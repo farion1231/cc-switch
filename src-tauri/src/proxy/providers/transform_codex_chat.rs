@@ -26,6 +26,11 @@ const EXTRA_CHAT_PASSTHROUGH_FIELDS: &[&str] = &[
 const THINK_OPEN_TAG: &str = "<think>";
 const THINK_CLOSE_TAG: &str = "</think>";
 
+/// Appended to the first system message for Codex -> Chat Completions requests
+/// to encourage immediate tool calls instead of describing steps and waiting.
+const AGENT_LOOP_HINT: &str =
+    "\n\nWhen executing a multi-step task, call tools immediately in the same turn as your response text. Do not describe a step and wait for user confirmation; execute it directly with a tool call when a tool is needed.";
+
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request.
 pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
     let mut result = json!({});
@@ -48,6 +53,23 @@ pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
     if let Some(input) = body.get("input") {
         append_responses_input_as_chat_messages(input, &mut messages)?;
     }
+
+    // For Codex requests (detected by presence of `instructions`), append an
+    // agent loop hint to the first system message to encourage immediate tool
+    // calls instead of describing steps and waiting for confirmation.
+    if body.get("instructions").is_some() {
+        if let Some(first) = messages.first_mut() {
+            if first.get("role").and_then(|v| v.as_str()) == Some("system") {
+                if let Some(content) = first.get("content").and_then(|v| v.as_str()) {
+                    if !content.contains(AGENT_LOOP_HINT) {
+                        let new_content = format!("{}{}", content, AGENT_LOOP_HINT);
+                        first["content"] = json!(new_content);
+                    }
+                }
+            }
+        }
+    }
+
     result["messages"] = json!(messages);
 
     let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
@@ -71,6 +93,12 @@ pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
         }
     }
 
+    // Responses API does not have stream_options; inject include_usage for
+    // Chat Completions so upstream returns token counts in SSE chunks
+    if result.get("stream").and_then(|v| v.as_bool()) == Some(true) {
+        result["stream_options"] = json!({"include_usage": true});
+    }
+
     if super::transform::supports_reasoning_effort(model) {
         if let Some(effort) = body.pointer("/reasoning/effort") {
             result["reasoning_effort"] = effort.clone();
@@ -88,7 +116,9 @@ pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
     }
 
     if let Some(tool_choice) = body.get("tool_choice") {
-        result["tool_choice"] = responses_tool_choice_to_chat(tool_choice);
+        if let Some(chat_tool_choice) = responses_tool_choice_to_chat(tool_choice) {
+            result["tool_choice"] = chat_tool_choice;
+        }
     }
 
     for key in EXTRA_CHAT_PASSTHROUGH_FIELDS {
@@ -176,13 +206,25 @@ fn append_responses_item_as_chat_message(
         Some("message") | None => {
             flush_pending_tool_calls(messages, pending_tool_calls);
             if item.get("role").is_some() || item.get("content").is_some() {
-                messages.push(responses_message_item_to_chat_message(item));
+                let msg = responses_message_item_to_chat_message(item);
+                if msg.get("role").and_then(|v| v.as_str()) == Some("assistant") {
+                    let content = msg["content"].clone();
+                    try_merge_content_into_last_tool_call_assistant(messages, content);
+                } else {
+                    messages.push(msg);
+                }
             }
         }
         _ => {
             flush_pending_tool_calls(messages, pending_tool_calls);
             if item.get("role").is_some() || item.get("content").is_some() {
-                messages.push(responses_message_item_to_chat_message(item));
+                let msg = responses_message_item_to_chat_message(item);
+                if msg.get("role").and_then(|v| v.as_str()) == Some("assistant") {
+                    let content = msg["content"].clone();
+                    try_merge_content_into_last_tool_call_assistant(messages, content);
+                } else {
+                    messages.push(msg);
+                }
             }
         }
     }
@@ -195,6 +237,18 @@ fn flush_pending_tool_calls(messages: &mut Vec<Value>, pending_tool_calls: &mut 
         return;
     }
 
+    // Merge tool_calls into the previous assistant message if it has content
+    // but no tool_calls — avoids creating split assistant messages.
+    if let Some(last) = messages.last_mut() {
+        if last.get("role").and_then(|v| v.as_str()) == Some("assistant")
+            && last.get("tool_calls").is_none()
+            && !last["content"].is_null()
+        {
+            last["tool_calls"] = json!(std::mem::take(pending_tool_calls));
+            return;
+        }
+    }
+
     messages.push(json!({
         "role": "assistant",
         "content": null,
@@ -202,8 +256,30 @@ fn flush_pending_tool_calls(messages: &mut Vec<Value>, pending_tool_calls: &mut 
     }));
 }
 
+/// If the last message is an assistant with tool_calls but no content,
+/// merge the given content into it instead of creating a separate message.
+fn try_merge_content_into_last_tool_call_assistant(messages: &mut Vec<Value>, content: Value) {
+    if let Some(last) = messages.last_mut() {
+        if last.get("role").and_then(|v| v.as_str()) == Some("assistant")
+            && last.get("tool_calls").is_some()
+            && last["content"].is_null()
+        {
+            last["content"] = content;
+            return;
+        }
+    }
+    messages.push(json!({
+        "role": "assistant",
+        "content": content
+    }));
+}
+
 fn responses_message_item_to_chat_message(item: &Value) -> Value {
-    let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("user");
+    let mut role = item.get("role").and_then(|v| v.as_str()).unwrap_or("user");
+    // Responses "developer" is not a valid Chat Completions role; normalize to "system"
+    if role == "developer" {
+        role = "system";
+    }
     let content = item
         .get("content")
         .map(|value| responses_content_to_chat_content(role, value))
@@ -340,17 +416,21 @@ fn responses_tool_to_chat_tool(tool: &Value) -> Option<Value> {
     }))
 }
 
-fn responses_tool_choice_to_chat(tool_choice: &Value) -> Value {
+fn responses_tool_choice_to_chat(tool_choice: &Value) -> Option<Value> {
     match tool_choice {
         Value::Object(obj) if obj.get("type").and_then(|v| v.as_str()) == Some("function") => {
-            json!({
+            Some(json!({
                 "type": "function",
                 "function": {
                     "name": obj.get("name").and_then(|v| v.as_str()).unwrap_or("")
                 }
-            })
+            }))
         }
-        _ => tool_choice.clone(),
+        // "none", "auto", "required" are valid in both APIs — pass through as-is
+        Value::String(_) => Some(tool_choice.clone()),
+        // Responses-only tool types (file_search, web_search_preview, etc.) have no Chat
+        // Completions equivalent; omit entirely.
+        _ => None,
     }
 }
 
@@ -668,7 +748,7 @@ pub(crate) fn response_id_from_chat_id(id: Option<&str>) -> String {
 
 pub(crate) fn response_status_from_finish_reason(finish_reason: Option<&str>) -> &'static str {
     match finish_reason {
-        Some("length") => "incomplete",
+        Some("length") | Some("content_filter") | Some("refusal") => "incomplete",
         _ => "completed",
     }
 }
@@ -884,5 +964,328 @@ mod tests {
 
         assert_eq!(result["status"], "incomplete");
         assert_eq!(result["incomplete_details"]["reason"], "max_output_tokens");
+    }
+
+    #[test]
+    fn chat_response_content_filter_maps_to_incomplete() {
+        let input = json!({
+            "id": "chatcmpl_filter",
+            "model": "gpt-5.4",
+            "choices": [{
+                "message": {"role": "assistant", "content": "filtered"},
+                "finish_reason": "content_filter"
+            }]
+        });
+
+        let result = chat_completion_to_response(input).unwrap();
+        assert_eq!(result["status"], "incomplete");
+    }
+
+    #[test]
+    fn chat_response_refusal_maps_to_incomplete() {
+        let input = json!({
+            "id": "chatcmpl_refusal",
+            "model": "gpt-5.4",
+            "choices": [{
+                "message": {"role": "assistant", "content": "I cannot help with that"},
+                "finish_reason": "refusal"
+            }]
+        });
+
+        let result = chat_completion_to_response(input).unwrap();
+        assert_eq!(result["status"], "incomplete");
+    }
+
+    #[test]
+    fn chat_response_tool_calls_maps_to_completed() {
+        let input = json!({
+            "id": "chatcmpl_tools",
+            "model": "gpt-5.4",
+            "choices": [{
+                "message": {"role": "assistant", "content": null},
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let result = chat_completion_to_response(input).unwrap();
+        assert_eq!(result["status"], "completed");
+    }
+
+    #[test]
+    fn responses_developer_role_is_normalized_to_system() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "instructions": "You are a coding assistant.",
+            "input": [
+                {"role": "developer", "content": "Use Chinese for all responses."},
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there"},
+                {"role": "developer", "content": "Always include code examples."}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // system from instructions
+        assert_eq!(messages[0]["role"], "system");
+        // developer -> system
+        assert_eq!(messages[1]["role"], "system");
+        assert_eq!(messages[1]["content"], "Use Chinese for all responses.");
+        // user stays user
+        assert_eq!(messages[2]["role"], "user");
+        // assistant stays assistant
+        assert_eq!(messages[3]["role"], "assistant");
+        // second developer -> system
+        assert_eq!(messages[4]["role"], "system");
+        assert_eq!(messages[4]["content"], "Always include code examples.");
+
+        // No developer role in output
+        for msg in messages {
+            assert_ne!(msg["role"], "developer");
+        }
+    }
+
+    #[test]
+    fn responses_roles_not_affected_except_developer() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {"role": "system", "content": "You are helpful."},
+                {"role": "user", "content": "Test"},
+                {"role": "assistant", "content": "OK"},
+                {"type": "function_call", "call_id": "c1", "name": "fn", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "c1", "output": "result"}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[2]["role"], "assistant");
+        // content="OK" and tool_calls are merged into one assistant message
+        assert_eq!(messages[2]["content"], "OK");
+        assert_eq!(messages[2]["tool_calls"][0]["id"], "c1");
+        assert_eq!(messages[3]["role"], "tool");
+
+        // No developer anywhere
+        for msg in messages {
+            assert_ne!(msg["role"], "developer");
+        }
+    }
+
+    #[test]
+    fn non_function_tools_are_filtered_out_from_chat_request() {
+        // Responses-only tool types (web_search_preview, computer_use_preview, file_search,
+        // code_interpreter, shell) must NOT be forwarded to a Chat Completions upstream.
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [{"role": "user", "content": "Search the web"}],
+            "tools": [
+                {"type": "web_search_preview"},
+                {"type": "computer_use_preview"},
+                {"type": "file_search", "max_num_results": 10},
+                {"type": "function", "name": "get_weather", "description": "Get weather", "parameters": {"type": "object"}},
+                {"type": "function", "function": {"name": "read_file", "parameters": {"type": "object"}}}
+            ],
+            "tool_choice": "auto"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        // Only the 2 function tools should be present
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0]["type"], "function");
+        assert_eq!(tools[0]["function"]["name"], "get_weather");
+        assert_eq!(tools[1]["type"], "function");
+        assert_eq!(tools[1]["function"]["name"], "read_file");
+
+        // tool_choice "auto" (string) should pass through
+        assert_eq!(result["tool_choice"], "auto");
+    }
+
+    #[test]
+    fn responses_only_tool_choice_is_omitted() {
+        // file_search tool_choice is Responses-only; Chat Completions does not support it.
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [{"role": "user", "content": "test"}],
+            "tools": [{"type": "function", "name": "search", "parameters": {}}],
+            "tool_choice": {"type": "file_search"}
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        // tool_choice should not be present in the result
+        assert!(result.get("tool_choice").is_none());
+    }
+
+    #[test]
+    fn stream_true_injects_stream_options_include_usage() {
+        // Without stream: true, no stream_options should be added
+        let input_no_stream = json!({
+            "model": "gpt-5.4",
+            "input": [{"role": "user", "content": "test"}]
+        });
+        let result_no_stream = responses_to_chat_completions(input_no_stream).unwrap();
+        assert!(result_no_stream.get("stream_options").is_none());
+
+        // With stream: true, stream_options.include_usage should be injected
+        let input_stream = json!({
+            "model": "gpt-5.4",
+            "input": [{"role": "user", "content": "test"}],
+            "stream": true
+        });
+        let result_stream = responses_to_chat_completions(input_stream).unwrap();
+        assert_eq!(
+            result_stream["stream_options"],
+            json!({"include_usage": true})
+        );
+        assert_eq!(result_stream["stream"], true);
+
+        // With stream: false, no stream_options should be added
+        let input_stream_false = json!({
+            "model": "gpt-5.4",
+            "input": [{"role": "user", "content": "test"}],
+            "stream": false
+        });
+        let result_stream_false = responses_to_chat_completions(input_stream_false).unwrap();
+        assert!(result_stream_false.get("stream_options").is_none());
+    }
+
+    #[test]
+    fn instructions_append_agent_loop_hint_to_first_system_message() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "instructions": "You are a coding assistant.",
+            "input": [{"role": "user", "content": "test"}]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let content = result["messages"][0]["content"].as_str().unwrap();
+
+        assert!(content.starts_with("You are a coding assistant."));
+        assert!(content.contains("call tools immediately"));
+        assert!(content.contains("Do not describe a step and wait"));
+    }
+
+    #[test]
+    fn no_instructions_does_not_append_agent_loop_hint() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [{"role": "user", "content": "test"}]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        // No messages since no instructions and input is just a user message
+        // (user messages from input go into messages array)
+        let messages = result["messages"].as_array().unwrap();
+        // The user message should be present
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
+        // No system message at all since no instructions
+        for msg in messages {
+            assert_ne!(msg["role"], "system");
+        }
+    }
+
+    #[test]
+    fn agent_loop_hint_not_duplicated_on_repeated_conversion() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "instructions": "You are concise.",
+            "input": [{"role": "user", "content": "test"}]
+        });
+
+        let result1 = responses_to_chat_completions(input.clone()).unwrap();
+        let content1 = result1["messages"][0]["content"].as_str().unwrap();
+        let hint_count1 = content1.matches("call tools immediately").count();
+        assert_eq!(hint_count1, 1, "hint should appear exactly once");
+
+        // Convert the same input again (simulating repeated calls)
+        let result2 = responses_to_chat_completions(input.clone()).unwrap();
+        let content2 = result2["messages"][0]["content"].as_str().unwrap();
+        let hint_count2 = content2.matches("call tools immediately").count();
+        assert_eq!(hint_count2, 1, "hint should still appear exactly once on repeated conversion");
+    }
+
+    #[test]
+    fn responses_message_plus_function_call_merged_into_single_assistant_message() {
+        // Responses output: message (text) + function_call + function_call_output
+        // Should become a single assistant message with both content and tool_calls,
+        // followed by a tool message.
+        let input = json!({
+            "model": "gpt-5.4",
+            "instructions": "You are helpful.",
+            "input": [
+                {"role": "user", "content": "What's the weather?"},
+                {"role": "assistant", "content": "Let me check the weather."},
+                {"type": "function_call", "call_id": "call_1", "name": "get_weather", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "call_1", "output": "Sunny"}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // Should be: system, user, assistant{content+tool_calls}, tool
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[1]["role"], "user");
+        // Single merged assistant message with both content and tool_calls
+        assert_eq!(messages[2]["role"], "assistant");
+        assert_eq!(messages[2]["content"], "Let me check the weather.");
+        assert_eq!(messages[2]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(messages[2]["tool_calls"][0]["function"]["name"], "get_weather");
+        // Tool result
+        assert_eq!(messages[3]["role"], "tool");
+        assert_eq!(messages[3]["tool_call_id"], "call_1");
+    }
+
+    #[test]
+    fn multi_round_merge_keeps_tool_calls_with_preceding_content() {
+        // Multi-round: each round has message + function_call + function_call_output
+        // All rounds should merge content into the tool_calls assistant message.
+        let input = json!({
+            "model": "gpt-5.4",
+            "instructions": "You are a coding agent.",
+            "input": [
+                {"role": "user", "content": "Run steps 1 and 2."},
+                // Round 1
+                {"role": "assistant", "content": "Step 1: list files."},
+                {"type": "function_call", "call_id": "c1", "name": "ls", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "c1", "output": "main.rs"},
+                // Round 2
+                {"role": "assistant", "content": "Step 2: read file."},
+                {"type": "function_call", "call_id": "c2", "name": "read", "arguments": "{\"file\":\"main.rs\"}"},
+                {"type": "function_call_output", "call_id": "c2", "output": "fn main() {}"}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // Should be: system, user, assistant1{content+tool_calls}, tool1,
+        //            assistant2{content+tool_calls}, tool2
+        assert_eq!(messages.len(), 6);
+
+        // Round 1: merged
+        assert_eq!(messages[2]["role"], "assistant");
+        assert_eq!(messages[2]["content"], "Step 1: list files.");
+        assert_eq!(messages[2]["tool_calls"][0]["id"], "c1");
+        assert_eq!(messages[2]["tool_calls"][0]["function"]["name"], "ls");
+        assert_eq!(messages[3]["role"], "tool");
+        assert_eq!(messages[3]["tool_call_id"], "c1");
+
+        // Round 2: merged
+        assert_eq!(messages[4]["role"], "assistant");
+        assert_eq!(messages[4]["content"], "Step 2: read file.");
+        assert_eq!(messages[4]["tool_calls"][0]["id"], "c2");
+        assert_eq!(messages[4]["tool_calls"][0]["function"]["name"], "read");
+        assert_eq!(messages[5]["role"], "tool");
+        assert_eq!(messages[5]["tool_call_id"], "c2");
     }
 }

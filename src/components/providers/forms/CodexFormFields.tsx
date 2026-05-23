@@ -148,8 +148,21 @@ export function CodexFormFields({
           label={t("codexConfig.apiUrlLabel")}
           value={codexBaseUrl}
           onChange={onBaseUrlChange}
-          placeholder={t("providerForm.codexApiEndpointPlaceholder")}
-          hint={t("providerForm.codexApiHint")}
+          placeholder={
+            apiFormat === "openai_chat"
+              ? t("providerForm.codexApiChatEndpointPlaceholder")
+              : t("providerForm.codexApiEndpointPlaceholder")
+          }
+          hint={
+            apiFormat === "openai_chat"
+              ? t("providerForm.codexApiHintChat")
+              : t("providerForm.codexApiHint")
+          }
+          fullUrlHint={
+            apiFormat === "openai_chat"
+              ? t("providerForm.codexApiHintChat")
+              : undefined
+          }
           showFullUrlToggle
           isFullUrl={isFullUrl}
           onFullUrlChange={onFullUrlChange}
