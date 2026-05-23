@@ -261,6 +261,16 @@ pub fn chat_completions_to_responses(body: Value) -> Value {
                     }
                 }
 
+                // Reasoning content (DeepSeek reasoning models)
+                if let Some(reasoning) = message.get("reasoning_content").and_then(|v| v.as_str()) {
+                    if !reasoning.is_empty() {
+                        output.push(json!({
+                            "type": "reasoning",
+                            "summary": [{"type": "summary_text", "text": reasoning}]
+                        }));
+                    }
+                }
+
                 // Tool calls → function_call items
                 if let Some(tool_calls) = message.get("tool_calls").and_then(|v| v.as_array()) {
                     for tc in tool_calls {
@@ -503,6 +513,42 @@ pub fn wrap_responses_as_sse(
                                 "item_id": &item_id,
                                 "output_index": output_index,
                                 "arguments": arguments
+                            })
+                        ))));
+                    }
+                    "reasoning" => {
+                        let summary = item
+                            .get("summary")
+                            .and_then(|v| v.as_array())
+                            .and_then(|arr| {
+                                arr.first()
+                                    .and_then(|s| s.get("text").and_then(|t| t.as_str()))
+                            })
+                            .unwrap_or("");
+
+                        v.push(Ok(Bytes::from(format!(
+                            "event: response.output_item.added\ndata: {}\n\n",
+                            json!({
+                                "type": "response.output_item.added",
+                                "output_index": output_index,
+                                "item": {
+                                    "id": &item_id,
+                                    "type": "reasoning",
+                                    "summary": [{"type": "summary_text", "text": summary}]
+                                }
+                            })
+                        ))));
+
+                        v.push(Ok(Bytes::from(format!(
+                            "event: response.output_item.done\ndata: {}\n\n",
+                            json!({
+                                "type": "response.output_item.done",
+                                "output_index": output_index,
+                                "item": {
+                                    "id": &item_id,
+                                    "type": "reasoning",
+                                    "summary": [{"type": "summary_text", "text": summary}]
+                                }
                             })
                         ))));
                     }

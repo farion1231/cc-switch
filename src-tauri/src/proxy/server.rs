@@ -294,6 +294,11 @@ impl ProxyServer {
                 "/claude-desktop/v1/messages",
                 post(handlers::handle_claude_desktop_messages),
             )
+            // OpenAI Models API (Codex CLI 模型列表)
+            .route("/models", get(handlers::handle_codex_models))
+            .route("/v1/models", get(handlers::handle_codex_models))
+            .route("/v1/v1/models", get(handlers::handle_codex_models))
+            .route("/codex/v1/models", get(handlers::handle_codex_models))
             // OpenAI Chat Completions API (Codex CLI，支持带前缀和不带前缀)
             .route("/chat/completions", post(handlers::handle_chat_completions))
             .route(

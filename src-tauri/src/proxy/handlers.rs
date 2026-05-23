@@ -110,6 +110,41 @@ pub async fn handle_claude_desktop_models(
     Ok(Json(response))
 }
 
+/// GET /v1/models — 转发到上游供应商获取可用模型列表
+pub async fn handle_codex_models(
+    State(state): State<ProxyState>,
+) -> Result<Json<Value>, ProxyError> {
+    let providers = state
+        .provider_router
+        .select_providers("codex")
+        .await
+        .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+    let provider = providers.first().ok_or(ProxyError::NoAvailableProvider)?;
+
+    let adapter = get_adapter(&AppType::Codex);
+    let base_url = adapter.extract_base_url(provider)?;
+    let auth = adapter
+        .extract_auth(provider)
+        .ok_or_else(|| ProxyError::ConfigError("Provider has no API key".to_string()))?;
+
+    let models = crate::services::model_fetch::fetch_models(&base_url, &auth.api_key, false, None)
+        .await
+        .map_err(|e| ProxyError::ConfigError(e))?;
+
+    let data: Vec<Value> = models
+        .into_iter()
+        .map(|m| {
+            json!({
+                "id": m.id,
+                "object": "model",
+                "owned_by": m.owned_by.unwrap_or_default()
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({"object": "list", "data": data})))
+}
+
 async fn handle_messages_for_app(
     state: ProxyState,
     request: axum::extract::Request,
