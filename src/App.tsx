@@ -678,6 +678,7 @@ function App() {
     originalId?: string;
   }) => {
     await updateProvider(provider, originalId);
+    await queryClient.invalidateQueries({ queryKey: ["providers"] });
     setEditingProvider(null);
   };
 

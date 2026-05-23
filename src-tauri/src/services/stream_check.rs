@@ -96,6 +96,7 @@ impl StreamCheckService {
         auth_override: Option<AuthInfo>,
         base_url_override: Option<String>,
         claude_api_format_override: Option<String>,
+        codex_api_format_override: Option<String>,
     ) -> Result<StreamCheckResult, AppError> {
         // 合并供应商单独配置和全局配置
         let effective_config = Self::merge_provider_config(provider, config);
@@ -109,6 +110,7 @@ impl StreamCheckService {
                 auth_override.clone(),
                 base_url_override.clone(),
                 claude_api_format_override.clone(),
+                codex_api_format_override.clone(),
             )
             .await;
 
@@ -202,6 +204,7 @@ impl StreamCheckService {
         auth_override: Option<AuthInfo>,
         base_url_override: Option<String>,
         claude_api_format_override: Option<String>,
+        codex_api_format_override: Option<String>,
     ) -> Result<StreamCheckResult, AppError> {
         let start = Instant::now();
 
@@ -263,6 +266,7 @@ impl StreamCheckService {
                     test_prompt,
                     request_timeout,
                     provider,
+                    codex_api_format_override.as_deref(),
                 )
                 .await
             }
@@ -517,7 +521,9 @@ impl StreamCheckService {
 
     /// Codex 流式检查
     ///
-    /// 严格按照 Codex CLI 真实请求格式构建请求 (Responses API)
+    /// 根据 apiFormat 选择请求格式：
+    /// - `openai_chat`（默认）: OpenAI Chat Completions API (/v1/chat/completions)
+    /// - `openai_responses`: OpenAI Responses API (/v1/responses)
     async fn check_codex_stream(
         client: &Client,
         base_url: &str,
@@ -526,35 +532,93 @@ impl StreamCheckService {
         test_prompt: &str,
         timeout: std::time::Duration,
         provider: &Provider,
+        api_format_override: Option<&str>,
     ) -> Result<(u16, String), AppError> {
         let is_full_url = provider
             .meta
             .as_ref()
             .and_then(|meta| meta.is_full_url)
             .unwrap_or(false);
-        let urls = Self::resolve_codex_stream_urls(base_url, is_full_url);
 
-        // 解析模型名和推理等级 (支持 model@level 或 model#level 格式)
+        // 检测 apiFormat：override > meta.apiFormat > 默认 "openai_chat"
+        let api_format = api_format_override
+            .or_else(|| {
+                provider
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.api_format.as_deref())
+            })
+            .unwrap_or("openai_chat");
+
+        // 解析模型名和推理等级
         let (actual_model, reasoning_effort) = Self::parse_model_with_effort(model);
-
-        // 获取本地系统信息
         let os_name = Self::get_os_name();
         let arch_name = Self::get_arch_name();
 
-        // Responses API 请求体格式 (input 必须是数组)
+        if api_format == "openai_chat" {
+            // Chat Completions 格式
+            let url = if is_full_url {
+                base_url.to_string()
+            } else {
+                let trimmed = base_url.trim_end_matches('/');
+                format!("{trimmed}/v1/chat/completions")
+            };
+
+            let mut body = json!({
+                "model": actual_model,
+                "messages": [{ "role": "user", "content": test_prompt }],
+                "stream": true,
+                "max_tokens": 1
+            });
+            if let Some(effort) = reasoning_effort {
+                body["reasoning_effort"] = json!(effort);
+            }
+
+            let response = client
+                .post(&url)
+                .header("authorization", format!("Bearer {}", auth.api_key))
+                .header("content-type", "application/json")
+                .header("accept", "text/event-stream")
+                .header("accept-encoding", "identity")
+                .header(
+                    "user-agent",
+                    format!("codex_cli_rs/0.80.0 ({os_name} 15.7.2; {arch_name}) Terminal"),
+                )
+                .timeout(timeout)
+                .json(&body)
+                .send()
+                .await
+                .map_err(Self::map_request_error)?;
+
+            let status = response.status().as_u16();
+            if !response.status().is_success() {
+                let error_text = response.text().await.unwrap_or_default();
+                return Err(Self::http_status_error(status, error_text));
+            }
+
+            let mut stream = response.bytes_stream();
+            if let Some(chunk) = stream.next().await {
+                match chunk {
+                    Ok(_) => return Ok((status, actual_model)),
+                    Err(e) => return Err(AppError::Message(format!("Stream read failed: {e}"))),
+                }
+            }
+            return Err(AppError::Message("No response data received".to_string()));
+        }
+
+        // openai_responses 格式（原有逻辑）
+        let urls = Self::resolve_codex_stream_urls(base_url, is_full_url);
+
         let mut body = json!({
             "model": actual_model,
             "input": [{ "role": "user", "content": test_prompt }],
             "stream": true
         });
-
-        // 如果是推理模型，添加 reasoning_effort
         if let Some(effort) = reasoning_effort {
             body["reasoning"] = json!({ "effort": effort });
         }
 
         for (i, url) in urls.iter().enumerate() {
-            // 严格按照 Codex CLI 请求格式设置 headers
             let response = client
                 .post(url)
                 .header("authorization", format!("Bearer {}", auth.api_key))
@@ -576,7 +640,6 @@ impl StreamCheckService {
 
             if !response.status().is_success() {
                 let error_text = response.text().await.unwrap_or_default();
-                // 回退策略：仅当首选 URL 返回 404 时尝试下一个
                 if i == 0 && status == 404 && urls.len() > 1 {
                     continue;
                 }

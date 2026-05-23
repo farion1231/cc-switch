@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { FormLabel } from "@/components/ui/form";
@@ -9,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { Download, Loader2 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
@@ -96,6 +97,12 @@ export function CodexFormFields({
 
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+
+  // DeepSeek 模型检测（Hook 必须在顶层调用）
+  const isDeepSeekModel = useMemo(() => {
+    const model = (modelName || "").toLowerCase();
+    return model.includes("deepseek") || model.includes("deep-seek");
+  }, [modelName]);
 
   const handleFetchModels = useCallback(() => {
     if (!codexBaseUrl || !codexApiKey) {
@@ -213,42 +220,29 @@ export function CodexFormFields({
         </div>
       )}
 
-      {/* Codex Chat 兼容模式选择 — 仅在 openai_chat 时显示 */}
-      {shouldShowSpeedTest && apiFormat === "openai_chat" && (
+      {/* Codex Chat 兼容模式 — 仅在 openai_chat 且模型名包含 DeepSeek 时显示 */}
+      {shouldShowSpeedTest && apiFormat === "openai_chat" && isDeepSeekModel && (
         <div className="space-y-2">
-          <FormLabel htmlFor="codexChatCompatMode">
-            {t("providerForm.codexChatCompatibilityMode", {
-              defaultValue: "Chat 兼容模式",
-            })}
-          </FormLabel>
-          <Select
-            value={chatCompatibilityMode}
-            onValueChange={(value) =>
-              onChatCompatibilityModeChange(
-                value as CodexChatCompatibilityMode,
-              )
-            }
-          >
-            <SelectTrigger id="codexChatCompatMode" className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="standard">
-                {t("providerForm.codexChatCompatStandard", {
-                  defaultValue: "标准 OpenAI Chat Completions",
-                })}
-              </SelectItem>
-              <SelectItem value="deepseek_thinking">
-                {t("providerForm.codexChatCompatDeepseekThinking", {
-                  defaultValue: "DeepSeek Thinking",
-                })}
-              </SelectItem>
-            </SelectContent>
-          </Select>
+          <div className="flex items-center justify-between">
+            <FormLabel htmlFor="codexChatCompatSwitch">
+              {t("providerForm.codexChatCompatibilityMode", {
+                defaultValue: "Chat 兼容模式",
+              })}
+            </FormLabel>
+            <Switch
+              id="codexChatCompatSwitch"
+              checked={chatCompatibilityMode === "deepseek_thinking"}
+              onCheckedChange={(checked) =>
+                onChatCompatibilityModeChange(
+                  checked ? "deepseek_thinking" : "standard",
+                )
+              }
+            />
+          </div>
           <p className="text-xs text-muted-foreground">
             {t("providerForm.codexChatCompatibilityModeHint", {
               defaultValue:
-                "选择 Chat Completions 格式的兼容行为。DeepSeek Thinking 模式会适配 reasoning_content 与 tool_calls 的合并。",
+                "DeepSeek 模型必须开启此选项，否则可能无法正常对话。开启后会适配 reasoning_content 与 tool_calls 的合并。",
             })}
           </p>
         </div>
