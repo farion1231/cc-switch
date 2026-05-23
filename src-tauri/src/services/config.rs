@@ -194,7 +194,8 @@ impl ConfigService {
         // 读-改-写：读取现有 settings.json 保留用户字段（enabledPlugins/hooks/permissions），
         // 仅更新 env 字段
         let mut existing = if settings_path.exists() {
-            read_json_file::<serde_json::Value>(&settings_path).unwrap_or_else(|_| serde_json::json!({}))
+            read_json_file::<serde_json::Value>(&settings_path)
+                .unwrap_or_else(|_| serde_json::json!({}))
         } else {
             serde_json::json!({})
         };

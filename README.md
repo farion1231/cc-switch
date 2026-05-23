@@ -292,7 +292,6 @@ Download the latest `CC-Switch-v{version}-Windows.msi` installer or `CC-Switch-v
 **Method 1: Install via Homebrew (Recommended)**
 
 ```bash
-brew tap farion1231/ccswitch
 brew install --cask cc-switch
 ```
 
