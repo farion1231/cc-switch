@@ -33,7 +33,17 @@ export function fmtUsd(
 
 export function getLocaleFromLanguage(language: string): string {
   if (!language) return "en-US";
-  if (language.startsWith("zh")) return "zh-CN";
+  const normalized = language.toLowerCase();
+  if (normalized === "zh") return "zh-CN";
+  if (
+    normalized.startsWith("zh-tw") ||
+    normalized.startsWith("zh-hk") ||
+    normalized.startsWith("zh-mo") ||
+    normalized.startsWith("zh-hant")
+  ) {
+    return "zh-TW";
+  }
+  if (normalized.startsWith("zh")) return "zh-CN";
   if (language.startsWith("ja")) return "ja-JP";
   return "en-US";
 }
