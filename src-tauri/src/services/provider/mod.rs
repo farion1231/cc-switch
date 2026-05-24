@@ -1051,6 +1051,81 @@ mod tests {
 
     #[test]
     #[serial]
+    fn sync_current_claude_profile_only_preserves_takeover_backup() {
+        with_test_home(|state, home| {
+            let official_dir = home.join(".claude-profiles").join("official");
+            fs::create_dir_all(&official_dir).expect("create official profile dir");
+            write_json_file(
+                &official_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "official-live-token",
+                        "ANTHROPIC_BASE_URL": "https://official-live.example"
+                    }
+                }),
+            )
+            .expect("seed official profile settings");
+
+            let official_provider = claude_provider(
+                "claude-official",
+                "Claude Official",
+                "provider-token-should-not-backup",
+                "https://provider-should-not-backup.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(official_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &official_provider)
+                .expect("save official provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "claude-official")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("claude-official"))
+                .expect("set local current provider");
+            let original_backup = serde_json::to_string(&json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "existing-backup-token",
+                    "ANTHROPIC_BASE_URL": "https://existing-backup.example"
+                }
+            }))
+            .expect("serialize backup");
+            futures::executor::block_on(state.db.save_live_backup("claude", &original_backup))
+                .expect("seed live backup");
+            futures::executor::block_on(state.db.update_proxy_config(ProxyConfig {
+                live_takeover_active: true,
+                ..Default::default()
+            }))
+            .expect("enable takeover");
+            {
+                let mut app_config =
+                    futures::executor::block_on(state.db.get_proxy_config_for_app("claude"))
+                        .expect("get app proxy config");
+                app_config.enabled = true;
+                futures::executor::block_on(state.db.update_proxy_config_for_app(app_config))
+                    .expect("enable claude takeover");
+            }
+
+            ProviderService::sync_current_provider_for_app(state, AppType::Claude)
+                .expect("sync current profile-only provider during takeover");
+
+            let backup = futures::executor::block_on(state.db.get_live_backup("claude"))
+                .expect("get live backup")
+                .expect("backup exists");
+            assert_eq!(
+                backup.original_config, original_backup,
+                "sync-current must not rewrite profile-only backup from provider credentials"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn switch_away_from_claude_profile_only_does_not_backfill_external_profile_settings() {
         with_test_home(|state, home| {
             let default_dir = home.join(".claude");
@@ -4757,19 +4832,28 @@ impl ProviderService {
             .proxy_service
             .detect_takeover_in_live_config_for_app(&app_type);
 
-        if matches!(app_type, AppType::Claude) {
-            let plan = Self::claude_switch_plan(provider);
+        let claude_switch_plan =
+            matches!(app_type, AppType::Claude).then(|| Self::claude_switch_plan(provider));
+        if let Some(plan) = claude_switch_plan.as_ref() {
             Self::validate_claude_runtime_switch_plan(&plan)?;
             Self::apply_claude_switch_plan(&plan)?;
         }
 
         if takeover_enabled && (has_live_backup || live_taken_over) {
-            futures::executor::block_on(
-                state
-                    .proxy_service
-                    .update_live_backup_from_provider(app_type.as_str(), provider),
-            )
-            .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+            let is_claude_profile_only = matches!(
+                claude_switch_plan
+                    .as_ref()
+                    .map(|plan| &plan.activation_mode),
+                Some(ClaudeActivationMode::ProfileOnly)
+            );
+            if !is_claude_profile_only {
+                futures::executor::block_on(
+                    state
+                        .proxy_service
+                        .update_live_backup_from_provider(app_type.as_str(), provider),
+                )
+                .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+            }
             return Ok(());
         }
 
