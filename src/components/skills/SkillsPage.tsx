@@ -37,7 +37,7 @@ import type {
 import { formatSkillError } from "@/lib/errors/skillErrorParser";
 
 interface SkillsPageProps {
-  initialApp?: AppId;
+  initialApp?: AppId | null;
 }
 
 export interface SkillsPageHandle {
@@ -212,6 +212,11 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
 
       if (!skill) {
         toast.error(t("skills.notFound"));
+        return;
+      }
+
+      if (!currentApp) {
+        toast.error(t("skills.noVisibleTargetApp"));
         return;
       }
 
