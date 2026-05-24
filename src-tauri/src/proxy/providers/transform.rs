@@ -228,10 +228,23 @@ pub fn anthropic_to_openai_with_reasoning_content(
     }
 
     if let Some(v) = body.get("tool_choice") {
-        result["tool_choice"] = map_tool_choice_to_chat(v);
+        if let Some(tool_choice) = map_tool_choice_to_chat(v) {
+            result["tool_choice"] = tool_choice;
+            if disables_parallel_tool_use(v) {
+                result["parallel_tool_calls"] = json!(false);
+            }
+        }
     }
 
     Ok(result)
+}
+
+fn disables_parallel_tool_use(value: &Value) -> bool {
+    value
+        .as_object()
+        .and_then(|obj| obj.get("disable_parallel_tool_use"))
+        .and_then(|value| value.as_bool())
+        == Some(true)
 }
 
 /// Translate an Anthropic `tool_choice` into the OpenAI Chat Completions form.
@@ -242,32 +255,35 @@ pub fn anthropic_to_openai_with_reasoning_content(
 ///   {"type": "tool", "name": "<X>"}
 ///
 /// OpenAI Chat forms:
-///   "auto" / "none" / "required"      (note: no "any" — use "required")
+///   "auto" / "none" / "required"      (note: no "any" - use "required")
 ///   {"type": "function", "function": {"name": "<X>"}}
 ///
 /// The Responses API uses a flatter `{"type":"function","name":"X"}` selector,
 /// so it has a sibling `map_tool_choice_to_responses` in `transform_responses.rs`.
 /// Keep the two in sync.
-fn map_tool_choice_to_chat(tool_choice: &Value) -> Value {
-    match tool_choice {
-        Value::String(s) => match s.as_str() {
+fn map_tool_choice_to_chat(value: &Value) -> Option<Value> {
+    if value.is_null() {
+        return None;
+    }
+
+    if let Some(choice) = value.as_str() {
+        return Some(match choice {
             "any" => json!("required"),
-            _ => json!(s),
-        },
-        Value::Object(obj) => match obj.get("type").and_then(|t| t.as_str()) {
-            Some("any") => json!("required"),
-            Some("auto") => json!("auto"),
-            Some("none") => json!("none"),
-            Some("tool") => {
-                let name = obj.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                json!({
-                    "type": "function",
-                    "function": { "name": name }
-                })
-            }
-            _ => tool_choice.clone(),
-        },
-        _ => tool_choice.clone(),
+            _ => json!(choice),
+        });
+    }
+
+    let obj = value.as_object()?;
+    match obj.get("type").and_then(|v| v.as_str()) {
+        Some("auto") => Some(json!("auto")),
+        Some("any") => Some(json!("required")),
+        Some("none") => Some(json!("none")),
+        Some("tool") => obj
+            .get("name")
+            .and_then(|name| name.as_str())
+            .map(|name| json!({"type": "function", "function": {"name": name}})),
+        Some("function") => Some(value.clone()),
+        _ => None,
     }
 }
 
@@ -421,7 +437,7 @@ fn convert_message_to_openai(
                     let content_val = block.get("content");
                     let content_str = match content_val {
                         Some(Value::String(s)) => s.clone(),
-                        Some(v) => canonical_json_string(v),
+                        Some(v) => serde_json::to_string(v).unwrap_or_default(),
                         None => String::new(),
                     };
                     result.push(json!({
@@ -886,6 +902,94 @@ mod tests {
     }
 
     #[test]
+    fn test_anthropic_to_openai_maps_anthropic_tool_choice() {
+        let base = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let mut auto = base.clone();
+        auto["tool_choice"] = json!({"type": "auto"});
+        assert_eq!(anthropic_to_openai(auto).unwrap()["tool_choice"], "auto");
+
+        let mut any = base.clone();
+        any["tool_choice"] = json!({"type": "any"});
+        assert_eq!(anthropic_to_openai(any).unwrap()["tool_choice"], "required");
+
+        let mut none = base.clone();
+        none["tool_choice"] = json!({"type": "none"});
+        assert_eq!(anthropic_to_openai(none).unwrap()["tool_choice"], "none");
+
+        let mut tool = base.clone();
+        tool["tool_choice"] = json!({"type": "tool", "name": "get_weather"});
+        let result = anthropic_to_openai(tool).unwrap();
+        assert_eq!(result["tool_choice"]["type"], "function");
+        assert_eq!(result["tool_choice"]["function"]["name"], "get_weather");
+
+        let mut native = base.clone();
+        native["tool_choice"] = json!({"type": "function", "function": {"name": "get_weather"}});
+        assert_eq!(
+            anthropic_to_openai(native).unwrap()["tool_choice"],
+            json!({"type": "function", "function": {"name": "get_weather"}})
+        );
+
+        let mut string = base.clone();
+        string["tool_choice"] = json!("auto");
+        assert_eq!(anthropic_to_openai(string).unwrap()["tool_choice"], "auto");
+
+        let mut string_any = base.clone();
+        string_any["tool_choice"] = json!("any");
+        assert_eq!(
+            anthropic_to_openai(string_any).unwrap()["tool_choice"],
+            "required"
+        );
+
+        let mut null_choice = base.clone();
+        null_choice["tool_choice"] = Value::Null;
+        assert!(anthropic_to_openai(null_choice)
+            .unwrap()
+            .get("tool_choice")
+            .is_none());
+
+        let mut unknown = base;
+        unknown["tool_choice"] = json!({"type": "unsupported"});
+        assert!(anthropic_to_openai(unknown)
+            .unwrap()
+            .get("tool_choice")
+            .is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_maps_disable_parallel_tool_use() {
+        let base = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let mut auto = base.clone();
+        auto["tool_choice"] = json!({"type": "auto", "disable_parallel_tool_use": true});
+        let result = anthropic_to_openai(auto).unwrap();
+        assert_eq!(result["tool_choice"], "auto");
+        assert_eq!(result["parallel_tool_calls"], false);
+
+        let mut any = base.clone();
+        any["tool_choice"] = json!({"type": "any", "disable_parallel_tool_use": true});
+        let result = anthropic_to_openai(any).unwrap();
+        assert_eq!(result["tool_choice"], "required");
+        assert_eq!(result["parallel_tool_calls"], false);
+
+        let mut tool = base;
+        tool["tool_choice"] =
+            json!({"type": "tool", "name": "get_weather", "disable_parallel_tool_use": true});
+        let result = anthropic_to_openai(tool).unwrap();
+        assert_eq!(result["tool_choice"]["type"], "function");
+        assert_eq!(result["tool_choice"]["function"]["name"], "get_weather");
+        assert_eq!(result["parallel_tool_calls"], false);
+    }
+
+    #[test]
     fn test_anthropic_to_openai_tool_use() {
         let input = json!({
             "model": "claude-3-opus",
@@ -905,6 +1009,48 @@ mod tests {
         assert!(msg.get("tool_calls").is_some());
         assert_eq!(msg["tool_calls"][0]["id"], "call_123");
         assert!(msg.get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_tool_use_canonicalizes_arguments() {
+        let left = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "call_123",
+                    "name": "read_file",
+                    "input": {"z": 1, "a": {"b": 2, "a": 1}}
+                }]
+            }]
+        });
+        let right = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "call_123",
+                    "name": "read_file",
+                    "input": {"a": {"a": 1, "b": 2}, "z": 1}
+                }]
+            }]
+        });
+
+        let left = anthropic_to_openai(left).expect("transform left");
+        let right = anthropic_to_openai(right).expect("transform right");
+        let left_args = left["messages"][0]["tool_calls"][0]["function"]["arguments"]
+            .as_str()
+            .expect("left arguments");
+        let right_args = right["messages"][0]["tool_calls"][0]["function"]["arguments"]
+            .as_str()
+            .expect("right arguments");
+
+        assert_eq!(left_args, right_args);
+        assert_eq!(left_args, "{\"a\":{\"a\":1,\"b\":2},\"z\":1}");
     }
 
     #[test]
@@ -1546,52 +1692,5 @@ mod tests {
         let result = anthropic_to_openai(input).unwrap();
         assert_eq!(result["max_tokens"], 1024);
         assert!(result.get("max_completion_tokens").is_none());
-    }
-
-    fn run_tool_choice(value: Value) -> Value {
-        let input = json!({
-            "model": "gpt-4o",
-            "messages": [{"role": "user", "content": "Hello"}],
-            "tools": [{
-                "name": "search",
-                "description": "search the web",
-                "input_schema": {"type": "object", "properties": {}}
-            }],
-            "tool_choice": value,
-        });
-        anthropic_to_openai(input).unwrap()["tool_choice"].clone()
-    }
-
-    #[test]
-    fn tool_choice_string_any_maps_to_required() {
-        assert_eq!(run_tool_choice(json!("any")), json!("required"));
-    }
-
-    #[test]
-    fn tool_choice_string_auto_and_none_pass_through() {
-        assert_eq!(run_tool_choice(json!("auto")), json!("auto"));
-        assert_eq!(run_tool_choice(json!("none")), json!("none"));
-    }
-
-    #[test]
-    fn tool_choice_object_any_maps_to_required() {
-        assert_eq!(run_tool_choice(json!({"type": "any"})), json!("required"));
-    }
-
-    #[test]
-    fn tool_choice_object_auto_and_none_collapse_to_string() {
-        assert_eq!(run_tool_choice(json!({"type": "auto"})), json!("auto"));
-        assert_eq!(run_tool_choice(json!({"type": "none"})), json!("none"));
-    }
-
-    #[test]
-    fn tool_choice_forced_tool_maps_to_nested_function_selector() {
-        // Anthropic {"type":"tool","name":"X"} must become OpenAI Chat
-        // {"type":"function","function":{"name":"X"}} — the *nested* form, not
-        // the flat Responses-API form.
-        assert_eq!(
-            run_tool_choice(json!({"type": "tool", "name": "search"})),
-            json!({"type": "function", "function": {"name": "search"}}),
-        );
     }
 }

@@ -21,6 +21,11 @@ fn update_cached_override(value: Option<PathBuf>) {
     }
 }
 
+#[cfg(test)]
+pub fn set_app_config_dir_override_for_tests(path: Option<PathBuf>) {
+    update_cached_override(path);
+}
+
 /// 获取缓存中的 app_config_dir 覆盖路径
 pub fn get_app_config_dir_override() -> Option<PathBuf> {
     override_cache().read().ok()?.clone()

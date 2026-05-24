@@ -8,6 +8,41 @@ import {
 } from "@/components/providers/forms/hooks/useModelState";
 
 describe("useModelState", () => {
+  it("removes deprecated reasoning model env when model fields are saved", () => {
+    let latestConfig = JSON.stringify({
+      env: {
+        ANTHROPIC_MODEL: "claude-sonnet-4-20250514",
+        ANTHROPIC_REASONING_MODEL: "claude-3-7-sonnet-20250219",
+        ANTHROPIC_SMALL_FAST_MODEL: "claude-3-5-haiku-20241022",
+      },
+    });
+    const onConfigChange = vi.fn((config: string) => {
+      latestConfig = config;
+    });
+
+    const { result } = renderHook(() =>
+      useModelState({ settingsConfig: latestConfig, onConfigChange }),
+    );
+
+    expect(result.current.claudeModel).toBe("claude-sonnet-4-20250514");
+    expect(result.current.reasoningModel).toBe("claude-3-7-sonnet-20250219");
+    expect(result.current.defaultHaikuModel).toBe(
+      "claude-3-5-haiku-20241022",
+    );
+
+    act(() => {
+      result.current.handleModelChange(
+        "ANTHROPIC_MODEL",
+        "claude-opus-4-1-20250805",
+      );
+    });
+
+    const updated = JSON.parse(latestConfig);
+    expect(updated.env.ANTHROPIC_MODEL).toBe("claude-opus-4-1-20250805");
+    expect(updated.env).not.toHaveProperty("ANTHROPIC_REASONING_MODEL");
+    expect(updated.env).not.toHaveProperty("ANTHROPIC_SMALL_FAST_MODEL");
+  });
+
   it("hydrates role models and display names from Claude Code env", () => {
     const settingsConfig = JSON.stringify({
       env: {
