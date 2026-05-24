@@ -1856,6 +1856,7 @@
     "loadFailed": "読み込みに失敗しました",
     "installSuccess": "スキル {{name}} をインストールしました",
     "installFailed": "インストールに失敗しました",
+    "noVisibleTargetApp": "スキルをインストールする前に Claude、Codex、Gemini、OpenCode、Hermes のいずれかを表示してください",
     "uninstallSuccess": "スキル {{name}} をアンインストールしました",
     "uninstallFailed": "アンインストールに失敗しました",
     "update": "更新",

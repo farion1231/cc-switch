@@ -4,8 +4,9 @@ use std::fs;
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_claude_mcp_path, get_claude_settings_path, import_default_config_test_hook, AppError,
-    AppType, McpApps, McpServer, McpService, MultiAppConfig,
+    get_claude_mcp_path, get_claude_settings_path, import_default_config_test_hook,
+    import_mcp_from_selected_apps, AppError, AppType, McpApps, McpServer, McpService,
+    MultiAppConfig,
 };
 
 #[path = "support.rs"]
@@ -526,6 +527,59 @@ command = "echo"
     let entry = servers.get("shared").expect("shared server exists");
     assert!(entry.apps.claude, "shared should enable Claude");
     assert!(entry.apps.codex, "shared should enable Codex");
+}
+
+#[test]
+fn import_mcp_from_selected_apps_skips_hidden_apps() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let mcp_path = get_claude_mcp_path();
+    let claude_json = json!({
+        "mcpServers": {
+            "claude-only": {
+                "type": "stdio",
+                "command": "echo"
+            }
+        }
+    });
+    fs::write(
+        &mcp_path,
+        serde_json::to_string_pretty(&claude_json).expect("serialize claude mcp"),
+    )
+    .expect("seed ~/.claude.json");
+
+    let gemini_dir = home.join(".gemini");
+    fs::create_dir_all(&gemini_dir).expect("create gemini dir");
+    let gemini_settings = json!({
+        "mcpServers": {
+            "hidden-gemini": {
+                "type": "stdio",
+                "command": "gemini-echo"
+            }
+        }
+    });
+    fs::write(
+        gemini_dir.join("settings.json"),
+        serde_json::to_string_pretty(&gemini_settings).expect("serialize gemini settings"),
+    )
+    .expect("seed ~/.gemini/settings.json");
+
+    let state = support::create_test_state().expect("create test state");
+    let changed = import_mcp_from_selected_apps(&state, Some(vec!["claude".to_string()]))
+        .expect("import selected MCP apps");
+
+    assert_eq!(changed, 1, "only Claude server should be imported");
+    let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
+    assert!(
+        servers.contains_key("claude-only"),
+        "visible Claude server should be imported"
+    );
+    assert!(
+        !servers.contains_key("hidden-gemini"),
+        "hidden Gemini server should not be imported"
+    );
 }
 
 #[test]

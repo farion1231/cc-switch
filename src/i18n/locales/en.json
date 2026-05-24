@@ -1856,6 +1856,7 @@
     "loadFailed": "Failed to load",
     "installSuccess": "Skill {{name}} installed",
     "installFailed": "Failed to install",
+    "noVisibleTargetApp": "Enable Claude, Codex, Gemini, OpenCode, or Hermes before installing skills",
     "uninstallSuccess": "Skill {{name}} uninstalled",
     "uninstallFailed": "Failed to uninstall",
     "update": "Update",

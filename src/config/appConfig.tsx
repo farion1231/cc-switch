@@ -1,5 +1,6 @@
 import React from "react";
 import type { AppId } from "@/lib/api/types";
+import type { VisibleApps } from "@/types";
 import {
   ClaudeIcon,
   CodexIcon,
@@ -25,6 +26,45 @@ export const APP_IDS: AppId[] = [
   "hermes",
 ];
 
+export const DEFAULT_VISIBLE_APPS: VisibleApps = {
+  claude: true,
+  "claude-desktop": true,
+  codex: true,
+  gemini: true,
+  opencode: true,
+  openclaw: true,
+  hermes: false,
+};
+
+export const EMPTY_VISIBLE_APPS: VisibleApps = {
+  claude: false,
+  "claude-desktop": false,
+  codex: false,
+  gemini: false,
+  opencode: false,
+  openclaw: false,
+  hermes: false,
+};
+
+export function resolveVisibleApps(visibleApps?: VisibleApps): VisibleApps {
+  return {
+    ...DEFAULT_VISIBLE_APPS,
+    ...visibleApps,
+  };
+}
+
+export function filterVisibleAppIds(
+  appIds: readonly AppId[],
+  visibleApps?: VisibleApps,
+): AppId[] {
+  const resolved = resolveVisibleApps(visibleApps);
+  return appIds.filter((app) => resolved[app]);
+}
+
+export function getFirstVisibleApp(visibleApps?: VisibleApps): AppId {
+  return filterVisibleAppIds(APP_IDS, visibleApps)[0] ?? "claude";
+}
+
 /** App IDs shown in Skills panels (excludes OpenClaw — it doesn't support Skills) */
 export const SKILLS_APP_IDS: AppId[] = [
   "claude",
@@ -33,6 +73,16 @@ export const SKILLS_APP_IDS: AppId[] = [
   "opencode",
   "hermes",
 ];
+
+export function getSkillTargetApp(
+  currentApp: AppId,
+  visibleApps?: VisibleApps,
+): AppId | null {
+  const visibleSkillAppIds = filterVisibleAppIds(SKILLS_APP_IDS, visibleApps);
+  return visibleSkillAppIds.includes(currentApp)
+    ? currentApp
+    : (visibleSkillAppIds[0] ?? null);
+}
 
 /** App IDs shown in MCP panels (excludes OpenClaw) */
 export const MCP_APP_IDS: AppId[] = [...SKILLS_APP_IDS];

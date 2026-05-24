@@ -156,7 +156,7 @@ describe("McpFormModal", () => {
     } = props ?? {};
     const onSave = overrideOnSave ?? vi.fn().mockResolvedValue(undefined);
     const onClose = overrideOnClose ?? vi.fn();
-    render(
+    const renderResult = render(
       <McpFormModal
         onSave={onSave}
         onClose={onClose}
@@ -165,7 +165,7 @@ describe("McpFormModal", () => {
         {...rest}
       />,
     );
-    return { onSave, onClose };
+    return { onSave, onClose, ...renderResult };
   };
 
   it("应用预设后填充 ID 与配置内容", async () => {
@@ -393,6 +393,117 @@ type = "stdio"
     });
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(onSave).toHaveBeenCalledWith();
+  });
+
+  it("隐藏应用不显示复选框，保存时保留隐藏应用已有状态", async () => {
+    const initialData: McpServer = {
+      id: "existing",
+      name: "Existing",
+      server: { type: "stdio", command: "old" },
+      apps: {
+        claude: true,
+        codex: false,
+        gemini: true,
+        opencode: false,
+        openclaw: false,
+        hermes: false,
+      },
+    };
+
+    renderForm({
+      editingId: "existing",
+      initialData,
+      visibleAppIds: ["claude", "codex"],
+    });
+
+    expect(
+      screen.queryByLabelText("mcp.unifiedPanel.apps.gemini"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("mcp.form.jsonPlaceholder"), {
+      target: { value: '{"type":"stdio","command":"updated"}' },
+    });
+    fireEvent.click(screen.getByText("common.save"));
+
+    await waitFor(() => expect(upsertMock).toHaveBeenCalledTimes(1));
+    const [entry] = upsertMock.mock.calls.at(-1) ?? [];
+    expect(entry.apps).toEqual({
+      claude: true,
+      codex: false,
+      gemini: true,
+      opencode: false,
+      openclaw: false,
+      hermes: false,
+    });
+  });
+
+  it("新增时隐藏应用不会被默认启用", async () => {
+    renderForm({ visibleAppIds: ["claude", "codex"] });
+
+    expect(
+      screen.queryByLabelText("mcp.unifiedPanel.apps.gemini"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("mcp.form.titlePlaceholder"), {
+      target: { value: "visible-only" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("mcp.form.jsonPlaceholder"), {
+      target: { value: '{"type":"stdio","command":"run"}' },
+    });
+    fireEvent.click(screen.getByText("common.add"));
+
+    await waitFor(() => expect(upsertMock).toHaveBeenCalledTimes(1));
+    const [entry] = upsertMock.mock.calls.at(-1) ?? [];
+    expect(entry.apps).toEqual({
+      claude: true,
+      codex: true,
+      gemini: false,
+      opencode: false,
+      openclaw: false,
+      hermes: false,
+    });
+  });
+
+  it("新增表单打开后应用变为隐藏时不会保存隐藏应用启用状态", async () => {
+    const { onSave, onClose, rerender } = renderForm({
+      visibleAppIds: ["claude", "codex", "gemini"],
+    });
+
+    expect(screen.getByLabelText("mcp.unifiedPanel.apps.gemini")).toBeChecked();
+
+    fireEvent.change(screen.getByPlaceholderText("mcp.form.titlePlaceholder"), {
+      target: { value: "visible-changed" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("mcp.form.jsonPlaceholder"), {
+      target: { value: '{"type":"stdio","command":"run"}' },
+    });
+
+    rerender(
+      <McpFormModal
+        onSave={onSave}
+        onClose={onClose}
+        existingIds={[]}
+        defaultFormat="json"
+        visibleAppIds={["claude", "codex"]}
+      />,
+    );
+
+    expect(
+      screen.queryByLabelText("mcp.unifiedPanel.apps.gemini"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("common.add"));
+
+    await waitFor(() => expect(upsertMock).toHaveBeenCalledTimes(1));
+    const [entry] = upsertMock.mock.calls.at(-1) ?? [];
+    expect(entry.apps).toEqual({
+      claude: true,
+      codex: true,
+      gemini: false,
+      opencode: false,
+      openclaw: false,
+      hermes: false,
+    });
   });
 
   it("允许未选择任何应用保存配置，并保持 apps 全 false", async () => {

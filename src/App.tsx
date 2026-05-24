@@ -89,6 +89,12 @@ import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
+import {
+  EMPTY_VISIBLE_APPS,
+  getFirstVisibleApp,
+  getSkillTargetApp,
+  resolveVisibleApps,
+} from "@/config/appConfig";
 
 type View =
   | "providers"
@@ -181,32 +187,22 @@ function App() {
     isLinux() && (settingsData?.useAppWindowControls ?? false);
   const dragBarHeight = useAppWindowControls ? 32 : DEFAULT_DRAG_BAR_HEIGHT;
   const contentTopOffset = dragBarHeight + HEADER_HEIGHT;
-  const visibleApps: VisibleApps = settingsData?.visibleApps ?? {
-    claude: true,
-    "claude-desktop": true,
-    codex: true,
-    gemini: true,
-    opencode: true,
-    openclaw: true,
-    hermes: true,
-  };
-
-  const getFirstVisibleApp = (): AppId => {
-    if (visibleApps.claude) return "claude";
-    if (visibleApps["claude-desktop"]) return "claude-desktop";
-    if (visibleApps.codex) return "codex";
-    if (visibleApps.gemini) return "gemini";
-    if (visibleApps.opencode) return "opencode";
-    if (visibleApps.openclaw) return "openclaw";
-    if (visibleApps.hermes) return "hermes";
-    return "claude"; // fallback
-  };
+  const visibleApps: VisibleApps | null = useMemo(
+    () => (settingsData ? resolveVisibleApps(settingsData.visibleApps) : null),
+    [settingsData],
+  );
+  const uiVisibleApps = visibleApps ?? EMPTY_VISIBLE_APPS;
 
   useEffect(() => {
+    if (!visibleApps) return;
     if (!visibleApps[activeApp]) {
-      setActiveApp(getFirstVisibleApp());
+      setActiveApp(getFirstVisibleApp(visibleApps));
     }
   }, [visibleApps, activeApp]);
+  const skillTargetApp = useMemo(
+    () => (visibleApps ? getSkillTargetApp(activeApp, visibleApps) : null),
+    [activeApp, visibleApps],
+  );
 
   // Fallback from sessions view when switching to an app without session support
   useEffect(() => {
@@ -944,18 +940,15 @@ function App() {
             <UnifiedSkillsPanel
               ref={unifiedSkillsPanelRef}
               onOpenDiscovery={() => setCurrentView("skillsDiscovery")}
-              currentApp={
-                sharedFeatureApp === "openclaw" ? "claude" : sharedFeatureApp
-              }
+              currentApp={skillTargetApp}
+              visibleApps={uiVisibleApps}
             />
           );
         case "skillsDiscovery":
           return (
             <SkillsPage
               ref={skillsPageRef}
-              initialApp={
-                sharedFeatureApp === "openclaw" ? "claude" : sharedFeatureApp
-              }
+              initialApp={skillTargetApp ?? null}
             />
           );
         case "mcp":
@@ -963,6 +956,7 @@ function App() {
             <UnifiedMcpPanel
               ref={mcpPanelRef}
               onOpenChange={() => setCurrentView("providers")}
+              visibleApps={uiVisibleApps}
             />
           );
         case "agents":
@@ -1403,12 +1397,14 @@ function App() {
                 )}
                 {currentView === "providers" && (
                   <>
-                    <AppSwitcher
-                      activeApp={activeApp}
-                      onSwitch={setActiveApp}
-                      visibleApps={visibleApps}
-                      compact={isToolbarCompact}
-                    />
+                    {visibleApps && (
+                      <AppSwitcher
+                        activeApp={activeApp}
+                        onSwitch={setActiveApp}
+                        visibleApps={visibleApps}
+                        compact={isToolbarCompact}
+                      />
+                    )}
 
                     <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
                       <AnimatePresence mode="wait">

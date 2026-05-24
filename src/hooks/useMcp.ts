@@ -66,7 +66,7 @@ export function useDeleteMcpServer() {
 export function useImportMcpFromApps() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => mcpApi.importFromApps(),
+    mutationFn: (apps?: AppId[]) => mcpApi.importFromApps(apps),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["mcp", "all"] });
     },

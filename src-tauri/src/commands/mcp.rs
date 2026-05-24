@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
 use indexmap::IndexMap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 use tauri::State;
@@ -194,14 +194,52 @@ pub async fn toggle_mcp_app(
     McpService::toggle_app(&state, &server_id, app_ty, enabled).map_err(|e| e.to_string())
 }
 
-/// 从所有应用导入 MCP 服务器（复用已有的导入逻辑）
-#[tauri::command]
-pub async fn import_mcp_from_apps(state: State<'_, AppState>) -> Result<usize, String> {
+fn import_mcp_from_app(state: &AppState, app: &AppType) -> usize {
+    match app {
+        AppType::Claude => McpService::import_from_claude(state),
+        AppType::ClaudeDesktop => Ok(0),
+        AppType::Codex => McpService::import_from_codex(state),
+        AppType::Gemini => McpService::import_from_gemini(state),
+        AppType::OpenCode => McpService::import_from_opencode(state),
+        AppType::OpenClaw => Ok(0),
+        AppType::Hermes => McpService::import_from_hermes(state),
+    }
+    .unwrap_or(0)
+}
+
+pub fn import_mcp_from_selected_apps(
+    state: &AppState,
+    apps: Option<Vec<String>>,
+) -> Result<usize, String> {
+    let mut apps_to_import = match apps {
+        Some(apps) => apps
+            .iter()
+            .map(|app| AppType::from_str(app).map_err(|e| e.to_string()))
+            .collect::<Result<Vec<_>, _>>()?,
+        None => vec![
+            AppType::Claude,
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::OpenCode,
+            AppType::Hermes,
+        ],
+    };
+    let mut seen = HashSet::new();
+    apps_to_import.retain(|app| seen.insert(app.clone()));
+
     let mut total = 0;
-    total += McpService::import_from_claude(&state).unwrap_or(0);
-    total += McpService::import_from_codex(&state).unwrap_or(0);
-    total += McpService::import_from_gemini(&state).unwrap_or(0);
-    total += McpService::import_from_opencode(&state).unwrap_or(0);
-    total += McpService::import_from_hermes(&state).unwrap_or(0);
+    for app in apps_to_import {
+        total += import_mcp_from_app(state, &app);
+    }
+
     Ok(total)
+}
+
+/// 从指定应用导入 MCP 服务器（复用已有的导入逻辑）；未指定时保持全量导入。
+#[tauri::command]
+pub async fn import_mcp_from_apps(
+    state: State<'_, AppState>,
+    apps: Option<Vec<String>>,
+) -> Result<usize, String> {
+    import_mcp_from_selected_apps(&state, apps)
 }

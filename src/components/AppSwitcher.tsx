@@ -3,6 +3,7 @@ import type { VisibleApps } from "@/types";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { cn } from "@/lib/utils";
 import { Monitor, Terminal } from "lucide-react";
+import { APP_IDS, filterVisibleAppIds } from "@/config/appConfig";
 
 const APP_BADGE_ICON: Partial<
   Record<AppId, { icon: typeof Terminal; offsetY?: number }>
@@ -18,15 +19,6 @@ interface AppSwitcherProps {
   compact?: boolean;
 }
 
-const ALL_APPS: AppId[] = [
-  "claude",
-  "claude-desktop",
-  "codex",
-  "gemini",
-  "opencode",
-  "openclaw",
-  "hermes",
-];
 const STORAGE_KEY = "cc-switch-last-app";
 
 export function AppSwitcher({
@@ -60,11 +52,7 @@ export function AppSwitcher({
     hermes: "Hermes",
   };
 
-  // Filter apps based on visibility settings (default all visible)
-  const appsToShow = ALL_APPS.filter((app) => {
-    if (!visibleApps) return true;
-    return visibleApps[app];
-  });
+  const appsToShow = filterVisibleAppIds(APP_IDS, visibleApps);
 
   return (
     <div className="inline-flex bg-muted rounded-xl p-1 gap-1">

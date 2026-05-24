@@ -31,10 +31,15 @@ import type { AppId } from "@/lib/api/types";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
-import { SKILLS_APP_IDS } from "@/config/appConfig";
+import {
+  filterVisibleAppIds,
+  getSkillTargetApp,
+  SKILLS_APP_IDS,
+} from "@/config/appConfig";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
+import type { VisibleApps } from "@/types";
 import {
   Dialog,
   DialogContent,
@@ -46,7 +51,8 @@ import {
 
 interface UnifiedSkillsPanelProps {
   onOpenDiscovery: () => void;
-  currentApp: AppId;
+  currentApp: AppId | null;
+  visibleApps?: VisibleApps;
 }
 
 export interface UnifiedSkillsPanelHandle {
@@ -67,7 +73,7 @@ function formatSkillBackupDate(unixSeconds: number): string {
 const UnifiedSkillsPanel = React.forwardRef<
   UnifiedSkillsPanelHandle,
   UnifiedSkillsPanelProps
->(({ onOpenDiscovery, currentApp }, ref) => {
+>(({ onOpenDiscovery, currentApp, visibleApps }, ref) => {
   const { t } = useTranslation();
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
@@ -101,6 +107,14 @@ const UnifiedSkillsPanel = React.forwardRef<
   } = useCheckSkillUpdates();
   const updateSkillMutation = useUpdateSkill();
   const [isUpdatingAll, setIsUpdatingAll] = useState(false);
+  const visibleSkillAppIds = useMemo(
+    () => filterVisibleAppIds(SKILLS_APP_IDS, visibleApps),
+    [visibleApps],
+  );
+  const targetApp = useMemo(
+    () => (currentApp ? getSkillTargetApp(currentApp, visibleApps) : null),
+    [currentApp, visibleApps],
+  );
 
   const updatesMap = useMemo(() => {
     const map: Record<string, SkillUpdateInfo> = {};
@@ -197,12 +211,17 @@ const UnifiedSkillsPanel = React.forwardRef<
 
   const handleInstallFromZip = async () => {
     try {
+      if (!targetApp) {
+        toast.error(t("skills.noVisibleTargetApp"));
+        return;
+      }
+
       const filePath = await skillsApi.openZipFileDialog();
       if (!filePath) return;
 
       const installed = await installFromZipMutation.mutateAsync({
         filePath,
-        currentApp,
+        currentApp: targetApp,
       });
 
       if (installed.length === 0) {
@@ -287,9 +306,14 @@ const UnifiedSkillsPanel = React.forwardRef<
 
   const handleRestoreFromBackup = async (backupId: string) => {
     try {
+      if (!targetApp) {
+        toast.error(t("skills.noVisibleTargetApp"));
+        return;
+      }
+
       const restored = await restoreBackupMutation.mutateAsync({
         backupId,
-        currentApp,
+        currentApp: targetApp,
       });
       setRestoreDialogOpen(false);
       toast.success(
@@ -350,7 +374,7 @@ const UnifiedSkillsPanel = React.forwardRef<
         <AppCountBar
           totalLabel={t("skills.installed", { count: skills?.length || 0 })}
           counts={enabledCounts}
-          appIds={SKILLS_APP_IDS}
+          appIds={visibleSkillAppIds}
         />
         <div className="flex items-center gap-1.5">
           <div
@@ -431,6 +455,7 @@ const UnifiedSkillsPanel = React.forwardRef<
                   onToggleApp={handleToggleApp}
                   onUninstall={() => handleUninstall(skill)}
                   onUpdate={() => handleUpdateSkill(skill)}
+                  visibleAppIds={visibleSkillAppIds}
                   isLast={index === skills.length - 1}
                 />
               ))}
@@ -458,6 +483,7 @@ const UnifiedSkillsPanel = React.forwardRef<
           isImporting={importMutation.isPending}
           onImport={handleImport}
           onClose={() => setImportDialogOpen(false)}
+          visibleAppIds={visibleSkillAppIds}
         />
       )}
 
@@ -484,6 +510,7 @@ interface InstalledSkillListItemProps {
   onToggleApp: (id: string, app: AppId, enabled: boolean) => void;
   onUninstall: () => void;
   onUpdate?: () => void;
+  visibleAppIds: AppId[];
   isLast?: boolean;
 }
 
@@ -494,6 +521,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   onToggleApp,
   onUninstall,
   onUpdate,
+  visibleAppIds,
   isLast,
 }) => {
   const { t } = useTranslation();
@@ -555,7 +583,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
       <AppToggleGroup
         apps={skill.apps}
         onToggle={(app, enabled) => onToggleApp(skill.id, app, enabled)}
-        appIds={SKILLS_APP_IDS}
+        appIds={visibleAppIds}
       />
 
       <div
@@ -605,6 +633,7 @@ interface ImportSkillsDialogProps {
   isImporting: boolean;
   onImport: (imports: ImportSkillSelection[]) => void;
   onClose: () => void;
+  visibleAppIds: AppId[];
 }
 
 interface RestoreSkillsDialogProps {
@@ -730,8 +759,37 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
   isImporting,
   onImport,
   onClose,
+  visibleAppIds,
 }) => {
   const { t } = useTranslation();
+  const visibleAppSet = useMemo(() => new Set(visibleAppIds), [visibleAppIds]);
+  const emptyApps = (): ImportSkillSelection["apps"] => ({
+    claude: false,
+    codex: false,
+    gemini: false,
+    opencode: false,
+    openclaw: false,
+    hermes: false,
+  });
+  const applyVisibleAppMask = (
+    apps: ImportSkillSelection["apps"],
+  ): ImportSkillSelection["apps"] => ({
+    claude: visibleAppSet.has("claude") && apps.claude,
+    codex: visibleAppSet.has("codex") && apps.codex,
+    gemini: visibleAppSet.has("gemini") && apps.gemini,
+    opencode: visibleAppSet.has("opencode") && apps.opencode,
+    openclaw: visibleAppSet.has("openclaw") && apps.openclaw,
+    hermes: visibleAppSet.has("hermes") && apps.hermes,
+  });
+  const appsFromFoundIn = (foundIn: string[]): ImportSkillSelection["apps"] =>
+    applyVisibleAppMask({
+      claude: foundIn.includes("claude"),
+      codex: foundIn.includes("codex"),
+      gemini: foundIn.includes("gemini"),
+      opencode: foundIn.includes("opencode"),
+      openclaw: false,
+      hermes: foundIn.includes("hermes"),
+    });
   const [selected, setSelected] = useState<Set<string>>(
     new Set(skills.map((s) => s.directory)),
   );
@@ -739,17 +797,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
     Record<string, ImportSkillSelection["apps"]>
   >(() =>
     Object.fromEntries(
-      skills.map((skill) => [
-        skill.directory,
-        {
-          claude: skill.foundIn.includes("claude"),
-          codex: skill.foundIn.includes("codex"),
-          gemini: skill.foundIn.includes("gemini"),
-          opencode: skill.foundIn.includes("opencode"),
-          openclaw: false,
-          hermes: skill.foundIn.includes("hermes"),
-        },
-      ]),
+      skills.map((skill) => [skill.directory, appsFromFoundIn(skill.foundIn)]),
     ),
   );
 
@@ -767,14 +815,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
     onImport(
       Array.from(selected).map((directory) => ({
         directory,
-        apps: selectedApps[directory] ?? {
-          claude: false,
-          codex: false,
-          gemini: false,
-          opencode: false,
-          openclaw: false,
-          hermes: false,
-        },
+        apps: applyVisibleAppMask(selectedApps[directory] ?? emptyApps()),
       })),
     );
   };
@@ -809,33 +850,17 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                   )}
                   <div className="mt-2">
                     <AppToggleGroup
-                      apps={
-                        selectedApps[skill.directory] ?? {
-                          claude: false,
-                          codex: false,
-                          gemini: false,
-                          opencode: false,
-                          openclaw: false,
-                          hermes: false,
-                        }
-                      }
+                      apps={selectedApps[skill.directory] ?? emptyApps()}
                       onToggle={(app, enabled) => {
                         setSelectedApps((prev) => ({
                           ...prev,
                           [skill.directory]: {
-                            ...(prev[skill.directory] ?? {
-                              claude: false,
-                              codex: false,
-                              gemini: false,
-                              opencode: false,
-                              openclaw: false,
-                              hermes: false,
-                            }),
+                            ...(prev[skill.directory] ?? emptyApps()),
                             [app]: enabled,
                           },
                         }));
                       }}
-                      appIds={SKILLS_APP_IDS}
+                      appIds={visibleAppIds}
                     />
                   </div>
                   <div

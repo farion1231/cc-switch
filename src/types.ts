@@ -300,7 +300,7 @@ export interface Settings {
   // 首选语言（可选，默认中文）
   language?: "en" | "zh" | "ja";
 
-  // 主页面显示的应用（默认全部显示）
+  // 主页面显示的应用（默认显示 Claude/Codex/Gemini/OpenCode/OpenClaw，Hermes 默认隐藏）
   visibleApps?: VisibleApps;
 
   // ===== 设备级目录覆盖 =====

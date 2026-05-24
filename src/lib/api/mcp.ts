@@ -123,7 +123,7 @@ export const mcpApi = {
   /**
    * 从所有应用导入 MCP 服务器
    */
-  async importFromApps(): Promise<number> {
-    return await invoke("import_mcp_from_apps");
+  async importFromApps(apps?: AppId[]): Promise<number> {
+    return await invoke("import_mcp_from_apps", { apps });
   },
 };

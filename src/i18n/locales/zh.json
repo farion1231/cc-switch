@@ -1856,6 +1856,7 @@
     "loadFailed": "加载失败",
     "installSuccess": "技能 {{name}} 已安装",
     "installFailed": "安装失败",
+    "noVisibleTargetApp": "请先显示 Claude、Codex、Gemini、OpenCode 或 Hermes，再安装技能",
     "uninstallSuccess": "技能 {{name}} 已卸载",
     "uninstallFailed": "卸载失败",
     "update": "更新",
