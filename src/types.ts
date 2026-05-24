@@ -189,6 +189,8 @@ export interface ProviderMeta {
   codexModels?: string[];
   // Codex 默认模型：config.toml 中的 model 字段值
   codexDefaultModel?: string;
+  // Codex models_catalog.json 完整内容（可编辑的 JSON 字符串）
+  codexModelsCatalog?: string;
 }
 
 // Skill 同步方式

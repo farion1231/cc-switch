@@ -345,54 +345,6 @@ export function CodexFormFields({
           onCustomEndpointsChange={onCustomEndpointsChange}
         />
       )}
-
-      {/* models_catalog.json 预览 */}
-      {codexModels.length > 0 && (
-        <details className="text-xs">
-          <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-            {t("providerForm.modelsCatalogPreview", {
-              defaultValue: "models_catalog.json 预览",
-            })}
-          </summary>
-          <pre className="mt-1 rounded bg-muted p-2 text-xs overflow-x-auto max-h-40">
-            {JSON.stringify(
-              {
-                models: codexModels.map((slug) => ({
-                  slug,
-                  display_name: slug,
-                  shell_type: "unified_exec",
-                  visibility: "list",
-                  supported_in_api: true,
-                  priority: 0,
-                  additional_speed_tiers: [],
-                  default_reasoning_level: "high",
-                  supported_reasoning_levels: [
-                    { effort: "high", description: "深度推理" },
-                    { effort: "low", description: "快速响应" },
-                  ],
-                  base_instructions: "You are a helpful coding assistant.",
-                  supports_reasoning_summaries: false,
-                  default_reasoning_summary: "none",
-                  support_verbosity: false,
-                  apply_patch_tool_type: "freeform",
-                  web_search_tool_type: "text",
-                  truncation_policy: { mode: "tokens", limit: 10000 },
-                  supports_parallel_tool_calls: true,
-                  supports_image_detail_original: false,
-                  context_window: 200000,
-                  max_context_window: 200000,
-                  effective_context_window_percent: 95,
-                  experimental_supported_tools: [],
-                  input_modalities: ["text"],
-                  supports_search_tool: false,
-                })),
-              },
-              null,
-              2,
-            )}
-          </pre>
-        </details>
-      )}
     </>
   );
 }

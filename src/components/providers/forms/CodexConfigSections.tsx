@@ -302,3 +302,87 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
     </div>
   );
 };
+
+interface CodexModelsCatalogSectionProps {
+  value: string;
+  onChange: (value: string) => void;
+  error?: string;
+}
+
+/**
+ * CodexModelsCatalogSection - models_catalog.json editor section
+ */
+export const CodexModelsCatalogSection: React.FC<
+  CodexModelsCatalogSectionProps
+> = ({ value, onChange, error }) => {
+  const { t } = useTranslation();
+  const [isDarkMode, setIsDarkMode] = useState(false);
+
+  useEffect(() => {
+    setIsDarkMode(document.documentElement.classList.contains("dark"));
+
+    const observer = new MutationObserver(() => {
+      setIsDarkMode(document.documentElement.classList.contains("dark"));
+    });
+
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+
+    return () => observer.disconnect();
+  }, []);
+
+  const [localValue, setLocalValue] = useState(value);
+  const localValueRef = useRef(value);
+  useEffect(() => {
+    setLocalValue(value);
+    localValueRef.current = value;
+  }, [value]);
+
+  const handleLocalChange = useCallback(
+    (newValue: string) => {
+      if (newValue === localValueRef.current) return;
+      localValueRef.current = newValue;
+      setLocalValue(newValue);
+      onChange(newValue);
+    },
+    [onChange],
+  );
+
+  return (
+    <div className="space-y-2">
+      <label
+        htmlFor="codexModelsCatalog"
+        className="block text-sm font-medium text-foreground"
+      >
+        {t("codexConfig.modelsCatalogJson", {
+          defaultValue: "models_catalog.json",
+        })}
+      </label>
+
+      <JsonEditor
+        value={localValue}
+        onChange={handleLocalChange}
+        placeholder=""
+        darkMode={isDarkMode}
+        rows={10}
+        showValidation={true}
+        language="json"
+      />
+
+      {error && (
+        <p className="text-xs text-red-500 dark:text-red-400">{error}</p>
+      )}
+
+      {!error && (
+        <p className="text-xs text-muted-foreground">
+          {t("codexConfig.modelsCatalogHint", {
+            defaultValue:
+              "自动从模型映射生成，也可手动编辑。保存后将随供应商配置一起存储。",
+          })}
+        </p>
+      )}
+    </div>
+  );
+};

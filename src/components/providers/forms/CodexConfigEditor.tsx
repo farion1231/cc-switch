@@ -1,5 +1,9 @@
 import React, { useState } from "react";
-import { CodexAuthSection, CodexConfigSection } from "./CodexConfigSections";
+import {
+  CodexAuthSection,
+  CodexConfigSection,
+  CodexModelsCatalogSection,
+} from "./CodexConfigSections";
 import { CodexCommonConfigModal } from "./CodexCommonConfigModal";
 
 interface CodexConfigEditorProps {
@@ -32,6 +36,12 @@ interface CodexConfigEditorProps {
   onExtract?: () => void;
 
   isExtracting?: boolean;
+
+  modelsCatalogValue: string;
+
+  onModelsCatalogChange: (value: string) => void;
+
+  modelsCatalogError?: string;
 }
 
 const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
@@ -50,6 +60,9 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
   configError,
   onExtract,
   isExtracting,
+  modelsCatalogValue,
+  onModelsCatalogChange,
+  modelsCatalogError,
 }) => {
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 
@@ -66,6 +79,13 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
         onChange={onAuthChange}
         onBlur={onAuthBlur}
         error={authError}
+      />
+
+      {/* Models Catalog JSON Section */}
+      <CodexModelsCatalogSection
+        value={modelsCatalogValue}
+        onChange={onModelsCatalogChange}
+        error={modelsCatalogError}
       />
 
       {/* Config TOML Section */}

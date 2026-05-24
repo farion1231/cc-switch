@@ -916,3 +916,73 @@ export const removeCodexTopLevelField = (
   }
   return finalizeTomlText(lines);
 };
+
+export interface ModelsCatalogEntry {
+  slug: string;
+  display_name: string;
+  shell_type: string;
+  visibility: string;
+  supported_in_api: boolean;
+  priority: number;
+  additional_speed_tiers: string[];
+  default_reasoning_level: string;
+  supported_reasoning_levels: Array<{
+    effort: string;
+    description: string;
+  }>;
+  base_instructions: string;
+  supports_reasoning_summaries: boolean;
+  default_reasoning_summary: string;
+  support_verbosity: boolean;
+  apply_patch_tool_type: string;
+  web_search_tool_type: string;
+  truncation_policy: { mode: string; limit: number };
+  supports_parallel_tool_calls: boolean;
+  supports_image_detail_original: boolean;
+  context_window: number;
+  max_context_window: number;
+  effective_context_window_percent: number;
+  experimental_supported_tools: string[];
+  input_modalities: string[];
+  supports_search_tool: boolean;
+}
+
+export function generateModelsCatalog(models: string[]): {
+  models: ModelsCatalogEntry[];
+} {
+  return {
+    models: models.map((slug) => ({
+      slug,
+      display_name: slug,
+      shell_type: "unified_exec",
+      visibility: "list",
+      supported_in_api: true,
+      priority: 0,
+      additional_speed_tiers: [],
+      default_reasoning_level: "high",
+      supported_reasoning_levels: [
+        { effort: "high", description: "深度推理" },
+        { effort: "low", description: "快速响应" },
+      ],
+      base_instructions: "You are a helpful coding assistant.",
+      supports_reasoning_summaries: false,
+      default_reasoning_summary: "none",
+      support_verbosity: false,
+      apply_patch_tool_type: "freeform",
+      web_search_tool_type: "text",
+      truncation_policy: { mode: "tokens", limit: 10000 },
+      supports_parallel_tool_calls: true,
+      supports_image_detail_original: false,
+      context_window: 200000,
+      max_context_window: 200000,
+      effective_context_window_percent: 95,
+      experimental_supported_tools: [],
+      input_modalities: ["text"],
+      supports_search_tool: false,
+    })),
+  };
+}
+
+export function generateModelsCatalogJson(models: string[]): string {
+  return JSON.stringify(generateModelsCatalog(models), null, 2);
+}

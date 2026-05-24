@@ -48,6 +48,7 @@ import type { UniversalProviderPreset } from "@/config/universalProviderPresets"
 import {
   applyTemplateValues,
   hasApiKeyField,
+  generateModelsCatalogJson,
 } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import { isNonNegativeDecimalString } from "@/types/usage";
@@ -415,6 +416,27 @@ function ProviderFormFull({
   const [localCodexModels, setLocalCodexModels] = useState<string[]>(
     () => initialData?.meta?.codexModels ?? [],
   );
+
+  const [localCodexModelsCatalog, setLocalCodexModelsCatalog] = useState(
+    () =>
+      initialData?.meta?.codexModelsCatalog ||
+      (initialData?.meta?.codexModels?.length
+        ? generateModelsCatalogJson(initialData.meta.codexModels)
+        : ""),
+  );
+
+  // Auto-generate models_catalog.json from model list when models change
+  useEffect(() => {
+    if (localCodexModels.length > 0) {
+      setLocalCodexModelsCatalog(generateModelsCatalogJson(localCodexModels));
+    } else {
+      setLocalCodexModelsCatalog("");
+    }
+  }, [localCodexModels]);
+
+  const handleCodexModelsCatalogChange = useCallback((value: string) => {
+    setLocalCodexModelsCatalog(value);
+  }, []);
 
   const {
     codexAuth,
@@ -1275,6 +1297,7 @@ function ProviderFormFull({
       nextMeta.codexModels =
         localCodexModels.length > 0 ? localCodexModels : undefined;
       nextMeta.codexDefaultModel = localCodexDefaultModel || undefined;
+      nextMeta.codexModelsCatalog = localCodexModelsCatalog || undefined;
     }
 
     payload.meta = nextMeta;
@@ -2029,6 +2052,8 @@ function ProviderFormFull({
                 configError={codexConfigError}
                 onExtract={handleCodexExtract}
                 isExtracting={isCodexExtracting}
+                modelsCatalogValue={localCodexModelsCatalog}
+                onModelsCatalogChange={handleCodexModelsCatalogChange}
               />
               {settingsConfigErrorField}
             </>

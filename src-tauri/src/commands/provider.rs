@@ -62,7 +62,11 @@ pub fn update_provider(
             let auth = s.get("auth")?;
             let cfg = s.get("config")?.as_str()?;
             let models = provider.meta.as_ref().and_then(|m| m.codex_models.as_deref());
-            Some((auth.clone(), cfg.to_string(), models.map(|v| v.to_vec())))
+            let catalog_json = provider
+                .meta
+                .as_ref()
+                .and_then(|m| m.codex_models_catalog.as_deref());
+            Some((auth.clone(), cfg.to_string(), models.map(|v| v.to_vec()), catalog_json.map(|s| s.to_string())))
         })
     } else {
         None
@@ -71,12 +75,13 @@ pub fn update_provider(
     let result = ProviderService::update(state.inner(), app_type.clone(), originalId.as_deref(), provider)
         .map_err(|e| e.to_string())?;
 
-    if let Some((auth, cfg, models)) = codex_sync_data {
+    if let Some((auth, cfg, models, catalog_json)) = codex_sync_data {
         let model_slice: Option<Vec<String>> = models;
         let _ = crate::codex_config::write_codex_live_atomic_with_stable_provider(
             &auth,
             Some(&cfg),
             model_slice.as_deref(),
+            catalog_json.as_deref(),
         );
         // 如果代理接管处于激活状态，重新应用代理地址到 config.toml
         let is_proxy_running = futures::executor::block_on(state.proxy_service.is_running());

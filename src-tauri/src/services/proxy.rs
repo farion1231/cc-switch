@@ -1830,7 +1830,7 @@ impl ProxyService {
         // Proxy restore writes saved live backups verbatim. Provider-driven writes go
         // through write_live_with_common_config(), which normalizes Codex provider ids.
         match (auth, config_str) {
-            (Some(auth), Some(cfg)) => write_codex_live_atomic(auth, Some(cfg), None)
+            (Some(auth), Some(cfg)) => write_codex_live_atomic(auth, Some(cfg), None, None)
                 .map_err(|e| format!("写入 Codex 配置失败: {e}"))?,
             (Some(auth), None) => {
                 let auth_path = get_codex_auth_path();

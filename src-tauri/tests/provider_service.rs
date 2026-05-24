@@ -106,7 +106,7 @@ fn provider_service_switch_codex_updates_live_and_config() {
 type = "stdio"
 command = "echo"
 "#;
-    write_codex_live_atomic(&legacy_auth, Some(legacy_config))
+    write_codex_live_atomic(&legacy_auth, Some(legacy_config), None, None)
         .expect("seed existing codex live config");
 
     let mut initial_config = MultiAppConfig::default();
@@ -255,7 +255,7 @@ base_url = "https://rightcode.example/v1"
 wire_api = "responses"
 requires_openai_auth = true
 "#;
-    write_codex_live_atomic(&legacy_auth, Some(legacy_config))
+    write_codex_live_atomic(&legacy_auth, Some(legacy_config), None, None)
         .expect("seed existing codex live config");
 
     let mut initial_config = MultiAppConfig::default();
@@ -363,7 +363,7 @@ base_url = "https://rightcode.example/v1"
 wire_api = "responses"
 requires_openai_auth = true
 "#;
-    write_codex_live_atomic(&legacy_auth, Some(provider_a_config))
+    write_codex_live_atomic(&legacy_auth, Some(provider_a_config), None, None)
         .expect("seed existing codex live config");
 
     let mut initial_config = MultiAppConfig::default();

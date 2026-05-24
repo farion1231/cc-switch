@@ -27,7 +27,7 @@ fn codex_startup_import_fresh_install_imports_once_and_syncs_current_setting() {
     let auth = json!({"OPENAI_API_KEY": "fresh-key"});
     let config = r#"model = "gpt-5"
 "#;
-    write_codex_live_atomic(&auth, Some(config)).expect("seed codex live config");
+    write_codex_live_atomic(&auth, Some(config), None, None).expect("seed codex live config");
 
     let state = create_test_state().expect("create test state");
 
@@ -102,7 +102,7 @@ fn codex_startup_import_skips_when_only_official_seed_exists() {
     let auth = json!({"OPENAI_API_KEY": "fresh-key"});
     let config = r#"model = "gpt-5"
 "#;
-    write_codex_live_atomic(&auth, Some(config)).expect("seed codex live config");
+    write_codex_live_atomic(&auth, Some(config), None, None).expect("seed codex live config");
 
     let state = create_test_state().expect("create test state");
     state
@@ -153,7 +153,7 @@ fn switch_provider_updates_codex_live_and_state() {
 type = "stdio"
 command = "echo"
 "#;
-    write_codex_live_atomic(&legacy_auth, Some(legacy_config))
+    write_codex_live_atomic(&legacy_auth, Some(legacy_config), None, None)
         .expect("seed existing codex live config");
 
     let mut config = MultiAppConfig::default();

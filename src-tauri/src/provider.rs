@@ -334,6 +334,10 @@ pub struct ProviderMeta {
     /// Codex 默认模型：config.toml 中的 model 字段值
     #[serde(rename = "codexDefaultModel", skip_serializing_if = "Option::is_none")]
     pub codex_default_model: Option<String>,
+    /// Codex models_catalog.json 完整内容（前端可编辑的 JSON 字符串）
+    /// 当此字段存在且为合法 JSON 时，优先直接写入 models_catalog.json，不再从 codexModels 重新生成
+    #[serde(rename = "codexModelsCatalog", skip_serializing_if = "Option::is_none")]
+    pub codex_models_catalog: Option<String>,
 }
 
 impl ProviderMeta {

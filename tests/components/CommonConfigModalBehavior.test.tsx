@@ -62,6 +62,8 @@ describe("Common config modals", () => {
         commonConfigError="Invalid TOML"
         authError=""
         configError=""
+        modelsCatalogValue=""
+        onModelsCatalogChange={() => {}}
       />,
     );
 

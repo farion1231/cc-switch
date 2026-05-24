@@ -172,6 +172,7 @@ fn build_default_catalog_entries(models: &[String]) -> Vec<CodexModelCatalogEntr
 }
 
 /// 从 config.toml 文本中提取 model 字段
+#[allow(dead_code)]
 fn extract_model_from_config_text(config_text: &str) -> Option<String> {
     let doc = config_text.parse::<DocumentMut>().ok()?;
     doc.get("model")
@@ -192,6 +193,20 @@ fn write_codex_models_catalog(models: &[String]) -> Result<(), AppError> {
     let json_text = serde_json::to_string_pretty(&catalog)
         .map_err(|e| AppError::Message(format!("Failed to serialize models catalog: {e}")))?;
     std::fs::write(&catalog_path, &json_text)
+        .map_err(|e| AppError::io(&catalog_path, e))
+}
+
+/// 直接写入原始 JSON 内容到 models_catalog.json（用于前端编辑后保存的场景）。
+/// 会先校验 JSON 合法性，再写入。
+fn write_codex_models_catalog_raw(json_text: &str) -> Result<(), AppError> {
+    // Validate that it's valid JSON before writing
+    let _: serde_json::Value = serde_json::from_str(json_text)
+        .map_err(|e| AppError::Message(format!("Invalid models_catalog.json: {e}")))?;
+    let catalog_path = get_codex_models_catalog_path();
+    if let Some(parent) = catalog_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+    }
+    std::fs::write(&catalog_path, json_text)
         .map_err(|e| AppError::io(&catalog_path, e))
 }
 
@@ -223,10 +238,13 @@ fn ensure_model_catalog_json_in_toml(config_text: &str) -> String {
 ///
 /// `catalog_models`：models_catalog.json 中应包含的模型 ID 列表；
 /// 为 `None` 时从 config_text 中提取单个模型名作为兜底。
+/// `catalog_json`：models_catalog.json 的完整 JSON 内容。
+/// 当 `catalog_json` 为 `Some` 且非空时，优先直接写入，不再从 `catalog_models` 重新生成。
 pub fn write_codex_live_atomic(
     auth: &Value,
     config_text_opt: Option<&str>,
     catalog_models: Option<&[String]>,
+    catalog_json: Option<&str>,
 ) -> Result<(), AppError> {
     let auth_path = get_codex_auth_path();
     let config_path = get_codex_config_path();
@@ -274,14 +292,14 @@ pub fn write_codex_live_atomic(
     }
 
     // 第三步：生成 models_catalog.json（非关键，失败不阻塞）
-    let model_ids: Vec<String> = match catalog_models {
-        Some(models) if !models.is_empty() => models.to_vec(),
-        _ => extract_model_from_config_text(&cfg_text)
-            .into_iter()
-            .collect(),
-    };
-    if !model_ids.is_empty() {
-        if let Err(e) = write_codex_models_catalog(&model_ids) {
+    // catalog_json 优先（前端编辑后保存的完整 JSON），其次从 catalog_models 生成。
+    // 当两者都未提供时，保留已有 models_catalog.json 不覆盖（适用代理接管等场景）。
+    if let Some(json) = catalog_json.filter(|s| !s.trim().is_empty()) {
+        if let Err(e) = write_codex_models_catalog_raw(json) {
+            log::warn!("[Codex] Failed to write models_catalog.json from raw JSON: {e}");
+        }
+    } else if let Some(models) = catalog_models.filter(|m| !m.is_empty()) {
+        if let Err(e) = write_codex_models_catalog(models) {
             log::warn!("[Codex] Failed to write models_catalog.json: {e}");
         }
     }
@@ -562,6 +580,7 @@ pub fn write_codex_live_atomic_with_stable_provider(
     auth: &Value,
     config_text_opt: Option<&str>,
     catalog_models: Option<&[String]>,
+    catalog_json: Option<&str>,
 ) -> Result<(), AppError> {
     match config_text_opt {
         Some(config_text) => {
@@ -573,9 +592,9 @@ pub fn write_codex_live_atomic_with_stable_provider(
                 .get("config")
                 .and_then(|value| value.as_str())
                 .unwrap_or(config_text);
-            write_codex_live_atomic(auth, Some(config_text), catalog_models)
+            write_codex_live_atomic(auth, Some(config_text), catalog_models, catalog_json)
         }
-        None => write_codex_live_atomic(auth, None, catalog_models),
+        None => write_codex_live_atomic(auth, None, catalog_models, catalog_json),
     }
 }
 

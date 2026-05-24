@@ -3,8 +3,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use cc_switch_lib::{
-    get_claude_settings_path, read_json_file, AppError, AppType, ConfigService, MultiAppConfig,
-    Provider, ProviderMeta,
+    get_claude_settings_path, get_codex_models_catalog_path, read_json_file, AppError, AppType,
+    ConfigService, MultiAppConfig, Provider, ProviderMeta,
 };
 
 #[path = "support.rs"]
@@ -154,7 +154,7 @@ base_url = "https://rightcode.example/v1"
 wire_api = "responses"
 requires_openai_auth = true
 "#;
-    cc_switch_lib::write_codex_live_atomic(&legacy_auth, Some(legacy_config))
+    cc_switch_lib::write_codex_live_atomic(&legacy_auth, Some(legacy_config), None, None)
         .expect("seed existing Codex live config");
 
     let mut config = MultiAppConfig::default();
@@ -478,7 +478,7 @@ command = "echo"
 args = ["ok"]
 "#;
 
-    cc_switch_lib::write_codex_live_atomic(&auth, Some(config_text))
+    cc_switch_lib::write_codex_live_atomic(&auth, Some(config_text), None, None)
         .expect("atomic write should succeed");
 
     let auth_path = cc_switch_lib::get_codex_auth_path();
@@ -517,7 +517,7 @@ type = "stdio"
 command = "noop"
 "#;
 
-    let err = cc_switch_lib::write_codex_live_atomic(&auth, Some(config_text))
+    let err = cc_switch_lib::write_codex_live_atomic(&auth, Some(config_text), None, None)
         .expect_err("config write should fail when target is directory");
     match err {
         cc_switch_lib::AppError::Io { path, .. } => {
@@ -545,6 +545,192 @@ command = "noop"
             .expect("config path metadata")
             .is_dir(),
         "config path should remain a directory after failure"
+    );
+}
+
+#[test]
+fn write_codex_models_catalog_includes_all_models_from_catalog_models() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+
+    let auth = json!({"OPENAI_API_KEY": "test-key"});
+    let config = r#"model = "gpt-5"
+base_url = "https://example.com/v1"
+"#;
+    let models: Vec<String> = vec!["gpt-5".to_string(), "gpt-5-mini".to_string()];
+
+    cc_switch_lib::write_codex_live_atomic(&auth, Some(config), Some(&models), None)
+        .expect("atomic write should succeed");
+
+    let catalog_path = get_codex_models_catalog_path();
+    assert!(
+        catalog_path.exists(),
+        "models_catalog.json should be created at {}",
+        catalog_path.display()
+    );
+
+    let catalog_text = fs::read_to_string(&catalog_path).expect("read models_catalog.json");
+    let catalog: serde_json::Value =
+        serde_json::from_str(&catalog_text).expect("parse models_catalog.json");
+
+    let entries = catalog["models"]
+        .as_array()
+        .expect("models should be an array");
+    assert_eq!(
+        entries.len(),
+        2,
+        "models_catalog.json should contain 2 model entries, got {}: {catalog_text}",
+        entries.len()
+    );
+
+    let slugs: Vec<&str> = entries
+        .iter()
+        .filter_map(|e| e["slug"].as_str())
+        .collect();
+    assert!(slugs.contains(&"gpt-5"), "should contain gpt-5");
+    assert!(slugs.contains(&"gpt-5-mini"), "should contain gpt-5-mini");
+}
+
+#[test]
+fn write_codex_models_catalog_raw_json_writes_exact_content() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+
+    let auth = json!({"OPENAI_API_KEY": "test-key"});
+    let config = r#"model = "gpt-5"
+"#;
+    let catalog_json = r#"{"models":[{"slug":"gpt-5","display_name":"GPT-5","shell_type":"unified_exec","visibility":"list","supported_in_api":true,"priority":0,"additional_speed_tiers":[],"default_reasoning_level":"high","supported_reasoning_levels":[{"effort":"high","description":"深度推理"}],"base_instructions":"You are a helpful coding assistant.","supports_reasoning_summaries":false,"default_reasoning_summary":"none","support_verbosity":false,"apply_patch_tool_type":"freeform","web_search_tool_type":"text","truncation_policy":{"mode":"tokens","limit":10000},"supports_parallel_tool_calls":true,"supports_image_detail_original":false,"context_window":200000,"max_context_window":200000,"effective_context_window_percent":95,"experimental_supported_tools":[],"input_modalities":["text"],"supports_search_tool":false},{"slug":"gpt-5-mini","display_name":"GPT-5 Mini","shell_type":"unified_exec","visibility":"list","supported_in_api":true,"priority":0,"additional_speed_tiers":[],"default_reasoning_level":"high","supported_reasoning_levels":[{"effort":"high","description":"深度推理"}],"base_instructions":"You are a helpful coding assistant.","supports_reasoning_summaries":false,"default_reasoning_summary":"none","support_verbosity":false,"apply_patch_tool_type":"freeform","web_search_tool_type":"text","truncation_policy":{"mode":"tokens","limit":10000},"supports_parallel_tool_calls":true,"supports_image_detail_original":false,"context_window":200000,"max_context_window":200000,"effective_context_window_percent":95,"experimental_supported_tools":[],"input_modalities":["text"],"supports_search_tool":false}]}"#;
+
+    cc_switch_lib::write_codex_live_atomic(&auth, Some(config), None, Some(catalog_json))
+        .expect("atomic write should succeed");
+
+    let catalog_path = get_codex_models_catalog_path();
+    let catalog_text = fs::read_to_string(&catalog_path).expect("read models_catalog.json");
+    let catalog: serde_json::Value =
+        serde_json::from_str(&catalog_text).expect("parse models_catalog.json");
+
+    let entries = catalog["models"]
+        .as_array()
+        .expect("models should be an array");
+    assert_eq!(
+        entries.len(),
+        2,
+        "raw JSON catalog should contain 2 model entries"
+    );
+    assert_eq!(
+        entries[0]["display_name"].as_str(),
+        Some("GPT-5"),
+        "raw JSON should preserve custom display_name"
+    );
+}
+
+#[test]
+fn write_codex_models_catalog_no_catalog_params_preserves_existing_file() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+
+    let auth = json!({"OPENAI_API_KEY": "test-key"});
+    let config = r#"model = "gpt-5"
+base_url = "https://example.com/v1"
+"#;
+
+    // When neither catalog_json nor catalog_models is provided, no models_catalog.json
+    // should be created (don't clobber existing data from proxy takeover recovery).
+    cc_switch_lib::write_codex_live_atomic(&auth, Some(config), None, None)
+        .expect("atomic write should succeed");
+
+    let catalog_path = get_codex_models_catalog_path();
+    assert!(
+        !catalog_path.exists(),
+        "models_catalog.json should NOT be created when no catalog params are provided"
+    );
+}
+
+#[test]
+fn write_codex_live_atomic_with_stable_provider_preserves_all_catalog_models() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+
+    let auth = json!({"OPENAI_API_KEY": "test-key"});
+    // Realistic config with model_provider section — this is what most providers use
+    let config = r#"model_provider = "myprovider"
+model = "gpt-5"
+base_url = "https://example.com/v1"
+
+[model_providers.myprovider]
+name = "MyProvider"
+base_url = "https://example.com/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+    let models: Vec<String> = vec!["gpt-5".to_string(), "gpt-5-mini".to_string()];
+
+    cc_switch_lib::write_codex_live_atomic_with_stable_provider(
+        &auth,
+        Some(config),
+        Some(&models),
+        None,
+    )
+    .expect("atomic write should succeed");
+
+    let catalog_path = get_codex_models_catalog_path();
+    let catalog_text = fs::read_to_string(&catalog_path).expect("read models_catalog.json");
+    let catalog: serde_json::Value =
+        serde_json::from_str(&catalog_text).expect("parse models_catalog.json");
+
+    let entries = catalog["models"]
+        .as_array()
+        .expect("models should be an array");
+    assert_eq!(
+        entries.len(),
+        2,
+        "stable provider wrapper should write 2 model entries, got {}: {catalog_text}",
+        entries.len()
+    );
+}
+
+#[test]
+fn write_codex_live_atomic_without_catalog_preserves_existing_models_catalog() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+
+    let auth = json!({"OPENAI_API_KEY": "test-key"});
+    let config = r#"model_provider = "myprovider"
+model = "gpt-5"
+
+[model_providers.myprovider]
+name = "MyProvider"
+base_url = "https://example.com/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+    let models: Vec<String> = vec!["gpt-5".to_string(), "gpt-5-mini".to_string()];
+
+    // Step 1: provider save writes catalog with 2 models
+    cc_switch_lib::write_codex_live_atomic(&auth, Some(config), Some(&models), None)
+        .expect("step 1: provider save");
+
+    let catalog_path = get_codex_models_catalog_path();
+    let initial_text = fs::read_to_string(&catalog_path).expect("read after step 1");
+    let initial: serde_json::Value = serde_json::from_str(&initial_text).unwrap();
+    assert_eq!(
+        initial["models"].as_array().unwrap().len(),
+        2,
+        "step 1 should write 2 models"
+    );
+
+    // Step 2: proxy takeover re-applies config WITHOUT catalog data
+    // This simulates what proxy::write_codex_live does — it calls
+    // write_codex_live_atomic(auth, Some(cfg), None, None)
+    cc_switch_lib::write_codex_live_atomic(&auth, Some(config), None, None)
+        .expect("step 2: proxy takeover");
+
+    let after_text = fs::read_to_string(&catalog_path).expect("read after step 2");
+    let after: serde_json::Value = serde_json::from_str(&after_text).unwrap();
+    let count = after["models"].as_array().unwrap().len();
+    assert_eq!(
+        count, 2,
+        "step 2 (proxy takeover) should PRESERVE existing models_catalog.json (2 models), but got {count}: {after_text}"
     );
 }
 
