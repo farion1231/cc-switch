@@ -1,10 +1,14 @@
 import React from "react";
 import type { ProviderMeta } from "@/types";
-import { useCodexOauthQuota } from "@/lib/query/subscription";
+import {
+  useCodexOauthQuota,
+  useCodexOauthQuotaByAccountId,
+} from "@/lib/query/subscription";
 import { SubscriptionQuotaView } from "@/components/SubscriptionQuotaFooter";
 
 interface CodexOauthQuotaFooterProps {
   meta?: ProviderMeta;
+  accountId?: string | null;
   inline?: boolean;
   /** 是否为当前激活的供应商 */
   isCurrent?: boolean;
@@ -18,14 +22,27 @@ interface CodexOauthQuotaFooterProps {
  */
 const CodexOauthQuotaFooter: React.FC<CodexOauthQuotaFooterProps> = ({
   meta,
+  accountId,
   inline = false,
-  isCurrent = false,
 }) => {
+  const hasExplicitAccount = accountId !== undefined;
+  const hasMetaBinding = meta !== undefined;
+
+  const accountQuery = useCodexOauthQuotaByAccountId(accountId, {
+    enabled: hasExplicitAccount,
+    autoQuery: hasExplicitAccount,
+  });
+  const metaQuery = useCodexOauthQuota(meta, {
+    enabled: !hasExplicitAccount && hasMetaBinding,
+    autoQuery: !hasExplicitAccount && hasMetaBinding,
+  });
+
+  const query = hasExplicitAccount ? accountQuery : metaQuery;
   const {
     data: quota,
     isFetching: loading,
     refetch,
-  } = useCodexOauthQuota(meta, { enabled: true, autoQuery: isCurrent });
+  } = query;
 
   return (
     <SubscriptionQuotaView

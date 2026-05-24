@@ -10,6 +10,8 @@ const REFETCH_INTERVAL = 5 * 60 * 1000; // 5 minutes
 export const subscriptionKeys = {
   all: ["subscription"] as const,
   quota: (appId: AppId) => [...subscriptionKeys.all, "quota", appId] as const,
+  codexProviderQuota: (providerId: string | null | undefined) =>
+    [...subscriptionKeys.all, "quota", "codex", "provider", providerId] as const,
 };
 
 export function useSubscriptionQuota(
@@ -35,6 +37,24 @@ export interface UseCodexOauthQuotaOptions {
   autoQuery?: boolean;
 }
 
+export function useCodexProviderQuota(
+  providerId: string | null | undefined,
+  options: UseCodexOauthQuotaOptions = {},
+) {
+  const { enabled = true, autoQuery = false } = options;
+  return useQuery({
+    queryKey: subscriptionKeys.codexProviderQuota(providerId),
+    queryFn: () => subscriptionApi.getCodexProviderQuota(providerId!),
+    enabled: enabled && Boolean(providerId),
+    refetchInterval: autoQuery ? REFETCH_INTERVAL : false,
+    refetchIntervalInBackground: autoQuery,
+    refetchOnWindowFocus: autoQuery,
+    refetchOnMount: autoQuery ? "always" : true,
+    staleTime: REFETCH_INTERVAL,
+    retry: 1,
+  });
+}
+
 /**
  * Codex OAuth (ChatGPT Plus/Pro 反代) 订阅额度查询 hook
  *
@@ -48,15 +68,24 @@ export function useCodexOauthQuota(
   meta: ProviderMeta | undefined,
   options: UseCodexOauthQuotaOptions = {},
 ) {
-  const { enabled = true, autoQuery = false } = options;
   const accountId = resolveManagedAccountId(meta, PROVIDER_TYPES.CODEX_OAUTH);
+  return useCodexOauthQuotaByAccountId(accountId, options);
+}
+
+export function useCodexOauthQuotaByAccountId(
+  accountId: string | null | undefined,
+  options: UseCodexOauthQuotaOptions = {},
+) {
+  const { enabled = true, autoQuery = false } = options;
+  const resolvedAccountId = accountId ?? null;
   return useQuery({
-    queryKey: ["codex_oauth", "quota", accountId ?? "default"],
-    queryFn: () => subscriptionApi.getCodexOauthQuota(accountId),
+    queryKey: ["codex_oauth", "quota", resolvedAccountId ?? "default"],
+    queryFn: () => subscriptionApi.getCodexOauthQuota(resolvedAccountId),
     enabled,
     refetchInterval: autoQuery ? REFETCH_INTERVAL : false,
     refetchIntervalInBackground: autoQuery,
     refetchOnWindowFocus: autoQuery,
+    refetchOnMount: autoQuery ? "always" : true,
     staleTime: REFETCH_INTERVAL,
     retry: 1,
   });

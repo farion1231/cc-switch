@@ -2,11 +2,15 @@ import React from "react";
 import { RefreshCw, AlertCircle, Clock } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
-import { useSubscriptionQuota } from "@/lib/query/subscription";
+import {
+  useCodexProviderQuota,
+  useSubscriptionQuota,
+} from "@/lib/query/subscription";
 import type { QuotaTier, SubscriptionQuota } from "@/types/subscription";
 
 interface SubscriptionQuotaFooterProps {
   appId: AppId;
+  providerId?: string;
   inline?: boolean;
   isCurrent?: boolean;
 }
@@ -388,16 +392,24 @@ const TierBar: React.FC<{
  */
 const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
   appId,
+  providerId,
   inline = false,
   isCurrent = false,
 }) => {
+  const useProviderQuota = appId === "codex" && Boolean(providerId);
+  const appQuery = useSubscriptionQuota(appId, !useProviderQuota && isCurrent, isCurrent);
+  const providerQuery = useCodexProviderQuota(providerId, {
+    enabled: useProviderQuota,
+    autoQuery: useProviderQuota,
+  });
+
   const {
     data: quota,
     isFetching: loading,
     refetch,
-  } = useSubscriptionQuota(appId, isCurrent, isCurrent);
+  } = useProviderQuota ? providerQuery : appQuery;
 
-  if (!isCurrent) return null;
+  if (!useProviderQuota && !isCurrent) return null;
 
   return (
     <SubscriptionQuotaView

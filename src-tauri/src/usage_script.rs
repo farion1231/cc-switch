@@ -438,14 +438,13 @@ fn validate_base_url(base_url: &str) -> Result<(), AppError> {
         )
     })?;
 
-    let is_loopback = is_loopback_host(&parsed_url);
-
-    // 必须是 HTTPS（允许 localhost 用于开发）
-    if parsed_url.scheme() != "https" && !is_loopback {
+    // 仅允许 HTTP(S)。是否允许非 localhost HTTP 由 request URL 的同源校验决定，
+    // 以兼容用户配置的内网/自建 HTTP 供应商。
+    if parsed_url.scheme() != "https" && parsed_url.scheme() != "http" {
         return Err(AppError::localized(
-            "usage_script.base_url_https_required",
-            "base_url 必须使用 HTTPS 协议（localhost 除外）",
-            "base_url must use HTTPS (localhost allowed)",
+            "usage_script.base_url_scheme_invalid",
+            "base_url 必须使用 HTTP 或 HTTPS 协议",
+            "base_url must use HTTP or HTTPS",
         ));
     }
 
@@ -470,7 +469,7 @@ fn validate_base_url(base_url: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// 验证请求 URL 是否安全（HTTPS 强制 + 同源检查）
+/// 验证请求 URL 是否安全（HTTPS/同源 HTTP + 同源检查）
 fn validate_request_url(
     request_url: &str,
     base_url: &str,
@@ -485,29 +484,59 @@ fn validate_request_url(
         )
     })?;
 
-    let is_request_loopback = is_loopback_host(&parsed_request);
-
-    // 必须使用 HTTPS（允许 localhost 用于开发）
-    // 自定义模板模式下，允许用户自行决定是否使用 HTTP（用户需自行承担安全风险）
-    if !is_custom_template && parsed_request.scheme() != "https" && !is_request_loopback {
-        return Err(AppError::localized(
-            "usage_script.request_https_required",
-            "请求 URL 必须使用 HTTPS 协议（localhost 除外）",
-            "Request URL must use HTTPS (localhost allowed)",
-        ));
-    }
-
     // 如果提供了 base_url（非空），则进行同源检查
     // 🔧 自定义模板模式下，用户可以自由访问任意 HTTPS 域名，跳过同源检查
-    if !base_url.is_empty() && !is_custom_template {
+    let parsed_base = if !base_url.is_empty() && !is_custom_template {
         // 解析 base URL
-        let parsed_base = Url::parse(base_url).map_err(|e| {
+        Some(Url::parse(base_url).map_err(|e| {
             AppError::localized(
                 "usage_script.base_url_invalid",
                 format!("无效的 base_url: {e}"),
                 format!("Invalid base_url: {e}"),
             )
-        })?;
+        })?)
+    } else {
+        None
+    };
+
+    let is_request_loopback = is_loopback_host(&parsed_request);
+    let is_same_origin_http = parsed_base.as_ref().is_some_and(|base| {
+        parsed_request.scheme() == "http"
+            && base.scheme() == "http"
+            && parsed_request.host_str() == base.host_str()
+            && parsed_request.port_or_known_default() == base.port_or_known_default()
+    });
+
+    // 必须使用 HTTPS（允许 localhost 或与 HTTP base_url 同源）
+    // 自定义模板模式下，允许用户自行决定是否使用 HTTP（用户需自行承担安全风险）
+    if !is_custom_template
+        && parsed_request.scheme() != "https"
+        && !is_request_loopback
+        && !is_same_origin_http
+    {
+        return Err(AppError::localized(
+            "usage_script.request_https_required",
+            "请求 URL 必须使用 HTTPS 协议（localhost 或同源 HTTP base_url 除外）",
+            "Request URL must use HTTPS (except localhost or same-origin HTTP base_url)",
+        ));
+    }
+
+    if let Some(parsed_base) = parsed_base {
+        if parsed_request.scheme() != parsed_base.scheme() {
+            return Err(AppError::localized(
+                "usage_script.request_scheme_mismatch",
+                format!(
+                    "请求协议 {} 必须与 base_url 协议 {} 匹配",
+                    parsed_request.scheme(),
+                    parsed_base.scheme()
+                ),
+                format!(
+                    "Request scheme {} must match base_url scheme {}",
+                    parsed_request.scheme(),
+                    parsed_base.scheme()
+                ),
+            ));
+        }
 
         // 核心安全检查：必须与 base_url 同源（相同域名和端口）
         if parsed_request.host_str() != parsed_base.host_str() {
@@ -573,10 +602,38 @@ mod tests {
     #[test]
     fn test_https_bypass_prevention() {
         // 非本地域名的 HTTP 应该被拒绝
-        let result = validate_base_url("http://127.0.0.1.evil.com/api");
+        let result = validate_request_url("http://127.0.0.1.evil.com/api", "", false);
         assert!(
             result.is_err(),
             "Should reject HTTP for non-localhost domains"
+        );
+    }
+
+    #[test]
+    fn test_same_origin_http_base_url_allowed() {
+        validate_base_url("http://api.example.com").unwrap();
+        let result = validate_request_url(
+            "http://api.example.com/v1/usage",
+            "http://api.example.com",
+            false,
+        );
+        assert!(
+            result.is_ok(),
+            "Should allow HTTP request when it matches HTTP base_url origin: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_http_request_must_match_http_base_url_origin() {
+        let result = validate_request_url(
+            "http://other.example.com/v1/usage",
+            "http://api.example.com",
+            false,
+        );
+        assert!(
+            result.is_err(),
+            "Should reject non-same-origin HTTP requests"
         );
     }
 

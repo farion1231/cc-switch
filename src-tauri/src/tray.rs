@@ -262,6 +262,18 @@ fn format_usage_suffix(
     }
 
     if provider.category.as_deref() == Some("official") {
+        if let Some(Some(s)) = app_state.usage_cache.with_provider_subscription(
+            app_type,
+            provider_id,
+            format_subscription_summary,
+        ) {
+            return Some(format!(" · {s}"));
+        }
+
+        if *app_type == AppType::Codex {
+            return None;
+        }
+
         if let Some(Some(s)) = app_state
             .usage_cache
             .with_subscription(app_type, format_subscription_summary)
@@ -445,6 +457,14 @@ fn handle_provider_click(
             }
         }
 
+        let app_clone = app.clone();
+        let app_type_clone = app_type.clone();
+        let provider_id_for_refresh = provider_id.to_string();
+        tauri::async_runtime::spawn(async move {
+            refresh_provider_usage_for_tray(&app_clone, &app_type_clone, &provider_id_for_refresh)
+                .await;
+        });
+
         // 发射事件到前端
         let event_data = serde_json::json!({
             "appType": app_type_str,
@@ -461,6 +481,61 @@ fn handle_provider_click(
         }
     }
     Ok(())
+}
+
+async fn refresh_provider_usage_for_tray(
+    app: &tauri::AppHandle,
+    app_type: &AppType,
+    provider_id: &str,
+) {
+    use crate::commands::CopilotAuthState;
+
+    let Some(app_state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let app_type_str = app_type.as_str();
+    let provider = match app_state.db.get_provider_by_id(provider_id, app_type_str) {
+        Ok(Some(provider)) => provider,
+        Ok(None) => return,
+        Err(e) => {
+            log::debug!("[Tray] 切换后读取{}当前供应商失败: {e}", app_type_str);
+            return;
+        }
+    };
+
+    if provider.has_usage_script_enabled() {
+        let Some(copilot_state) = app.try_state::<CopilotAuthState>() else {
+            return;
+        };
+        if let Err(e) = crate::commands::queryProviderUsage(
+            app.clone(),
+            app_state,
+            copilot_state,
+            provider_id.to_string(),
+            app_type_str.to_string(),
+        )
+        .await
+        {
+            log::debug!("[Tray] 切换后刷新{}供应商 {provider_id} 用量失败: {e}", app_type_str);
+        }
+        return;
+    }
+
+    if provider.category.as_deref() != Some("official") {
+        return;
+    }
+
+    let result = if *app_type == AppType::Codex {
+        crate::commands::get_codex_provider_quota(app.clone(), app_state, provider_id.to_string())
+            .await
+    } else {
+        crate::commands::get_subscription_quota(app.clone(), app_state, app_type_str.to_string())
+            .await
+    };
+
+    if let Err(e) = result {
+        log::debug!("[Tray] 切换后刷新{}订阅用量失败（可能未登录）: {e}", app_type_str);
+    }
 }
 
 /// 创建动态托盘菜单
@@ -847,11 +922,16 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
         } else if current.category.as_deref() == Some("official") {
             let app_clone = app.clone();
             let state = app.state::<AppState>();
+            let provider_id = current_id.clone();
             let tool = app_type_str.to_string();
+            let is_codex = section.app_type == AppType::Codex;
             subscription_futures.push(async move {
-                if let Err(e) =
+                let result = if is_codex {
+                    crate::commands::get_codex_provider_quota(app_clone, state, provider_id).await
+                } else {
                     crate::commands::get_subscription_quota(app_clone, state, tool).await
-                {
+                };
+                if let Err(e) = result {
                     log::debug!("[Tray] 刷新{log_name}订阅用量失败（可能未登录）: {e}");
                 }
             });
