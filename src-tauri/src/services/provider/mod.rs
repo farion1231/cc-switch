@@ -2126,6 +2126,38 @@ mod tests {
 
     #[test]
     #[serial]
+    fn apply_claude_legacy_resolves_configured_dir_env() {
+        let _env_guard = UserEnvVarGuard::new("CLAUDE_CONFIG_DIR");
+        with_test_home(|_state, home| {
+            let configured_legacy_dir = home.join(".configured-claude");
+            fs::create_dir_all(&configured_legacy_dir).expect("create configured legacy dir");
+            let mut settings = crate::settings::get_settings();
+            settings.claude_config_dir = Some("~/.configured-claude".to_string());
+            crate::settings::update_settings(settings).expect("set configured legacy dir");
+
+            let legacy_provider = claude_provider(
+                "claude-legacy",
+                "Claude Legacy",
+                "legacy-token",
+                "https://legacy.example",
+                None,
+            );
+
+            let plan = ProviderService::claude_switch_plan(&legacy_provider);
+            ProviderService::apply_claude_switch_plan(&plan).expect("apply legacy plan");
+
+            assert_eq!(
+                crate::services::env_manager::get_user_env_var("CLAUDE_CONFIG_DIR")
+                    .expect("read claude config env")
+                    .as_deref(),
+                Some(configured_legacy_dir.to_string_lossy().as_ref()),
+                "legacy activation should export the resolved configured legacy dir"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn startup_sync_rejects_missing_profile_only_directory() {
         with_test_home(|state, home| {
             let broken_provider = claude_provider(
@@ -2162,6 +2194,52 @@ mod tests {
             assert!(
                 err.to_string().contains("profile"),
                 "expected missing profile error, got {err:?}"
+            );
+            assert!(
+                crate::settings::get_claude_override_dir().is_none(),
+                "failed startup sync should not mutate the Claude override dir"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn startup_sync_rejects_profile_only_file_path() {
+        with_test_home(|state, home| {
+            let profile_file = home.join(".claude-profiles").join("not-a-dir");
+            fs::create_dir_all(profile_file.parent().expect("profile parent"))
+                .expect("create profile parent");
+            fs::write(&profile_file, "{}").expect("create profile file");
+
+            let broken_provider = claude_provider(
+                "claude-official",
+                "Claude Official",
+                "provider-token",
+                "https://provider.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(profile_file.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &broken_provider)
+                .expect("save broken provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "claude-official")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("claude-official"))
+                .expect("set local current provider");
+
+            let err = ProviderService::sync_current_claude_profile_env(state)
+                .expect_err("startup sync should fail when profile-only path is a file");
+
+            assert!(
+                err.to_string().contains("profile"),
+                "expected profile validation error, got {err:?}"
             );
             assert!(
                 crate::settings::get_claude_override_dir().is_none(),
@@ -3450,11 +3528,15 @@ impl ProviderService {
     fn apply_claude_switch_plan(plan: &ClaudeSwitchPlan) -> Result<(), AppError> {
         crate::settings::set_claude_provider_override_dir(plan.override_dir.as_deref())?;
         let settings = crate::settings::get_settings();
-        let legacy_config_dir = settings.claude_config_dir.as_deref();
+        let legacy_config_dir = settings
+            .claude_config_dir
+            .as_deref()
+            .map(Self::resolve_claude_override_path)
+            .map(|path| path.to_string_lossy().to_string());
         crate::services::env_manager::set_user_env_var(
             "CLAUDE_CONFIG_DIR",
             match plan.activation_mode {
-                ClaudeActivationMode::Legacy => legacy_config_dir,
+                ClaudeActivationMode::Legacy => legacy_config_dir.as_deref(),
                 ClaudeActivationMode::ProfileOnly | ClaudeActivationMode::ProfileAndConfig => {
                     plan.override_dir.as_deref()
                 }
@@ -3470,9 +3552,9 @@ impl ProviderService {
                     "Claude profile switching requires a profile directory".to_string(),
                 )
             })?;
-            if !PathBuf::from(profile_dir).exists() {
+            if !Path::new(profile_dir).is_dir() {
                 return Err(AppError::Message(format!(
-                    "Claude profile directory does not exist: {profile_dir}"
+                    "Claude profile path must be an existing directory: {profile_dir}"
                 )));
             }
         }
