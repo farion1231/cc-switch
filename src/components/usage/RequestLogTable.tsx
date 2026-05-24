@@ -313,27 +313,28 @@ export function RequestLogTable({
                           {log.providerName || t("usage.unknownProvider")}
                         </TableCell>
                         <TableCell className="text-center font-mono text-xs max-w-[200px]">
-                          <div
-                            className="truncate"
-                            title={
+                          {(() => {
+                            const modelLabel =
                               log.requestModel && log.requestModel !== log.model
                                 ? `${log.requestModel} → ${log.model}`
-                                : log.model
-                            }
-                          >
-                            {log.requestModel &&
-                            log.requestModel !== log.model ? (
-                              <span>
-                                {log.requestModel}
-                                <span className="text-muted-foreground">
-                                  {" → "}
-                                  {log.model}
-                                </span>
-                              </span>
-                            ) : (
-                              log.model
-                            )}
-                          </div>
+                                : log.model;
+                            return (
+                              <div className="truncate" aria-label={modelLabel}>
+                                {log.requestModel &&
+                                log.requestModel !== log.model ? (
+                                  <span>
+                                    {log.requestModel}
+                                    <span className="text-muted-foreground">
+                                      {" → "}
+                                      {log.model}
+                                    </span>
+                                  </span>
+                                ) : (
+                                  log.model
+                                )}
+                              </div>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell className="text-center px-1.5">
                           {(() => {

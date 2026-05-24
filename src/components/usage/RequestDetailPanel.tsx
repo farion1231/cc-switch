@@ -7,10 +7,95 @@ import {
 } from "@/components/ui/dialog";
 import { useRequestDetail } from "@/lib/query/usage";
 import { getFreshInputTokens, isUnpricedUsage } from "@/types/usage";
+import { Check, Copy } from "lucide-react";
+import { useState } from "react";
 
 interface RequestDetailPanelProps {
   requestId: string;
   onClose: () => void;
+}
+
+function CopyValueButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard?.writeText(value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border bg-background text-muted-foreground opacity-0 transition hover:text-foreground group-hover:opacity-100 focus:opacity-100"
+      aria-label="Copy value"
+    >
+      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+    </button>
+  );
+}
+
+function DetailValue({
+  label,
+  value,
+  mono = false,
+  long = "auto",
+}: {
+  label: string;
+  value: unknown;
+  mono?: boolean;
+  long?: "auto" | "always" | "never";
+}) {
+  const text =
+    value == null || value === ""
+      ? "-"
+      : typeof value === "string"
+        ? value
+        : String(value);
+  const isLong =
+    long === "always" ||
+    (long === "auto" && (text.length > 72 || text.includes("\n")));
+  const valueClass = mono ? "font-mono" : "";
+
+  return (
+    <div className="min-w-0">
+      <dt className="mb-1 text-muted-foreground">{label}</dt>
+      <dd className="group min-w-0 text-foreground">
+        {isLong ? (
+          <details className="rounded-md border bg-muted/30 p-2 open:bg-background">
+            <summary className="flex cursor-pointer list-none items-start gap-2 text-xs text-muted-foreground">
+              <span
+                className={`min-w-0 flex-1 overflow-hidden break-words ${valueClass}`}
+                style={{
+                  display: "-webkit-box",
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: "vertical",
+                }}
+              >
+                {text}
+              </span>
+              <CopyValueButton value={text} />
+            </summary>
+            <pre
+              className={`mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded bg-background p-2 text-xs leading-relaxed ${valueClass}`}
+            >
+              {text}
+            </pre>
+          </details>
+        ) : (
+          <div className="flex min-w-0 items-center gap-2">
+            <span className={`min-w-0 truncate ${valueClass}`}>{text}</span>
+            {text !== "-" && <CopyValueButton value={text} />}
+          </div>
+        )}
+      </dd>
+    </div>
+  );
 }
 
 export function RequestDetailPanel({
@@ -57,59 +142,46 @@ export function RequestDetailPanel({
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+      <DialogContent className="flex max-h-[86vh] max-w-[min(96vw,980px)] flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle>{t("usage.requestDetail", "请求详情")}</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="min-h-0 space-y-4 overflow-y-auto pr-1">
           {/* 基本信息 */}
           <div className="rounded-lg border p-4">
             <h3 className="mb-3 font-semibold">
               {t("usage.basicInfo", "基本信息")}
             </h3>
-            <dl className="grid grid-cols-2 gap-3 text-sm">
-              <div>
-                <dt className="text-muted-foreground">
-                  {t("usage.requestId", "请求ID")}
-                </dt>
-                <dd className="font-mono">{request.requestId}</dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">
-                  {t("usage.time", "时间")}
-                </dt>
-                <dd>
-                  {new Date(request.createdAt * 1000).toLocaleString(
-                    dateLocale,
-                  )}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">
-                  {t("usage.provider", "供应商")}
-                </dt>
-                <dd className="text-sm">
-                  <span className="font-medium">
-                    {request.providerName || t("usage.unknownProvider", "未知")}
-                  </span>
-                  <span className="ml-2 font-mono text-xs text-muted-foreground">
-                    {request.providerId}
-                  </span>
-                </dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">
-                  {t("usage.appType", "应用类型")}
-                </dt>
-                <dd>{request.appType}</dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">
-                  {t("usage.model", "模型")}
-                </dt>
-                <dd className="font-mono">{request.model}</dd>
-              </div>
+            <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
+              <DetailValue
+                label={t("usage.requestId", "请求ID")}
+                value={request.requestId}
+                mono
+              />
+              <DetailValue
+                label={t("usage.time", "时间")}
+                value={new Date(request.createdAt * 1000).toLocaleString(
+                  dateLocale,
+                )}
+              />
+              <DetailValue
+                label={t("usage.provider", "供应商")}
+                value={`${request.providerName || t("usage.unknownProvider", "未知")} (${request.providerId})`}
+              />
+              <DetailValue
+                label={t("usage.appType", "应用类型")}
+                value={request.appType}
+              />
+              <DetailValue
+                label={t("usage.model", "模型")}
+                value={
+                  request.requestModel && request.requestModel !== request.model
+                    ? `${request.requestModel} → ${request.model}`
+                    : request.model
+                }
+                mono
+              />
               <div>
                 <dt className="text-muted-foreground">
                   {t("usage.status", "状态")}
@@ -290,7 +362,9 @@ export function RequestDetailPanel({
               <h3 className="mb-2 font-semibold text-red-800">
                 {t("usage.errorMessage", "错误信息")}
               </h3>
-              <p className="text-sm text-red-700">{request.errorMessage}</p>
+              <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded bg-white/70 p-3 text-sm text-red-700">
+                {request.errorMessage}
+              </pre>
             </div>
           )}
         </div>
