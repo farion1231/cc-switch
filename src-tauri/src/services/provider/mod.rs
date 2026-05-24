@@ -15,7 +15,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::app_config::AppType;
-use crate::codex_config::CC_SWITCH_CODEX_MODEL_PROVIDER_ID;
+use crate::codex_config::{
+    codex_config_has_model_provider_table, CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+};
 use crate::config::{get_claude_settings_path, write_json_file};
 use crate::database::{validate_cost_multiplier, validate_pricing_source};
 use crate::error::AppError;
@@ -480,6 +482,22 @@ mod tests {
         value["payload"]["model_provider"] = serde_json::Value::String(provider.to_string());
         let first_line = serde_json::to_string(&value).expect("serialize rollout metadata");
         fs::write(path, format!("{first_line}{rest}")).expect("rewrite rollout");
+    }
+
+    #[test]
+    fn codex_desktop_provider_key_ignores_dangling_ccswitch_provider() {
+        let provider = codex_provider(
+            "codex-api",
+            "Codex API",
+            "model_provider = \"ccswitch\"\nmodel = \"gpt-5.4\"\n",
+        );
+
+        let provider_key =
+            ProviderService::codex_desktop_provider_key(&provider).expect("provider key");
+        assert_eq!(
+            provider_key, "openai",
+            "ccswitch is only a usable history label when config.toml has a matching provider table"
+        );
     }
 
     #[test]
@@ -3540,6 +3558,11 @@ impl ProviderService {
 
         let provider_key = crate::codex_config::extract_codex_model_provider(config)
             .unwrap_or_else(|| "openai".to_string());
+        if provider_key.eq_ignore_ascii_case(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+            && !codex_config_has_model_provider_table(config, &provider_key)
+        {
+            return Ok("openai".to_string());
+        }
         if provider_key.eq_ignore_ascii_case("openai") && config.contains("[model_providers.") {
             return Ok(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
         }

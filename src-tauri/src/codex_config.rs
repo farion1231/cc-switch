@@ -9,7 +9,7 @@ use crate::error::AppError;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
-use toml_edit::DocumentMut;
+use toml_edit::{DocumentMut, Item};
 
 pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "ccswitch";
 
@@ -214,9 +214,9 @@ fn stable_codex_model_provider_id_from_config(config_text: &str) -> Option<Strin
     }
 }
 
-fn codex_model_provider_id_with_table_from_config(
+fn codex_model_provider_id_and_table_from_config(
     config_text: &str,
-) -> Result<Option<String>, AppError> {
+) -> Result<Option<(String, Option<Item>)>, AppError> {
     if config_text.trim().is_empty() {
         return Ok(None);
     }
@@ -228,13 +228,24 @@ fn codex_model_provider_id_with_table_from_config(
         return Ok(None);
     };
 
-    let has_provider_table = doc
+    let provider_table = doc
         .get("model_providers")
         .and_then(|item| item.as_table())
         .and_then(|table| table.get(provider_id.as_str()))
-        .is_some();
+        .cloned();
 
-    Ok(has_provider_table.then_some(provider_id))
+    Ok(Some((provider_id, provider_table)))
+}
+
+pub fn codex_config_has_model_provider_table(config_text: &str, provider_id: &str) -> bool {
+    let Ok(doc) = config_text.parse::<DocumentMut>() else {
+        return false;
+    };
+
+    doc.get("model_providers")
+        .and_then(|item| item.as_table())
+        .and_then(|table| table.get(provider_id))
+        .is_some()
 }
 
 fn normalize_codex_live_config_model_provider_with_anchors<'a>(
@@ -253,18 +264,35 @@ fn normalize_codex_live_config_model_provider_with_anchors<'a>(
         return Ok(config_text.to_string());
     };
 
+    let anchor_stable_provider_id = anchor_config_texts
+        .into_iter()
+        .find_map(stable_codex_model_provider_id_from_config);
+
     let has_source_provider_table = doc
         .get("model_providers")
         .and_then(|item| item.as_table())
         .and_then(|table| table.get(source_provider_id.as_str()))
         .is_some();
     if !has_source_provider_table {
+        if source_provider_id.eq_ignore_ascii_case(CC_SWITCH_CODEX_MODEL_PROVIDER_ID) {
+            let fallback_provider_id = anchor_stable_provider_id
+                .filter(|id| !id.eq_ignore_ascii_case(CC_SWITCH_CODEX_MODEL_PROVIDER_ID))
+                .unwrap_or_else(|| "openai".to_string());
+
+            rewrite_codex_profile_model_provider_refs(
+                &mut doc,
+                &source_provider_id,
+                &fallback_provider_id,
+            );
+            doc["model_provider"] = toml_edit::value(fallback_provider_id.as_str());
+
+            return Ok(doc.to_string());
+        }
+
         return Ok(config_text.to_string());
     }
 
-    let stable_provider_id = anchor_config_texts
-        .into_iter()
-        .find_map(stable_codex_model_provider_id_from_config)
+    let stable_provider_id = anchor_stable_provider_id
         .or_else(|| {
             is_custom_codex_model_provider_id(&source_provider_id)
                 .then(|| source_provider_id.clone())
@@ -358,8 +386,8 @@ fn restore_codex_backfill_model_provider_id(
     config_text: &str,
     template_config_text: &str,
 ) -> Result<String, AppError> {
-    let Some(template_provider_id) =
-        codex_model_provider_id_with_table_from_config(template_config_text)?
+    let Some((template_provider_id, template_provider_table)) =
+        codex_model_provider_id_and_table_from_config(template_config_text)?
     else {
         return Ok(config_text.to_string());
     };
@@ -383,12 +411,16 @@ fn restore_codex_backfill_model_provider_id(
         .get_mut("model_providers")
         .and_then(|item| item.as_table_mut())
     {
-        let Some(provider_table) = model_providers.remove(live_provider_id.as_str()) else {
-            return Ok(config_text.to_string());
-        };
-        model_providers[template_provider_id.as_str()] = provider_table;
-    } else {
-        return Ok(config_text.to_string());
+        if let Some(provider_table) = model_providers.remove(live_provider_id.as_str()) {
+            model_providers[template_provider_id.as_str()] = provider_table;
+        } else if let Some(provider_table) = template_provider_table.clone() {
+            model_providers[template_provider_id.as_str()] = provider_table;
+        }
+    } else if let Some(provider_table) = template_provider_table {
+        doc["model_providers"] = toml_edit::table();
+        if let Some(model_providers) = doc["model_providers"].as_table_mut() {
+            model_providers[template_provider_id.as_str()] = provider_table;
+        }
     }
 
     rewrite_codex_profile_model_provider_refs(&mut doc, &live_provider_id, &template_provider_id);
@@ -800,6 +832,45 @@ wire_api = "responses"
                 .and_then(|v| v.get("base_url"))
                 .and_then(|v| v.as_str()),
             Some("https://beta.example/v1")
+        );
+    }
+
+    #[test]
+    fn restore_backfill_rewrites_stable_provider_without_table_to_template_provider() {
+        let live = r#"model_provider = "ccswitch"
+model = "gpt-5.4"
+"#;
+        let template = r#"model_provider = "OpenAI"
+model = "gpt-5.4"
+"#;
+
+        let result = restore_codex_backfill_model_provider_id(live, template).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("OpenAI"),
+            "backfill must not persist a dangling ccswitch model_provider"
+        );
+        assert!(
+            !result.contains("ccswitch"),
+            "invalid stable provider label should be removed when no matching table exists"
+        );
+    }
+
+    #[test]
+    fn normalize_live_config_rewrites_dangling_stable_provider_to_openai() {
+        let target = r#"model_provider = "ccswitch"
+model = "gpt-5.4"
+"#;
+
+        let result = normalize_codex_live_config_model_provider_with_anchors(target, None).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("openai"),
+            "provider-driven live writes must not emit a missing ccswitch provider table"
         );
     }
 
