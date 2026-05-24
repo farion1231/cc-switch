@@ -31,6 +31,13 @@ pub fn get_codex_config_dir() -> PathBuf {
         return custom;
     }
 
+    if let Ok(codex_home) = std::env::var("CODEX_HOME") {
+        let trimmed = codex_home.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+
     get_home_dir().join(".codex")
 }
 
