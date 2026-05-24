@@ -1741,19 +1741,19 @@ impl ProxyService {
         crate::settings::set_current_provider(&app_type_enum, Some(provider_id))
             .map_err(|e| format!("更新本地当前供应商失败: {e}"))?;
 
-        if should_sync_backup {
+        let is_claude_profile_only = matches!(app_type_enum, AppType::Claude)
+            && matches!(
+                provider
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.claude_activation_mode.as_ref()),
+                Some(ClaudeActivationMode::ProfileOnly)
+            );
+        if should_sync_backup && !is_claude_profile_only {
             self.update_live_backup_from_provider_inner(app_type, &provider)
                 .await?;
 
-            let is_claude_profile_only = matches!(app_type_enum, AppType::Claude)
-                && matches!(
-                    provider
-                        .meta
-                        .as_ref()
-                        .and_then(|meta| meta.claude_activation_mode.as_ref()),
-                    Some(ClaudeActivationMode::ProfileOnly)
-                );
-            if matches!(app_type_enum, AppType::Claude) && !is_claude_profile_only {
+            if matches!(app_type_enum, AppType::Claude) {
                 self.sync_claude_live_from_provider_while_proxy_active(&provider)
                     .await?;
             }

@@ -2586,6 +2586,19 @@ base_url = "http://localhost:8080"
             Value::String("PROXY_MANAGED".to_string()),
             "profile-only hot-switch should not write provider credentials into proxy live config"
         );
+
+        let backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("read live backup")
+            .expect("backup remains present");
+        let backup_config: Value =
+            serde_json::from_str(&backup.original_config).expect("parse live backup");
+        assert_eq!(
+            backup_config["env"]["ANTHROPIC_AUTH_TOKEN"],
+            Value::String("legacy-token".to_string()),
+            "profile-only hot-switch should preserve the previous live backup"
+        );
     }
 
     #[tokio::test]
