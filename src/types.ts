@@ -185,6 +185,10 @@ export interface ProviderMeta {
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
   githubAccountId?: string;
+  // Codex 模型映射：models_catalog.json 中包含的模型 slug 列表
+  codexModels?: string[];
+  // Codex 默认模型：config.toml 中的 model 字段值
+  codexDefaultModel?: string;
 }
 
 // Skill 同步方式

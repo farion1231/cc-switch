@@ -328,6 +328,12 @@ pub struct ProviderMeta {
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
+    /// Codex 模型映射：models_catalog.json 中包含的模型 slug 列表
+    #[serde(rename = "codexModels", skip_serializing_if = "Option::is_none")]
+    pub codex_models: Option<Vec<String>>,
+    /// Codex 默认模型：config.toml 中的 model 字段值
+    #[serde(rename = "codexDefaultModel", skip_serializing_if = "Option::is_none")]
+    pub codex_default_model: Option<String>,
 }
 
 impl ProviderMeta {

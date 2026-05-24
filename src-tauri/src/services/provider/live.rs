@@ -732,7 +732,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 AppError::Config("Codex 供应商配置缺少 'config' 字段或不是字符串".to_string())
             })?;
 
-            write_codex_live_atomic_with_stable_provider(auth, Some(config_str))?;
+            let catalog_models = provider
+                .meta
+                .as_ref()
+                .and_then(|m| m.codex_models.as_deref());
+            write_codex_live_atomic_with_stable_provider(auth, Some(config_str), catalog_models)?;
         }
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly

@@ -1101,7 +1101,7 @@ impl ProxyService {
     }
 
     /// 接管指定应用的 Live 配置（尽力而为：配置不存在/读取失败则跳过）
-    async fn takeover_live_config_best_effort(&self, app_type: &AppType) -> Result<(), String> {
+    pub async fn takeover_live_config_best_effort(&self, app_type: &AppType) -> Result<(), String> {
         let (proxy_url, proxy_codex_base_url) = self.build_proxy_urls().await?;
 
         match app_type {
@@ -1830,7 +1830,7 @@ impl ProxyService {
         // Proxy restore writes saved live backups verbatim. Provider-driven writes go
         // through write_live_with_common_config(), which normalizes Codex provider ids.
         match (auth, config_str) {
-            (Some(auth), Some(cfg)) => write_codex_live_atomic(auth, Some(cfg))
+            (Some(auth), Some(cfg)) => write_codex_live_atomic(auth, Some(cfg), None)
                 .map_err(|e| format!("写入 Codex 配置失败: {e}"))?,
             (Some(auth), None) => {
                 let auth_path = get_codex_auth_path();

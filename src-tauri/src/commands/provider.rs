@@ -53,8 +53,51 @@ pub fn update_provider(
     #[allow(non_snake_case)] originalId: Option<String>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::update(state.inner(), app_type, originalId.as_deref(), provider)
-        .map_err(|e| e.to_string())
+    // 保存 Codex provider 时同步更新 models_catalog.json（在 update 前提取数据）
+    let needs_codex_sync = app_type == AppType::Codex
+        && crate::settings::get_current_provider(&app_type)
+            .is_some_and(|cid| cid == originalId.as_deref().unwrap_or(&"") || cid == provider.id);
+    let codex_sync_data = if needs_codex_sync {
+        provider.settings_config.as_object().and_then(|s| {
+            let auth = s.get("auth")?;
+            let cfg = s.get("config")?.as_str()?;
+            let models = provider.meta.as_ref().and_then(|m| m.codex_models.as_deref());
+            Some((auth.clone(), cfg.to_string(), models.map(|v| v.to_vec())))
+        })
+    } else {
+        None
+    };
+
+    let result = ProviderService::update(state.inner(), app_type.clone(), originalId.as_deref(), provider)
+        .map_err(|e| e.to_string())?;
+
+    if let Some((auth, cfg, models)) = codex_sync_data {
+        let model_slice: Option<Vec<String>> = models;
+        let _ = crate::codex_config::write_codex_live_atomic_with_stable_provider(
+            &auth,
+            Some(&cfg),
+            model_slice.as_deref(),
+        );
+        // 如果代理接管处于激活状态，重新应用代理地址到 config.toml
+        let is_proxy_running = futures::executor::block_on(state.proxy_service.is_running());
+        if is_proxy_running {
+            let has_live_backup = futures::executor::block_on(
+                state.db.get_live_backup(app_type.as_str()),
+            )
+            .ok()
+            .flatten()
+            .is_some();
+            if has_live_backup {
+                let _ = futures::executor::block_on(
+                    state
+                        .proxy_service
+                        .takeover_live_config_best_effort(&app_type),
+                );
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 #[tauri::command]

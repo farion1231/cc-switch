@@ -6,7 +6,7 @@ use crate::config::{
     write_text_file,
 };
 use crate::error::AppError;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
 use toml_edit::DocumentMut;
@@ -44,6 +44,11 @@ pub fn get_codex_config_path() -> PathBuf {
     get_codex_config_dir().join("config.toml")
 }
 
+/// 获取 Codex models_catalog.json 路径
+pub fn get_codex_models_catalog_path() -> PathBuf {
+    get_codex_config_dir().join("models_catalog.json")
+}
+
 /// 获取 Codex 供应商配置文件路径
 #[allow(dead_code)]
 pub fn get_codex_provider_paths(
@@ -74,10 +79,154 @@ pub fn delete_codex_provider_config(
     Ok(())
 }
 
-/// 原子写 Codex 的 `auth.json` 与 `config.toml`，在第二步失败时回滚第一步
+/// Codex models_catalog.json 中的模型条目（字段对齐 Moon Bridge ModelInfo）
+#[derive(serde::Serialize)]
+struct CodexModelCatalogEntry {
+    slug: String,
+    display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    shell_type: String,
+    visibility: String,
+    supported_in_api: bool,
+    priority: u32,
+    additional_speed_tiers: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default_reasoning_level: Option<String>,
+    supported_reasoning_levels: Vec<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    availability_nux: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    upgrade: Option<Value>,
+    base_instructions: String,
+    supports_reasoning_summaries: bool,
+    default_reasoning_summary: String,
+    support_verbosity: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default_verbosity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    apply_patch_tool_type: Option<String>,
+    web_search_tool_type: String,
+    truncation_policy: Value,
+    supports_parallel_tool_calls: bool,
+    supports_image_detail_original: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_window: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_context_window: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auto_compact_token_limit: Option<u32>,
+    effective_context_window_percent: u32,
+    experimental_supported_tools: Vec<String>,
+    input_modalities: Vec<String>,
+    supports_search_tool: bool,
+}
+
+#[derive(serde::Serialize)]
+struct CodexModelsCatalog {
+    models: Vec<CodexModelCatalogEntry>,
+}
+
+/// 从模型名列表构建默认 catalog entries
+fn build_default_catalog_entries(models: &[String]) -> Vec<CodexModelCatalogEntry> {
+    models
+        .iter()
+        .map(|model_id| {
+            let display_name = model_id.clone();
+            CodexModelCatalogEntry {
+                slug: model_id.clone(),
+                display_name,
+                description: None,
+                shell_type: "unified_exec".to_string(),
+                visibility: "list".to_string(),
+                supported_in_api: true,
+                priority: 0,
+                additional_speed_tiers: vec![],
+                default_reasoning_level: Some("high".to_string()),
+                supported_reasoning_levels: vec![
+                    json!({"effort": "high", "description": "深度推理"}),
+                    json!({"effort": "low", "description": "快速响应"}),
+                ],
+                availability_nux: None,
+                upgrade: None,
+                base_instructions: "You are a helpful coding assistant.".to_string(),
+                supports_reasoning_summaries: false,
+                default_reasoning_summary: "none".to_string(),
+                support_verbosity: false,
+                default_verbosity: None,
+                apply_patch_tool_type: Some("freeform".to_string()),
+                web_search_tool_type: "text".to_string(),
+                truncation_policy: json!({"mode": "tokens", "limit": 10000}),
+                supports_parallel_tool_calls: true,
+                supports_image_detail_original: false,
+                context_window: Some(200000),
+                max_context_window: Some(200000),
+                auto_compact_token_limit: None,
+                effective_context_window_percent: 95,
+                experimental_supported_tools: vec![],
+                input_modalities: vec!["text".to_string()],
+                supports_search_tool: false,
+            }
+        })
+        .collect()
+}
+
+/// 从 config.toml 文本中提取 model 字段
+fn extract_model_from_config_text(config_text: &str) -> Option<String> {
+    let doc = config_text.parse::<DocumentMut>().ok()?;
+    doc.get("model")
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// 写入 Codex models_catalog.json
+fn write_codex_models_catalog(models: &[String]) -> Result<(), AppError> {
+    let catalog_path = get_codex_models_catalog_path();
+    if let Some(parent) = catalog_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+    }
+    let entries = build_default_catalog_entries(models);
+    let catalog = CodexModelsCatalog { models: entries };
+    let json_text = serde_json::to_string_pretty(&catalog)
+        .map_err(|e| AppError::Message(format!("Failed to serialize models catalog: {e}")))?;
+    std::fs::write(&catalog_path, &json_text)
+        .map_err(|e| AppError::io(&catalog_path, e))
+}
+
+/// 确保 config.toml 中包含 model_catalog_json 字段
+fn ensure_model_catalog_json_in_toml(config_text: &str) -> String {
+    let catalog_path = get_codex_config_dir().join("models_catalog.json");
+    let catalog_path_str = catalog_path.to_string_lossy().to_string();
+
+    if config_text.trim().is_empty() {
+        return format!("model_catalog_json = \"{catalog_path_str}\"\n");
+    }
+
+    match config_text.parse::<DocumentMut>() {
+        Ok(mut doc) => {
+            let existing = doc
+                .get("model_catalog_json")
+                .and_then(|item| item.as_str());
+            if existing == Some(&catalog_path_str) {
+                return config_text.to_string();
+            }
+            doc["model_catalog_json"] = toml_edit::value(catalog_path_str.as_str());
+            doc.to_string()
+        }
+        Err(_) => config_text.to_string(),
+    }
+}
+
+/// 原子写 Codex 的 `auth.json` 与 `config.toml`，在第二步失败时回滚第一步。
+///
+/// `catalog_models`：models_catalog.json 中应包含的模型 ID 列表；
+/// 为 `None` 时从 config_text 中提取单个模型名作为兜底。
 pub fn write_codex_live_atomic(
     auth: &Value,
     config_text_opt: Option<&str>,
+    catalog_models: Option<&[String]>,
 ) -> Result<(), AppError> {
     let auth_path = get_codex_auth_path();
     let config_path = get_codex_config_path();
@@ -98,14 +247,17 @@ pub fn write_codex_live_atomic(
         None
     };
 
-    // 准备写入内容
-    let cfg_text = match config_text_opt {
+    // 准备写入内容，注入 model_catalog_json
+    let raw_text = match config_text_opt {
         Some(s) => s.to_string(),
         None => String::new(),
     };
-    if !cfg_text.trim().is_empty() {
-        toml::from_str::<toml::Table>(&cfg_text).map_err(|e| AppError::toml(&config_path, e))?;
-    }
+    let cfg_text = if raw_text.trim().is_empty() {
+        raw_text
+    } else {
+        toml::from_str::<toml::Table>(&raw_text).map_err(|e| AppError::toml(&config_path, e))?;
+        ensure_model_catalog_json_in_toml(&raw_text)
+    };
 
     // 第一步：写 auth.json
     write_json_file(&auth_path, auth)?;
@@ -119,6 +271,19 @@ pub fn write_codex_live_atomic(
             let _ = delete_file(&auth_path);
         }
         return Err(e);
+    }
+
+    // 第三步：生成 models_catalog.json（非关键，失败不阻塞）
+    let model_ids: Vec<String> = match catalog_models {
+        Some(models) if !models.is_empty() => models.to_vec(),
+        _ => extract_model_from_config_text(&cfg_text)
+            .into_iter()
+            .collect(),
+    };
+    if !model_ids.is_empty() {
+        if let Err(e) = write_codex_models_catalog(&model_ids) {
+            log::warn!("[Codex] Failed to write models_catalog.json: {e}");
+        }
     }
 
     Ok(())
@@ -396,6 +561,7 @@ pub fn restore_codex_settings_config_model_provider_for_backfill(
 pub fn write_codex_live_atomic_with_stable_provider(
     auth: &Value,
     config_text_opt: Option<&str>,
+    catalog_models: Option<&[String]>,
 ) -> Result<(), AppError> {
     match config_text_opt {
         Some(config_text) => {
@@ -407,9 +573,9 @@ pub fn write_codex_live_atomic_with_stable_provider(
                 .get("config")
                 .and_then(|value| value.as_str())
                 .unwrap_or(config_text);
-            write_codex_live_atomic(auth, Some(config_text))
+            write_codex_live_atomic(auth, Some(config_text), catalog_models)
         }
-        None => write_codex_live_atomic(auth, None),
+        None => write_codex_live_atomic(auth, None, catalog_models),
     }
 }
 
@@ -977,5 +1143,67 @@ base_url = "https://production.api/v1"
             .and_then(|v| v.get("base_url"))
             .and_then(|v| v.as_str());
         assert_eq!(base_url, Some("https://production.api/v1"));
+    }
+
+    #[test]
+    fn extract_model_from_standard_config() {
+        let config = r#"model_provider = "deepseek"
+model = "deepseek-v4-pro"
+
+[model_providers.deepseek]
+name = "deepseek"
+wire_api = "responses"
+"#;
+        assert_eq!(
+            extract_model_from_config_text(config),
+            Some("deepseek-v4-pro".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_model_returns_none_when_absent() {
+        let config = r#"model_provider = "deepseek"
+[model_providers.deepseek]
+name = "deepseek"
+"#;
+        assert_eq!(extract_model_from_config_text(config), None);
+    }
+
+    #[test]
+    fn ensure_model_catalog_json_adds_field() {
+        let config = r#"model_provider = "deepseek"
+model = "deepseek-v4-pro"
+"#;
+        let result = ensure_model_catalog_json_in_toml(config);
+        assert!(result.contains("model_catalog_json"));
+        assert!(result.contains("models_catalog.json"));
+        assert!(result.contains("deepseek-v4-pro")); // original content preserved
+    }
+
+    #[test]
+    fn ensure_model_catalog_json_preserves_existing_value() {
+        let catalog_path = get_codex_config_dir().join("models_catalog.json");
+        let catalog_str = catalog_path.to_string_lossy();
+        let config = format!("model = \"test\"\nmodel_catalog_json = \"{catalog_str}\"\n");
+        let result = ensure_model_catalog_json_in_toml(&config);
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert_eq!(
+            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
+            Some(catalog_str.as_ref())
+        );
+    }
+
+    #[test]
+    fn build_catalog_entries_creates_valid_structure() {
+        let entries = build_default_catalog_entries(&["deepseek-v4-pro".to_string()]);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].slug, "deepseek-v4-pro");
+        assert_eq!(entries[0].display_name, "deepseek-v4-pro");
+        assert_eq!(entries[0].shell_type, "unified_exec");
+        assert_eq!(entries[0].context_window, Some(200000));
+        assert!(entries[0].additional_speed_tiers.is_empty());
+        assert!(entries[0].experimental_supported_tools.is_empty());
+        assert_eq!(entries[0].supported_reasoning_levels.len(), 2);
+        assert_eq!(entries[0].input_modalities, vec!["text"]);
     }
 }

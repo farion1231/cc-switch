@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { Download, Loader2 } from "lucide-react";
+import { Download, Loader2, Minus, Plus } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/select";
 import { FormLabel } from "@/components/ui/form";
 import EndpointSpeedTest from "./EndpointSpeedTest";
-import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
+import { ApiKeySection, EndpointField } from "./shared";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -47,17 +47,18 @@ interface CodexFormFieldsProps {
   autoSelect: boolean;
   onAutoSelectChange: (checked: boolean) => void;
 
-  // Model Name
-  shouldShowModelField?: boolean;
-  modelName?: string;
-  onModelNameChange?: (model: string) => void;
-
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
 
   // API Format
   apiFormat: string;
   onApiFormatChange: (format: string) => void;
+
+  // Model Mapping
+  codexModels: string[];
+  onCodexModelsChange: (models: string[]) => void;
+  codexDefaultModel: string;
+  onCodexDefaultModelChange: (model: string) => void;
 }
 
 export function CodexFormFields({
@@ -79,12 +80,12 @@ export function CodexFormFields({
   onCustomEndpointsChange,
   autoSelect,
   onAutoSelectChange,
-  shouldShowModelField = true,
-  modelName = "",
-  onModelNameChange,
   speedTestEndpoints,
   apiFormat,
   onApiFormatChange,
+  codexModels,
+  onCodexModelsChange,
+  onCodexDefaultModelChange,
 }: CodexFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -173,31 +174,12 @@ export function CodexFormFields({
         </div>
       )}
 
-      {/* Codex Base URL 输入框 */}
+      {/* 获取模型 + 模型映射（动态行，第一行为默认模型） */}
       {shouldShowSpeedTest && (
-        <EndpointField
-          id="codexBaseUrl"
-          label={t("codexConfig.apiUrlLabel")}
-          value={codexBaseUrl}
-          onChange={onBaseUrlChange}
-          placeholder={t("providerForm.codexApiEndpointPlaceholder")}
-          hint={t("providerForm.codexApiHint")}
-          showFullUrlToggle
-          isFullUrl={isFullUrl}
-          onFullUrlChange={onFullUrlChange}
-          onManageClick={() => onEndpointModalToggle(true)}
-        />
-      )}
-
-      {/* Codex Model Name 输入框 */}
-      {shouldShowModelField && onModelNameChange && (
-        <div className="space-y-2">
+        <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <label
-              htmlFor="codexModelName"
-              className="block text-sm font-medium text-foreground"
-            >
-              {t("codexConfig.modelName", { defaultValue: "模型名称" })}
+            <label className="block text-sm font-medium text-foreground">
+              {t("providerForm.modelMapping", { defaultValue: "模型映射" })}
             </label>
             <Button
               type="button"
@@ -215,26 +197,137 @@ export function CodexFormFields({
               {t("providerForm.fetchModels")}
             </Button>
           </div>
-          <ModelInputWithFetch
-            id="codexModelName"
-            value={modelName}
-            onChange={(v) => onModelNameChange!(v)}
-            placeholder={t("codexConfig.modelNamePlaceholder", {
-              defaultValue: "例如: gpt-5.4",
-            })}
-            fetchedModels={fetchedModels}
-            isLoading={isFetchingModels}
-          />
-          <p className="text-xs text-muted-foreground">
-            {modelName.trim()
-              ? t("codexConfig.modelNameHint", {
-                  defaultValue: "指定使用的模型，将自动更新到 config.toml 中",
-                })
-              : t("providerForm.modelHint", {
-                  defaultValue: "💡 留空将使用供应商的默认模型",
-                })}
-          </p>
+
+          {(fetchedModels.length > 0 || codexModels.length > 0) && (
+            <div className="space-y-1.5">
+              {codexModels.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {t("providerForm.addModelRow", {
+                    defaultValue: "点击 + 添加模型，第一个模型作为默认模型",
+                  })}
+                </p>
+              )}
+              {codexModels.map((modelId, index) => {
+                // 合并已保存但不在 fetchedModels 中的模型名，确保显示
+                const allOptions = [
+                  ...fetchedModels,
+                  ...(!fetchedModels.some((m) => m.id === modelId)
+                    ? [{ id: modelId, ownedBy: null as string | null }]
+                    : []),
+                ];
+                const availableModels = allOptions.filter(
+                  (m) => !codexModels.includes(m.id) || m.id === modelId,
+                );
+                const hasFetched = fetchedModels.length > 0;
+                return (
+                  <div key={index} className="flex items-center gap-2">
+                    <div className="flex-1">
+                      {hasFetched ? (
+                        <select
+                          value={modelId}
+                          onChange={(e) => {
+                            const newId = e.target.value;
+                            const updated = [...codexModels];
+                            updated[index] = newId;
+                            onCodexModelsChange(updated);
+                            if (index === 0) {
+                              onCodexDefaultModelChange(newId);
+                            }
+                          }}
+                          className="flex h-9 w-full rounded-md border border-border-default bg-background px-3 py-2 text-sm focus:outline-none focus:border-border-active"
+                        >
+                          {availableModels.length === 0 ? (
+                            <option value={modelId}>{modelId}</option>
+                          ) : (
+                            availableModels.map((m) => (
+                              <option key={m.id} value={m.id}>
+                                {m.id}{index === 0 ? " (默认)" : ""}
+                              </option>
+                            ))
+                          )}
+                        </select>
+                      ) : (
+                        <div className="flex h-9 items-center rounded-md border px-3 text-sm">
+                          {modelId}
+                          {index === 0 && (
+                            <span className="ml-1 text-muted-foreground">
+                              {t("providerForm.defaultModelTag", {
+                                defaultValue: "(默认)",
+                              })}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => {
+                        const updated = codexModels.filter(
+                          (_, i) => i !== index,
+                        );
+                        onCodexModelsChange(updated);
+                        if (index === 0 && updated.length > 0) {
+                          onCodexDefaultModelChange(updated[0]);
+                        }
+                      }}
+                    >
+                      <Minus className="h-4 w-4" />
+                    </Button>
+                  </div>
+                );
+              })}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1"
+                onClick={() => {
+                  const available = fetchedModels.find(
+                    (m) => !codexModels.includes(m.id),
+                  );
+                  if (available) {
+                    const updated = [...codexModels, available.id];
+                    onCodexModelsChange(updated);
+                    if (updated.length === 1) {
+                      onCodexDefaultModelChange(available.id);
+                    }
+                  }
+                }}
+                disabled={codexModels.length >= fetchedModels.length}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                {t("providerForm.addModel", { defaultValue: "添加模型" })}
+              </Button>
+            </div>
+          )}
+          {fetchedModels.length === 0 && codexModels.length === 0 && !isFetchingModels && (
+            <p className="text-xs text-muted-foreground">
+              {t("providerForm.fetchModelsToConfigure", {
+                defaultValue: "输入 API Key 和 Base URL 后点击'获取模型'来配置模型映射",
+              })}
+            </p>
+          )}
+
         </div>
+      )}
+
+      {/* Codex Base URL 输入框 */}
+      {shouldShowSpeedTest && (
+        <EndpointField
+          id="codexBaseUrl"
+          label={t("codexConfig.apiUrlLabel")}
+          value={codexBaseUrl}
+          onChange={onBaseUrlChange}
+          placeholder={t("providerForm.codexApiEndpointPlaceholder")}
+          hint={t("providerForm.codexApiHint")}
+          showFullUrlToggle
+          isFullUrl={isFullUrl}
+          onFullUrlChange={onFullUrlChange}
+          onManageClick={() => onEndpointModalToggle(true)}
+        />
       )}
 
       {/* 端点测速弹窗 - Codex */}
@@ -251,6 +344,54 @@ export function CodexFormFields({
           onAutoSelectChange={onAutoSelectChange}
           onCustomEndpointsChange={onCustomEndpointsChange}
         />
+      )}
+
+      {/* models_catalog.json 预览 */}
+      {codexModels.length > 0 && (
+        <details className="text-xs">
+          <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+            {t("providerForm.modelsCatalogPreview", {
+              defaultValue: "models_catalog.json 预览",
+            })}
+          </summary>
+          <pre className="mt-1 rounded bg-muted p-2 text-xs overflow-x-auto max-h-40">
+            {JSON.stringify(
+              {
+                models: codexModels.map((slug) => ({
+                  slug,
+                  display_name: slug,
+                  shell_type: "unified_exec",
+                  visibility: "list",
+                  supported_in_api: true,
+                  priority: 0,
+                  additional_speed_tiers: [],
+                  default_reasoning_level: "high",
+                  supported_reasoning_levels: [
+                    { effort: "high", description: "深度推理" },
+                    { effort: "low", description: "快速响应" },
+                  ],
+                  base_instructions: "You are a helpful coding assistant.",
+                  supports_reasoning_summaries: false,
+                  default_reasoning_summary: "none",
+                  support_verbosity: false,
+                  apply_patch_tool_type: "freeform",
+                  web_search_tool_type: "text",
+                  truncation_policy: { mode: "tokens", limit: 10000 },
+                  supports_parallel_tool_calls: true,
+                  supports_image_detail_original: false,
+                  context_window: 200000,
+                  max_context_window: 200000,
+                  effective_context_window_percent: 95,
+                  experimental_supported_tools: [],
+                  input_modalities: ["text"],
+                  supports_search_tool: false,
+                })),
+              },
+              null,
+              2,
+            )}
+          </pre>
+        </details>
       )}
     </>
   );

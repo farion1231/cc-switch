@@ -159,7 +159,15 @@ impl ConfigService {
         }
         let cfg_text = settings.get("config").and_then(Value::as_str);
 
-        crate::codex_config::write_codex_live_atomic_with_stable_provider(auth, cfg_text)?;
+        let catalog_models = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.codex_models.as_deref());
+        crate::codex_config::write_codex_live_atomic_with_stable_provider(
+            auth,
+            cfg_text,
+            catalog_models,
+        )?;
         // 注意：MCP 同步在 v3.7.0 中已通过 McpService 进行，不再在此调用
         // sync_enabled_to_codex 使用旧的 config.mcp.codex 结构，在新架构中为空
         // MCP 的启用/禁用应通过 McpService::toggle_app 进行

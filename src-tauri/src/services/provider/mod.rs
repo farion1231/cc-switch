@@ -1259,6 +1259,14 @@ impl ProviderService {
                     )
                     .map_err(|e| AppError::Message(format!("同步 Claude Live 配置失败: {e}")))?;
                 }
+                if matches!(app_type, AppType::Codex) {
+                    futures::executor::block_on(
+                        state
+                            .proxy_service
+                            .takeover_live_config_best_effort(&AppType::Codex),
+                    )
+                    .map_err(|e| AppError::Message(format!("同步 Codex Live 配置失败: {e}")))?;
+                }
             } else {
                 write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
                 // Sync MCP

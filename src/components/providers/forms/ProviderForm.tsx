@@ -366,8 +366,8 @@ function ProviderFormFull({
     return "anthropic";
   });
 
-  const handleApiFormatChange = useCallback((format: ClaudeApiFormat) => {
-    setLocalApiFormat(format);
+  const handleApiFormatChange = useCallback((format: string) => {
+    setLocalApiFormat(format as ClaudeApiFormat);
   }, []);
 
   const handleApiKeyFieldChange = useCallback(
@@ -412,13 +412,16 @@ function ProviderFormFull({
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
   );
+  const [localCodexModels, setLocalCodexModels] = useState<string[]>(
+    () => initialData?.meta?.codexModels ?? [],
+  );
 
   const {
     codexAuth,
     codexConfig,
     codexApiKey,
     codexBaseUrl,
-    codexModelName,
+    codexModelName: _codexModelName,
     codexAuthError,
     setCodexAuth,
     handleCodexApiKeyChange,
@@ -427,6 +430,24 @@ function ProviderFormFull({
     handleCodexConfigChange: originalHandleCodexConfigChange,
     resetCodexConfig,
   } = useCodexConfigState({ initialData });
+
+  const localCodexDefaultModel =
+    localCodexModels.length > 0 ? localCodexModels[0] : "";
+  const handleCodexDefaultModelChange = useCallback(
+    (model: string) => {
+      if (model) {
+        handleCodexModelNameChange(model);
+      }
+    },
+    [handleCodexModelNameChange],
+  );
+
+  // 初次加载时，用 codexModels[0] 同步 TOML model 字段
+  useEffect(() => {
+    if (localCodexDefaultModel) {
+      handleCodexModelNameChange(localCodexDefaultModel);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { configError: codexConfigError, debouncedValidate } =
     useCodexTomlValidation();
@@ -1249,6 +1270,13 @@ function ProviderFormFull({
       delete nextMeta.codexFastMode;
     }
 
+    // Codex model mapping
+    if (appId === "codex" && category !== "official") {
+      nextMeta.codexModels =
+        localCodexModels.length > 0 ? localCodexModels : undefined;
+      nextMeta.codexDefaultModel = localCodexDefaultModel || undefined;
+    }
+
     payload.meta = nextMeta;
 
     await onSubmit(payload);
@@ -1856,12 +1884,13 @@ function ProviderFormFull({
               }
               autoSelect={endpointAutoSelect}
               onAutoSelectChange={setEndpointAutoSelect}
-              shouldShowModelField={category !== "official"}
-              modelName={codexModelName}
-              onModelNameChange={handleCodexModelNameChange}
               speedTestEndpoints={speedTestEndpoints}
               apiFormat={localApiFormat}
               onApiFormatChange={handleApiFormatChange}
+              codexModels={localCodexModels}
+              onCodexModelsChange={setLocalCodexModels}
+              codexDefaultModel={localCodexDefaultModel}
+              onCodexDefaultModelChange={handleCodexDefaultModelChange}
             />
           )}
 
