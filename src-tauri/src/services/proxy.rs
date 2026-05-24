@@ -5,7 +5,7 @@
 use crate::app_config::AppType;
 use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
 use crate::database::Database;
-use crate::provider::Provider;
+use crate::provider::{ClaudeActivationMode, Provider};
 use crate::proxy::server::ProxyServer;
 use crate::proxy::switch_lock::SwitchLockManager;
 use crate::proxy::types::*;
@@ -1745,7 +1745,15 @@ impl ProxyService {
             self.update_live_backup_from_provider_inner(app_type, &provider)
                 .await?;
 
-            if matches!(app_type_enum, AppType::Claude) {
+            let is_claude_profile_only = matches!(app_type_enum, AppType::Claude)
+                && matches!(
+                    provider
+                        .meta
+                        .as_ref()
+                        .and_then(|meta| meta.claude_activation_mode.as_ref()),
+                    Some(ClaudeActivationMode::ProfileOnly)
+                );
+            if matches!(app_type_enum, AppType::Claude) && !is_claude_profile_only {
                 self.sync_claude_live_from_provider_while_proxy_active(&provider)
                     .await?;
             }

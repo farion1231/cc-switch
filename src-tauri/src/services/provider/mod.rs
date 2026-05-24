@@ -2544,6 +2544,20 @@ base_url = "http://localhost:8080"
         ProviderService::switch(&state, AppType::Claude, "profile-only")
             .expect("hot-switch to profile-only provider");
 
+        let proxy_status = state
+            .proxy_service
+            .get_status()
+            .await
+            .expect("get proxy status");
+        assert!(
+            proxy_status.active_targets.iter().any(|target| {
+                target.app_type == "claude"
+                    && target.provider_id == "profile-only"
+                    && target.provider_name == "Claude Profile"
+            }),
+            "profile-only hot-switch should update the running proxy target"
+        );
+
         assert_eq!(
             crate::settings::get_claude_override_dir().as_deref(),
             Some(profile_dir.as_path()),
@@ -4345,22 +4359,12 @@ impl ProviderService {
                     Self::apply_claude_switch_plan(plan)?;
                 }
 
-                if !matches!(
-                    claude_switch_plan
-                        .as_ref()
-                        .map(|plan| &plan.activation_mode),
-                    Some(ClaudeActivationMode::ProfileOnly)
-                ) {
-                    futures::executor::block_on(
-                        state
-                            .proxy_service
-                            .hot_switch_provider(app_type.as_str(), id),
-                    )
-                    .map_err(|e| AppError::Message(format!("热切换失败: {e}")))?;
-                } else {
-                    state.db.set_current_provider(app_type.as_str(), id)?;
-                    crate::settings::set_current_provider(&app_type, Some(id))?;
-                }
+                futures::executor::block_on(
+                    state
+                        .proxy_service
+                        .hot_switch_provider(app_type.as_str(), id),
+                )
+                .map_err(|e| AppError::Message(format!("热切换失败: {e}")))?;
 
                 Ok(())
             })();
