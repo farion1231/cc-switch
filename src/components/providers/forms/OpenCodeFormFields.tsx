@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import {
   getModelExtraFields,
   isKnownModelKey,
+  mergeFetchedModelsIntoOpenCodeModels,
 } from "./helpers/opencodeFormUtils";
 import type { ProviderCategory, OpenCodeModel } from "@/types";
 
@@ -190,6 +191,11 @@ export function OpenCodeFormFields({
 
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const modelsRef = useRef(models);
+
+  useEffect(() => {
+    modelsRef.current = models;
+  }, [models]);
 
   const handleFetchModels = useCallback(() => {
     if (!baseUrl || !apiKey) {
@@ -201,13 +207,20 @@ export function OpenCodeFormFields({
     }
     setIsFetchingModels(true);
     fetchModelsForConfig(baseUrl, apiKey)
-      .then((models) => {
-        setFetchedModels(models);
-        if (models.length === 0) {
+      .then((fetched) => {
+        setFetchedModels(fetched);
+        if (fetched.length === 0) {
           toast.info(t("providerForm.fetchModelsEmpty"));
         } else {
+          const mergedModels = mergeFetchedModelsIntoOpenCodeModels(
+            modelsRef.current,
+            fetched,
+          );
+          if (mergedModels !== modelsRef.current) {
+            onModelsChange(mergedModels);
+          }
           toast.success(
-            t("providerForm.fetchModelsSuccess", { count: models.length }),
+            t("providerForm.fetchModelsSuccess", { count: fetched.length }),
           );
         }
       })
@@ -216,7 +229,7 @@ export function OpenCodeFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [baseUrl, apiKey, t]);
+  }, [baseUrl, apiKey, onModelsChange, t]);
 
   // Track which models have expanded options panel
   const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());

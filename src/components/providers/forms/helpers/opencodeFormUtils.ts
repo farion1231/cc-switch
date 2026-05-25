@@ -152,6 +152,24 @@ export function toOpencodeExtraOptions(
   return extra;
 }
 
+export function mergeFetchedModelsIntoOpenCodeModels(
+  current: Record<string, OpenCodeModel>,
+  fetched: Array<{ id: string }>,
+): Record<string, OpenCodeModel> {
+  let changed = false;
+  const next = { ...current };
+
+  for (const model of fetched) {
+    const id = model.id.trim();
+    if (!id || next[id]) continue;
+
+    next[id] = { name: id };
+    changed = true;
+  }
+
+  return changed ? next : current;
+}
+
 export { buildOmoProfilePreview } from "@/types/omo";
 
 export const normalizePricingSource = (
