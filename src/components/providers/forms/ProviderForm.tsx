@@ -518,7 +518,8 @@ function ProviderFormFull({
     (format: CodexApiFormat) => {
       setLocalCodexApiFormat(format);
       setCodexConfig((prev) => {
-        const updated = setCodexWireApi(prev, "responses");
+        const wireApiValue = format === "openai_chat" ? "chat" : "responses";
+        const updated = setCodexWireApi(prev, wireApiValue);
         debouncedValidate(updated);
         return updated;
       });
@@ -1147,7 +1148,10 @@ function ProviderFormFull({
         const authJson = JSON.parse(codexAuth);
         const normalizedCodexConfig =
           category !== "official" && (codexConfig ?? "").trim()
-            ? setCodexWireApi(codexConfig ?? "", "responses")
+            ? setCodexWireApi(
+                codexConfig ?? "",
+                localCodexApiFormat === "openai_chat" ? "chat" : "responses",
+              )
             : (codexConfig ?? "");
         const configObj = {
           auth: authJson,
@@ -1333,12 +1337,14 @@ function ProviderFormFull({
         pricingConfig.enabled && pricingConfig.pricingModelSource !== "inherit"
           ? pricingConfig.pricingModelSource
           : undefined,
-      apiFormat:
-        appId === "claude" && category !== "official"
-          ? localApiFormat
-          : appId === "codex" && category !== "official"
-            ? localCodexApiFormat
-            : undefined,
+      // Codex: 非官方供应商始终保存 apiFormat
+      ...(appId === "codex" && category !== "official"
+        ? { apiFormat: localCodexApiFormat }
+        : {}),
+      // Claude: 非官方供应商保存 apiFormat
+      ...(appId === "claude" && category !== "official"
+        ? { apiFormat: localApiFormat }
+        : {}),
       apiKeyField:
         appId === "claude" &&
         category !== "official" &&
@@ -1349,13 +1355,15 @@ function ProviderFormFull({
         supportsFullUrl && category !== "official" && localIsFullUrl
           ? true
           : undefined,
-      chatCompatibilityMode:
+      // DeepSeek 模型开启 Chat 兼容模式
+      ...(
         appId === "codex" &&
         category !== "official" &&
         localCodexApiFormat === "openai_chat" &&
         localCodexChatCompatibilityMode !== "standard"
-          ? localCodexChatCompatibilityMode
-          : undefined,
+          ? { chatCompatibilityMode: localCodexChatCompatibilityMode }
+          : {}
+      ),
     };
 
     if (!isCodexOauthProvider && "codexFastMode" in nextMeta) {

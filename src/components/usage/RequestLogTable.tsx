@@ -317,22 +317,19 @@ export function RequestLogTable({
                             className="truncate"
                             title={
                               log.requestModel && log.requestModel !== log.model
-                                ? `${log.requestModel} → ${log.model}`
+                                ? `${t("usage.requestModel")}: ${log.requestModel}`
                                 : log.model
                             }
                           >
+                            <span className="text-foreground">
+                              {log.model}
+                            </span>
                             {log.requestModel &&
                             log.requestModel !== log.model ? (
-                              <span>
-                                {log.requestModel}
-                                <span className="text-muted-foreground">
-                                  {" → "}
-                                  {log.model}
-                                </span>
+                              <span className="text-muted-foreground">
+                                {" "}{t("usage.requestModel")}: {log.requestModel}
                               </span>
-                            ) : (
-                              log.model
-                            )}
+                            ) : null}
                           </div>
                         </TableCell>
                         <TableCell className="text-center px-1.5">
