@@ -45,6 +45,8 @@ pub use claude::{
 pub use codex::should_convert_codex_responses_to_chat;
 pub use codex::codex_chat_compatibility_mode;
 pub use codex::extract_codex_model_from_toml;
+pub use codex::extract_codex_wire_api_from_toml;
+pub use codex::is_chat_wire_api;
 pub use codex::CodexAdapter;
 pub use gemini::GeminiAdapter;
 

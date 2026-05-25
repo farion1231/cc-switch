@@ -1366,6 +1366,16 @@ function ProviderFormFull({
       ),
     };
 
+    // 删除不应存在的 chatCompatibilityMode（关开关 / 非 chat 格式时清理残留）
+    const shouldHaveCompat =
+      appId === "codex" &&
+      category !== "official" &&
+      localCodexApiFormat === "openai_chat" &&
+      localCodexChatCompatibilityMode !== "standard";
+    if (!shouldHaveCompat) {
+      delete nextMeta.chatCompatibilityMode;
+    }
+
     if (!isCodexOauthProvider && "codexFastMode" in nextMeta) {
       delete nextMeta.codexFastMode;
     }

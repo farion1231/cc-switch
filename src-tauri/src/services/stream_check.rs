@@ -18,6 +18,7 @@ use crate::proxy::providers::transform_gemini::anthropic_to_gemini;
 use crate::proxy::providers::transform_responses::anthropic_to_responses;
 use crate::proxy::providers::{
     get_adapter, AuthInfo, AuthStrategy, ClaudeAdapter, ProviderAdapter,
+    is_chat_wire_api, extract_codex_wire_api_from_toml,
 };
 
 /// 健康状态枚举
@@ -540,13 +541,22 @@ impl StreamCheckService {
             .and_then(|meta| meta.is_full_url)
             .unwrap_or(false);
 
-        // 检测 apiFormat：override > meta.apiFormat > 默认 "openai_chat"
+        // 检测 apiFormat：override > meta.apiFormat > TOML wire_api > 默认 "openai_chat"
         let api_format = api_format_override
             .or_else(|| {
                 provider
                     .meta
                     .as_ref()
                     .and_then(|m| m.api_format.as_deref())
+            })
+            .or_else(|| {
+                provider
+                    .settings_config
+                    .get("config")
+                    .and_then(|v| v.as_str())
+                    .and_then(extract_codex_wire_api_from_toml)
+                    .as_deref()
+                    .and_then(|wire| if is_chat_wire_api(wire) { Some("openai_chat") } else { Some("openai_responses") })
             })
             .unwrap_or("openai_chat");
 

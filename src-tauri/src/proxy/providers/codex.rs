@@ -93,7 +93,7 @@ pub fn codex_chat_compatibility_mode(provider: &Provider) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn is_chat_wire_api(value: &str) -> bool {
+pub fn is_chat_wire_api(value: &str) -> bool {
     matches!(
         value.trim().to_ascii_lowercase().as_str(),
         "chat"
@@ -112,7 +112,7 @@ fn is_chat_completions_url(value: &str) -> bool {
         .ends_with("/chat/completions")
 }
 
-fn extract_codex_wire_api_from_toml(config_text: &str) -> Option<String> {
+pub fn extract_codex_wire_api_from_toml(config_text: &str) -> Option<String> {
     let doc = config_text.parse::<TomlValue>().ok()?;
 
     if let Some(active_provider) = doc.get("model_provider").and_then(|v| v.as_str()) {
