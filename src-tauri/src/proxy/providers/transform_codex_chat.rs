@@ -27,9 +27,12 @@ const THINK_OPEN_TAG: &str = "<think>";
 const THINK_CLOSE_TAG: &str = "</think>";
 
 /// Appended to the first system message for Codex -> Chat Completions requests
-/// to encourage immediate tool calls instead of describing steps and waiting.
+/// to reinforce Codex-like agent behavior: continue multi-step tasks to
+/// completion, call tools immediately instead of describing-and-waiting,
+/// respect explicit sequencing (no parallel tool calls when ordered), and
+/// output copyable Markdown task blocks when asked for a handoff or checklist.
 const AGENT_LOOP_HINT: &str =
-    "\n\nWhen executing a multi-step task, call tools immediately in the same turn as your response text. Do not describe a step and wait for user confirmation; execute it directly with a tool call when a tool is needed.";
+    "\n\nYou are running inside Codex. Follow Codex agent behavior, not generic chat behavior. Distinguish planning, execution, handoff, and review requests. For planning requests, clarify assumptions and keep scope tight. For execution, diagnosis, testing, fixing, or verification requests, use tools proactively and continue until you reach a concrete result; do not ask for confirmation unless required information is missing, the action is destructive, or a product decision is ambiguous. For handoff, task, checklist, or tool-instruction requests, provide a complete copyable Markdown block with goal, scope, non-goals, acceptance criteria, and verification when relevant. For review requests, lead with findings, risks, regressions, and missing tests. For multi-step work, continue the agent loop until complete; call tools in the same turn when needed, and respect explicit sequential-execution instructions.";
 
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request.
 pub fn responses_to_chat_completions(
@@ -1320,8 +1323,7 @@ mod tests {
         let content = result["messages"][0]["content"].as_str().unwrap();
 
         assert!(content.starts_with("You are a coding assistant."));
-        assert!(content.contains("call tools immediately"));
-        assert!(content.contains("Do not describe a step and wait"));
+        assert!(content.contains(AGENT_LOOP_HINT));
     }
 
     #[test]
@@ -1354,13 +1356,13 @@ mod tests {
 
         let result1 = responses_to_chat_completions(input.clone(), None).unwrap();
         let content1 = result1["messages"][0]["content"].as_str().unwrap();
-        let hint_count1 = content1.matches("call tools immediately").count();
+        let hint_count1 = content1.matches(AGENT_LOOP_HINT).count();
         assert_eq!(hint_count1, 1, "hint should appear exactly once");
 
         // Convert the same input again (simulating repeated calls)
         let result2 = responses_to_chat_completions(input.clone(), None).unwrap();
         let content2 = result2["messages"][0]["content"].as_str().unwrap();
-        let hint_count2 = content2.matches("call tools immediately").count();
+        let hint_count2 = content2.matches(AGENT_LOOP_HINT).count();
         assert_eq!(hint_count2, 1, "hint should still appear exactly once on repeated conversion");
     }
 
