@@ -90,7 +90,7 @@ export function UniversalProviderFormModal({
       setClaudeEnabled(defaultPreset.defaultApps.claude);
       setCodexEnabled(defaultPreset.defaultApps.codex);
       setGeminiEnabled(defaultPreset.defaultApps.gemini);
-      setModels(JSON.parse(JSON.stringify(defaultPreset.defaultModels)));
+      setModels(structuredClone(defaultPreset.defaultModels));
     }
   }, [editingProvider, initialPreset, isOpen]);
 
@@ -103,7 +103,7 @@ export function UniversalProviderFormModal({
         setClaudeEnabled(preset.defaultApps.claude);
         setCodexEnabled(preset.defaultApps.codex);
         setGeminiEnabled(preset.defaultApps.gemini);
-        setModels(JSON.parse(JSON.stringify(preset.defaultModels)));
+        setModels(structuredClone(preset.defaultModels));
       }
     },
     [isEditMode],

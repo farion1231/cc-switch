@@ -169,7 +169,7 @@ export function UniversalProviderPanel() {
   const handleDuplicate = useCallback(
     async (provider: UniversalProvider) => {
       const duplicated: UniversalProvider = {
-        ...JSON.parse(JSON.stringify(provider)),
+        ...structuredClone(provider),
         id: crypto.randomUUID(),
         name: `${provider.name} copy`,
         createdAt: Date.now(),

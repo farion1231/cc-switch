@@ -133,7 +133,7 @@ const applyTemplateValuesToConfigString = (
     if (Array.isArray(parsedConfig)) {
       targetConfig = [...parsedConfig];
     } else if (parsedConfig && typeof parsedConfig === "object") {
-      targetConfig = JSON.parse(JSON.stringify(parsedConfig));
+      targetConfig = structuredClone(parsedConfig);
     } else {
       targetConfig = {};
     }

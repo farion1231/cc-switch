@@ -62,23 +62,6 @@ const isSubset = (target: any, source: any): boolean => {
   return target === source;
 };
 
-// 深拷贝函数
-const deepClone = <T>(obj: T): T => {
-  if (obj === null || typeof obj !== "object") return obj;
-  if (obj instanceof Date) return new Date(obj.getTime()) as T;
-  if (obj instanceof Array) return obj.map((item) => deepClone(item)) as T;
-  if (obj instanceof Object) {
-    const clonedObj = {} as T;
-    for (const key in obj) {
-      if (obj.hasOwnProperty(key)) {
-        clonedObj[key] = deepClone(obj[key]);
-      }
-    }
-    return clonedObj;
-  }
-  return obj;
-};
-
 export interface UpdateCommonConfigResult {
   updatedConfig: string;
   error?: string;
@@ -137,13 +120,13 @@ export const updateCommonConfigSnippet = (
   const snippet = JSON.parse(snippetString) as Record<string, any>;
 
   if (enabled) {
-    const merged = deepMerge(deepClone(config), snippet);
+    const merged = deepMerge(structuredClone(config), snippet);
     return {
       updatedConfig: JSON.stringify(merged, null, 2),
     };
   }
 
-  const cloned = deepClone(config);
+  const cloned = structuredClone(config);
   deepRemove(cloned, snippet);
   return {
     updatedConfig: JSON.stringify(cloned, null, 2),
@@ -380,12 +363,12 @@ export const updateTomlCommonConfigSnippet = (
 
     if (enabled) {
       const merged = deepMerge(
-        deepClone(config) as Record<string, any>,
-        deepClone(snippet) as Record<string, any>,
+        structuredClone(config) as Record<string, any>,
+        structuredClone(snippet) as Record<string, any>,
       );
       return { updatedConfig: stringifyToml(merged) };
     } else {
-      const result = deepClone(config) as Record<string, any>;
+      const result = structuredClone(config) as Record<string, any>;
       deepRemove(result, snippet as Record<string, any>);
       return { updatedConfig: stringifyToml(result) };
     }

@@ -193,7 +193,7 @@ let mcpConfigs: McpConfigState = {
 };
 
 const cloneProviders = (value: ProvidersByApp) =>
-  JSON.parse(JSON.stringify(value)) as ProvidersByApp;
+  structuredClone(value) as ProvidersByApp;
 
 export const resetProviderState = () => {
   providers = createDefaultProviders();
@@ -294,7 +294,7 @@ export const setProviders = (
   appType: AppId,
   data: Record<string, Provider>,
 ) => {
-  providers[appType] = JSON.parse(JSON.stringify(data)) as Record<
+  providers[appType] = structuredClone(data) as Record<
     string,
     Provider
   >;
@@ -336,13 +336,13 @@ export const updateSortOrder = (
 };
 
 export const listProviders = (appType: AppId) =>
-  JSON.parse(JSON.stringify(providers[appType] ?? {})) as Record<
+  structuredClone(providers[appType] ?? {}) as Record<
     string,
     Provider
   >;
 
 export const getSettings = () =>
-  JSON.parse(JSON.stringify(settingsState)) as Settings;
+  structuredClone(settingsState) as Settings;
 
 export const setSettings = (data: Partial<Settings>) => {
   settingsState = { ...settingsState, ...data };
@@ -368,7 +368,7 @@ export const setMcpConfig = (
   appType: AppId,
   value: Record<string, McpServer>,
 ) => {
-  mcpConfigs[appType] = JSON.parse(JSON.stringify(value)) as Record<
+  mcpConfigs[appType] = structuredClone(value) as Record<
     string,
     McpServer
   >;
@@ -394,7 +394,7 @@ export const upsertMcpServer = (
   if (!mcpConfigs[appType]) {
     mcpConfigs[appType] = {};
   }
-  mcpConfigs[appType][id] = JSON.parse(JSON.stringify(server)) as McpServer;
+  mcpConfigs[appType][id] = structuredClone(server) as McpServer;
 };
 
 export const deleteMcpServer = (appType: AppId, id: string) => {
@@ -403,13 +403,11 @@ export const deleteMcpServer = (appType: AppId, id: string) => {
 };
 
 export const listSessions = () =>
-  JSON.parse(JSON.stringify(sessionsState)) as SessionMeta[];
+  structuredClone(sessionsState) as SessionMeta[];
 
 export const getSessionMessages = (providerId: string, sourcePath: string) =>
-  JSON.parse(
-    JSON.stringify(
-      sessionMessagesState[sessionMessageKey(providerId, sourcePath)] ?? [],
-    ),
+  structuredClone(
+    sessionMessagesState[sessionMessageKey(providerId, sourcePath)] ?? [],
   ) as SessionMessage[];
 
 export const deleteSession = (
@@ -433,8 +431,8 @@ export const setSessionFixtures = (
   sessions: SessionMeta[],
   messages: Record<string, SessionMessage[]>,
 ) => {
-  sessionsState = JSON.parse(JSON.stringify(sessions)) as SessionMeta[];
-  sessionMessagesState = JSON.parse(JSON.stringify(messages)) as Record<
+  sessionsState = structuredClone(sessions) as SessionMeta[];
+  sessionMessagesState = structuredClone(messages) as Record<
     string,
     SessionMessage[]
   >;
