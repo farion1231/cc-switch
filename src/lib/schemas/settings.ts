@@ -56,6 +56,21 @@ export const settingsSchema = z.object({
         .optional(),
     })
     .optional(),
+
+  // 本机自动迁移状态（后端维护，前端保存设置时应透传）
+  localMigrations: z
+    .object({
+      codexThirdPartyHistoryProviderBucketV1: z
+        .object({
+          completedAt: z.string(),
+          targetProviderId: z.string(),
+          sourceProviderIds: z.array(z.string()).optional(),
+          migratedJsonlFiles: z.number().optional(),
+          migratedStateRows: z.number().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
 });
 
 export type SettingsFormData = z.infer<typeof settingsSchema>;

@@ -1608,52 +1608,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: "AICoding",
-    websiteUrl: "https://aicoding.sh",
-    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
-    settingsConfig: {
-      baseUrl: "https://api.aicoding.sh",
-      apiKey: "",
-      api: "anthropic-messages",
-      models: [
-        {
-          id: "claude-opus-4-7",
-          name: "Claude Opus 4.7",
-          contextWindow: 1000000,
-          cost: { input: 5, output: 25 },
-        },
-        {
-          id: "claude-sonnet-4-6",
-          name: "Claude Sonnet 4.6",
-          contextWindow: 1000000,
-          cost: { input: 3, output: 15 },
-        },
-      ],
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "aicoding",
-    icon: "aicoding",
-    iconColor: "#000000",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: {
-        primary: "aicoding/claude-opus-4-7",
-        fallbacks: ["aicoding/claude-sonnet-4-6"],
-      },
-      modelCatalog: {
-        "aicoding/claude-opus-4-7": { alias: "Opus" },
-        "aicoding/claude-sonnet-4-6": { alias: "Sonnet" },
-      },
-    },
-  },
-  {
     name: "CrazyRouter",
     websiteUrl: "https://www.crazyrouter.com",
     apiKeyUrl: "https://www.crazyrouter.com/register?aff=OZcm&ref=cc-switch",

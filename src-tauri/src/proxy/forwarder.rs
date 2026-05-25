@@ -11,8 +11,8 @@ use super::{
     log_codes::fwd as log_fwd,
     provider_router::ProviderRouter,
     providers::{
-        gemini_shadow::GeminiShadowStore, get_adapter, AuthInfo, AuthStrategy, ProviderAdapter,
-        ProviderType,
+        codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore, get_adapter,
+        AuthInfo, AuthStrategy, ProviderAdapter, ProviderType,
     },
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
@@ -92,6 +92,7 @@ pub struct RequestForwarder {
     status: Arc<RwLock<ProxyStatus>>,
     current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
     gemini_shadow: Arc<GeminiShadowStore>,
+    codex_chat_history: Arc<CodexChatHistoryStore>,
     /// 故障转移切换管理器
     failover_manager: Arc<FailoverSwitchManager>,
     /// AppHandle，用于发射事件和更新托盘
@@ -128,6 +129,7 @@ impl RequestForwarder {
         status: Arc<RwLock<ProxyStatus>>,
         current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
         gemini_shadow: Arc<GeminiShadowStore>,
+        codex_chat_history: Arc<CodexChatHistoryStore>,
         failover_manager: Arc<FailoverSwitchManager>,
         app_handle: Option<tauri::AppHandle>,
         current_provider_id_at_start: String,
@@ -148,6 +150,7 @@ impl RequestForwarder {
             status,
             current_providers,
             gemini_shadow,
+            codex_chat_history,
             failover_manager,
             app_handle,
             current_provider_id_at_start,
@@ -1146,7 +1149,23 @@ impl RequestForwarder {
 
         // 转换请求体（如果需要）
         let request_body = if codex_responses_to_chat {
-            super::providers::transform_codex_chat::responses_to_chat_completions(mapped_body)?
+            let mut mapped_body = mapped_body;
+            let restored = self
+                .codex_chat_history
+                .enrich_request(&mut mapped_body)
+                .await;
+            if restored > 0 {
+                log::debug!(
+                    "[Codex] Restored {restored} cached function call(s) for Chat upstream"
+                );
+            }
+            super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
+            let reasoning_config =
+                super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
+            super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+                mapped_body,
+                reasoning_config.as_ref(),
+            )?
         } else if needs_transform {
             if adapter.name() == "Claude" {
                 let api_format = resolved_claude_api_format
@@ -2389,6 +2408,7 @@ mod tests {
             status: Arc::new(RwLock::new(ProxyStatus::default())),
             current_providers: Arc::new(RwLock::new(HashMap::new())),
             gemini_shadow: Arc::new(GeminiShadowStore::new()),
+            codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
             app_handle: None,
             current_provider_id_at_start: String::new(),

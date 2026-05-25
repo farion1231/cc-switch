@@ -75,15 +75,12 @@ pub fn optimize(body: &mut Value, config: &OptimizerConfig) {
 
 /// 追加 beta 标识到 anthropic_beta 数组（去重）
 fn append_beta(body: &mut Value, beta: &str) {
-    match body.get("anthropic_beta") {
+    match body.get_mut("anthropic_beta") {
         Some(Value::Array(arr)) => {
             if arr.iter().any(|v| v.as_str() == Some(beta)) {
                 return;
             }
-            body["anthropic_beta"]
-                .as_array_mut()
-                .unwrap()
-                .push(json!(beta));
+            arr.push(json!(beta));
         }
         Some(Value::Null) | None => {
             body["anthropic_beta"] = json!([beta]);
