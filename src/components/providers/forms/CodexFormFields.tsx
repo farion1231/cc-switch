@@ -204,6 +204,11 @@ export function CodexFormFields({
                   defaultValue: "OpenAI Responses API (原生)",
                 })}
               </SelectItem>
+              <SelectItem value="responses_passthrough">
+                {t("providerForm.codexApiFormatResponsesPassthrough", {
+                  defaultValue: "OpenAI Responses API (原生，本地代理透传)",
+                })}
+              </SelectItem>
               <SelectItem value="openai_chat">
                 {t("providerForm.codexApiFormatOpenAIChat", {
                   defaultValue: "OpenAI Chat Completions (需开启路由)",
@@ -214,7 +219,7 @@ export function CodexFormFields({
           <p className="text-xs text-muted-foreground">
             {t("providerForm.codexApiFormatHint", {
               defaultValue:
-                "选择供应商真实支持的 Codex API 格式；Chat Completions 会通过本地路由自动转换为 Responses。",
+                "选择供应商真实支持的 Codex API 格式；Chat Completions 会通过本地路由自动转换为 Responses；Responses Passthrough 会在代理层按当前 provider 配置覆盖 model 字段。",
             })}
           </p>
         </div>
@@ -226,7 +231,7 @@ export function CodexFormFields({
           <div className="flex items-center justify-between">
             <FormLabel htmlFor="codexChatCompatSwitch">
               {t("providerForm.codexChatCompatibilityMode", {
-                defaultValue: "Chat 兼容模式",
+                defaultValue: "DeepSeek 兼容开关",
               })}
             </FormLabel>
             <Switch
@@ -242,7 +247,7 @@ export function CodexFormFields({
           <p className="text-xs text-muted-foreground">
             {t("providerForm.codexChatCompatibilityModeHint", {
               defaultValue:
-                "DeepSeek 模型必须开启此选项，否则可能无法正常对话。开启后会适配 reasoning_content 与 tool_calls 的合并。",
+                "DeepSeek 模型专用兼容开关，开启后会适配 reasoning_content 与 tool_calls 的合并，确保 Thinking 模式正常工作。",
             })}
           </p>
         </div>

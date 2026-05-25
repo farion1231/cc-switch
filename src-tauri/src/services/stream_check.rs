@@ -542,6 +542,8 @@ impl StreamCheckService {
             .unwrap_or(false);
 
         // 检测 apiFormat：override > meta.apiFormat > TOML wire_api > 默认 "openai_chat"
+        // 注意：TOML wire_api 对 passthrough 始终是 "responses"，
+        // 因此 passthrough 必须通过 meta.apiFormat 识别。
         let api_format = api_format_override
             .or_else(|| {
                 provider
@@ -556,7 +558,13 @@ impl StreamCheckService {
                     .and_then(|v| v.as_str())
                     .and_then(extract_codex_wire_api_from_toml)
                     .as_deref()
-                    .and_then(|wire| if is_chat_wire_api(wire) { Some("openai_chat") } else { Some("openai_responses") })
+                    .map(|wire| {
+                        if is_chat_wire_api(wire) {
+                            "openai_chat"
+                        } else {
+                            "openai_responses"
+                        }
+                    })
             })
             .unwrap_or("openai_chat");
 
@@ -616,7 +624,7 @@ impl StreamCheckService {
             return Err(AppError::Message("No response data received".to_string()));
         }
 
-        // openai_responses 格式（原有逻辑）
+        // openai_responses / responses_passthrough 格式（都走 /v1/responses 端点）
         let urls = Self::resolve_codex_stream_urls(base_url, is_full_url);
 
         let mut body = json!({

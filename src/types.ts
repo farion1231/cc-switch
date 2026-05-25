@@ -166,11 +166,13 @@ export interface ProviderMeta {
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
   // - "openai_responses": OpenAI Responses API 格式，需要格式转换
   // - "gemini_native": Gemini Native generateContent API 格式，需要格式转换
+  // - "responses_passthrough": OpenAI Responses API 原生透传，代理层覆盖 model 字段
   apiFormat?:
     | "anthropic"
     | "openai_chat"
     | "openai_responses"
-    | "gemini_native";
+    | "gemini_native"
+    | "responses_passthrough";
   // 通用认证绑定
   authBinding?: AuthBinding;
   // Claude 认证字段名
@@ -209,7 +211,8 @@ export type ClaudeApiFormat =
 // Codex API 格式类型
 // - "openai_responses": OpenAI Responses API 格式，直接透传
 // - "openai_chat": OpenAI Chat Completions 格式，需要本地路由转换
-export type CodexApiFormat = "openai_responses" | "openai_chat";
+// - "responses_passthrough": OpenAI Responses API 原生透传，代理层覆盖 model 字段
+export type CodexApiFormat = "openai_responses" | "openai_chat" | "responses_passthrough";
 
 // Codex Chat 兼容模式
 // - undefined / "standard": 标准 OpenAI Chat Completions，无特殊处理

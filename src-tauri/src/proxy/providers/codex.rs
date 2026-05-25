@@ -41,6 +41,10 @@ pub fn codex_provider_uses_chat_completions(provider: &Provider) -> bool {
                 .and_then(|v| v.as_str())
         })
     {
+        // responses_passthrough must NOT trigger Chat conversion
+        if is_responses_passthrough(api_format) {
+            return false;
+        }
         return is_chat_wire_api(api_format);
     }
 
@@ -69,6 +73,40 @@ pub fn codex_provider_uses_chat_completions(provider: &Provider) -> bool {
         .and_then(extract_codex_base_url_from_toml)
         .map(|url| is_chat_completions_url(&url))
         .unwrap_or(false)
+}
+
+/// Whether the api_format indicates Responses passthrough with model override.
+pub fn is_responses_passthrough(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "responses_passthrough" | "responses-passthrough"
+    )
+}
+
+/// Check whether this Codex provider uses Responses passthrough mode
+/// (meta/apiFormat only; TOML wire_api is always "responses" for passthrough).
+pub fn codex_provider_uses_responses_passthrough(provider: &Provider) -> bool {
+    if let Some(api_format) = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.api_format.as_deref())
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("api_format")
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("apiFormat")
+                .and_then(|v| v.as_str())
+        })
+    {
+        return is_responses_passthrough(api_format);
+    }
+
+    false
 }
 
 pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &str) -> bool {
@@ -547,5 +585,77 @@ base_url = "https://platform.deepseek.com/v1/chat/completions"
 base_url = "https://api.openai.com/v1"
 "#;
         assert_eq!(extract_codex_model_from_toml(config), None);
+    }
+
+    #[test]
+    fn test_codex_provider_uses_responses_passthrough_from_meta() {
+        let mut provider = create_provider(json!({
+            "base_url": "https://example.com/v1"
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("responses_passthrough".to_string()),
+            ..Default::default()
+        });
+
+        assert!(codex_provider_uses_responses_passthrough(&provider));
+        assert!(!codex_provider_uses_chat_completions(&provider));
+        assert!(!should_convert_codex_responses_to_chat(
+            &provider,
+            "/v1/responses"
+        ));
+    }
+
+    #[test]
+    fn test_codex_provider_uses_responses_passthrough_from_meta_with_toml_responses() {
+        // Passthrough 是 cc-switch meta 语义，TOML wire_api 为 "responses"
+        let mut provider = create_provider(json!({
+            "config": r#"
+model_provider = "passthrough"
+model = "gpt-5"
+
+[model_providers.passthrough]
+name = "Passthrough"
+base_url = "https://example.com/v1"
+wire_api = "responses"
+"#
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("responses_passthrough".to_string()),
+            ..Default::default()
+        });
+
+        assert!(codex_provider_uses_responses_passthrough(&provider));
+        assert!(!codex_provider_uses_chat_completions(&provider));
+        assert!(!should_convert_codex_responses_to_chat(
+            &provider,
+            "/responses?stream=true"
+        ));
+    }
+
+    #[test]
+    fn test_codex_provider_toml_wire_api_passthrough_not_detected() {
+        // TOML wire_api = "responses_passthrough" 不再被检测（因为现在写入的是 "responses"）
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "passthrough"
+model = "gpt-5"
+
+[model_providers.passthrough]
+name = "Passthrough"
+base_url = "https://example.com/v1"
+wire_api = "responses_passthrough"
+"#
+        }));
+
+        // 不通过 meta 时，不检测为 passthrough
+        assert!(!codex_provider_uses_responses_passthrough(&provider));
+    }
+
+    #[test]
+    fn test_responses_passthrough_not_detected_for_other_formats() {
+        let provider = create_provider(json!({
+            "base_url": "https://example.com/v1"
+        }));
+        assert!(!codex_provider_uses_responses_passthrough(&provider));
     }
 }

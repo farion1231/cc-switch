@@ -299,9 +299,13 @@ export function ClaudeDesktopProviderForm({
   const initialMode = initialData?.meta?.claudeDesktopMode ?? "direct";
   const [mode, setMode] = useState<"direct" | "proxy">(initialMode);
   const needsModelMapping = mode === "proxy";
-  const [apiFormat, setApiFormat] = useState<ClaudeApiFormat>(
-    initialData?.meta?.apiFormat ?? "anthropic",
-  );
+  const [apiFormat, setApiFormat] = useState<ClaudeApiFormat>(() => {
+    const f = initialData?.meta?.apiFormat;
+    if (f === "openai_chat") return "openai_chat";
+    if (f === "openai_responses") return "openai_responses";
+    if (f === "gemini_native") return "gemini_native";
+    return "anthropic";
+  });
   const [baseUrl, setBaseUrl] = useState(
     envString(initialData?.settingsConfig, "ANTHROPIC_BASE_URL"),
   );
