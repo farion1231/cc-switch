@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { UsageSummaryCards } from "./UsageSummaryCards";
+import { UsageHero } from "./UsageHero";
 import { UsageTrendChart } from "./UsageTrendChart";
 import { RequestLogTable } from "./RequestLogTable";
 import { ProviderStatsTable } from "./ProviderStatsTable";
@@ -126,9 +126,9 @@ export function UsageDashboard() {
         </div>
       </div>
 
-      <UsageSummaryCards
+      <UsageHero
         range={range}
-        appType={appType}
+        appType={appType === "all" ? undefined : appType}
         refreshIntervalMs={refreshIntervalMs}
       />
 

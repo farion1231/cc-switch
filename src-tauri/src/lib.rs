@@ -1,6 +1,7 @@
 mod app_config;
 mod app_store;
 mod auto_launch;
+mod claude_desktop_config;
 mod claude_mcp;
 mod claude_plugin;
 mod codex_config;
@@ -494,6 +495,19 @@ pub fn run() {
             for app_type in
                 crate::app_config::AppType::all().filter(|t| !t.is_additive_mode())
             {
+                if !crate::services::provider::should_import_default_config_on_startup(
+                    &app_state,
+                    &app_type,
+                )
+                .unwrap_or(false)
+                {
+                    log::debug!(
+                        "○ {} already has providers; live import skipped",
+                        app_type.as_str()
+                    );
+                    continue;
+                }
+
                 match crate::services::provider::import_default_config(
                     &app_state,
                     app_type.clone(),
@@ -957,10 +971,6 @@ pub fn run() {
                         "Gemini usage initial sync",
                         crate::services::session_usage_gemini::sync_gemini_usage(db),
                     );
-                    run_step(
-                        "Hermes usage initial sync",
-                        crate::services::session_usage_hermes::sync_hermes_usage(db),
-                    );
 
                     // 定期同步
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
@@ -980,10 +990,6 @@ pub fn run() {
                         run_step(
                             "Gemini usage periodic sync",
                             crate::services::session_usage_gemini::sync_gemini_usage(db),
-                        );
-                        run_step(
-                            "Hermes usage periodic sync",
-                            crate::services::session_usage_hermes::sync_hermes_usage(db),
                         );
                     }
                 });
@@ -1046,6 +1052,9 @@ pub fn run() {
             commands::remove_provider_from_live_config,
             commands::switch_provider,
             commands::import_default_config,
+            commands::get_claude_desktop_status,
+            commands::get_claude_desktop_default_routes,
+            commands::import_claude_desktop_providers_from_claude,
             commands::get_claude_config_status,
             commands::get_config_status,
             commands::get_claude_code_config_path,
@@ -1096,6 +1105,7 @@ pub fn run() {
             // subscription quota
             commands::get_subscription_quota,
             commands::get_codex_oauth_quota,
+            commands::get_codex_oauth_models,
             commands::get_coding_plan_quota,
             commands::get_balance,
             // New MCP via config.json (SSOT)
@@ -1187,6 +1197,7 @@ pub fn run() {
             commands::get_auto_launch_status,
             // Proxy server management
             commands::start_proxy_server,
+            commands::stop_proxy_server,
             commands::stop_proxy_with_restore,
             commands::get_proxy_takeover_status,
             commands::set_proxy_takeover_for_app,
@@ -1220,6 +1231,7 @@ pub fn run() {
             commands::set_auto_failover_enabled,
             // Usage statistics
             commands::get_usage_summary,
+            commands::get_usage_summary_by_app,
             commands::get_usage_trends,
             commands::get_provider_stats,
             commands::get_model_stats,

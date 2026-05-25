@@ -6,7 +6,6 @@ import { settingsApi, type AppId } from "@/lib/api";
 import type { SettingsFormState } from "./useSettingsForm";
 
 export type DirectoryAppId = Exclude<AppId, "claude-desktop">;
-
 type AppDirectoryKey =
   | "claude"
   | "codex"

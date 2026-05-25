@@ -17,7 +17,6 @@ const DATA_SOURCE_ICONS: Record<string, React.ReactNode> = {
   codex_db: <Database className="h-3.5 w-3.5" />,
   codex_session: <FileText className="h-3.5 w-3.5" />,
   gemini_session: <FileText className="h-3.5 w-3.5" />,
-  hermes_session: <Database className="h-3.5 w-3.5" />,
 };
 
 export function DataSourceBar({ refreshIntervalMs }: DataSourceBarProps) {

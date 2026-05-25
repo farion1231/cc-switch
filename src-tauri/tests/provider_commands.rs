@@ -1,14 +1,146 @@
 use serde_json::json;
+use std::path::{Path, PathBuf};
 
 use cc_switch_lib::{
-    get_codex_auth_path, get_codex_config_path, read_json_file, switch_provider_test_hook,
-    write_codex_live_atomic, AppError, AppType, McpApps, McpServer, MultiAppConfig, Provider,
+    get_codex_auth_path, get_codex_config_path, import_default_config_test_hook, read_json_file,
+    switch_provider_test_hook, write_codex_live_atomic, AppError, AppType, McpApps, McpServer,
+    MultiAppConfig, Provider, ProviderService,
 };
 
 #[path = "support.rs"]
 mod support;
 use std::collections::HashMap;
-use support::{create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex};
+use support::{
+    create_test_state, create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex,
+};
+
+fn settings_path(home: &Path) -> PathBuf {
+    home.join(".cc-switch").join("settings.json")
+}
+
+#[test]
+fn codex_startup_import_fresh_install_imports_once_and_syncs_current_setting() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let auth = json!({"OPENAI_API_KEY": "fresh-key"});
+    let config = r#"model = "gpt-5"
+"#;
+    write_codex_live_atomic(&auth, Some(config)).expect("seed codex live config");
+
+    let state = create_test_state().expect("create test state");
+
+    assert!(
+        ProviderService::should_import_default_config_on_startup(&state, &AppType::Codex)
+            .expect("check startup import eligibility"),
+        "empty Codex provider set should import on startup"
+    );
+
+    import_default_config_test_hook(&state, AppType::Codex).expect("import codex default");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
+        .expect("get codex providers after import");
+    assert_eq!(
+        providers.len(),
+        1,
+        "fresh install import should create exactly one Codex provider before seeding"
+    );
+    assert!(
+        providers.contains_key("default"),
+        "fresh install import should create default provider"
+    );
+
+    let current_id = state
+        .db
+        .get_current_provider(AppType::Codex.as_str())
+        .expect("get codex current provider");
+    assert_eq!(current_id.as_deref(), Some("default"));
+
+    let settings: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(settings_path(home)).expect("read settings.json"),
+    )
+    .expect("parse settings.json");
+    assert_eq!(
+        settings
+            .get("currentProviderCodex")
+            .and_then(|value| value.as_str()),
+        Some("default"),
+        "live import should also sync device-local currentProviderCodex"
+    );
+
+    state
+        .db
+        .init_default_official_providers()
+        .expect("seed official providers");
+    let providers_after_seed = state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
+        .expect("get codex providers after seed");
+    assert_eq!(
+        providers_after_seed.len(),
+        2,
+        "official seeding should add codex-official alongside imported default"
+    );
+    assert!(providers_after_seed.contains_key("codex-official"));
+
+    assert!(
+        !ProviderService::should_import_default_config_on_startup(&state, &AppType::Codex)
+            .expect("re-check startup import eligibility"),
+        "subsequent startup should skip once Codex already has providers"
+    );
+}
+
+#[test]
+fn codex_startup_import_skips_when_only_official_seed_exists() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let auth = json!({"OPENAI_API_KEY": "fresh-key"});
+    let config = r#"model = "gpt-5"
+"#;
+    write_codex_live_atomic(&auth, Some(config)).expect("seed codex live config");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .init_default_official_providers()
+        .expect("seed official providers");
+
+    let providers_before = state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
+        .expect("get codex providers before restart check");
+    assert_eq!(
+        providers_before.len(),
+        1,
+        "fixture should start with only codex-official present"
+    );
+    assert!(providers_before.contains_key("codex-official"));
+
+    assert!(
+        !ProviderService::should_import_default_config_on_startup(&state, &AppType::Codex)
+            .expect("check startup import eligibility"),
+        "startup should skip import when codex-official already exists"
+    );
+
+    let providers_after = state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
+        .expect("get codex providers after restart check");
+    assert_eq!(
+        providers_after.len(),
+        providers_before.len(),
+        "skipping startup import should not grow the Codex provider set"
+    );
+    assert!(
+        !providers_after.contains_key("default"),
+        "restart path should not create a new default provider"
+    );
+}
 
 #[test]
 fn switch_provider_updates_codex_live_and_state() {
