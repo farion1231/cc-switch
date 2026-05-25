@@ -14,6 +14,7 @@ use super::{
         gemini_shadow::GeminiShadowStore, get_adapter, AuthInfo, AuthStrategy, ProviderAdapter,
         ProviderType,
     },
+    req_logger,
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
@@ -1621,6 +1622,12 @@ impl RequestForwarder {
             for (key, value) in &ordered_headers {
                 request = request.header(key, value);
             }
+            req_logger::log_upstream_req(
+                app_type.as_str(),
+                &method.to_string(),
+                &url,
+                &String::from_utf8_lossy(&body_bytes),
+            );
             let send = request.body(body_bytes).send();
             let send_result = if request_is_streaming {
                 let header_timeout = if self.streaming_first_byte_timeout.is_zero() {
@@ -1644,6 +1651,12 @@ impl RequestForwarder {
         } else {
             // HTTP 代理或直连：走 hyper raw write（保持 header 大小写）
             // 如果有 HTTP 代理，hyper_client 会用 CONNECT 隧道穿过代理
+            req_logger::log_upstream_req(
+                app_type.as_str(),
+                &method.to_string(),
+                &url,
+                &String::from_utf8_lossy(&body_bytes),
+            );
             let uri: http::Uri = url
                 .parse()
                 .map_err(|e| ProxyError::ForwardFailed(format!("Invalid URL '{url}': {e}")))?;

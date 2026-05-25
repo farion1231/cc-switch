@@ -32,6 +32,7 @@ use super::{
     types::*,
     usage::parser::TokenUsage,
     hyper_client::ProxyResponse,
+    req_logger,
     ProxyError,
 };
 use crate::app_config::AppType;
@@ -165,6 +166,14 @@ async fn handle_messages_for_app(
         .to_bytes();
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+
+    req_logger::log_incoming(
+        tag,
+        &parts.method.to_string(),
+        &uri.to_string(),
+        &format!("{:?}", headers),
+        &serde_json::to_string_pretty(&body).unwrap_or_else(|_| format!("{:?}", body)),
+    );
 
     let mut ctx =
         RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;
@@ -380,6 +389,7 @@ async fn handle_claude_transform(
         let logged_stream = create_logged_passthrough_stream(
             sse_stream,
             "Claude/OpenRouter",
+            0, // status not readily available in this legacy path
             usage_collector,
             timeout_config,
             connection_guard,
@@ -524,6 +534,14 @@ pub async fn handle_chat_completions(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
+    req_logger::log_incoming(
+        "Codex",
+        &parts.method.to_string(),
+        &uri.to_string(),
+        &format!("{:?}", headers),
+        &serde_json::to_string_pretty(&body).unwrap_or_else(|_| format!("{:?}", body)),
+    );
+
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
     let endpoint = endpoint_with_query(&uri, "/chat/completions");
@@ -560,14 +578,24 @@ pub async fn handle_chat_completions(
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(
+    let result = process_response(
         response,
         &ctx,
         &state,
         &OPENAI_PARSER_CONFIG,
         connection_guard,
     )
-    .await
+    .await;
+    match &result {
+        Ok(resp) => req_logger::log_return(
+            "Codex",
+            resp.status().as_u16(),
+            "chat",
+            &format!("{:?}", resp.headers()),
+        ),
+        Err(e) => log::error!("[Codex] → RETURN error: {e}"),
+    }
+    result
 }
 
 /// 处理 /v1/responses 请求（OpenAI Responses API - Codex CLI 透传）
@@ -591,6 +619,14 @@ pub async fn handle_responses(
         .to_bytes();
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+
+    req_logger::log_incoming(
+        "Codex",
+        &parts.method.to_string(),
+        &uri.to_string(),
+        &format!("{:?}", headers),
+        &serde_json::to_string_pretty(&body).unwrap_or_else(|_| format!("{:?}", body)),
+    );
 
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
@@ -659,10 +695,25 @@ pub async fn handle_responses(
         };
 
         let chat_body: Value = serde_json::from_slice(&body_bytes).unwrap_or(json!({}));
+        req_logger::log_upstream_resp(
+            "codex",
+            upstream_status.as_u16(),
+            &String::from_utf8_lossy(&body_bytes),
+        );
         let responses_body = transform_codex::chat_completions_to_responses(chat_body);
 
         // 如果原始请求是流式，包装为 SSE 事件流（Codex CLI 需要 SSE 格式）
         if was_streaming {
+            let event_count = responses_body
+                .get("output")
+                .and_then(|o| o.as_array())
+                .map_or(0, |a| a.len());
+            req_logger::log_return(
+                "Codex",
+                upstream_status.as_u16(),
+                &format!("stream SSE, {event_count} events"),
+                "<SSE stream>",
+            );
             let sse_stream = transform_codex::wrap_responses_as_sse(responses_body);
             let mut sse_response = axum::response::Response::new(
                 axum::body::Body::from_stream(sse_stream),
@@ -675,6 +726,12 @@ pub async fn handle_responses(
         }
 
         let new_body = serde_json::to_vec(&responses_body).unwrap_or_default();
+        req_logger::log_return(
+            "Codex",
+            upstream_status.as_u16(),
+            "",
+            &String::from_utf8_lossy(&new_body),
+        );
         let reconstructed: axum::response::Response = (
             upstream_status,
             [(
@@ -689,14 +746,24 @@ pub async fn handle_responses(
         return Ok(reconstructed);
     }
 
-    process_response(
+    let result = process_response(
         response,
         &ctx,
         &state,
         &CODEX_PARSER_CONFIG,
         connection_guard,
     )
-    .await
+    .await;
+    match &result {
+        Ok(resp) => req_logger::log_return(
+            "Codex",
+            resp.status().as_u16(),
+            "native",
+            &format!("{:?}", resp.headers()),
+        ),
+        Err(e) => log::error!("[Codex] → RETURN error: {e}"),
+    }
+    result
 }
 
 /// 处理 /v1/responses/compact 请求（OpenAI Responses Compact API - Codex CLI 透传）
@@ -716,6 +783,14 @@ pub async fn handle_responses_compact(
         .to_bytes();
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+
+    req_logger::log_incoming(
+        "Codex",
+        &parts.method.to_string(),
+        &uri.to_string(),
+        &format!("{:?}", headers),
+        &serde_json::to_string_pretty(&body).unwrap_or_else(|_| format!("{:?}", body)),
+    );
 
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;

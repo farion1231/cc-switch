@@ -7,6 +7,7 @@ use super::{
     handler_config::{StreamUsageEventFilter, UsageParserConfig},
     handler_context::{RequestContext, StreamingTimeoutConfig},
     hyper_client::ProxyResponse,
+    req_logger,
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
     usage::parser::TokenUsage,
@@ -224,6 +225,7 @@ pub async fn handle_streaming(
     let logged_stream = create_logged_passthrough_stream(
         stream,
         ctx.tag,
+        status.as_u16(),
         usage_collector,
         timeout_config,
         connection_guard,
@@ -259,10 +261,10 @@ pub async fn handle_non_streaming(
         read_decoded_body(response, ctx.tag, body_timeout).await?;
     strip_hop_by_hop_response_headers(&mut response_headers);
 
-    log::debug!(
-        "[{}] 上游响应体内容: {}",
+    req_logger::log_upstream_resp(
         ctx.tag,
-        String::from_utf8_lossy(&body_bytes)
+        status.as_u16(),
+        &String::from_utf8_lossy(&body_bytes),
     );
 
     // 解析并记录使用量。关闭 usage logging 时直接跳过，避免非流式响应整包 JSON parse。
@@ -678,6 +680,7 @@ async fn log_usage_internal(
 pub fn create_logged_passthrough_stream(
     stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
     tag: &'static str,
+    status: u16,
     usage_collector: Option<SseUsageCollector>,
     timeout_config: StreamingTimeoutConfig,
     connection_guard: Option<ActiveConnectionGuard>,
@@ -691,6 +694,8 @@ pub fn create_logged_passthrough_stream(
         let inspect_sse_events =
             collector.is_some() || log::log_enabled!(log::Level::Debug);
         let mut is_first_chunk = true;
+        // 收集所有 SSE data 事件，流结束后拼合为完整响应体打印
+        let mut stream_body_parts: Vec<String> = Vec::new();
 
         // 超时配置
         let first_byte_timeout = if timeout_config.first_byte_timeout > 0 {
@@ -750,23 +755,18 @@ pub fn create_logged_passthrough_stream(
                                 for line in event_text.lines() {
                                     if let Some(data) = strip_sse_field(line, "data") {
                                         if data.trim() != "[DONE]" {
-                                            let collected = match &collector {
-                                                Some(c) if c.should_collect(data) => {
-                                                    match serde_json::from_str::<Value>(data) {
-                                                        Ok(json_value) => {
-                                                            c.push(json_value).await;
-                                                            true
-                                                        }
-                                                        Err(_) => false,
+                                            // 收集 data 用于流结束后还原完整响应体
+                                            stream_body_parts.push(data.to_string());
+                                            if let Some(c) = &collector {
+                                                if c.should_collect(data) {
+                                                    if let Ok(json_value) =
+                                                        serde_json::from_str::<Value>(data)
+                                                    {
+                                                        c.push(json_value).await;
                                                     }
                                                 }
-                                                _ => false,
-                                            };
-                                            if collected {
-                                                log::debug!("[{tag}] <<< SSE 事件: {data}");
-                                            } else {
-                                                log::debug!("[{tag}] <<< SSE 数据: {data}");
                                             }
+                                            log::debug!("[{tag}] <<< SSE: {data}");
                                         } else {
                                             log::debug!("[{tag}] <<< SSE: [DONE]");
                                         }
@@ -795,6 +795,11 @@ pub fn create_logged_passthrough_stream(
         }
         if let Some(guard) = &mut finish_guard {
             guard.disarm();
+        }
+        // 流结束后，拼合所有 SSE data 事件为完整响应体并打印
+        let reconstructed: String = stream_body_parts.join("");
+        if !reconstructed.is_empty() {
+            req_logger::log_upstream_resp(tag, status, &reconstructed);
         }
     }
 }
