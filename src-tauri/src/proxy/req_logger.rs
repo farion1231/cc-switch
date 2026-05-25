@@ -17,10 +17,11 @@ fn append_line(line: &str) {
     }
 }
 
-/// 美化 JSON 并截断，返回带缩进的多行字符串
+/// 美化 JSON 并截断长文本值，保持 JSON 结构完整
 fn indented_field(label: &str, raw: &str) -> String {
     let content = if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
-        serde_json::to_string_pretty(&v).unwrap_or_else(|_| raw.to_string())
+        let trimmed = trim_json_values(v);
+        serde_json::to_string_pretty(&trimmed).unwrap_or_else(|_| raw.to_string())
     } else {
         raw.to_string()
     };
@@ -28,6 +29,7 @@ fn indented_field(label: &str, raw: &str) -> String {
     let content = if content.len() <= MAX_LEN {
         content
     } else {
+        // Fallback: hard truncation only if still too large after trim
         format!("{}...(truncated)", &content[..MAX_LEN])
     };
     let lines: Vec<&str> = content.lines().collect();
@@ -39,6 +41,45 @@ fn indented_field(label: &str, raw: &str) -> String {
             s.push_str(&format!("    {line}\n"));
         }
         s
+    }
+}
+
+/// 递归裁剪 JSON 中的长文本值，保持结构完整
+fn trim_json_values(v: serde_json::Value) -> serde_json::Value {
+    const MAX_VAL_LEN: usize = 500;
+    const MAX_ARRAY_ITEMS: usize = 20;
+    match v {
+        serde_json::Value::String(s) => {
+            if s.len() > MAX_VAL_LEN {
+                let head: String = s.chars().take(MAX_VAL_LEN).collect();
+                serde_json::Value::String(format!("{head}...(truncated)"))
+            } else {
+                serde_json::Value::String(s)
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            let total = arr.len();
+            if total > MAX_ARRAY_ITEMS {
+                let mut trimmed: Vec<serde_json::Value> = arr
+                    .into_iter()
+                    .take(MAX_ARRAY_ITEMS)
+                    .map(trim_json_values)
+                    .collect();
+                trimmed.push(serde_json::Value::String(format!(
+                    "...({} more items)",
+                    total - MAX_ARRAY_ITEMS
+                )));
+                serde_json::Value::Array(trimmed)
+            } else {
+                serde_json::Value::Array(arr.into_iter().map(trim_json_values).collect())
+            }
+        }
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .map(|(k, val)| (k, trim_json_values(val)))
+                .collect(),
+        ),
+        other => other,
     }
 }
 

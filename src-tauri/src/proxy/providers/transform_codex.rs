@@ -6,6 +6,33 @@
 use bytes::Bytes;
 use futures::{stream, Stream};
 use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+
+/// DeepSeek 要求 reasoning_content 必须在后续请求中原样回传。
+/// 此缓存按 tool_call.id 存储 reasoning_content，跨请求注入。
+static REASONING_CACHE: LazyLock<Mutex<HashMap<String, String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// 缓存 reasoning_content，按 tool_call IDs
+pub fn cache_reasoning_for_tool_calls(reasoning: &str, tool_call_ids: &[String]) {
+    if reasoning.is_empty() || tool_call_ids.is_empty() {
+        return;
+    }
+    if let Ok(mut cache) = REASONING_CACHE.lock() {
+        for id in tool_call_ids {
+            cache.insert(id.clone(), reasoning.to_string());
+        }
+    }
+}
+
+/// 按 tool_call ID 查找缓存的 reasoning_content
+fn get_cached_reasoning(tool_call_id: &str) -> Option<String> {
+    REASONING_CACHE
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(tool_call_id).cloned())
+}
 
 /// OpenAI Responses API 请求 → OpenAI Chat Completions 请求
 pub fn responses_to_chat_completions(body: Value) -> Value {
@@ -138,26 +165,42 @@ pub fn responses_to_chat_completions(body: Value) -> Value {
 }
 
 fn convert_input_to_messages(input: &[Value], messages: &mut Vec<Value>) {
+    let mut pending_tool_calls: Vec<Value> = Vec::new();
+
     for item in input {
         let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
         match item_type {
             "function_call" => {
-                messages.push(json!({
-                    "role": "assistant",
-                    "content": null,
-                    "tool_calls": [{
-                        "id": item.get("call_id").cloned().unwrap_or_default(),
-                        "type": "function",
-                        "function": {
-                            "name": item.get("name").cloned().unwrap_or_default(),
-                            "arguments": item.get("arguments").cloned().unwrap_or(json!("{}"))
-                        }
-                    }]
+                let call_id = item
+                    .get("call_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                // Accumulate consecutive function_calls into one assistant message
+                pending_tool_calls.push(json!({
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": item.get("name").cloned().unwrap_or_default(),
+                        "arguments": item.get("arguments").cloned().unwrap_or(json!("{}"))
+                    }
                 }));
             }
 
             "function_call_output" => {
+                // Flush pending tool_calls before processing output
+                if !pending_tool_calls.is_empty() {
+                    let mut msg = json!({
+                        "role": "assistant",
+                        "content": null,
+                        "tool_calls": pending_tool_calls
+                    });
+                    // Inject cached reasoning_content (DeepSeek requirement)
+                    inject_reasoning_into_message(&mut msg);
+                    messages.push(msg);
+                    pending_tool_calls = Vec::new();
+                }
                 messages.push(json!({
                     "role": "tool",
                     "tool_call_id": item.get("call_id").and_then(|v| v.as_str()).unwrap_or(""),
@@ -230,6 +273,37 @@ fn convert_input_to_messages(input: &[Value], messages: &mut Vec<Value>) {
             }
         }
     }
+
+    // Flush any remaining pending tool_calls
+    if !pending_tool_calls.is_empty() {
+        let mut msg = json!({
+            "role": "assistant",
+            "content": null,
+            "tool_calls": pending_tool_calls
+        });
+        inject_reasoning_into_message(&mut msg);
+        messages.push(msg);
+    }
+}
+
+/// 为 assistant message 注入缓存的 reasoning_content（DeepSeek 硬性要求）
+fn inject_reasoning_into_message(msg: &mut Value) {
+    let tool_calls = match msg.get("tool_calls").and_then(|v| v.as_array()) {
+        Some(tc) => tc,
+        None => return,
+    };
+    // 检查任意 tool_call 是否有缓存
+    for tc in tool_calls {
+        if let Some(call_id) = tc.get("id").and_then(|v| v.as_str()) {
+            if let Some(reasoning) = get_cached_reasoning(call_id) {
+                msg["reasoning_content"] = json!(reasoning);
+                return;
+            }
+        }
+    }
+    // 兜底：即使缓存为空，DeepSeek 也要求字段存在
+    // 设置空字符串以确保 JSON 序列化时输出 "reasoning_content": ""
+    msg["reasoning_content"] = json!("");
 }
 
 /// OpenAI Chat Completions 响应 → OpenAI Responses 响应
@@ -268,7 +342,7 @@ pub fn chat_completions_to_responses(body: Value) -> Value {
             };
 
             if let Some(message) = message {
-                // Text content — need null check because tool_calls messages have content: null
+                // Text content — may be null when only tool_calls are present
                 let text = message
                     .get("content")
                     .and_then(|v| v.as_str())
@@ -280,57 +354,50 @@ pub fn chat_completions_to_responses(body: Value) -> Value {
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.is_empty());
 
-                // Tool calls
+                // Tool calls → separate function_call output items
                 let tool_calls = message.get("tool_calls").and_then(|v| v.as_array());
 
-                let has_tool_calls = tool_calls.map_or(false, |tc| !tc.is_empty());
-
-                if text.is_some() || has_tool_calls {
-                    let mut content: Vec<Value> = Vec::new();
-                    if let Some(t) = text {
-                        content.push(json!({"type": "output_text", "text": t}));
-                    }
-                    if let Some(tc) = tool_calls {
-                        for call in tc {
-                            if let Some(f) = call.get("function") {
-                                content.push(json!({
-                                    "type": "tool_use",
-                                    "id": call.get("id").and_then(|v| v.as_str()).unwrap_or(""),
-                                    "name": f.get("name").and_then(|v| v.as_str()).unwrap_or(""),
-                                    "input": f.get("arguments").cloned().unwrap_or(json!({}))
-                                }));
-                            }
-                        }
-                    }
-                    if !content.is_empty() {
-                        output.push(json!({
-                            "type": "message",
-                            "role": "assistant",
-                            "status": "completed",
-                            "content": content
-                        }));
-                    }
+                // Message item: only for text content (not for tool_calls)
+                // OpenAI Responses API uses separate function_call items, not tool_use within message
+                if let Some(t) = text {
+                    output.push(json!({
+                        "type": "message",
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [{"type": "output_text", "text": t}]
+                    }));
                 }
 
                 // Reasoning content → reasoning item
                 if let Some(reasoning_text) = reasoning {
                     output.push(json!({
                         "type": "reasoning",
-                        "content": [{"type": "summary_text", "text": reasoning_text}]
+                        "summary": [{"type": "text", "text": reasoning_text}],
+                        "status": "completed"
                     }));
                 }
 
-                // Legacy tool_calls → function_call items (for backward compat with simpler schemas)
-                if has_tool_calls {
-                    for tc in tool_calls.unwrap() {
-                        let function = tc.get("function");
+                // Tool calls → function_call items (separate from message)
+                if let Some(tc) = tool_calls {
+                    let mut tc_ids: Vec<String> = Vec::new();
+                    for call in tc {
+                        let function = call.get("function");
+                        let call_id = call.get("id").and_then(|v| v.as_str()).unwrap_or("");
                         output.push(json!({
                             "type": "function_call",
-                            "call_id": tc.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                            "id": call_id,
+                            "call_id": call_id,
                             "name": function.and_then(|f| f.get("name")).and_then(|v| v.as_str()).unwrap_or(""),
                             "arguments": function.and_then(|f| f.get("arguments").cloned()).unwrap_or(json!("{}")),
                             "status": "completed"
                         }));
+                        if !call_id.is_empty() {
+                            tc_ids.push(call_id.to_string());
+                        }
+                    }
+                    // Cache reasoning_content for next round (DeepSeek requirement)
+                    if let Some(r) = reasoning {
+                        cache_reasoning_for_tool_calls(r, &tc_ids);
                     }
                 }
             }
@@ -553,6 +620,7 @@ pub fn wrap_responses_as_sse(
                             .get("arguments")
                             .and_then(|v| v.as_str())
                             .unwrap_or("{}");
+                        let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or(&item_id);
 
                         // output_item.added for function_call
                         v.push(Ok(Bytes::from(format!(
@@ -561,9 +629,9 @@ pub fn wrap_responses_as_sse(
                                 "type": "response.output_item.added",
                                 "output_index": output_index,
                                 "item": {
-                                    "id": &item_id,
+                                    "id": call_id,
                                     "type": "function_call",
-                                    "call_id": &item_id,
+                                    "call_id": call_id,
                                     "name": name,
                                     "arguments": ""
                                 }
@@ -575,7 +643,7 @@ pub fn wrap_responses_as_sse(
                             "event: response.function_call_arguments.delta\ndata: {}\n\n",
                             json!({
                                 "type": "response.function_call_arguments.delta",
-                                "item_id": &item_id,
+                                "item_id": call_id,
                                 "output_index": output_index,
                                 "delta": arguments
                             })
@@ -586,17 +654,34 @@ pub fn wrap_responses_as_sse(
                             "event: response.function_call_arguments.done\ndata: {}\n\n",
                             json!({
                                 "type": "response.function_call_arguments.done",
-                                "item_id": &item_id,
+                                "item_id": call_id,
                                 "output_index": output_index,
                                 "arguments": arguments
                             })
                         ))));
+
+                        // output_item.done for function_call
+                        v.push(Ok(Bytes::from(format!(
+                            "event: response.output_item.done\ndata: {}\n\n",
+                            json!({
+                                "type": "response.output_item.done",
+                                "output_index": output_index,
+                                "item": {
+                                    "id": call_id,
+                                    "type": "function_call",
+                                    "call_id": call_id,
+                                    "name": name,
+                                    "arguments": arguments,
+                                    "status": "completed"
+                                }
+                            })
+                        ))));
+
                     }
                     "reasoning" => {
-                        // Support both old "summary" and new "content" format
                         let summary_text = item
-                            .get("content")
-                            .or_else(|| item.get("summary"))
+                            .get("summary")
+                            .or_else(|| item.get("content"))
                             .and_then(|v| v.as_array())
                             .and_then(|arr| {
                                 arr.first()
@@ -612,7 +697,8 @@ pub fn wrap_responses_as_sse(
                                 "item": {
                                     "id": &item_id,
                                     "type": "reasoning",
-                                    "content": [{"type": "summary_text", "text": summary_text}]
+                                    "summary": [{"type": "text", "text": summary_text}],
+                                    "status": "completed"
                                 }
                             })
                         ))));
@@ -625,7 +711,8 @@ pub fn wrap_responses_as_sse(
                                 "item": {
                                     "id": &item_id,
                                     "type": "reasoning",
-                                    "content": [{"type": "summary_text", "text": summary_text}]
+                                    "summary": [{"type": "text", "text": summary_text}],
+                                    "status": "completed"
                                 }
                             })
                         ))));
@@ -901,12 +988,11 @@ mod tests {
         let result = chat_completions_to_responses(input);
         let output = result["output"].as_array().unwrap();
 
-        // Should have 1 message item + 1 function_call item
-        assert_eq!(output.len(), 2, "should have message + function_call items");
-        assert_eq!(output[0]["type"], "message");
-        assert_eq!(output[1]["type"], "function_call");
-        assert_eq!(output[1]["call_id"], "call_abc");
-        assert_eq!(output[1]["name"], "read_file");
+        // Only function_call items (no message item when content is null)
+        assert_eq!(output.len(), 1, "should have only function_call item when content is null");
+        assert_eq!(output[0]["type"], "function_call");
+        assert_eq!(output[0]["call_id"], "call_abc");
+        assert_eq!(output[0]["name"], "read_file");
         assert_eq!(result["status"], "completed");
     }
 
@@ -947,8 +1033,40 @@ mod tests {
         assert_eq!(output.len(), 2);
         assert_eq!(output[0]["type"], "message");
         assert_eq!(output[1]["type"], "reasoning");
-        assert_eq!(output[1]["content"][0]["type"], "summary_text");
-        assert_eq!(output[1]["content"][0]["text"], "让我思考一下...");
+        assert_eq!(output[1]["summary"][0]["type"], "text");
+        assert_eq!(output[1]["summary"][0]["text"], "让我思考一下...");
+    }
+
+    #[test]
+    fn test_chat_to_responses_text_plus_tool_calls() {
+        // Model says something before calling a tool
+        let input = json!({
+            "id": "chatcmpl-789",
+            "model": "deepseek-chat",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Let me search for that.",
+                    "tool_calls": [{
+                        "id": "call_x1",
+                        "type": "function",
+                        "function": {"name": "search", "arguments": "{\"q\":\"test\"}"}
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let result = chat_completions_to_responses(input);
+        let output = result["output"].as_array().unwrap();
+
+        // message item (text) + function_call item
+        assert_eq!(output.len(), 2);
+        assert_eq!(output[0]["type"], "message");
+        assert_eq!(output[0]["content"][0]["text"], "Let me search for that.");
+        assert_eq!(output[1]["type"], "function_call");
+        assert_eq!(output[1]["name"], "search");
     }
 
     #[test]
