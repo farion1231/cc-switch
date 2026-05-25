@@ -701,6 +701,8 @@ pub async fn handle_responses(
             &String::from_utf8_lossy(&body_bytes),
         );
         let responses_body = transform_codex::chat_completions_to_responses(chat_body);
+        let converted_json = serde_json::to_string(&responses_body)
+            .unwrap_or_else(|_| format!("{:?}", responses_body));
 
         // 如果原始请求是流式，包装为 SSE 事件流（Codex CLI 需要 SSE 格式）
         if was_streaming {
@@ -712,7 +714,7 @@ pub async fn handle_responses(
                 "Codex",
                 upstream_status.as_u16(),
                 &format!("stream SSE, {event_count} events"),
-                "<SSE stream>",
+                &converted_json,
             );
             let sse_stream = transform_codex::wrap_responses_as_sse(responses_body);
             let mut sse_response = axum::response::Response::new(

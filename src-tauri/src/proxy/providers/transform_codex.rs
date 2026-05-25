@@ -240,46 +240,96 @@ pub fn chat_completions_to_responses(body: Value) -> Value {
         .unwrap_or("")
         .to_string();
 
+    let id = body
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let choices = body.get("choices").and_then(|v| v.as_array());
     let usage = body.get("usage");
 
     let mut output: Vec<Value> = Vec::new();
+    let mut status = "completed";
 
     if let Some(choices) = choices {
         for choice in choices {
+            let finish_reason = choice
+                .get("finish_reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("stop");
             let message = choice.get("message");
 
+            // Map finish_reason to status (last choice wins)
+            status = match finish_reason {
+                "stop" | "tool_calls" => "completed",
+                "length" => "incomplete",
+                "content_filter" => "incomplete",
+                _ => "completed",
+            };
+
             if let Some(message) = message {
-                // Text content
-                if let Some(text) = message.get("content").and_then(|v| v.as_str()) {
-                    if !text.is_empty() {
+                // Text content — need null check because tool_calls messages have content: null
+                let text = message
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty());
+
+                // Reasoning content (DeepSeek reasoning models)
+                let reasoning = message
+                    .get("reasoning_content")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty());
+
+                // Tool calls
+                let tool_calls = message.get("tool_calls").and_then(|v| v.as_array());
+
+                let has_tool_calls = tool_calls.map_or(false, |tc| !tc.is_empty());
+
+                if text.is_some() || has_tool_calls {
+                    let mut content: Vec<Value> = Vec::new();
+                    if let Some(t) = text {
+                        content.push(json!({"type": "output_text", "text": t}));
+                    }
+                    if let Some(tc) = tool_calls {
+                        for call in tc {
+                            if let Some(f) = call.get("function") {
+                                content.push(json!({
+                                    "type": "tool_use",
+                                    "id": call.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                                    "name": f.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                                    "input": f.get("arguments").cloned().unwrap_or(json!({}))
+                                }));
+                            }
+                        }
+                    }
+                    if !content.is_empty() {
                         output.push(json!({
                             "type": "message",
                             "role": "assistant",
-                            "content": [{"type": "output_text", "text": text}]
+                            "status": "completed",
+                            "content": content
                         }));
                     }
                 }
 
-                // Reasoning content (DeepSeek reasoning models)
-                if let Some(reasoning) = message.get("reasoning_content").and_then(|v| v.as_str()) {
-                    if !reasoning.is_empty() {
-                        output.push(json!({
-                            "type": "reasoning",
-                            "summary": [{"type": "summary_text", "text": reasoning}]
-                        }));
-                    }
+                // Reasoning content → reasoning item
+                if let Some(reasoning_text) = reasoning {
+                    output.push(json!({
+                        "type": "reasoning",
+                        "content": [{"type": "summary_text", "text": reasoning_text}]
+                    }));
                 }
 
-                // Tool calls → function_call items
-                if let Some(tool_calls) = message.get("tool_calls").and_then(|v| v.as_array()) {
-                    for tc in tool_calls {
+                // Legacy tool_calls → function_call items (for backward compat with simpler schemas)
+                if has_tool_calls {
+                    for tc in tool_calls.unwrap() {
                         let function = tc.get("function");
                         output.push(json!({
                             "type": "function_call",
                             "call_id": tc.get("id").and_then(|v| v.as_str()).unwrap_or(""),
                             "name": function.and_then(|f| f.get("name")).and_then(|v| v.as_str()).unwrap_or(""),
-                            "arguments": function.and_then(|f| f.get("arguments").cloned()).unwrap_or(json!("{}"))
+                            "arguments": function.and_then(|f| f.get("arguments").cloned()).unwrap_or(json!("{}")),
+                            "status": "completed"
                         }));
                     }
                 }
@@ -288,10 +338,21 @@ pub fn chat_completions_to_responses(body: Value) -> Value {
     }
 
     let usage_json = if let Some(usage) = usage {
+        let prompt_tokens = usage.get("prompt_tokens").cloned().unwrap_or(json!(0));
+        let completion_tokens = usage.get("completion_tokens").cloned().unwrap_or(json!(0));
+        let total_tokens = usage.get("total_tokens").cloned().unwrap_or(json!(0));
+        // OpenAI Responses API 期望 input_tokens 包含 cache_read (Anthropic) 或 prompt_cache_hit (OpenAI)
+        // 对于 DeepSeek，prompt_cache_hit_tokens 也可能存在
+        let cache_hit = usage
+            .get("prompt_cache_hit_tokens")
+            .or_else(|| usage.get("prompt_tokens_details").and_then(|d| d.get("cached_tokens")))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let input_tokens = prompt_tokens.as_u64().unwrap_or(0) + cache_hit;
         json!({
-            "input_tokens": usage.get("prompt_tokens").cloned().unwrap_or(json!(0)),
-            "output_tokens": usage.get("completion_tokens").cloned().unwrap_or(json!(0)),
-            "total_tokens": usage.get("total_tokens").cloned().unwrap_or(json!(0))
+            "input_tokens": input_tokens,
+            "output_tokens": completion_tokens,
+            "total_tokens": total_tokens
         })
     } else {
         json!({
@@ -302,11 +363,11 @@ pub fn chat_completions_to_responses(body: Value) -> Value {
     };
 
     json!({
-        "id": body.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+        "id": id,
         "object": "response",
         "model": model,
         "output": output,
-        "status": "completed",
+        "status": status,
         "usage": usage_json
     })
 }
@@ -351,6 +412,18 @@ pub fn wrap_responses_as_sse(
         })
     );
 
+    let in_progress = format!(
+        "event: response.in_progress\ndata: {}\n\n",
+        json!({
+            "type": "response.in_progress",
+            "response": {
+                "id": &response_id,
+                "model": model_name,
+                "status": "in_progress"
+            }
+        })
+    );
+
     let completed = format!(
         "event: response.completed\ndata: {}\n\n",
         json!({
@@ -365,7 +438,10 @@ pub fn wrap_responses_as_sse(
         // response.created MUST be first
         v.push(Ok(Bytes::from(created)));
 
-        // Append per-output-item events for tool calls and text
+        // response.in_progress MUST follow response.created
+        v.push(Ok(Bytes::from(in_progress)));
+
+        // Append per-output-item events for tool calls, text, and reasoning
         if let Some(output) = responses_body.get("output").and_then(|v| v.as_array()) {
             for (i, item) in output.iter().enumerate() {
                 let output_index = i;
@@ -517,8 +593,10 @@ pub fn wrap_responses_as_sse(
                         ))));
                     }
                     "reasoning" => {
-                        let summary = item
-                            .get("summary")
+                        // Support both old "summary" and new "content" format
+                        let summary_text = item
+                            .get("content")
+                            .or_else(|| item.get("summary"))
                             .and_then(|v| v.as_array())
                             .and_then(|arr| {
                                 arr.first()
@@ -534,7 +612,7 @@ pub fn wrap_responses_as_sse(
                                 "item": {
                                     "id": &item_id,
                                     "type": "reasoning",
-                                    "summary": [{"type": "summary_text", "text": summary}]
+                                    "content": [{"type": "summary_text", "text": summary_text}]
                                 }
                             })
                         ))));
@@ -547,7 +625,7 @@ pub fn wrap_responses_as_sse(
                                 "item": {
                                     "id": &item_id,
                                     "type": "reasoning",
-                                    "summary": [{"type": "summary_text", "text": summary}]
+                                    "content": [{"type": "summary_text", "text": summary_text}]
                                 }
                             })
                         ))));
@@ -757,12 +835,17 @@ mod tests {
 
         // response.created MUST be the first event
         let created_pos = text.find("event: response.created").unwrap();
+        let in_progress_pos = text.find("event: response.in_progress").unwrap();
         let completed_pos = text.find("event: response.completed").unwrap();
         let first_output = text.find("event: response.output_item.added").unwrap();
 
         assert!(
-            created_pos < first_output,
-            "response.created ({created_pos}) must come before first output_item.added ({first_output})\nFull SSE:\n{text}"
+            created_pos < in_progress_pos,
+            "response.created ({created_pos}) must come before response.in_progress ({in_progress_pos})"
+        );
+        assert!(
+            in_progress_pos < first_output,
+            "response.in_progress ({in_progress_pos}) must come before first output_item.added ({first_output})\nFull SSE:\n{text}"
         );
         assert!(
             completed_pos > first_output,
@@ -792,5 +875,96 @@ mod tests {
             created_response.get("usage").is_some(),
             "response.created must include usage\nFull SSE:\n{text}"
         );
+    }
+
+    #[test]
+    fn test_chat_to_responses_with_tool_calls_null_content() {
+        let input = json!({
+            "id": "chatcmpl-456",
+            "model": "deepseek-chat",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_abc",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": "{\"path\":\"/tmp/x\"}"}
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        });
+
+        let result = chat_completions_to_responses(input);
+        let output = result["output"].as_array().unwrap();
+
+        // Should have 1 message item + 1 function_call item
+        assert_eq!(output.len(), 2, "should have message + function_call items");
+        assert_eq!(output[0]["type"], "message");
+        assert_eq!(output[1]["type"], "function_call");
+        assert_eq!(output[1]["call_id"], "call_abc");
+        assert_eq!(output[1]["name"], "read_file");
+        assert_eq!(result["status"], "completed");
+    }
+
+    #[test]
+    fn test_chat_to_responses_handles_length_finish() {
+        let input = json!({
+            "id": "chatcmpl-789",
+            "model": "deepseek-chat",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "未完成的"},
+                "finish_reason": "length"
+            }]
+        });
+
+        let result = chat_completions_to_responses(input);
+        assert_eq!(result["status"], "incomplete");
+    }
+
+    #[test]
+    fn test_chat_to_responses_with_reasoning_content() {
+        let input = json!({
+            "id": "chatcmpl-reason",
+            "model": "deepseek-reasoner",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "答案是42",
+                    "reasoning_content": "让我思考一下..."
+                },
+                "finish_reason": "stop"
+            }]
+        });
+
+        let result = chat_completions_to_responses(input);
+        let output = result["output"].as_array().unwrap();
+        assert_eq!(output.len(), 2);
+        assert_eq!(output[0]["type"], "message");
+        assert_eq!(output[1]["type"], "reasoning");
+        assert_eq!(output[1]["content"][0]["type"], "summary_text");
+        assert_eq!(output[1]["content"][0]["text"], "让我思考一下...");
+    }
+
+    #[test]
+    fn test_chat_to_responses_session_id_preserved() {
+        let input = json!({
+            "id": "chatcmpl-session-123",
+            "model": "deepseek-chat",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "ok"},
+                "finish_reason": "stop"
+            }]
+        });
+
+        let result = chat_completions_to_responses(input);
+        assert_eq!(result["id"], "chatcmpl-session-123");
+        assert_eq!(result["object"], "response");
     }
 }
