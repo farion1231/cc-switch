@@ -17,13 +17,28 @@ fn append_line(line: &str) {
     }
 }
 
-/// 截断过长的 body（8KB）
-fn truncate_body(body: &str) -> &str {
-    const MAX_LEN: usize = 8192;
-    if body.len() <= MAX_LEN {
-        body
+/// 美化 JSON 并截断，返回带缩进的多行字符串
+fn indented_field(label: &str, raw: &str) -> String {
+    let content = if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
+        serde_json::to_string_pretty(&v).unwrap_or_else(|_| raw.to_string())
     } else {
-        &body[..MAX_LEN]
+        raw.to_string()
+    };
+    const MAX_LEN: usize = 8192;
+    let content = if content.len() <= MAX_LEN {
+        content
+    } else {
+        format!("{}...(truncated)", &content[..MAX_LEN])
+    };
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.len() == 1 {
+        format!("  {label}: {}", lines[0])
+    } else {
+        let mut s = format!("  {label}:\n");
+        for line in &lines {
+            s.push_str(&format!("    {line}\n"));
+        }
+        s
     }
 }
 
@@ -59,36 +74,33 @@ fn sanitize_headers(headers: &str) -> String {
 /// ① Codex CLI → cc-switch 入口请求
 pub fn log_incoming(tag: &str, method: &str, uri: &str, headers: &str, body: &str) {
     let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-    let body = truncate_body(body);
     let headers = sanitize_headers(headers);
     append_line(&format!("{ts} [{tag}] ← INCOMING {method} {uri}"));
-    append_line(&format!("  headers: {headers} | body: {body}"));
+    append_line(&indented_field("headers", &headers));
+    append_line(&indented_field("body", body));
 }
 
 /// ④ cc-switch → 上游提供商请求
 pub fn log_upstream_req(tag: &str, method: &str, url: &str, body: &str) {
     let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-    let body = truncate_body(body);
     append_line(&format!("{ts} [{tag}] → UPSTREAM {method} {url}"));
-    append_line(&format!("  body: {body}"));
+    append_line(&indented_field("body", body));
 }
 
 /// ⑤ 上游 → cc-switch 响应
 pub fn log_upstream_resp(tag: &str, status: u16, body: &str) {
     let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-    let body = truncate_body(body);
     append_line(&format!("{ts} [{tag}] ← UPSTREAM RESPONSE {status}"));
-    append_line(&format!("  body: {body}"));
+    append_line(&indented_field("body", body));
 }
 
 /// ⑥ cc-switch → Codex CLI 最终返回
 pub fn log_return(tag: &str, status: u16, extra: &str, body: &str) {
     let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-    let body = truncate_body(body);
     if extra.is_empty() {
         append_line(&format!("{ts} [{tag}] → RETURN {status}"));
     } else {
         append_line(&format!("{ts} [{tag}] → RETURN {status} ({extra})"));
     }
-    append_line(&format!("  body: {body}"));
+    append_line(&indented_field("body", body));
 }
