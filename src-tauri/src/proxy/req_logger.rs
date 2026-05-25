@@ -7,6 +7,9 @@ use std::io::Write;
 
 /// 追加一行到 req.log，忽略写入失败
 fn append_line(line: &str) {
+    if !crate::settings::get_settings().enable_log_req {
+        return;
+    }
     let path = crate::config::get_app_config_dir().join("req.log");
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)

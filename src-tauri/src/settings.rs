@@ -301,6 +301,11 @@ pub struct AppSettings {
     /// - Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_terminal: Option<String>,
+
+    // ===== 请求日志 =====
+    /// 是否启用 req.log 请求/响应日志（默认关闭）
+    #[serde(default)]
+    pub enable_log_req: bool,
 }
 
 fn default_show_in_tray() -> bool {
@@ -351,6 +356,7 @@ impl Default for AppSettings {
             backup_interval_hours: None,
             backup_retain_count: None,
             preferred_terminal: None,
+            enable_log_req: false,
         }
     }
 }

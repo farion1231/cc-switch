@@ -349,6 +349,8 @@ export interface Settings {
   // Windows: "cmd" | "powershell" | "wt"
   // Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
   preferredTerminal?: string;
+  // 是否启用 req.log 请求/响应日志（默认 false）
+  enableLogReq?: boolean;
 }
 
 export interface SessionMeta {
