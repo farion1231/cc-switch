@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   extractCodexBaseUrl,
+  extractCodexExperimentalBearerToken,
   extractCodexModelName,
+  extractCodexTopLevelInt,
+  removeCodexTopLevelField,
   setCodexBaseUrl,
   setCodexModelName,
+  setCodexTopLevelInt,
+  updateCodexExperimentalBearerToken,
 } from "@/utils/providerConfigUtils";
 
 describe("Codex TOML utils", () => {
@@ -147,5 +152,180 @@ describe("Codex TOML utils", () => {
 
     expect(extractCodexBaseUrl(input)).toBe("https://api.example.com/v1");
     expect(extractCodexModelName(input)).toBe("gpt-5");
+  });
+
+  it("reads, writes, and removes top-level integer metadata fields", () => {
+    const input = [
+      'model_provider = "custom"',
+      'model = "deepseek-v4-flash"',
+      "",
+      "[model_providers.custom]",
+      'name = "DeepSeek"',
+      "",
+    ].join("\n");
+
+    const withContext = setCodexTopLevelInt(
+      input,
+      "model_context_window",
+      128000,
+    );
+    const withCompact = setCodexTopLevelInt(
+      withContext,
+      "model_auto_compact_token_limit",
+      90000,
+    );
+
+    expect(extractCodexTopLevelInt(withCompact, "model_context_window")).toBe(
+      128000,
+    );
+    expect(
+      extractCodexTopLevelInt(withCompact, "model_auto_compact_token_limit"),
+    ).toBe(90000);
+    expect(withCompact).toMatch(/^model_context_window = 128000$/m);
+    expect(withCompact).toMatch(/^model_auto_compact_token_limit = 90000$/m);
+
+    const removed = removeCodexTopLevelField(
+      withCompact,
+      "model_context_window",
+    );
+
+    expect(
+      extractCodexTopLevelInt(removed, "model_context_window"),
+    ).toBeUndefined();
+    expect(removed).toContain("[model_providers.custom]");
+  });
+
+  // P3 回归: 不能在 config 没用 bearer token 模式时, 误为它新增一行
+  it("updateCodexExperimentalBearerToken leaves config without the token alone", () => {
+    const input = [
+      'model_provider = "openai"',
+      'base_url = "https://api.example.com/v1"',
+      "",
+    ].join("\n");
+
+    expect(updateCodexExperimentalBearerToken(input, "new-key")).toBe(input);
+    expect(updateCodexExperimentalBearerToken(input, "")).toBe(input);
+  });
+
+  // P3 回归: bearer 模式下清空 API key 必须真正擦掉 token, 让 pickCodexApiKey 的 fallback 找不到
+  it("updateCodexExperimentalBearerToken removes the token line when set to empty", () => {
+    const input = [
+      'model_provider = "thirdparty"',
+      "",
+      "[model_providers.thirdparty]",
+      'name = "Thirdparty"',
+      'base_url = "https://thirdparty.example/v1"',
+      'experimental_bearer_token = "old-key"',
+      "requires_openai_auth = true",
+      "",
+    ].join("\n");
+
+    const cleared = updateCodexExperimentalBearerToken(input, "");
+
+    expect(extractCodexExperimentalBearerToken(cleared)).toBeUndefined();
+    expect(cleared).toMatch(/requires_openai_auth = true/);
+    expect(cleared).toMatch(/base_url = "https:\/\/thirdparty\.example\/v1"/);
+  });
+
+  it("updateCodexExperimentalBearerToken replaces the token inside the active model_providers section", () => {
+    const input = [
+      'model_provider = "thirdparty"',
+      "",
+      "[model_providers.thirdparty]",
+      'experimental_bearer_token = "old-key"',
+      "",
+    ].join("\n");
+
+    const updated = updateCodexExperimentalBearerToken(input, "new-key");
+
+    expect(extractCodexExperimentalBearerToken(updated)).toBe("new-key");
+    expect(updated).not.toMatch(/old-key/);
+  });
+
+  it("updateCodexExperimentalBearerToken escapes basic TOML strings and keeps comments", () => {
+    const input = [
+      'model_provider = "thirdparty"',
+      "",
+      "[model_providers.thirdparty]",
+      'experimental_bearer_token = "old-key" # vendor token',
+      "",
+    ].join("\n");
+
+    const updated = updateCodexExperimentalBearerToken(
+      input,
+      'abc"def\\ghi',
+    );
+
+    expect(updated).toContain(
+      'experimental_bearer_token = "abc\\"def\\\\ghi" # vendor token',
+    );
+    expect(extractCodexExperimentalBearerToken(updated)).toBe('abc"def\\ghi');
+  });
+
+  it("updateCodexExperimentalBearerToken escapes all TOML control characters", () => {
+    const input = [
+      'model_provider = "thirdparty"',
+      "",
+      "[model_providers.thirdparty]",
+      'experimental_bearer_token = "old-key"',
+      "",
+    ].join("\n");
+
+    const updated = updateCodexExperimentalBearerToken(
+      input,
+      "a\u0000b\u0001c\u001fd",
+    );
+
+    expect(updated).toContain(
+      'experimental_bearer_token = "a\\u0000b\\u0001c\\u001fd"',
+    );
+    expect(extractCodexExperimentalBearerToken(updated)).toBe(
+      "a\u0000b\u0001c\u001fd",
+    );
+  });
+
+  it("updateCodexExperimentalBearerToken can replace an already escaped basic string", () => {
+    const input = [
+      'model_provider = "thirdparty"',
+      "",
+      "[model_providers.thirdparty]",
+      'experimental_bearer_token = "old\\"key" # vendor token',
+      "",
+    ].join("\n");
+
+    const updated = updateCodexExperimentalBearerToken(input, "new-key");
+
+    expect(updated).toContain(
+      'experimental_bearer_token = "new-key" # vendor token',
+    );
+    expect(extractCodexExperimentalBearerToken(updated)).toBe("new-key");
+  });
+
+  it("extractCodexExperimentalBearerToken ignores reserved provider tables", () => {
+    const input = [
+      'model_provider = "openai"',
+      'experimental_bearer_token = "top-level-key"',
+      "",
+      "[model_providers.openai]",
+      'experimental_bearer_token = "stale-table-key"',
+      "",
+    ].join("\n");
+
+    expect(extractCodexExperimentalBearerToken(input)).toBe("top-level-key");
+  });
+
+  it("extractCodexExperimentalBearerToken reads only top-level model_provider", () => {
+    const input = [
+      'experimental_bearer_token = "top-level-key"',
+      "",
+      "[profiles.work]",
+      'model_provider = "fake"',
+      "",
+      "[model_providers.fake]",
+      'experimental_bearer_token = "wrong-key"',
+      "",
+    ].join("\n");
+
+    expect(extractCodexExperimentalBearerToken(input)).toBe("top-level-key");
   });
 });

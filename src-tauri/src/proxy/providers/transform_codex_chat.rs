@@ -5,6 +5,7 @@
 //! OpenAI-compatible Chat Completions endpoint.
 
 use crate::proxy::{error::ProxyError, json_canonical::canonical_json_string};
+use crate::provider::CodexChatReasoningConfig;
 use serde_json::{json, Value};
 
 const EXTRA_CHAT_PASSTHROUGH_FIELDS: &[&str] = &[
@@ -169,6 +170,20 @@ pub fn responses_to_chat_completions(
     }
 
     Ok(result)
+}
+
+/// Convert an OpenAI Responses request into an OpenAI Chat Completions request,
+/// using provider-declared Codex Chat reasoning capabilities when available.
+pub fn responses_to_chat_completions_with_reasoning(
+    body: Value,
+    reasoning_config: Option<&CodexChatReasoningConfig>,
+) -> Result<Value, ProxyError> {
+    // Map reasoning_config's deepseek mode to compatibility_mode
+    let compatibility_mode = reasoning_config
+        .and_then(|c| c.effort_value_mode.as_ref())
+        .filter(|m| *m == "deepseek")
+        .map(|_| "deepseek_thinking");
+    responses_to_chat_completions(body, compatibility_mode)
 }
 
 fn instruction_text(value: &Value) -> String {

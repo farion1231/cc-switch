@@ -185,12 +185,12 @@ async fn query_kimi(api_key: &str) -> SubscriptionQuota {
 
 /// 把智谱 `data` 里的 `limits[]` 解析成 tier 列表。
 ///
-/// 按 `nextResetTime` 升序后：第 0 条 = 五小时桶（`five_hour`）、
-/// 第 1 条 = 每周桶（`weekly_limit`）。老套餐（2026-02-12 前订阅）只回 1 条
+/// 双桶响应中，5 小时桶在 0% 等状态下可能没有 `nextResetTime`；
+/// 这类无 reset 条目应优先归为五小时桶。其余条目按 `nextResetTime` 升序。
+/// 老套餐（2026-02-12 前订阅）只回 1 条
 /// `TOKENS_LIMIT`，自然降级为仅展示 `five_hour`；新套餐回 2 条。
-/// 缺失 `nextResetTime` 时按 `i64::MAX` 排到末位。
 fn parse_zhipu_token_tiers(data: &serde_json::Value) -> Vec<QuotaTier> {
-    let mut token_limits: Vec<(i64, f64, Option<String>)> = Vec::new();
+    let mut token_limits: Vec<(Option<i64>, f64, Option<String>)> = Vec::new();
     if let Some(limits) = data.get("limits").and_then(|v| v.as_array()) {
         for limit_item in limits {
             let limit_type = limit_item
@@ -205,19 +205,12 @@ fn parse_zhipu_token_tiers(data: &serde_json::Value) -> Vec<QuotaTier> {
                 .get("percentage")
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.0);
-            let reset_ms = limit_item
-                .get("nextResetTime")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(i64::MAX);
-            let reset_iso = if reset_ms == i64::MAX {
-                None
-            } else {
-                millis_to_iso8601(reset_ms)
-            };
+            let reset_ms = limit_item.get("nextResetTime").and_then(|v| v.as_i64());
+            let reset_iso = reset_ms.and_then(millis_to_iso8601);
             token_limits.push((reset_ms, percentage, reset_iso));
         }
     }
-    token_limits.sort_by_key(|(reset, _, _)| *reset);
+    token_limits.sort_by_key(|(reset, _, _)| (reset.is_some(), reset.unwrap_or(i64::MIN)));
 
     token_limits
         .into_iter()
@@ -529,21 +522,23 @@ mod tests {
     }
 
     #[test]
-    fn zhipu_missing_reset_time_sorts_last() {
-        // 防御性：没有 nextResetTime 的条目排到末位，避免抢占 five_hour 槽位。
+    fn zhipu_missing_reset_time_is_five_hour_when_weekly_has_reset() {
+        // 真实反馈：5 小时桶为 0% 时可能没有 nextResetTime；每周桶带 reset。
+        // 这种形态不能按 reset 升序把每周桶误判为 five_hour。
         let data = json!({
             "limits": [
-                { "type": "TOKENS_LIMIT", "percentage": 99.0 },
-                { "type": "TOKENS_LIMIT", "percentage": 10.0, "nextResetTime": 1_000_000_000_000_i64 }
+                { "type": "TOKENS_LIMIT", "percentage": 25.0, "nextResetTime": 2_000_000_000_000_i64 },
+                { "type": "TOKENS_LIMIT", "percentage": 0.0 }
             ]
         });
         let tiers = parse_zhipu_token_tiers(&data);
         assert_eq!(tiers.len(), 2);
         assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
-        assert_eq!(tiers[0].utilization, 10.0);
+        assert_eq!(tiers[0].utilization, 0.0);
+        assert!(tiers[0].resets_at.is_none());
         assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
-        assert_eq!(tiers[1].utilization, 99.0);
-        assert!(tiers[1].resets_at.is_none());
+        assert_eq!(tiers[1].utilization, 25.0);
+        assert!(tiers[1].resets_at.is_some());
     }
 
     #[test]

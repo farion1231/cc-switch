@@ -137,6 +137,42 @@ export interface ClaudeDesktopModelRoute {
   supports1m?: boolean;
 }
 
+export type CodexChatThinkingParam =
+  | "none"
+  | "thinking"
+  | "enable_thinking"
+  | "reasoning_split";
+
+export type CodexChatEffortParam =
+  | "none"
+  | "reasoning_effort"
+  // OpenRouter 原生归一化对象 reasoning:{effort}（区别于顶层 OpenAI 别名 reasoning_effort）
+  | "reasoning.effort";
+
+export type CodexChatEffortValueMode =
+  | "passthrough"
+  | "low_high"
+  | "deepseek"
+  // OpenRouter effort 枚举 xhigh|high|medium|low|minimal（无 max，max 钳到 xhigh）
+  | "openrouter";
+
+export type CodexChatReasoningOutputFormat =
+  | "auto"
+  | "reasoning_content"
+  | "reasoning"
+  | "reasoning_details"
+  | "think_tags";
+
+export interface CodexChatReasoning {
+  supportsThinking?: boolean;
+  supportsEffort?: boolean;
+  thinkingParam?: CodexChatThinkingParam;
+  effortParam?: CodexChatEffortParam;
+  effortValueMode?: CodexChatEffortValueMode;
+  // 声明性字段：标注上游 reasoning 回传位置。当前提取靠穷举字段，未读取此值（think_tags 尚未接线）。
+  outputFormat?: CodexChatReasoningOutputFormat;
+}
+
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
@@ -183,6 +219,8 @@ export interface ProviderMeta {
   promptCacheKey?: string;
   // Codex OAuth FAST mode: injects service_tier="priority" on ChatGPT Codex requests
   codexFastMode?: boolean;
+  // Codex Responses -> Chat Completions reasoning capability metadata
+  codexChatReasoning?: CodexChatReasoning;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
@@ -218,6 +256,12 @@ export type CodexApiFormat = "openai_responses" | "openai_chat" | "responses_pas
 // - undefined / "standard": 标准 OpenAI Chat Completions，无特殊处理
 // - "deepseek_thinking": DeepSeek Thinking 模式，adapter 会合并 reasoning_content 与 tool_calls
 export type CodexChatCompatibilityMode = "standard" | "deepseek_thinking";
+
+export interface CodexCatalogModel {
+  model: string;
+  displayName?: string;
+  contextWindow?: string | number;
+}
 
 // Claude 认证字段类型
 export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
@@ -358,6 +402,17 @@ export interface Settings {
   // Windows: "cmd" | "powershell" | "wt"
   // Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
   preferredTerminal?: string;
+
+  // ===== 本机自动迁移状态 =====
+  localMigrations?: {
+    codexThirdPartyHistoryProviderBucketV1?: {
+      completedAt: string;
+      targetProviderId: string;
+      sourceProviderIds?: string[];
+      migratedJsonlFiles?: number;
+      migratedStateRows?: number;
+    };
+  };
 }
 
 export interface SessionMeta {

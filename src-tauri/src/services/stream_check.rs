@@ -541,6 +541,17 @@ impl StreamCheckService {
             .and_then(|meta| meta.is_full_url)
             .unwrap_or(false);
 
+        // 当 provider 的 api_format 标记为 openai_chat 时，上游不接受 Responses API；
+        // 必须改打 /chat/completions 并发送 Chat 格式 body，否则 Stream Check 与代理路径不一致，
+        // 会把"实际可用"的供应商误报为不可用（典型如 DeepSeek、MiniMax、Kimi 等 Chat 兼容厂商）。
+        // passthrough 模式 codex_provider_uses_chat_completions 返回 false，走 Responses 路径。
+        let uses_chat = crate::proxy::providers::codex_provider_uses_chat_completions(provider);
+        let urls = if uses_chat {
+            Self::resolve_codex_chat_stream_urls(base_url, is_full_url)
+        } else {
+            Self::resolve_codex_stream_urls(base_url, is_full_url)
+        };
+
         // 检测 apiFormat：override > meta.apiFormat > TOML wire_api > 默认 "openai_chat"
         // 注意：TOML wire_api 对 passthrough 始终是 "responses"，
         // 因此 passthrough 必须通过 meta.apiFormat 识别。
@@ -573,67 +584,34 @@ impl StreamCheckService {
         let os_name = Self::get_os_name();
         let arch_name = Self::get_arch_name();
 
-        if api_format == "openai_chat" {
-            // Chat Completions 格式
-            let url = if is_full_url {
-                base_url.to_string()
-            } else {
-                let trimmed = base_url.trim_end_matches('/');
-                format!("{trimmed}/v1/chat/completions")
-            };
-
-            let mut body = json!({
+        let mut body = if uses_chat {
+            // Chat Completions 请求体（与 transform_codex_chat::responses_to_chat_completions 对齐）
+            json!({
                 "model": actual_model,
                 "messages": [{ "role": "user", "content": test_prompt }],
-                "stream": true,
-                "max_tokens": 1
-            });
-            if let Some(effort) = reasoning_effort {
-                body["reasoning_effort"] = json!(effort);
-            }
+                "max_tokens": 1,
+                "stream": true
+            })
+        } else {
+            // Responses API 请求体格式 (input 必须是数组)
+            // passthrough 也走此路径（uses_chat 对 passthrough 返回 false）
+            json!({
+                "model": actual_model,
+                "input": [{ "role": "user", "content": test_prompt }],
+                "stream": true
+            })
+        };
 
-            let response = client
-                .post(&url)
-                .header("authorization", format!("Bearer {}", auth.api_key))
-                .header("content-type", "application/json")
-                .header("accept", "text/event-stream")
-                .header("accept-encoding", "identity")
-                .header(
-                    "user-agent",
-                    format!("codex_cli_rs/0.80.0 ({os_name} 15.7.2; {arch_name}) Terminal"),
-                )
-                .timeout(timeout)
-                .json(&body)
-                .send()
-                .await
-                .map_err(Self::map_request_error)?;
-
-            let status = response.status().as_u16();
-            if !response.status().is_success() {
-                let error_text = response.text().await.unwrap_or_default();
-                return Err(Self::http_status_error(status, error_text));
-            }
-
-            let mut stream = response.bytes_stream();
-            if let Some(chunk) = stream.next().await {
-                match chunk {
-                    Ok(_) => return Ok((status, actual_model)),
-                    Err(e) => return Err(AppError::Message(format!("Stream read failed: {e}"))),
-                }
-            }
-            return Err(AppError::Message("No response data received".to_string()));
-        }
-
-        // openai_responses / responses_passthrough 格式（都走 /v1/responses 端点）
-        let urls = Self::resolve_codex_stream_urls(base_url, is_full_url);
-
-        let mut body = json!({
-            "model": actual_model,
-            "input": [{ "role": "user", "content": test_prompt }],
-            "stream": true
-        });
+        // Chat 路径只对 OpenAI o-series 透传 reasoning_effort，与 transform_codex_chat
+        // 一致；非 o-series（DeepSeek、Kimi 等）收到未知字段会 400。
         if let Some(effort) = reasoning_effort {
-            body["reasoning"] = json!({ "effort": effort });
+            if uses_chat
+                && crate::proxy::providers::transform::supports_reasoning_effort(&actual_model)
+            {
+                body["reasoning_effort"] = json!(effort);
+            } else if !uses_chat {
+                body["reasoning"] = json!({ "effort": effort });
+            }
         }
 
         for (i, url) in urls.iter().enumerate() {
@@ -1591,17 +1569,54 @@ impl StreamCheckService {
         }
     }
 
+    /// Codex Responses 流式 URL 构造（薄包装，详见 `resolve_codex_endpoint_urls`）。
     fn resolve_codex_stream_urls(base_url: &str, is_full_url: bool) -> Vec<String> {
+        Self::resolve_codex_endpoint_urls(base_url, is_full_url, "responses")
+    }
+
+    /// Codex Chat Completions 流式 URL 构造（薄包装，详见 `resolve_codex_endpoint_urls`）。
+    fn resolve_codex_chat_stream_urls(base_url: &str, is_full_url: bool) -> Vec<String> {
+        Self::resolve_codex_endpoint_urls(base_url, is_full_url, "chat/completions")
+    }
+
+    /// 与 `CodexAdapter::build_url` 优先级对齐的 stream check URL 列表构造。
+    ///
+    /// 纯 origin 在生产路径上会自动补 `/v1`，所以 Stream Check 必须优先走
+    /// `<base>/v1/<endpoint>`。否则上游对 bare 路径返回 401/400/405（非 404）
+    /// 时不会触发循环里的 fallback，会把可用供应商误判为不可用。
+    fn resolve_codex_endpoint_urls(
+        base_url: &str,
+        is_full_url: bool,
+        endpoint: &str,
+    ) -> Vec<String> {
         if is_full_url {
             return vec![base_url.to_string()];
         }
 
         let base = base_url.trim_end_matches('/');
+        let lower = base.to_ascii_lowercase();
+        let endpoint_suffix = format!("/{endpoint}");
+        let endpoint_lower = endpoint_suffix.to_ascii_lowercase();
+
+        // 用户在 base_url 里写了完整 endpoint 但忘开 is_full_url 的兜底
+        if lower.ends_with(&endpoint_lower) {
+            return vec![base.to_string()];
+        }
 
         if base.ends_with("/v1") {
-            vec![format!("{base}/responses")]
+            return vec![format!("{base}{endpoint_suffix}")];
+        }
+
+        if crate::proxy::providers::is_origin_only_url(base) {
+            vec![
+                format!("{base}/v1{endpoint_suffix}"),
+                format!("{base}{endpoint_suffix}"),
+            ]
         } else {
-            vec![format!("{base}/responses"), format!("{base}/v1/responses")]
+            vec![
+                format!("{base}{endpoint_suffix}"),
+                format!("{base}/v1{endpoint_suffix}"),
+            ]
         }
     }
 
@@ -2076,16 +2091,110 @@ mod tests {
         assert_eq!(urls, vec!["https://api.openai.com/v1/responses"]);
     }
 
+    /// 纯 origin 必须优先 /v1/responses（与 CodexAdapter::build_url 一致）。
+    /// OpenAI 官方 /responses 实际挂在 /v1 下，bare 路径只在用户配置错误的
+    /// 反代上才可能命中，作为 fallback 保留即可。
     #[test]
-    fn test_resolve_codex_stream_urls_for_origin_base() {
+    fn test_resolve_codex_stream_urls_for_origin_base_prioritizes_v1() {
         let urls = StreamCheckService::resolve_codex_stream_urls("https://api.openai.com", false);
 
         assert_eq!(
             urls,
             vec![
-                "https://api.openai.com/responses",
                 "https://api.openai.com/v1/responses",
+                "https://api.openai.com/responses",
             ]
         );
+    }
+
+    /// 自定义前缀（如 /openai）生产路径不会自动补 /v1，Stream Check 应先打
+    /// 不带 /v1 的版本与之对齐；/v1 作为 misconfigured 兜底。
+    #[test]
+    fn test_resolve_codex_stream_urls_for_custom_prefix() {
+        let urls =
+            StreamCheckService::resolve_codex_stream_urls("https://relay.example/openai", false);
+
+        assert_eq!(
+            urls,
+            vec![
+                "https://relay.example/openai/responses",
+                "https://relay.example/openai/v1/responses",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_resolve_codex_stream_urls_recognizes_full_endpoint_without_flag() {
+        let urls = StreamCheckService::resolve_codex_stream_urls(
+            "https://api.openai.com/v1/responses",
+            false,
+        );
+
+        assert_eq!(urls, vec!["https://api.openai.com/v1/responses"]);
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_stream_urls_for_v1_base() {
+        let urls = StreamCheckService::resolve_codex_chat_stream_urls(
+            "https://api.deepseek.com/v1",
+            false,
+        );
+
+        assert_eq!(urls, vec!["https://api.deepseek.com/v1/chat/completions"]);
+    }
+
+    /// 纯 origin 必须优先 /v1/chat/completions，与 CodexAdapter::build_url 一致；
+    /// bare /chat/completions 仅作为 fallback。如果颠倒了优先级，上游对 bare
+    /// 路径返回 401/400/405 时（非 404）fallback 不会触发，会误判为不可用。
+    #[test]
+    fn test_resolve_codex_chat_stream_urls_for_origin_base_prioritizes_v1() {
+        let urls =
+            StreamCheckService::resolve_codex_chat_stream_urls("https://api.deepseek.com", false);
+
+        assert_eq!(
+            urls,
+            vec![
+                "https://api.deepseek.com/v1/chat/completions",
+                "https://api.deepseek.com/chat/completions",
+            ]
+        );
+    }
+
+    /// 自定义前缀（路径中已经包含段如 `/openai`）生产路径不会自动补 /v1。
+    /// Stream Check 应先打不带 /v1 的版本，与 build_url 行为一致。
+    #[test]
+    fn test_resolve_codex_chat_stream_urls_for_custom_prefix() {
+        let urls =
+            StreamCheckService::resolve_codex_chat_stream_urls("https://example.com/openai", false);
+
+        assert_eq!(
+            urls,
+            vec![
+                "https://example.com/openai/chat/completions",
+                "https://example.com/openai/v1/chat/completions",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_stream_urls_for_full_url_mode() {
+        let urls = StreamCheckService::resolve_codex_chat_stream_urls(
+            "https://relay.example/custom/chat/completions",
+            true,
+        );
+
+        assert_eq!(urls, vec!["https://relay.example/custom/chat/completions"]);
+    }
+
+    /// 用户在 base_url 里直接写完整 chat/completions endpoint 但忘开 is_full_url 时，
+    /// 不应该再追加 `/chat/completions` 后缀。
+    #[test]
+    fn test_resolve_codex_chat_stream_urls_recognizes_full_endpoint_without_flag() {
+        let urls = StreamCheckService::resolve_codex_chat_stream_urls(
+            "https://api.deepseek.com/v1/chat/completions",
+            false,
+        );
+
+        assert_eq!(urls, vec!["https://api.deepseek.com/v1/chat/completions"]);
     }
 }
