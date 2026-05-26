@@ -13,7 +13,7 @@
 
 ### 🌐 唯一官方网站：**[ccswitch.io](https://ccswitch.io)**
 
-[English](README.md) | 中文 | [日本語](README_JA.md) | [更新日志](CHANGELOG.md)
+[English](README.md) | 中文 | [日本語](README_JA.md) | [Deutsch](README_DE.md) | [更新日志](CHANGELOG.md)
 
 </div>
 
