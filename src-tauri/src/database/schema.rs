@@ -1896,7 +1896,15 @@ impl Database {
     }
 
     fn ensure_model_pricing_seeded_on_conn(conn: &Connection) -> Result<(), AppError> {
-        // 每次启动都执行 INSERT OR IGNORE，增量追加新模型，已有数据不覆盖
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM model_pricing", [], |row| row.get(0))
+            .map_err(|e| AppError::Database(format!("读取模型定价数量失败: {e}")))?;
+
+        if count > 0 {
+            log::debug!("模型定价表已有数据，跳过默认定价填充");
+            return Ok(());
+        }
+
         Self::seed_model_pricing(conn)
     }
 
