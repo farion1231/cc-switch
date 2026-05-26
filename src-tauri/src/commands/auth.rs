@@ -303,3 +303,47 @@ pub async fn auth_logout(
         _ => unreachable!(),
     }
 }
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn claude_official_list_accounts(
+) -> Result<Vec<crate::claude_official_accounts::ClaudeOfficialAccount>, String> {
+    crate::claude_official_accounts::list_accounts().map_err(|e| e.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn claude_official_start_login() -> Result<(), String> {
+    crate::claude_official_accounts::start_login_terminal().map_err(|e| e.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn claude_official_capture_current_account(
+    label: Option<String>,
+) -> Result<crate::claude_official_accounts::ClaudeOfficialAccount, String> {
+    crate::claude_official_accounts::capture_current_account(label)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn claude_official_refresh_account_quota(
+    account_id: String,
+) -> Result<crate::claude_official_accounts::ClaudeOfficialAccount, String> {
+    crate::claude_official_accounts::refresh_account_quota(&account_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn claude_official_activate_account(account_id: String) -> Result<Vec<String>, String> {
+    let warnings = crate::claude_official_accounts::activate_account(&account_id)
+        .map_err(|e| e.to_string())?;
+    crate::claude_official_accounts::refresh_account_quota(&account_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(warnings)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn claude_official_remove_account(account_id: String) -> Result<(), String> {
+    crate::claude_official_accounts::remove_account(&account_id).map_err(|e| e.to_string())
+}

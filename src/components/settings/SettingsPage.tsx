@@ -200,7 +200,7 @@ export function SettingsPage({
             </TabsTrigger>
             <TabsTrigger value="proxy">{t("settings.tabProxy")}</TabsTrigger>
             <TabsTrigger value="auth">
-              {t("settings.tabAuth", { defaultValue: "认证" })}
+              {t("settings.tabAuth", { defaultValue: "邮箱" })}
             </TabsTrigger>
             <TabsTrigger value="advanced">
               {t("settings.tabAdvanced")}
