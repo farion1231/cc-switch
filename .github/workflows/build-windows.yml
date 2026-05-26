@@ -31,9 +31,16 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ''
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+          TAURI_SKIP_SIGNING: 'true'
 
-      - name: Upload artifact
+      - name: Upload MSI artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cc-switch-windows
+          name: cc-switch-windows-msi
           path: src-tauri/target/release/bundle/msi/*.msi
+
+      - name: Upload EXE artifact (debug)
+        uses: actions/upload-artifact@v4
+        with:
+          name: cc-switch-windows-exe
+          path: src-tauri/target/release/cc-switch.exe
