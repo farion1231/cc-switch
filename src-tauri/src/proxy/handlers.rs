@@ -15,6 +15,7 @@ use super::{
         GEMINI_PARSER_CONFIG, OPENAI_PARSER_CONFIG,
     },
     handler_context::RequestContext,
+    hyper_client::ProxyResponse,
     providers::{
         get_adapter, get_claude_api_format, get_codex_api_format,
         streaming::create_anthropic_sse_stream,
@@ -22,6 +23,7 @@ use super::{
         streaming_responses::create_anthropic_sse_stream_from_responses, transform,
         transform_codex, transform_gemini, transform_responses,
     },
+    req_logger,
     response_processor::{
         create_logged_passthrough_stream, process_response, read_decoded_body,
         strip_entity_headers_for_rebuilt_body, strip_hop_by_hop_response_headers,
@@ -31,8 +33,6 @@ use super::{
     sse::{strip_sse_field, take_sse_block},
     types::*,
     usage::parser::TokenUsage,
-    hyper_client::ProxyResponse,
-    req_logger,
     ProxyError,
 };
 use crate::app_config::AppType;
@@ -632,8 +632,7 @@ pub async fn handle_responses(
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
 
     let api_format = get_codex_api_format(&ctx.provider);
-    let needs_chat_transform =
-        super::providers::codex_api_format_needs_transform(api_format);
+    let needs_chat_transform = super::providers::codex_api_format_needs_transform(api_format);
 
     let was_streaming = body
         .get("stream")
@@ -717,9 +716,8 @@ pub async fn handle_responses(
                 &converted_json,
             );
             let sse_stream = transform_codex::wrap_responses_as_sse(responses_body);
-            let mut sse_response = axum::response::Response::new(
-                axum::body::Body::from_stream(sse_stream),
-            );
+            let mut sse_response =
+                axum::response::Response::new(axum::body::Body::from_stream(sse_stream));
             *sse_response.status_mut() = upstream_status;
             let hm = sse_response.headers_mut();
             hm.insert("content-type", "text/event-stream".parse().unwrap());

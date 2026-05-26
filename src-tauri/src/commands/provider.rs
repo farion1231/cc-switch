@@ -61,19 +61,32 @@ pub fn update_provider(
         provider.settings_config.as_object().and_then(|s| {
             let auth = s.get("auth")?;
             let cfg = s.get("config")?.as_str()?;
-            let models = provider.meta.as_ref().and_then(|m| m.codex_models.as_deref());
+            let models = provider
+                .meta
+                .as_ref()
+                .and_then(|m| m.codex_models.as_deref());
             let catalog_json = provider
                 .meta
                 .as_ref()
                 .and_then(|m| m.codex_models_catalog.as_deref());
-            Some((auth.clone(), cfg.to_string(), models.map(|v| v.to_vec()), catalog_json.map(|s| s.to_string())))
+            Some((
+                auth.clone(),
+                cfg.to_string(),
+                models.map(|v| v.to_vec()),
+                catalog_json.map(|s| s.to_string()),
+            ))
         })
     } else {
         None
     };
 
-    let result = ProviderService::update(state.inner(), app_type.clone(), originalId.as_deref(), provider)
-        .map_err(|e| e.to_string())?;
+    let result = ProviderService::update(
+        state.inner(),
+        app_type.clone(),
+        originalId.as_deref(),
+        provider,
+    )
+    .map_err(|e| e.to_string())?;
 
     if let Some((auth, cfg, models, catalog_json)) = codex_sync_data {
         let model_slice: Option<Vec<String>> = models;
@@ -86,12 +99,11 @@ pub fn update_provider(
         // 如果代理接管处于激活状态，重新应用代理地址到 config.toml
         let is_proxy_running = futures::executor::block_on(state.proxy_service.is_running());
         if is_proxy_running {
-            let has_live_backup = futures::executor::block_on(
-                state.db.get_live_backup(app_type.as_str()),
-            )
-            .ok()
-            .flatten()
-            .is_some();
+            let has_live_backup =
+                futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
+                    .ok()
+                    .flatten()
+                    .is_some();
             if has_live_backup {
                 let _ = futures::executor::block_on(
                     state

@@ -360,10 +360,11 @@ function ProviderFormFull({
   });
 
   const [localApiFormat, setLocalApiFormat] = useState<ClaudeApiFormat>(() => {
-    if (appId === "claude")
-      return initialData?.meta?.apiFormat ?? "anthropic";
+    if (appId === "claude") return initialData?.meta?.apiFormat ?? "anthropic";
     if (appId === "codex")
-      return (initialData?.meta?.apiFormat as ClaudeApiFormat) ?? "openai_responses";
+      return (
+        (initialData?.meta?.apiFormat as ClaudeApiFormat) ?? "openai_responses"
+      );
     return "anthropic";
   });
 

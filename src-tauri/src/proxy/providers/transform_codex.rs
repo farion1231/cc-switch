@@ -97,18 +97,13 @@ pub fn responses_to_chat_completions(body: Value) -> Value {
                 // namespace: MCP server tools — 展开内嵌的 functions
                 "namespace" => {
                     if let Some(ns_tools) = tool.get("tools").and_then(|v| v.as_array()) {
-                        let ns_prefix = tool
-                            .get("namespace")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
+                        let ns_prefix =
+                            tool.get("namespace").and_then(|v| v.as_str()).unwrap_or("");
                         for ns_tool in ns_tools {
-                            if ns_tool.get("type").and_then(|v| v.as_str()) == Some("function")
-                            {
+                            if ns_tool.get("type").and_then(|v| v.as_str()) == Some("function") {
                                 let mut function_obj = json!({});
-                                let orig_name = ns_tool
-                                    .get("name")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("");
+                                let orig_name =
+                                    ns_tool.get("name").and_then(|v| v.as_str()).unwrap_or("");
                                 // Prepend namespace: "filesystem/read_file"
                                 let qualified_name = if ns_prefix.is_empty() {
                                     orig_name.to_string()
@@ -240,9 +235,10 @@ fn convert_input_to_messages(input: &[Value], messages: &mut Vec<Value>) {
                             "role": resolved_role,
                             "content": texts.join("")
                         }));
-                    } else if content_blocks.iter().any(|b| {
-                        b.get("type").and_then(|v| v.as_str()) == Some("input_image")
-                    }) {
+                    } else if content_blocks
+                        .iter()
+                        .any(|b| b.get("type").and_then(|v| v.as_str()) == Some("input_image"))
+                    {
                         let parts: Vec<Value> = content_blocks
                             .iter()
                             .filter_map(|block| {
@@ -412,7 +408,11 @@ pub fn chat_completions_to_responses(body: Value) -> Value {
         // 对于 DeepSeek，prompt_cache_hit_tokens 也可能存在
         let cache_hit = usage
             .get("prompt_cache_hit_tokens")
-            .or_else(|| usage.get("prompt_tokens_details").and_then(|d| d.get("cached_tokens")))
+            .or_else(|| {
+                usage
+                    .get("prompt_tokens_details")
+                    .and_then(|d| d.get("cached_tokens"))
+            })
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
         let input_tokens = prompt_tokens.as_u64().unwrap_or(0) + cache_hit;
@@ -612,15 +612,15 @@ pub fn wrap_responses_as_sse(
                         ))));
                     }
                     "function_call" => {
-                        let name = item
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
+                        let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
                         let arguments = item
                             .get("arguments")
                             .and_then(|v| v.as_str())
                             .unwrap_or("{}");
-                        let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or(&item_id);
+                        let call_id = item
+                            .get("call_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(&item_id);
 
                         // output_item.added for function_call
                         v.push(Ok(Bytes::from(format!(
@@ -676,7 +676,6 @@ pub fn wrap_responses_as_sse(
                                 }
                             })
                         ))));
-
                     }
                     "reasoning" => {
                         let summary_text = item
@@ -800,10 +799,7 @@ mod tests {
         assert_eq!(result["id"], "chatcmpl-123");
         assert_eq!(result["object"], "response");
         assert_eq!(result["output"][0]["type"], "message");
-        assert_eq!(
-            result["output"][0]["content"][0]["text"],
-            "Hi there!"
-        );
+        assert_eq!(result["output"][0]["content"][0]["text"], "Hi there!");
         assert_eq!(result["usage"]["input_tokens"], 5);
         assert_eq!(result["usage"]["output_tokens"], 3);
     }
@@ -910,9 +906,9 @@ mod tests {
         });
 
         let stream = wrap_responses_as_sse(body);
-        let chunks: Vec<Bytes> = futures::executor::block_on(
-            futures::StreamExt::collect::<Vec<Result<Bytes, std::io::Error>>>(stream)
-        )
+        let chunks: Vec<Bytes> = futures::executor::block_on(futures::StreamExt::collect::<
+            Vec<Result<Bytes, std::io::Error>>,
+        >(stream))
         .into_iter()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
@@ -989,7 +985,11 @@ mod tests {
         let output = result["output"].as_array().unwrap();
 
         // Only function_call items (no message item when content is null)
-        assert_eq!(output.len(), 1, "should have only function_call item when content is null");
+        assert_eq!(
+            output.len(),
+            1,
+            "should have only function_call item when content is null"
+        );
         assert_eq!(output[0]["type"], "function_call");
         assert_eq!(output[0]["call_id"], "call_abc");
         assert_eq!(output[0]["name"], "read_file");

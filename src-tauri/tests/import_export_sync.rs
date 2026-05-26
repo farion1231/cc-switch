@@ -583,10 +583,7 @@ base_url = "https://example.com/v1"
         entries.len()
     );
 
-    let slugs: Vec<&str> = entries
-        .iter()
-        .filter_map(|e| e["slug"].as_str())
-        .collect();
+    let slugs: Vec<&str> = entries.iter().filter_map(|e| e["slug"].as_str()).collect();
     assert!(slugs.contains(&"gpt-5"), "should contain gpt-5");
     assert!(slugs.contains(&"gpt-5-mini"), "should contain gpt-5-mini");
 }

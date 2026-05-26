@@ -241,7 +241,8 @@ export function CodexFormFields({
                           ) : (
                             availableModels.map((m) => (
                               <option key={m.id} value={m.id}>
-                                {m.id}{index === 0 ? " (默认)" : ""}
+                                {m.id}
+                                {index === 0 ? " (默认)" : ""}
                               </option>
                             ))
                           )}
@@ -303,14 +304,16 @@ export function CodexFormFields({
               </Button>
             </div>
           )}
-          {fetchedModels.length === 0 && codexModels.length === 0 && !isFetchingModels && (
-            <p className="text-xs text-muted-foreground">
-              {t("providerForm.fetchModelsToConfigure", {
-                defaultValue: "输入 API Key 和 Base URL 后点击'获取模型'来配置模型映射",
-              })}
-            </p>
-          )}
-
+          {fetchedModels.length === 0 &&
+            codexModels.length === 0 &&
+            !isFetchingModels && (
+              <p className="text-xs text-muted-foreground">
+                {t("providerForm.fetchModelsToConfigure", {
+                  defaultValue:
+                    "输入 API Key 和 Base URL 后点击'获取模型'来配置模型映射",
+                })}
+              </p>
+            )}
         </div>
       )}
 

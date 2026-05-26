@@ -740,7 +740,12 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 .meta
                 .as_ref()
                 .and_then(|m| m.codex_models_catalog.as_deref());
-            write_codex_live_atomic_with_stable_provider(auth, Some(config_str), catalog_models, catalog_json)?;
+            write_codex_live_atomic_with_stable_provider(
+                auth,
+                Some(config_str),
+                catalog_models,
+                catalog_json,
+            )?;
         }
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly

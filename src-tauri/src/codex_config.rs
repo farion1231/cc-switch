@@ -192,8 +192,7 @@ fn write_codex_models_catalog(models: &[String]) -> Result<(), AppError> {
     let catalog = CodexModelsCatalog { models: entries };
     let json_text = serde_json::to_string_pretty(&catalog)
         .map_err(|e| AppError::Message(format!("Failed to serialize models catalog: {e}")))?;
-    std::fs::write(&catalog_path, &json_text)
-        .map_err(|e| AppError::io(&catalog_path, e))
+    std::fs::write(&catalog_path, &json_text).map_err(|e| AppError::io(&catalog_path, e))
 }
 
 /// 直接写入原始 JSON 内容到 models_catalog.json（用于前端编辑后保存的场景）。
@@ -206,8 +205,7 @@ fn write_codex_models_catalog_raw(json_text: &str) -> Result<(), AppError> {
     if let Some(parent) = catalog_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }
-    std::fs::write(&catalog_path, json_text)
-        .map_err(|e| AppError::io(&catalog_path, e))
+    std::fs::write(&catalog_path, json_text).map_err(|e| AppError::io(&catalog_path, e))
 }
 
 /// 确保 config.toml 中包含 model_catalog_json 字段
@@ -221,9 +219,7 @@ fn ensure_model_catalog_json_in_toml(config_text: &str) -> String {
 
     match config_text.parse::<DocumentMut>() {
         Ok(mut doc) => {
-            let existing = doc
-                .get("model_catalog_json")
-                .and_then(|item| item.as_str());
+            let existing = doc.get("model_catalog_json").and_then(|item| item.as_str());
             if existing == Some(&catalog_path_str) {
                 return config_text.to_string();
             }
