@@ -8,7 +8,7 @@ import type { AppId } from "@/lib/api/types";
 import { APP_IDS, APP_ICON_MAP } from "@/config/appConfig";
 
 interface AppToggleGroupProps {
-  apps: Record<AppId, boolean>;
+  apps: Partial<Record<AppId, boolean>>;
   onToggle: (app: AppId, enabled: boolean) => void;
   appIds?: AppId[];
 }
