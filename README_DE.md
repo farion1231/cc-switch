@@ -87,11 +87,6 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
-<td width="180"><a href="https://aicoding.sh/i/CCSWITCH"><img src="assets/partners/logos/aicoding.jpg" alt="AICoding" width="150"></a></td>
-<td>Danke an AICoding.sh für die Unterstützung dieses Projekts! AICoding.sh — globaler KI-Modell-API-Relay-Dienst zu unschlagbaren Preisen! Claude Code zu 19 % des Originalpreises, GPT zu nur 1 %! Hunderte Unternehmen vertrauen auf die kostengünstigen KI-Dienste. Unterstützt Claude Code, GPT, Gemini und große inländische Modelle, mit unternehmensgerechter hoher Nebenläufigkeit, schneller Rechnungsstellung und dediziertem technischem Support rund um die Uhr. CC-Switch-Nutzer, die sich über <a href="https://aicoding.sh/i/CCSWITCH">diesen Link</a> registrieren, erhalten 10 % Rabatt auf ihre erste Aufladung!</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://crazyrouter.com/register?aff=OZcm&ref=cc-switch"><img src="assets/partners/logos/crazyrouter.png" alt="Crazyrouter" width="150"></a></td>
 <td>Danke an Crazyrouter für die Unterstützung dieses Projekts! Crazyrouter ist eine leistungsstarke KI-API-Aggregationsplattform — ein API-Schlüssel für mehr als 300 Modelle, darunter Claude Code, Codex, Gemini CLI und weitere. Alle Modelle zu 55 % des offiziellen Preises, mit automatischem Failover, intelligentem Routing und unbegrenzter Nebenläufigkeit. Crazyrouter bietet ein exklusives Angebot für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://crazyrouter.com/register?aff=OZcm&ref=cc-switch">diesen Link</a> und kontaktieren Sie den Kundensupport, um <strong>2 $ Gratisguthaben</strong> zu erhalten; geben Sie zusätzlich bei Ihrer ersten Aufladung den Gutscheincode `CCSWITCH` ein, um <strong>30 % Bonusguthaben</strong> zu bekommen! </td>
 </tr>
