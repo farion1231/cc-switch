@@ -5,6 +5,7 @@ mod claude_desktop_config;
 mod claude_mcp;
 mod claude_plugin;
 mod codex_config;
+mod codex_history_migration;
 mod commands;
 mod config;
 mod database;
@@ -533,6 +534,31 @@ pub fn run() {
                 }
                 Ok(_) => {}
                 Err(e) => log::warn!("✗ Failed to seed official providers: {e}"),
+            }
+
+            {
+                let db_for_codex_history_migration = app_state.db.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    match crate::codex_history_migration::maybe_migrate_codex_third_party_history_provider_bucket(
+                        &db_for_codex_history_migration,
+                    ) {
+                        Ok(outcome) => {
+                            if let Some(reason) = outcome.skipped_reason {
+                                log::debug!("○ Codex history provider bucket migration skipped: {reason}");
+                            } else {
+                                log::info!(
+                                    "✓ Codex history provider bucket migration completed: sources={}, jsonl_files={}, state_rows={}",
+                                    outcome.source_provider_ids.len(),
+                                    outcome.migrated_jsonl_files,
+                                    outcome.migrated_state_rows
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("✗ Codex history provider bucket migration failed: {e}");
+                        }
+                    }
+                });
             }
 
             // 老用户 / 已确认的路径由 `fresh_install_at_startup` 自行拦截，这里不做写入。
@@ -1256,6 +1282,8 @@ pub fn run() {
             commands::delete_sessions,
             commands::launch_session_terminal,
             commands::get_tool_versions,
+            commands::run_tool_lifecycle_action,
+            commands::probe_tool_installations,
             // Provider terminal
             commands::open_provider_terminal,
             // Universal Provider management

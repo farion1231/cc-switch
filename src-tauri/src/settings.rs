@@ -176,6 +176,32 @@ impl WebDavSyncSettings {
     }
 }
 
+/// 本机自动迁移状态。
+///
+/// 这里记录的是设备级操作（例如修改本机 `~/.codex` 文件），不随数据库同步。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalMigrations {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_third_party_history_provider_bucket_v1:
+        Option<CodexThirdPartyHistoryProviderBucketMigration>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexThirdPartyHistoryProviderBucketMigration {
+    pub completed_at: String,
+    pub target_provider_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_provider_ids: Vec<String>,
+    #[serde(default)]
+    pub migrated_jsonl_files: usize,
+    #[serde(default)]
+    pub migrated_state_rows: usize,
+    #[serde(default)]
+    pub scanned_history_files: bool,
+}
+
 /// 应用设置结构
 ///
 /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
@@ -301,6 +327,10 @@ pub struct AppSettings {
     /// - Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_terminal: Option<String>,
+
+    // ===== 本机自动迁移状态 =====
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_migrations: Option<LocalMigrations>,
 }
 
 fn default_show_in_tray() -> bool {
@@ -351,6 +381,7 @@ impl Default for AppSettings {
             backup_interval_hours: None,
             backup_retain_count: None,
             preferred_terminal: None,
+            local_migrations: None,
         }
     }
 }
@@ -554,6 +585,29 @@ where
     save_settings_file(&next)?;
     *guard = next;
     Ok(())
+}
+
+pub fn is_codex_third_party_history_provider_bucket_migrated() -> bool {
+    get_settings()
+        .local_migrations
+        .as_ref()
+        .and_then(|migrations| {
+            migrations
+                .codex_third_party_history_provider_bucket_v1
+                .as_ref()
+        })
+        .is_some_and(|m| m.scanned_history_files)
+}
+
+pub fn mark_codex_third_party_history_provider_bucket_migrated(
+    migration: CodexThirdPartyHistoryProviderBucketMigration,
+) -> Result<(), AppError> {
+    mutate_settings(|settings| {
+        let migrations = settings
+            .local_migrations
+            .get_or_insert_with(Default::default);
+        migrations.codex_third_party_history_provider_bucket_v1 = Some(migration);
+    })
 }
 
 /// 从文件重新加载设置到内存缓存

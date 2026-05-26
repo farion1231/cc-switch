@@ -94,6 +94,98 @@ fn codex_startup_import_fresh_install_imports_once_and_syncs_current_setting() {
 }
 
 #[test]
+fn codex_startup_import_accepts_config_without_auth_file() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let config_path = get_codex_config_path();
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent).expect("create codex config dir");
+    }
+    std::fs::write(
+        &config_path,
+        r#"model_provider = "aihubmix"
+
+[model_providers.aihubmix]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+experimental_bearer_token = "live-key"
+"#,
+    )
+    .expect("seed config.toml without auth.json");
+    assert!(
+        !get_codex_auth_path().exists(),
+        "test should not seed auth.json"
+    );
+
+    let state = create_test_state().expect("create test state");
+    import_default_config_test_hook(&state, AppType::Codex)
+        .expect("import codex config-only default");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
+        .expect("get codex providers after import");
+    let provider = providers.get("default").expect("default provider exists");
+    assert_eq!(
+        provider.settings_config.pointer("/auth"),
+        Some(&json!({})),
+        "missing auth.json should import as an empty auth object"
+    );
+    assert!(
+        provider
+            .settings_config
+            .get("config")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .contains("experimental_bearer_token"),
+        "config.toml content should still be imported"
+    );
+}
+
+#[test]
+fn codex_startup_import_marks_oauth_only_default_official() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let auth = json!({
+        "auth_mode": "chatgpt",
+        "tokens": {
+            "id_token": "oauth-id",
+            "access_token": "oauth-access"
+        }
+    });
+    let config = r#"[mcp_servers.echo]
+command = "echo"
+"#;
+    write_codex_live_atomic(&auth, Some(config)).expect("seed oauth-only codex live config");
+
+    let state = create_test_state().expect("create test state");
+    import_default_config_test_hook(&state, AppType::Codex).expect("import codex default");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
+        .expect("get codex providers after import");
+    let provider = providers.get("default").expect("default provider exists");
+
+    assert_eq!(
+        provider.category.as_deref(),
+        Some("official"),
+        "OAuth-only live Codex installs should keep official behavior"
+    );
+    assert_eq!(
+        provider.settings_config.pointer("/auth/tokens/id_token"),
+        Some(&json!("oauth-id")),
+        "import should preserve OAuth login material"
+    );
+}
+
+#[test]
 fn codex_startup_import_skips_when_only_official_seed_exists() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
@@ -228,14 +320,18 @@ command = "say"
             .get("OPENAI_API_KEY")
             .and_then(|v| v.as_str())
             .unwrap_or(""),
-        "fresh-key",
-        "live auth.json should reflect new provider"
+        "legacy-key",
+        "Codex provider switching should preserve the existing live auth.json"
     );
 
     let config_text = std::fs::read_to_string(get_codex_config_path()).expect("read config.toml");
     assert!(
         config_text.contains("mcp_servers.echo-server"),
         "config.toml should contain synced MCP servers"
+    );
+    assert!(
+        config_text.contains("experimental_bearer_token"),
+        "config.toml should carry the selected provider API key as bearer token"
     );
 
     let current_id = app_state

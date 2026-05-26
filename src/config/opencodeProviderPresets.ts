@@ -1386,36 +1386,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "AICoding",
-    websiteUrl: "https://aicoding.sh",
-    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
-    settingsConfig: {
-      npm: "@ai-sdk/anthropic",
-      name: "AICoding",
-      options: {
-        baseURL: "https://api.aicoding.sh",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
-        "claude-opus-4-7": { name: "Claude Opus 4.7" },
-      },
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "aicoding",
-    icon: "aicoding",
-    iconColor: "#000000",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
-  {
     name: "CrazyRouter",
     websiteUrl: "https://www.crazyrouter.com",
     apiKeyUrl: "https://www.crazyrouter.com/register?aff=OZcm&ref=cc-switch",
