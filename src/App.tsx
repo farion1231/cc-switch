@@ -362,33 +362,29 @@ function App() {
     };
   }, [activeApp, refetch]);
 
-  useTauriEvent(
-    "universal-provider-synced",
-    () => {
-      void (async () => {
-        await queryClient.invalidateQueries({ queryKey: ["providers"] });
-        try {
-          await providersApi.updateTrayMenu();
-        } catch (error) {
-          console.error("[App] Failed to update tray menu", error);
-        }
-      })();
-    },
-    [queryClient],
-  );
+  useTauriEvent("universal-provider-synced", async () => {
+    await queryClient.invalidateQueries({ queryKey: ["providers"] });
+    try {
+      await providersApi.updateTrayMenu();
+    } catch (error) {
+      console.error("[App] Failed to update tray menu", error);
+    }
+  });
 
-  useTauriEvent<WebDavSyncStatusUpdatedPayload>(
+  useTauriEvent<WebDavSyncStatusUpdatedPayload | null | undefined>(
     "webdav-sync-status-updated",
-    (payload) => {
-      void queryClient.invalidateQueries({ queryKey: ["settings"] });
-      if (payload.source !== "auto" || payload.status !== "error") return;
+    async (payload) => {
+      const statusPayload = payload ?? {};
+      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      if (statusPayload.source !== "auto" || statusPayload.status !== "error") {
+        return;
+      }
       toast.error(
         t("settings.webdavSync.autoSyncFailedToast", {
-          error: payload.error || t("common.unknown"),
+          error: statusPayload.error || t("common.unknown"),
         }),
       );
     },
-    [queryClient, t],
   );
 
   useTauriEvent<{ appType: string; providerName: string }>(
@@ -402,7 +398,6 @@ function App() {
         { duration: 8000 },
       );
     },
-    [t],
   );
 
   useEffect(() => {

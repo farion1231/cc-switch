@@ -27,21 +27,17 @@ type UsageCacheUpdatedPayload =
 export function useUsageCacheBridge() {
   const queryClient = useQueryClient();
 
-  useTauriEvent<UsageCacheUpdatedPayload>(
-    "usage-cache-updated",
-    (payload) => {
-      if (payload.kind === "script") {
-        queryClient.setQueryData<UsageResult>(
-          usageKeys.script(payload.providerId, payload.appType),
-          payload.data,
-        );
-      } else if (payload.kind === "subscription") {
-        queryClient.setQueryData<SubscriptionQuota>(
-          subscriptionKeys.quota(payload.appType),
-          payload.data,
-        );
-      }
-    },
-    [queryClient],
-  );
+  useTauriEvent<UsageCacheUpdatedPayload>("usage-cache-updated", (payload) => {
+    if (payload.kind === "script") {
+      queryClient.setQueryData<UsageResult>(
+        usageKeys.script(payload.providerId, payload.appType),
+        payload.data,
+      );
+    } else if (payload.kind === "subscription") {
+      queryClient.setQueryData<SubscriptionQuota>(
+        subscriptionKeys.quota(payload.appType),
+        payload.data,
+      );
+    }
+  });
 }

@@ -7,8 +7,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
  */
 export function useTauriEvent<P>(
   eventName: string,
-  handler: (payload: P) => void,
-  deps?: unknown[],
+  handler: (payload: P) => void | Promise<void>,
 ): void {
   const handlerRef = useRef(handler);
   handlerRef.current = handler;
@@ -20,7 +19,7 @@ export function useTauriEvent<P>(
     void (async () => {
       try {
         const off = await listen<P>(eventName, (event) => {
-          handlerRef.current(event.payload);
+          void handlerRef.current(event.payload);
         });
         if (disposed) {
           off();
@@ -36,5 +35,5 @@ export function useTauriEvent<P>(
       disposed = true;
       unlisten?.();
     };
-  }, [eventName, ...(deps ?? [])]);
+  }, [eventName]);
 }
