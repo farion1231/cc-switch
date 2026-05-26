@@ -68,9 +68,7 @@ mod tests {
     use serial_test::serial;
     use std::env;
     use std::fs;
-    use std::path::Path;
-    #[cfg(any(target_os = "macos", windows))]
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex, OnceLock};
     use tempfile::TempDir;
 
