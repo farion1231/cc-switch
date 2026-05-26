@@ -23,24 +23,26 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Patch tauri config to disable updater signing
+        shell: pwsh
+        run: |
+          $config = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $config.bundle.createUpdaterArtifacts = $false
+          $config | ConvertTo-Json -Depth 10 | Set-Content src-tauri/tauri.conf.json
+
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
       - name: Build Tauri app
-        run: pnpm tauri build --bundles msi
+        run: pnpm tauri build
         env:
           TAURI_SIGNING_PRIVATE_KEY: ''
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
-          TAURI_SKIP_SIGNING: 'true'
 
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cc-switch-windows-msi
-          path: src-tauri/target/release/bundle/msi/*.msi
-
-      - name: Upload EXE artifact (debug)
-        uses: actions/upload-artifact@v4
-        with:
-          name: cc-switch-windows-exe
-          path: src-tauri/target/release/cc-switch.exe
+          name: cc-switch-windows
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/cc-switch.exe
