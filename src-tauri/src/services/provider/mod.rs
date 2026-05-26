@@ -2244,7 +2244,7 @@ impl ProviderService {
                 Ok((credentials.api_key, credentials.base_url))
             }
             AppType::Codex => {
-                let auth = provider
+                let _auth = provider
                     .settings_config
                     .get("auth")
                     .and_then(|v| v.as_object())
@@ -2256,23 +2256,23 @@ impl ProviderService {
                         )
                     })?;
 
-                let api_key = auth
-                    .get("OPENAI_API_KEY")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.codex.api_key.missing",
-                            "缺少 API Key",
-                            "API key is missing",
-                        )
-                    })?
-                    .to_string();
-
                 let config_toml = provider
                     .settings_config
                     .get("config")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
+
+                let api_key = crate::codex_config::extract_codex_api_key(
+                    provider.settings_config.get("auth"),
+                    Some(config_toml),
+                )
+                .ok_or_else(|| {
+                    AppError::localized(
+                        "provider.codex.api_key.missing",
+                        "缺少 API Key",
+                        "API key is missing",
+                    )
+                })?;
 
                 let base_url = if config_toml.contains("base_url") {
                     let re = Regex::new(r#"base_url\s*=\s*["']([^"']+)["']"#).map_err(|e| {
