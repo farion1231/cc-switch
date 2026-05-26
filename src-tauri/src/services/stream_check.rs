@@ -552,10 +552,11 @@ impl StreamCheckService {
             Self::resolve_codex_stream_urls(base_url, is_full_url)
         };
 
-        // 检测 apiFormat：override > meta.apiFormat > TOML wire_api > 默认 "openai_chat"
+        // 检测 apiFormat（用于流式检查格式选择）：override > meta.apiFormat > TOML wire_api > 默认 "openai_chat"
         // 注意：TOML wire_api 对 passthrough 始终是 "responses"，
         // 因此 passthrough 必须通过 meta.apiFormat 识别。
-        let api_format = api_format_override
+        // 当前 uses_chat 已覆盖路由判定，api_format 仅作为诊断参考。
+        let _api_format = api_format_override
             .or_else(|| {
                 provider
                     .meta

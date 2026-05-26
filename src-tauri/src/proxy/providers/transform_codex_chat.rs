@@ -923,6 +923,73 @@ pub(crate) fn response_status_from_finish_reason(finish_reason: Option<&str>) ->
     }
 }
 
+/// Normalize a Chat Completions error response to a Responses-style error shape,
+/// so the proxy downstream error handler can render it uniformly.
+pub fn chat_error_to_response_error(body: Option<&Value>) -> Value {
+    let Some(value) = body else {
+        return json!({
+            "error": {
+                "message": "Upstream returned an empty error response",
+                "type": "upstream_error",
+                "code": serde_json::Value::Null,
+                "param": serde_json::Value::Null,
+            }
+        });
+    };
+
+    if let Some(text) = value.as_str() {
+        return json!({
+            "error": {
+                "message": text,
+                "type": "upstream_error",
+                "code": serde_json::Value::Null,
+                "param": serde_json::Value::Null,
+            }
+        });
+    }
+
+    let source = value.get("error").unwrap_or(value);
+
+    let message = source
+        .get("message")
+        .or_else(|| source.get("detail"))
+        .or_else(|| source.get("status_msg"))
+        .or_else(|| source.pointer("/base_resp/status_msg"))
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
+        .or_else(|| source.as_str().map(ToString::to_string))
+        .unwrap_or_else(|| {
+            // 没法从字段提取出文本，就把整个 JSON 序列化回去，方便用户排查。
+            serde_json::to_string(source).unwrap_or_else(|_| "Upstream error".to_string())
+        });
+
+    let error_type = source
+        .get("type")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "upstream_error".to_string());
+
+    let code = source
+        .get("code")
+        .cloned()
+        .or_else(|| source.pointer("/base_resp/status_code").cloned())
+        .unwrap_or(serde_json::Value::Null);
+
+    let param = source
+        .get("param")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+
+    json!({
+        "error": {
+            "message": message,
+            "type": error_type,
+            "code": code,
+            "param": param,
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

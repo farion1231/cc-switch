@@ -2131,9 +2131,7 @@ function ProviderFormFull({
               onChatCompatibilityModeChange={
                 handleCodexChatCompatibilityModeChange
               }
-              shouldShowModelField={category !== "official"}
-              modelName={codexModelName}
-              onModelNameChange={handleCodexModelNameChange}
+              modelName={extractCodexModelName(codexConfig) ?? ""}
               codexChatReasoning={codexChatReasoning}
               onCodexChatReasoningChange={setCodexChatReasoning}
               catalogModels={codexCatalogModels}

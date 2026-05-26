@@ -16,7 +16,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import {
   ChevronDown,
@@ -79,10 +78,8 @@ interface CodexFormFieldsProps {
   chatCompatibilityMode: CodexChatCompatibilityMode;
   onChatCompatibilityModeChange: (mode: CodexChatCompatibilityMode) => void;
 
-  // Model Name
-  shouldShowModelField?: boolean;
+  // Model Name (for DeepSeek model detection)
   modelName?: string;
-  onModelNameChange?: (model: string) => void;
 
   // Model Catalog
   catalogModels?: CodexCatalogModel[];
@@ -143,9 +140,7 @@ export function CodexFormFields({
   onApiFormatChange,
   chatCompatibilityMode,
   onChatCompatibilityModeChange,
-  shouldShowModelField = true,
   modelName = "",
-  onModelNameChange,
   codexChatReasoning = {},
   onCodexChatReasoningChange,
   catalogModels = [],
@@ -230,7 +225,7 @@ export function CodexFormFields({
     [codexChatReasoning, onCodexChatReasoningChange],
   );
 
-  // DeepSeek 模型检测（Hook 必须在顶层调用）
+  // DeepSeek 模型检测：基于模型名检测（与 ProviderForm 的写入/清理条件一致）
   const isDeepSeekModel = useMemo(() => {
     const model = (modelName || "").toLowerCase();
     return model.includes("deepseek") || model.includes("deep-seek");

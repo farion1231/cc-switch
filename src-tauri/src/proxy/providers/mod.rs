@@ -44,7 +44,6 @@ pub use claude::{
     claude_api_format_needs_transform, get_claude_api_format,
     transform_claude_request_for_api_format, ClaudeAdapter,
 };
-pub use codex::should_convert_codex_responses_to_chat;
 pub use codex::codex_chat_compatibility_mode;
 pub use codex::codex_provider_uses_responses_passthrough;
 pub use codex::extract_codex_model_from_toml;

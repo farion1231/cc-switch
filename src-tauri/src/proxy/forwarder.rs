@@ -1185,13 +1185,10 @@ impl RequestForwarder {
             }
         } else if codex_responses_passthrough {
             // In Responses passthrough mode, override the model field with the
-            // provider-configured model name from TOML config before forwarding
-            // to the upstream.
-            apply_codex_config_model_override_if_chat_adapter(
-                mapped_body,
-                provider,
-                /* should_convert */ true,
-            )
+            // provider-configured upstream model before forwarding to the upstream.
+            // Uses codex_provider_upstream_model which reads both provider-level
+            // model and falls back to TOML model.
+            apply_codex_responses_passthrough_model_override(mapped_body, provider)
         } else if needs_transform {
             if adapter.name() == "Claude" {
                 let api_format = resolved_claude_api_format
@@ -2330,6 +2327,31 @@ fn apply_codex_config_model_override_if_chat_adapter(
     body
 }
 
+/// For Codex Responses passthrough mode: override the request `model` field
+/// with the provider's configured upstream model, ensuring stale request models
+/// from old Codex sessions are replaced with the current provider configuration.
+///
+/// Uses `codex_provider_upstream_model` which reads the provider-level `model`
+/// first, then falls back to the TOML `model` field.
+///
+/// Does nothing if no upstream model is configured.
+fn apply_codex_responses_passthrough_model_override(mut body: Value, provider: &Provider) -> Value {
+    use super::providers::codex_provider_upstream_model;
+
+    if let Some(model) = codex_provider_upstream_model(provider) {
+        if body.get("model").and_then(|v| v.as_str()) != Some(&model) {
+            log::debug!(
+                "[Codex] model override (responses_passthrough): {:?} → {}",
+                body.get("model").and_then(|v| v.as_str()).unwrap_or("<none>"),
+                model
+            );
+            body["model"] = serde_json::json!(model);
+        }
+    }
+
+    body
+}
+
 #[cfg(test)]
 fn should_force_identity_encoding(
     endpoint: &str,
@@ -3224,5 +3246,78 @@ base_url = "{}/v1/chat/completions"
 
         let result = apply_codex_config_model_override_if_chat_adapter(body, &provider, true);
         assert_eq!(result["model"], "gpt-5.4-mini");
+    }
+
+    /// Responses passthrough: override stale request model with provider upstream model.
+    #[test]
+    fn codex_responses_passthrough_overrides_model_from_provider_upstream_model() {
+        // Provider-level upstream model takes priority.
+        let provider = Provider {
+            id: "qwen".to_string(),
+            name: "Qwen".to_string(),
+            settings_config: json!({
+                "model": "qwen3.7-max",
+                "config": r#"
+model_provider = "qwen"
+model = "qwen-turbo"
+
+[model_providers.qwen]
+name = "Qwen"
+base_url = "https://dashscope.aliyuncs.com/v1"
+wire_api = "responses"
+"#
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+        let body = json!({"model": "deepseek-v4-flash", "input": []});
+
+        let result = apply_codex_responses_passthrough_model_override(body, &provider);
+        assert_eq!(result["model"], "qwen3.7-max");
+    }
+
+    /// Responses passthrough: fallback to TOML model when no provider-level model.
+    #[test]
+    fn codex_responses_passthrough_fallback_to_toml_model() {
+        let provider = codex_provider_with_config("qwen3.6-plus", "https://dashscope.aliyuncs.com");
+        let body = json!({"model": "deepseek-v4-flash", "input": []});
+
+        let result = apply_codex_responses_passthrough_model_override(body, &provider);
+        assert_eq!(result["model"], "qwen3.6-plus");
+    }
+
+    /// Responses passthrough: no provider model configured → keep request model.
+    #[test]
+    fn codex_responses_passthrough_no_provider_model_keeps_request_model() {
+        let provider = Provider {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            settings_config: json!({
+                "config": r#"
+base_url = "https://example.com/v1"
+wire_api = "responses"
+"#
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+        let body = json!({"model": "deepseek-v4-flash", "input": []});
+
+        let result = apply_codex_responses_passthrough_model_override(body, &provider);
+        assert_eq!(result["model"], "deepseek-v4-flash");
     }
 }
