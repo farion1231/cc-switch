@@ -217,11 +217,12 @@ export function useSettings(): UseSettingsResult {
 
         // 如果开机自启状态改变，调用系统 API
         if (
-          payload.launchOnStartup !== undefined &&
-          payload.launchOnStartup !== data?.launchOnStartup
+          payload.launchOnStartup !== data?.launchOnStartup ||
+          (!!payload.launchOnStartup &&
+            payload.lightweightOnStartup !== data?.lightweightOnStartup)
         ) {
           try {
-            await settingsApi.setAutoLaunch(payload.launchOnStartup);
+            await settingsApi.setAutoLaunch(!!payload.launchOnStartup);
           } catch (error) {
             console.error("Failed to update auto-launch:", error);
             toast.error(
@@ -352,11 +353,12 @@ export function useSettings(): UseSettingsResult {
 
         // 只在开机自启状态真正改变时调用系统 API
         if (
-          payload.launchOnStartup !== undefined &&
-          payload.launchOnStartup !== data?.launchOnStartup
+          payload.launchOnStartup !== data?.launchOnStartup ||
+          (!!payload.launchOnStartup &&
+            payload.lightweightOnStartup !== data?.lightweightOnStartup)
         ) {
           try {
-            await settingsApi.setAutoLaunch(payload.launchOnStartup);
+            await settingsApi.setAutoLaunch(!!payload.launchOnStartup);
           } catch (error) {
             console.error("Failed to update auto-launch:", error);
             toast.error(

@@ -581,7 +581,8 @@ pub fn create_tray_menu(
         "lightweight_mode",
         tray_texts.lightweight_mode,
         true,
-        crate::lightweight::is_lightweight_mode(),
+        crate::lightweight::is_lightweight_mode()
+            || crate::lightweight::is_auto_lightweight_pending(),
         None::<&str>,
     )
     .map_err(|e| AppError::Message(format!("创建轻量模式菜单失败: {e}")))?;
@@ -681,6 +682,8 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
     match event_id {
         "show_main" => {
             if let Some(window) = app.get_webview_window("main") {
+                let had_auto_lightweight_pending =
+                    crate::lightweight::cancel_auto_lightweight_timer();
                 #[cfg(target_os = "windows")]
                 {
                     let _ = window.set_skip_taskbar(false);
@@ -695,6 +698,9 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                 #[cfg(target_os = "macos")]
                 {
                     apply_tray_policy(app, true);
+                }
+                if had_auto_lightweight_pending {
+                    refresh_tray_menu(app);
                 }
             } else if crate::lightweight::is_lightweight_mode() {
                 if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
@@ -711,6 +717,10 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
             if crate::lightweight::is_lightweight_mode() {
                 if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
                     log::error!("退出轻量模式失败: {e}");
+                }
+            } else if crate::lightweight::is_auto_lightweight_pending() {
+                if crate::lightweight::cancel_auto_lightweight_timer() {
+                    refresh_tray_menu(app);
                 }
             } else if let Err(e) = crate::lightweight::enter_lightweight_mode(app) {
                 log::error!("进入轻量模式失败: {e}");

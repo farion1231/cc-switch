@@ -135,6 +135,7 @@ fn handle_deeplink_url(
 
             if focus_main_window {
                 if let Some(window) = app.get_webview_window("main") {
+                    cancel_pending_auto_lightweight_and_refresh(app);
                     let _ = window.unminimize();
                     let _ = window.show();
                     let _ = window.set_focus();
@@ -162,6 +163,12 @@ fn handle_deeplink_url(
     }
 
     true
+}
+
+fn cancel_pending_auto_lightweight_and_refresh(app: &tauri::AppHandle) {
+    if crate::lightweight::cancel_auto_lightweight_timer() {
+        tray::refresh_tray_menu(app);
+    }
 }
 
 /// 更新托盘菜单的Tauri命令
@@ -236,6 +243,7 @@ pub fn run() {
 
             // Show and focus window regardless
             if let Some(window) = app.get_webview_window("main") {
+                cancel_pending_auto_lightweight_and_refresh(app);
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -265,6 +273,12 @@ pub fn run() {
                     #[cfg(target_os = "macos")]
                     {
                         tray::apply_tray_policy(window.app_handle(), false);
+                    }
+                    if settings.auto_lightweight_after_close {
+                        crate::lightweight::schedule_auto_lightweight_after_close(
+                            window.app_handle().clone(),
+                            settings.auto_lightweight_delay_minutes,
+                        );
                     }
                 } else {
                     api.prevent_close();
@@ -1043,7 +1057,13 @@ pub fn run() {
                 // 仅 Linux 生效：解决 Wayland 下系统窗口按钮不可用的问题
                 #[cfg(target_os = "linux")]
                 let _ = window.set_decorations(!settings.use_app_window_controls);
-                if settings.silent_startup {
+                if crate::auto_launch::current_args_request_lightweight()
+                    && settings.lightweight_on_startup
+                {
+                    if let Err(e) = crate::lightweight::enter_lightweight_mode(app.handle()) {
+                        log::error!("进入轻量模式失败: {e}");
+                    }
+                } else if settings.silent_startup {
                     // 静默启动模式：保持窗口隐藏
                     let _ = window.hide();
                     #[cfg(target_os = "windows")]
@@ -1417,6 +1437,7 @@ pub fn run() {
                 // macOS 在 Dock 图标被点击并重新激活应用时会触发 Reopen 事件，这里手动恢复主窗口
                 RunEvent::Reopen { .. } => {
                     if let Some(window) = app_handle.get_webview_window("main") {
+                        cancel_pending_auto_lightweight_and_refresh(app_handle);
                         #[cfg(target_os = "windows")]
                         {
                             let _ = window.set_skip_taskbar(false);
@@ -1483,6 +1504,7 @@ pub fn run() {
 
                             // 确保主窗口可见
                             if let Some(window) = app_handle.get_webview_window("main") {
+                                cancel_pending_auto_lightweight_and_refresh(app_handle);
                                 let _ = window.unminimize();
                                 let _ = window.show();
                                 let _ = window.set_focus();

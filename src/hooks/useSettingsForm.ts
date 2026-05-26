@@ -84,7 +84,11 @@ export function useSettingsForm(): UseSettingsFormResult {
       useAppWindowControls: data.useAppWindowControls ?? false,
       enableClaudePluginIntegration:
         data.enableClaudePluginIntegration ?? false,
+      launchOnStartup: data.launchOnStartup ?? false,
       silentStartup: data.silentStartup ?? false,
+      autoLightweightAfterClose: data.autoLightweightAfterClose ?? true,
+      autoLightweightDelayMinutes: data.autoLightweightDelayMinutes ?? 20,
+      lightweightOnStartup: data.lightweightOnStartup ?? true,
       skipClaudeOnboarding: data.skipClaudeOnboarding ?? false,
       claudeConfigDir: sanitizeDir(data.claudeConfigDir),
       codexConfigDir: sanitizeDir(data.codexConfigDir),
@@ -109,7 +113,11 @@ export function useSettingsForm(): UseSettingsFormResult {
             minimizeToTrayOnClose: true,
             useAppWindowControls: false,
             enableClaudePluginIntegration: false,
+            launchOnStartup: false,
             skipClaudeOnboarding: false,
+            autoLightweightAfterClose: true,
+            autoLightweightDelayMinutes: 20,
+            lightweightOnStartup: true,
             language: readPersistedLanguage(),
           } as SettingsFormState);
 
@@ -145,7 +153,12 @@ export function useSettingsForm(): UseSettingsFormResult {
         useAppWindowControls: serverData.useAppWindowControls ?? false,
         enableClaudePluginIntegration:
           serverData.enableClaudePluginIntegration ?? false,
+        launchOnStartup: serverData.launchOnStartup ?? false,
         silentStartup: serverData.silentStartup ?? false,
+        autoLightweightAfterClose: serverData.autoLightweightAfterClose ?? true,
+        autoLightweightDelayMinutes:
+          serverData.autoLightweightDelayMinutes ?? 20,
+        lightweightOnStartup: serverData.lightweightOnStartup ?? true,
         skipClaudeOnboarding: serverData.skipClaudeOnboarding ?? false,
         claudeConfigDir: sanitizeDir(serverData.claudeConfigDir),
         codexConfigDir: sanitizeDir(serverData.codexConfigDir),

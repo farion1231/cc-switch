@@ -214,6 +214,12 @@ pub struct AppSettings {
     pub show_in_tray: bool,
     #[serde(default = "default_minimize_to_tray_on_close")]
     pub minimize_to_tray_on_close: bool,
+    #[serde(default = "default_auto_lightweight_after_close")]
+    pub auto_lightweight_after_close: bool,
+    #[serde(default = "default_auto_lightweight_delay_minutes")]
+    pub auto_lightweight_delay_minutes: u32,
+    #[serde(default = "default_lightweight_on_startup")]
+    pub lightweight_on_startup: bool,
     #[serde(default)]
     pub use_app_window_controls: bool,
     /// 是否启用 Claude 插件联动
@@ -341,11 +347,26 @@ fn default_minimize_to_tray_on_close() -> bool {
     true
 }
 
+fn default_auto_lightweight_after_close() -> bool {
+    true
+}
+
+fn default_auto_lightweight_delay_minutes() -> u32 {
+    20
+}
+
+fn default_lightweight_on_startup() -> bool {
+    true
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             show_in_tray: true,
             minimize_to_tray_on_close: true,
+            auto_lightweight_after_close: true,
+            auto_lightweight_delay_minutes: default_auto_lightweight_delay_minutes(),
+            lightweight_on_startup: true,
             use_app_window_controls: false,
             enable_claude_plugin_integration: false,
             skip_claude_onboarding: false,
@@ -397,6 +418,11 @@ impl AppSettings {
     }
 
     fn normalize_paths(&mut self) {
+        self.auto_lightweight_delay_minutes =
+            crate::lightweight::normalize_auto_lightweight_delay_minutes(
+                self.auto_lightweight_delay_minutes,
+            );
+
         self.claude_config_dir = self
             .claude_config_dir
             .as_ref()
@@ -842,6 +868,25 @@ pub fn update_webdav_sync_status(status: WebDavSyncStatus) -> Result<(), AppErro
 mod tests {
     use super::*;
     use crate::app_config::AppType;
+
+    #[test]
+    fn app_settings_default_auto_lightweight_policy() {
+        let settings = AppSettings::default();
+
+        assert!(settings.auto_lightweight_after_close);
+        assert_eq!(settings.auto_lightweight_delay_minutes, 20);
+        assert!(settings.lightweight_on_startup);
+    }
+
+    #[test]
+    fn legacy_settings_use_auto_lightweight_defaults() {
+        let settings: AppSettings =
+            serde_json::from_value(serde_json::json!({})).expect("settings should deserialize");
+
+        assert!(settings.auto_lightweight_after_close);
+        assert_eq!(settings.auto_lightweight_delay_minutes, 20);
+        assert!(settings.lightweight_on_startup);
+    }
 
     #[test]
     fn visible_apps_old_settings_default_claude_desktop_visible() {

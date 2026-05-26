@@ -87,7 +87,9 @@ pub async fn set_app_config_dir_override(
 #[tauri::command]
 pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
     if enabled {
-        crate::auto_launch::enable_auto_launch().map_err(|e| format!("启用开机自启失败: {e}"))?;
+        let settings = crate::settings::get_settings();
+        crate::auto_launch::enable_auto_launch(settings.lightweight_on_startup)
+            .map_err(|e| format!("启用开机自启失败: {e}"))?;
     } else {
         crate::auto_launch::disable_auto_launch().map_err(|e| format!("禁用开机自启失败: {e}"))?;
     }
