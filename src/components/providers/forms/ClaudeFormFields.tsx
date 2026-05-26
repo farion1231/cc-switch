@@ -219,6 +219,8 @@ export function ClaudeFormFields({
   const [codexOauthModelsLoading, setCodexOauthModelsLoading] = useState(false);
   const codexOauthModelsRequestRef = useRef(0);
 
+  // Copilot 模型列表搜索
+  const [copilotModelSearch, setCopilotModelSearch] = useState("");
   // 通用模型获取（非 Copilot 供应商）
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
@@ -398,7 +400,21 @@ export function ClaudeFormFields({
         if (!grouped[vendor]) grouped[vendor] = [];
         grouped[vendor].push(model);
       }
-      const vendors = Object.keys(grouped).sort();
+
+      // 根据搜索过滤模型
+      const filteredGrouped: Record<string, CopilotModel[]> = {};
+      if (copilotModelSearch.trim()) {
+        const search = copilotModelSearch.toLowerCase();
+        for (const [vendor, models] of Object.entries(grouped)) {
+          const filtered = models.filter((m) =>
+            m.id.toLowerCase().includes(search),
+          );
+          if (filtered.length > 0) filteredGrouped[vendor] = filtered;
+        }
+      } else {
+        Object.assign(filteredGrouped, grouped);
+      }
+      const filteredVendors = Object.keys(filteredGrouped).sort();
 
       return (
         <div className="flex gap-1">
@@ -421,20 +437,47 @@ export function ClaudeFormFields({
               align="end"
               className="max-h-64 overflow-y-auto z-[200]"
             >
-              {vendors.map((vendor, vi) => (
-                <div key={vendor}>
-                  {vi > 0 && <DropdownMenuSeparator />}
-                  <DropdownMenuLabel>{vendor}</DropdownMenuLabel>
-                  {grouped[vendor].map((model) => (
-                    <DropdownMenuItem
-                      key={model.id}
-                      onSelect={() => updateValue(model.id)}
-                    >
-                      {model.id}
-                    </DropdownMenuItem>
-                  ))}
-                </div>
-              ))}
+              <div className="px-2 py-1.5">
+                <Input
+                  value={copilotModelSearch}
+                  onChange={(e) => setCopilotModelSearch(e.target.value)}
+                  placeholder={t("providerForm.searchModels", {
+                    defaultValue: "搜索模型...",
+                  })}
+                  autoComplete="off"
+                  className="h-7 text-xs"
+                  onKeyDown={(e) => {
+                    // 防止下拉框捕获键盘事件导致焦点丢失
+                    e.stopPropagation();
+                  }}
+                />
+              </div>
+              <DropdownMenuSeparator />
+              {filteredVendors.length === 0 ? (
+                <DropdownMenuItem disabled>
+                  {t("providerForm.noModelsFound", {
+                    defaultValue: "未找到模型",
+                  })}
+                </DropdownMenuItem>
+              ) : (
+                filteredVendors.map((vendor, vi) => (
+                  <div key={vendor}>
+                    {vi > 0 && <DropdownMenuSeparator />}
+                    <DropdownMenuLabel>{vendor}</DropdownMenuLabel>
+                    {filteredGrouped[vendor].map((model) => (
+                      <DropdownMenuItem
+                        key={model.id}
+                        onSelect={() => {
+                          updateValue(model.id);
+                          setCopilotModelSearch("");
+                        }}
+                      >
+                        {model.id}
+                      </DropdownMenuItem>
+                    ))}
+                  </div>
+                ))
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
