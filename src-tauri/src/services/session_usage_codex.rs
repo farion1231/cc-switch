@@ -56,6 +56,49 @@ struct FileParseState {
     current_model: String,
     prev_total: Option<CumulativeTokens>,
     event_index: u32,
+    /// 当前 turn 内累积的 token delta（多个 token_count 事件聚合为 1 条记录）
+    pending_delta: Option<DeltaTokens>,
+    /// pending_delta 对应的模型名
+    pending_model: String,
+    /// pending_delta 的最新时间戳
+    pending_timestamp: Option<String>,
+}
+
+impl FileParseState {
+    /// 将当前 turn 的累积 delta flush 为一条记录（如果非零）
+    fn flush_pending(
+        &mut self,
+        db: &Database,
+        imported: &mut u32,
+        skipped: &mut u32,
+    ) {
+        let delta = match self.pending_delta.take() {
+            Some(d) if !d.is_zero() => d,
+            _ => return,
+        };
+        let model = std::mem::take(&mut self.pending_model);
+        let timestamp = self.pending_timestamp.take();
+        let session_id_str = self.session_id.as_deref().unwrap_or("unknown");
+
+        self.event_index += 1;
+        let request_id = format!("codex_session:{}:{}", session_id_str, self.event_index);
+
+        match insert_codex_session_entry(
+            db,
+            &request_id,
+            &delta,
+            &model,
+            self.session_id.as_deref(),
+            timestamp.as_deref(),
+        ) {
+            Ok(true) => *imported += 1,
+            Ok(false) => *skipped += 1,
+            Err(e) => {
+                log::warn!("[CODEX-SYNC] 插入失败 ({}): {e}", request_id);
+                *skipped += 1;
+            }
+        }
+    }
 }
 
 /// 归一化 Codex 模型名
@@ -254,6 +297,9 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
         current_model: "unknown".to_string(),
         prev_total: None,
         event_index: 0,
+        pending_delta: None,
+        pending_model: String::new(),
+        pending_timestamp: None,
     };
 
     let mut line_offset: i64 = 0;
@@ -296,6 +342,7 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
 
         match event_type {
             "session_meta" if state.session_id.is_none() => {
+                state.flush_pending(db, &mut imported, &mut skipped);
                 let payload = value.get("payload");
                 state.session_id = payload
                     .and_then(|p| {
@@ -307,6 +354,8 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
                     .map(|s| s.to_string());
             }
             "turn_context" => {
+                // 上一个 turn 结束：flush 累积的 token 用量
+                state.flush_pending(db, &mut imported, &mut skipped);
                 if let Some(payload) = value.get("payload") {
                     // model 可能在 payload.model 或 payload.info.model
                     if let Some(model) = payload
@@ -379,45 +428,41 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
                 };
 
                 if delta.is_zero() {
-                    continue; // 跳过 task 边界的零 delta 事件
+                    continue;
                 }
 
-                state.event_index += 1;
-
-                // 跳过已处理的行（但仍需解析以恢复状态）
+                // 跳过已处理的行（但仍需解析以恢复 prev_total 状态）
                 if line_offset <= last_offset {
                     continue;
                 }
 
-                // 生成唯一 request_id
-                let session_id_str = state.session_id.as_deref().unwrap_or("unknown");
-                let request_id = format!("codex_session:{}:{}", session_id_str, state.event_index);
-
-                // 提取时间戳
+                // 将 delta 累积到当前 turn，而非逐事件插入
+                // 单个 API 调用在流式响应期间会产生多个 token_count 事件；
+                // 我们只在该 turn 结束（下一个 turn_context 或文件末尾）时 flush 一条记录
                 let timestamp = value
                     .get("timestamp")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
-                match insert_codex_session_entry(
-                    db,
-                    &request_id,
-                    &delta,
-                    &state.current_model,
-                    state.session_id.as_deref(),
-                    timestamp.as_deref(),
-                ) {
-                    Ok(true) => imported += 1,
-                    Ok(false) => skipped += 1,
-                    Err(e) => {
-                        log::warn!("[CODEX-SYNC] 插入失败 ({}): {e}", request_id);
-                        skipped += 1;
+                match &mut state.pending_delta {
+                    Some(ref mut acc) => {
+                        acc.input = acc.input.saturating_add(delta.input);
+                        acc.cached_input = acc.cached_input.saturating_add(delta.cached_input);
+                        acc.output = acc.output.saturating_add(delta.output);
+                    }
+                    None => {
+                        state.pending_delta = Some(delta);
                     }
                 }
+                state.pending_model = state.current_model.clone();
+                state.pending_timestamp = timestamp;
             }
             _ => {}
         }
     }
+
+    // 文件末尾：flush 最后一个 turn 的累积 delta
+    state.flush_pending(db, &mut imported, &mut skipped);
 
     // 更新同步状态
     update_sync_state(db, &file_path_str, file_modified, line_offset)?;
