@@ -26,18 +26,13 @@ jobs:
       - name: Patch tauri config to disable updater signing
         shell: pwsh
         run: |
-          $config = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
-          $config.bundle.createUpdaterArtifacts = $false
-          $config | ConvertTo-Json -Depth 10 | Set-Content src-tauri/tauri.conf.json
+          (Get-Content src-tauri/tauri.conf.json) -replace '"createUpdaterArtifacts": true', '"createUpdaterArtifacts": false' | Set-Content src-tauri/tauri.conf.json
 
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
       - name: Build Tauri app
-        run: pnpm tauri build
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ''
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+        run: pnpm tauri build --bundles msi
 
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v4
