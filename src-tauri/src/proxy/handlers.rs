@@ -9,22 +9,24 @@
 
 use super::{
     error_mapper::{get_error_message, map_proxy_error_to_status},
+    forwarder::ActiveConnectionGuard,
     handler_config::{
-        CLAUDE_PARSER_CONFIG, CODEX_PARSER_CONFIG, GEMINI_PARSER_CONFIG, OPENAI_PARSER_CONFIG,
+        claude_stream_usage_event_filter, codex_stream_usage_event_filter, CLAUDE_PARSER_CONFIG,
+        CODEX_PARSER_CONFIG, GEMINI_PARSER_CONFIG, OPENAI_PARSER_CONFIG,
     },
     handler_context::RequestContext,
     providers::{
-        deepseek::{DeepSeekAdapter, DeepSeekResponseConverter},
-        ProviderAdapter,
-        get_adapter, get_claude_api_format, streaming::create_anthropic_sse_stream,
+        codex_chat_history::record_responses_sse_stream, get_adapter, get_claude_api_format,
+        streaming::create_anthropic_sse_stream,
+        streaming_codex_chat::create_responses_sse_stream_from_chat,
         streaming_gemini::create_anthropic_sse_stream_from_gemini,
         streaming_responses::create_anthropic_sse_stream_from_responses, transform,
-        transform_gemini, transform_responses,
+        transform_codex_chat, transform_gemini, transform_responses,
     },
     response_processor::{
         create_logged_passthrough_stream, process_response, read_decoded_body,
         strip_entity_headers_for_rebuilt_body, strip_hop_by_hop_response_headers,
-        SseUsageCollector,
+        usage_logging_enabled, SseUsageCollector,
     },
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
@@ -33,30 +35,11 @@ use super::{
     ProxyError,
 };
 use crate::app_config::AppType;
-use crate::provider::Provider;
+use crate::database::PRICING_SOURCE_REQUEST;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use bytes::Bytes;
 use http_body_util::BodyExt;
-use once_cell::sync::Lazy;
 use serde_json::{json, Value};
-use std::collections::HashMap;
-use std::sync::Mutex;
-
-/// Cache for DeepSeek reasoning_content across requests in a conversation.
-/// Keyed by response_id (the `id` field of the upstream Responses API response),
-/// so reasoning from the previous turn can be looked up when Codex sends
-/// `previous_response_id` in the next request (required by DeepSeek thinking mode).
-static REASONING_CACHE: Lazy<Mutex<HashMap<String, String>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
-
-/// Secondary cache keyed by DeepSeek tool call IDs.
-/// Codex does NOT send `previous_response_id` on tool-call round-trips,
-/// but it DOES include `call_id` in `function_call_output` items, which
-/// matches the original DeepSeek tool call `id`.  We cache reasoning by
-/// each tool call ID so the fallback path can inject it without relying
-/// on `previous_response_id`.
-static TOOL_CALL_REASONING_CACHE: Lazy<Mutex<HashMap<String, String>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
 
 // ============================================================================
 // 健康检查和状态查询（简单端点）
@@ -92,7 +75,51 @@ pub async fn handle_messages(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
+    handle_messages_for_app(state, request, AppType::Claude, "Claude", "claude", None).await
+}
+
+pub async fn handle_claude_desktop_messages(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    validate_claude_desktop_gateway_auth(&state, request.headers())?;
+    handle_messages_for_app(
+        state,
+        request,
+        AppType::ClaudeDesktop,
+        "Claude Desktop",
+        "claude-desktop",
+        Some("/claude-desktop"),
+    )
+    .await
+}
+
+pub async fn handle_claude_desktop_models(
+    State(state): State<ProxyState>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<Value>, ProxyError> {
+    validate_claude_desktop_gateway_auth(&state, &headers)?;
+    let providers = state
+        .provider_router
+        .select_providers("claude-desktop")
+        .await
+        .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+    let provider = providers.first().ok_or(ProxyError::NoAvailableProvider)?;
+    let response = crate::claude_desktop_config::model_list_response(provider)
+        .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
+    Ok(Json(response))
+}
+
+async fn handle_messages_for_app(
+    state: ProxyState,
+    request: axum::extract::Request,
+    app_type: AppType,
+    tag: &'static str,
+    app_type_str: &'static str,
+    strip_prefix: Option<&'static str>,
+) -> Result<axum::response::Response, ProxyError> {
     let (parts, body) = request.into_parts();
+    let method = parts.method.clone();
     let uri = parts.uri;
     let headers = parts.headers;
     let extensions = parts.extensions;
@@ -105,12 +132,15 @@ pub async fn handle_messages(
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
     let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Claude, "Claude", "claude").await?;
+        RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;
 
-    let endpoint = uri
+    let raw_endpoint = uri
         .path_and_query()
         .map(|path_and_query| path_and_query.as_str())
         .unwrap_or(uri.path());
+    let endpoint = strip_prefix
+        .and_then(|prefix| raw_endpoint.strip_prefix(prefix))
+        .unwrap_or(raw_endpoint);
 
     let is_stream = body
         .get("stream")
@@ -119,9 +149,10 @@ pub async fn handle_messages(
 
     // 转发请求
     let forwarder = ctx.create_forwarder(&state);
-    let result = match forwarder
+    let mut result = match forwarder
         .forward_with_retry(
-            &AppType::Claude,
+            &app_type,
+            method,
             endpoint,
             body.clone(),
             headers,
@@ -140,6 +171,7 @@ pub async fn handle_messages(
         }
     };
 
+    let connection_guard = result.connection_guard.take();
     ctx.provider = result.provider;
     let api_format = result
         .claude_api_format
@@ -149,17 +181,59 @@ pub async fn handle_messages(
     let response = result.response;
 
     // 检查是否需要格式转换（OpenRouter 等中转服务）
-    let adapter = get_adapter(&AppType::Claude);
+    let adapter = get_adapter(&app_type);
     let needs_transform = adapter.needs_transform(&ctx.provider);
 
     // Claude 特有：格式转换处理
     if needs_transform {
-        return handle_claude_transform(response, &ctx, &state, &body, is_stream, &api_format)
-            .await;
+        return handle_claude_transform(
+            response,
+            &ctx,
+            &state,
+            &body,
+            is_stream,
+            &api_format,
+            connection_guard,
+        )
+        .await;
     }
 
     // 通用响应处理（透传模式）
-    process_response(response, &ctx, &state, &CLAUDE_PARSER_CONFIG).await
+    process_response(
+        response,
+        &ctx,
+        &state,
+        &CLAUDE_PARSER_CONFIG,
+        connection_guard,
+    )
+    .await
+}
+
+fn validate_claude_desktop_gateway_auth(
+    state: &ProxyState,
+    headers: &axum::http::HeaderMap,
+) -> Result<(), ProxyError> {
+    let expected = crate::claude_desktop_config::get_or_create_gateway_token(state.db.as_ref())
+        .map_err(|e| ProxyError::AuthError(e.to_string()))?;
+    let Some(value) = headers.get(axum::http::header::AUTHORIZATION) else {
+        return Err(ProxyError::AuthError(
+            "Claude Desktop gateway 缺少 Authorization 头".to_string(),
+        ));
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| ProxyError::AuthError("Authorization 头格式无效".to_string()))?;
+    let token = value
+        .strip_prefix("Bearer ")
+        .or_else(|| value.strip_prefix("bearer "))
+        .unwrap_or("")
+        .trim();
+    if token != expected {
+        return Err(ProxyError::AuthError(
+            "Claude Desktop gateway token 无效".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Claude 格式转换处理（独有逻辑）
@@ -172,6 +246,7 @@ async fn handle_claude_transform(
     original_body: &Value,
     is_stream: bool,
     api_format: &str,
+    connection_guard: Option<ActiveConnectionGuard>,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
     let is_codex_oauth = ctx
@@ -219,40 +294,49 @@ async fn handle_claude_transform(
             Box::new(Box::pin(create_anthropic_sse_stream(stream)))
         };
 
-        // 创建使用量收集器
-        let usage_collector = {
+        // 创建使用量收集器；关闭 usage logging 时不要再解析转换后的 SSE。
+        let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
             let model = ctx.request_model.clone();
             let status_code = status.as_u16();
             let start_time = ctx.start_time;
+            let session_id = ctx.session_id.clone();
 
-            SseUsageCollector::new(start_time, move |events, first_token_ms| {
-                if let Some(usage) = TokenUsage::from_claude_stream_events(&events) {
-                    let latency_ms = start_time.elapsed().as_millis() as u64;
-                    let state = state.clone();
-                    let provider_id = provider_id.clone();
-                    let model = model.clone();
+            Some(SseUsageCollector::new(
+                start_time,
+                Some(claude_stream_usage_event_filter),
+                move |events, first_token_ms| {
+                    if let Some(usage) = TokenUsage::from_claude_stream_events(&events) {
+                        let latency_ms = start_time.elapsed().as_millis() as u64;
+                        let state = state.clone();
+                        let provider_id = provider_id.clone();
+                        let model = model.clone();
+                        let session_id = session_id.clone();
 
-                    tokio::spawn(async move {
-                        log_usage(
-                            &state,
-                            &provider_id,
-                            "claude",
-                            &model,
-                            &model,
-                            usage,
-                            latency_ms,
-                            first_token_ms,
-                            true,
-                            status_code,
-                        )
-                        .await;
-                    });
-                } else {
-                    log::debug!("[Claude] OpenRouter 流式响应缺少 usage 统计，跳过消费记录");
-                }
-            })
+                        tokio::spawn(async move {
+                            log_usage(
+                                &state,
+                                &provider_id,
+                                "claude",
+                                &model,
+                                &model,
+                                usage,
+                                latency_ms,
+                                first_token_ms,
+                                true,
+                                status_code,
+                                Some(session_id),
+                            )
+                            .await;
+                        });
+                    } else {
+                        log::debug!("[Claude] OpenRouter 流式响应缺少 usage 统计，跳过消费记录");
+                    }
+                },
+            ))
+        } else {
+            None
         };
 
         // 获取流式超时配置
@@ -261,8 +345,9 @@ async fn handle_claude_transform(
         let logged_stream = create_logged_passthrough_stream(
             sse_stream,
             "Claude/OpenRouter",
-            Some(usage_collector),
+            usage_collector,
             timeout_config,
+            connection_guard,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -332,6 +417,7 @@ async fn handle_claude_transform(
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
             let model = model.to_string();
+            let session_id = ctx.session_id.clone();
             async move {
                 log_usage(
                     &state,
@@ -344,6 +430,7 @@ async fn handle_claude_transform(
                     None,
                     false,
                     status.as_u16(),
+                    Some(session_id),
                 )
                 .await;
             }
@@ -354,12 +441,17 @@ async fn handle_claude_transform(
     let mut builder = axum::response::Response::builder().status(status);
     strip_entity_headers_for_rebuilt_body(&mut response_headers);
     strip_hop_by_hop_response_headers(&mut response_headers);
+    // Builder::header 是 append 语义；不先 remove 会和上游 Content-Type 双发。
+    response_headers.remove(axum::http::header::CONTENT_TYPE);
 
     for (key, value) in response_headers.iter() {
         builder = builder.header(key, value);
     }
 
-    builder = builder.header("content-type", "application/json");
+    builder = builder.header(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/json"),
+    );
 
     let response_body = serde_json::to_vec(&anthropic_response).map_err(|e| {
         log::error!("[Claude] 序列化响应失败: {e}");
@@ -390,6 +482,7 @@ pub async fn handle_chat_completions(
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
+    let method = parts.method.clone();
     let uri = parts.uri;
     let headers = parts.headers;
     let extensions = parts.extensions;
@@ -411,9 +504,10 @@ pub async fn handle_chat_completions(
         .unwrap_or(false);
 
     let forwarder = ctx.create_forwarder(&state);
-    let result = match forwarder
+    let mut result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
+            method,
             &endpoint,
             body,
             headers,
@@ -432,21 +526,27 @@ pub async fn handle_chat_completions(
         }
     };
 
+    let connection_guard = result.connection_guard.take();
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(response, &ctx, &state, &OPENAI_PARSER_CONFIG).await
+    process_response(
+        response,
+        &ctx,
+        &state,
+        &OPENAI_PARSER_CONFIG,
+        connection_guard,
+    )
+    .await
 }
 
-/// 处理 /v1/responses 请求（OpenAI Responses API - Codex CLI）
-///
-/// 自动检测上游供应商，如果是 DeepSeek 则使用 DeepSeek 专用的格式转换
-/// （Responses API ↔ Chat Completions），否则走标准 Codex 透传。
+/// 处理 /v1/responses 请求（OpenAI Responses API - Codex CLI 透传）
 pub async fn handle_responses(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
+    let method = parts.method.clone();
     let uri = parts.uri;
     let headers = parts.headers;
     let extensions = parts.extensions;
@@ -460,18 +560,6 @@ pub async fn handle_responses(
 
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
-
-    // Detect DeepSeek provider and route to dedicated handler
-    let providers = ctx.get_providers();
-    if let Some(first_provider) = providers.first() {
-        if DeepSeekAdapter::is_deepseek_provider(first_provider) {
-            return handle_deepseek_response(
-                &state, &ctx, body, headers, first_provider,
-            )
-            .await;
-        }
-    }
-
     let endpoint = endpoint_with_query(&uri, "/responses");
 
     let is_stream = body
@@ -480,9 +568,10 @@ pub async fn handle_responses(
         .unwrap_or(false);
 
     let forwarder = ctx.create_forwarder(&state);
-    let result = match forwarder
+    let mut result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
+            method,
             &endpoint,
             body,
             headers,
@@ -501,600 +590,38 @@ pub async fn handle_responses(
         }
     };
 
+    let connection_guard = result.connection_guard.take();
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(response, &ctx, &state, &CODEX_PARSER_CONFIG).await
+    if super::providers::should_convert_codex_responses_to_chat(&ctx.provider, &endpoint) {
+        return handle_codex_chat_to_responses_transform(
+            response,
+            &ctx,
+            &state,
+            is_stream,
+            connection_guard,
+        )
+        .await;
+    }
+
+    process_response(
+        response,
+        &ctx,
+        &state,
+        &CODEX_PARSER_CONFIG,
+        connection_guard,
+    )
+    .await
 }
 
-/// DeepSeek 专用响应处理器
-///
-/// 将 Codex 的 Responses API 请求转换为 Chat Completions 格式，
-/// 转发到 DeepSeek API，再将 DeepSeek 的 Chat Completions SSE 流
-/// 转换为 Responses API SSE 事件返回给 Codex。
-async fn handle_deepseek_response(
-    _state: &ProxyState,
-    _ctx: &RequestContext,
-    body: Value,
-    _headers: axum::http::HeaderMap,
-    provider: &Provider,
-) -> Result<axum::response::Response, ProxyError> {
-    use axum::http::header;
-    use std::time::Duration;
-
-    let adapter = DeepSeekAdapter::new();
-
-    // 1. Extract base URL and auth
-    let base_url = adapter.extract_base_url(provider).map_err(|e| {
-        ProxyError::ForwardFailed(format!("Failed to get DeepSeek base URL: {e}"))
-    })?;
-    let auth = adapter.extract_auth(provider).ok_or_else(|| {
-        ProxyError::ForwardFailed("No API key configured for DeepSeek provider".to_string())
-    })?;
-    let api_key = auth.api_key.clone();
-
-    // 2. Inject cached reasoning_content if available.
-    // DeepSeek thinking mode requires reasoning_content to be passed back
-    // in ALL follow-up requests. We cache reasoning from the previous response
-    // keyed by its response_id, then look it up when Codex sends
-    // `previous_response_id` in the next request.
-    let prev_response_id = body
-        .get("previous_response_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    // 3. Convert request body: Responses API → Chat Completions
-    let mut chat_body = adapter.transform_request(body, provider)?;
-
-    // 3b. Inject cached reasoning_content if we're continuing a conversation.
-    //     Strategy: find the best assistant message to attach reasoning to.
-    //     - If there are tool messages (multi-turn tool calls), attach to the
-    //       last assistant BEFORE the first tool message (that's the one that
-    //       generated the reasoning originally).
-    //     - Otherwise, attach to the last assistant message.
-    {
-        if let Some(ref prev_id) = prev_response_id {
-            log::info!(
-                "[DeepSeek] Looking up reasoning cache for prev_response={}",
-                &prev_id[..prev_id.len().min(16)]
-            );
-            if let Ok(cache) = REASONING_CACHE.lock() {
-                let has_reasoning = cache.contains_key(prev_id);
-                log::info!(
-                    "[DeepSeek] Reasoning cache {} for key {}",
-                    if has_reasoning { "HIT" } else { "MISS" },
-                    &prev_id[..prev_id.len().min(16)]
-                );
-                if let Some(cached_reasoning) = cache.get(prev_id) {
-                    if !cached_reasoning.is_empty() {
-                        if let Some(messages) = chat_body
-                            .get_mut("messages")
-                            .and_then(|m| m.as_array_mut())
-                        {
-                            // Determine the target assistant message index:
-                            // If there are tool messages, find the last assistant
-                            // before the first tool message (tool-call round-trip).
-                            // Otherwise, use the last assistant message.
-                            let first_tool_idx = messages.iter().position(|m| {
-                                m.get("role") == Some(&json!("tool"))
-                            });
-                            let target_idx = if let Some(tool_idx) = first_tool_idx {
-                                // Find the last assistant before this tool message
-                                messages[..tool_idx]
-                                    .iter()
-                                    .enumerate()
-                                    .rev()
-                                    .find(|(_, m)| m.get("role") == Some(&json!("assistant")))
-                                    .map(|(i, _)| i)
-                            } else {
-                                // No tool messages — use the last assistant
-                                messages
-                                    .iter()
-                                    .enumerate()
-                                    .rev()
-                                    .find(|(_, m)| m.get("role") == Some(&json!("assistant")))
-                                    .map(|(i, _)| i)
-                            };
-
-                            if let Some(idx) = target_idx {
-                                if let Some(assistant_msg) = messages.get_mut(idx) {
-                                    // Only inject if not already present
-                                    let already_has = assistant_msg
-                                        .get("reasoning_content")
-                                        .and_then(|v| v.as_str())
-                                        .map_or(false, |s| !s.is_empty());
-                                    if !already_has {
-                                        if let Some(obj) = assistant_msg.as_object_mut() {
-                                            log::info!(
-                                                "[DeepSeek] Injecting cached reasoning_content ({} chars) into assistant msg [{}] (prev_response={})",
-                                                cached_reasoning.len(),
-                                                idx,
-                                                &prev_id[..prev_id.len().min(16)]
-                                            );
-                                            obj.insert(
-                                                "reasoning_content".to_string(),
-                                                json!(cached_reasoning),
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 3b. Fallback reasoning injection (when previous_response_id is absent/missed).
-    //     Codex does not send `previous_response_id` on tool-call round-trips, so
-    //     the cache lookup above won't trigger.  Instead, we detect tool messages
-    //     in the array and look up reasoning by each tool message's `tool_call_id`
-    //     from TOOL_CALL_REASONING_CACHE (populated when the previous response was
-    //     processed).
-    {
-        if let Some(messages) = chat_body
-            .get_mut("messages")
-            .and_then(|m| m.as_array_mut())
-        {
-            // Iterate through ALL assistant messages with tool_calls.
-            // Each one that lacks reasoning_content needs injection from cache.
-            // We match each assistant to its FOLLOWING tool messages so the
-            // correct round's reasoning_content is injected.
-            let total = messages.len();
-            // Build a list of (assistant_idx, Vec<tool_call_ids_for_this_round>)
-            let mut rounds: Vec<(usize, Vec<String>)> = Vec::new();
-            let mut i = 0;
-            while i < total {
-                if messages[i].get("role") == Some(&json!("assistant"))
-                    && messages[i].get("tool_calls").is_some()
-                {
-                    let assistant_idx = i;
-                    i += 1;
-                    // Collect tool messages that follow this assistant
-                    let mut tc_ids = Vec::new();
-                    while i < total
-                        && messages[i].get("role") == Some(&json!("tool"))
-                    {
-                        if let Some(tc_id) = messages[i]
-                            .get("tool_call_id")
-                            .and_then(|v| v.as_str())
-                        {
-                            tc_ids.push(tc_id.to_string());
-                        }
-                        i += 1;
-                    }
-                    rounds.push((assistant_idx, tc_ids));
-                } else {
-                    i += 1;
-                }
-            }
-
-            for (idx, tc_ids) in &rounds {
-                if let Some(assistant_msg) = messages.get_mut(*idx) {
-                    let already_has = assistant_msg
-                        .get("reasoning_content")
-                        .and_then(|v| v.as_str())
-                        .map_or(false, |s| !s.is_empty());
-                    if already_has {
-                        continue;
-                    }
-
-                    // Strategy 1: Look up TOOL_CALL_REASONING_CACHE by this round's tool_call_ids
-                    let mut injected = false;
-                    if !tc_ids.is_empty() {
-                        if let Ok(tc_cache) = TOOL_CALL_REASONING_CACHE.lock() {
-                            for tc_id in tc_ids {
-                                if let Some(cached_reasoning) = tc_cache.get(tc_id) {
-                                    if !cached_reasoning.is_empty() {
-                                        log::info!(
-                                            "[DeepSeek] Fallback: injected cached reasoning_content ({} chars) via tool_call_id {} into msg[{}]",
-                                            cached_reasoning.len(),
-                                            &tc_id[..tc_id.len().min(12)],
-                                            idx
-                                        );
-                                        if let Some(obj) = assistant_msg.as_object_mut() {
-                                            obj.insert(
-                                                "reasoning_content".to_string(),
-                                                json!(cached_reasoning),
-                                            );
-                                        }
-                                        injected = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if !injected {
-                        log::warn!(
-                            "[DeepSeek] msg[{}]: assistant with tool_calls but NO cached reasoning found to inject",
-                            idx
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    // 3. Debug logging: verify reasoning_content state before sending to DeepSeek
-    {
-        if let Some(messages) = chat_body.get("messages").and_then(|m| m.as_array()) {
-            for (i, msg) in messages.iter().enumerate() {
-                let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("?");
-                let has_tc = msg.get("tool_calls").is_some();
-                let rc = msg.get("reasoning_content").and_then(|v| v.as_str()).unwrap_or("");
-                let rc_preview = if rc.is_empty() {
-                    "MISSING".to_string()
-                } else {
-                    format!("{} chars", rc.len())
-                };
-                log::info!(
-                    "[DeepSeek] msg[{}]: role={}, has_tool_calls={}, reasoning_content={}",
-                    i, role, has_tc, rc_preview
-                );
-            }
-        }
-    }
-    {
-        let tc_cache_size = TOOL_CALL_REASONING_CACHE.lock().map(|c| c.len()).unwrap_or(0);
-        let r_cache_size = REASONING_CACHE.lock().map(|c| c.len()).unwrap_or(0);
-        log::info!(
-            "[DeepSeek] Cache state: TOOL_CALL_REASONING_CACHE={} entries, REASONING_CACHE={} entries",
-            tc_cache_size,
-            r_cache_size
-        );
-    }
-
-    // 3. Build upstream URL
-    let upstream_url = adapter.build_url(&base_url, "");
-    let model = chat_body
-        .get("model")
-        .and_then(|v| v.as_str())
-        .unwrap_or("deepseek-chat")
-        .to_string();
-    log::info!(
-        "[DeepSeek] Forwarding Codex request to {} (model: {})",
-        upstream_url,
-        model
-    );
-
-    // 4. Send request to DeepSeek API
-    let client = reqwest::Client::builder()
-        .use_rustls_tls()
-        .timeout(Duration::from_secs(300))
-        .build()
-        .map_err(|e| ProxyError::Internal(format!("Failed to create HTTP client: {e}")))?;
-
-    let ds_response = client
-        .post(&upstream_url)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .json(&chat_body)
-        .send()
-        .await
-        .map_err(|e| {
-            if e.is_timeout() {
-                ProxyError::Timeout(format!("DeepSeek request timed out: {e}"))
-            } else {
-                ProxyError::ForwardFailed(format!("DeepSeek request failed: {e}"))
-            }
-        })?;
-
-    let status = ds_response.status();
-    if !status.is_success() {
-        let error_text = ds_response.text().await.unwrap_or_default();
-        log::error!(
-            "[DeepSeek] API error {}: {}",
-            status,
-            &error_text[..error_text.len().min(300)]
-        );
-        return Err(ProxyError::UpstreamError {
-            status: status.as_u16(),
-            body: Some(error_text),
-        });
-    }
-
-    let is_streaming = chat_body
-        .get("stream")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-
-    if !is_streaming {
-        // --- Non-streaming: read full JSON and convert ---
-        let completion = ds_response
-            .json::<Value>()
-            .await
-            .map_err(|e| ProxyError::Internal(format!("Failed to parse DeepSeek response: {e}")))?;
-
-        // Build a Responses API response from the DeepSeek completion
-        let response_value = build_responses_from_chat_completion(&completion, &model);
-
-        // Save reasoning_content to cache, keyed by the response_id so Codex's
-        // next request (with `previous_response_id`) can look it up.
-        let resp_id = response_value
-            .get("id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        if let Some(ref rid) = resp_id {
-            if let Some(reasoning) = completion
-                .pointer("/choices/0/message/reasoning_content")
-                .and_then(|v| v.as_str())
-            {
-                if !reasoning.is_empty() {
-                    log::info!(
-                        "[DeepSeek] Caching reasoning_content ({} chars) from non-streaming response (resp={})",
-                        reasoning.len(),
-                        &rid[..rid.len().min(16)]
-                    );
-                    REASONING_CACHE
-                        .lock()
-                        .unwrap()
-                        .insert(rid.clone(), reasoning.to_string());
-                }
-            }
-            // Also cache by tool call IDs for fallback injection
-            // (Codex may not send previous_response_id on tool-call round-trips).
-            let reasoning_str = completion
-                .pointer("/choices/0/message/reasoning_content")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            if !reasoning_str.is_empty() {
-                let tc_ids: Vec<String> = completion
-                    .pointer("/choices/0/message/tool_calls")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|tc| tc.get("id").and_then(|v| v.as_str()))
-                            .map(|s| s.to_string())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                if !tc_ids.is_empty() {
-                    let mut tc_cache = TOOL_CALL_REASONING_CACHE.lock().unwrap();
-                    for tc_id in &tc_ids {
-                        tc_cache.insert(tc_id.clone(), reasoning_str.to_string());
-                        // Also cache by the proxy-generated id format "fc_{tc_id}"
-                        // since Codex may use that as the call_id.
-                        let proxy_id = format!("fc_{tc_id}");
-                        tc_cache.insert(proxy_id, reasoning_str.to_string());
-                    }
-                    log::info!(
-                        "[DeepSeek] Also cached reasoning by {} tool call ID(s) for fallback",
-                        tc_ids.len()
-                    );
-                }
-            }
-        }
-
-        return Ok(Json(response_value).into_response());
-    }
-
-    // --- Streaming: convert Chat Completions SSE → Responses API SSE on the fly ---
-    let stream = ds_response.bytes_stream();
-    let model_clone = model.clone();
-
-    let sse_stream = futures::stream::unfold(
-        (stream, String::new(), DeepSeekResponseConverter::new(&model_clone), false),
-        |(mut byte_stream, mut line_buf, mut converter, mut lifecycle_emitted)| async move {
-            use futures::StreamExt;
-
-            let mut output = String::new();
-
-            // Emit lifecycle events on the very first invocation,
-            // then immediately fall through to also process any buffered data.
-            if !lifecycle_emitted {
-                lifecycle_emitted = true;
-                for evt in converter.lifecycle_events() {
-                    output.push_str(&evt.to_sse_string());
-                }
-                // Also process whatever is already in line_buf (could be leftover from prev chunk)
-            }
-
-            // Read next chunk from DeepSeek (unless we already have pending data in the line buffer
-            // from a partial SSE line — but that's rare; normally we always read a new chunk)
-            match byte_stream.next().await {
-                Some(Ok(bytes)) => {
-                    let chunk_str = String::from_utf8_lossy(&bytes);
-                    line_buf.push_str(&chunk_str);
-
-                    // Process all complete lines from the buffer
-                    loop {
-                        if let Some(newline_pos) = line_buf.find('\n') {
-                            let line = line_buf[..newline_pos].to_string();
-                            line_buf = line_buf[newline_pos + 1..].to_string();
-                            let trimmed = line.trim();
-                            if trimmed.is_empty() || trimmed.starts_with(':') {
-                                continue;
-                            }
-                            if let Some(data) = trimmed.strip_prefix("data: ") {
-                                if data == "[DONE]" {
-                                    continue;
-                                }
-                                if let Ok(chat_chunk) = serde_json::from_str::<Value>(data) {
-                                    for evt in converter.process_chunk(&chat_chunk) {
-                                        output.push_str(&evt.to_sse_string());
-                                    }
-                                }
-                            }
-                        } else {
-                            break;
-                        }
-                    }
-
-                    if output.is_empty() {
-                        Some((Ok::<_, std::convert::Infallible>(bytes::Bytes::new()), (byte_stream, line_buf, converter, true)))
-                    } else {
-                        Some((Ok::<_, std::convert::Infallible>(bytes::Bytes::from(output)), (byte_stream, line_buf, converter, true)))
-                    }
-                }
-                Some(Err(e)) => {
-                    log::error!("[DeepSeek] Stream error: {e}");
-                    // Save partial reasoning before emitting the error
-                    let reasoning = converter.reasoning_content().to_string();
-                    let resp_id = converter.response_id().to_string();
-                    if !reasoning.is_empty() && !resp_id.is_empty() {
-                        REASONING_CACHE.lock().unwrap().insert(resp_id, reasoning);
-                    }
-                    let failed = converter.failed_event(&e.to_string());
-                    Some((Ok::<_, std::convert::Infallible>(bytes::Bytes::from(failed.to_sse_string())), (byte_stream, line_buf, converter, true)))
-                }
-                None => {
-                    // Stream ended — finalize and emit response.completed.
-                    // Save reasoning_content to cache BEFORE finalizing so the
-                    // cache is populated by the time Codex reads the completed event.
-                    let reasoning = converter.reasoning_content().to_string();
-                    let resp_id = converter.response_id().to_string();
-                    if !reasoning.is_empty() && !resp_id.is_empty() {
-                        log::info!(
-                            "[DeepSeek] Caching reasoning_content ({} chars) from streaming response (resp_id={})",
-                            reasoning.len(),
-                            &resp_id[..resp_id.len().min(16)]
-                        );
-                        REASONING_CACHE.lock().unwrap().insert(resp_id, reasoning.clone());
-                    }
-                    // Also cache by each tool call ID, since Codex may not send
-                    // `previous_response_id` on the follow-up (tool-call round-trip)
-                    // but will include the tool call's `call_id` in function_call_output.
-                    if !reasoning.is_empty() {
-                        let tc_ids = converter.tool_call_ids();
-                        if !tc_ids.is_empty() {
-                            let mut tc_cache = TOOL_CALL_REASONING_CACHE.lock().unwrap();
-                            for tc_id in &tc_ids {
-                                tc_cache.insert(tc_id.clone(), reasoning.clone());
-                            }
-                            log::info!(
-                                "[DeepSeek] Also cached reasoning by {} tool call ID(s) for fallback lookup",
-                                tc_ids.len()
-                            );
-                        }
-                    }
-                    let final_events = converter.finalize();
-                    if final_events.is_empty() && output.is_empty() {
-                        None
-                    } else {
-                        for evt in final_events {
-                            output.push_str(&evt.to_sse_string());
-                        }
-                        if output.contains("response.completed") {
-                            log::info!(
-                                "[DeepSeek] Stream completed, total text length: {}",
-                                converter.output_text().len()
-                            );
-                        }
-                        Some((Ok::<_, std::convert::Infallible>(bytes::Bytes::from(output)), (byte_stream, line_buf, converter, true)))
-                    }
-                }
-            }
-        }
-    );
-
-    let body = axum::body::Body::from_stream(sse_stream);
-    let headers = [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")];
-    log::info!("[DeepSeek] Streaming response started for model: {model}");
-    Ok((headers, body).into_response())
-}
-
-/// Build a Responses API JSON response from a Chat Completions response.
-fn build_responses_from_chat_completion(completion: &Value, model: &str) -> Value {
-    let msg = completion
-        .pointer("/choices/0/message")
-        .or_else(|| completion.pointer("/choices/0/delta"));
-
-    let content = msg
-        .and_then(|m| m.get("content"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    let finish_reason = completion
-        .pointer("/choices/0/finish_reason")
-        .and_then(|v| v.as_str())
-        .unwrap_or("stop");
-
-    let tool_calls = msg.and_then(|m| m.get("tool_calls")).and_then(|v| v.as_array());
-
-    // Reasoning content (DeepSeek thinking mode)
-    let reasoning = msg
-        .and_then(|m| m.get("reasoning_content"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    let mut output: Vec<Value> = Vec::new();
-
-    // Reasoning output (for thinking mode round-trip)
-    if !reasoning.is_empty() {
-        output.push(json!({
-            "type": "reasoning",
-            "reasoning_content": reasoning,
-        }));
-    }
-
-    // Text output — include reasoning_content directly on the message item
-    // so Codex preserves it when reconstructing conversation history.
-    if !content.is_empty() {
-        let mut msg = json!({
-            "type": "message",
-            "id": format!("msg_{}", &uuid::Uuid::new_v4().to_string().replace('-', "")[..12]),
-            "role": "assistant",
-            "content": [{
-                "type": "output_text",
-                "text": content,
-                "annotations": []
-            }],
-            "status": "completed"
-        });
-        if !reasoning.is_empty() {
-            msg["reasoning_content"] = json!(reasoning);
-        }
-        output.push(msg);
-    }
-
-    // Tool call outputs
-    if let Some(tcs) = tool_calls {
-        for tc in tcs {
-            let tc_id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("");
-            let func = tc.get("function");
-            let tc_name = func.and_then(|f| f.get("name")).and_then(|v| v.as_str()).unwrap_or("");
-            let tc_args = func.and_then(|f| f.get("arguments")).and_then(|v| v.as_str()).unwrap_or("");
-            output.push(json!({
-                "type": "function_call",
-                "id": format!("fc_{tc_id}"),
-                "call_id": tc_id,
-                "name": tc_name,
-                "arguments": tc_args,
-                "status": "completed"
-            }));
-        }
-    }
-
-    let mut resp = json!({
-        "id": format!("resp_{}", &uuid::Uuid::new_v4().to_string().replace('-', "")[..12]),
-        "object": "response",
-        "model": model,
-        "status": if finish_reason == "error" { "failed" } else { "completed" },
-        "created_at": chrono::Utc::now().timestamp(),
-        "output": output,
-    });
-
-    if let Some(usage) = completion.get("usage") {
-        resp["usage"] = json!({
-            "input_tokens": usage.get("prompt_tokens"),
-            "output_tokens": usage.get("completion_tokens"),
-            "total_tokens": usage.get("total_tokens"),
-        });
-    }
-
-    resp
-}
-
-/// Convert a full Chat Completions SSE body string into Responses API SSE string.
 /// 处理 /v1/responses/compact 请求（OpenAI Responses Compact API - Codex CLI 透传）
 pub async fn handle_responses_compact(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
+    let method = parts.method.clone();
     let uri = parts.uri;
     let headers = parts.headers;
     let extensions = parts.extensions;
@@ -1108,18 +635,6 @@ pub async fn handle_responses_compact(
 
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
-
-    // Detect DeepSeek provider and route to dedicated handler
-    let providers = ctx.get_providers();
-    if let Some(first_provider) = providers.first() {
-        if DeepSeekAdapter::is_deepseek_provider(first_provider) {
-            return handle_deepseek_response(
-                &state, &ctx, body, headers, first_provider,
-            )
-            .await;
-        }
-    }
-
     let endpoint = endpoint_with_query(&uri, "/responses/compact");
 
     let is_stream = body
@@ -1128,9 +643,10 @@ pub async fn handle_responses_compact(
         .unwrap_or(false);
 
     let forwarder = ctx.create_forwarder(&state);
-    let result = match forwarder
+    let mut result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
+            method,
             &endpoint,
             body,
             headers,
@@ -1149,10 +665,265 @@ pub async fn handle_responses_compact(
         }
     };
 
+    let connection_guard = result.connection_guard.take();
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(response, &ctx, &state, &CODEX_PARSER_CONFIG).await
+    if super::providers::should_convert_codex_responses_to_chat(&ctx.provider, &endpoint) {
+        return handle_codex_chat_to_responses_transform(
+            response,
+            &ctx,
+            &state,
+            is_stream,
+            connection_guard,
+        )
+        .await;
+    }
+
+    process_response(
+        response,
+        &ctx,
+        &state,
+        &CODEX_PARSER_CONFIG,
+        connection_guard,
+    )
+    .await
+}
+
+async fn handle_codex_chat_to_responses_transform(
+    response: super::hyper_client::ProxyResponse,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    is_stream: bool,
+    connection_guard: Option<ActiveConnectionGuard>,
+) -> Result<axum::response::Response, ProxyError> {
+    let status = response.status();
+
+    if !status.is_success() {
+        // 上游 Chat 错误体形状与 Responses 不一致（如 MiniMax 的 base_resp、自定义 detail 字段）；
+        // 直接透传会让 Codex 客户端无法识别错误码。这里统一转换为 Responses 风格
+        // `{"error": {message, type, code, param}}`，保留原始 HTTP 状态码。
+        return handle_codex_chat_error_response(response, ctx, status).await;
+    }
+
+    if is_stream || response.is_sse() {
+        let stream = response.bytes_stream();
+        let sse_stream = create_responses_sse_stream_from_chat(stream);
+        let sse_stream = record_responses_sse_stream(sse_stream, state.codex_chat_history.clone());
+
+        let usage_collector = if usage_logging_enabled(state) {
+            let state = state.clone();
+            let provider_id = ctx.provider.id.clone();
+            let request_model = ctx.request_model.clone();
+            let start_time = ctx.start_time;
+            let session_id = ctx.session_id.clone();
+
+            Some(SseUsageCollector::new(
+                start_time,
+                Some(codex_stream_usage_event_filter),
+                move |events, first_token_ms| {
+                    let usage =
+                        TokenUsage::from_codex_stream_events_auto(&events).unwrap_or_default();
+                    let model = usage.model.clone().unwrap_or_else(|| request_model.clone());
+                    let latency_ms = start_time.elapsed().as_millis() as u64;
+
+                    let state = state.clone();
+                    let provider_id = provider_id.clone();
+                    let request_model = request_model.clone();
+                    let session_id = session_id.clone();
+
+                    tokio::spawn(async move {
+                        log_usage(
+                            &state,
+                            &provider_id,
+                            "codex",
+                            &model,
+                            &request_model,
+                            usage,
+                            latency_ms,
+                            first_token_ms,
+                            true,
+                            status.as_u16(),
+                            Some(session_id),
+                        )
+                        .await;
+                    });
+                },
+            ))
+        } else {
+            None
+        };
+
+        let logged_stream = create_logged_passthrough_stream(
+            sse_stream,
+            ctx.tag,
+            usage_collector,
+            ctx.streaming_timeout_config(),
+            connection_guard,
+        );
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            "Content-Type",
+            axum::http::HeaderValue::from_static("text/event-stream"),
+        );
+        headers.insert(
+            "Cache-Control",
+            axum::http::HeaderValue::from_static("no-cache"),
+        );
+
+        let body = axum::body::Body::from_stream(logged_stream);
+        return Ok((headers, body).into_response());
+    }
+
+    let _connection_guard = connection_guard;
+    let body_timeout =
+        if ctx.app_config.auto_failover_enabled && ctx.app_config.non_streaming_timeout > 0 {
+            std::time::Duration::from_secs(ctx.app_config.non_streaming_timeout as u64)
+        } else {
+            std::time::Duration::ZERO
+        };
+    let (mut response_headers, status, body_bytes) =
+        read_decoded_body(response, ctx.tag, body_timeout).await?;
+    let body_str = String::from_utf8_lossy(&body_bytes);
+    let chat_response: Value = serde_json::from_slice(&body_bytes).map_err(|e| {
+        log::error!("[Codex] 解析 Chat 上游响应失败: {e}, body: {body_str}");
+        ProxyError::TransformError(format!("Failed to parse upstream chat response: {e}"))
+    })?;
+    let responses_response = transform_codex_chat::chat_completion_to_response(chat_response)
+        .map_err(|e| {
+            log::error!("[Codex] Chat → Responses 响应转换失败: {e}");
+            e
+        })?;
+    state
+        .codex_chat_history
+        .record_response(&responses_response)
+        .await;
+
+    if let Some(usage) = TokenUsage::from_codex_response_auto(&responses_response) {
+        let model = responses_response
+            .get("model")
+            .and_then(|m| m.as_str())
+            .unwrap_or(&ctx.request_model);
+        let request_model = ctx.request_model.clone();
+        tokio::spawn({
+            let state = state.clone();
+            let provider_id = ctx.provider.id.clone();
+            let model = model.to_string();
+            let session_id = ctx.session_id.clone();
+            let latency_ms = ctx.latency_ms();
+            async move {
+                log_usage(
+                    &state,
+                    &provider_id,
+                    "codex",
+                    &model,
+                    &request_model,
+                    usage,
+                    latency_ms,
+                    None,
+                    false,
+                    status.as_u16(),
+                    Some(session_id),
+                )
+                .await;
+            }
+        });
+    }
+
+    strip_entity_headers_for_rebuilt_body(&mut response_headers);
+    strip_hop_by_hop_response_headers(&mut response_headers);
+    // Builder::header 是 append 语义；不先 remove 会和上游 Content-Type 双发。
+    response_headers.remove(axum::http::header::CONTENT_TYPE);
+
+    let mut builder = axum::response::Response::builder().status(status);
+    for (key, value) in response_headers.iter() {
+        builder = builder.header(key, value);
+    }
+    builder = builder.header(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/json"),
+    );
+
+    let response_body = serde_json::to_vec(&responses_response).map_err(|e| {
+        log::error!("[Codex] 序列化 Responses 响应失败: {e}");
+        ProxyError::TransformError(format!("Failed to serialize responses response: {e}"))
+    })?;
+
+    builder
+        .body(axum::body::Body::from(response_body))
+        .map_err(|e| {
+            log::error!("[Codex] 构建 Responses 响应失败: {e}");
+            ProxyError::Internal(format!("Failed to build response: {e}"))
+        })
+}
+
+/// 把上游 Chat Completions 的错误响应转换为 Responses API 错误形状。
+///
+/// 与正常响应分支配套：正常响应已经被改写成 Responses 形式，错误响应若仍保留
+/// Chat 错误体（如 MiniMax 的 `{"base_resp": {"status_code": 2013}}`），Codex
+/// 客户端的错误处理就无法对齐字段。这里读取上游 body、规整成
+/// `{"error": {message, type, code, param}}` 并保留原始 HTTP 状态码。
+async fn handle_codex_chat_error_response(
+    response: super::hyper_client::ProxyResponse,
+    ctx: &RequestContext,
+    status: axum::http::StatusCode,
+) -> Result<axum::response::Response, ProxyError> {
+    let body_timeout =
+        if ctx.app_config.auto_failover_enabled && ctx.app_config.non_streaming_timeout > 0 {
+            std::time::Duration::from_secs(ctx.app_config.non_streaming_timeout as u64)
+        } else {
+            std::time::Duration::ZERO
+        };
+    let (mut response_headers, _status, body_bytes) =
+        read_decoded_body(response, ctx.tag, body_timeout).await?;
+
+    // 非 JSON 上游错误体（Cloudflare HTML、纯文本 "Unauthorized" 等）若丢成 None，
+    // 客户端就看不到原始诊断信息；包成 Value::String 走转换函数的字符串分支。
+    let parsed_value: Value = match serde_json::from_slice::<Value>(&body_bytes) {
+        Ok(value) => value,
+        Err(_) => {
+            const MAX_RAW_ERROR_BYTES: usize = 1024;
+            let lossy = String::from_utf8_lossy(&body_bytes);
+            let truncated = if lossy.len() > MAX_RAW_ERROR_BYTES {
+                let mut end = MAX_RAW_ERROR_BYTES;
+                while end > 0 && !lossy.is_char_boundary(end) {
+                    end -= 1;
+                }
+                format!("{}…(truncated)", &lossy[..end])
+            } else {
+                lossy.into_owned()
+            };
+            log::warn!("[Codex] Chat 错误响应不是合法 JSON，按文本透传: {truncated}");
+            Value::String(truncated)
+        }
+    };
+
+    let responses_error = transform_codex_chat::chat_error_to_response_error(Some(&parsed_value));
+
+    strip_entity_headers_for_rebuilt_body(&mut response_headers);
+    strip_hop_by_hop_response_headers(&mut response_headers);
+    // Builder::header 是 append 语义；不先 remove 会和上游 Content-Type 双发。
+    response_headers.remove(axum::http::header::CONTENT_TYPE);
+
+    let mut builder = axum::response::Response::builder().status(status);
+    for (key, value) in response_headers.iter() {
+        builder = builder.header(key, value);
+    }
+    builder = builder.header(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/json"),
+    );
+
+    let body = serde_json::to_vec(&responses_error).map_err(|e| {
+        log::error!("[Codex] 序列化 Responses 错误体失败: {e}");
+        ProxyError::TransformError(format!("Failed to serialize responses error: {e}"))
+    })?;
+
+    builder.body(axum::body::Body::from(body)).map_err(|e| {
+        log::error!("[Codex] 构建 Responses 错误响应失败: {e}");
+        ProxyError::Internal(format!("Failed to build response: {e}"))
+    })
 }
 
 // ============================================================================
@@ -1166,6 +937,7 @@ pub async fn handle_gemini(
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
+    let method = parts.method.clone();
     let headers = parts.headers;
     let extensions = parts.extensions;
     let body_bytes = req_body
@@ -1173,8 +945,14 @@ pub async fn handle_gemini(
         .await
         .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
         .to_bytes();
-    let body: Value = serde_json::from_slice(&body_bytes)
-        .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+    // GET 类只读端点（/v1beta/models、/v1beta/models/<model> 等）没有请求体，
+    // 不能强制 parse 为 JSON —— 否则空 body 会被拒绝。
+    let body: Value = if body_bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&body_bytes)
+            .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?
+    };
 
     // Gemini 的模型名称在 URI 中
     let mut ctx = RequestContext::new(&state, &body, &headers, AppType::Gemini, "Gemini", "gemini")
@@ -1193,9 +971,10 @@ pub async fn handle_gemini(
         .unwrap_or(false);
 
     let forwarder = ctx.create_forwarder(&state);
-    let result = match forwarder
+    let mut result = match forwarder
         .forward_with_retry(
             &AppType::Gemini,
+            method,
             endpoint,
             body,
             headers,
@@ -1214,10 +993,18 @@ pub async fn handle_gemini(
         }
     };
 
+    let connection_guard = result.connection_guard.take();
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(response, &ctx, &state, &GEMINI_PARSER_CONFIG).await
+    process_response(
+        response,
+        &ctx,
+        &state,
+        &GEMINI_PARSER_CONFIG,
+        connection_guard,
+    )
+    .await
 }
 
 fn should_use_claude_transform_streaming(
@@ -1347,14 +1134,19 @@ async fn log_usage(
     first_token_ms: Option<u64>,
     is_streaming: bool,
     status_code: u16,
+    session_id: Option<String>,
 ) {
     use super::usage::logger::UsageLogger;
+
+    if !usage_logging_enabled(state) {
+        return;
+    }
 
     let logger = UsageLogger::new(&state.db);
 
     let (multiplier, pricing_model_source) =
         logger.resolve_pricing_config(provider_id, app_type).await;
-    let pricing_model = if pricing_model_source == "request" {
+    let pricing_model = if pricing_model_source == PRICING_SOURCE_REQUEST {
         request_model
     } else {
         model
@@ -1374,7 +1166,7 @@ async fn log_usage(
         latency_ms,
         first_token_ms,
         status_code,
-        None,
+        session_id,
         None, // provider_type
         is_streaming,
     ) {

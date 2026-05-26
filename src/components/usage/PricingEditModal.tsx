@@ -16,6 +16,8 @@ interface PricingEditModalProps {
   onClose: () => void;
 }
 
+const PRICE_INPUT_STEP = "0.0001";
+
 export function PricingEditModal({
   open,
   model,
@@ -152,7 +154,7 @@ export function PricingEditModal({
           <Input
             id="inputCost"
             type="number"
-            step="0.01"
+            step={PRICE_INPUT_STEP}
             min="0"
             value={formData.inputCost}
             onChange={(e) =>
@@ -169,7 +171,7 @@ export function PricingEditModal({
           <Input
             id="outputCost"
             type="number"
-            step="0.01"
+            step={PRICE_INPUT_STEP}
             min="0"
             value={formData.outputCost}
             onChange={(e) =>
@@ -189,7 +191,7 @@ export function PricingEditModal({
           <Input
             id="cacheReadCost"
             type="number"
-            step="0.01"
+            step={PRICE_INPUT_STEP}
             min="0"
             value={formData.cacheReadCost}
             onChange={(e) =>
@@ -209,7 +211,7 @@ export function PricingEditModal({
           <Input
             id="cacheCreationCost"
             type="number"
-            step="0.01"
+            step={PRICE_INPUT_STEP}
             min="0"
             value={formData.cacheCreationCost}
             onChange={(e) =>

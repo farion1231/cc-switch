@@ -40,7 +40,9 @@ describe("TheRouter provider presets", () => {
       "https://api.therouter.ai/v1",
     ]);
     expect(preset?.auth).toEqual({ OPENAI_API_KEY: "" });
-    expect(preset?.config).toContain('model_provider = "therouter"');
+    expect(preset?.config).toContain('model_provider = "custom"');
+    expect(preset?.config).toContain("[model_providers.custom]");
+    expect(preset?.config).toContain('name = "therouter"');
     expect(preset?.config).toContain('model = "openai/gpt-5.3-codex"');
     expect(preset?.config).toContain(
       'base_url = "https://api.therouter.ai/v1"',
