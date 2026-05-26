@@ -55,17 +55,22 @@ pub struct SwitchResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(any(target_os = "macos", windows))]
     use crate::claude_desktop_config::PROFILE_ID;
     use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
     use crate::database::Database;
-    use crate::provider::{ClaudeDesktopModelRoute, ClaudeDesktopMode, ProviderMeta};
+    use crate::provider::ProviderMeta;
+    #[cfg(any(target_os = "macos", windows))]
+    use crate::provider::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
     use crate::proxy::types::ProxyConfig;
     use crate::store::AppState;
     use serde_json::json;
     use serial_test::serial;
     use std::env;
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
+    #[cfg(any(target_os = "macos", windows))]
+    use std::path::PathBuf;
     use std::sync::{Arc, Mutex, OnceLock};
     use tempfile::TempDir;
 
@@ -73,6 +78,7 @@ mod tests {
         #[allow(dead_code)]
         dir: TempDir,
         original_home: Option<String>,
+        #[cfg(windows)]
         original_local_app_data: Option<String>,
         original_userprofile: Option<String>,
         original_test_home: Option<String>,
@@ -82,11 +88,13 @@ mod tests {
         fn new() -> Self {
             let dir = TempDir::new().expect("failed to create temp home");
             let original_home = env::var("HOME").ok();
+            #[cfg(windows)]
             let original_local_app_data = env::var("LOCALAPPDATA").ok();
             let original_userprofile = env::var("USERPROFILE").ok();
             let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
 
             env::set_var("HOME", dir.path());
+            #[cfg(windows)]
             env::set_var("LOCALAPPDATA", dir.path().join("AppData").join("Local"));
             env::set_var("USERPROFILE", dir.path());
             env::set_var("CC_SWITCH_TEST_HOME", dir.path());
@@ -94,6 +102,7 @@ mod tests {
             Self {
                 dir,
                 original_home,
+                #[cfg(windows)]
                 original_local_app_data,
                 original_userprofile,
                 original_test_home,
@@ -108,9 +117,12 @@ mod tests {
                 None => env::remove_var("HOME"),
             }
 
-            match &self.original_local_app_data {
-                Some(value) => env::set_var("LOCALAPPDATA", value),
-                None => env::remove_var("LOCALAPPDATA"),
+            #[cfg(windows)]
+            {
+                match &self.original_local_app_data {
+                    Some(value) => env::set_var("LOCALAPPDATA", value),
+                    None => env::remove_var("LOCALAPPDATA"),
+                }
             }
 
             match &self.original_userprofile {
@@ -544,6 +556,8 @@ base_url = "http://localhost:8080"
         crate::settings::set_current_provider(&AppType::ClaudeDesktop, Some("p1"))
             .expect("set local current provider");
 
+        // Claude Desktop keeps backup state from takeover startup; this sentinel only
+        // marks takeover as active so provider updates rewrite the 3P profile.
         db.save_live_backup("claude-desktop", "{}")
             .await
             .expect("seed live backup");
@@ -597,13 +611,10 @@ base_url = "http://localhost:8080"
             .await
             .expect("get live backup")
             .expect("backup exists");
-        let stored_provider = db
-            .get_provider_by_id("p1", "claude-desktop")
-            .expect("get stored provider")
-            .expect("stored provider exists");
-        let expected_backup =
-            serde_json::to_string(&stored_provider.settings_config).expect("serialize");
-        assert_eq!(backup.original_config, expected_backup);
+        assert_eq!(
+            backup.original_config, "{}",
+            "Claude Desktop provider edits should not rewrite takeover backup"
+        );
 
         let profile_path = claude_desktop_profile_path(home.dir.path());
         let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
@@ -1389,12 +1400,16 @@ impl ProviderService {
             let should_sync_via_proxy = is_proxy_running && (has_live_backup || live_taken_over);
 
             if should_sync_via_proxy {
-                futures::executor::block_on(
-                    state
-                        .proxy_service
-                        .update_live_backup_from_provider(app_type.as_str(), &provider),
-                )
-                .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+                if matches!(app_type, AppType::ClaudeDesktop) {
+                    write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
+                } else {
+                    futures::executor::block_on(
+                        state
+                            .proxy_service
+                            .update_live_backup_from_provider(app_type.as_str(), &provider),
+                    )
+                    .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+                }
 
                 if matches!(app_type, AppType::Claude) {
                     futures::executor::block_on(
@@ -1403,9 +1418,6 @@ impl ProviderService {
                             .sync_claude_live_from_provider_while_proxy_active(&provider),
                     )
                     .map_err(|e| AppError::Message(format!("同步 Claude Live 配置失败: {e}")))?;
-                }
-                if matches!(app_type, AppType::ClaudeDesktop) {
-                    write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
                 }
             } else {
                 write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
@@ -1806,15 +1818,17 @@ impl ProviderService {
             .detect_takeover_in_live_config_for_app(&app_type);
 
         if takeover_enabled && (has_live_backup || live_taken_over) {
+            if matches!(app_type, AppType::ClaudeDesktop) {
+                write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
+                return Ok(());
+            }
+
             futures::executor::block_on(
                 state
                     .proxy_service
                     .update_live_backup_from_provider(app_type.as_str(), provider),
             )
             .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
-            if matches!(app_type, AppType::ClaudeDesktop) {
-                write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
-            }
             return Ok(());
         }
 
