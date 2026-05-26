@@ -22,6 +22,8 @@ pub fn launch_terminal(
         "wezterm" => launch_wezterm(command, cwd),
         "kaku" => launch_kaku(command, cwd),
         "alacritty" => launch_alacritty(command, cwd),
+        #[cfg(unix)]
+        "warp" => launch_warp(command, cwd),
         "custom" => launch_custom(command, cwd, custom_config),
         _ => Err(format!("Unsupported terminal target: {target}")),
     }
@@ -199,6 +201,48 @@ fn build_wezterm_compatible_args_with_shell(
     args.push("-c".to_string());
     args.push(full_command);
     args
+}
+
+#[cfg(unix)]
+fn launch_warp(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    let cwd = cwd.ok_or("Failed to resume session without cwd")?;
+
+    let mut script_file = tempfile::Builder::new()
+        .disable_cleanup(true)
+        .permissions(std::fs::Permissions::from_mode(0o755))
+        .tempfile_in(cwd)
+        .map_err(|e| format!("Failed to create temporary script file for launching Warp: {e}"))?;
+
+    writeln!(
+        &mut script_file,
+        r#"#!/usr/bin/env sh
+
+        rm -- "$0"
+
+        exec {command}
+        "#,
+    )
+    .map_err(|e| format!("Failed to write to temporary script file for Warp: {e}"))?;
+
+    let mut warp_url = url::Url::parse("warp://action/new_tab").unwrap();
+    warp_url
+        .query_pairs_mut()
+        .append_pair("path", &script_file.path().to_string_lossy());
+    let warp_url = warp_url.to_string();
+
+    let status = Command::new("open")
+        .args(["-a", "Warp", &warp_url])
+        .status()
+        .map_err(|e| format!("Failed to launch Warp: {e}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to launch Warp.".to_string())
+    }
 }
 
 fn launch_alacritty(command: &str, cwd: Option<&str>) -> Result<(), String> {
