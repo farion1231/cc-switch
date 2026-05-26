@@ -2473,7 +2473,7 @@ fn kill_idle_claude_spare_processes() -> Result<(), AppError> {
                     // pkill -f matches the full command line, targeting exactly
                     // the spare process that owns this specific socket file.
                     let status = std::process::Command::new("pkill")
-                        .args(["-TERM", "-f", &format!("--bg-spare {sock_path}")])
+                        .args(["-TERM", "-f", "--", &format!("--bg-spare {sock_path}")])
                         .status();
 
                     match status {
