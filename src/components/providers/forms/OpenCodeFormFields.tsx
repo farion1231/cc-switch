@@ -197,6 +197,14 @@ export function OpenCodeFormFields({
     modelsRef.current = models;
   }, [models]);
 
+  const commitModelsChange = useCallback(
+    (nextModels: Record<string, OpenCodeModel>) => {
+      modelsRef.current = nextModels;
+      onModelsChange(nextModels);
+    },
+    [onModelsChange],
+  );
+
   const handleFetchModels = useCallback(() => {
     if (!baseUrl || !apiKey) {
       showFetchModelsError(null, t, {
@@ -217,7 +225,7 @@ export function OpenCodeFormFields({
             fetched,
           );
           if (mergedModels !== modelsRef.current) {
-            onModelsChange(mergedModels);
+            commitModelsChange(mergedModels);
           }
           toast.success(
             t("providerForm.fetchModelsSuccess", { count: fetched.length }),
@@ -229,7 +237,7 @@ export function OpenCodeFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [baseUrl, apiKey, onModelsChange, t]);
+  }, [baseUrl, apiKey, commitModelsChange, t]);
 
   // Track which models have expanded options panel
   const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
@@ -247,17 +255,18 @@ export function OpenCodeFormFields({
   // Add a new model entry
   const handleAddModel = () => {
     const newKey = `model-${Date.now()}`;
-    onModelsChange({
-      ...models,
+    const currentModels = modelsRef.current;
+    commitModelsChange({
+      ...currentModels,
       [newKey]: { name: "" },
     });
   };
 
   // Remove a model entry
   const handleRemoveModel = (key: string) => {
-    const newModels = { ...models };
+    const newModels = { ...modelsRef.current };
     delete newModels[key];
-    onModelsChange(newModels);
+    commitModelsChange(newModels);
     // Also remove from expanded set
     setExpandedModels((prev) => {
       const next = new Set(prev);
@@ -270,14 +279,14 @@ export function OpenCodeFormFields({
   const handleModelIdChange = (oldKey: string, newKey: string) => {
     if (oldKey === newKey || !newKey.trim()) return;
     const newModels: Record<string, OpenCodeModel> = {};
-    for (const [k, v] of Object.entries(models)) {
+    for (const [k, v] of Object.entries(modelsRef.current)) {
       if (k === oldKey) {
         newModels[newKey] = v;
       } else {
         newModels[k] = v;
       }
     }
-    onModelsChange(newModels);
+    commitModelsChange(newModels);
     // Update expanded set if this model was expanded
     if (expandedModels.has(oldKey)) {
       setExpandedModels((prev) => {
@@ -291,18 +300,20 @@ export function OpenCodeFormFields({
 
   // Update model name
   const handleModelNameChange = (key: string, name: string) => {
-    onModelsChange({
-      ...models,
-      [key]: { ...models[key], name },
+    const currentModels = modelsRef.current;
+    commitModelsChange({
+      ...currentModels,
+      [key]: { ...currentModels[key], name },
     });
   };
 
   // Model options handlers
   const handleAddModelOption = (modelKey: string) => {
-    const model = models[modelKey];
+    const currentModels = modelsRef.current;
+    const model = currentModels[modelKey];
     const newOptionKey = `option-${Date.now()}`;
-    onModelsChange({
-      ...models,
+    commitModelsChange({
+      ...currentModels,
       [modelKey]: {
         ...model,
         options: { ...model.options, [newOptionKey]: "" },
@@ -311,11 +322,12 @@ export function OpenCodeFormFields({
   };
 
   const handleRemoveModelOption = (modelKey: string, optionKey: string) => {
-    const model = models[modelKey];
+    const currentModels = modelsRef.current;
+    const model = currentModels[modelKey];
     const newOptions = { ...model.options };
     delete newOptions[optionKey];
-    onModelsChange({
-      ...models,
+    commitModelsChange({
+      ...currentModels,
       [modelKey]: {
         ...model,
         options: Object.keys(newOptions).length > 0 ? newOptions : undefined,
@@ -329,14 +341,15 @@ export function OpenCodeFormFields({
     newKey: string,
   ) => {
     if (!newKey.trim() || oldKey === newKey) return;
-    const model = models[modelKey];
+    const currentModels = modelsRef.current;
+    const model = currentModels[modelKey];
     const newOptions: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(model.options || {})) {
       if (k === oldKey) newOptions[newKey] = v;
       else newOptions[k] = v;
     }
-    onModelsChange({
-      ...models,
+    commitModelsChange({
+      ...currentModels,
       [modelKey]: { ...model, options: newOptions },
     });
   };
@@ -346,15 +359,16 @@ export function OpenCodeFormFields({
     optionKey: string,
     value: string,
   ) => {
-    const model = models[modelKey];
+    const currentModels = modelsRef.current;
+    const model = currentModels[modelKey];
     let parsedValue: unknown;
     try {
       parsedValue = JSON.parse(value);
     } catch {
       parsedValue = value;
     }
-    onModelsChange({
-      ...models,
+    commitModelsChange({
+      ...currentModels,
       [modelKey]: {
         ...model,
         options: { ...model.options, [optionKey]: parsedValue },
@@ -364,20 +378,22 @@ export function OpenCodeFormFields({
 
   // Model extra field handlers (top-level properties like variants, cost)
   const handleAddModelExtraField = (modelKey: string) => {
-    const model = models[modelKey];
+    const currentModels = modelsRef.current;
+    const model = currentModels[modelKey];
     const newFieldKey = `option-${Date.now()}`;
-    onModelsChange({
-      ...models,
+    commitModelsChange({
+      ...currentModels,
       [modelKey]: { ...model, [newFieldKey]: "" },
     });
   };
 
   const handleRemoveModelExtraField = (modelKey: string, fieldKey: string) => {
-    const model = models[modelKey];
+    const currentModels = modelsRef.current;
+    const model = currentModels[modelKey];
     const newModel = { ...model };
     delete newModel[fieldKey];
-    onModelsChange({
-      ...models,
+    commitModelsChange({
+      ...currentModels,
       [modelKey]: newModel,
     });
   };
@@ -388,7 +404,8 @@ export function OpenCodeFormFields({
     newKey: string,
   ) => {
     if (!newKey.trim() || oldKey === newKey) return;
-    const model = models[modelKey];
+    const currentModels = modelsRef.current;
+    const model = currentModels[modelKey];
     // Reject reserved keys and duplicate extra field names
     if (isKnownModelKey(newKey) || (newKey !== oldKey && newKey in model))
       return;
@@ -397,8 +414,8 @@ export function OpenCodeFormFields({
       if (k === oldKey) newModel[newKey] = v;
       else newModel[k] = v;
     }
-    onModelsChange({
-      ...models,
+    commitModelsChange({
+      ...currentModels,
       [modelKey]: newModel as OpenCodeModel,
     });
   };
@@ -408,15 +425,16 @@ export function OpenCodeFormFields({
     fieldKey: string,
     value: string,
   ) => {
-    const model = models[modelKey];
+    const currentModels = modelsRef.current;
+    const model = currentModels[modelKey];
     let parsedValue: unknown;
     try {
       parsedValue = JSON.parse(value);
     } catch {
       parsedValue = value;
     }
-    onModelsChange({
-      ...models,
+    commitModelsChange({
+      ...currentModels,
       [modelKey]: { ...model, [fieldKey]: parsedValue },
     });
   };
