@@ -554,15 +554,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     const preset = PRESET_TEMPLATES[presetName];
     if (preset !== undefined) {
       if (presetName === TEMPLATE_TYPES.CUSTOM) {
-        // 🔧 自定义模式：用户应该在脚本中直接写完整 URL 和凭证，而不是依赖变量替换
-        // 这样可以避免同源检查导致的问题
-        // 如果用户想使用变量，需要手动在配置中设置 baseUrl/apiKey
         setScript({
           ...script,
           code: preset,
-          // 清除凭证，用户可选择手动输入或保持空
-          apiKey: undefined,
-          baseUrl: undefined,
+          // 预填供应商凭证以支持 {{baseUrl}}/{{apiKey}} 变量替换
+          apiKey: providerCredentials.apiKey || script.apiKey,
+          baseUrl: providerCredentials.baseUrl || script.baseUrl,
           accessToken: undefined,
           userId: undefined,
         });
@@ -570,6 +567,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         setScript({
           ...script,
           code: preset,
+          // 预填供应商凭证以支持 {{baseUrl}}/{{apiKey}} 变量替换
+          apiKey: providerCredentials.apiKey || script.apiKey,
+          baseUrl: providerCredentials.baseUrl || script.baseUrl,
           accessToken: undefined,
           userId: undefined,
         });
@@ -577,6 +577,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         setScript({
           ...script,
           code: preset,
+          // 预填供应商 baseUrl 以支持 {{baseUrl}} 变量替换
+          baseUrl: providerCredentials.baseUrl || script.baseUrl,
           apiKey: undefined,
         });
       } else if (presetName === TEMPLATE_TYPES.GITHUB_COPILOT) {

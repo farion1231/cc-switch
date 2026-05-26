@@ -83,30 +83,56 @@ pub(crate) async fn execute_and_format_usage_result(
 
 /// Extract API key from provider configuration
 fn extract_api_key_from_provider(provider: &crate::provider::Provider) -> Option<String> {
-    if let Some(env) = provider.settings_config.get("env") {
-        // Try multiple possible API key fields
-        env.get("ANTHROPIC_AUTH_TOKEN")
-            .or_else(|| env.get("ANTHROPIC_API_KEY"))
-            .or_else(|| env.get("OPENROUTER_API_KEY"))
-            .or_else(|| env.get("GOOGLE_API_KEY"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-    } else {
-        None
+    // Try env-specific keys first (Claude, Gemini, etc.)
+    let from_env = provider
+        .settings_config
+        .get("env")
+        .and_then(|env| {
+            env.get("ANTHROPIC_AUTH_TOKEN")
+                .or_else(|| env.get("ANTHROPIC_API_KEY"))
+                .or_else(|| env.get("OPENROUTER_API_KEY"))
+                .or_else(|| env.get("GOOGLE_API_KEY"))
+        })
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    if from_env.is_some() {
+        return from_env;
     }
+
+    // Fallback to top-level apiKey/api_key (Hermes, OpenClaw, Custom, etc.)
+    provider
+        .settings_config
+        .get("apiKey")
+        .or_else(|| provider.settings_config.get("api_key"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }
 
 /// Extract base URL from provider configuration
 fn extract_base_url_from_provider(provider: &crate::provider::Provider) -> Option<String> {
-    if let Some(env) = provider.settings_config.get("env") {
-        // Try multiple possible base URL fields
-        env.get("ANTHROPIC_BASE_URL")
-            .or_else(|| env.get("GOOGLE_GEMINI_BASE_URL"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim_end_matches('/').to_string())
-    } else {
-        None
+    // Try env-specific keys first (Claude, Gemini, etc.)
+    let from_env = provider
+        .settings_config
+        .get("env")
+        .and_then(|env| {
+            env.get("ANTHROPIC_BASE_URL")
+                .or_else(|| env.get("GOOGLE_GEMINI_BASE_URL"))
+        })
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim_end_matches('/').to_string());
+
+    if from_env.is_some() {
+        return from_env;
     }
+
+    // Fallback to top-level baseUrl/base_url (Hermes, OpenClaw, Custom, etc.)
+    provider
+        .settings_config
+        .get("baseUrl")
+        .or_else(|| provider.settings_config.get("base_url"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim_end_matches('/').to_string())
 }
 
 /// Query provider usage (using saved script configuration)
@@ -185,9 +211,9 @@ pub async fn query_usage(
 /// Test usage script (using temporary script content, not saved)
 #[allow(clippy::too_many_arguments)]
 pub async fn test_usage_script(
-    _state: &AppState,
-    _app_type: AppType,
-    _provider_id: &str,
+    state: &AppState,
+    app_type: AppType,
+    provider_id: &str,
     script_code: &str,
     timeout: u64,
     api_key: Option<&str>,
@@ -196,11 +222,35 @@ pub async fn test_usage_script(
     user_id: Option<&str>,
     template_type: Option<&str>,
 ) -> Result<UsageResult, AppError> {
-    // Use provided credential parameters directly for testing
+    // Resolve credentials: prefer explicit params, fallback to provider config
+    let (resolved_api_key, resolved_base_url) = if api_key.is_none() || base_url.is_none() {
+        let providers = state.db.get_all_providers(app_type.as_str())?;
+        if let Some(provider) = providers.get(provider_id) {
+            (
+                api_key
+                    .map(|s| s.to_string())
+                    .or_else(|| extract_api_key_from_provider(provider)),
+                base_url
+                    .map(|s| s.to_string())
+                    .or_else(|| extract_base_url_from_provider(provider)),
+            )
+        } else {
+            (
+                api_key.map(|s| s.to_string()),
+                base_url.map(|s| s.to_string()),
+            )
+        }
+    } else {
+        (
+            api_key.map(|s| s.to_string()),
+            base_url.map(|s| s.to_string()),
+        )
+    };
+
     execute_and_format_usage_result(
         script_code,
-        api_key.unwrap_or(""),
-        base_url.unwrap_or(""),
+        &resolved_api_key.unwrap_or_default(),
+        &resolved_base_url.unwrap_or_default(),
         timeout,
         access_token,
         user_id,
