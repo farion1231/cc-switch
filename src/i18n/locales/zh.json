@@ -1199,6 +1199,8 @@
   "providerPreset": {
     "label": "预设供应商",
     "custom": "自定义配置",
+    "sortDefault": "默认",
+    "sortAlphabetical": "按字母",
     "other": "其他",
     "hint": "选择预设后可继续调整下方字段。"
   },
