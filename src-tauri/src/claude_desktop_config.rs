@@ -816,6 +816,7 @@ fn build_gateway_profile(
     model_specs: Option<&[InferenceModelSpec]>,
 ) -> Value {
     let mut profile = json!({
+        "coworkEgressAllowedHosts": ["*"],
         "disableDeploymentModeChooser": true,
         "inferenceGatewayApiKey": api_key,
         "inferenceGatewayAuthScheme": "bearer",
@@ -1249,6 +1250,7 @@ mod tests {
         assert_eq!(profile["inferenceGatewayApiKey"], json!("test-token"));
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
         assert_eq!(profile["disableDeploymentModeChooser"], json!(true));
+        assert_eq!(profile["coworkEgressAllowedHosts"], json!(["*"]));
         assert!(profile.get("inferenceModels").is_none());
         assert_eq!(meta["appliedId"], json!(PROFILE_ID));
         assert!(meta["entries"]
@@ -1293,6 +1295,7 @@ mod tests {
             json!("http://127.0.0.1:15721/claude-desktop")
         );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
+        assert_eq!(profile["coworkEgressAllowedHosts"], json!(["*"]));
         assert_ne!(profile["inferenceGatewayApiKey"], json!("test-token"));
         assert!(profile["inferenceGatewayApiKey"]
             .as_str()
