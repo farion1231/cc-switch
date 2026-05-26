@@ -402,7 +402,11 @@ fn convert_message_to_openai(
                 "tool_use" => {
                     let id = block.get("id").and_then(|i| i.as_str()).unwrap_or("");
                     let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                    let input = block.get("input").cloned().unwrap_or(json!({}));
+                    // 将 null input 归一化为 {}，避免 canonical_json_string 输出 "null"
+                    let input = match block.get("input") {
+                        Some(Value::Null) | None => json!({}),
+                        Some(v) => v.clone(),
+                    };
                     tool_calls.push(json!({
                         "id": id,
                         "type": "function",
@@ -583,11 +587,57 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
             let empty_obj = json!({});
             let func = tc.get("function").unwrap_or(&empty_obj);
             let name = func.get("name").and_then(|n| n.as_str()).unwrap_or("");
-            let args_str = func
-                .get("arguments")
-                .and_then(|a| a.as_str())
-                .unwrap_or("{}");
-            let input: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
+            // 安全解析 arguments：兼容对象类型（非标准 API 行为）和 null
+            let (input, args_debug) = match func.get("arguments") {
+                Some(Value::String(s)) => {
+                    let trimmed = s.trim();
+                    if trimmed.is_empty() {
+                        log::warn!(
+                            "[Claude/OpenAI] tool call '{name}' (id={id}) has empty arguments string, falling back to {{}}"
+                        );
+                        (json!({}), "(empty-string)".to_string())
+                    } else {
+                        match serde_json::from_str::<Value>(trimmed) {
+                            Ok(parsed) => (parsed, format!("str:{}..", &trimmed[..std::cmp::min(80, trimmed.len())])),
+                            Err(e) => {
+                                log::error!(
+                                    "[Claude/OpenAI] Failed to parse tool call '{name}' arguments as JSON: {e}. args={trunc}",
+                                    trunc = &trimmed[..std::cmp::min(200, trimmed.len())]
+                                );
+                                (json!({}), format!("parse-error:{e}"))
+                            }
+                        }
+                    }
+                }
+                // 某些上游 API 会返回 JSON 对象而非字符串
+                Some(Value::Object(obj)) => {
+                    log::warn!(
+                        "[Claude/OpenAI] tool call '{name}' arguments is an object (non-standard), serializing directly"
+                    );
+                    (Value::Object(obj.clone()), "(object)".to_string())
+                }
+                // null 或缺失
+                Some(Value::Null) => {
+                    log::warn!(
+                        "[Claude/OpenAI] tool call '{name}' (id={id}) arguments is null, falling back to {{}}"
+                    );
+                    (json!({}), "(null)".to_string())
+                }
+                Some(other) => {
+                    log::warn!(
+                        "[Claude/OpenAI] tool call '{name}' arguments has unexpected type, serializing directly"
+                    );
+                    (other.clone(), "(other)".to_string())
+                }
+                None => {
+                    log::warn!(
+                        "[Claude/OpenAI] tool call '{name}' (id={id}) has no arguments field, falling back to {{}}"
+                    );
+                    (json!({}), "(missing)".to_string())
+                }
+            };
+
+            _ = args_debug; // keep compiler quiet — used implicitly via log may be compiled out
 
             content.push(json!({
                 "type": "tool_use",
@@ -1592,6 +1642,230 @@ mod tests {
         assert_eq!(
             run_tool_choice(json!({"type": "tool", "name": "search"})),
             json!({"type": "function", "function": {"name": "search"}}),
+        );
+    }
+
+    // --- openai_to_anthropic tests ---
+
+    fn run_openai_to_anthropic(choices_msg: Value) -> Value {
+        let body = json!({
+            "id": "chatcmpl-xxx",
+            "model": "deepseek-v4-pro",
+            "choices": [{
+                "index": 0,
+                "finish_reason": "stop",
+                "message": choices_msg
+            }],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 20
+            }
+        });
+        openai_to_anthropic(body).unwrap()
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_simple_text() {
+        let result = run_openai_to_anthropic(json!({
+            "role": "assistant",
+            "content": "Hello!"
+        }));
+        assert_eq!(result["type"], "message");
+        assert_eq!(result["role"], "assistant");
+        assert_eq!(result["content"][0]["type"], "text");
+        assert_eq!(result["content"][0]["text"], "Hello!");
+        assert_eq!(result["stop_reason"], "end_turn");
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_tool_call_string_args() {
+        // Standard case: arguments is a valid JSON string
+        let result = run_openai_to_anthropic(json!({
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "exec",
+                    "arguments": r#"{\"command\": \"ls -la\", \"timeout\": 30}"#
+                }
+            }]
+        }));
+        assert_eq!(result["content"][0]["type"], "tool_use");
+        assert_eq!(result["content"][0]["name"], "exec");
+        assert_eq!(result["content"][0]["input"]["command"], "ls -la");
+        assert_eq!(result["content"][0]["input"]["timeout"], 30);
+        assert_eq!(result["stop_reason"], "tool_use");
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_tool_call_object_args() {
+        // Non-standard upstream that returns arguments as a JSON object
+        let result = run_openai_to_anthropic(json!({
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [{
+                "id": "call_2",
+                "type": "function",
+                "function": {
+                    "name": "read",
+                    "arguments": {"path": "/tmp/test.txt"}
+                }
+            }]
+        }));
+        assert_eq!(result["content"][0]["type"], "tool_use");
+        assert_eq!(result["content"][0]["name"], "read");
+        assert_eq!(result["content"][0]["input"]["path"], "/tmp/test.txt");
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_tool_call_null_args() {
+        // arguments is null (seen with some providers under load)
+        let result = run_openai_to_anthropic(json!({
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [{
+                "id": "call_3",
+                "type": "function",
+                "function": {
+                    "name": "bash",
+                    "arguments": null
+                }
+            }]
+        }));
+        assert_eq!(result["content"][0]["type"], "tool_use");
+        assert_eq!(result["content"][0]["name"], "bash");
+        // null args should fall back to empty object gracefully
+        assert!(result["content"][0]["input"].is_object());
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_tool_call_empty_string_args() {
+        // Empty string arguments (some proxies may strip it)
+        let result = run_openai_to_anthropic(json!({
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [{
+                "id": "call_4",
+                "type": "function",
+                "function": {
+                    "name": "write",
+                    "arguments": ""
+                }
+            }]
+        }));
+        assert_eq!(result["content"][0]["type"], "tool_use");
+        assert_eq!(result["content"][0]["name"], "write");
+        assert!(result["content"][0]["input"].is_object());
+        // Should still be a valid tool_use, not crash
+        assert_eq!(result["stop_reason"], "tool_use");
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_tool_call_missing_args() {
+        // No arguments field at all
+        let result = run_openai_to_anthropic(json!({
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [{
+                "id": "call_5",
+                "type": "function",
+                "function": {
+                    "name": "search"
+                }
+            }]
+        }));
+        assert_eq!(result["content"][0]["type"], "tool_use");
+        assert!(result["content"][0]["input"].is_object());
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_multiple_tool_calls() {
+        let result = run_openai_to_anthropic(json!({
+            "role": "assistant",
+            "content": "I'll run two commands",
+            "tool_calls": [
+                {
+                    "id": "call_a",
+                    "type": "function",
+                    "function": {
+                        "name": "exec",
+                        "arguments": r#"{\"command\": \"echo hello\"}"#
+                    }
+                },
+                {
+                    "id": "call_b",
+                    "type": "function",
+                    "function": {
+                        "name": "read",
+                        "arguments": {"path": "/tmp/x"}
+                    }
+                }
+            ]
+        }));
+        // First content block should be text
+        assert_eq!(result["content"][0]["type"], "text");
+        assert_eq!(result["content"][0]["text"], "I'll run two commands");
+        // Then two tool_use blocks
+        assert_eq!(result["content"][1]["type"], "tool_use");
+        assert_eq!(result["content"][1]["name"], "exec");
+        assert_eq!(result["content"][1]["input"]["command"], "echo hello");
+        assert_eq!(result["content"][2]["type"], "tool_use");
+        assert_eq!(result["content"][2]["name"], "read");
+        assert_eq!(result["content"][2]["input"]["path"], "/tmp/x");
+        assert_eq!(result["stop_reason"], "tool_use");
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_content_refusal() {
+        let result = run_openai_to_anthropic(json!({
+            "role": "assistant",
+            "content": null,
+            "refusal": "I cannot help with that request."
+        }));
+        assert_eq!(result["content"][0]["type"], "text");
+        assert_eq!(result["content"][0]["text"], "I cannot help with that request.");
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_reasoning_content() {
+        // DeepSeek-style reasoning_content mapping
+        let result = run_openai_to_anthropic(json!({
+            "role": "assistant",
+            "content": "Final answer",
+            "reasoning_content": "Let me think about this step by step..."
+        }));
+        assert_eq!(result["content"][0]["type"], "thinking");
+        assert_eq!(result["content"][0]["thinking"], "Let me think about this step by step...");
+        assert_eq!(result["content"][1]["type"], "text");
+        assert_eq!(result["content"][1]["text"], "Final answer");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_tool_use_null_input() {
+        // Anthropic tool_use with null input should serialize to "{}" not "null"
+        let input = json!({
+            "model": "gpt-4o",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "tu_1", "name": "exec", "input": null}
+                ]
+            }, {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "tu_1", "content": "done"}
+                ]
+            }]
+        });
+        let result = anthropic_to_openai(input).unwrap();
+        let assistant_msg = &result["messages"][0];
+        let tool_call = &assistant_msg["tool_calls"][0];
+        // arguments should be "{}" not "null"
+        assert_eq!(
+            tool_call["function"]["arguments"].as_str().unwrap(),
+            "{}"
         );
     }
 }
