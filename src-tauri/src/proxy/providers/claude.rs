@@ -87,6 +87,19 @@ fn is_reasoning_content_compatible_identifier(value: &str) -> bool {
     value.contains("moonshot") || value.contains("kimi") || value.contains("deepseek")
 }
 
+fn value_contains_reasoning_content_identifier(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(value) => is_reasoning_content_compatible_identifier(value),
+        serde_json::Value::Array(values) => values
+            .iter()
+            .any(value_contains_reasoning_content_identifier),
+        serde_json::Value::Object(values) => values
+            .values()
+            .any(value_contains_reasoning_content_identifier),
+        _ => false,
+    }
+}
+
 fn should_preserve_reasoning_content_for_openai_chat(
     provider: &Provider,
     body: &serde_json::Value,
@@ -96,6 +109,10 @@ fn should_preserve_reasoning_content_for_openai_chat(
         .and_then(|m| m.as_str())
         .is_some_and(is_reasoning_content_compatible_identifier)
     {
+        return true;
+    }
+
+    if is_reasoning_content_compatible_identifier(&provider.name) {
         return true;
     }
 
@@ -114,6 +131,7 @@ fn should_preserve_reasoning_content_for_openai_chat(
         .into_iter()
         .flatten()
         .any(is_reasoning_content_compatible_identifier)
+        || value_contains_reasoning_content_identifier(settings.get("env").unwrap_or(settings))
 }
 
 pub fn transform_claude_request_for_api_format(
@@ -1783,6 +1801,43 @@ mod tests {
         );
         let body = json!({
             "model": "deepseek-v4-flash",
+            "max_tokens": 64,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I should call the tool."},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        let msg = &transformed["messages"][0];
+        assert_eq!(msg["reasoning_content"], "I should call the tool.");
+        assert!(msg.get("tool_calls").is_some());
+    }
+
+    #[test]
+    fn test_transform_openai_chat_preserves_reasoning_content_for_wrapped_deepseek_provider() {
+        let mut provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go/v1",
+                    "ANTHROPIC_API_KEY": "test-key",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            },
+        );
+        provider.name = "GO-deepseekv4pro".to_string();
+        let body = json!({
+            "model": "claude-opus-4-7",
             "max_tokens": 64,
             "messages": [{
                 "role": "assistant",
