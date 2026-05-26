@@ -10,6 +10,7 @@ import type {
   UniversalProviderApps,
   UniversalProviderModels,
 } from "@/types";
+import { deepClone } from "@/utils/deepClone";
 
 /**
  * 统一供应商预设接口
@@ -106,7 +107,7 @@ export function createUniversalProviderFromPreset(
     apps: { ...preset.defaultApps },
     baseUrl,
     apiKey,
-    models: structuredClone(preset.defaultModels),
+    models: deepClone(preset.defaultModels),
     websiteUrl: preset.websiteUrl,
     icon: preset.icon,
     iconColor: preset.iconColor,

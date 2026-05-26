@@ -1,6 +1,7 @@
 // 供应商配置处理工具函数
 
 import type { TemplateValueConfig } from "../config/claudeProviderPresets";
+import { deepClone } from "@/utils/deepClone";
 import { normalizeTomlText } from "@/utils/textNormalization";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 
@@ -120,13 +121,13 @@ export const updateCommonConfigSnippet = (
   const snippet = JSON.parse(snippetString) as Record<string, any>;
 
   if (enabled) {
-    const merged = deepMerge(structuredClone(config), snippet);
+    const merged = deepMerge(deepClone(config), snippet);
     return {
       updatedConfig: JSON.stringify(merged, null, 2),
     };
   }
 
-  const cloned = structuredClone(config);
+  const cloned = deepClone(config);
   deepRemove(cloned, snippet);
   return {
     updatedConfig: JSON.stringify(cloned, null, 2),
@@ -363,12 +364,12 @@ export const updateTomlCommonConfigSnippet = (
 
     if (enabled) {
       const merged = deepMerge(
-        structuredClone(config) as Record<string, any>,
-        structuredClone(snippet) as Record<string, any>,
+        deepClone(config) as Record<string, any>,
+        deepClone(snippet) as Record<string, any>,
       );
       return { updatedConfig: stringifyToml(merged) };
     } else {
-      const result = structuredClone(config) as Record<string, any>;
+      const result = deepClone(config) as Record<string, any>;
       deepRemove(result, snippet as Record<string, any>);
       return { updatedConfig: stringifyToml(result) };
     }

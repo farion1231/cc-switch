@@ -49,6 +49,7 @@ import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
+import { deepClone } from "@/utils/deepClone";
 import { cn } from "@/lib/utils";
 import {
   isWindows,
@@ -361,12 +362,20 @@ function App() {
     };
   }, [activeApp, refetch]);
 
-  useTauriEvent("universal-provider-synced", () => {
-    void queryClient.invalidateQueries({ queryKey: ["providers"] });
-    void providersApi.updateTrayMenu().catch((error) => {
-      console.error("[App] Failed to update tray menu", error);
-    });
-  }, [queryClient]);
+  useTauriEvent(
+    "universal-provider-synced",
+    () => {
+      void (async () => {
+        await queryClient.invalidateQueries({ queryKey: ["providers"] });
+        try {
+          await providersApi.updateTrayMenu();
+        } catch (error) {
+          console.error("[App] Failed to update tray menu", error);
+        }
+      })();
+    },
+    [queryClient],
+  );
 
   useTauriEvent<WebDavSyncStatusUpdatedPayload>(
     "webdav-sync-status-updated",
@@ -667,13 +676,11 @@ function App() {
       addToLive?: boolean;
     } = {
       name: `${provider.name} copy`,
-      settingsConfig: structuredClone(provider.settingsConfig),
+      settingsConfig: deepClone(provider.settingsConfig),
       websiteUrl: provider.websiteUrl,
       category: provider.category,
       sortIndex: newSortIndex, // 复制原 sortIndex + 1
-      meta: provider.meta
-        ? structuredClone(provider.meta)
-        : undefined,
+      meta: provider.meta ? deepClone(provider.meta) : undefined,
       icon: provider.icon,
       iconColor: provider.iconColor,
     };

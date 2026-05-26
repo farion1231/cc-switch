@@ -137,7 +137,7 @@ export function createUniversalProviderFromPreset(
     apps: { ...preset.defaultApps },
     baseUrl,
     apiKey,
-    models: structuredClone(preset.defaultModels),
+    models: JSON.parse(JSON.stringify(preset.defaultModels)), // Deep copy
     websiteUrl: preset.websiteUrl,
     icon: preset.icon,
     iconColor: preset.iconColor,

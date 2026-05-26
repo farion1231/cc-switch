@@ -6,11 +6,15 @@ import type {
   SessionMeta,
   Settings,
 } from "@/types";
+import { deepClone } from "@/utils/deepClone";
 
 type ProvidersByApp = Record<AppId, Record<string, Provider>>;
 type CurrentProviderState = Record<AppId, string>;
 type McpConfigState = Record<AppId, Record<string, McpServer>>;
-type LiveProviderIdsByApp = Record<"opencode" | "openclaw" | "hermes", string[]>;
+type LiveProviderIdsByApp = Record<
+  "opencode" | "openclaw" | "hermes",
+  string[]
+>;
 
 const createDefaultProviders = (): ProvidersByApp => ({
   claude: {
@@ -193,7 +197,7 @@ let mcpConfigs: McpConfigState = {
 };
 
 const cloneProviders = (value: ProvidersByApp) =>
-  structuredClone(value) as ProvidersByApp;
+  deepClone(value) as ProvidersByApp;
 
 export const resetProviderState = () => {
   providers = createDefaultProviders();
@@ -266,9 +270,9 @@ export const getProviders = (appType: AppId) =>
 
 export const getCurrentProviderId = (appType: AppId) => current[appType] ?? "";
 
-export const getLiveProviderIds = (appType: "opencode" | "openclaw" | "hermes") => [
-  ...liveProviderIds[appType],
-];
+export const getLiveProviderIds = (
+  appType: "opencode" | "openclaw" | "hermes",
+) => [...liveProviderIds[appType]];
 
 export const setLiveProviderIds = (
   appType: "opencode" | "openclaw" | "hermes",
@@ -294,10 +298,7 @@ export const setProviders = (
   appType: AppId,
   data: Record<string, Provider>,
 ) => {
-  providers[appType] = structuredClone(data) as Record<
-    string,
-    Provider
-  >;
+  providers[appType] = deepClone(data) as Record<string, Provider>;
 };
 
 export const addProvider = (appType: AppId, provider: Provider) => {
@@ -336,13 +337,9 @@ export const updateSortOrder = (
 };
 
 export const listProviders = (appType: AppId) =>
-  structuredClone(providers[appType] ?? {}) as Record<
-    string,
-    Provider
-  >;
+  deepClone(providers[appType] ?? {}) as Record<string, Provider>;
 
-export const getSettings = () =>
-  structuredClone(settingsState) as Settings;
+export const getSettings = () => deepClone(settingsState) as Settings;
 
 export const setSettings = (data: Partial<Settings>) => {
   settingsState = { ...settingsState, ...data };
@@ -355,9 +352,10 @@ export const setAppConfigDirOverrideState = (value: string | null) => {
 };
 
 export const getMcpConfig = (appType: AppId) => {
-  const servers = JSON.parse(
-    JSON.stringify(mcpConfigs[appType] ?? {}),
-  ) as Record<string, McpServer>;
+  const servers = deepClone(mcpConfigs[appType] ?? {}) as Record<
+    string,
+    McpServer
+  >;
   return {
     configPath: `/mock/${appType}.mcp.json`,
     servers,
@@ -368,10 +366,7 @@ export const setMcpConfig = (
   appType: AppId,
   value: Record<string, McpServer>,
 ) => {
-  mcpConfigs[appType] = structuredClone(value) as Record<
-    string,
-    McpServer
-  >;
+  mcpConfigs[appType] = deepClone(value) as Record<string, McpServer>;
 };
 
 export const setMcpServerEnabled = (
@@ -394,7 +389,7 @@ export const upsertMcpServer = (
   if (!mcpConfigs[appType]) {
     mcpConfigs[appType] = {};
   }
-  mcpConfigs[appType][id] = structuredClone(server) as McpServer;
+  mcpConfigs[appType][id] = deepClone(server) as McpServer;
 };
 
 export const deleteMcpServer = (appType: AppId, id: string) => {
@@ -402,11 +397,10 @@ export const deleteMcpServer = (appType: AppId, id: string) => {
   delete mcpConfigs[appType][id];
 };
 
-export const listSessions = () =>
-  structuredClone(sessionsState) as SessionMeta[];
+export const listSessions = () => deepClone(sessionsState) as SessionMeta[];
 
 export const getSessionMessages = (providerId: string, sourcePath: string) =>
-  structuredClone(
+  deepClone(
     sessionMessagesState[sessionMessageKey(providerId, sourcePath)] ?? [],
   ) as SessionMessage[];
 
@@ -431,8 +425,8 @@ export const setSessionFixtures = (
   sessions: SessionMeta[],
   messages: Record<string, SessionMessage[]>,
 ) => {
-  sessionsState = structuredClone(sessions) as SessionMeta[];
-  sessionMessagesState = structuredClone(messages) as Record<
+  sessionsState = deepClone(sessions) as SessionMeta[];
+  sessionMessagesState = deepClone(messages) as Record<
     string,
     SessionMessage[]
   >;
