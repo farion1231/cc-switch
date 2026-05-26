@@ -453,6 +453,33 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "SenseNova",
+    websiteUrl: "https://platform.sensenova.cn",
+    apiKeyUrl: "https://platform.sensenova.cn",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      options: {
+        baseURL: "https://token.sensenova.cn/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "sensenova-6.7-flash-lite": { name: "SenseNova 6.7 Flash Lite" },
+        "SenseChat-5": { name: "SenseChat 5" },
+      },
+    },
+    category: "cn_official",
+    icon: "sensenova",
+    iconColor: "#1177E4",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "Zhipu GLM",
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
