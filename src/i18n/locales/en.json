@@ -1202,6 +1202,20 @@
       "codex": "Codex",
       "gemini": "Gemini"
     },
+    "activityHeatmap": {
+      "title": "Activity in the last 365 days",
+      "loading": "Loading activity heatmap",
+      "error": "Failed to load activity heatmap",
+      "summary": "{{activeDays}} active days · {{sessions}} sessions · {{tokens}} tokens",
+      "less": "Less",
+      "more": "More",
+      "tooltipDate": "Date",
+      "tooltipApp": "App",
+      "tooltipTokens": "Tokens processed",
+      "tooltipSessions": "Sessions",
+      "tooltipRequests": "Requests",
+      "tooltipCost": "Cost"
+    },
     "rawInputLabel": "Raw",
     "dataSources": "Data Sources",
     "dataSource": {

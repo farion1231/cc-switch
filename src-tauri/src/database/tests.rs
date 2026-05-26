@@ -184,6 +184,32 @@ fn schema_migration_rejects_future_version() {
 }
 
 #[test]
+fn schema_migration_v10_to_v11_creates_activity_rollup_table() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute("DROP TABLE usage_daily_activity_rollups", [])
+        .expect("drop v11 table");
+    Database::set_user_version(&conn, 10).expect("set user_version=10");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    assert!(
+        Database::table_exists(&conn, "usage_daily_activity_rollups")
+            .expect("check activity table"),
+        "usage_daily_activity_rollups should exist after v11 migration"
+    );
+    assert!(
+        Database::has_column(&conn, "usage_daily_activity_rollups", "session_count")
+            .expect("check session_count"),
+        "activity rollup should store session_count"
+    );
+    assert_eq!(
+        Database::get_user_version(&conn).expect("read version after"),
+        SCHEMA_VERSION
+    );
+}
+
+#[test]
 fn schema_migration_adds_missing_columns_for_providers() {
     let conn = Connection::open_in_memory().expect("open memory db");
 

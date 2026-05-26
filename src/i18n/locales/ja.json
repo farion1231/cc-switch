@@ -1202,6 +1202,20 @@
       "codex": "Codex",
       "gemini": "Gemini"
     },
+    "activityHeatmap": {
+      "title": "過去 365 日のアクティビティ",
+      "loading": "アクティビティヒートマップを読み込み中",
+      "error": "アクティビティヒートマップの読み込みに失敗しました",
+      "summary": "{{activeDays}} 日アクティブ · {{sessions}} セッション · {{tokens}} tokens",
+      "less": "少ない",
+      "more": "多い",
+      "tooltipDate": "日付",
+      "tooltipApp": "アプリ",
+      "tooltipTokens": "実消費トークン",
+      "tooltipSessions": "セッション数",
+      "tooltipRequests": "リクエスト数",
+      "tooltipCost": "コスト"
+    },
     "rawInputLabel": "原始",
     "dataSources": "データソース",
     "dataSource": {

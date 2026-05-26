@@ -148,6 +148,45 @@ impl Database {
         conn.execute(&aggregation_sql, [cutoff])
             .map_err(|e| AppError::Database(format!("Rollup aggregation failed: {e}")))?;
 
+        let activity_sql = format!(
+            "INSERT OR REPLACE INTO usage_daily_activity_rollups
+                (date, app_type, request_count, session_count,
+                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                 total_cost_usd)
+            SELECT
+                d, a,
+                COALESCE(old.request_count, 0) + new_req,
+                COALESCE(old.session_count, 0) + new_sessions,
+                COALESCE(old.input_tokens, 0) + new_in,
+                COALESCE(old.output_tokens, 0) + new_out,
+                COALESCE(old.cache_read_tokens, 0) + new_cr,
+                COALESCE(old.cache_creation_tokens, 0) + new_cc,
+                CAST(COALESCE(CAST(old.total_cost_usd AS REAL), 0) + new_cost AS TEXT)
+            FROM (
+                SELECT
+                    date(l.created_at, 'unixepoch', 'localtime') as d,
+                    l.app_type as a,
+                    COUNT(*) as new_req,
+                    COUNT(DISTINCT CASE
+                        WHEN l.session_id IS NULL OR l.session_id = '' THEN NULL
+                        ELSE l.session_id
+                    END) as new_sessions,
+                    COALESCE(SUM(l.input_tokens), 0) as new_in,
+                    COALESCE(SUM(l.output_tokens), 0) as new_out,
+                    COALESCE(SUM(l.cache_read_tokens), 0) as new_cr,
+                    COALESCE(SUM(l.cache_creation_tokens), 0) as new_cc,
+                    COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as new_cost
+                FROM proxy_request_logs l
+                WHERE l.created_at < ?1 AND {effective_filter}
+                GROUP BY d, a
+            ) agg
+            LEFT JOIN usage_daily_activity_rollups old
+                ON old.date = agg.d AND old.app_type = agg.a"
+        );
+
+        conn.execute(&activity_sql, [cutoff])
+            .map_err(|e| AppError::Database(format!("Activity rollup failed: {e}")))?;
+
         // INSERT uses the effective-log filter to exclude duplicate session rows.
         // DELETE intentionally prunes all old details so those duplicates are discarded.
         let deleted = conn
@@ -318,6 +357,70 @@ mod tests {
                 row.get(0)
             })?;
         assert_eq!(remaining, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_rollup_writes_daily_activity_sessions() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let now = chrono::Utc::now().timestamp();
+        let old_ts = now - 40 * 86400;
+        let date_str = Local
+            .timestamp_opt(old_ts, 0)
+            .single()
+            .expect("valid local timestamp")
+            .date_naive()
+            .format("%Y-%m-%d")
+            .to_string();
+
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            for (idx, session_id) in ["session-a", "session-a", "session-b"].iter().enumerate() {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model,
+                        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                        total_cost_usd, latency_ms, status_code, session_id, created_at
+                    ) VALUES (?1, 'p1', 'claude', 'claude-3', 100, 50, 7, 9, '0.02', 100, 200, ?2, ?3)",
+                    rusqlite::params![format!("activity-{idx}"), session_id, old_ts + idx as i64],
+                )?;
+            }
+        }
+
+        assert_eq!(db.rollup_and_prune(30)?, 3);
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let (request_count, session_count, input_tokens, output_tokens, cache_read, cache_create): (
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+        ) = conn.query_row(
+            "SELECT request_count, session_count, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens
+             FROM usage_daily_activity_rollups
+             WHERE date = ?1 AND app_type = 'claude'",
+            [&date_str],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )?;
+        assert_eq!(request_count, 3);
+        assert_eq!(session_count, 2);
+        assert_eq!(input_tokens, 300);
+        assert_eq!(output_tokens, 150);
+        assert_eq!(cache_read, 21);
+        assert_eq!(cache_create, 27);
 
         Ok(())
     }

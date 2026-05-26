@@ -1202,6 +1202,20 @@
       "codex": "Codex",
       "gemini": "Gemini"
     },
+    "activityHeatmap": {
+      "title": "过去 365 天活跃",
+      "loading": "正在加载活跃热力图",
+      "error": "活跃热力图加载失败",
+      "summary": "{{activeDays}} 天活跃 · {{sessions}} 个会话 · {{tokens}} tokens",
+      "less": "较少的",
+      "more": "更多的",
+      "tooltipDate": "日期",
+      "tooltipApp": "应用",
+      "tooltipTokens": "真实消耗 Tokens",
+      "tooltipSessions": "会话数",
+      "tooltipRequests": "请求数",
+      "tooltipCost": "成本"
+    },
     "rawInputLabel": "原始",
     "dataSources": "数据来源",
     "dataSource": {
