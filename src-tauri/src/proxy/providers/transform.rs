@@ -598,11 +598,14 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
                         (json!({}), "(empty-string)".to_string())
                     } else {
                         match serde_json::from_str::<Value>(trimmed) {
-                            Ok(parsed) => (parsed, format!("str:{}..", &trimmed[..std::cmp::min(80, trimmed.len())])),
+                            Ok(parsed) => {
+                                let safe_end = trimmed.floor_char_boundary(80);
+                                (parsed, format!("str:{}..", &trimmed[..safe_end]))
+                            },
                             Err(e) => {
                                 log::error!(
                                     "[Claude/OpenAI] Failed to parse tool call '{name}' arguments as JSON: {e}. args={trunc}",
-                                    trunc = &trimmed[..std::cmp::min(200, trimmed.len())]
+                                    trunc = &trimmed[..trimmed.floor_char_boundary(200)]
                                 );
                                 (json!({}), format!("parse-error:{e}"))
                             }
