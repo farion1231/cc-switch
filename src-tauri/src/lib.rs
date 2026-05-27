@@ -1077,6 +1077,11 @@ pub fn run() {
             commands::delete_provider,
             commands::remove_provider_from_live_config,
             commands::switch_provider,
+            commands::get_ssh_config_hosts,
+            commands::apply_provider_to_remote,
+            commands::inspect_remote_provider,
+            commands::import_remote_provider,
+            commands::sync_remote_session_usage,
             commands::import_default_config,
             commands::get_claude_desktop_status,
             commands::get_claude_desktop_default_routes,
@@ -1270,6 +1275,7 @@ pub fn run() {
             // Session usage sync
             commands::sync_session_usage,
             commands::get_usage_data_sources,
+            commands::delete_remote_usage_data,
             // Stream health check
             commands::stream_check_provider,
             commands::stream_check_all_providers,

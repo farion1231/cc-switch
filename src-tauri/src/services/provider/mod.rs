@@ -5,6 +5,7 @@
 mod endpoints;
 mod gemini_auth;
 mod live;
+mod remote;
 mod usage;
 
 use indexmap::IndexMap;
@@ -25,6 +26,10 @@ pub use live::{
     import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
     import_opencode_providers_from_live, read_live_settings,
     should_import_default_config_on_startup, sync_current_to_live,
+};
+pub use remote::{
+    RemoteApplyResult, RemoteImportResult, RemoteProviderService, RemoteProviderState,
+    RemoteUsageSyncProgress, RemoteUsageSyncResult, SshConnectionTarget, SshHostEntry,
 };
 
 // Internal re-exports (pub(crate))

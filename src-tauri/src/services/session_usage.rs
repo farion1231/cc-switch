@@ -14,7 +14,8 @@ use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::usage_stats::{
-    effective_usage_log_filter, find_model_pricing, should_skip_session_insert, DedupKey,
+    effective_usage_log_filter, find_model_pricing, should_skip_session_insert_with_proxy_dedup,
+    DedupKey,
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -43,6 +44,57 @@ pub struct DataSourceSummary {
     pub total_cost_usd: String,
 }
 
+/// Controls the source metadata and sync key used during session log imports.
+///
+/// Local logs keep using their real file paths for incremental sync. Remote SSH
+/// logs are materialized in a temporary directory, so `sync_key_prefix + relative
+/// path` gives them stable keys and avoids a full rescan on every sync.
+#[derive(Debug, Clone)]
+pub struct SessionUsageImportOptions {
+    pub data_source: String,
+    pub provider_id: String,
+    pub provider_type: String,
+    pub request_id_prefix: String,
+    pub sync_key_prefix: Option<String>,
+    pub dedup_with_proxy: bool,
+}
+
+impl SessionUsageImportOptions {
+    pub fn local(
+        data_source: impl Into<String>,
+        provider_id: impl Into<String>,
+        provider_type: impl Into<String>,
+    ) -> Self {
+        Self {
+            data_source: data_source.into(),
+            provider_id: provider_id.into(),
+            provider_type: provider_type.into(),
+            request_id_prefix: String::new(),
+            sync_key_prefix: None,
+            dedup_with_proxy: true,
+        }
+    }
+
+    pub fn remote(host_alias: &str, app_type: &str, provider_type: impl Into<String>) -> Self {
+        Self {
+            data_source: format!("remote:{host_alias}"),
+            provider_id: format!("_remote:{app_type}:{host_alias}"),
+            provider_type: provider_type.into(),
+            request_id_prefix: format!("remote:{host_alias}:"),
+            sync_key_prefix: Some(format!("remote://{host_alias}/{app_type}")),
+            dedup_with_proxy: false,
+        }
+    }
+
+    pub fn request_id(&self, request_id: &str) -> String {
+        if self.request_id_prefix.is_empty() {
+            request_id.to_string()
+        } else {
+            format!("{}{}", self.request_id_prefix, request_id)
+        }
+    }
+}
+
 /// 从 JSONL 中解析出的 assistant 消息使用数据
 #[derive(Debug)]
 struct ParsedAssistantUsage {
@@ -60,6 +112,26 @@ struct ParsedAssistantUsage {
 /// 同步 Claude Code 会话日志到使用统计数据库
 pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppError> {
     let projects_dir = get_claude_config_dir().join("projects");
+    sync_claude_session_logs_from_projects_dir(db, &projects_dir)
+}
+
+/// Syncs session logs from a specific Claude projects directory.
+///
+/// Remote SSH logs are first materialized into a temporary directory, then parsed
+/// through the same code path.
+pub fn sync_claude_session_logs_from_projects_dir(
+    db: &Database,
+    projects_dir: &Path,
+) -> Result<SessionSyncResult, AppError> {
+    let options = SessionUsageImportOptions::local("session_log", "_session", "session_log");
+    sync_claude_session_logs_from_projects_dir_with_options(db, projects_dir, &options)
+}
+
+pub fn sync_claude_session_logs_from_projects_dir_with_options(
+    db: &Database,
+    projects_dir: &Path,
+    options: &SessionUsageImportOptions,
+) -> Result<SessionSyncResult, AppError> {
     if !projects_dir.exists() {
         return Ok(SessionSyncResult {
             imported: 0,
@@ -77,12 +149,12 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
     };
 
     // 收集所有 .jsonl 文件
-    let jsonl_files = collect_jsonl_files(&projects_dir);
+    let jsonl_files = collect_jsonl_files(projects_dir);
 
     for file_path in &jsonl_files {
         result.files_scanned += 1;
 
-        match sync_single_file(db, file_path) {
+        match sync_single_file(db, file_path, projects_dir, options) {
             Ok((imported, skipped)) => {
                 result.imported += imported;
                 result.skipped += skipped;
@@ -155,16 +227,20 @@ fn collect_jsonl_files(projects_dir: &Path) -> Vec<PathBuf> {
 }
 
 /// 同步单个 JSONL 文件，返回 (imported, skipped)
-fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppError> {
-    let file_path_str = file_path.to_string_lossy().to_string();
-
+fn sync_single_file(
+    db: &Database,
+    file_path: &Path,
+    sync_root: &Path,
+    options: &SessionUsageImportOptions,
+) -> Result<(u32, u32), AppError> {
+    let sync_key = session_sync_key(file_path, sync_root, options);
     // 获取文件元数据
     let metadata = fs::metadata(file_path)
         .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
     let file_modified = metadata_modified_nanos(&metadata);
 
     // 检查同步状态
-    let (last_modified, last_offset) = get_sync_state(db, &file_path_str)?;
+    let (last_modified, last_offset) = get_sync_state(db, &sync_key)?;
 
     // 文件未变化则跳过
     if file_modified <= last_modified {
@@ -306,7 +382,8 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
             continue;
         }
 
-        match insert_session_log_entry(db, &request_id, msg) {
+        let request_id = options.request_id(&request_id);
+        match insert_session_log_entry(db, &request_id, msg, options) {
             Ok(true) => imported += 1,
             Ok(false) => skipped += 1,
             Err(e) => {
@@ -317,9 +394,81 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
     }
 
     // 更新同步状态
-    update_sync_state(db, &file_path_str, file_modified, line_offset)?;
+    update_sync_state(db, &sync_key, file_modified, line_offset)?;
 
     Ok((imported, skipped))
+}
+
+pub(crate) fn session_sync_key(
+    file_path: &Path,
+    sync_root: &Path,
+    options: &SessionUsageImportOptions,
+) -> String {
+    let Some(prefix) = options.sync_key_prefix.as_deref() else {
+        return file_path.to_string_lossy().to_string();
+    };
+
+    let relative = file_path.strip_prefix(sync_root).unwrap_or(file_path);
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    format!("{prefix}/{relative}")
+}
+
+/// Retags rows written by the legacy remote sync path.
+///
+/// Older builds imported SSH logs as local session rows. New remote imports
+/// prefix request IDs, so retagging the old rows prevents duplicate local and
+/// remote entries after the user syncs again. If the original request ID already
+/// belongs to the same remote source, the row has been retagged before.
+pub(crate) fn retag_legacy_remote_session_log(
+    conn: &rusqlite::Connection,
+    request_id: &str,
+    app_type: &str,
+    model: &str,
+    options: &SessionUsageImportOptions,
+) -> Result<Option<bool>, AppError> {
+    if options.request_id_prefix.is_empty() {
+        return Ok(None);
+    }
+
+    let Some(original_request_id) = request_id.strip_prefix(&options.request_id_prefix) else {
+        return Ok(None);
+    };
+
+    let existing_remote: bool = conn
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM proxy_request_logs
+                WHERE request_id = ?1 AND app_type = ?2
+                  AND COALESCE(data_source, 'proxy') = ?3
+            )",
+            rusqlite::params![original_request_id, app_type, options.data_source.as_str()],
+            |row| row.get(0),
+        )
+        .map_err(|e| AppError::Database(format!("查询旧远端日志失败: {e}")))?;
+    if existing_remote {
+        return Ok(Some(false));
+    }
+
+    let updated = conn
+        .execute(
+            "UPDATE proxy_request_logs
+             SET provider_id = ?1, provider_type = ?2, data_source = ?3
+             WHERE request_id = ?4
+               AND app_type = ?5
+               AND model = ?6
+               AND COALESCE(data_source, 'proxy') IN ('session_log', 'codex_session', 'gemini_session')",
+            rusqlite::params![
+                options.provider_id.as_str(),
+                options.provider_type.as_str(),
+                options.data_source.as_str(),
+                original_request_id,
+                app_type,
+                model,
+            ],
+        )
+        .map_err(|e| AppError::Database(format!("改标旧远端日志失败: {e}")))?;
+
+    Ok((updated > 0).then_some(true))
 }
 
 /// 获取 session_log_sync 表中某条目的同步进度。
@@ -377,6 +526,7 @@ fn insert_session_log_entry(
     db: &Database,
     request_id: &str,
     msg: &ParsedAssistantUsage,
+    options: &SessionUsageImportOptions,
 ) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
 
@@ -404,7 +554,17 @@ fn insert_session_log_entry(
         cache_creation_tokens: msg.cache_creation_tokens,
         created_at,
     };
-    if should_skip_session_insert(&conn, request_id, &dedup_key)? {
+    if let Some(result) =
+        retag_legacy_remote_session_log(&conn, request_id, "claude", &msg.model, options)?
+    {
+        return Ok(result);
+    }
+    if should_skip_session_insert_with_proxy_dedup(
+        &conn,
+        request_id,
+        &dedup_key,
+        options.dedup_with_proxy,
+    )? {
         return Ok(false);
     }
 
@@ -451,7 +611,7 @@ fn insert_session_log_entry(
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
         rusqlite::params![
             request_id,
-            "_session",         // provider_id: 标记为会话来源
+            options.provider_id.as_str(),
             "claude",           // app_type
             msg.model,
             msg.model,          // request_model = model
@@ -469,11 +629,11 @@ fn insert_session_log_entry(
             200i64,             // status_code: 有 stop_reason 说明请求成功
             Option::<String>::None, // error_message
             msg.session_id,
-            Some("session_log"), // provider_type
+            Some(options.provider_type.clone()),
             1i64,               // is_streaming: Claude Code 通常使用流式
             "1.0",              // cost_multiplier
             created_at,
-            "session_log",      // data_source
+            options.data_source.as_str(),
         ],
     )
     .map_err(|e| AppError::Database(format!("插入会话日志失败: {e}")))?;
@@ -495,10 +655,20 @@ pub fn get_data_source_breakdown(db: &Database) -> Result<Vec<DataSourceSummary>
 
     let effective_filter = effective_usage_log_filter("l");
     let sql = format!(
-        "SELECT COALESCE(l.data_source, 'proxy') as ds, COUNT(*) as cnt,
-                COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as cost
-         FROM proxy_request_logs l
-         WHERE {effective_filter}
+        "SELECT ds, SUM(cnt) as cnt, COALESCE(SUM(cost), 0) as cost
+         FROM (
+             SELECT COALESCE(l.data_source, 'proxy') as ds, COUNT(*) as cnt,
+                    COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as cost
+             FROM proxy_request_logs l
+             WHERE {effective_filter}
+             GROUP BY ds
+             UNION ALL
+             SELECT COALESCE(data_source, 'proxy') as ds,
+                    COALESCE(SUM(request_count), 0) as cnt,
+                    COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as cost
+             FROM usage_daily_rollups
+             GROUP BY ds
+         )
          GROUP BY ds
          ORDER BY cnt DESC"
     );
@@ -645,7 +815,8 @@ mod tests {
             session_id: Some("session-1".to_string()),
         };
 
-        let inserted = insert_session_log_entry(&db, "session:msg_1", &msg)?;
+        let options = SessionUsageImportOptions::local("session_log", "_session", "session_log");
+        let inserted = insert_session_log_entry(&db, "session:msg_1", &msg, &options)?;
         assert!(!inserted);
 
         let conn = lock_conn!(db.conn);

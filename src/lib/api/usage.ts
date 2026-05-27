@@ -12,10 +12,18 @@ import type {
   PaginatedLogs,
   SessionSyncResult,
   DataSourceSummary,
+  UsageSourceFilter,
 } from "@/types/usage";
 import type { UsageResult } from "@/types";
 import type { AppId } from "./types";
 import type { TemplateType } from "@/config/constants";
+
+export interface DeleteRemoteUsageDataResult {
+  dataSource: string;
+  deletedRequestLogs: number;
+  deletedRollups: number;
+  deletedSyncStates: number;
+}
 
 export const usageApi = {
   // Provider usage script methods
@@ -52,39 +60,49 @@ export const usageApi = {
     startDate?: number,
     endDate?: number,
     appType?: string,
+    source?: UsageSourceFilter,
   ): Promise<UsageSummary> => {
-    return invoke("get_usage_summary", { startDate, endDate, appType });
+    return invoke("get_usage_summary", { startDate, endDate, appType, source });
   },
 
   getUsageSummaryByApp: async (
     startDate?: number,
     endDate?: number,
+    source?: UsageSourceFilter,
   ): Promise<UsageSummaryByApp[]> => {
-    return invoke("get_usage_summary_by_app", { startDate, endDate });
+    return invoke("get_usage_summary_by_app", { startDate, endDate, source });
   },
 
   getUsageTrends: async (
     startDate?: number,
     endDate?: number,
     appType?: string,
+    source?: UsageSourceFilter,
   ): Promise<DailyStats[]> => {
-    return invoke("get_usage_trends", { startDate, endDate, appType });
+    return invoke("get_usage_trends", { startDate, endDate, appType, source });
   },
 
   getProviderStats: async (
     startDate?: number,
     endDate?: number,
     appType?: string,
+    source?: UsageSourceFilter,
   ): Promise<ProviderStats[]> => {
-    return invoke("get_provider_stats", { startDate, endDate, appType });
+    return invoke("get_provider_stats", {
+      startDate,
+      endDate,
+      appType,
+      source,
+    });
   },
 
   getModelStats: async (
     startDate?: number,
     endDate?: number,
     appType?: string,
+    source?: UsageSourceFilter,
   ): Promise<ModelStats[]> => {
-    return invoke("get_model_stats", { startDate, endDate, appType });
+    return invoke("get_model_stats", { startDate, endDate, appType, source });
   },
 
   getRequestLogs: async (
@@ -143,5 +161,11 @@ export const usageApi = {
 
   getDataSourceBreakdown: async (): Promise<DataSourceSummary[]> => {
     return invoke("get_usage_data_sources");
+  },
+
+  deleteRemoteUsageData: async (
+    dataSource: string,
+  ): Promise<DeleteRemoteUsageDataResult> => {
+    return invoke("delete_remote_usage_data", { dataSource });
   },
 };

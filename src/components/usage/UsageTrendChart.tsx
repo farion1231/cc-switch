@@ -18,12 +18,13 @@ import {
   parseFiniteNumber,
 } from "./format";
 import { resolveUsageRange } from "@/lib/usageRange";
-import type { UsageRangeSelection } from "@/types/usage";
+import type { UsageRangeSelection, UsageSourceFilter } from "@/types/usage";
 
 interface UsageTrendChartProps {
   range: UsageRangeSelection;
   rangeLabel: string;
   appType?: string;
+  source?: UsageSourceFilter;
   refreshIntervalMs: number;
 }
 
@@ -31,11 +32,12 @@ export function UsageTrendChart({
   range,
   rangeLabel,
   appType,
+  source,
   refreshIntervalMs,
 }: UsageTrendChartProps) {
   const { t, i18n } = useTranslation();
   const { startDate, endDate } = resolveUsageRange(range);
-  const { data: trends, isLoading } = useUsageTrends(range, appType, {
+  const { data: trends, isLoading } = useUsageTrends(range, appType, source, {
     refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
   });
 

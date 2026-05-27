@@ -101,6 +101,7 @@ pub struct ModelStats {
 #[serde(rename_all = "camelCase")]
 pub struct LogFilters {
     pub app_type: Option<String>,
+    pub source: Option<String>,
     pub provider_name: Option<String>,
     pub model: Option<String>,
     pub status_code: Option<u16>,
@@ -199,10 +200,13 @@ fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reques
 /// authoritative mapping from placeholder to readable name.
 fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
     format!(
-        "COALESCE({provider_alias}.name, CASE {log_alias}.provider_id \
-         WHEN '_session' THEN 'Claude (Session)' \
-         WHEN '_codex_session' THEN 'Codex (Session)' \
-         WHEN '_gemini_session' THEN 'Gemini (Session)' \
+        "COALESCE({provider_alias}.name, CASE \
+         WHEN {log_alias}.provider_id LIKE '_remote:claude:%' THEN 'Remote ' || substr({log_alias}.provider_id, length('_remote:claude:') + 1) || ' (Claude Session)' \
+         WHEN {log_alias}.provider_id LIKE '_remote:codex:%' THEN 'Remote ' || substr({log_alias}.provider_id, length('_remote:codex:') + 1) || ' (Codex Session)' \
+         WHEN {log_alias}.provider_id LIKE '_remote:gemini:%' THEN 'Remote ' || substr({log_alias}.provider_id, length('_remote:gemini:') + 1) || ' (Gemini Session)' \
+         WHEN {log_alias}.provider_id = '_session' THEN 'Claude (Session)' \
+         WHEN {log_alias}.provider_id = '_codex_session' THEN 'Codex (Session)' \
+         WHEN {log_alias}.provider_id = '_gemini_session' THEN 'Gemini (Session)' \
          ELSE {log_alias}.provider_id END)"
     )
 }
@@ -215,7 +219,64 @@ pub(crate) const SESSION_PROXY_DEDUP_WINDOW_SECONDS: i64 = 10 * 60;
 /// `tests::create_legacy_nullable_logs_table`）。所有用到 data_source 的查询
 /// 都应通过此 helper 生成片段，避免遗漏。
 fn data_source_expr(log_alias: &str) -> String {
-    format!("COALESCE({log_alias}.data_source, 'proxy')")
+    if log_alias.is_empty() {
+        "COALESCE(data_source, 'proxy')".to_string()
+    } else {
+        format!("COALESCE({log_alias}.data_source, 'proxy')")
+    }
+}
+
+fn push_source_filter(
+    conditions: &mut Vec<String>,
+    params: &mut Vec<Box<dyn rusqlite::ToSql>>,
+    alias: &str,
+    source: Option<&str>,
+) {
+    let Some(source) = source.filter(|value| !value.is_empty() && *value != "all") else {
+        return;
+    };
+
+    let data_source = data_source_expr(alias);
+    if let Some(multi_source) = source.strip_prefix("multi:") {
+        let mut clauses = Vec::new();
+        for item in multi_source
+            .split('\u{1f}')
+            .filter(|item| !item.is_empty() && *item != "all")
+        {
+            match item {
+                "local" => {
+                    clauses.push(format!("{data_source} NOT LIKE 'remote:%'"));
+                }
+                "remote" => {
+                    clauses.push(format!("{data_source} LIKE 'remote:%'"));
+                }
+                remote if remote.starts_with("remote:") => {
+                    clauses.push(format!("{data_source} = ?"));
+                    params.push(Box::new(remote.to_string()));
+                }
+                _ => {}
+            }
+        }
+
+        if !clauses.is_empty() {
+            conditions.push(format!("({})", clauses.join(" OR ")));
+        }
+        return;
+    }
+
+    match source {
+        "local" => {
+            conditions.push(format!("{data_source} NOT LIKE 'remote:%'"));
+        }
+        "remote" => {
+            conditions.push(format!("{data_source} LIKE 'remote:%'"));
+        }
+        remote if remote.starts_with("remote:") => {
+            conditions.push(format!("{data_source} = ?"));
+            params.push(Box::new(remote.to_string()));
+        }
+        _ => {}
+    }
 }
 
 pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
@@ -273,15 +334,20 @@ pub(crate) struct DedupKey<'a> {
 ///
 /// 命中以下任一条件即跳过插入：① `request_id` 已存在；② 时间窗口内存在
 /// 与 `key` 匹配的 proxy 日志（指纹去重）。
-pub(crate) fn should_skip_session_insert(
+pub(crate) fn should_skip_session_insert_with_proxy_dedup(
     conn: &Connection,
     request_id: &str,
     key: &DedupKey,
+    dedup_with_proxy: bool,
 ) -> Result<bool, AppError> {
     if proxy_request_id_exists(conn, request_id)? {
         return Ok(true);
     }
-    has_matching_proxy_usage_log(conn, key)
+    if dedup_with_proxy {
+        has_matching_proxy_usage_log(conn, key)
+    } else {
+        Ok(false)
+    }
 }
 
 fn proxy_request_id_exists(conn: &Connection, request_id: &str) -> Result<bool, AppError> {
@@ -437,6 +503,7 @@ impl Database {
         start_date: Option<i64>,
         end_date: Option<i64>,
         app_type: Option<&str>,
+        source: Option<&str>,
     ) -> Result<UsageSummary, AppError> {
         let conn = lock_conn!(self.conn);
 
@@ -456,6 +523,7 @@ impl Database {
             conditions.push("l.app_type = ?".to_string());
             params_vec.push(Box::new(at.to_string()));
         }
+        push_source_filter(&mut conditions, &mut params_vec, "l", source);
 
         let where_clause = if conditions.is_empty() {
             String::new()
@@ -478,6 +546,7 @@ impl Database {
             rollup_conditions.push("app_type = ?".to_string());
             rollup_params.push(Box::new(at.to_string()));
         }
+        push_source_filter(&mut rollup_conditions, &mut rollup_params, "", source);
 
         let rollup_where = if rollup_conditions.is_empty() {
             String::new()
@@ -569,6 +638,7 @@ impl Database {
         &self,
         start_date: Option<i64>,
         end_date: Option<i64>,
+        source: Option<&str>,
     ) -> Result<Vec<UsageSummaryByApp>, AppError> {
         let conn = lock_conn!(self.conn);
 
@@ -582,6 +652,7 @@ impl Database {
             detail_conditions.push("l.created_at <= ?".to_string());
             detail_params.push(Box::new(end));
         }
+        push_source_filter(&mut detail_conditions, &mut detail_params, "l", source);
         let detail_where = format!("WHERE {}", detail_conditions.join(" AND "));
 
         let rollup_bounds = compute_rollup_date_bounds(start_date, end_date)?;
@@ -593,6 +664,7 @@ impl Database {
             "date",
             &rollup_bounds,
         );
+        push_source_filter(&mut rollup_conditions, &mut rollup_params, "", source);
         let rollup_where = if rollup_conditions.is_empty() {
             String::new()
         } else {
@@ -702,6 +774,7 @@ impl Database {
         start_date: Option<i64>,
         end_date: Option<i64>,
         app_type: Option<&str>,
+        source: Option<&str>,
     ) -> Result<Vec<DailyStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
@@ -725,8 +798,16 @@ impl Database {
                 bucket_count = 1;
             }
 
+            let mut source_conditions = Vec::new();
+            let mut source_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            push_source_filter(&mut source_conditions, &mut source_params, "l", source);
+            let source_filter = if source_conditions.is_empty() {
+                String::new()
+            } else {
+                format!(" AND {}", source_conditions.join(" AND "))
+            };
             let app_type_filter = if app_type.is_some() {
-                "AND l.app_type = ?4"
+                "AND l.app_type = ?"
             } else {
                 ""
             };
@@ -745,7 +826,7 @@ impl Database {
                     COALESCE(SUM(l.cache_read_tokens), 0) as total_cache_read_tokens
                 FROM proxy_request_logs l
                 WHERE l.created_at >= ?1 AND l.created_at <= ?2
-                  AND {effective_filter} {app_type_filter}
+                  AND {effective_filter} {app_type_filter} {source_filter}
                 GROUP BY bucket_idx
                 ORDER BY bucket_idx ASC"
             );
@@ -769,11 +850,18 @@ impl Database {
 
             let mut map: HashMap<i64, DailyStats> = HashMap::new();
 
-            let rows = if let Some(at) = app_type {
-                stmt.query_map(params![start_ts, end_ts, bucket_seconds, at], row_mapper)?
-            } else {
-                stmt.query_map(params![start_ts, end_ts, bucket_seconds], row_mapper)?
-            };
+            let mut query_params: Vec<Box<dyn rusqlite::ToSql>> = vec![
+                Box::new(start_ts),
+                Box::new(end_ts),
+                Box::new(bucket_seconds),
+            ];
+            if let Some(at) = app_type {
+                query_params.push(Box::new(at.to_string()));
+            }
+            query_params.extend(source_params);
+            let query_refs: Vec<&dyn rusqlite::ToSql> =
+                query_params.iter().map(|p| p.as_ref()).collect();
+            let rows = stmt.query_map(query_refs.as_slice(), row_mapper)?;
             for row in rows {
                 let (mut bucket_idx, stat) = row?;
                 if bucket_idx < 0 {
@@ -815,8 +903,16 @@ impl Database {
         let end_day = local_datetime_from_timestamp(end_ts)?.date_naive();
         let bucket_count = (end_day.signed_duration_since(start_day).num_days() + 1) as usize;
 
+        let mut source_conditions = Vec::new();
+        let mut source_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        push_source_filter(&mut source_conditions, &mut source_params, "l", source);
+        let source_filter = if source_conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" AND {}", source_conditions.join(" AND "))
+        };
         let app_type_filter = if app_type.is_some() {
-            "AND l.app_type = ?3"
+            "AND l.app_type = ?"
         } else {
             ""
         };
@@ -835,7 +931,7 @@ impl Database {
                 COALESCE(SUM(l.cache_read_tokens), 0) as total_cache_read_tokens
             FROM proxy_request_logs l
             WHERE l.created_at >= ?1 AND l.created_at <= ?2
-              AND {effective_filter} {app_type_filter}
+              AND {effective_filter} {app_type_filter} {source_filter}
             GROUP BY bucket_date
             ORDER BY bucket_date ASC"
         );
@@ -858,11 +954,15 @@ impl Database {
         };
 
         let mut map: HashMap<NaiveDate, DailyStats> = HashMap::new();
-        let detail_rows = if let Some(at) = app_type {
-            detail_stmt.query_map(params![start_ts, end_ts, at], detail_row_mapper)?
-        } else {
-            detail_stmt.query_map(params![start_ts, end_ts], detail_row_mapper)?
-        };
+        let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> =
+            vec![Box::new(start_ts), Box::new(end_ts)];
+        if let Some(at) = app_type {
+            detail_params.push(Box::new(at.to_string()));
+        }
+        detail_params.extend(source_params);
+        let detail_param_refs: Vec<&dyn rusqlite::ToSql> =
+            detail_params.iter().map(|p| p.as_ref()).collect();
+        let detail_rows = detail_stmt.query_map(detail_param_refs.as_slice(), detail_row_mapper)?;
 
         for row in detail_rows {
             let (bucket_date, stat) = row?;
@@ -884,6 +984,7 @@ impl Database {
             rollup_conditions.push("app_type = ?".to_string());
             rollup_params.push(Box::new(at.to_string()));
         }
+        push_source_filter(&mut rollup_conditions, &mut rollup_params, "", source);
 
         let rollup_where = if rollup_conditions.is_empty() {
             String::new()
@@ -984,6 +1085,7 @@ impl Database {
         start_date: Option<i64>,
         end_date: Option<i64>,
         app_type: Option<&str>,
+        source: Option<&str>,
     ) -> Result<Vec<ProviderStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
@@ -1001,6 +1103,7 @@ impl Database {
             detail_conditions.push("l.app_type = ?".to_string());
             detail_params.push(Box::new(at.to_string()));
         }
+        push_source_filter(&mut detail_conditions, &mut detail_params, "l", source);
         let detail_where = if detail_conditions.is_empty() {
             String::new()
         } else {
@@ -1020,6 +1123,7 @@ impl Database {
             rollup_conditions.push("r.app_type = ?".to_string());
             rollup_params.push(Box::new(at.to_string()));
         }
+        push_source_filter(&mut rollup_conditions, &mut rollup_params, "r", source);
         let rollup_where = if rollup_conditions.is_empty() {
             String::new()
         } else {
@@ -1110,6 +1214,7 @@ impl Database {
         start_date: Option<i64>,
         end_date: Option<i64>,
         app_type: Option<&str>,
+        source: Option<&str>,
     ) -> Result<Vec<ModelStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
@@ -1127,6 +1232,7 @@ impl Database {
             detail_conditions.push("l.app_type = ?".to_string());
             detail_params.push(Box::new(at.to_string()));
         }
+        push_source_filter(&mut detail_conditions, &mut detail_params, "l", source);
         let detail_where = if detail_conditions.is_empty() {
             String::new()
         } else {
@@ -1146,6 +1252,7 @@ impl Database {
             rollup_conditions.push("r.app_type = ?".to_string());
             rollup_params.push(Box::new(at.to_string()));
         }
+        push_source_filter(&mut rollup_conditions, &mut rollup_params, "r", source);
         let rollup_where = if rollup_conditions.is_empty() {
             String::new()
         } else {
@@ -1230,6 +1337,7 @@ impl Database {
             conditions.push("l.app_type = ?".to_string());
             params.push(Box::new(app_type.clone()));
         }
+        push_source_filter(&mut conditions, &mut params, "l", filters.source.as_deref());
         if let Some(ref provider_name) = filters.provider_name {
             conditions.push("p.name LIKE ?".to_string());
             params.push(Box::new(format!("%{provider_name}%")));
@@ -2253,9 +2361,90 @@ mod tests {
             )?;
         }
 
-        let summary = db.get_usage_summary(None, None, None)?;
+        let summary = db.get_usage_summary(None, None, None, None)?;
         assert_eq!(summary.total_requests, 2);
         assert_eq!(summary.success_rate, 100.0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_source_filter_supports_multiple_remote_hosts() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "local-proxy",
+                "claude",
+                "local-provider",
+                "claude-haiku-4-5",
+                "proxy",
+                1000,
+                10,
+                1,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+            insert_usage_log(
+                &conn,
+                "remote-pjlab",
+                "claude",
+                "_remote:claude:pjlab",
+                "claude-haiku-4-5",
+                "remote:pjlab",
+                1001,
+                20,
+                2,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+            insert_usage_log(
+                &conn,
+                "remote-other",
+                "claude",
+                "_remote:claude:other",
+                "claude-haiku-4-5",
+                "remote:other",
+                1002,
+                30,
+                3,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+        }
+
+        let source = "multi:remote:pjlab\u{1f}remote:other";
+        let summary = db.get_usage_summary(None, None, Some("claude"), Some(source))?;
+        assert_eq!(summary.total_requests, 2);
+        assert_eq!(summary.total_input_tokens, 50);
+        assert_eq!(summary.total_output_tokens, 5);
+
+        let logs = db.get_request_logs(
+            &LogFilters {
+                app_type: Some("claude".to_string()),
+                source: Some(source.to_string()),
+                ..Default::default()
+            },
+            0,
+            10,
+        )?;
+        let request_ids: Vec<&str> = logs
+            .data
+            .iter()
+            .map(|log| log.request_id.as_str())
+            .collect();
+        assert_eq!(logs.total, 2);
+        assert!(request_ids.contains(&"remote-pjlab"));
+        assert!(request_ids.contains(&"remote-other"));
+        assert!(!request_ids.contains(&"local-proxy"));
 
         Ok(())
     }
@@ -2333,7 +2522,7 @@ mod tests {
             )?;
         }
 
-        let summary = db.get_usage_summary(Some(start), Some(end), Some("claude"))?;
+        let summary = db.get_usage_summary(Some(start), Some(end), Some("claude"), None)?;
         assert_eq!(summary.total_requests, 20);
         assert_eq!(summary.total_input_tokens, 2000);
         assert_eq!(summary.total_output_tokens, 1000);
@@ -2394,7 +2583,7 @@ mod tests {
             )?;
         }
 
-        let summary = db.get_usage_summary(Some(start), Some(end), Some("claude"))?;
+        let summary = db.get_usage_summary(Some(start), Some(end), Some("claude"), None)?;
         assert_eq!(summary.total_requests, 30);
         assert_eq!(summary.total_input_tokens, 3000);
         assert_eq!(summary.total_output_tokens, 1500);
@@ -2515,7 +2704,7 @@ mod tests {
             )?;
         }
 
-        let summary = db.get_usage_summary(None, None, None)?;
+        let summary = db.get_usage_summary(None, None, None, None)?;
         assert_eq!(summary.total_requests, 4);
         // codex-proxy contributes 100-10=90; gemini-proxy contributes 200-30=170
         // (both cache-inclusive providers). claude-proxy=300, codex-session-only=50.
@@ -2530,10 +2719,10 @@ mod tests {
         let expected_hit_rate = 60.0_f64 / 682.0_f64;
         assert!((summary.cache_hit_rate - expected_hit_rate).abs() < 1e-9);
 
-        let trends = db.get_daily_trends(Some(0), Some(40_000), None)?;
+        let trends = db.get_daily_trends(Some(0), Some(40_000), None, None)?;
         assert_eq!(trends.iter().map(|stat| stat.request_count).sum::<u64>(), 4);
 
-        let provider_stats = db.get_provider_stats(None, None, None)?;
+        let provider_stats = db.get_provider_stats(None, None, None, None)?;
         assert_eq!(
             provider_stats
                 .iter()
@@ -2551,7 +2740,7 @@ mod tests {
             .iter()
             .any(|stat| stat.provider_id == "_session"));
 
-        let model_stats = db.get_model_stats(None, None, None)?;
+        let model_stats = db.get_model_stats(None, None, None, None)?;
         assert_eq!(
             model_stats
                 .iter()
@@ -2743,7 +2932,7 @@ mod tests {
             )?;
         }
 
-        let summary = db.get_usage_summary(None, None, None)?;
+        let summary = db.get_usage_summary(None, None, None, None)?;
         assert_eq!(summary.total_requests, 9);
 
         let logs = db.get_request_logs(&LogFilters::default(), 0, 10)?;
@@ -2791,7 +2980,7 @@ mod tests {
             )?;
         }
 
-        let stats = db.get_model_stats(None, None, None)?;
+        let stats = db.get_model_stats(None, None, None, None)?;
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].model, "claude-3-sonnet");
         assert_eq!(stats[0].request_count, 1);
@@ -2823,7 +3012,7 @@ mod tests {
             )?;
         }
 
-        let stats = db.get_provider_stats(Some(1500), Some(2500), Some("claude"))?;
+        let stats = db.get_provider_stats(Some(1500), Some(2500), Some("claude"), None)?;
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].provider_id, "p1");
         assert_eq!(stats[0].request_count, 1);
@@ -2905,7 +3094,7 @@ mod tests {
             )?;
         }
 
-        let stats = db.get_provider_stats(Some(start), Some(end), Some("claude"))?;
+        let stats = db.get_provider_stats(Some(start), Some(end), Some("claude"), None)?;
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].provider_id, "p-rollup");
         assert_eq!(stats[0].request_count, 8);
@@ -2941,7 +3130,7 @@ mod tests {
             )?;
         }
 
-        let stats = db.get_daily_trends(Some(0), Some(15 * 60 * 60), Some("claude"))?;
+        let stats = db.get_daily_trends(Some(0), Some(15 * 60 * 60), Some("claude"), None)?;
         assert_eq!(stats.len(), 15);
         assert_eq!(stats[3].request_count, 1);
 
@@ -3018,7 +3207,7 @@ mod tests {
             )?;
         }
 
-        let stats = db.get_daily_trends(Some(start), Some(end), Some("claude"))?;
+        let stats = db.get_daily_trends(Some(start), Some(end), Some("claude"), None)?;
         assert_eq!(stats.len(), 3);
         assert_eq!(stats[0].request_count, 1);
         assert_eq!(stats[0].total_tokens, 150);
@@ -3103,7 +3292,7 @@ mod tests {
             )?;
         }
 
-        let stats = db.get_model_stats(Some(start), Some(end), Some("claude"))?;
+        let stats = db.get_model_stats(Some(start), Some(end), Some("claude"), None)?;
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].model, "claude-3-haiku");
         assert_eq!(stats[0].request_count, 9);
