@@ -222,47 +222,67 @@ fn convert_input_to_messages(input: &[Value], messages: &mut Vec<Value>) {
                 };
 
                 if let Some(content_blocks) = item.get("content").and_then(|v| v.as_array()) {
-                    let texts: Vec<&str> = content_blocks
+                    let has_images = content_blocks
                         .iter()
-                        .filter_map(|block| {
+                        .any(|b| b.get("type").and_then(|v| v.as_str()) == Some("input_image"));
+
+                    if has_images {
+                        let mut parts: Vec<Value> = Vec::new();
+                        for block in content_blocks {
                             let bt = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
                             match bt {
                                 "input_text" | "output_text" => {
-                                    block.get("text").and_then(|v| v.as_str())
+                                    if let Some(t) = block.get("text").and_then(|v| v.as_str()) {
+                                        parts.push(json!({"type": "text", "text": t}));
+                                    }
                                 }
-                                "refusal" => block.get("refusal").and_then(|v| v.as_str()),
-                                _ => None,
-                            }
-                        })
-                        .collect();
-
-                    if !texts.is_empty() {
-                        messages.push(json!({
-                            "role": resolved_role,
-                            "content": texts.join("")
-                        }));
-                    } else if content_blocks
-                        .iter()
-                        .any(|b| b.get("type").and_then(|v| v.as_str()) == Some("input_image"))
-                    {
-                        let parts: Vec<Value> = content_blocks
-                            .iter()
-                            .filter_map(|block| {
-                                if block.get("type").and_then(|v| v.as_str()) == Some("input_image")
-                                {
-                                    Some(json!({
+                                "refusal" => {
+                                    if let Some(r) =
+                                        block.get("refusal").and_then(|v| v.as_str())
+                                    {
+                                        parts.push(json!({"type": "text", "text": r}));
+                                    }
+                                }
+                                "input_image" => {
+                                    parts.push(json!({
                                         "type": "image_url",
-                                        "image_url": block.get("image_url").cloned().unwrap_or(json!({}))
-                                    }))
-                                } else {
-                                    None
+                                        "image_url": block
+                                            .get("image_url")
+                                            .cloned()
+                                            .unwrap_or(json!({}))
+                                    }));
                                 }
-                            })
-                            .collect();
+                                _ => {}
+                            }
+                        }
                         if !parts.is_empty() {
                             messages.push(json!({
                                 "role": resolved_role,
                                 "content": parts
+                            }));
+                        }
+                    } else {
+                        let texts: Vec<&str> = content_blocks
+                            .iter()
+                            .filter_map(|block| {
+                                let bt =
+                                    block.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                                match bt {
+                                    "input_text" | "output_text" => {
+                                        block.get("text").and_then(|v| v.as_str())
+                                    }
+                                    "refusal" => {
+                                        block.get("refusal").and_then(|v| v.as_str())
+                                    }
+                                    _ => None,
+                                }
+                            })
+                            .collect();
+
+                        if !texts.is_empty() {
+                            messages.push(json!({
+                                "role": resolved_role,
+                                "content": texts.join("")
                             }));
                         }
                     }

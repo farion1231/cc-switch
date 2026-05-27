@@ -128,7 +128,12 @@ pub async fn handle_codex_models(
         .extract_auth(provider)
         .ok_or_else(|| ProxyError::ConfigError("Provider has no API key".to_string()))?;
 
-    let models = crate::services::model_fetch::fetch_models(&base_url, &auth.api_key, false, None)
+    let is_full_url = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.is_full_url)
+        .unwrap_or(false);
+    let models = crate::services::model_fetch::fetch_models(&base_url, &auth.api_key, is_full_url, None)
         .await
         .map_err(ProxyError::ConfigError)?;
 
@@ -683,6 +688,7 @@ pub async fn handle_responses(
     if needs_chat_transform {
         // 读取响应体和状态：forwarder 可能返回 Buffered/Reqwest/Hyper 多种类型
         let upstream_status = response.status();
+        let upstream_headers = response.headers().clone();
         let body_bytes = match response {
             ProxyResponse::Buffered { body, .. } => body,
             other => {
@@ -725,25 +731,30 @@ pub async fn handle_responses(
             return Ok(sse_response);
         }
 
-        let new_body = serde_json::to_vec(&responses_body).unwrap_or_default();
-        req_logger::log_return(
-            "Codex",
-            upstream_status.as_u16(),
-            "",
-            &String::from_utf8_lossy(&new_body),
-        );
-        let reconstructed: axum::response::Response = (
-            upstream_status,
-            [(
-                "content-type".parse::<axum::http::HeaderName>().unwrap(),
-                "application/json".parse().unwrap(),
-            )]
-            .into_iter()
-            .collect::<axum::http::HeaderMap>(),
-            new_body,
+        let converted_body = serde_json::to_vec(&responses_body).unwrap_or_default();
+        let buffered = ProxyResponse::Buffered {
+            status: upstream_status,
+            headers: upstream_headers,
+            body: Bytes::from(converted_body),
+        };
+        let result = process_response(
+            buffered,
+            &ctx,
+            &state,
+            &CODEX_PARSER_CONFIG,
+            connection_guard,
         )
-            .into_response();
-        return Ok(reconstructed);
+        .await;
+        match &result {
+            Ok(resp) => req_logger::log_return(
+                "Codex",
+                resp.status().as_u16(),
+                "native",
+                &format!("{:?}", resp.headers()),
+            ),
+            Err(e) => log::error!("[Codex] → RETURN error: {e}"),
+        }
+        return result;
     }
 
     let result = process_response(
