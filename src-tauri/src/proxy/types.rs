@@ -117,8 +117,8 @@ pub struct SmartRoutingTarget {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum RequestType {
-    Main,   // 主对话（用户直接发起）
-    Others, // 其他请求（子agent/compact/工具续写）
+    Main,   // 主供应商队列（主对话、compact、warmup、工具续写等）
+    Others, // 子供应商队列（仅子代理 subagent 请求）
 }
 
 /// 代理服务器信息

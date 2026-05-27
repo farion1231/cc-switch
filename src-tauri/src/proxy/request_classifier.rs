@@ -24,11 +24,13 @@ pub fn classify_request_type(
         .get("anthropic-beta")
         .is_some();
 
+    // 智能路由的子代理检测始终开启，不受 Copilot 优化器 subagent_detection 配置影响。
+    // Copilot 优化器开关控制的是是否注入 x-initiator 计费头，与路由决策是独立的关注点。
     let classification = classify_request(
         body,
         has_anthropic_beta,
         copilot_config.compact_detection,
-        copilot_config.subagent_detection,
+        true, // 智能路由始终检测子代理
     );
 
     if classification.is_subagent {
@@ -124,13 +126,26 @@ mod tests {
     }
 
     #[test]
-    fn test_subagent_detection_disabled_all_to_main() {
-        // subagent_detection 关闭时，所有请求都走 Main
+    fn test_subagent_detection_works_regardless_of_config_flag() {
+        // 即使 copilot_config.subagent_detection = false，
+        // 智能路由也始终启用子代理检测（路由决策独立于 Copilot 计费优化）
+        let body = json!({
+            "messages": [{"role": "user", "content": "__SUBAGENT_MARKER__\nDo something"}]
+        });
+        let mut config = default_config();
+        config.subagent_detection = false; // Copilot 优化器关闭了子代理检测
+        let result = classify_request_type(&body, &HeaderMap::new(), &config);
+        // 智能路由始终检测子代理，不受 Copilot 配置影响
+        assert_eq!(result, RequestType::Others);
+    }
+
+    #[test]
+    fn test_non_subagent_when_config_disabled_still_main() {
+        // 普通用户消息：即使 config flag 怎么设，都走 Main
         let body = json!({
             "messages": [{"role": "user", "content": "Hello"}]
         });
         let mut config = default_config();
-        config.compact_detection = false;
         config.subagent_detection = false;
         let result = classify_request_type(&body, &HeaderMap::new(), &config);
         assert_eq!(result, RequestType::Main);

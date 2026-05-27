@@ -374,6 +374,7 @@ impl Database {
         if version > SCHEMA_VERSION {
             // 允许小版本回退：如果高版本仅添加了有默认值的列（如 v10→v11 的智能路由字段），
             // 则将版本号降级为当前版本继续运行，避免用户切换版本时数据库被拒绝。
+            // TODO(cleanup): 当 SCHEMA_VERSION >= 11 时，此 v11→v10 降级分支变为死代码，应移除。
             if version == 11 && SCHEMA_VERSION == 10 {
                 log::warn!(
                     "数据库版本为 {version}，当前仅支持 {SCHEMA_VERSION}。智能路由字段为纯增量列，降级兼容。"

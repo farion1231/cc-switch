@@ -251,12 +251,14 @@ impl ProxyServer {
             status.uptime_seconds = start.elapsed().as_secs();
         }
 
-        // 从 current_providers HashMap 获取每个应用类型当前正在使用的 provider
-        // 智能路由启用时，每个 appType 可能有 Main 和 Others 两个方向
-        let current_providers = self.state.current_providers.read().await;
+        // 先 clone current_providers 数据并立即释放读锁，
+        // 避免持锁期间 await DB 查询阻塞 forwarder 的写入路径
+        let current_providers_snapshot = {
+            self.state.current_providers.read().await.clone()
+        };
         let mut active_targets: Vec<ActiveTarget> = Vec::new();
 
-        // 先读取所有 app 的智能路由数据库配置（用于校验内存数据一致性）
+        // 读取所有 app 的智能路由数据库配置（无锁阶段，不阻塞 forwarder）
         let sr_configs: std::collections::HashMap<String, bool> = {
             let mut map = std::collections::HashMap::new();
             for app_type_str in &["claude", "codex", "gemini"] {
@@ -267,7 +269,7 @@ impl ProxyServer {
             map
         };
 
-        for (app_type, target) in current_providers.iter() {
+        for (app_type, target) in current_providers_snapshot.iter() {
             let sr_enabled = sr_configs.get(app_type).copied().unwrap_or(false);
 
             if let Some((main_id, main_name)) = &target.main_provider {

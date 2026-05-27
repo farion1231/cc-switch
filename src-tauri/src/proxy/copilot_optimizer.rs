@@ -354,43 +354,68 @@ pub fn deterministic_interaction_id(session_id: &str) -> Option<String> {
 /// {"__SUBAGENT_MARKER__": {"session_id": "...", "agent_id": "...", "agent_type": "..."}}
 /// ```
 ///
-/// 扫描策略（与 copilot-api 的 subagent-marker.ts 对齐）：
-/// 1. 遍历所有 user 消息（不仅是第一条，因为 context 压缩可能重排消息）
-/// 2. 在消息文本中查找 `__SUBAGENT_MARKER__` 关键字
-/// 3. 找到即判定为子代理请求
+/// 扫描策略：
+/// 1. 遍历所有消息（user/system），在文本中查找 `__SUBAGENT_MARKER__` 关键字
+/// 2. metadata.user_id 包含子代理标识（_agent_ / _subagent_）
+/// 3. system prompt 中包含 agent_id/agent_type 子代理特征
 fn detect_subagent(body: &Value) -> bool {
     // 信号 1: 显式 __SUBAGENT_MARKER__（Claude Code 2.x+ 自动注入）
-    if extract_system_text(body).contains("__SUBAGENT_MARKER__") {
+    // 检查 system prompt
+    let system_text = extract_system_text(body);
+    if system_text.contains("__SUBAGENT_MARKER__") {
+        log::debug!("[Subagent] Detected via __SUBAGENT_MARKER__ in system prompt");
         return true;
     }
 
+    // 检查所有消息（不限于 user role，覆盖 system 角色消息中的标记）
     if let Some(messages) = body.get("messages").and_then(|m| m.as_array()) {
-        for msg in messages {
-            if msg.get("role").and_then(|r| r.as_str()) != Some("user") {
-                continue;
-            }
+        for (i, msg) in messages.iter().enumerate() {
+            let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
             let text = extract_text_from_message(msg);
             if text.contains("__SUBAGENT_MARKER__") {
+                log::debug!(
+                    "[Subagent] Detected via __SUBAGENT_MARKER__ in messages[{i}] (role={role})"
+                );
                 return true;
             }
         }
     }
 
     // 信号 2（fallback）: metadata.user_id 包含子代理标识
-    // Claude Code 的 Agent tool 会将 subagent session 标记为
-    // "parentSessionId_agent_agentId" 格式，检测 "_agent_" 后缀
     if let Some(user_id) = body.pointer("/metadata/user_id").and_then(|v| v.as_str()) {
-        // "_agent_" 是 Claude Code Agent tool 的内部标记
-        if user_id.contains("_agent_") {
-            return true;
+        let patterns = ["_agent_", "_subagent_"];
+        for pat in &patterns {
+            if user_id.contains(pat) {
+                log::debug!("[Subagent] Detected via metadata.user_id pattern '{pat}': {user_id}");
+                return true;
+            }
         }
     }
 
-    // 信号 3（fallback）: system prompt 包含 Claude Code 子代理的典型框架文本
-    // Agent tool 生成的子代理会在 system prompt 中包含由 Agent tool 注入的任务描述，
-    // 但主对话的 system prompt 由 Claude Code CLI 直接生成，两者格式不同
-    // 这个信号不够可靠（用户 prompt 也可能包含这些词），因此只作为辅助判据
-    // 暂不启用，预留接口
+    // 信号 3（fallback）: system prompt 中包含 agent_type/agent_id 等子代理 JSON 特征
+    // Agent tool 注入的任务描述包含 {"agent_type": "...", "agent_id": "..."} 格式
+    if !system_text.is_empty()
+        && (system_text.contains("\"agent_type\"") || system_text.contains("\"agent_id\""))
+        && !system_text.contains("__SUBAGENT_MARKER__")
+    {
+        // system prompt 提到 agent_type/agent_id 但没找到 __SUBAGENT_MARKER__
+        // 可能是旧版 Claude Code 或其他子代理实现，取 system + 首条消息联合判定
+        if let Some(messages) = body.get("messages").and_then(|m| m.as_array()) {
+            if let Some(first_user) = messages
+                .iter()
+                .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+            {
+                let first_text = extract_text_from_message(first_user);
+                let combined = format!("{system_text} {first_text}");
+                if combined.contains("agent_type") || combined.contains("agent_id") {
+                    log::debug!(
+                        "[Subagent] Detected via agent_type/agent_id in system+first_user (fallback)"
+                    );
+                    return true;
+                }
+            }
+        }
+    }
 
     false
 }

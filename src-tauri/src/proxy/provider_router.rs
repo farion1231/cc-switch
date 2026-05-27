@@ -135,7 +135,10 @@ impl ProviderRouter {
         // 1. 按应用独立获取熔断器配置
         let failure_threshold = match self.db.get_proxy_config_for_app(app_type).await {
             Ok(app_config) => app_config.circuit_failure_threshold,
-            Err(_) => 5, // 默认值
+            Err(e) => {
+                log::error!("[{app_type}] 读取 proxy_config 失败: {e}，使用默认 failure_threshold=5");
+                5
+            }
         };
 
         // 2. 更新熔断器状态
@@ -263,7 +266,10 @@ impl ProviderRouter {
             .get_proxy_config_for_app(app_type)
             .await
             .map(|cfg| cfg.auto_failover_enabled)
-            .unwrap_or(false);
+            .unwrap_or_else(|e| {
+                log::error!("[{app_type}] 读取 proxy_config 失败: {e}，默认禁用故障转移");
+                false
+            });
 
         // 使用 spawn_blocking 避免同步 DB 调用阻塞 tokio worker 线程
         let app_type_owned = app_type.to_string();
@@ -325,7 +331,28 @@ impl ProviderRouter {
                     "[{app_type}] Smart routing: queue is empty (0 providers) — falling back to default"
                 );
             }
-            return self.select_providers(app_type).await;
+            // fallback 到 select_providers，但对结果也执行熔断器检查。
+            // select_from_queue 承诺"熔断器检查始终执行"，fallback 路径必须保持一致，
+            // 避免请求被发往已知 circuit-open 的 provider。
+            let fallback = self.select_providers(app_type).await?;
+            let mut filtered = Vec::new();
+            for provider in fallback {
+                let circuit_key = format!("{app_type}:{}", provider.id);
+                let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
+                if breaker.is_available().await {
+                    filtered.push(provider);
+                } else {
+                    log::debug!(
+                        "[{app_type}] Smart routing fallback: Provider {} is circuit-open, skipping",
+                        provider.name
+                    );
+                }
+            }
+            if filtered.is_empty() {
+                log::warn!("[{app_type}] Smart routing: all providers (including fallback) are circuit-open");
+                return Err(AppError::AllProvidersCircuitOpen);
+            }
+            return Ok(filtered);
         }
 
         log::debug!(
@@ -367,18 +394,10 @@ impl ProviderRouter {
             }
         }
 
-        // 如果不存在，获取写锁创建
-        let mut breakers = self.circuit_breakers.write().await;
-
-        // 双重检查，防止竞争条件
-        if let Some(breaker) = breakers.get(key) {
-            return breaker.clone();
-        }
-
         // 从 key 中提取 app_type (格式: "app_type:provider_id")
         let app_type = key.split(':').next().unwrap_or("claude");
 
-        // 按应用独立读取熔断器配置
+        // 在获取写锁之前读取熔断器配置，避免持锁期间 await DB 阻塞所有请求的熔断器操作
         let config = match self.db.get_proxy_config_for_app(app_type).await {
             Ok(app_config) => crate::proxy::circuit_breaker::CircuitBreakerConfig {
                 failure_threshold: app_config.circuit_failure_threshold,
@@ -387,8 +406,19 @@ impl ProviderRouter {
                 error_rate_threshold: app_config.circuit_error_rate_threshold,
                 min_requests: app_config.circuit_min_requests,
             },
-            Err(_) => crate::proxy::circuit_breaker::CircuitBreakerConfig::default(),
+            Err(e) => {
+                log::error!("[{app_type}] 读取 proxy_config 失败: {e}，使用默认熔断器配置");
+                crate::proxy::circuit_breaker::CircuitBreakerConfig::default()
+            }
         };
+
+        // 获取写锁 — 此时不再有 .await，锁持有时间极短
+        let mut breakers = self.circuit_breakers.write().await;
+
+        // 双重检查，防止竞争条件
+        if let Some(breaker) = breakers.get(key) {
+            return breaker.clone();
+        }
 
         let breaker = Arc::new(CircuitBreaker::new(config));
         breakers.insert(key.to_string(), breaker.clone());
@@ -833,13 +863,13 @@ mod tests {
         );
     }
 
-    /// 真实场景测试：智能路由 + auto_failover 关闭 + 所有 provider 都不可用时 fallback
+    /// 真实场景测试：智能路由 + auto_failover 关闭 + 队列全部不可用时 fallback
     ///
     /// 场景描述：
-    /// - Main 队列 = [Provider A, Provider B]
+    /// - Main 队列 = [glm5.1, minimax]，均已熔断
     /// - auto_failover_enabled = false
-    /// - Provider A 和 Provider B 都已熔断
-    /// - 期望：fallback 到默认行为（返回 current provider）
+    /// - current_provider = deepseek（未熔断，不在队列中）
+    /// - 期望：fallback 到 select_providers → 返回 deepseek（通过熔断器检查后仍可用）
     #[tokio::test]
     #[serial]
     async fn test_smart_routing_auto_failover_disabled_all_unavailable_falls_back() {
@@ -915,6 +945,73 @@ mod tests {
             providers[0].id, "deepseek",
             "fallback 应使用 current provider"
         );
+    }
+
+    /// 真实场景测试：智能路由队列全部熔断 + fallback 的 current_provider 也熔断 → 返回错误
+    ///
+    /// 场景描述：
+    /// - Main 队列 = [glm5.1, minimax]，均已熔断
+    /// - auto_failover_enabled = false
+    /// - current_provider = glm5.1（也在队列中，已熔断）
+    /// - 期望：返回 AllProvidersCircuitOpen 错误（不做无意义的"盲发"）
+    #[tokio::test]
+    #[serial]
+    async fn test_smart_routing_fallback_all_circuit_open_returns_error() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        // 配置熔断器：1 次失败即熔断，超时很长（不会自动恢复）
+        db.update_circuit_breaker_config(&CircuitBreakerConfig {
+            failure_threshold: 1,
+            timeout_seconds: 999999,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        let glm51 =
+            Provider::with_id("glm5.1".to_string(), "GLM-5.1".to_string(), json!({}), None);
+        let minimax =
+            Provider::with_id("minimax".to_string(), "MiniMax".to_string(), json!({}), None);
+        db.save_provider("claude", &glm51).unwrap();
+        db.save_provider("claude", &minimax).unwrap();
+
+        // current provider 设置为 glm5.1（与队列第一个相同），且无一幸免
+        db.set_current_provider("claude", "glm5.1").unwrap();
+
+        // 智能路由配置：Main 队列 = [glm5.1, minimax]，auto_failover = false
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.smart_routing_enabled = true;
+        config.auto_failover_enabled = false;
+        config.main_request_queue = vec!["glm5.1".to_string(), "minimax".to_string()];
+        config.others_request_queue = vec!["minimax".to_string()];
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+
+        // 让 glm5.1 和 minimax 都熔断
+        router
+            .record_result("glm5.1", "claude", false, false, Some("fail".to_string()))
+            .await
+            .unwrap();
+        router
+            .record_result("minimax", "claude", false, false, Some("fail".to_string()))
+            .await
+            .unwrap();
+
+        // 主对话请求：队列全部熔断，fallback 的 current_provider 也熔断 → 应返回错误
+        let result = router
+            .select_providers_for_request("claude", RequestType::Main)
+            .await;
+
+        assert!(
+            result.is_err(),
+            "队列全部熔断且 fallback provider 也熔断时应返回错误，而非盲发到已知不可用的 provider"
+        );
+        match result.unwrap_err() {
+            crate::error::AppError::AllProvidersCircuitOpen => {}
+            other => panic!("期望 AllProvidersCircuitOpen 错误，实际得到: {other:?}"),
+        }
     }
 
     /// 真实场景测试：智能路由中子代理请求的行为
