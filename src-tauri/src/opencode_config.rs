@@ -86,7 +86,28 @@ pub fn get_providers() -> Result<Map<String, Value>, AppError> {
         .unwrap_or_default())
 }
 
-pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
+fn ensure_v1_suffix(config: &mut Value) {
+    let npm = config
+        .get("npm")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if !npm.starts_with("@ai-sdk/openai") {
+        return;
+    }
+    let base_url = config
+        .pointer_mut("/options/baseURL")
+        .and_then(|v| v.as_str().map(|s| s.to_string()));
+    let Some(base_url) = base_url else { return };
+    if base_url.is_empty() || base_url.ends_with("/v1") {
+        return;
+    }
+    let normalized = format!("{}/v1", base_url.trim_end_matches('/'));
+    config["options"]["baseURL"] = json!(normalized);
+}
+
+pub fn set_provider(id: &str, mut config: Value) -> Result<(), AppError> {
+    ensure_v1_suffix(&mut config);
+
     let mut full_config = read_opencode_config()?;
 
     if full_config.get("provider").is_none() {
