@@ -67,7 +67,30 @@ impl Provider {
     }
 
     pub fn is_codex_oauth(&self) -> bool {
-        self.meta.as_ref().and_then(|m| m.provider_type.as_deref()) == Some("codex_oauth")
+        self.provider_type() == Some("codex_oauth")
+    }
+
+    pub fn is_github_copilot(&self) -> bool {
+        self.provider_type() == Some("github_copilot")
+            || self.claude_base_url_contains("githubcopilot.com")
+    }
+
+    pub fn uses_managed_account_auth(&self) -> bool {
+        self.is_github_copilot()
+            || self.is_codex_oauth()
+            || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
+    }
+
+    fn provider_type(&self) -> Option<&str> {
+        self.meta.as_ref().and_then(|m| m.provider_type.as_deref())
+    }
+
+    fn claude_base_url_contains(&self, needle: &str) -> bool {
+        self.settings_config
+            .pointer("/env/ANTHROPIC_BASE_URL")
+            .and_then(|value| value.as_str())
+            .map(|base_url| base_url.contains(needle))
+            .unwrap_or(false)
     }
 
     pub fn codex_fast_mode_enabled(&self) -> bool {
@@ -230,12 +253,32 @@ pub enum ClaudeDesktopMode {
 pub struct ClaudeDesktopModelRoute {
     /// 真实上游模型名，只保存在 CC Switch 内部，不写入 Claude Desktop profile。
     pub model: String,
-    /// Desktop /v1/models 中显示的名称。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
+    /// Claude Desktop 模型菜单显示名；写入 profile 的 `labelOverride`。
+    #[serde(rename = "labelOverride", skip_serializing_if = "Option::is_none")]
+    pub label_override: Option<String>,
     /// Claude Desktop 3P 识别的 1M 上下文能力标记。
     #[serde(rename = "supports1m", skip_serializing_if = "Option::is_none")]
     pub supports_1m: Option<bool>,
+}
+
+/// Codex Responses -> Chat Completions 的 reasoning 能力描述。
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct CodexChatReasoningConfig {
+    #[serde(rename = "supportsThinking", skip_serializing_if = "Option::is_none")]
+    pub supports_thinking: Option<bool>,
+    #[serde(rename = "supportsEffort", skip_serializing_if = "Option::is_none")]
+    pub supports_effort: Option<bool>,
+    #[serde(rename = "thinkingParam", skip_serializing_if = "Option::is_none")]
+    pub thinking_param: Option<String>,
+    #[serde(rename = "effortParam", skip_serializing_if = "Option::is_none")]
+    pub effort_param: Option<String>,
+    #[serde(rename = "effortValueMode", skip_serializing_if = "Option::is_none")]
+    pub effort_value_mode: Option<String>,
+    /// 声明性字段：标注上游 reasoning 的回传位置（reasoning_content / reasoning /
+    /// reasoning_details / think_tags）。当前响应侧 `extract_reasoning_field_text`
+    /// 靠穷举字段提取、并不读取本字段；保留作文档说明与未来按格式分发（如 think_tags）的预留。
+    #[serde(rename = "outputFormat", skip_serializing_if = "Option::is_none")]
+    pub output_format: Option<String>,
 }
 
 /// 供应商元数据
@@ -316,6 +359,9 @@ pub struct ProviderMeta {
     /// Codex OAuth FAST mode: inject `service_tier = "priority"` for ChatGPT Codex requests.
     #[serde(rename = "codexFastMode", skip_serializing_if = "Option::is_none")]
     pub codex_fast_mode: Option<bool>,
+    /// Codex Responses -> Chat Completions reasoning capability metadata.
+    #[serde(rename = "codexChatReasoning", skip_serializing_if = "Option::is_none")]
+    pub codex_chat_reasoning: Option<CodexChatReasoningConfig>,
     /// 累加模式应用中，该 provider 是否已写入 live config。
     /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
     #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]
@@ -808,6 +854,53 @@ mod tests {
         assert!(provider.icon.is_none());
         assert!(provider.icon_color.is_none());
         assert!(!provider.in_failover_queue);
+    }
+
+    #[test]
+    fn provider_managed_account_auth_detection_uses_type_or_known_endpoint() {
+        let mut copilot = Provider::with_id(
+            "copilot".to_string(),
+            "Copilot".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
+                }
+            }),
+            None,
+        );
+        assert!(copilot.is_github_copilot());
+        assert!(copilot.uses_managed_account_auth());
+
+        let mut codex = Provider::with_id(
+            "codex".to_string(),
+            "Codex".to_string(),
+            json!({ "env": {} }),
+            None,
+        );
+        codex.meta = Some(ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            ..Default::default()
+        });
+        assert!(codex.is_codex_oauth());
+        assert!(codex.uses_managed_account_auth());
+
+        let codex_endpoint = Provider::with_id(
+            "codex-endpoint".to_string(),
+            "Codex Endpoint".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            None,
+        );
+        assert!(codex_endpoint.uses_managed_account_auth());
+
+        copilot.meta = Some(ProviderMeta {
+            provider_type: Some("github_copilot".to_string()),
+            ..Default::default()
+        });
+        assert!(copilot.is_github_copilot());
     }
 
     #[test]

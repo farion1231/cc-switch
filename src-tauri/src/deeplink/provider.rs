@@ -616,12 +616,11 @@ fn merge_codex_config(
     request: &mut DeepLinkImportRequest,
     config: &serde_json::Value,
 ) -> Result<(), AppError> {
-    // Auto-fill API key from auth.OPENAI_API_KEY
+    // Auto-fill API key from auth.OPENAI_API_KEY or Codex mobile-compatible bearer token.
     if request.api_key.as_ref().is_none_or(|s| s.is_empty()) {
-        if let Some(api_key) = config
-            .get("auth")
-            .and_then(|v| v.get("OPENAI_API_KEY"))
-            .and_then(|v| v.as_str())
+        let config_str = config.get("config").and_then(|v| v.as_str());
+        if let Some(api_key) =
+            crate::codex_config::extract_codex_api_key(config.get("auth"), config_str)
         {
             request.api_key = Some(api_key.to_string());
         }

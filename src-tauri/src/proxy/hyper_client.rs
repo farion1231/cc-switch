@@ -6,7 +6,7 @@
 
 use super::ProxyError;
 use bytes::Bytes;
-use futures::stream::Stream;
+use futures::{stream::Stream, StreamExt};
 use http_body_util::BodyExt;
 use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::{client::legacy::Client, rt::TokioExecutor};
@@ -79,13 +79,44 @@ fn global_hyper_client() -> &'static HyperClient {
 pub enum ProxyResponse {
     Hyper(hyper::Response<hyper::body::Incoming>),
     Reqwest(reqwest::Response),
+    Buffered {
+        status: http::StatusCode,
+        headers: http::HeaderMap,
+        body: Bytes,
+    },
+    Streamed {
+        status: http::StatusCode,
+        headers: http::HeaderMap,
+        stream: std::pin::Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
+    },
 }
 
 impl ProxyResponse {
+    pub fn buffered(status: http::StatusCode, headers: http::HeaderMap, body: Bytes) -> Self {
+        Self::Buffered {
+            status,
+            headers,
+            body,
+        }
+    }
+
+    pub fn streamed(
+        status: http::StatusCode,
+        headers: http::HeaderMap,
+        stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
+    ) -> Self {
+        Self::Streamed {
+            status,
+            headers,
+            stream: Box::pin(stream),
+        }
+    }
+
     pub fn status(&self) -> http::StatusCode {
         match self {
             Self::Hyper(r) => r.status(),
             Self::Reqwest(r) => r.status(),
+            Self::Buffered { status, .. } | Self::Streamed { status, .. } => *status,
         }
     }
 
@@ -93,6 +124,7 @@ impl ProxyResponse {
         match self {
             Self::Hyper(r) => r.headers(),
             Self::Reqwest(r) => r.headers(),
+            Self::Buffered { headers, .. } | Self::Streamed { headers, .. } => headers,
         }
     }
 
@@ -122,6 +154,17 @@ impl ProxyResponse {
             Self::Reqwest(r) => r.bytes().await.map_err(|e| {
                 ProxyError::ForwardFailed(format!("Failed to read response body: {e}"))
             }),
+            Self::Buffered { body, .. } => Ok(body),
+            Self::Streamed { mut stream, .. } => {
+                let mut body = bytes::BytesMut::new();
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk.map_err(|e| {
+                        ProxyError::ForwardFailed(format!("Failed to read response body: {e}"))
+                    })?;
+                    body.extend_from_slice(&chunk);
+                }
+                Ok(body.freeze())
+            }
         }
     }
 
@@ -161,6 +204,9 @@ impl ProxyResponse {
                     .map(|r| r.map_err(|e| std::io::Error::other(e.to_string())));
                 Box::pin(stream)
             }
+            Self::Buffered { body, .. } => Box::pin(futures::stream::once(async move { Ok(body) }))
+                as std::pin::Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
+            Self::Streamed { stream, .. } => stream,
         }
     }
 }
@@ -204,18 +250,14 @@ pub async fn send_request(
         proxy_url,
     );
 
-    if has_cases {
+    if let Some(original_cases) = original_cases
+        .as_ref()
+        .filter(|cases| !cases.cases.is_empty())
+    {
         // Primary path: use raw write + hyper handshake for exact header casing
         let result = tokio::time::timeout(
             timeout,
-            send_raw_request(
-                &uri,
-                &method,
-                &headers,
-                original_cases.as_ref().unwrap(),
-                &body,
-                proxy_url,
-            ),
+            send_raw_request(&uri, &method, &headers, original_cases, &body, proxy_url),
         )
         .await
         .map_err(|_| ProxyError::Timeout(format!("请求超时: {}s", timeout.as_secs())))?;

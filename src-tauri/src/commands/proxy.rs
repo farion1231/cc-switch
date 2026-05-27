@@ -133,9 +133,17 @@ pub async fn update_proxy_config_for_app(
     config: AppProxyConfig,
 ) -> Result<(), String> {
     let db = &state.db;
+    let app_type = config.app_type.clone();
+    let circuit_config = CircuitBreakerConfig::from(&config);
+
     db.update_proxy_config_for_app(config)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    state
+        .proxy_service
+        .update_circuit_breaker_config_for_app(&app_type, circuit_config)
+        .await
 }
 
 async fn get_default_cost_multiplier_internal(

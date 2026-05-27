@@ -268,6 +268,47 @@ fn test_parse_and_merge_config_claude() {
 }
 
 #[test]
+fn test_parse_and_merge_config_codex_uses_bearer_token() {
+    let config_toml = r#"model_provider = "rightcode"
+model = "gpt-5-codex"
+
+[model_providers.rightcode]
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+experimental_bearer_token = "sk-rightcode"
+"#;
+    let config_json = serde_json::json!({
+        "auth": {},
+        "config": config_toml,
+    })
+    .to_string();
+    let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
+
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("codex".to_string()),
+        name: Some("RightCode".to_string()),
+        config: Some(config_b64),
+        config_format: Some("json".to_string()),
+        ..Default::default()
+    };
+
+    let merged = parse_and_merge_config(&request).unwrap();
+
+    assert_eq!(merged.api_key, Some("sk-rightcode".to_string()));
+    assert_eq!(
+        merged.endpoint,
+        Some("https://rightcode.example/v1".to_string())
+    );
+    assert_eq!(
+        merged.homepage,
+        Some("https://rightcode.example".to_string())
+    );
+    assert_eq!(merged.model, Some("gpt-5-codex".to_string()));
+}
+
+#[test]
 fn test_parse_and_merge_config_url_override() {
     let config_json = r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-old","ANTHROPIC_BASE_URL":"https://api.anthropic.com/v1"}}"#;
     let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());

@@ -13,6 +13,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::app_config::AppType;
+use crate::database::{validate_cost_multiplier, validate_pricing_source};
 use crate::error::AppError;
 use crate::provider::{Provider, UsageResult};
 use crate::services::mcp::McpService;
@@ -54,9 +55,13 @@ pub struct SwitchResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(any(target_os = "macos", windows))]
+    use crate::claude_desktop_config::PROFILE_ID;
     use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
     use crate::database::Database;
     use crate::provider::ProviderMeta;
+    #[cfg(any(target_os = "macos", windows))]
+    use crate::provider::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
     use crate::proxy::types::ProxyConfig;
     use crate::store::AppState;
     use serde_json::json;
@@ -71,6 +76,8 @@ mod tests {
         #[allow(dead_code)]
         dir: TempDir,
         original_home: Option<String>,
+        #[cfg(windows)]
+        original_local_app_data: Option<String>,
         original_userprofile: Option<String>,
         original_test_home: Option<String>,
     }
@@ -79,16 +86,22 @@ mod tests {
         fn new() -> Self {
             let dir = TempDir::new().expect("failed to create temp home");
             let original_home = env::var("HOME").ok();
+            #[cfg(windows)]
+            let original_local_app_data = env::var("LOCALAPPDATA").ok();
             let original_userprofile = env::var("USERPROFILE").ok();
             let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
 
             env::set_var("HOME", dir.path());
+            #[cfg(windows)]
+            env::set_var("LOCALAPPDATA", dir.path().join("AppData").join("Local"));
             env::set_var("USERPROFILE", dir.path());
             env::set_var("CC_SWITCH_TEST_HOME", dir.path());
 
             Self {
                 dir,
                 original_home,
+                #[cfg(windows)]
+                original_local_app_data,
                 original_userprofile,
                 original_test_home,
             }
@@ -102,6 +115,14 @@ mod tests {
                 None => env::remove_var("HOME"),
             }
 
+            #[cfg(windows)]
+            {
+                match &self.original_local_app_data {
+                    Some(value) => env::set_var("LOCALAPPDATA", value),
+                    None => env::remove_var("LOCALAPPDATA"),
+                }
+            }
+
             match &self.original_userprofile {
                 Some(value) => env::set_var("USERPROFILE", value),
                 None => env::remove_var("USERPROFILE"),
@@ -112,6 +133,24 @@ mod tests {
                 None => env::remove_var("CC_SWITCH_TEST_HOME"),
             }
         }
+    }
+
+    #[cfg(windows)]
+    fn claude_desktop_profile_path(home: &Path) -> PathBuf {
+        home.join("AppData")
+            .join("Local")
+            .join("Claude-3p")
+            .join("configLibrary")
+            .join(format!("{PROFILE_ID}.json"))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn claude_desktop_profile_path(home: &Path) -> PathBuf {
+        home.join("Library")
+            .join("Application Support")
+            .join("Claude-3p")
+            .join("configLibrary")
+            .join(format!("{PROFILE_ID}.json"))
     }
 
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
@@ -259,6 +298,35 @@ mod tests {
             err.to_string().contains("auth"),
             "expected auth error, got {err:?}"
         );
+    }
+
+    #[test]
+    fn validate_provider_settings_rejects_negative_cost_multiplier() {
+        let mut provider = Provider::with_id(
+            "claude".into(),
+            "Claude".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token",
+                    "ANTHROPIC_BASE_URL": "https://claude.example"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            cost_multiplier: Some("-1".to_string()),
+            ..ProviderMeta::default()
+        });
+
+        let err = ProviderService::validate_provider_settings(&AppType::Claude, &provider)
+            .expect_err("negative multiplier should be rejected");
+        assert!(matches!(
+            err,
+            AppError::Localized {
+                key: "error.invalidMultiplier",
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -442,6 +510,122 @@ base_url = "http://localhost:8080"
                 .and_then(|env| env.get("ANTHROPIC_MODEL"))
                 .is_none(),
             "model override should be removed in takeover live config"
+        );
+    }
+
+    #[cfg(any(target_os = "macos", windows))]
+    #[tokio::test]
+    #[serial]
+    async fn update_current_claude_desktop_provider_syncs_profile_when_proxy_takeover_is_active() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        let mut original = Provider::with_id(
+            "p1".into(),
+            "Desktop A".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-a",
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go"
+                }
+            }),
+            None,
+        );
+        original.meta = Some(ProviderMeta {
+            api_format: Some("openai_chat".into()),
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            claude_desktop_model_routes: std::collections::HashMap::from([(
+                "claude-sonnet-4-6".into(),
+                ClaudeDesktopModelRoute {
+                    model: "deepseek-v4-flash".into(),
+                    label_override: Some("DeepSeek V4 Flash".into()),
+                    supports_1m: None,
+                },
+            )]),
+            ..Default::default()
+        });
+        db.save_provider("claude-desktop", &original)
+            .expect("save provider");
+        db.set_current_provider("claude-desktop", "p1")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::ClaudeDesktop, Some("p1"))
+            .expect("set local current provider");
+
+        // Claude Desktop keeps backup state from takeover startup; this sentinel only
+        // marks takeover as active so provider updates rewrite the 3P profile.
+        db.save_live_backup("claude-desktop", "{}")
+            .await
+            .expect("seed live backup");
+        {
+            let mut config = db
+                .get_proxy_config_for_app("claude-desktop")
+                .await
+                .expect("get app proxy config");
+            config.enabled = true;
+            db.update_proxy_config_for_app(config)
+                .await
+                .expect("update app proxy config");
+        }
+
+        state
+            .proxy_service
+            .start()
+            .await
+            .expect("start proxy service");
+
+        let mut updated = Provider::with_id(
+            "p1".into(),
+            "Desktop A".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-updated",
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go"
+                }
+            }),
+            None,
+        );
+        updated.meta = Some(ProviderMeta {
+            api_format: Some("openai_chat".into()),
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            claude_desktop_model_routes: std::collections::HashMap::from([(
+                "claude-sonnet-4-6".into(),
+                ClaudeDesktopModelRoute {
+                    model: "deepseek-v4-flash".into(),
+                    label_override: Some("DeepSeek V4 Flash Updated".into()),
+                    supports_1m: Some(true),
+                },
+            )]),
+            ..Default::default()
+        });
+
+        ProviderService::update(&state, AppType::ClaudeDesktop, None, updated.clone())
+            .expect("update current provider");
+
+        let backup = db
+            .get_live_backup("claude-desktop")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        assert_eq!(
+            backup.original_config, "{}",
+            "Claude Desktop provider edits should not rewrite takeover backup"
+        );
+
+        let profile_path = claude_desktop_profile_path(home.dir.path());
+        let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
+        assert_eq!(
+            profile["inferenceGatewayBaseUrl"],
+            json!("http://127.0.0.1:15721/claude-desktop"),
+            "desktop profile should stay pointed at the local gateway during takeover"
+        );
+        assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
+        assert_eq!(
+            profile["inferenceModels"],
+            json!([{ "name": "claude-sonnet-4-6", "labelOverride": "DeepSeek V4 Flash Updated", "supports1m": true }]),
+            "provider edits should propagate into the Claude Desktop 3P profile during takeover"
         );
     }
 
@@ -1214,12 +1398,16 @@ impl ProviderService {
             let should_sync_via_proxy = is_proxy_running && (has_live_backup || live_taken_over);
 
             if should_sync_via_proxy {
-                futures::executor::block_on(
-                    state
-                        .proxy_service
-                        .update_live_backup_from_provider(app_type.as_str(), &provider),
-                )
-                .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+                if matches!(app_type, AppType::ClaudeDesktop) {
+                    write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
+                } else {
+                    futures::executor::block_on(
+                        state
+                            .proxy_service
+                            .update_live_backup_from_provider(app_type.as_str(), &provider),
+                    )
+                    .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+                }
 
                 if matches!(app_type, AppType::Claude) {
                     futures::executor::block_on(
@@ -1628,6 +1816,11 @@ impl ProviderService {
             .detect_takeover_in_live_config_for_app(&app_type);
 
         if takeover_enabled && (has_live_backup || live_taken_over) {
+            if matches!(app_type, AppType::ClaudeDesktop) {
+                write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
+                return Ok(());
+            }
+
             futures::executor::block_on(
                 state
                     .proxy_service
@@ -1768,12 +1961,15 @@ impl ProviderService {
             // Auth
             "ANTHROPIC_API_KEY",
             "ANTHROPIC_AUTH_TOKEN",
-            // Models (4 fields + 1 legacy)
+            // Models and Claude Code model-menu display names
             "ANTHROPIC_MODEL",
             "ANTHROPIC_REASONING_MODEL", // legacy: 已废弃，但旧配置可能残留
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
             "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
             "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
             // Endpoint
             "ANTHROPIC_BASE_URL",
         ];
@@ -2145,6 +2341,12 @@ impl ProviderService {
 
         // Validate and clean UsageScript configuration (common for all app types)
         if let Some(meta) = &provider.meta {
+            if let Some(multiplier) = meta.cost_multiplier.as_deref() {
+                validate_cost_multiplier(multiplier)?;
+            }
+            if let Some(source) = meta.pricing_model_source.as_deref() {
+                validate_pricing_source(source)?;
+            }
             if let Some(usage_script) = &meta.usage_script {
                 validate_usage_script(usage_script)?;
             }
@@ -2205,7 +2407,7 @@ impl ProviderService {
                 Ok((credentials.api_key, credentials.base_url))
             }
             AppType::Codex => {
-                let auth = provider
+                let _auth = provider
                     .settings_config
                     .get("auth")
                     .and_then(|v| v.as_object())
@@ -2217,23 +2419,23 @@ impl ProviderService {
                         )
                     })?;
 
-                let api_key = auth
-                    .get("OPENAI_API_KEY")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.codex.api_key.missing",
-                            "缺少 API Key",
-                            "API key is missing",
-                        )
-                    })?
-                    .to_string();
-
                 let config_toml = provider
                     .settings_config
                     .get("config")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
+
+                let api_key = crate::codex_config::extract_codex_api_key(
+                    provider.settings_config.get("auth"),
+                    Some(config_toml),
+                )
+                .ok_or_else(|| {
+                    AppError::localized(
+                        "provider.codex.api_key.missing",
+                        "缺少 API Key",
+                        "API key is missing",
+                    )
+                })?;
 
                 let base_url = if config_toml.contains("base_url") {
                     let re = Regex::new(r#"base_url\s*=\s*["']([^"']+)["']"#).map_err(|e| {

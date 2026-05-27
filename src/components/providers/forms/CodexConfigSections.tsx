@@ -1,10 +1,19 @@
 // NOTE: Codex 1M 上下文 UI 已暂时隐藏（详见下方 CodexConfigSection 内 JSX 注释）。
 // 如需恢复，请同时：
-//   - 在下方 React import 中加回 `useMemo`
 //   - 取消下面 `@/utils/providerConfigUtils` import 的注释
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import JsonEditor from "@/components/JsonEditor";
+import {
+  isCodexGoalModeEnabled,
+  setCodexGoalMode,
+} from "@/utils/providerConfigUtils";
 /*
 import {
   extractCodexTopLevelInt,
@@ -144,6 +153,18 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
     [onChange],
   );
 
+  const goalModeEnabled = useMemo(
+    () => isCodexGoalModeEnabled(localValue),
+    [localValue],
+  );
+
+  const handleGoalModeToggle = useCallback(
+    (checked: boolean) => {
+      handleLocalChange(setCodexGoalMode(localValueRef.current || "", checked));
+    },
+    [handleLocalChange],
+  );
+
   // Codex 1M 上下文相关状态/回调暂时禁用——见同文件下方 JSX 注释处的恢复说明。
   /*
   // Parse toggle states from TOML text
@@ -217,7 +238,7 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <label
           htmlFor="codexConfig"
           className="block text-sm font-medium text-foreground"
@@ -225,15 +246,27 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
           {t("codexConfig.configToml")}
         </label>
 
-        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-          <input
-            type="checkbox"
-            checked={useCommonConfig}
-            onChange={(e) => onCommonConfigToggle(e.target.checked)}
-            className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default  rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-          />
-          {t("codexConfig.writeCommonConfig")}
-        </label>
+        <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1">
+          <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={goalModeEnabled}
+              onChange={(e) => handleGoalModeToggle(e.target.checked)}
+              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            />
+            {t("codexConfig.enableGoalMode")}
+          </label>
+
+          <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={useCommonConfig}
+              onChange={(e) => onCommonConfigToggle(e.target.checked)}
+              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            />
+            {t("codexConfig.writeCommonConfig")}
+          </label>
+        </div>
       </div>
 
       <div className="flex items-center justify-end">

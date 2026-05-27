@@ -3,8 +3,8 @@
  *
  * 形态与 Claude Code 预设不同：
  * - baseUrl 是顶级字段，而不是 settingsConfig.env.ANTHROPIC_BASE_URL
- * - 模型信息以"请求模型 → 上游模型 → 显示模型"三段式表达，
- *   对应后端 ClaudeDesktopModelRoute 的 routeId / model / displayName
+ * - 模型信息以"Desktop 可见模型 ID → 上游模型"表达，
+ *   对应后端 ClaudeDesktopModelRoute 的 routeId / model
  *
  * 翻译来源：src/config/claudeProviderPresets.ts（排除 OAuth 与不兼容预设）
  */
@@ -20,9 +20,22 @@ export type ClaudeDesktopApiFormat =
 export interface ClaudeDesktopRoutePreset {
   routeId: string;
   upstreamModel: string;
-  displayName: string;
+  labelOverride?: string;
   supports1m: boolean;
 }
+
+/**
+ * Claude Desktop 3P fail-all 校验只接受 `claude-(sonnet|opus|haiku)-*` 形式的
+ * routeId（1.6259.1+，实测 2026-05-13）。所有预设工厂、表单角色下拉、
+ * 后端 `next_catalog_safe_route_id` 都从此映射派生 routeId，避免散落硬编码。
+ */
+export const CLAUDE_DESKTOP_ROLE_ROUTE_IDS = {
+  sonnet: "claude-sonnet-4-6",
+  opus: "claude-opus-4-7",
+  haiku: "claude-haiku-4-5",
+} as const;
+
+export type ClaudeDesktopRoleId = keyof typeof CLAUDE_DESKTOP_ROLE_ROUTE_IDS;
 
 export interface ClaudeDesktopProviderPreset {
   name: string;
@@ -39,6 +52,8 @@ export interface ClaudeDesktopProviderPreset {
   mode: "direct" | "proxy";
   apiFormat?: ClaudeDesktopApiFormat;
   modelRoutes?: ClaudeDesktopRoutePreset[];
+  providerType?: "github_copilot" | "codex_oauth";
+  requiresOAuth?: boolean;
 
   endpointCandidates?: string[];
   theme?: PresetTheme;
@@ -48,21 +63,18 @@ export interface ClaudeDesktopProviderPreset {
 
 const passthroughRoutes = (supports1m = false): ClaudeDesktopRoutePreset[] => [
   {
-    routeId: "claude-sonnet-4-6",
-    upstreamModel: "claude-sonnet-4-6",
-    displayName: "Sonnet",
+    routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
+    upstreamModel: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
     supports1m,
   },
   {
-    routeId: "claude-opus-4-7",
-    upstreamModel: "claude-opus-4-7",
-    displayName: "Opus",
+    routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus,
+    upstreamModel: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus,
     supports1m,
   },
   {
-    routeId: "claude-haiku-4-5",
-    upstreamModel: "claude-haiku-4-5",
-    displayName: "Haiku",
+    routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku,
+    upstreamModel: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku,
     supports1m,
   },
 ];
@@ -74,56 +86,69 @@ const mappedRoutes = (
   supports1m = false,
 ): ClaudeDesktopRoutePreset[] => [
   {
-    routeId: "claude-sonnet-4-6",
+    routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
     upstreamModel: sonnet,
-    displayName: "Sonnet",
     supports1m,
   },
   {
-    routeId: "claude-opus-4-7",
+    routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus,
     upstreamModel: opus,
-    displayName: "Opus",
     supports1m,
   },
   {
-    routeId: "claude-haiku-4-5",
+    routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku,
     upstreamModel: haiku,
-    displayName: "Haiku",
     supports1m,
   },
 ];
 
 /**
- * 非 Claude 上游模型用此工厂：displayName 直接等于 upstreamModel，
- * 让用户在 Claude Desktop 看到的就是实际请求的模型 ID（如 "deepseek-v4-pro"）。
+ * 非 Claude 上游模型用此工厂：route ID 使用 Claude Desktop 能通过校验的
+ * Sonnet/Opus/Haiku 路由，真实品牌名只写入 labelOverride 和 upstreamModel。
  */
 const brandedRoutes = (
   sonnet: string,
   opus: string,
   haiku: string,
   supports1m = false,
-): ClaudeDesktopRoutePreset[] => [
-  {
-    routeId: "claude-sonnet-4-6",
-    upstreamModel: sonnet,
-    displayName: sonnet,
-    supports1m,
-  },
-  {
-    routeId: "claude-opus-4-7",
-    upstreamModel: opus,
-    displayName: opus,
-    supports1m,
-  },
-  {
-    routeId: "claude-haiku-4-5",
-    upstreamModel: haiku,
-    displayName: haiku,
-    supports1m,
-  },
-];
+): ClaudeDesktopRoutePreset[] => {
+  const seenUpstream = new Set<string>();
+  return [
+    { routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet, upstreamModel: sonnet },
+    { routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus, upstreamModel: opus },
+    { routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku, upstreamModel: haiku },
+  ]
+    .map(({ routeId, upstreamModel }) => ({
+      routeId,
+      upstreamModel,
+      labelOverride: upstreamModel,
+      supports1m,
+    }))
+    .filter((route) => {
+      if (seenUpstream.has(route.upstreamModel)) {
+        return false;
+      }
+      seenUpstream.add(route.upstreamModel);
+      return true;
+    });
+};
 
 export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
+  {
+    name: "Claude Desktop Official",
+    websiteUrl: "https://claude.ai/download",
+    category: "official",
+    baseUrl: "",
+    mode: "direct",
+    apiFormat: "anthropic",
+    theme: {
+      icon: "claude",
+      backgroundColor: "#D97757",
+      textColor: "#FFFFFF",
+    },
+    icon: "anthropic",
+    iconColor: "#D4915D",
+  },
   {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
@@ -131,12 +156,85 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
     category: "aggregator",
     baseUrl: "https://router.shengsuanyun.com/api",
-    mode: "proxy",
+    mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
     isPartner: true,
     partnerPromotionKey: "shengsuanyun",
     icon: "shengsuanyun",
+  },
+  {
+    name: "PatewayAI",
+    websiteUrl: "https://pateway.ai",
+    apiKeyUrl: "https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/",
+    category: "third_party",
+    baseUrl: "https://api.pateway.ai",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(),
+    isPartner: true,
+    partnerPromotionKey: "patewayai",
+    icon: "pateway",
+  },
+  {
+    name: "火山Agentplan",
+    websiteUrl:
+      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    category: "cn_official",
+    baseUrl: "https://ark.cn-beijing.volces.com/api/coding",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "ark-code-latest",
+      "ark-code-latest",
+      "ark-code-latest",
+    ),
+    icon: "huoshan",
+    iconColor: "#3370FF",
+    isPartner: true,
+    partnerPromotionKey: "volcengine_agentplan",
+  },
+  {
+    name: "BytePlus",
+    websiteUrl:
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    category: "cn_official",
+    baseUrl: "https://ark.ap-southeast.bytepluses.com/api/coding",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "ark-code-latest",
+      "ark-code-latest",
+      "ark-code-latest",
+    ),
+    icon: "byteplus",
+    iconColor: "#3370FF",
+    isPartner: true,
+    partnerPromotionKey: "byteplus",
+  },
+  {
+    name: "DouBaoSeed",
+    websiteUrl:
+      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    category: "cn_official",
+    baseUrl: "https://ark.cn-beijing.volces.com/api/compatible",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "doubao-seed-2-0-code-preview-latest",
+      "doubao-seed-2-0-code-preview-latest",
+      "doubao-seed-2-0-code-preview-latest",
+    ),
+    isPartner: true,
+    partnerPromotionKey: "doubaoseed",
+    icon: "doubao",
+    iconColor: "#3370FF",
   },
   {
     name: "Gemini Native",
@@ -157,6 +255,36 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#4285F4",
   },
   {
+    name: "GitHub Copilot",
+    websiteUrl: "https://github.com/features/copilot",
+    category: "third_party",
+    baseUrl: "https://api.githubcopilot.com",
+    mode: "proxy",
+    apiFormat: "openai_chat",
+    providerType: "github_copilot",
+    requiresOAuth: true,
+    modelRoutes: brandedRoutes(
+      "claude-sonnet-4.6",
+      "claude-sonnet-4.6",
+      "claude-haiku-4.5",
+    ),
+    icon: "github",
+    iconColor: "#000000",
+  },
+  {
+    name: "Codex",
+    websiteUrl: "https://openai.com/chatgpt/pricing",
+    category: "third_party",
+    baseUrl: "https://chatgpt.com/backend-api/codex",
+    mode: "proxy",
+    apiFormat: "openai_responses",
+    providerType: "codex_oauth",
+    requiresOAuth: true,
+    modelRoutes: brandedRoutes("gpt-5.4", "gpt-5.4", "gpt-5.4-mini"),
+    icon: "openai",
+    iconColor: "#000000",
+  },
+  {
     name: "DeepSeek",
     websiteUrl: "https://platform.deepseek.com",
     category: "cn_official",
@@ -170,6 +298,22 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     ),
     icon: "deepseek",
     iconColor: "#1E88E5",
+  },
+  {
+    name: "OpenCode Go (DeepSeek V4 Flash)",
+    websiteUrl: "https://opencode.ai",
+    category: "third_party",
+    baseUrl: "https://opencode.ai/zen/go",
+    mode: "proxy",
+    apiFormat: "openai_chat",
+    modelRoutes: brandedRoutes(
+      "deepseek-v4-flash",
+      "deepseek-v4-flash",
+      "deepseek-v4-flash",
+    ),
+    endpointCandidates: ["https://opencode.ai/zen/go"],
+    icon: "opencode",
+    iconColor: "#211E1E",
   },
   {
     name: "Zhipu GLM",
@@ -359,22 +503,6 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#FF6B6B",
   },
   {
-    name: "DouBaoSeed",
-    websiteUrl: "https://www.volcengine.com/product/doubao",
-    apiKeyUrl: "https://www.volcengine.com/product/doubao",
-    category: "cn_official",
-    baseUrl: "https://ark.cn-beijing.volces.com/api/coding",
-    mode: "proxy",
-    apiFormat: "anthropic",
-    modelRoutes: brandedRoutes(
-      "doubao-seed-2-0-code-preview-latest",
-      "doubao-seed-2-0-code-preview-latest",
-      "doubao-seed-2-0-code-preview-latest",
-    ),
-    icon: "doubao",
-    iconColor: "#3370FF",
-  },
-  {
     name: "BaiLing",
     websiteUrl: "https://alipaytbox.yuque.com/sxs0ba/ling/get_started",
     category: "cn_official",
@@ -390,7 +518,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     category: "aggregator",
     baseUrl: "https://aihubmix.com",
     apiKeyField: "ANTHROPIC_API_KEY",
-    mode: "proxy",
+    mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
     endpointCandidates: ["https://aihubmix.com", "https://api.aihubmix.com"],
@@ -439,7 +567,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiKeyUrl: "https://www.dmxapi.cn",
     category: "aggregator",
     baseUrl: "https://www.dmxapi.cn",
-    mode: "proxy",
+    mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
     endpointCandidates: ["https://www.dmxapi.cn", "https://api.dmxapi.cn"],
@@ -452,7 +580,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
     category: "third_party",
     baseUrl: "https://www.packyapi.com",
-    mode: "proxy",
+    mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
     endpointCandidates: [
@@ -464,12 +592,62 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "packycode",
   },
   {
+    name: "ClaudeAPI",
+    websiteUrl: "https://claudeapi.com",
+    apiKeyUrl: "https://console.claudeapi.com/register?aff=pCLD",
+    category: "aggregator",
+    baseUrl: "https://gw.claudeapi.com",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(),
+    isPartner: true,
+    partnerPromotionKey: "claudeapi",
+    icon: "claudeapi",
+  },
+  {
+    name: "ClaudeCN",
+    websiteUrl: "https://claudecn.top",
+    apiKeyUrl: "https://claudecn.top/register?aff=ccswitch",
+    category: "third_party",
+    baseUrl: "https://claudecn.top",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(),
+    isPartner: true,
+    partnerPromotionKey: "claudecn",
+    icon: "claudecn",
+  },
+  {
+    name: "RunAPI",
+    websiteUrl: "https://runapi.co",
+    apiKeyUrl: "https://runapi.co",
+    category: "aggregator",
+    baseUrl: "https://runapi.co",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(),
+    isPartner: true,
+    partnerPromotionKey: "runapi",
+    icon: "runapi",
+  },
+  {
+    name: "RelaxyCode",
+    websiteUrl: "https://www.relaxycode.com",
+    apiKeyUrl: "https://www.relaxycode.com/register",
+    category: "third_party",
+    baseUrl: "https://www.relaxycode.com",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(),
+    icon: "relaxcode",
+  },
+  {
     name: "Cubence",
     websiteUrl: "https://cubence.com",
     apiKeyUrl: "https://cubence.com/signup?code=CCSWITCH&source=ccs",
     category: "third_party",
     baseUrl: "https://api.cubence.com",
-    mode: "proxy",
+    mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
     endpointCandidates: [
@@ -489,7 +667,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
     category: "third_party",
     baseUrl: "https://api.aigocode.com",
-    mode: "proxy",
+    mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
     endpointCandidates: ["https://api.aigocode.com"],
@@ -504,7 +682,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiKeyUrl: "https://www.right.codes/register?aff=CCSWITCH",
     category: "third_party",
     baseUrl: "https://www.right.codes/claude",
-    mode: "proxy",
+    mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
     isPartner: true,
@@ -518,7 +696,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiKeyUrl: "https://www.aicodemirror.com/register?invitecode=9915W3",
     category: "third_party",
     baseUrl: "https://api.aicodemirror.com/api/claudecode",
-    mode: "proxy",
+    mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
     endpointCandidates: [
@@ -531,30 +709,15 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#000000",
   },
   {
-    name: "AICoding",
-    websiteUrl: "https://aicoding.sh",
-    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
-    category: "third_party",
-    baseUrl: "https://api.aicoding.sh",
-    mode: "proxy",
-    apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
-    endpointCandidates: ["https://api.aicoding.sh"],
-    isPartner: true,
-    partnerPromotionKey: "aicoding",
-    icon: "aicoding",
-    iconColor: "#000000",
-  },
-  {
     name: "CrazyRouter",
     websiteUrl: "https://www.crazyrouter.com",
     apiKeyUrl: "https://www.crazyrouter.com/register?aff=OZcm&ref=cc-switch",
     category: "third_party",
-    baseUrl: "https://crazyrouter.com",
-    mode: "proxy",
+    baseUrl: "https://cn.crazyrouter.com",
+    mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
-    endpointCandidates: ["https://crazyrouter.com"],
+    endpointCandidates: ["https://cn.crazyrouter.com"],
     isPartner: true,
     partnerPromotionKey: "crazyrouter",
     icon: "crazyrouter",
@@ -566,7 +729,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiKeyUrl: "https://www.sssaicode.com/register?ref=DCP0SM",
     category: "third_party",
     baseUrl: "https://node-hk.sssaicode.com/api",
-    mode: "proxy",
+    mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
     endpointCandidates: [
@@ -587,7 +750,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
     category: "aggregator",
     baseUrl: "https://api.modelverse.cn",
-    mode: "proxy",
+    mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
     endpointCandidates: ["https://api.modelverse.cn"],
@@ -604,7 +767,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
     category: "aggregator",
     baseUrl: "https://cp.compshare.cn",
-    mode: "proxy",
+    mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
     endpointCandidates: ["https://cp.compshare.cn"],
@@ -615,14 +778,14 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "Micu",
-    websiteUrl: "https://www.openclaudecode.cn",
-    apiKeyUrl: "https://www.openclaudecode.cn/register?aff=aOYQ",
+    websiteUrl: "https://www.micuapi.ai",
+    apiKeyUrl: "https://www.micuapi.ai/register?aff=aOYQ",
     category: "third_party",
-    baseUrl: "https://www.openclaudecode.cn",
-    mode: "proxy",
+    baseUrl: "https://www.micuapi.ai",
+    mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
-    endpointCandidates: ["https://www.openclaudecode.cn"],
+    endpointCandidates: ["https://www.micuapi.ai"],
     isPartner: true,
     partnerPromotionKey: "micu",
     icon: "micu",
@@ -634,7 +797,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiKeyUrl: "https://ctok.ai",
     category: "third_party",
     baseUrl: "https://api.ctok.ai",
-    mode: "proxy",
+    mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
     isPartner: true,
@@ -643,43 +806,17 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#000000",
   },
   {
-    name: "DDSHub",
-    websiteUrl: "https://www.ddshub.cc",
-    apiKeyUrl: "https://ddshub.short.gy/ccswitch",
-    category: "third_party",
-    baseUrl: "https://www.ddshub.cc",
-    mode: "proxy",
-    apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
-    isPartner: true,
-    partnerPromotionKey: "ddshub",
-    icon: "dds",
-    iconColor: "#000000",
-  },
-  {
     name: "E-FlowCode",
     websiteUrl: "https://e-flowcode.cc",
     apiKeyUrl: "https://e-flowcode.cc",
     category: "third_party",
     baseUrl: "https://e-flowcode.cc",
-    mode: "proxy",
+    mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
     endpointCandidates: ["https://e-flowcode.cc"],
     icon: "eflowcode",
     iconColor: "#000000",
-  },
-  {
-    name: "LionCCAPI",
-    websiteUrl: "https://vibecodingapi.ai",
-    category: "third_party",
-    baseUrl: "https://vibecodingapi.ai",
-    mode: "proxy",
-    apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
-    isPartner: true,
-    partnerPromotionKey: "lionccapi",
-    icon: "lioncc",
   },
   {
     name: "OpenRouter",
@@ -738,7 +875,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     category: "third_party",
     baseUrl: "https://api.lemondata.cc",
     apiKeyField: "ANTHROPIC_API_KEY",
-    mode: "proxy",
+    mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
     isPartner: true,
@@ -767,14 +904,9 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",
     category: "aggregator",
     baseUrl: "https://cc-api.pipellm.ai",
-    mode: "proxy",
+    mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: mappedRoutes(
-      "claude-sonnet-4-6",
-      "claude-opus-4-7",
-      "claude-haiku-4-5-20251001",
-      true,
-    ),
+    modelRoutes: passthroughRoutes(),
     icon: "pipellm",
   },
   {
@@ -785,7 +917,27 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.xiaomimimo.com/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("mimo-v2-pro", "mimo-v2-pro", "mimo-v2-pro"),
+    modelRoutes: brandedRoutes(
+      "mimo-v2.5-pro",
+      "mimo-v2.5-pro",
+      "mimo-v2.5-pro",
+    ),
+    icon: "xiaomimimo",
+    iconColor: "#000000",
+  },
+  {
+    name: "Xiaomi MiMo Token Plan (China)",
+    websiteUrl: "https://platform.xiaomimimo.com/#/token-plan",
+    apiKeyUrl: "https://platform.xiaomimimo.com/#/console/plan-manage",
+    category: "cn_official",
+    baseUrl: "https://token-plan-cn.xiaomimimo.com/anthropic",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "mimo-v2.5-pro",
+      "mimo-v2.5-pro",
+      "mimo-v2.5-pro",
+    ),
     icon: "xiaomimimo",
     iconColor: "#000000",
   },

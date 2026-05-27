@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useUpdateModelPricing } from "@/lib/query/usage";
-import type { ModelPricing } from "@/types/usage";
+import { isNonNegativeDecimalString, type ModelPricing } from "@/types/usage";
 
 interface PricingEditModalProps {
   open: boolean;
@@ -15,6 +15,8 @@ interface PricingEditModalProps {
   isNew?: boolean;
   onClose: () => void;
 }
+
+const PRICE_INPUT_STEP = "0.0001";
 
 export function PricingEditModal({
   open,
@@ -52,8 +54,7 @@ export function PricingEditModal({
     ];
 
     for (const value of values) {
-      const num = parseFloat(value);
-      if (isNaN(num) || num < 0) {
+      if (!isNonNegativeDecimalString(value)) {
         toast.error(t("usage.invalidPrice", "价格必须为非负数"));
         return;
       }
@@ -152,7 +153,7 @@ export function PricingEditModal({
           <Input
             id="inputCost"
             type="number"
-            step="0.01"
+            step={PRICE_INPUT_STEP}
             min="0"
             value={formData.inputCost}
             onChange={(e) =>
@@ -169,7 +170,7 @@ export function PricingEditModal({
           <Input
             id="outputCost"
             type="number"
-            step="0.01"
+            step={PRICE_INPUT_STEP}
             min="0"
             value={formData.outputCost}
             onChange={(e) =>
@@ -189,7 +190,7 @@ export function PricingEditModal({
           <Input
             id="cacheReadCost"
             type="number"
-            step="0.01"
+            step={PRICE_INPUT_STEP}
             min="0"
             value={formData.cacheReadCost}
             onChange={(e) =>
@@ -209,7 +210,7 @@ export function PricingEditModal({
           <Input
             id="cacheCreationCost"
             type="number"
-            step="0.01"
+            step={PRICE_INPUT_STEP}
             min="0"
             value={formData.cacheCreationCost}
             onChange={(e) =>

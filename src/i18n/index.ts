@@ -4,8 +4,9 @@ import { initReactI18next } from "react-i18next";
 import en from "./locales/en.json";
 import ja from "./locales/ja.json";
 import zh from "./locales/zh.json";
+import zhTW from "./locales/zh-TW.json";
 
-type Language = "zh" | "en" | "ja";
+type Language = "zh" | "zh-TW" | "en" | "ja";
 
 const DEFAULT_LANGUAGE: Language = "zh";
 
@@ -13,7 +14,12 @@ const getInitialLanguage = (): Language => {
   if (typeof window !== "undefined") {
     try {
       const stored = window.localStorage.getItem("language");
-      if (stored === "zh" || stored === "en" || stored === "ja") {
+      if (
+        stored === "zh" ||
+        stored === "zh-TW" ||
+        stored === "en" ||
+        stored === "ja"
+      ) {
         return stored;
       }
     } catch (error) {
@@ -26,6 +32,19 @@ const getInitialLanguage = (): Language => {
       ? (navigator.language?.toLowerCase() ??
         navigator.languages?.[0]?.toLowerCase())
       : undefined;
+
+  if (navigatorLang === "zh") {
+    return "zh";
+  }
+
+  if (
+    navigatorLang?.startsWith("zh-tw") ||
+    navigatorLang?.startsWith("zh-hk") ||
+    navigatorLang?.startsWith("zh-mo") ||
+    navigatorLang?.startsWith("zh-hant")
+  ) {
+    return "zh-TW";
+  }
 
   if (navigatorLang?.startsWith("zh")) {
     return "zh";
@@ -51,6 +70,9 @@ const resources = {
   },
   zh: {
     translation: zh,
+  },
+  "zh-TW": {
+    translation: zhTW,
   },
 };
 
