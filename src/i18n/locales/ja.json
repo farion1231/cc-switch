@@ -908,6 +908,8 @@
     "apiFormatAnthropic": "Anthropic Messages（ネイティブ）",
     "apiFormatOpenAIChat": "OpenAI Chat Completions（ルーティングが必要）",
     "apiFormatOpenAIResponses": "OpenAI Responses API（ルーティングが必要）",
+    "codexApiFormatOpenAIChat": "OpenAI Chat Completions（ルーティングが必要）",
+    "codexApiFormatOpenAIResponses": "OpenAI Responses API（ネイティブ）",
     "apiFormatGeminiNative": "Gemini Native generateContent（ルーティングが必要）",
     "authField": "認証フィールド",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN（デフォルト）",

@@ -908,6 +908,8 @@
     "apiFormatAnthropic": "Anthropic Messages (Native)",
     "apiFormatOpenAIChat": "OpenAI Chat Completions (Requires routing)",
     "apiFormatOpenAIResponses": "OpenAI Responses API (Requires routing)",
+    "codexApiFormatOpenAIChat": "OpenAI Chat Completions (Requires routing)",
+    "codexApiFormatOpenAIResponses": "OpenAI Responses API (Native)",
     "apiFormatGeminiNative": "Gemini Native generateContent (Requires routing)",
     "authField": "Auth Field",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN (Default)",

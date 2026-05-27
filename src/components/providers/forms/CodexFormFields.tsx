@@ -154,12 +154,12 @@ export function CodexFormFields({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="openai_responses">
-                {t("providerForm.apiFormatOpenAIResponses", {
+                {t("providerForm.codexApiFormatOpenAIResponses", {
                   defaultValue: "OpenAI Responses API (原生)",
                 })}
               </SelectItem>
               <SelectItem value="openai_chat">
-                {t("providerForm.apiFormatOpenAIChat", {
+                {t("providerForm.codexApiFormatOpenAIChat", {
                   defaultValue: "OpenAI Chat Completions (需开启路由)",
                 })}
               </SelectItem>

@@ -908,6 +908,8 @@
     "apiFormatAnthropic": "Anthropic Messages (原生)",
     "apiFormatOpenAIChat": "OpenAI Chat Completions (需开启路由)",
     "apiFormatOpenAIResponses": "OpenAI Responses API (需开启路由)",
+    "codexApiFormatOpenAIChat": "OpenAI Chat Completions (需开启路由)",
+    "codexApiFormatOpenAIResponses": "OpenAI Responses API (原生)",
     "apiFormatGeminiNative": "Gemini Native generateContent (需开启路由)",
     "authField": "认证字段",
     "authFieldAuthToken": "ANTHROPIC_AUTH_TOKEN（默认）",
