@@ -558,7 +558,7 @@
     "useAppWindowControls": "啟用應用程式等級視窗按鈕",
     "useAppWindowControlsDescription": "開啟後使用應用程式自建的最小化、最大化/還原、關閉按鈕；關閉後沿用系統視窗模式。",
     "enableClaudePluginIntegration": "套用至 Claude Code 外掛程式",
-    "enableClaudePluginIntegrationDescription": "開啟後 Vscode Claude Code 外掛程式的供應商將隨本軟體切換",
+    "enableClaudePluginIntegrationDescription": "開啟後 VS Code Claude Code 外掛程式的供應商將隨本軟體切換",
     "skipClaudeOnboarding": "跳過 Claude Code 初次安裝確認",
     "skipClaudeOnboardingDescription": "開啟後跳過 Claude Code 初次安裝確認",
     "appVisibility": {

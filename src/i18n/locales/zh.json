@@ -558,7 +558,7 @@
     "useAppWindowControls": "启用应用级窗口按钮",
     "useAppWindowControlsDescription": "开启后使用应用自建的最小化、最大化/还原、关闭按钮；关闭后沿用系统窗口模式。",
     "enableClaudePluginIntegration": "应用到 Claude Code 插件",
-    "enableClaudePluginIntegrationDescription": "开启后 Vscode Claude Code 插件的供应商将随本软件切换",
+    "enableClaudePluginIntegrationDescription": "开启后 VS Code Claude Code 插件的供应商将随本软件切换",
     "skipClaudeOnboarding": "跳过 Claude Code 初次安装确认",
     "skipClaudeOnboardingDescription": "开启后跳过 Claude Code 初次安装确认",
     "appVisibility": {
