@@ -925,7 +925,7 @@ export interface ModelsCatalogEntry {
   supported_in_api: boolean;
   priority: number;
   additional_speed_tiers: string[];
-  default_reasoning_level: string;
+  default_reasoning_level?: string;
   supported_reasoning_levels: Array<{
     effort: string;
     description: string;
@@ -947,39 +947,100 @@ export interface ModelsCatalogEntry {
   supports_search_tool: boolean;
 }
 
+interface ModelCapabilities {
+  contextWindow: number;
+  maxContextWindow: number;
+  effectiveContextWindowPercent: number;
+  supportsReasoning: boolean;
+}
+
+const DEFAULT_CAPABILITIES: ModelCapabilities = {
+  contextWindow: 128000,
+  maxContextWindow: 128000,
+  effectiveContextWindowPercent: 95,
+  supportsReasoning: false,
+};
+
+// 按前缀长度降序排列，长前缀优先匹配
+const MODEL_CAPABILITIES: Array<[string, ModelCapabilities]> = [
+  [
+    "deepseek-reasoner",
+    {
+      contextWindow: 64000,
+      maxContextWindow: 64000,
+      effectiveContextWindowPercent: 95,
+      supportsReasoning: true,
+    },
+  ],
+  [
+    "deepseek-chat",
+    {
+      contextWindow: 128000,
+      maxContextWindow: 128000,
+      effectiveContextWindowPercent: 95,
+      supportsReasoning: false,
+    },
+  ],
+  [
+    "deepseek",
+    {
+      contextWindow: 128000,
+      maxContextWindow: 128000,
+      effectiveContextWindowPercent: 95,
+      supportsReasoning: true,
+    },
+  ],
+];
+
+function lookupModelCapabilities(modelId: string): ModelCapabilities {
+  for (const [prefix, caps] of MODEL_CAPABILITIES) {
+    if (modelId === prefix || modelId.startsWith(`${prefix}-`)) {
+      return caps;
+    }
+  }
+  return DEFAULT_CAPABILITIES;
+}
+
 export function generateModelsCatalog(models: string[]): {
   models: ModelsCatalogEntry[];
 } {
   return {
-    models: models.map((slug) => ({
-      slug,
-      display_name: slug,
-      shell_type: "unified_exec",
-      visibility: "list",
-      supported_in_api: true,
-      priority: 0,
-      additional_speed_tiers: [],
-      default_reasoning_level: "high",
-      supported_reasoning_levels: [
-        { effort: "high", description: "深度推理" },
-        { effort: "low", description: "快速响应" },
-      ],
-      base_instructions: "You are a helpful coding assistant.",
-      supports_reasoning_summaries: false,
-      default_reasoning_summary: "none",
-      support_verbosity: false,
-      apply_patch_tool_type: "freeform",
-      web_search_tool_type: "text",
-      truncation_policy: { mode: "tokens", limit: 10000 },
-      supports_parallel_tool_calls: true,
-      supports_image_detail_original: false,
-      context_window: 200000,
-      max_context_window: 200000,
-      effective_context_window_percent: 95,
-      experimental_supported_tools: [],
-      input_modalities: ["text"],
-      supports_search_tool: false,
-    })),
+    models: models.map((slug) => {
+      const caps = lookupModelCapabilities(slug);
+      const defaultReasoningLevel = caps.supportsReasoning ? "high" : undefined;
+      const supportedReasoningLevels = caps.supportsReasoning
+        ? [
+            { effort: "high" as const, description: "深度推理" },
+            { effort: "low" as const, description: "快速响应" },
+          ]
+        : [];
+      return {
+        slug,
+        display_name: slug,
+        shell_type: "unified_exec",
+        visibility: "list",
+        supported_in_api: true,
+        priority: 0,
+        additional_speed_tiers: [],
+        default_reasoning_level: defaultReasoningLevel,
+        supported_reasoning_levels: supportedReasoningLevels,
+        base_instructions: "You are a helpful coding assistant.",
+        supports_reasoning_summaries: false,
+        default_reasoning_summary: "none",
+        support_verbosity: false,
+        apply_patch_tool_type: "freeform",
+        web_search_tool_type: "text",
+        truncation_policy: { mode: "tokens", limit: 10000 },
+        supports_parallel_tool_calls: true,
+        supports_image_detail_original: false,
+        context_window: caps.contextWindow,
+        max_context_window: caps.maxContextWindow,
+        effective_context_window_percent: caps.effectiveContextWindowPercent,
+        experimental_supported_tools: [],
+        input_modalities: ["text"],
+        supports_search_tool: false,
+      };
+    }),
   };
 }
 

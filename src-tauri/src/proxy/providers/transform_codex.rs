@@ -14,24 +14,30 @@ use std::sync::{LazyLock, Mutex};
 static REASONING_CACHE: LazyLock<Mutex<HashMap<String, String>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// REASONING_CACHE 中允许的最大条目数，防止未消费 ID 失控。
+const REASONING_CACHE_MAX_ENTRIES: usize = 100;
+
 /// 缓存 reasoning_content，按 tool_call IDs
 pub fn cache_reasoning_for_tool_calls(reasoning: &str, tool_call_ids: &[String]) {
     if reasoning.is_empty() || tool_call_ids.is_empty() {
         return;
     }
     if let Ok(mut cache) = REASONING_CACHE.lock() {
+        if cache.len() + tool_call_ids.len() > REASONING_CACHE_MAX_ENTRIES {
+            cache.clear();
+        }
         for id in tool_call_ids {
             cache.insert(id.clone(), reasoning.to_string());
         }
     }
 }
 
-/// 按 tool_call ID 查找缓存的 reasoning_content
-fn get_cached_reasoning(tool_call_id: &str) -> Option<String> {
+/// 按 tool_call ID 查找并移除缓存的 reasoning_content（消费即删除，防止内存泄漏）
+fn remove_cached_reasoning(tool_call_id: &str) -> Option<String> {
     REASONING_CACHE
         .lock()
         .ok()
-        .and_then(|cache| cache.get(tool_call_id).cloned())
+        .and_then(|mut cache| cache.remove(tool_call_id))
 }
 
 /// OpenAI Responses API 请求 → OpenAI Chat Completions 请求
@@ -291,14 +297,15 @@ fn inject_reasoning_into_message(msg: &mut Value) {
     // 检查任意 tool_call 是否有缓存
     for tc in tool_calls {
         if let Some(call_id) = tc.get("id").and_then(|v| v.as_str()) {
-            if let Some(reasoning) = get_cached_reasoning(call_id) {
+            if let Some(reasoning) = remove_cached_reasoning(call_id) {
                 msg["reasoning_content"] = json!(reasoning);
                 return;
             }
         }
     }
-    // 兜底：即使缓存为空，DeepSeek 也要求字段存在
-    // 设置空字符串以确保 JSON 序列化时输出 "reasoning_content": ""
+    // 兜底：即使缓存为空，DeepSeek 推理 API 也要求 assistant tool_calls 消息中存在
+    // reasoning_content 字段。非推理模型不会触发此路径（它们不产生 reasoning_content
+    // 也不会被 cache_reasoning_for_tool_calls 缓存），故此兜底安全。
     msg["reasoning_content"] = json!("");
 }
 
@@ -1084,5 +1091,67 @@ mod tests {
         let result = chat_completions_to_responses(input);
         assert_eq!(result["id"], "chatcmpl-session-123");
         assert_eq!(result["object"], "response");
+    }
+
+    #[test]
+    fn test_reasoning_cache_round_trip() {
+        // Step 1: Simulate DeepSeek response with reasoning_content + tool_calls
+        let deepseek_resp = json!({
+            "id": "chatcmpl-r1",
+            "model": "deepseek-reasoner",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Thinking...",
+                    "reasoning_content": "I need to calculate...",
+                    "tool_calls": [{
+                        "id": "call_u1",
+                        "type": "function",
+                        "function": {"name": "calc", "arguments": "{\"x\":1}"}
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 10, "total_tokens": 15}
+        });
+        let _result = chat_completions_to_responses(deepseek_resp);
+        // Cache should now contain call_u1 -> "I need to calculate..."
+
+        // Step 2: Convert next request — should inject cached reasoning
+        let next_req = json!({
+            "model": "deepseek-reasoner",
+            "input": [
+                {"type": "function_call", "call_id": "call_u1",
+                 "name": "calc", "arguments": "{\"x\":1}"},
+                {"type": "function_call_output", "call_id": "call_u1",
+                 "output": "42"}
+            ]
+        });
+        let result = responses_to_chat_completions(next_req);
+        let msgs = result["messages"].as_array().unwrap();
+        assert_eq!(msgs[0]["role"], "assistant");
+        assert_eq!(
+            msgs[0]["reasoning_content"], "I need to calculate...",
+            "first request should inject cached reasoning_content"
+        );
+
+        // Step 3: Same call_id again — should NOT have reasoning_content (consumed)
+        let third_req = json!({
+            "model": "deepseek-reasoner",
+            "input": [
+                {"type": "function_call", "call_id": "call_u1",
+                 "name": "calc", "arguments": "{\"x\":1}"},
+                {"type": "function_call_output", "call_id": "call_u1",
+                 "output": "100"}
+            ]
+        });
+        let result2 = responses_to_chat_completions(third_req);
+        let msgs2 = result2["messages"].as_array().unwrap();
+        assert_eq!(msgs2[0]["role"], "assistant");
+        assert_eq!(
+            msgs2[0]["reasoning_content"], "",
+            "after consumption, reasoning_content should be empty string (DeepSeek requires field)"
+        );
     }
 }

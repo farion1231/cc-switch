@@ -70,7 +70,12 @@ fn sanitize_headers(headers: &str) -> String {
         let lower = line.to_lowercase();
         if lower.contains("authorization")
             || lower.contains("api-key")
-            || lower.contains("x-api-key")
+            || lower.contains("proxy-authorization")
+            || lower.contains("chatgpt-account-id")
+            || lower.contains("cookie")
+            || lower.contains("x-forwarded-for")
+            || lower.contains("x-real-ip")
+            || lower.contains("csrf-token")
         {
             if let Some(colon) = line.find(':') {
                 result.push_str(&line[..=colon]);

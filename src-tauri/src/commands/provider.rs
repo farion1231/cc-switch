@@ -56,7 +56,7 @@ pub fn update_provider(
     // 保存 Codex provider 时同步更新 models_catalog.json（在 update 前提取数据）
     let needs_codex_sync = app_type == AppType::Codex
         && crate::settings::get_current_provider(&app_type)
-            .is_some_and(|cid| cid == originalId.as_deref().unwrap_or(&"") || cid == provider.id);
+            .is_some_and(|cid| cid == originalId.as_deref().unwrap_or("") || cid == provider.id);
     let codex_sync_data = if needs_codex_sync {
         provider.settings_config.as_object().and_then(|s| {
             let auth = s.get("auth")?;

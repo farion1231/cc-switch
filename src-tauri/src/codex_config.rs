@@ -127,11 +127,80 @@ struct CodexModelsCatalog {
     models: Vec<CodexModelCatalogEntry>,
 }
 
+/// 每个模型的能力，通过模型名称模式匹配查找。
+#[derive(Copy, Clone)]
+struct ModelCapabilities {
+    context_window: u32,
+    max_context_window: u32,
+    effective_context_window_percent: u32,
+    supports_reasoning: bool,
+}
+
+const DEFAULT_CAPABILITIES: ModelCapabilities = ModelCapabilities {
+    context_window: 128000,
+    max_context_window: 128000,
+    effective_context_window_percent: 95,
+    supports_reasoning: false,
+};
+
+/// 静态模型能力查找表。
+/// 按前缀长度降序排列，长前缀优先匹配。
+const MODEL_CAPABILITIES: &[(&str, ModelCapabilities)] = &[
+    (
+        "deepseek-reasoner",
+        ModelCapabilities {
+            context_window: 64000,
+            max_context_window: 64000,
+            effective_context_window_percent: 95,
+            supports_reasoning: true,
+        },
+    ),
+    (
+        "deepseek-chat",
+        ModelCapabilities {
+            context_window: 128000,
+            max_context_window: 128000,
+            effective_context_window_percent: 95,
+            supports_reasoning: false,
+        },
+    ),
+    (
+        "deepseek",
+        ModelCapabilities {
+            context_window: 128000,
+            max_context_window: 128000,
+            effective_context_window_percent: 95,
+            supports_reasoning: true,
+        },
+    ),
+];
+
+fn lookup_model_capabilities(model_id: &str) -> ModelCapabilities {
+    for (prefix, caps) in MODEL_CAPABILITIES {
+        if model_id == *prefix || model_id.starts_with(&format!("{prefix}-")) {
+            return *caps;
+        }
+    }
+    DEFAULT_CAPABILITIES
+}
+
 /// 从模型名列表构建默认 catalog entries
 fn build_default_catalog_entries(models: &[String]) -> Vec<CodexModelCatalogEntry> {
     models
         .iter()
         .map(|model_id| {
+            let caps = lookup_model_capabilities(model_id);
+            let (default_reasoning_level, supported_reasoning_levels) = if caps.supports_reasoning {
+                (
+                    Some("high".to_string()),
+                    vec![
+                        json!({"effort": "high", "description": "深度推理"}),
+                        json!({"effort": "low", "description": "快速响应"}),
+                    ],
+                )
+            } else {
+                (None, vec![])
+            };
             let display_name = model_id.clone();
             CodexModelCatalogEntry {
                 slug: model_id.clone(),
@@ -142,11 +211,8 @@ fn build_default_catalog_entries(models: &[String]) -> Vec<CodexModelCatalogEntr
                 supported_in_api: true,
                 priority: 0,
                 additional_speed_tiers: vec![],
-                default_reasoning_level: Some("high".to_string()),
-                supported_reasoning_levels: vec![
-                    json!({"effort": "high", "description": "深度推理"}),
-                    json!({"effort": "low", "description": "快速响应"}),
-                ],
+                default_reasoning_level,
+                supported_reasoning_levels,
                 availability_nux: None,
                 upgrade: None,
                 base_instructions: "You are a helpful coding assistant.".to_string(),
@@ -159,10 +225,10 @@ fn build_default_catalog_entries(models: &[String]) -> Vec<CodexModelCatalogEntr
                 truncation_policy: json!({"mode": "tokens", "limit": 10000}),
                 supports_parallel_tool_calls: true,
                 supports_image_detail_original: false,
-                context_window: Some(200000),
-                max_context_window: Some(200000),
+                context_window: Some(caps.context_window),
+                max_context_window: Some(caps.max_context_window),
                 auto_compact_token_limit: None,
-                effective_context_window_percent: 95,
+                effective_context_window_percent: caps.effective_context_window_percent,
                 experimental_supported_tools: vec![],
                 input_modalities: vec!["text".to_string()],
                 supports_search_tool: false,
@@ -1210,15 +1276,47 @@ model = "deepseek-v4-pro"
 
     #[test]
     fn build_catalog_entries_creates_valid_structure() {
-        let entries = build_default_catalog_entries(&["deepseek-v4-pro".to_string()]);
+        // Use a model ID that doesn't match any prefix to test DEFAULT_CAPABILITIES
+        let entries = build_default_catalog_entries(&["unknown-model".to_string()]);
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].slug, "deepseek-v4-pro");
-        assert_eq!(entries[0].display_name, "deepseek-v4-pro");
+        assert_eq!(entries[0].slug, "unknown-model");
+        assert_eq!(entries[0].display_name, "unknown-model");
         assert_eq!(entries[0].shell_type, "unified_exec");
-        assert_eq!(entries[0].context_window, Some(200000));
+        assert_eq!(entries[0].context_window, Some(128000));
         assert!(entries[0].additional_speed_tiers.is_empty());
         assert!(entries[0].experimental_supported_tools.is_empty());
-        assert_eq!(entries[0].supported_reasoning_levels.len(), 2);
+        assert!(
+            entries[0].supported_reasoning_levels.is_empty(),
+            "non-matching model should have no reasoning levels by default"
+        );
+        assert!(entries[0].default_reasoning_level.is_none());
         assert_eq!(entries[0].input_modalities, vec!["text"]);
+    }
+
+    #[test]
+    fn test_reasoner_model_capabilities() {
+        let entries = build_default_catalog_entries(&["deepseek-reasoner".to_string()]);
+        assert_eq!(entries[0].context_window, Some(64000));
+        assert_eq!(entries[0].default_reasoning_level, Some("high".to_string()));
+        assert_eq!(entries[0].supported_reasoning_levels.len(), 2);
+    }
+
+    #[test]
+    fn test_chat_model_capabilities() {
+        let entries = build_default_catalog_entries(&["deepseek-chat".to_string()]);
+        assert_eq!(entries[0].context_window, Some(128000));
+        assert!(entries[0].default_reasoning_level.is_none());
+        assert!(entries[0].supported_reasoning_levels.is_empty());
+    }
+
+    #[test]
+    fn test_deepseek_prefix_does_not_match_chat() {
+        // "deepseek" prefix must not match before "deepseek-chat" is tried
+        let entries = build_default_catalog_entries(&["deepseek-chat".to_string()]);
+        assert_eq!(entries[0].context_window, Some(128000));
+        assert!(
+            entries[0].default_reasoning_level.is_none(),
+            "deepseek-chat should not get reasoning capabilities from 'deepseek' fallback"
+        );
     }
 }

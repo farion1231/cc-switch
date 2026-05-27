@@ -130,7 +130,7 @@ pub async fn handle_codex_models(
 
     let models = crate::services::model_fetch::fetch_models(&base_url, &auth.api_key, false, None)
         .await
-        .map_err(|e| ProxyError::ConfigError(e))?;
+        .map_err(ProxyError::ConfigError)?;
 
     let data: Vec<Value> = models
         .into_iter()
@@ -169,7 +169,7 @@ async fn handle_messages_for_app(
 
     req_logger::log_incoming(
         tag,
-        &parts.method.to_string(),
+        parts.method.as_ref(),
         &uri.to_string(),
         &format!("{:?}", headers),
         &serde_json::to_string_pretty(&body).unwrap_or_else(|_| format!("{:?}", body)),
@@ -536,7 +536,7 @@ pub async fn handle_chat_completions(
 
     req_logger::log_incoming(
         "Codex",
-        &parts.method.to_string(),
+        parts.method.as_ref(),
         &uri.to_string(),
         &format!("{:?}", headers),
         &serde_json::to_string_pretty(&body).unwrap_or_else(|_| format!("{:?}", body)),
@@ -622,7 +622,7 @@ pub async fn handle_responses(
 
     req_logger::log_incoming(
         "Codex",
-        &parts.method.to_string(),
+        parts.method.as_ref(),
         &uri.to_string(),
         &format!("{:?}", headers),
         &serde_json::to_string_pretty(&body).unwrap_or_else(|_| format!("{:?}", body)),
@@ -786,7 +786,7 @@ pub async fn handle_responses_compact(
 
     req_logger::log_incoming(
         "Codex",
-        &parts.method.to_string(),
+        parts.method.as_ref(),
         &uri.to_string(),
         &format!("{:?}", headers),
         &serde_json::to_string_pretty(&body).unwrap_or_else(|_| format!("{:?}", body)),

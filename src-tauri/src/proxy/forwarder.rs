@@ -1624,7 +1624,7 @@ impl RequestForwarder {
             }
             req_logger::log_upstream_req(
                 app_type.as_str(),
-                &method.to_string(),
+                method.as_ref(),
                 &url,
                 &String::from_utf8_lossy(&body_bytes),
             );
@@ -1653,7 +1653,7 @@ impl RequestForwarder {
             // 如果有 HTTP 代理，hyper_client 会用 CONNECT 隧道穿过代理
             req_logger::log_upstream_req(
                 app_type.as_str(),
-                &method.to_string(),
+                method.as_ref(),
                 &url,
                 &String::from_utf8_lossy(&body_bytes),
             );
