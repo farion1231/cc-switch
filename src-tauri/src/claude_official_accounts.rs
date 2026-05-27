@@ -245,12 +245,23 @@ async fn query_claude_quota_for_token(access_token: &str) -> Result<Subscription
 }
 
 fn activate_best_available_account(preferred_account_id: &str) -> Result<Vec<String>, AppError> {
-    let preferred = refresh_account_quota_blocking(preferred_account_id)?;
-    if !is_quota_near_limit(preferred.quota.as_ref()) {
-        return activate_account(&preferred.id);
+    let preferred = match refresh_account_quota_blocking(preferred_account_id) {
+        Ok(account) => Some(account),
+        Err(err) => {
+            log::warn!(
+                "Preferred Claude official account {preferred_account_id} unavailable, trying fallback accounts: {err}"
+            );
+            None
+        }
+    };
+
+    if let Some(preferred) = preferred.as_ref() {
+        if !is_quota_near_limit(preferred.quota.as_ref()) {
+            return activate_account(&preferred.id);
+        }
     }
 
-    if let Some(account) = first_available_account(Some(&preferred.id))? {
+    if let Some(account) = first_available_account(Some(preferred_account_id))? {
         let mut warnings = activate_account(&account.id)?;
         warnings.push(format!(
             "claude_official_auto_switched:{}",
@@ -260,8 +271,12 @@ fn activate_best_available_account(preferred_account_id: &str) -> Result<Vec<Str
     }
 
     Err(AppError::Message(
-        "当前 Claude Official 账号 5h/7d 用量已接近 95%，且没有找到可自动切换的可用账号。"
-            .to_string(),
+        if preferred.is_some() {
+            "当前 Claude Official 账号 5h/7d 用量已接近 95%，且没有找到可自动切换的可用账号。"
+        } else {
+            "绑定的 Claude Official 账号快照不可用，且没有找到可自动切换的可用账号。"
+        }
+        .to_string(),
     ))
 }
 
