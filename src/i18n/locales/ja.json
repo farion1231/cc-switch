@@ -1102,6 +1102,7 @@
     "editCommonConfig": "共通設定を編集",
     "editCommonConfigTitle": "Codex 共通設定スニペットを編集",
     "commonConfigHint": "「共通設定を書き込む」がオンの場合、config.toml の末尾に追記されます",
+    "enableGoalMode": "Goal mode を有効化",
     "apiUrlLabel": "API リクエスト URL",
     "extractFromCurrent": "編集内容から抽出",
     "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",

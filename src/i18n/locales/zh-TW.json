@@ -1074,6 +1074,7 @@
     "editCommonConfig": "編輯通用設定",
     "editCommonConfigTitle": "編輯 Codex 通用設定片段",
     "commonConfigHint": "該片段會在勾選「寫入通用設定」時附加到 config.toml 末尾",
+    "enableGoalMode": "啟用 Goal mode",
     "apiUrlLabel": "API 請求位址",
     "extractFromCurrent": "從編輯內容擷取",
     "extractNoCommonConfig": "目前編輯內容沒有可擷取的通用設定",

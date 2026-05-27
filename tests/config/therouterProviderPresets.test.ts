@@ -42,8 +42,7 @@ describe("TheRouter provider presets", () => {
     expect(preset?.config).toContain("[model_providers.custom]");
     expect(preset?.config).toContain('name = "therouter"');
     expect(preset?.config).toContain('model = "openai/gpt-5.3-codex"');
-    expect(preset?.config).toContain("[features]");
-    expect(preset?.config).toContain("goals = true");
+    expect(preset?.config).not.toContain("goals = true");
     expect(preset?.config).toContain(
       'base_url = "https://api.therouter.ai/v1"',
     );

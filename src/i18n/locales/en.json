@@ -1102,6 +1102,7 @@
     "editCommonConfig": "Edit Common Config",
     "editCommonConfigTitle": "Edit Codex Common Config Snippet",
     "commonConfigHint": "This snippet will be appended to the end of config.toml when 'Write Common Config' is checked",
+    "enableGoalMode": "Enable Goal mode",
     "apiUrlLabel": "API Request URL",
     "extractFromCurrent": "Extract from Editor",
     "extractNoCommonConfig": "No common config available to extract from editor",
