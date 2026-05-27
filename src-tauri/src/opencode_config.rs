@@ -46,6 +46,16 @@ pub fn get_opencode_config_path() -> PathBuf {
     get_opencode_dir().join("opencode.json")
 }
 
+/// 获取 OpenCode SQLite 数据库路径
+/// 数据目录遵循 XDG_DATA_HOME 或默认 ~/.local/share/opencode/
+pub fn get_opencode_db_path() -> PathBuf {
+    crate::config::get_home_dir()
+        .join(".local")
+        .join("share")
+        .join("opencode")
+        .join("opencode.db")
+}
+
 #[allow(dead_code)]
 pub fn get_opencode_env_path() -> PathBuf {
     get_opencode_dir().join(".env")

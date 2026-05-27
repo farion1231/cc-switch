@@ -1256,7 +1256,8 @@
       "all": "All",
       "claude": "Claude Code",
       "codex": "Codex",
-      "gemini": "Gemini"
+      "gemini": "Gemini",
+      "opencode": "OpenCode"
     },
     "rawInputLabel": "Raw",
     "dataSources": "Data Sources",

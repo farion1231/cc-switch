@@ -1202,7 +1202,8 @@
       "all": "全部",
       "claude": "Claude Code",
       "codex": "Codex",
-      "gemini": "Gemini"
+      "gemini": "Gemini",
+      "opencode": "OpenCode"
     },
     "rawInputLabel": "原始",
     "dataSources": "資料來源",
