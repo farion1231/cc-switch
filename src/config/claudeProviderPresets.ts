@@ -230,6 +230,25 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#1E88E5",
   },
   {
+    name: "OpenCode Go (DeepSeek V4 Flash)",
+    websiteUrl: "https://opencode.ai",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "deepseek-v4-flash",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-flash",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-flash",
+      },
+    },
+    category: "third_party",
+    apiFormat: "openai_chat",
+    endpointCandidates: ["https://opencode.ai/zen/go"],
+    icon: "opencode",
+    iconColor: "#211E1E",
+  },
+  {
     name: "Zhipu GLM",
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
@@ -614,7 +633,7 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
-    category: "third_party",
+    category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "claudeapi",
     icon: "claudeapi",
@@ -736,23 +755,6 @@ export const providerPresets: ProviderPreset[] = [
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "aicodemirror", // 促销信息 i18n key
     icon: "aicodemirror",
-    iconColor: "#000000",
-  },
-  {
-    name: "AICoding",
-    websiteUrl: "https://aicoding.sh",
-    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://api.aicoding.sh",
-        ANTHROPIC_AUTH_TOKEN: "",
-      },
-    },
-    endpointCandidates: ["https://api.aicoding.sh"],
-    category: "third_party",
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "aicoding", // 促销信息 i18n key
-    icon: "aicoding",
     iconColor: "#000000",
   },
   {

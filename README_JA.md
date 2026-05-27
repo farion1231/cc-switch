@@ -13,7 +13,7 @@
 
 ### 🌐 唯一の公式サイト：**[ccswitch.io](https://ccswitch.io)**
 
-[English](README.md) | [中文](README_ZH.md) | 日本語 | [Changelog](CHANGELOG.md)
+[English](README.md) | [中文](README_ZH.md) | 日本語 | [Deutsch](README_DE.md) | [Changelog](CHANGELOG.md)
 
 </div>
 
@@ -84,11 +84,6 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 <tr>
 <td width="180"><a href="https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch"><img src="assets/partners/logos/ucloud.png" alt="Compshare" width="150"></a></td>
 <td>Compshare のご支援に感謝します！Compshare は UCloud 傘下の AI クラウドプラットフォームで、国内外の安定した包括的なモデル API を 1 つのキーだけで利用可能。月額・都度課金のコストパフォーマンスに優れた国内モデル Coding Plan パッケージを提供し、公式リレーによる安定した海外モデルも利用できます。Claude Code、Codex および API アクセスに対応。エンタープライズ級の高同時接続、24 時間年中無休のテクニカルサポート、セルフサービス請求書発行に対応。<a href="https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch">こちらのリンク</a>から登録すると、無料で 5 元分のプラットフォーム体験クレジットがもらえます！</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://aicoding.sh/i/CCSWITCH"><img src="assets/partners/logos/aicoding.jpg" alt="AICoding" width="150"></a></td>
-<td>AICoding.sh のご支援に感謝します！AICoding.sh —— グローバル AI モデル API 超お得な中継サービス！Claude Code 81% オフ、GPT 99% オフ！数百社の企業に高コストパフォーマンスの AI サービスを提供。Claude Code、GPT、Gemini および国内主要モデルに対応、エンタープライズ級の高同時接続、迅速な請求書発行、24 時間年中無休の専属テクニカルサポート。<a href="https://aicoding.sh/i/CCSWITCH">こちらのリンク</a>から登録した CC Switch ユーザーは、初回チャージ 10% オフ！</td>
 </tr>
 
 <tr>

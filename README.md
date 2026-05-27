@@ -13,7 +13,7 @@
 
 ### 🌐 The Only Official Website: **[ccswitch.io](https://ccswitch.io)**
 
-English | [中文](README_ZH.md) | [日本語](README_JA.md) | [Changelog](CHANGELOG.md)
+English | [中文](README_ZH.md) | [日本語](README_JA.md) | [Deutsch](README_DE.md) | [Changelog](CHANGELOG.md)
 
 </div>
 
@@ -84,11 +84,6 @@ Register now via <a href="https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/">this lin
 <tr>
 <td width="180"><a href="https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch"><img src="assets/partners/logos/ucloud.png" alt="Compshare" width="150"></a></td>
 <td>Thanks to Compshare for sponsoring this project! Compshare is UCloud's AI cloud platform, providing stable and comprehensive domestic and international model APIs with just one key. Featuring cost-effective monthly and per-use domestic-model Coding Plan packages, alongside stable officially-relayed overseas models. Supports Claude Code, Codex, and API access. Enterprise-grade high concurrency, 24/7 technical support, and self-service invoicing. Users who register via <a href="https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch">this link</a> will receive a free 5 CNY platform trial credit!</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://aicoding.sh/i/CCSWITCH"><img src="assets/partners/logos/aicoding.jpg" alt="AICoding" width="150"></a></td>
-<td>Thanks to AICoding.sh for sponsoring this project! AICoding.sh — Global AI Model API Relay Service at Unbeatable Prices! Claude Code at 19% of original price, GPT at just 1%! Trusted by hundreds of enterprises for cost-effective AI services. Supports Claude Code, GPT, Gemini and major domestic models, with enterprise-grade high concurrency, fast invoicing, and 24/7 dedicated technical support. CC Switch users who register via <a href="https://aicoding.sh/i/CCSWITCH">this link</a> get 10% off their first top-up!</td>
 </tr>
 
 <tr>
