@@ -3,6 +3,9 @@
   "version": "3.15.0",
   "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI",
   "type": "module",
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "msw"]
+  },
   "scripts": {
     "dev": "pnpm tauri dev",
     "build": "pnpm tauri build",
