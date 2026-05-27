@@ -366,6 +366,37 @@ export function ClaudeFormFields({
       ? handleFetchCodexOauthModels
       : handleFetchModels;
 
+  const autoFetchRef = useRef(false);
+  useEffect(() => {
+    if (autoFetchRef.current) return;
+    if (isCopilotPreset) {
+      if (isCopilotAuthenticated) {
+        autoFetchRef.current = true;
+        handleFetchCopilotModels();
+      }
+    } else if (isCodexOauthPreset) {
+      if (isCodexOauthAuthenticated) {
+        autoFetchRef.current = true;
+        handleFetchCodexOauthModels();
+      }
+    } else {
+      if (baseUrl && apiKey) {
+        autoFetchRef.current = true;
+        handleFetchModels();
+      }
+    }
+  }, [
+    baseUrl,
+    apiKey,
+    isCopilotPreset,
+    isCopilotAuthenticated,
+    isCodexOauthPreset,
+    isCodexOauthAuthenticated,
+    handleFetchCopilotModels,
+    handleFetchCodexOauthModels,
+    handleFetchModels,
+  ]);
+
   // 模型输入框：支持手动输入 + 下拉选择
   const renderModelInput = (
     id: string,
