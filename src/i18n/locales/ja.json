@@ -178,6 +178,7 @@
     "noRoutingSupport": "ルーティング非対応"
   },
   "codex": {
+    "needsRouting": "ルーティングが必要",
     "noRoutingSupport": "ルーティング非対応"
   },
   "claudeDesktop": {

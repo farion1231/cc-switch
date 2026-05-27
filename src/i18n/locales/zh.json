@@ -178,6 +178,7 @@
     "noRoutingSupport": "不支持路由"
   },
   "codex": {
+    "needsRouting": "需要路由",
     "noRoutingSupport": "不支持路由"
   },
   "claudeDesktop": {

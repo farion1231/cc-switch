@@ -178,6 +178,7 @@
     "noRoutingSupport": "No Routing Support"
   },
   "codex": {
+    "needsRouting": "Needs Routing",
     "noRoutingSupport": "No Routing Support"
   },
   "claudeDesktop": {
