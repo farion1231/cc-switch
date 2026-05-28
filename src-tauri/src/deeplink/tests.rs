@@ -294,6 +294,34 @@ fn test_parse_and_merge_config_claude() {
 }
 
 #[test]
+fn test_parse_and_merge_config_claude_desktop_aliases() {
+    let config_json = r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-ant-xxx","ANTHROPIC_BASE_URL":"https://api.anthropic.com/v1","ANTHROPIC_MODEL":"claude-sonnet-4.5"}}"#;
+    let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
+
+    for alias in ["claude-desktop", "claude_desktop", "claudedesktop"] {
+        let request = DeepLinkImportRequest {
+            version: "v1".to_string(),
+            resource: "provider".to_string(),
+            app: Some(alias.to_string()),
+            name: Some("Test".to_string()),
+            config: Some(config_b64.clone()),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+
+        let merged = parse_and_merge_config(&request)
+            .unwrap_or_else(|e| panic!("alias '{alias}' should merge Claude config, got: {e}"));
+
+        assert_eq!(merged.api_key, Some("sk-ant-xxx".to_string()));
+        assert_eq!(
+            merged.endpoint,
+            Some("https://api.anthropic.com/v1".to_string())
+        );
+        assert_eq!(merged.model, Some("claude-sonnet-4.5".to_string()));
+    }
+}
+
+#[test]
 fn test_parse_and_merge_config_codex_uses_bearer_token() {
     let config_toml = r#"model_provider = "rightcode"
 model = "gpt-5-codex"
