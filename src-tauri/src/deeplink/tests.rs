@@ -77,6 +77,32 @@ fn test_parse_missing_required_field() {
         .contains("Missing 'name' parameter"));
 }
 
+#[test]
+fn test_parse_provider_accepts_claude_desktop_aliases() {
+    // AppType::from_str accepts "claude-desktop", "claude_desktop" and
+    // "claudedesktop"; provider deep links must accept the same aliases so users
+    // can import Claude Desktop providers via ccswitch:// links (issue #3112).
+    for alias in ["claude-desktop", "claude_desktop", "claudedesktop"] {
+        let url = format!(
+            "ccswitch://v1/import?resource=provider&app={alias}&name=Test&endpoint=https%3A%2F%2Fexample.com&apiKey=sk-test"
+        );
+        let request = parse_deeplink_url(&url)
+            .unwrap_or_else(|e| panic!("alias '{alias}' should be accepted, got: {e}"));
+        assert_eq!(request.app, Some(alias.to_string()));
+    }
+}
+
+#[test]
+fn test_parse_provider_invalid_app_error_lists_claude_desktop() {
+    let url = "ccswitch://v1/import?resource=provider&app=bogus&name=Test";
+    let err = parse_deeplink_url(url).unwrap_err().to_string();
+    assert!(err.contains("Invalid app type"), "got: {err}");
+    assert!(
+        err.contains("claude-desktop"),
+        "error message should advertise claude-desktop alias, got: {err}"
+    );
+}
+
 // =============================================================================
 // Utils Tests
 // =============================================================================
