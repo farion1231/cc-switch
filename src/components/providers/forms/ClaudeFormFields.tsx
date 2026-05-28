@@ -366,12 +366,18 @@ export function ClaudeFormFields({
       ? handleFetchCodexOauthModels
       : handleFetchModels;
 
-  const autoFetchTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const autoFetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    clearTimeout(autoFetchTimerRef.current);
+    if (autoFetchTimerRef.current) {
+      clearTimeout(autoFetchTimerRef.current);
+    }
     if (!baseUrl || !apiKey) return;
     autoFetchTimerRef.current = setTimeout(handleModelFetchClick, 800);
-    return () => clearTimeout(autoFetchTimerRef.current);
+    return () => {
+      if (autoFetchTimerRef.current) {
+        clearTimeout(autoFetchTimerRef.current);
+      }
+    };
   }, [baseUrl, apiKey, handleModelFetchClick]);
 
   // 模型输入框：支持手动输入 + 下拉选择
