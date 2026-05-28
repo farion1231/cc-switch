@@ -135,6 +135,8 @@ fn handle_deeplink_url(
 
             if focus_main_window {
                 if let Some(window) = app.get_webview_window("main") {
+                    #[cfg(target_os = "macos")]
+                    ensure_not_fullscreen(&window);
                     let _ = window.unminimize();
                     let _ = window.show();
                     let _ = window.set_focus();
@@ -249,6 +251,17 @@ fn hide_fullscreen_window(window: &tauri::Window) {
     let _ = window.set_fullscreen(false);
 }
 
+/// Ensure the window is not in fullscreen mode before showing it.
+/// This handles the case where the window was hidden while fullscreen —
+/// the fullscreen state may persist and cause the window to appear as
+/// borderless fullscreen when shown again.
+#[cfg(target_os = "macos")]
+pub(crate) fn ensure_not_fullscreen(window: &tauri::WebviewWindow) {
+    if window.is_fullscreen().unwrap_or(false) {
+        let _ = window.set_fullscreen(false);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 设置 panic hook，在应用崩溃时记录日志到 <app_config_dir>/crash.log（默认 ~/.cc-switch/crash.log）
@@ -286,6 +299,8 @@ pub fn run() {
 
             // Show and focus window regardless
             if let Some(window) = app.get_webview_window("main") {
+                #[cfg(target_os = "macos")]
+                ensure_not_fullscreen(&window);
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -1478,6 +1493,8 @@ pub fn run() {
                         {
                             let _ = window.set_skip_taskbar(false);
                         }
+                        #[cfg(target_os = "macos")]
+                        ensure_not_fullscreen(&window);
                         let _ = window.unminimize();
                         let _ = window.show();
                         let _ = window.set_focus();
@@ -1540,6 +1557,8 @@ pub fn run() {
 
                             // 确保主窗口可见
                             if let Some(window) = app_handle.get_webview_window("main") {
+                                #[cfg(target_os = "macos")]
+                                ensure_not_fullscreen(&window);
                                 let _ = window.unminimize();
                                 let _ = window.show();
                                 let _ = window.set_focus();

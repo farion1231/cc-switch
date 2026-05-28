@@ -693,6 +693,8 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                 {
                     let _ = window.set_skip_taskbar(false);
                 }
+                #[cfg(target_os = "macos")]
+                crate::ensure_not_fullscreen(&window);
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
