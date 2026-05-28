@@ -201,60 +201,10 @@ fn macos_tray_icon() -> Option<Image<'static>> {
     }
 }
 
-/// Exit fullscreen and hide the window once the fullscreen exit animation completes.
-/// On macOS, `window.hide()` on a fullscreen window leaves the presentation layer
-/// active, causing the window to reappear as borderless fullscreen when shown again.
-#[cfg(target_os = "macos")]
-fn hide_fullscreen_window(window: &tauri::Window) {
-    use block2::RcBlock;
-    use objc2_app_kit::NSView;
-    use objc2_foundation::{NSNotificationCenter, NSString};
-    use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
-
-    let Ok(handle) = window.window_handle() else {
-        let _ = window.hide();
-        return;
-    };
-    let RawWindowHandle::AppKit(app_kit) = handle.as_raw() else {
-        let _ = window.hide();
-        return;
-    };
-
-    // SAFETY: ns_view is a valid pointer from the window handle, on the main thread.
-    let ns_view: objc2::rc::Retained<NSView> = unsafe {
-        objc2::rc::Retained::retain(app_kit.ns_view.as_ptr().cast())
-    }
-    .expect("failed to retain NSView");
-    let Some(ns_window) = ns_view.window() else {
-        let _ = window.hide();
-        return;
-    };
-
-    let retained = window.app_handle().clone();
-    let label = window.label().to_string();
-    let block = RcBlock::new(move |_notification: std::ptr::NonNull<_>| {
-        if let Some(w) = retained.get_webview_window(&label) {
-            let _ = w.hide();
-        }
-    });
-    let name = NSString::from_str("NSWindowDidExitFullScreenNotification");
-    let observer = unsafe {
-        NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
-            Some(&name),
-            Some(&ns_window),
-            None,
-            &block,
-        )
-    };
-    Box::leak(Box::new(observer));
-
-    let _ = window.set_fullscreen(false);
-}
-
 /// Ensure the window is not in fullscreen mode before showing it.
-/// This handles the case where the window was hidden while fullscreen —
-/// the fullscreen state may persist and cause the window to appear as
-/// borderless fullscreen when shown again.
+/// When a fullscreen window is hidden, the fullscreen state may persist.
+/// Calling set_fullscreen(false) before show() prevents the window from
+/// reappearing as borderless fullscreen.
 #[cfg(target_os = "macos")]
 pub(crate) fn ensure_not_fullscreen(window: &tauri::WebviewWindow) {
     if window.is_fullscreen().unwrap_or(false) {
@@ -322,13 +272,6 @@ pub fn run() {
 
                 if settings.minimize_to_tray_on_close {
                     api.prevent_close();
-                    #[cfg(target_os = "macos")]
-                    if window.is_fullscreen().unwrap_or(false) {
-                        hide_fullscreen_window(window);
-                    } else {
-                        let _ = window.hide();
-                    }
-                    #[cfg(not(target_os = "macos"))]
                     let _ = window.hide();
                     #[cfg(target_os = "windows")]
                     {
