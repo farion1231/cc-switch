@@ -7,6 +7,7 @@
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use url::Url;
 
 /// 获取到的模型信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,6 +48,40 @@ const KNOWN_COMPAT_SUFFIXES: &[&str] = &[
     "/claude",
 ];
 
+/// 是否为阿里云百炼 Token Plan（`*.maas.aliyuncs.com`，且 host 含 `token-plan.`）。
+///
+/// 该网关通常不把 Anthropic Base URL 映射到可用的 `GET /v1/models`，甚至会返回 400 JSON，
+/// 造成 CC Switch 误判为「不支持获取模型列表」。这里单独识别并在末尾提供文档列表兜底。
+fn is_token_plan_host(base_url: &str) -> bool {
+    let lower = base_url.to_lowercase();
+    lower.contains("token-plan.") && lower.contains("maas.aliyuncs.com")
+}
+
+/// Token Plan 团队版文档列出的模型 ID（文本 + 图像）。
+/// 参见：https://help.aliyun.com/zh/model-studio/token-plan-overview
+fn token_plan_team_fallback_models() -> Vec<FetchedModel> {
+    const IDS: &[&str] = &[
+        "qwen3.6-plus",
+        "qwen3.6-flash",
+        "glm-5.1",
+        "glm-5",
+        "MiniMax-M2.5",
+        "deepseek-v3.2",
+        "kimi-k2.5",
+        "kimi-k2.6",
+        "qwen-image-2.0",
+        "qwen-image-2.0-pro",
+        "wan2.7-image",
+        "wan2.7-image-pro",
+    ];
+    IDS.iter()
+        .map(|id| FetchedModel {
+            id: (*id).to_string(),
+            owned_by: Some("token-plan".to_string()),
+        })
+        .collect()
+}
+
 /// 获取供应商的可用模型列表
 ///
 /// 使用 OpenAI 兼容的 GET /v1/models 端点，按候选列表顺序尝试。
@@ -82,23 +117,43 @@ pub async fn fetch_models(
         let status = response.status();
 
         if status.is_success() {
-            let resp: ModelsResponse = response
-                .json()
+            let text = response
+                .text()
                 .await
-                .map_err(|e| format!("Failed to parse response: {e}"))?;
+                .map_err(|e| format!("Failed to read response: {e}"))?;
 
-            let mut models: Vec<FetchedModel> = resp
-                .data
-                .unwrap_or_default()
-                .into_iter()
-                .map(|m| FetchedModel {
-                    id: m.id,
-                    owned_by: m.owned_by,
-                })
-                .collect();
+            match serde_json::from_str::<ModelsResponse>(&text) {
+                Ok(resp) => {
+                    let mut models: Vec<FetchedModel> = resp
+                        .data
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|m| FetchedModel {
+                            id: m.id,
+                            owned_by: m.owned_by,
+                        })
+                        .collect();
 
-            models.sort_by(|a, b| a.id.cmp(&b.id));
-            return Ok(models);
+                    if models.is_empty() && is_token_plan_host(base_url) {
+                        last_err =
+                            Some("Success but empty models list (Token Plan gateway)".to_string());
+                        continue;
+                    }
+
+                    models.sort_by(|a, b| a.id.cmp(&b.id));
+                    return Ok(models);
+                }
+                Err(e) => {
+                    if is_token_plan_host(base_url) {
+                        let preview = truncate_body(text);
+                        last_err = Some(format!(
+                            "Failed to parse response as OpenAI models list: {e}; body: {preview}"
+                        ));
+                        continue;
+                    }
+                    return Err(format!("Failed to parse response: {e}"));
+                }
+            }
         }
 
         if status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED {
@@ -107,8 +162,24 @@ pub async fn fetch_models(
             continue;
         }
 
+        // Token Plan 网关在「兼容 OpenAI 列表」路径上常返回 400（而非 404），应继续尝试其它候选。
+        if status == StatusCode::BAD_REQUEST && is_token_plan_host(base_url) {
+            let body = truncate_body(response.text().await.unwrap_or_default());
+            last_err = Some(format!("HTTP {status}: {body}"));
+            continue;
+        }
+
         let body = truncate_body(response.text().await.unwrap_or_default());
         return Err(format!("HTTP {status}: {body}"));
+    }
+
+    if is_token_plan_host(base_url) {
+        log::info!(
+            "[ModelFetch] Token Plan host: gateway does not expose a usable OpenAI /v1/models listing — returning curated fallback model IDs"
+        );
+        let mut models = token_plan_team_fallback_models();
+        models.sort_by(|a, b| a.id.cmp(&b.id));
+        return Ok(models);
     }
 
     Err(format!(
@@ -172,6 +243,16 @@ pub fn build_models_url_candidates(
         if !root.is_empty() && root.contains("://") {
             candidates.push(format!("{root}/v1/models"));
             candidates.push(format!("{root}/models"));
+        }
+    }
+
+    // Token Plan：Anthropic 兼容 Base URL 不在同一前缀下暴露模型列表；额外尝试 OpenAI 兼容路径。
+    if is_token_plan_host(trimmed) {
+        if let Ok(parsed) = Url::parse(trimmed) {
+            if let Some(host) = parsed.host_str() {
+                let compat = format!("{}://{}/compatible-mode/v1/models", parsed.scheme(), host);
+                candidates.insert(0, compat);
+            }
         }
     }
 
@@ -310,6 +391,23 @@ mod tests {
                 "https://dashscope.aliyuncs.com/models",
             ]
         );
+    }
+
+    #[test]
+    fn test_candidates_token_plan_prepends_compatible_mode_models() {
+        let c = build_models_url_candidates(
+            "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            c[0],
+            "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/models"
+        );
+        assert!(c.contains(
+            &"https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/models".to_string()
+        ));
     }
 
     #[test]
