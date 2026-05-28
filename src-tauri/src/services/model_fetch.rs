@@ -50,36 +50,11 @@ const KNOWN_COMPAT_SUFFIXES: &[&str] = &[
 
 /// 是否为阿里云百炼 Token Plan（`*.maas.aliyuncs.com`，且 host 含 `token-plan.`）。
 ///
-/// 该网关通常不把 Anthropic Base URL 映射到可用的 `GET /v1/models`，甚至会返回 400 JSON，
-/// 造成 CC Switch 误判为「不支持获取模型列表」。这里单独识别并在末尾提供文档列表兜底。
+/// 该网关通常不把 Anthropic Base URL 映射到可用的 `GET /v1/models`，模型列表在
+/// `/compatible-mode/v1/models` 下单独暴露。
 fn is_token_plan_host(base_url: &str) -> bool {
     let lower = base_url.to_lowercase();
     lower.contains("token-plan.") && lower.contains("maas.aliyuncs.com")
-}
-
-/// Token Plan 团队版文档列出的模型 ID（文本 + 图像）。
-/// 参见：https://help.aliyun.com/zh/model-studio/token-plan-overview
-fn token_plan_team_fallback_models() -> Vec<FetchedModel> {
-    const IDS: &[&str] = &[
-        "qwen3.6-plus",
-        "qwen3.6-flash",
-        "glm-5.1",
-        "glm-5",
-        "MiniMax-M2.5",
-        "deepseek-v3.2",
-        "kimi-k2.5",
-        "kimi-k2.6",
-        "qwen-image-2.0",
-        "qwen-image-2.0-pro",
-        "wan2.7-image",
-        "wan2.7-image-pro",
-    ];
-    IDS.iter()
-        .map(|id| FetchedModel {
-            id: (*id).to_string(),
-            owned_by: Some("token-plan".to_string()),
-        })
-        .collect()
 }
 
 /// 获取供应商的可用模型列表
@@ -171,15 +146,6 @@ pub async fn fetch_models(
 
         let body = truncate_body(response.text().await.unwrap_or_default());
         return Err(format!("HTTP {status}: {body}"));
-    }
-
-    if is_token_plan_host(base_url) {
-        log::info!(
-            "[ModelFetch] Token Plan host: gateway does not expose a usable OpenAI /v1/models listing — returning curated fallback model IDs"
-        );
-        let mut models = token_plan_team_fallback_models();
-        models.sort_by(|a, b| a.id.cmp(&b.id));
-        return Ok(models);
     }
 
     Err(format!(
