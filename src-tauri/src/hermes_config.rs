@@ -105,6 +105,63 @@ pub struct HermesModelConfig {
 /// 读取 Hermes 配置文件为 serde_yaml::Value
 ///
 /// 如果文件不存在，返回空 Mapping
+/// Remove duplicate top-level YAML keys, keeping only the first occurrence.
+/// Each top-level key line is tracked; subsequent sections with the same key
+/// are removed. This is a safety net against accidental duplicates that would
+/// otherwise cause serde_yaml to fail with "duplicate entry" errors.
+fn deduplicate_top_level_keys(raw: &str) -> String {
+    use std::collections::HashSet;
+
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut result = String::with_capacity(raw.len());
+    let mut skip_until_next_key = false;
+    let mut dup_key: Option<String> = None;
+
+    for line in raw.split_inclusive('\n') {
+        if skip_until_next_key {
+            // Check if this line starts a new top-level key
+            if is_top_level_key_line(line) {
+                skip_until_next_key = false;
+                // Process this line normally (check for duplicate)
+                if let Some(first_colon) = line.find(':') {
+                    let key = &line[..first_colon];
+                    if seen.contains(key) {
+                        // Another duplicate, stay in skip mode
+                        dup_key = Some(key.to_string());
+                        continue;
+                    } else {
+                        seen.insert(key);
+                    }
+                }
+                result.push_str(line);
+            }
+            // else: still in skip mode, discard this line
+            continue;
+        }
+
+        if is_top_level_key_line(line) {
+            if let Some(first_colon) = line.find(':') {
+                let key = &line[..first_colon];
+                if seen.contains(key) {
+                    // Duplicate top-level key found — skip this section
+                    skip_until_next_key = true;
+                    dup_key = Some(key.to_string());
+                    log::warn!(
+                        "Hermes config: removed duplicate top-level section '{}'",
+                        key
+                    );
+                    continue;
+                }
+                seen.insert(key);
+            }
+        }
+
+        result.push_str(line);
+    }
+
+    result
+}
+
 pub fn read_hermes_config() -> Result<serde_yaml::Value, AppError> {
     let path = get_hermes_config_path();
     if !path.exists() {
@@ -116,7 +173,11 @@ pub fn read_hermes_config() -> Result<serde_yaml::Value, AppError> {
         return Ok(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
     }
 
-    serde_yaml::from_str(&content)
+    // Deduplicate top-level YAML keys to handle accidental duplicates
+    // (e.g. from a prior write bug). Keep the first occurrence, discard later ones.
+    let deduped = deduplicate_top_level_keys(&content);
+
+    serde_yaml::from_str(&deduped)
         .map_err(|e| AppError::Config(format!("Failed to parse Hermes config as YAML: {e}")))
 }
 
@@ -196,6 +257,25 @@ fn serialize_yaml_section(key: &str, value: &serde_yaml::Value) -> Result<String
     Ok(yaml_str)
 }
 
+/// Remove all top-level sections with the given key from raw YAML text.
+/// Used to clean up duplicate sections after replacing the primary occurrence.
+fn remove_all_sections(raw: &str, section_key: &str) -> String {
+    let mut result = String::with_capacity(raw.len());
+    let mut pos = 0;
+
+    while let Some((start, end)) = find_yaml_section_range(&raw[pos..], section_key) {
+        // Copy content before this occurrence
+        result.push_str(&raw[pos..pos + start]);
+        // Skip the section itself
+        pos += end;
+    }
+
+    // Copy remaining content
+    result.push_str(&raw[pos..]);
+
+    result
+}
+
 /// Replace a YAML section in raw text, or append it if not found.
 fn replace_yaml_section(
     raw: &str,
@@ -208,12 +288,25 @@ fn replace_yaml_section(
         let mut result = String::with_capacity(raw.len());
         result.push_str(&raw[..start]);
         result.push_str(&serialized);
-        // Ensure proper separation between sections
+
+        // Remove duplicate sections with the same key from the remainder
         let remainder = &raw[end..];
-        if !serialized.ends_with('\n') && !remainder.is_empty() && !remainder.starts_with('\n') {
+        let cleaned = remove_all_sections(remainder, section_key);
+        let cleaned_trimmed = cleaned.trim_start_matches(|c: char| c == '\n' || c == '\r');
+        let trimmed_count = cleaned.len() - cleaned_trimmed.len();
+
+        if !cleaned_trimmed.is_empty() {
+            if !serialized.ends_with('\n') {
+                result.push('\n');
+            }
+            // Preserve at most one blank line before the next section
+            if trimmed_count > 1 {
+                result.push('\n');
+            }
+            result.push_str(cleaned_trimmed);
+        } else if !serialized.ends_with('\n') {
             result.push('\n');
         }
-        result.push_str(remainder);
         Ok(result)
     } else {
         // Section not found — append at end
