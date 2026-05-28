@@ -272,27 +272,22 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
     Ok(changed_total)
 }
 
-/// 将 config.json 中 Codex 的 enabled==true 项以 TOML 形式写入 ~/.codex/config.toml
+/// 将 config.json 中 Codex 启用的项以 TOML 形式写入 ~/.codex/config.toml。
 ///
 /// 格式策略：
 /// - 唯一正确格式：[mcp_servers] 顶层表（Codex 官方标准）
 /// - 自动清理错误格式：[mcp.servers]（如果存在）
 /// - 读取现有 config.toml；若语法无效则报错，不尝试覆盖
-/// - 仅更新 `mcp_servers` 表，保留其它键
-/// - 仅写入启用项；无启用项时清理 mcp_servers 表
+/// - 重写每个 enabled server 的子表时保留其非 cc-switch 管辖的子表
+/// - 无启用项时清理 mcp_servers 表（pre-existing 行为）
 pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
     if !should_sync_codex_mcp() {
         return Ok(());
     }
-    use toml_edit::{Item, Table};
 
-    // 1) 收集启用项（Codex 维度）
     let enabled = collect_enabled_servers(&config.mcp.codex);
-
-    // 2) 读取现有 config.toml 文本；保持无效 TOML 的错误返回（不覆盖文件）
     let base_text = crate::codex_config::read_and_validate_codex_config_text()?;
 
-    // 3) 使用 toml_edit 解析（允许空文件）
     let mut doc = if base_text.trim().is_empty() {
         toml_edit::DocumentMut::default()
     } else {
@@ -301,50 +296,17 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
             .map_err(|e| AppError::McpValidation(format!("解析 config.toml 失败: {e}")))?
     };
 
-    // 4) 清理可能存在的错误格式 [mcp.servers]
-    if let Some(mcp_item) = doc.get_mut("mcp") {
-        if let Some(tbl) = mcp_item.as_table_like_mut() {
-            if tbl.contains_key("servers") {
-                log::warn!("检测到错误的 MCP 格式 [mcp.servers]，正在清理并迁移到 [mcp_servers]");
-                tbl.remove("servers");
-            }
-        }
-    }
+    apply_enabled_servers_to_doc(&mut doc, &enabled);
 
-    // 5) 构造目标 servers 表（稳定的键顺序）
-    if enabled.is_empty() {
-        // 无启用项：移除 mcp_servers 表
-        doc.as_table_mut().remove("mcp_servers");
-    } else {
-        // 构建 servers 表
-        let mut servers_tbl = Table::new();
-        let mut ids: Vec<_> = enabled.keys().cloned().collect();
-        ids.sort();
-        for id in ids {
-            let spec = enabled.get(&id).expect("spec must exist");
-            // 复用通用转换函数（已包含扩展字段支持）
-            match json_server_to_toml_table(spec) {
-                Ok(table) => {
-                    servers_tbl[&id[..]] = Item::Table(table);
-                }
-                Err(err) => {
-                    log::error!("跳过无效的 MCP 服务器 '{id}': {err}");
-                }
-            }
-        }
-        // 使用唯一正确的格式：[mcp_servers]
-        doc["mcp_servers"] = Item::Table(servers_tbl);
-    }
-
-    // 6) 写回（仅改 TOML，不触碰 auth.json）；toml_edit 会尽量保留未改区域的注释/空白/顺序
     let new_text = doc.to_string();
     let path = crate::codex_config::get_codex_config_path();
     crate::config::write_text_file(&path, &new_text)?;
     Ok(())
 }
 
-/// 将单个 MCP 服务器同步到 Codex live 配置
-/// 始终使用 Codex 官方格式 [mcp_servers]，并清理可能存在的错误格式 [mcp.servers]
+/// 将单个 MCP 服务器同步到 Codex live 配置。
+/// 始终使用 Codex 官方格式 [mcp_servers]，并清理可能存在的错误格式 [mcp.servers]。
+/// 重写 [mcp_servers.<id>] 时保留非 cc-switch 管辖的子表（典型为 Codex CLI 写入的 tools.*）。
 pub fn sync_single_server_to_codex(
     _config: &MultiAppConfig,
     id: &str,
@@ -353,9 +315,7 @@ pub fn sync_single_server_to_codex(
     if !should_sync_codex_mcp() {
         return Ok(());
     }
-    use toml_edit::Item;
 
-    // 读取现有的 config.toml
     let config_path = crate::codex_config::get_codex_config_path();
 
     let mut doc = if config_path.exists() {
@@ -370,28 +330,8 @@ pub fn sync_single_server_to_codex(
         toml_edit::DocumentMut::new()
     };
 
-    // 清理可能存在的错误格式 [mcp.servers]
-    if let Some(mcp_item) = doc.get_mut("mcp") {
-        if let Some(tbl) = mcp_item.as_table_like_mut() {
-            if tbl.contains_key("servers") {
-                log::warn!("检测到错误的 MCP 格式 [mcp.servers]，正在清理并迁移到 [mcp_servers]");
-                tbl.remove("servers");
-            }
-        }
-    }
+    apply_single_server_to_doc(&mut doc, id, server_spec)?;
 
-    // 确保 [mcp_servers] 表存在
-    if !doc.contains_key("mcp_servers") {
-        doc["mcp_servers"] = toml_edit::table();
-    }
-
-    // 将 JSON 服务器规范转换为 TOML 表
-    let toml_table = json_server_to_toml_table(server_spec)?;
-
-    // 使用唯一正确的格式：[mcp_servers]
-    doc["mcp_servers"][id] = Item::Table(toml_table);
-
-    // 写回文件
     let new_text = doc.to_string();
     crate::config::write_text_file(&config_path, &new_text)?;
 
@@ -674,4 +614,666 @@ fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError>
     }
 
     Ok(t)
+}
+
+/// `[mcp_servers.<id>]` 下 cc-switch 当前 / 曾经会写入为子表（toml_edit::Item::Table）的键名。
+/// 不在此列表里、但以子表形式存在的键（典型为 Codex CLI 运行时写入的
+/// `tools.<tool_name>` 权限声明）一律视为非 cc-switch 管辖，sync / live 写入时必须保留。
+///
+/// `"headers"` 是 compat 读取名：write 路径已切换到 `http_headers`，但 import
+/// 仍会读取旧文件里残留的 `headers`（见 `import_from_codex`），所以这里把它
+/// 视为受管，允许在重写时被清理，避免与新写入的 `http_headers` 共存。
+const CC_SWITCH_MANAGED_SUBTABLE_KEYS: &[&str] = &["env", "http_headers", "headers"];
+
+/// 抓取 `[mcp_servers.<server_id>]` 下所有非 cc-switch 管辖的子表，
+/// 用于在 sync 重写前快照、重写后再 restore。
+fn snapshot_unmanaged_subtables(
+    doc: &toml_edit::DocumentMut,
+    server_id: &str,
+) -> Vec<(String, toml_edit::Table)> {
+    let Some(server_tbl) = doc
+        .get("mcp_servers")
+        .and_then(|item| item.as_table())
+        .and_then(|t| t.get(server_id))
+        .and_then(|item| item.as_table())
+    else {
+        return Vec::new();
+    };
+
+    server_tbl
+        .iter()
+        .filter_map(|(k, v)| {
+            if CC_SWITCH_MANAGED_SUBTABLE_KEYS.contains(&k) {
+                return None;
+            }
+            v.as_table().map(|tbl| (k.to_string(), tbl.clone()))
+        })
+        .collect()
+}
+
+/// 把 snapshot_unmanaged_subtables 抓到的子表写回 `[mcp_servers.<server_id>]`。
+/// 在 sync 函数把 server 子表整体重写之后调用。
+fn restore_unmanaged_subtables(
+    doc: &mut toml_edit::DocumentMut,
+    server_id: &str,
+    preserved: Vec<(String, toml_edit::Table)>,
+) {
+    if preserved.is_empty() {
+        return;
+    }
+    let Some(server_tbl) = doc
+        .get_mut("mcp_servers")
+        .and_then(|item| item.as_table_mut())
+        .and_then(|t| t.get_mut(server_id))
+        .and_then(|item| item.as_table_mut())
+    else {
+        return;
+    };
+    for (k, tbl) in preserved {
+        server_tbl.insert(&k, toml_edit::Item::Table(tbl));
+    }
+}
+
+/// **Layer 2 纯函数**：把 `old_text` 中所有非 cc-switch 管辖的子表
+/// （典型为 Codex CLI 运行时写入的 `[mcp_servers.<id>.tools.<tool>]`）
+/// 合并进 `new_text`，返回合并后的 TOML 文本。
+///
+/// 用于 Codex live 写入边界：provider switch / common-config save 会用新 provider
+/// 的 stored config 整张覆盖 `~/.codex/config.toml`，但 stored config 不带 runtime
+/// 子表，本函数在写入前把旧 live 中的 runtime 子表抢救出来合并进去。
+///
+/// 语义：
+/// - "受管子表"（`CC_SWITCH_MANAGED_SUBTABLE_KEYS`）跳过——它们由 cc-switch 自己负责。
+/// - **逐子键深度合并**：旧 live 与新文本同时存在某子表（如 `tools`）时，按叶子键
+///   合并而非整体取舍——旧 `tools.search` 与新 `tools.read` 都保留；同名叶子键冲突
+///   时新文本优先（处理用户在 provider config 中显式改写 `tools.*` 的少见情况）。
+/// - **不为新文本中不存在的 server 凭空建父表**：新文本没有的 server 说明切换后的
+///   provider 配置不含它，且 provider 切换路径之后不会再跑 MCP sync 补全 command/url，
+///   建一个只有 `tools.*` 的残缺 server 会让 Codex 无法加载——这类孤儿 runtime 子表直接丢弃。
+/// - 解析失败 / 旧文件不可读 / 新旧任一方没有 `[mcp_servers]` 时退回原文本，
+///   best-effort 不阻塞底层写入。
+pub(crate) fn merge_codex_runtime_subtables(new_text: &str, old_text: &str) -> String {
+    use toml_edit::DocumentMut;
+
+    let Ok(old_doc) = old_text.parse::<DocumentMut>() else {
+        return new_text.to_string();
+    };
+    let Some(old_mcp_servers) = old_doc
+        .get("mcp_servers")
+        .and_then(|item| item.as_table())
+    else {
+        return new_text.to_string();
+    };
+
+    // server_id, subtable_key, table
+    let mut preserved: Vec<(String, String, toml_edit::Table)> = Vec::new();
+    for (server_id, server_item) in old_mcp_servers.iter() {
+        let Some(server_tbl) = server_item.as_table() else {
+            continue;
+        };
+        for (k, v) in server_tbl.iter() {
+            if CC_SWITCH_MANAGED_SUBTABLE_KEYS.contains(&k) {
+                continue;
+            }
+            if let Some(tbl) = v.as_table() {
+                preserved.push((server_id.to_string(), k.to_string(), tbl.clone()));
+            }
+        }
+    }
+
+    if preserved.is_empty() {
+        return new_text.to_string();
+    }
+
+    let mut new_doc = if new_text.trim().is_empty() {
+        DocumentMut::default()
+    } else {
+        match new_text.parse::<DocumentMut>() {
+            Ok(doc) => doc,
+            Err(_) => return new_text.to_string(),
+        }
+    };
+
+    // P1：只把 runtime 子表回写到新文本中已存在的 server，不凭空创建残缺父表。
+    let Some(mcp_servers) = new_doc
+        .get_mut("mcp_servers")
+        .and_then(|item| item.as_table_mut())
+    else {
+        return new_text.to_string();
+    };
+
+    for (server_id, key, tbl) in preserved {
+        let Some(server_tbl) = mcp_servers
+            .get_mut(&server_id)
+            .and_then(|item| item.as_table_mut())
+        else {
+            continue;
+        };
+        // P2：逐子键合并——新文本已有同名子表（如 `tools`）时深度合并（新文本优先），
+        //     而非整体跳过，从而保住旧 live 中新文本未声明的 per-tool 授权。
+        match server_tbl.get_mut(&key) {
+            None => {
+                server_tbl.insert(&key, toml_edit::Item::Table(tbl));
+            }
+            Some(existing) => {
+                if let Some(existing_tbl) = existing.as_table_mut() {
+                    merge_table_preserving_new(existing_tbl, &tbl);
+                }
+            }
+        }
+    }
+
+    new_doc.to_string()
+}
+
+/// 深度合并：把 `old` 的键并入 `target`，target（新文本）已有的叶子键优先保留，
+/// 仅补齐缺失键；两边同名且皆为子表时递归合并。用于在 `tools` 等子表层面做到
+/// 逐工具粒度的保留。
+fn merge_table_preserving_new(target: &mut toml_edit::Table, old: &toml_edit::Table) {
+    for (k, v) in old.iter() {
+        match target.get_mut(k) {
+            None => {
+                target.insert(k, v.clone());
+            }
+            Some(existing) => {
+                if let (Some(existing_tbl), Some(old_tbl)) =
+                    (existing.as_table_mut(), v.as_table())
+                {
+                    merge_table_preserving_new(existing_tbl, old_tbl);
+                }
+            }
+        }
+    }
+}
+
+/// 纯逻辑：把单个 server 的 spec 应用到 DocumentMut，保留非 cc-switch 管辖的子表。
+/// `sync_single_server_to_codex` 的可单测内核。
+fn apply_single_server_to_doc(
+    doc: &mut toml_edit::DocumentMut,
+    id: &str,
+    server_spec: &Value,
+) -> Result<(), AppError> {
+    use toml_edit::Item;
+
+    let preserved = snapshot_unmanaged_subtables(doc, id);
+
+    // 清理可能存在的错误格式 [mcp.servers]
+    if let Some(mcp_item) = doc.get_mut("mcp") {
+        if let Some(tbl) = mcp_item.as_table_like_mut() {
+            if tbl.contains_key("servers") {
+                log::warn!("检测到错误的 MCP 格式 [mcp.servers]，正在清理并迁移到 [mcp_servers]");
+                tbl.remove("servers");
+            }
+        }
+    }
+
+    if !doc.contains_key("mcp_servers") {
+        doc["mcp_servers"] = toml_edit::table();
+    }
+
+    let toml_table = json_server_to_toml_table(server_spec)?;
+    doc["mcp_servers"][id] = Item::Table(toml_table);
+
+    restore_unmanaged_subtables(doc, id, preserved);
+
+    Ok(())
+}
+
+/// 纯逻辑：把 enabled servers 批量应用到 DocumentMut，保留 enabled server 自己的非托管子表。
+/// 未在 enabled 中的 server 沿用原有"整体抹除"行为（pre-existing），本 PR 不调整这一语义。
+/// `sync_enabled_to_codex` 的可单测内核。
+fn apply_enabled_servers_to_doc(
+    doc: &mut toml_edit::DocumentMut,
+    enabled: &HashMap<String, Value>,
+) {
+    use toml_edit::{Item, Table};
+
+    // 仅为 enabled 中的 server 快照非托管子表
+    let preserved_per_server: HashMap<String, Vec<(String, toml_edit::Table)>> = enabled
+        .keys()
+        .filter_map(|id| {
+            let preserved = snapshot_unmanaged_subtables(doc, id);
+            (!preserved.is_empty()).then(|| (id.clone(), preserved))
+        })
+        .collect();
+
+    // 清理可能存在的错误格式 [mcp.servers]
+    if let Some(mcp_item) = doc.get_mut("mcp") {
+        if let Some(tbl) = mcp_item.as_table_like_mut() {
+            if tbl.contains_key("servers") {
+                log::warn!("检测到错误的 MCP 格式 [mcp.servers]，正在清理并迁移到 [mcp_servers]");
+                tbl.remove("servers");
+            }
+        }
+    }
+
+    if enabled.is_empty() {
+        // pre-existing behavior：无 enabled 时整体移除 [mcp_servers]。
+        // preserved_per_server 在此分支必为空。
+        doc.as_table_mut().remove("mcp_servers");
+        return;
+    }
+
+    let mut servers_tbl = Table::new();
+    let mut ids: Vec<_> = enabled.keys().cloned().collect();
+    ids.sort();
+    for id in ids {
+        let spec = enabled.get(&id).expect("spec must exist");
+        match json_server_to_toml_table(spec) {
+            Ok(table) => {
+                servers_tbl[&id[..]] = Item::Table(table);
+            }
+            Err(err) => {
+                log::error!("跳过无效的 MCP 服务器 '{id}': {err}");
+            }
+        }
+    }
+    doc["mcp_servers"] = Item::Table(servers_tbl);
+
+    for (server_id, preserved) in preserved_per_server {
+        restore_unmanaged_subtables(doc, &server_id, preserved);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use toml_edit::DocumentMut;
+
+    fn parse(text: &str) -> DocumentMut {
+        text.parse::<DocumentMut>().expect("valid toml")
+    }
+
+    fn parse_value(doc: &DocumentMut) -> toml::Value {
+        toml::from_str(&doc.to_string()).expect("valid toml round-trip")
+    }
+
+    #[test]
+    fn sync_single_preserves_tools_permission_subtable() {
+        let mut doc = parse(
+            r#"
+[mcp_servers.ace-tool-rs]
+type = "stdio"
+command = "old-cmd"
+
+[mcp_servers.ace-tool-rs.tools.search_context]
+approval_mode = "approve"
+"#,
+        );
+
+        let new_spec = json!({
+            "type": "stdio",
+            "command": "new-cmd",
+            "args": ["--foo"]
+        });
+
+        apply_single_server_to_doc(&mut doc, "ace-tool-rs", &new_spec).unwrap();
+        let v = parse_value(&doc);
+
+        // 管辖字段已覆盖
+        assert_eq!(
+            v["mcp_servers"]["ace-tool-rs"]["command"].as_str(),
+            Some("new-cmd")
+        );
+        let args = v["mcp_servers"]["ace-tool-rs"]["args"]
+            .as_array()
+            .expect("args is array");
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].as_str(), Some("--foo"));
+
+        // 非托管子表必须保留
+        assert_eq!(
+            v["mcp_servers"]["ace-tool-rs"]["tools"]["search_context"]["approval_mode"].as_str(),
+            Some("approve"),
+            "Codex CLI 运行时写入的 tools.* 权限必须在 sync 后保留"
+        );
+    }
+
+    #[test]
+    fn sync_single_overwrites_managed_env_subtable() {
+        // env 是 cc-switch 管辖的子表——spec 中没有 env 时，旧 env 必须被清掉
+        let mut doc = parse(
+            r#"
+[mcp_servers.x]
+type = "stdio"
+command = "old"
+
+[mcp_servers.x.env]
+OLD_VAR = "1"
+"#,
+        );
+
+        let new_spec = json!({
+            "type": "stdio",
+            "command": "new"
+        });
+
+        apply_single_server_to_doc(&mut doc, "x", &new_spec).unwrap();
+        let v = parse_value(&doc);
+
+        assert_eq!(v["mcp_servers"]["x"]["command"].as_str(), Some("new"));
+        assert!(
+            v.get("mcp_servers")
+                .and_then(|m| m.get("x"))
+                .and_then(|x| x.get("env"))
+                .is_none(),
+            "env 是 cc-switch 管辖子表，spec 无 env 时必须清除"
+        );
+    }
+
+    #[test]
+    fn sync_single_overwrites_managed_http_headers_subtable() {
+        // http_headers 同样是 cc-switch 管辖的子表
+        let mut doc = parse(
+            r#"
+[mcp_servers.h]
+type = "http"
+url = "https://old.example/"
+
+[mcp_servers.h.http_headers]
+X-Old = "1"
+"#,
+        );
+
+        let new_spec = json!({
+            "type": "http",
+            "url": "https://new.example/",
+            "headers": { "X-New": "2" }
+        });
+
+        apply_single_server_to_doc(&mut doc, "h", &new_spec).unwrap();
+        let v = parse_value(&doc);
+
+        assert_eq!(
+            v["mcp_servers"]["h"]["url"].as_str(),
+            Some("https://new.example/")
+        );
+        assert_eq!(
+            v["mcp_servers"]["h"]["http_headers"]["X-New"].as_str(),
+            Some("2")
+        );
+        assert!(
+            v["mcp_servers"]["h"]["http_headers"]
+                .as_table()
+                .map(|t| !t.contains_key("X-Old"))
+                .unwrap_or(false),
+            "旧 header 应被新 spec 覆盖"
+        );
+    }
+
+    #[test]
+    fn sync_enabled_preserves_tools_for_enabled_server() {
+        let mut doc = parse(
+            r#"
+[mcp_servers.x]
+type = "stdio"
+command = "old"
+
+[mcp_servers.x.tools.t1]
+approval_mode = "deny"
+"#,
+        );
+
+        let mut enabled = HashMap::new();
+        enabled.insert(
+            "x".to_string(),
+            json!({
+                "type": "stdio",
+                "command": "new"
+            }),
+        );
+
+        apply_enabled_servers_to_doc(&mut doc, &enabled);
+        let v = parse_value(&doc);
+
+        assert_eq!(v["mcp_servers"]["x"]["command"].as_str(), Some("new"));
+        assert_eq!(
+            v["mcp_servers"]["x"]["tools"]["t1"]["approval_mode"].as_str(),
+            Some("deny"),
+            "enabled server 的 tools.* 必须保留"
+        );
+    }
+
+    #[test]
+    fn sync_enabled_drops_mcp_servers_when_empty() {
+        let mut doc = parse(
+            r#"
+[mcp_servers.x]
+type = "stdio"
+command = "x"
+
+[mcp_servers.x.tools.t1]
+approval_mode = "approve"
+"#,
+        );
+
+        let enabled: HashMap<String, Value> = HashMap::new();
+        apply_enabled_servers_to_doc(&mut doc, &enabled);
+
+        let text = doc.to_string();
+        assert!(
+            !text.contains("mcp_servers"),
+            "enabled 为空时整体移除 [mcp_servers]（pre-existing 行为）"
+        );
+    }
+
+    #[test]
+    fn sync_enabled_drops_unmentioned_server_including_its_tools() {
+        // 不在 enabled 中的 server 沿用原有"整体移除"行为
+        let mut doc = parse(
+            r#"
+[mcp_servers.x]
+type = "stdio"
+command = "x"
+
+[mcp_servers.x.tools.t1]
+approval_mode = "approve"
+
+[mcp_servers.y]
+type = "stdio"
+command = "y"
+"#,
+        );
+
+        let mut enabled = HashMap::new();
+        enabled.insert(
+            "y".to_string(),
+            json!({ "type": "stdio", "command": "y2" }),
+        );
+
+        apply_enabled_servers_to_doc(&mut doc, &enabled);
+        let v = parse_value(&doc);
+
+        assert!(
+            v.get("mcp_servers")
+                .and_then(|m| m.get("x"))
+                .is_none(),
+            "未在 enabled 中的 server 应被整体移除（pre-existing 行为）"
+        );
+        assert_eq!(v["mcp_servers"]["y"]["command"].as_str(), Some("y2"));
+    }
+
+    #[test]
+    fn sync_single_handles_empty_doc() {
+        let mut doc = DocumentMut::new();
+        let spec = json!({ "type": "stdio", "command": "c" });
+        apply_single_server_to_doc(&mut doc, "x", &spec).unwrap();
+        let v = parse_value(&doc);
+        assert_eq!(v["mcp_servers"]["x"]["command"].as_str(), Some("c"));
+    }
+
+    // ====== Layer 2: merge_codex_runtime_subtables ======
+
+    #[test]
+    fn merge_runtime_preserves_tools_when_new_text_has_server_without_tools() {
+        // 主复现路径：tools.* 由 Codex CLI 在 provider 保存之后才追加，所以切换回来的
+        // provider stored config 带 [mcp_servers.ace-tool-rs]（含 command）但不含 tools.*。
+        let old = r#"
+model_provider = "openai"
+
+[mcp_servers.ace-tool-rs]
+type = "stdio"
+command = "ace"
+
+[mcp_servers.ace-tool-rs.tools.search_context]
+approval_mode = "approve"
+"#;
+        let new = r#"
+model_provider = "anthropic"
+
+[mcp_servers.ace-tool-rs]
+type = "stdio"
+command = "ace"
+"#;
+        let merged = merge_codex_runtime_subtables(new, old);
+        let v: toml::Value = toml::from_str(&merged).expect("merged is valid toml");
+
+        // 新文本的字段保留
+        assert_eq!(v["model_provider"].as_str(), Some("anthropic"));
+        assert_eq!(v["mcp_servers"]["ace-tool-rs"]["command"].as_str(), Some("ace"));
+        // 旧 tools.* 必须保留
+        assert_eq!(
+            v["mcp_servers"]["ace-tool-rs"]["tools"]["search_context"]["approval_mode"].as_str(),
+            Some("approve"),
+            "Layer 2 必须把 Codex CLI runtime 写入的 tools.* 从旧 live 抢救到新文本"
+        );
+    }
+
+    #[test]
+    fn merge_runtime_skips_managed_subtables() {
+        // env / http_headers / headers 是受管子表，不应被 Layer 2 保留
+        let old = r#"
+[mcp_servers.x]
+command = "old"
+
+[mcp_servers.x.env]
+OLD = "1"
+
+[mcp_servers.x.http_headers]
+X-Old = "1"
+
+[mcp_servers.x.headers]
+X-Compat = "1"
+
+[mcp_servers.x.tools.t1]
+approval_mode = "approve"
+"#;
+        let new = r#"
+[mcp_servers.x]
+command = "new"
+"#;
+        let merged = merge_codex_runtime_subtables(new, old);
+        let v: toml::Value = toml::from_str(&merged).expect("merged is valid toml");
+
+        assert_eq!(v["mcp_servers"]["x"]["command"].as_str(), Some("new"));
+        // 受管子表都不应该被保留进来
+        assert!(v["mcp_servers"]["x"].get("env").is_none(), "env 受管，不应被 Layer 2 保留");
+        assert!(
+            v["mcp_servers"]["x"].get("http_headers").is_none(),
+            "http_headers 受管，不应被 Layer 2 保留"
+        );
+        assert!(
+            v["mcp_servers"]["x"].get("headers").is_none(),
+            "compat headers 受管，不应被 Layer 2 保留"
+        );
+        // 未知子表必须保留
+        assert_eq!(
+            v["mcp_servers"]["x"]["tools"]["t1"]["approval_mode"].as_str(),
+            Some("approve"),
+        );
+    }
+
+    #[test]
+    fn merge_runtime_new_wins_when_key_collides() {
+        // 用户在 provider config 中显式声明了 tools.*——新文本优先
+        let old = r#"
+[mcp_servers.x.tools.t1]
+approval_mode = "approve"
+"#;
+        let new = r#"
+[mcp_servers.x.tools.t1]
+approval_mode = "deny"
+"#;
+        let merged = merge_codex_runtime_subtables(new, old);
+        let v: toml::Value = toml::from_str(&merged).expect("merged is valid toml");
+
+        assert_eq!(
+            v["mcp_servers"]["x"]["tools"]["t1"]["approval_mode"].as_str(),
+            Some("deny"),
+            "新文本显式声明同名子表时应保留新值"
+        );
+    }
+
+    #[test]
+    fn merge_runtime_returns_unchanged_when_old_has_no_mcp_servers() {
+        let old = r#"model_provider = "openai""#;
+        let new = r#"model_provider = "anthropic""#;
+        let merged = merge_codex_runtime_subtables(new, old);
+        // best-effort：原样返回新文本（不要求字符串完全相等，只要语义等价）
+        let v: toml::Value = toml::from_str(&merged).unwrap();
+        assert_eq!(v["model_provider"].as_str(), Some("anthropic"));
+        assert!(v.get("mcp_servers").is_none());
+    }
+
+    #[test]
+    fn merge_runtime_returns_unchanged_when_old_unparseable() {
+        let old = "this is :: not toml";
+        let new = r#"model_provider = "anthropic""#;
+        let merged = merge_codex_runtime_subtables(new, old);
+        assert_eq!(merged, new, "旧文本无法解析时退回原新文本，不应阻断写入");
+    }
+
+    #[test]
+    fn merge_runtime_merges_tools_per_tool_not_per_parent() {
+        // P2：旧 live 有 tools.search、新文本（用户在 provider config 里）声明了 tools.read，
+        // 两者无键冲突，必须都保留——不能因为新文本已有 `tools` 父表就整体跳过旧表。
+        let old = r#"
+[mcp_servers.x]
+command = "x"
+
+[mcp_servers.x.tools.search]
+approval_mode = "approve"
+"#;
+        let new = r#"
+[mcp_servers.x]
+command = "x"
+
+[mcp_servers.x.tools.read]
+approval_mode = "approve"
+"#;
+        let merged = merge_codex_runtime_subtables(new, old);
+        let v: toml::Value = toml::from_str(&merged).expect("merged is valid toml");
+
+        assert_eq!(
+            v["mcp_servers"]["x"]["tools"]["search"]["approval_mode"].as_str(),
+            Some("approve"),
+            "新文本声明了其它工具时，旧 live 的 per-tool 授权仍须逐工具保留"
+        );
+        assert_eq!(
+            v["mcp_servers"]["x"]["tools"]["read"]["approval_mode"].as_str(),
+            Some("approve"),
+            "新文本声明的工具同样保留"
+        );
+    }
+
+    #[test]
+    fn merge_runtime_drops_orphan_tools_when_new_lacks_server() {
+        // P1：新文本里没有该 server（切换后的 provider 不含它，且之后不会再跑 MCP sync）。
+        // 不能为了塞 tools.* 而凭空建一个没有 command/url 的残缺 server——Codex 无法加载它。
+        let old = r#"
+[mcp_servers.x.tools.t1]
+approval_mode = "approve"
+"#;
+        let new = r#"
+model_provider = "anthropic"
+"#;
+        let merged = merge_codex_runtime_subtables(new, old);
+        let v: toml::Value = toml::from_str(&merged).expect("merged is valid toml");
+        assert_eq!(v["model_provider"].as_str(), Some("anthropic"));
+        assert!(
+            v.get("mcp_servers").is_none(),
+            "新文本不含该 server 时，不得为孤儿 tools.* 创建残缺父表"
+        );
+    }
 }
