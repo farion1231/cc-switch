@@ -90,8 +90,11 @@ webkit2gtk = { version = "2.0.1", features = ["v2_16"] }
 winreg = "0.52"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.5"
 objc2 = "0.5"
-objc2-app-kit = { version = "0.2", features = ["NSColor"] }
+objc2-app-kit = { version = "0.2", features = ["NSColor", "NSResponder", "NSView", "NSWindow"] }
+objc2-foundation = { version = "0.2", features = ["block2", "NSString", "NSOperation"] }
+raw-window-handle = "0.6"
 
 # Optimize release binary size to help reduce AppImage footprint
 [profile.release]
