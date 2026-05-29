@@ -1688,6 +1688,102 @@ mod tests {
 
     #[test]
     #[serial]
+    fn add_first_claude_profile_and_config_rejects_empty_dir_before_saving() {
+        with_test_home(|state, _home| {
+            let broken_provider = claude_provider(
+                "claude-api",
+                "Claude API",
+                "provider-token-should-not-save",
+                "https://provider-should-not-save.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some("   ".to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileAndConfig),
+                    ..Default::default()
+                }),
+            );
+
+            let err = ProviderService::add(state, AppType::Claude, broken_provider, true)
+                .expect_err("empty profile-and-config dir should reject first add");
+            assert!(
+                err.to_string().contains("profile"),
+                "expected profile validation error, got {err:?}"
+            );
+            assert!(
+                state
+                    .db
+                    .get_provider_by_id("claude-api", AppType::Claude.as_str())
+                    .expect("query provider")
+                    .is_none(),
+                "failed first add must not persist invalid provider"
+            );
+            assert!(
+                crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)
+                    .expect("effective current provider")
+                    .is_none(),
+                "failed first add must not set current provider"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_claude_profile_and_config_rejects_stored_relative_dir() {
+        with_test_home(|state, _home| {
+            let legacy_provider = claude_provider(
+                "claude-current",
+                "Claude Current",
+                "legacy-token",
+                "https://legacy.example",
+                None,
+            );
+            let broken_provider = claude_provider(
+                "claude-api",
+                "Claude API",
+                "provider-token-should-not-apply",
+                "https://provider-should-not-apply.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some("relative-profile-dir".to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileAndConfig),
+                    ..Default::default()
+                }),
+            );
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &legacy_provider)
+                .expect("save legacy provider");
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &broken_provider)
+                .expect("save broken provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "claude-current")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("claude-current"))
+                .expect("set local current provider");
+
+            let err = ProviderService::switch(state, AppType::Claude, "claude-api")
+                .expect_err("stored relative profile-and-config dir should reject switch");
+            assert!(
+                err.to_string().contains("absolute"),
+                "expected absolute-path validation error, got {err:?}"
+            );
+            assert_eq!(
+                crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)
+                    .expect("effective current provider")
+                    .as_deref(),
+                Some("claude-current"),
+                "failed switch must not change current provider"
+            );
+            assert!(
+                crate::settings::get_claude_override_dir().is_none(),
+                "failed switch must not persist a relative Claude override dir"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn update_current_claude_profile_only_applies_profile_without_overwriting_live() {
         with_test_home(|state, home| {
             let default_dir = home.join(".claude");
@@ -1760,6 +1856,68 @@ mod tests {
                 default_live["env"]["ANTHROPIC_AUTH_TOKEN"],
                 Value::String("default-live-token".to_string()),
                 "profile-only current-provider update should not overwrite default live settings"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn update_current_claude_profile_and_config_rejects_relative_dir_before_saving() {
+        with_test_home(|state, _home| {
+            let legacy_provider = claude_provider(
+                "claude-current",
+                "Claude Current",
+                "legacy-token",
+                "https://legacy.example",
+                None,
+            );
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &legacy_provider)
+                .expect("save legacy provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "claude-current")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("claude-current"))
+                .expect("set local current provider");
+
+            let updated_provider = claude_provider(
+                "claude-current",
+                "Claude Current",
+                "provider-token-should-not-save",
+                "https://provider-should-not-save.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some("relative-profile-dir".to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileAndConfig),
+                    ..Default::default()
+                }),
+            );
+
+            let err = ProviderService::update(state, AppType::Claude, None, updated_provider)
+                .expect_err("relative profile-and-config dir should reject update");
+            assert!(
+                err.to_string().contains("absolute"),
+                "expected absolute-path validation error, got {err:?}"
+            );
+
+            let stored = state
+                .db
+                .get_provider_by_id("claude-current", AppType::Claude.as_str())
+                .expect("query stored provider")
+                .expect("stored provider exists");
+            assert!(
+                stored
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.claude_activation_mode.as_ref())
+                    .is_none(),
+                "failed current-provider update must not persist invalid profile activation"
+            );
+            assert_eq!(
+                stored.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("legacy-token".to_string()),
+                "failed current-provider update must leave previous settings in DB"
             );
         });
     }
@@ -3880,13 +4038,25 @@ impl ProviderService {
     }
 
     fn validate_claude_runtime_switch_plan(plan: &ClaudeSwitchPlan) -> Result<(), AppError> {
-        if matches!(plan.activation_mode, ClaudeActivationMode::ProfileOnly) {
+        let requires_profile_dir = matches!(
+            plan.activation_mode,
+            ClaudeActivationMode::ProfileOnly | ClaudeActivationMode::ProfileAndConfig
+        );
+        if requires_profile_dir {
             let profile_dir = plan.override_dir.as_deref().ok_or_else(|| {
                 AppError::Message(
                     "Claude profile switching requires a profile directory".to_string(),
                 )
             })?;
-            if !Path::new(profile_dir).is_dir() {
+            let profile_path = Path::new(profile_dir);
+            if !profile_path.is_absolute() {
+                return Err(AppError::Message(
+                    "Claude profile directory must be an absolute path".to_string(),
+                ));
+            }
+            if matches!(plan.activation_mode, ClaudeActivationMode::ProfileOnly)
+                && !profile_path.is_dir()
+            {
                 return Err(AppError::Message(format!(
                     "Claude profile path must be an existing directory: {profile_dir}"
                 )));
