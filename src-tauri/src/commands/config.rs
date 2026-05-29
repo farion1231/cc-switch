@@ -247,11 +247,15 @@ pub async fn set_claude_common_config_snippet(
 ) -> Result<(), String> {
     let is_cleared = snippet.trim().is_empty();
 
-    if !snippet.trim().is_empty() {
+    let value = if is_cleared {
+        None
+    } else {
         serde_json::from_str::<serde_json::Value>(&snippet).map_err(invalid_json_format_error)?;
-    }
-
-    let value = if is_cleared { None } else { Some(snippet) };
+        Some(
+            crate::services::provider::sanitize_claude_common_config_snippet_text(&snippet)
+                .map_err(|e| e.to_string())?,
+        )
+    };
 
     state
         .db
@@ -289,7 +293,18 @@ pub async fn set_common_config_snippet(
 
     validate_common_config_snippet(&app_type, &snippet)?;
 
-    let value = if is_cleared { None } else { Some(snippet) };
+    let sanitized_snippet = if !is_cleared && app_type == "claude" {
+        crate::services::provider::sanitize_claude_common_config_snippet_text(&snippet)
+            .map_err(|e| e.to_string())?
+    } else {
+        snippet
+    };
+
+    let value = if is_cleared {
+        None
+    } else {
+        Some(sanitized_snippet)
+    };
 
     if matches!(app_type.as_str(), "claude" | "codex" | "gemini") {
         if let Some(legacy_snippet) = old_snippet
