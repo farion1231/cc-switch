@@ -461,6 +461,17 @@ function ProviderFormFull({
     setLocalApiFormat(format);
   }, []);
 
+  const [localThinkingEnabled, setLocalThinkingEnabled] = useState<
+    boolean | undefined
+  >(() => {
+    if (appId !== "claude") return undefined;
+    const meta = initialData?.meta;
+    if (!meta) return undefined;
+    if (meta.preserveReasoningContent === true) return true;
+    if (meta.disableThinking === true) return false;
+    return undefined;
+  });
+
   const handleApiKeyFieldChange = useCallback(
     (field: ClaudeApiKeyField) => {
       const prev = localApiKeyField;
@@ -1408,6 +1419,20 @@ function ProviderFormFull({
         supportsFullUrl && category !== "official" && localIsFullUrl
           ? true
           : undefined,
+      disableThinking:
+        appId === "claude" &&
+        category !== "official" &&
+        localApiFormat === "openai_chat" &&
+        localThinkingEnabled === false
+          ? true
+          : undefined,
+      preserveReasoningContent:
+        appId === "claude" &&
+        category !== "official" &&
+        localApiFormat === "openai_chat" &&
+        localThinkingEnabled === true
+          ? true
+          : undefined,
     };
 
     if (!isCodexOauthProvider && "codexFastMode" in nextMeta) {
@@ -2007,6 +2032,8 @@ function ProviderFormFull({
               onApiKeyFieldChange={handleApiKeyFieldChange}
               isFullUrl={localIsFullUrl}
               onFullUrlChange={setLocalIsFullUrl}
+              thinkingEnabled={localThinkingEnabled}
+              onThinkingChange={setLocalThinkingEnabled}
             />
           )}
 
