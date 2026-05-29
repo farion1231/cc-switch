@@ -5,6 +5,7 @@
 
 use reqwest::{Method, RequestBuilder, StatusCode, Url};
 use std::time::Duration;
+use tokio::time::sleep;
 
 use crate::error::AppError;
 use crate::proxy::http_client;
@@ -13,6 +14,8 @@ use futures::StreamExt;
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 /// Timeout for large file transfers (PUT/GET of db.sql, skills.zip).
 const TRANSFER_TIMEOUT_SECS: u64 = 300;
+const GET_RETRY_ATTEMPTS: usize = 3;
+const GET_RETRY_BASE_DELAY_MS: u64 = 300;
 
 /// Auth pair: `(username, Some(password))`.
 pub type WebDavAuth = Option<(String, Option<String>)>;
@@ -119,11 +122,37 @@ fn webdav_transport_error(
     };
 
     let safe_url = redact_url(target_url);
+    let detail = sanitize_reqwest_error(err, target_url, &safe_url);
     AppError::localized(
         key,
-        format!("WebDAV {op_zh}失败（{zh_reason}）: {safe_url}"),
-        format!("WebDAV {op_en} failed ({en_reason}): {safe_url}"),
+        format!("WebDAV {op_zh}失败（{zh_reason}）: {safe_url}；详情: {detail}"),
+        format!("WebDAV {op_en} failed ({en_reason}): {safe_url}; detail: {detail}"),
     )
+}
+
+fn sanitize_reqwest_error(err: &reqwest::Error, target_url: &str, safe_url: &str) -> String {
+    err.to_string().replace(target_url, safe_url)
+}
+
+fn is_retryable_get_error(err: &reqwest::Error) -> bool {
+    err.is_timeout() || err.is_connect() || err.is_request() || err.is_body()
+}
+
+async fn retry_get_after_error(url: &str, attempt: usize, err: &reqwest::Error) -> bool {
+    if attempt + 1 >= GET_RETRY_ATTEMPTS || !is_retryable_get_error(err) {
+        return false;
+    }
+
+    let delay_ms = GET_RETRY_BASE_DELAY_MS.saturating_mul(1_u64 << attempt);
+    log::warn!(
+        "[WebDAV] GET failed for {}, retrying ({}/{}): {}",
+        redact_url(url),
+        attempt + 1,
+        GET_RETRY_ATTEMPTS,
+        sanitize_reqwest_error(err, url, &redact_url(url))
+    );
+    sleep(Duration::from_millis(delay_ms)).await;
+    true
 }
 
 // ─── HTTP operations ─────────────────────────────────────────
@@ -255,46 +284,72 @@ pub async fn get_bytes(
     auth: &WebDavAuth,
     max_bytes: usize,
 ) -> Result<Option<(Vec<u8>, Option<String>)>, AppError> {
-    let client = http_client::get();
-    let resp = apply_auth(
-        client
-            .get(url)
-            .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS)),
-        auth,
-    )
-    .send()
-    .await
-    .map_err(|e| webdav_transport_error("webdav.get_failed", "GET 请求", "GET request", url, &e))?;
+    'attempts: for attempt in 0..GET_RETRY_ATTEMPTS {
+        let client = http_client::get();
+        let resp = match apply_auth(
+            client
+                .get(url)
+                .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS)),
+            auth,
+        )
+        .send()
+        .await
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                if retry_get_after_error(url, attempt, &e).await {
+                    continue;
+                }
+                return Err(webdav_transport_error(
+                    "webdav.get_failed",
+                    "GET 请求",
+                    "GET request",
+                    url,
+                    &e,
+                ));
+            }
+        };
 
-    if resp.status() == StatusCode::NOT_FOUND {
-        return Ok(None);
-    }
-    if !resp.status().is_success() {
-        return Err(webdav_status_error("GET", resp.status(), url));
-    }
-    ensure_content_length_within_limit(resp.headers(), max_bytes, url)?;
-
-    let etag = resp
-        .headers()
-        .get("etag")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
-    let mut bytes = Vec::new();
-    let mut stream = resp.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| {
-            AppError::localized(
-                "webdav.response_read_failed",
-                format!("读取 WebDAV 响应失败: {e}"),
-                format!("Failed to read WebDAV response: {e}"),
-            )
-        })?;
-        if bytes.len().saturating_add(chunk.len()) > max_bytes {
-            return Err(response_too_large_error(url, max_bytes));
+        if resp.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
         }
-        bytes.extend_from_slice(&chunk);
+        if !resp.status().is_success() {
+            return Err(webdav_status_error("GET", resp.status(), url));
+        }
+        ensure_content_length_within_limit(resp.headers(), max_bytes, url)?;
+
+        let etag = resp
+            .headers()
+            .get("etag")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let mut bytes = Vec::new();
+        let mut stream = resp.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = match chunk {
+                Ok(chunk) => chunk,
+                Err(e) => {
+                    if retry_get_after_error(url, attempt, &e).await {
+                        continue 'attempts;
+                    }
+                    let safe_url = redact_url(url);
+                    let detail = sanitize_reqwest_error(&e, url, &safe_url);
+                    return Err(AppError::localized(
+                        "webdav.response_read_failed",
+                        format!("读取 WebDAV 响应失败: {safe_url}；详情: {detail}"),
+                        format!("Failed to read WebDAV response: {safe_url}; detail: {detail}"),
+                    ));
+                }
+            };
+            if bytes.len().saturating_add(chunk.len()) > max_bytes {
+                return Err(response_too_large_error(url, max_bytes));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        return Ok(Some((bytes, etag)));
     }
-    Ok(Some((bytes, etag)))
+
+    unreachable!("GET retry loop always returns on the final attempt")
 }
 
 /// HEAD request to retrieve the ETag. Returns `None` on 404.
