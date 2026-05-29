@@ -203,7 +203,11 @@ fn is_top_level_key_line(line: &str) -> bool {
     }
     if let Some(colon_pos) = line.find(':') {
         let after_colon = &line[colon_pos + 1..];
-        after_colon.is_empty() || after_colon.starts_with(' ') || after_colon.starts_with('\t')
+        after_colon.is_empty()
+            || after_colon.starts_with(' ')
+            || after_colon.starts_with('\t')
+            || after_colon.starts_with('\r')
+            || after_colon.starts_with('\n')
     } else {
         false
     }
@@ -1295,6 +1299,58 @@ model:
         // Should match "model:", not "model_extra:"
         assert!(section.starts_with("model:"));
         assert!(!section.starts_with("model_extra:"));
+    }
+
+    // ---- deduplicate_top_level_keys tests ----
+
+    #[test]
+    fn dedup_removes_duplicate_top_level_keys_lf() {
+        let yaml = "\
+model:
+  default: gpt-4
+mcp_servers:
+  - name: foo
+model:
+  default: claude
+";
+        let result = deduplicate_top_level_keys(yaml);
+        // "model:" should appear exactly once
+        let count = result.lines().filter(|l| l.trim() == "model:").count();
+        assert_eq!(count, 1, "duplicate model: section was not removed");
+        assert!(result.contains("mcp_servers:"));
+    }
+
+    #[test]
+    fn dedup_removes_duplicate_top_level_keys_crlf() {
+        // Simulate Windows CRLF content as read by fs::read_to_string
+        let yaml = "\
+model:\r
+  default: gpt-4\r
+mcp_servers:\r
+  - name: foo\r
+model:\r
+  default: claude\r
+";
+        let result = deduplicate_top_level_keys(yaml);
+        // "model:" should appear exactly once (the key line itself)
+        let count = result.lines().filter(|l| l.trim() == "model:").count();
+        assert_eq!(count, 1, "duplicate model: section was not removed for CRLF");
+        assert!(result.contains("mcp_servers:"));
+    }
+
+    #[test]
+    fn dedup_preserves_first_occurrence() {
+        let yaml = "\
+model:
+  default: gpt-4
+agent:
+  max_turns: 10
+model:
+  default: claude
+";
+        let result = deduplicate_top_level_keys(yaml);
+        assert!(result.contains("default: gpt-4"));
+        assert!(!result.contains("default: claude"));
     }
 
     // ---- replace_yaml_section tests ----
