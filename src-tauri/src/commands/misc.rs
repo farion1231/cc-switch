@@ -2567,7 +2567,8 @@ echo "$CLAUDE_CONFIG_DIR"
         return format!(
             r#"#!/bin/bash
 trap 'rm -f {config_path} {script_path}' EXIT
-{cd_command}echo "Using provider-specific claude config:"
+{cd_command}unset CLAUDE_CONFIG_DIR
+echo "Using provider-specific claude config:"
 echo {config_path}
 claude --settings {config_path}
 exec bash --norc --noprofile
@@ -2581,7 +2582,8 @@ exec bash --norc --noprofile
     format!(
         r#"#!/bin/bash
 trap 'rm -f {script_path}' EXIT
-{cd_command}claude
+{cd_command}unset CLAUDE_CONFIG_DIR
+claude
 exec bash --norc --noprofile
 "#,
         script_path = script_path,
@@ -2960,61 +2962,7 @@ fn launch_windows_terminal(
     let terminal = preferred.as_deref().unwrap_or("cmd");
 
     let bat_file = temp_dir.join(format!("cc_switch_claude_{}.bat", std::process::id()));
-    let cwd_command = build_windows_cwd_command(cwd);
-
-    let content = if let Some(profile_dir) = claude_profile_dir {
-        let escaped_profile_dir = escape_windows_batch_value(profile_dir);
-        let config_fragment = if let Some(config_file) = config_file {
-            let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
-            format!(
-                "echo Using provider-specific claude config:
-echo {config_path_for_batch}
-claude --settings \"{config_path_for_batch}\"
-del \"{config_path_for_batch}\" >nul 2>&1
-",
-                config_path_for_batch = config_path_for_batch,
-            )
-        } else {
-            "claude\n".to_string()
-        };
-        format!(
-            "@echo off
-{cwd_command}
-set \"CLAUDE_CONFIG_DIR={escaped_profile_dir}\"
-echo Using Claude profile dir:
-echo %CLAUDE_CONFIG_DIR%
-{config_fragment}del \"%~f0\" >nul 2>&1
-",
-            cwd_command = cwd_command,
-            escaped_profile_dir = escaped_profile_dir,
-            config_fragment = config_fragment,
-        )
-    } else if let Some(config_file) = config_file {
-        let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
-        format!(
-            "@echo off
-{cwd_command}
-echo Using provider-specific claude config:
-echo {}
-claude --settings \"{}\"
-del \"{}\" >nul 2>&1
-del \"%~f0\" >nul 2>&1
-",
-            config_path_for_batch,
-            config_path_for_batch,
-            config_path_for_batch,
-            cwd_command = cwd_command,
-        )
-    } else {
-        format!(
-            "@echo off
-{cwd_command}
-claude
-del \"%~f0\" >nul 2>&1
-",
-            cwd_command = cwd_command,
-        )
-    };
+    let content = build_windows_claude_launch_batch_content(config_file, cwd, claude_profile_dir);
 
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
 
@@ -3042,6 +2990,73 @@ del \"%~f0\" >nul 2>&1
     }
 
     result
+}
+
+#[cfg(target_os = "windows")]
+fn build_windows_claude_launch_batch_content(
+    config_file: Option<&std::path::Path>,
+    cwd: Option<&Path>,
+    claude_profile_dir: Option<&str>,
+) -> String {
+    let cwd_command = build_windows_cwd_command(cwd);
+
+    if let Some(profile_dir) = claude_profile_dir {
+        let escaped_profile_dir = escape_windows_batch_value(profile_dir);
+        let config_fragment = if let Some(config_file) = config_file {
+            let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
+            format!(
+                "echo Using provider-specific claude config:
+echo {config_path_for_batch}
+claude --settings \"{config_path_for_batch}\"
+del \"{config_path_for_batch}\" >nul 2>&1
+",
+                config_path_for_batch = config_path_for_batch,
+            )
+        } else {
+            "claude\n".to_string()
+        };
+        return format!(
+            "@echo off
+{cwd_command}
+set \"CLAUDE_CONFIG_DIR={escaped_profile_dir}\"
+echo Using Claude profile dir:
+echo %CLAUDE_CONFIG_DIR%
+{config_fragment}del \"%~f0\" >nul 2>&1
+",
+            cwd_command = cwd_command,
+            escaped_profile_dir = escaped_profile_dir,
+            config_fragment = config_fragment,
+        );
+    }
+
+    if let Some(config_file) = config_file {
+        let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
+        return format!(
+            "@echo off
+{cwd_command}
+set \"CLAUDE_CONFIG_DIR=\"
+echo Using provider-specific claude config:
+echo {}
+claude --settings \"{}\"
+del \"{}\" >nul 2>&1
+del \"%~f0\" >nul 2>&1
+",
+            config_path_for_batch,
+            config_path_for_batch,
+            config_path_for_batch,
+            cwd_command = cwd_command,
+        );
+    }
+
+    format!(
+        "@echo off
+{cwd_command}
+set \"CLAUDE_CONFIG_DIR=\"
+claude
+del \"%~f0\" >nul 2>&1
+",
+        cwd_command = cwd_command,
+    )
 }
 
 fn build_shell_cd_command(cwd: Option<&Path>) -> String {
@@ -3490,6 +3505,44 @@ mod tests {
         assert!(script.contains("export CLAUDE_CONFIG_DIR='/tmp/.claude-profiles/api'"));
         assert!(script.contains("claude --settings '/tmp/claude_provider.json'"));
         assert!(script.contains("rm -f '/tmp/claude_provider.json' '/tmp/launcher.sh'"));
+    }
+
+    #[test]
+    fn unix_legacy_settings_launch_unsets_stale_claude_config_dir() {
+        let script = build_unix_claude_launch_script(
+            Some(Path::new("/tmp/claude_provider.json")),
+            Path::new("/tmp/launcher.sh"),
+            Some(Path::new("/tmp/project")),
+            None,
+        );
+
+        assert!(script.contains("unset CLAUDE_CONFIG_DIR\n"));
+        assert!(script.contains("claude --settings '/tmp/claude_provider.json'"));
+    }
+
+    #[test]
+    fn unix_legacy_default_launch_unsets_stale_claude_config_dir() {
+        let script = build_unix_claude_launch_script(
+            None,
+            Path::new("/tmp/launcher.sh"),
+            Some(Path::new("/tmp/project")),
+            None,
+        );
+
+        assert!(script.contains("unset CLAUDE_CONFIG_DIR\nclaude\n"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_legacy_launch_unsets_stale_claude_config_dir() {
+        let batch = build_windows_claude_launch_batch_content(
+            Some(Path::new(r"C:\Temp\claude_provider.json")),
+            Some(Path::new(r"C:\Work\project")),
+            None,
+        );
+
+        assert!(batch.contains("set \"CLAUDE_CONFIG_DIR=\"\n"));
+        assert!(batch.contains(r#"claude --settings "C:\Temp\claude_provider.json""#));
     }
 
     #[test]
