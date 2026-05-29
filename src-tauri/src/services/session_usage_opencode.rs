@@ -51,10 +51,18 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
 
     let db_path_str = db_path.to_string_lossy().to_string();
 
-    // 检查文件修改时间
+    // 检查文件修改时间。
+    // opencode 的数据库运行在 WAL 模式：新提交先落在 -wal 文件里，
+    // 主库文件只有在 checkpoint 时才更新。因此必须同时考虑 -wal 的
+    // mtime，否则会在 checkpoint 之前漏掉刚写入的会话。
     let metadata = fs::metadata(&db_path)
         .map_err(|e| AppError::Config(format!("无法读取 opencode.db 元数据: {e}")))?;
-    let file_modified = metadata_modified_nanos(&metadata);
+    let mut file_modified = metadata_modified_nanos(&metadata);
+
+    let wal_path = db_path.with_extension("db-wal");
+    if let Ok(wal_meta) = fs::metadata(&wal_path) {
+        file_modified = file_modified.max(metadata_modified_nanos(&wal_meta));
+    }
 
     let (last_modified, _last_offset) = get_sync_state(db, &db_path_str)?;
 
