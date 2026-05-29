@@ -830,7 +830,6 @@ pub fn run() {
                         let app = tray.app_handle();
                         if crate::lightweight::is_lightweight_mode() {
                             // 轻量模式：双击不执行任何操作
-                            return;
                         } else if let Some(window) = app.get_webview_window("main") {
                             if window.is_visible().unwrap_or(false) {
                                 // 窗口可见：隐藏窗口
