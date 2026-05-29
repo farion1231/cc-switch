@@ -14,6 +14,7 @@ use super::{
     log_codes::srv as log_srv,
     provider_router::ProviderRouter,
     providers::{codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore},
+    request_log::RequestLogStore,
     types::*,
     ProxyError,
 };
@@ -48,6 +49,8 @@ pub struct ProxyState {
     pub app_handle: Option<tauri::AppHandle>,
     /// 故障转移切换管理器
     pub failover_manager: Arc<FailoverSwitchManager>,
+    /// 请求日志存储（内存环形缓冲区）
+    pub request_log_store: Arc<RequestLogStore>,
 }
 
 /// 代理HTTP服务器
@@ -64,6 +67,7 @@ impl ProxyServer {
         config: ProxyConfig,
         db: Arc<Database>,
         app_handle: Option<tauri::AppHandle>,
+        request_log_store: Arc<RequestLogStore>,
     ) -> Self {
         // 创建共享的 ProviderRouter（熔断器状态将跨所有请求保持）
         let provider_router = Arc::new(ProviderRouter::new(db.clone()));
@@ -81,6 +85,7 @@ impl ProxyServer {
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             app_handle,
             failover_manager,
+            request_log_store,
         };
 
         Self {

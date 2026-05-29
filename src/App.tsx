@@ -26,6 +26,7 @@ import {
   Shield,
   Cpu,
   LayoutDashboard,
+  FileText,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -78,6 +79,7 @@ import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
 import { McpIcon } from "@/components/BrandIcons";
+import { RequestLogPanel } from "@/components/request-log/RequestLogPanel";
 import { Button } from "@/components/ui/button";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
 import {
@@ -105,7 +107,8 @@ type View =
   | "openclawEnv"
   | "openclawTools"
   | "openclawAgents"
-  | "hermesMemory";
+  | "hermesMemory"
+  | "requestLog";
 
 interface WebDavSyncStatusUpdatedPayload {
   source?: string;
@@ -151,6 +154,7 @@ const VALID_VIEWS: View[] = [
   "openclawTools",
   "openclawAgents",
   "hermesMemory",
+  "requestLog",
 ];
 
 const getInitialView = (): View => {
@@ -864,6 +868,8 @@ function App() {
           );
         case "hermesMemory":
           return <HermesMemoryPanel />;
+        case "requestLog":
+          return <RequestLogPanel />;
         case "skills":
           return (
             <UnifiedSkillsPanel
@@ -1138,6 +1144,10 @@ function App() {
                   {currentView === "openclawAgents" &&
                     t("openclaw.agents.title")}
                   {currentView === "hermesMemory" && t("hermes.memory.title")}
+                  {currentView === "requestLog" &&
+                    t("requestLog.title", {
+                      defaultValue: "请求日志",
+                    })}
                 </h1>
               </div>
             ) : (
@@ -1191,6 +1201,28 @@ function App() {
                     <BarChart2 className="w-4 h-4" />
                   </Button>
                 )}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => {
+                    if (!isProxyRunning) {
+                      toast.info(
+                        t("requestLog.proxyRequired", {
+                          defaultValue:
+                            "请先在设置中开启「本地代理」功能并启用代理接管，否则无法捕获请求日志",
+                        }),
+                      );
+                      return;
+                    }
+                    setCurrentView("requestLog");
+                  }}
+                  title={t("requestLog.title", {
+                    defaultValue: "请求日志",
+                  })}
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <FileText className="w-4 h-4" />
+                </Button>
               </div>
             )}
           </div>

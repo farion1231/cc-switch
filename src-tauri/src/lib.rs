@@ -1374,6 +1374,14 @@ pub fn run() {
             commands::enter_lightweight_mode,
             commands::exit_lightweight_mode,
             commands::is_lightweight_mode,
+            // Request log capture (proxy traffic inspector)
+            commands::get_captured_request_logs,
+            commands::get_captured_request_log_detail,
+            commands::clear_captured_request_logs,
+            commands::set_request_log_capture_enabled,
+            commands::is_request_log_capture_enabled,
+            commands::get_request_log_max_entries,
+            commands::set_request_log_max_entries,
         ]);
 
     let app = builder

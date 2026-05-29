@@ -86,6 +86,7 @@
     "react-dom": "^18.2.0",
     "react-hook-form": "^7.65.0",
     "react-i18next": "^16.0.0",
+    "react-json-view-lite": "^2.5.0",
     "recharts": "^3.5.1",
     "smol-toml": "^1.4.2",
     "sonner": "^2.0.7",

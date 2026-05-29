@@ -7,6 +7,7 @@ use super::{
     handler_config::{StreamUsageEventFilter, UsageParserConfig},
     handler_context::{RequestContext, StreamingTimeoutConfig},
     hyper_client::ProxyResponse,
+    request_log::RequestLogStore,
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
     usage::parser::TokenUsage,
@@ -184,6 +185,7 @@ pub async fn handle_streaming(
     state: &ProxyState,
     parser_config: &UsageParserConfig,
     connection_guard: Option<ActiveConnectionGuard>,
+    log_id: Option<String>,
 ) -> Response {
     let status = response.status();
     log::debug!(
@@ -220,6 +222,18 @@ pub async fn handle_streaming(
     // 获取流式超时配置
     let timeout_config = ctx.streaming_timeout_config();
 
+    // 构建 response_log_info（如果 log_id 存在且 request_log 启用）
+    let response_log_info = if let Some(id) = &log_id {
+        if state.request_log_store.is_enabled() {
+            let latency_ms = ctx.latency_ms();
+            Some((state.request_log_store.clone(), id.clone(), latency_ms))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // 创建带日志和超时的透传流
     let logged_stream = create_logged_passthrough_stream(
         stream,
@@ -227,6 +241,7 @@ pub async fn handle_streaming(
         usage_collector,
         timeout_config,
         connection_guard,
+        response_log_info,
     );
 
     let body = axum::body::Body::from_stream(logged_stream);
@@ -247,6 +262,7 @@ pub async fn handle_non_streaming(
     parser_config: &UsageParserConfig,
     // guard 在函数 scope 内持有，整包响应读取完成后随函数返回一并 drop
     _connection_guard: Option<ActiveConnectionGuard>,
+    log_id: Option<String>,
 ) -> Result<Response, ProxyError> {
     // 整包超时：仅在故障转移开启且配置值非零时生效
     let body_timeout =
@@ -328,6 +344,22 @@ pub async fn handle_non_streaming(
         log::debug!("[{}] usage logging 已关闭，跳过非流式 usage 解析", ctx.tag);
     }
 
+    // 如果 log_id 存在且 request_log 启用，尝试回填 response_body
+    if let Some(id) = &log_id {
+        if state.request_log_store.is_enabled() {
+            let latency_ms = ctx.latency_ms();
+            // 尝试将 body_bytes 解析为 JSON
+            let response_body = serde_json::from_slice::<Value>(&body_bytes).ok();
+            // 异步回填（不阻塞响应返回）
+            let store = state.request_log_store.clone();
+            let id = id.clone();
+            let status_code = status.as_u16();
+            tokio::spawn(async move {
+                store.update_response(&id, status_code, latency_ms, response_body).await;
+            });
+        }
+    }
+
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);
     for (key, value) in response_headers.iter() {
@@ -350,11 +382,12 @@ pub async fn process_response(
     state: &ProxyState,
     parser_config: &UsageParserConfig,
     connection_guard: Option<ActiveConnectionGuard>,
+    log_id: Option<String>,
 ) -> Result<Response, ProxyError> {
     if is_sse_response(&response) {
-        Ok(handle_streaming(response, ctx, state, parser_config, connection_guard).await)
+        Ok(handle_streaming(response, ctx, state, parser_config, connection_guard, log_id).await)
     } else {
-        handle_non_streaming(response, ctx, state, parser_config, connection_guard).await
+        handle_non_streaming(response, ctx, state, parser_config, connection_guard, log_id).await
     }
 }
 
@@ -681,6 +714,7 @@ pub fn create_logged_passthrough_stream(
     usage_collector: Option<SseUsageCollector>,
     timeout_config: StreamingTimeoutConfig,
     connection_guard: Option<ActiveConnectionGuard>,
+    response_log_info: Option<(Arc<RequestLogStore>, String, u64)>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let _conn_guard = connection_guard;
@@ -689,8 +723,15 @@ pub fn create_logged_passthrough_stream(
         let mut collector = usage_collector;
         let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
         let inspect_sse_events =
-            collector.is_some() || log::log_enabled!(log::Level::Debug);
+            collector.is_some() || log::log_enabled!(log::Level::Debug) || response_log_info.is_some();
         let mut is_first_chunk = true;
+
+        // 用于收集 SSE events 以便回填 response_body（仅在 response_log_info 存在时启用）
+        let mut sse_events_for_log: Option<Vec<Value>> = if response_log_info.is_some() {
+            Some(Vec::new())
+        } else {
+            None
+        };
 
         // 超时配置
         let first_byte_timeout = if timeout_config.first_byte_timeout > 0 {
@@ -754,13 +795,30 @@ pub fn create_logged_passthrough_stream(
                                                 Some(c) if c.should_collect(data) => {
                                                     match serde_json::from_str::<Value>(data) {
                                                         Ok(json_value) => {
+                                                            // 如果启用了 response_log，也收集到 sse_events_for_log
+                                                            if let Some(ref mut events) = sse_events_for_log {
+                                                                events.push(json_value.clone());
+                                                            }
                                                             c.push(json_value).await;
                                                             true
                                                         }
                                                         Err(_) => false,
                                                     }
                                                 }
-                                                _ => false,
+                                                _ => {
+                                                    // 没有 usage collector，但如果需要记录 response_log，仍然要解析
+                                                    if sse_events_for_log.is_some() {
+                                                        match serde_json::from_str::<Value>(data) {
+                                                            Ok(json_value) => {
+                                                                sse_events_for_log.as_mut().unwrap().push(json_value);
+                                                                true
+                                                            }
+                                                            Err(_) => false,
+                                                        }
+                                                    } else {
+                                                        false
+                                                    }
+                                                }
                                             };
                                             if collected {
                                                 log::debug!("[{tag}] <<< SSE 事件: {data}");
@@ -795,6 +853,18 @@ pub fn create_logged_passthrough_stream(
         }
         if let Some(guard) = &mut finish_guard {
             guard.disarm();
+        }
+
+        // 流结束后，如果 response_log_info 存在且收集到了 SSE events，异步回填
+        if let Some((store, log_id, latency_ms)) = response_log_info {
+            if let Some(events) = sse_events_for_log {
+                if !events.is_empty() {
+                    let response_body = Value::Array(events);
+                    tokio::spawn(async move {
+                        store.update_response(&log_id, 200, latency_ms, Some(response_body)).await;
+                    });
+                }
+            }
         }
     }
 }
@@ -945,6 +1015,7 @@ mod tests {
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             app_handle: None,
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
+            request_log_store: Arc::new(Default::default()),
         }
     }
 
