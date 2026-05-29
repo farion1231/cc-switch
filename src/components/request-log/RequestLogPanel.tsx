@@ -1,8 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Search, Trash2, Circle, Copy, X, FileText, MessageSquare, MessageCircle, Bot, Wrench, Settings, User, Braces } from "lucide-react";
-import { JsonView, allExpanded, darkStyles, defaultStyles } from "react-json-view-lite";
+import {
+  Search,
+  Trash2,
+  Circle,
+  Copy,
+  X,
+  FileText,
+  MessageSquare,
+  MessageCircle,
+  Bot,
+  Wrench,
+  Settings,
+  User,
+  Braces,
+} from "lucide-react";
+import {
+  JsonView,
+  allExpanded,
+  darkStyles,
+  defaultStyles,
+} from "react-json-view-lite";
 import { useTheme } from "@/components/theme-provider";
 import "react-json-view-lite/dist/index.css";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
@@ -54,7 +73,9 @@ interface LogListItem {
  * 从 request_body.messages 中提取最后一个 role=user 的 content 的最后一项，
  * 返回 type 和文本内容。
  */
-function extractUserQuery(requestBody: unknown): { type: string; text: string } | null {
+function extractUserQuery(
+  requestBody: unknown,
+): { type: string; text: string } | null {
   if (
     requestBody == null ||
     typeof requestBody !== "object" ||
@@ -69,7 +90,11 @@ function extractUserQuery(requestBody: unknown): { type: string; text: string } 
   let lastUserMessage: Record<string, unknown> | null = null;
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
-    if (msg && typeof msg === "object" && (msg as Record<string, unknown>).role === "user") {
+    if (
+      msg &&
+      typeof msg === "object" &&
+      (msg as Record<string, unknown>).role === "user"
+    ) {
       lastUserMessage = msg as Record<string, unknown>;
       break;
     }
@@ -91,7 +116,8 @@ function extractUserQuery(requestBody: unknown): { type: string; text: string } 
       const item = lastItem as Record<string, unknown>;
       const itemType = typeof item.type === "string" ? item.type : "unknown";
       if (itemType === "text" && typeof item.text === "string") {
-        const text = item.text.length > 120 ? item.text.slice(0, 120) + "…" : item.text;
+        const text =
+          item.text.length > 120 ? item.text.slice(0, 120) + "…" : item.text;
         return { type: "text", text };
       }
       return { type: itemType, text: "" };
@@ -172,11 +198,13 @@ const APP_TYPE_OPTIONS = [
   { value: "hermes", label: "Hermes" },
 ];
 
-
 export function RequestLogPanel() {
   const { t } = useTranslation();
   const { theme } = useTheme();
-  const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  const isDark =
+    theme === "dark" ||
+    (theme === "system" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches);
   const jsonViewStyle = isDark ? darkStyles : defaultStyles;
   const [captureEnabled, setCaptureEnabled] = useState(false);
   const [logs, setLogs] = useState<LogListItem[]>([]);
@@ -423,7 +451,9 @@ export function RequestLogPanel() {
               setMaxEntries(num);
               void requestLogApi.setMaxEntries(num);
               // 前端也截断已有日志，只保留最新的 num 条
-              setLogs((prev) => (prev.length > num ? prev.slice(0, num) : prev));
+              setLogs((prev) =>
+                prev.length > num ? prev.slice(0, num) : prev,
+              );
             }}
           >
             <SelectTrigger className="h-8 w-24 text-xs" title="最大保留条数">
@@ -534,11 +564,15 @@ export function RequestLogPanel() {
                       <span className="text-xs font-mono truncate">
                         {log.endpoint}
                       </span>
-                      <span className="text-[10px] text-muted-foreground">·</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        ·
+                      </span>
                       <span className="text-[10px] text-muted-foreground truncate shrink-0">
                         {log.providerName}
                       </span>
-                      <span className="text-[10px] text-muted-foreground">·</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        ·
+                      </span>
                       <span className="text-[10px] text-muted-foreground truncate">
                         {log.model}
                       </span>
@@ -546,7 +580,10 @@ export function RequestLogPanel() {
                     {log.userQuery && (
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <MessageSquare className="w-3 h-3 text-muted-foreground shrink-0" />
-                        <Badge variant="outline" className="text-[10px] px-1 py-0 h-4 font-mono font-normal shrink-0">
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] px-1 py-0 h-4 font-mono font-normal shrink-0"
+                        >
                           {log.userQuery.type}
                         </Badge>
                         {log.userQuery.text ? (
@@ -560,7 +597,6 @@ export function RequestLogPanel() {
                         )}
                       </div>
                     )}
-
                   </button>
                 ))}
               </div>
@@ -690,8 +726,15 @@ export function RequestLogPanel() {
                       </pre>
 
                       {/* System Prompt 弹窗 */}
-                      <Dialog open={showSystemPromptView} onOpenChange={setShowSystemPromptView}>
-                        <DialogContent zIndex="top" overlayClassName="bg-black/60" className="max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+                      <Dialog
+                        open={showSystemPromptView}
+                        onOpenChange={setShowSystemPromptView}
+                      >
+                        <DialogContent
+                          zIndex="top"
+                          overlayClassName="bg-black/60"
+                          className="max-w-2xl max-h-[85vh] flex flex-col overflow-hidden"
+                        >
                           <DialogHeader>
                             <DialogTitle className="flex items-center gap-2">
                               <FileText className="w-4 h-4 text-blue-500" />
@@ -755,8 +798,15 @@ export function RequestLogPanel() {
                   </div>
 
                   {/* Request Body JSON 弹窗 */}
-                  <Dialog open={showRequestJsonView} onOpenChange={setShowRequestJsonView}>
-                    <DialogContent zIndex="top" overlayClassName="bg-black/60" className="max-w-3xl max-h-[85vh] flex flex-col overflow-hidden">
+                  <Dialog
+                    open={showRequestJsonView}
+                    onOpenChange={setShowRequestJsonView}
+                  >
+                    <DialogContent
+                      zIndex="top"
+                      overlayClassName="bg-black/60"
+                      className="max-w-3xl max-h-[85vh] flex flex-col overflow-hidden"
+                    >
                       <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                           <Braces className="w-4 h-4" />
@@ -777,8 +827,15 @@ export function RequestLogPanel() {
                   </Dialog>
 
                   {/* 格式化对话弹窗 */}
-                  <Dialog open={showFormattedView} onOpenChange={setShowFormattedView}>
-                    <DialogContent zIndex="top" overlayClassName="bg-black/60" className="max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+                  <Dialog
+                    open={showFormattedView}
+                    onOpenChange={setShowFormattedView}
+                  >
+                    <DialogContent
+                      zIndex="top"
+                      overlayClassName="bg-black/60"
+                      className="max-w-2xl max-h-[85vh] flex flex-col overflow-hidden"
+                    >
                       <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                           <MessageCircle className="w-4 h-4" />
@@ -789,7 +846,9 @@ export function RequestLogPanel() {
                         </DialogDescription>
                       </DialogHeader>
                       <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4">
-                        <FormattedMessagesView requestBody={detailEntry.request_body} />
+                        <FormattedMessagesView
+                          requestBody={detailEntry.request_body}
+                        />
                       </div>
                     </DialogContent>
                   </Dialog>
@@ -824,7 +883,11 @@ export function RequestLogPanel() {
                             className="h-6 text-[10px] gap-1"
                             onClick={() =>
                               void handleCopy(
-                                JSON.stringify(detailEntry.response_body, null, 2),
+                                JSON.stringify(
+                                  detailEntry.response_body,
+                                  null,
+                                  2,
+                                ),
                               )
                             }
                           >
@@ -846,19 +909,32 @@ export function RequestLogPanel() {
 
                     {/* Response Body 格式化弹窗 */}
                     {detailEntry.response_body != null && (
-                      <Dialog open={showResponseFormatView} onOpenChange={setShowResponseFormatView}>
-                        <DialogContent zIndex="top" overlayClassName="bg-black/60" className="max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+                      <Dialog
+                        open={showResponseFormatView}
+                        onOpenChange={setShowResponseFormatView}
+                      >
+                        <DialogContent
+                          zIndex="top"
+                          overlayClassName="bg-black/60"
+                          className="max-w-2xl max-h-[85vh] flex flex-col overflow-hidden"
+                        >
                           <DialogHeader>
                             <DialogTitle className="flex items-center gap-2">
                               <Bot className="w-4 h-4" />
                               响应内容
                             </DialogTitle>
                             <DialogDescription>
-                              {detailEntry.model} · {detailEntry.is_stream ? "SSE Stream" : "Non-Stream"}
+                              {detailEntry.model} ·{" "}
+                              {detailEntry.is_stream
+                                ? "SSE Stream"
+                                : "Non-Stream"}
                             </DialogDescription>
                           </DialogHeader>
                           <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4">
-                            <FormattedResponseView responseBody={detailEntry.response_body} isStream={detailEntry.is_stream} />
+                            <FormattedResponseView
+                              responseBody={detailEntry.response_body}
+                              isStream={detailEntry.is_stream}
+                            />
                           </div>
                         </DialogContent>
                       </Dialog>
@@ -866,8 +942,15 @@ export function RequestLogPanel() {
 
                     {/* Response Body JSON 弹窗 */}
                     {detailEntry.response_body != null && (
-                      <Dialog open={showResponseJsonView} onOpenChange={setShowResponseJsonView}>
-                        <DialogContent zIndex="top" overlayClassName="bg-black/60" className="max-w-3xl max-h-[85vh] flex flex-col overflow-hidden">
+                      <Dialog
+                        open={showResponseJsonView}
+                        onOpenChange={setShowResponseJsonView}
+                      >
+                        <DialogContent
+                          zIndex="top"
+                          overlayClassName="bg-black/60"
+                          className="max-w-3xl max-h-[85vh] flex flex-col overflow-hidden"
+                        >
                           <DialogHeader>
                             <DialogTitle className="flex items-center gap-2">
                               <Braces className="w-4 h-4" />
@@ -929,7 +1012,11 @@ interface ParsedMessage {
 }
 
 function parseMessages(requestBody: unknown): ParsedMessage[] | null {
-  if (requestBody == null || typeof requestBody !== "object" || !("messages" in requestBody))
+  if (
+    requestBody == null ||
+    typeof requestBody !== "object" ||
+    !("messages" in requestBody)
+  )
     return null;
   const messages = (requestBody as Record<string, unknown>).messages;
   if (!Array.isArray(messages)) return null;
@@ -941,7 +1028,10 @@ function parseMessages(requestBody: unknown): ParsedMessage[] | null {
     const rawRole = typeof m.role === "string" ? m.role : "unknown";
 
     if (typeof m.content === "string") {
-      result.push({ role: rawRole, contentParts: [{ type: "text", text: m.content }] });
+      result.push({
+        role: rawRole,
+        contentParts: [{ type: "text", text: m.content }],
+      });
       continue;
     }
 
@@ -971,7 +1061,8 @@ function parseMessages(requestBody: unknown): ParsedMessage[] | null {
             .map((c) => c.text as string)
             .join("\n");
         }
-        const toolUseId = typeof p.tool_use_id === "string" ? p.tool_use_id : "";
+        const toolUseId =
+          typeof p.tool_use_id === "string" ? p.tool_use_id : "";
         toolResults.push({ toolUseId, content: resultText });
       } else if (partType === "tool_use" && typeof p.name === "string") {
         const toolId = typeof p.id === "string" ? p.id : "";
@@ -1002,13 +1093,19 @@ function parseMessages(requestBody: unknown): ParsedMessage[] | null {
     for (const tr of toolResults) {
       result.push({
         role: "tool",
-        contentParts: tr.content ? [{ type: "tool_result", text: tr.content }] : [],
+        contentParts: tr.content
+          ? [{ type: "tool_result", text: tr.content }]
+          : [],
         toolUseId: tr.toolUseId,
       });
     }
 
     // 如果整个消息只有 tool_result 没有其他内容，不要遗漏空的情况
-    if (normalParts.length === 0 && toolCalls.length === 0 && toolResults.length === 0) {
+    if (
+      normalParts.length === 0 &&
+      toolCalls.length === 0 &&
+      toolResults.length === 0
+    ) {
       result.push({ role: rawRole, contentParts: [] });
     }
   }
@@ -1016,19 +1113,51 @@ function parseMessages(requestBody: unknown): ParsedMessage[] | null {
   return result;
 }
 
-const ROLE_CONFIG: Record<string, { icon: typeof User; label: string; color: string; bubbleColor: string }> = {
-  user: { icon: User, label: "User", color: "text-blue-600 dark:text-blue-400", bubbleColor: "bg-blue-500 dark:bg-blue-600 text-white" },
-  assistant: { icon: Bot, label: "Assistant", color: "text-purple-600 dark:text-purple-400", bubbleColor: "bg-muted border border-border" },
-  tool: { icon: Wrench, label: "Tool", color: "text-amber-600 dark:text-amber-400", bubbleColor: "bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800" },
-  system: { icon: Settings, label: "System", color: "text-emerald-600 dark:text-emerald-400", bubbleColor: "bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800" },
+const ROLE_CONFIG: Record<
+  string,
+  { icon: typeof User; label: string; color: string; bubbleColor: string }
+> = {
+  user: {
+    icon: User,
+    label: "User",
+    color: "text-blue-600 dark:text-blue-400",
+    bubbleColor: "bg-blue-500 dark:bg-blue-600 text-white",
+  },
+  assistant: {
+    icon: Bot,
+    label: "Assistant",
+    color: "text-purple-600 dark:text-purple-400",
+    bubbleColor: "bg-muted border border-border",
+  },
+  tool: {
+    icon: Wrench,
+    label: "Tool",
+    color: "text-amber-600 dark:text-amber-400",
+    bubbleColor:
+      "bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800",
+  },
+  system: {
+    icon: Settings,
+    label: "System",
+    color: "text-emerald-600 dark:text-emerald-400",
+    bubbleColor:
+      "bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800",
+  },
 };
 
-const DEFAULT_ROLE_CONFIG = { icon: MessageCircle, label: "Unknown", color: "text-muted-foreground", bubbleColor: "bg-muted border border-border" };
+const DEFAULT_ROLE_CONFIG = {
+  icon: MessageCircle,
+  label: "Unknown",
+  color: "text-muted-foreground",
+  bubbleColor: "bg-muted border border-border",
+};
 
 function FormattedMessagesView({ requestBody }: { requestBody: unknown }) {
   const messages = parseMessages(requestBody);
   if (!messages || messages.length === 0) {
-    return <p className="text-xs text-muted-foreground italic">无 messages 数据</p>;
+    return (
+      <p className="text-xs text-muted-foreground italic">无 messages 数据</p>
+    );
   }
 
   return (
@@ -1039,22 +1168,44 @@ function FormattedMessagesView({ requestBody }: { requestBody: unknown }) {
         const isUser = msg.role === "user";
 
         return (
-          <div key={index} className={cn("flex gap-2", isUser ? "flex-row-reverse" : "flex-row")}>
+          <div
+            key={index}
+            className={cn(
+              "flex gap-2",
+              isUser ? "flex-row-reverse" : "flex-row",
+            )}
+          >
             {/* 头像 */}
-            <div className={cn(
-              "w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5",
-              isUser ? "bg-blue-500 text-white" : "bg-muted border border-border",
-            )}>
+            <div
+              className={cn(
+                "w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5",
+                isUser
+                  ? "bg-blue-500 text-white"
+                  : "bg-muted border border-border",
+              )}
+            >
               <Icon className="w-3.5 h-3.5" />
             </div>
 
             {/* 气泡 */}
-            <div className={cn("max-w-[80%] min-w-0", isUser ? "items-end" : "items-start")}>
-              <div className={cn("flex items-center gap-1.5 mb-0.5", isUser ? "justify-end" : "justify-start")}>
+            <div
+              className={cn(
+                "max-w-[80%] min-w-0",
+                isUser ? "items-end" : "items-start",
+              )}
+            >
+              <div
+                className={cn(
+                  "flex items-center gap-1.5 mb-0.5",
+                  isUser ? "justify-end" : "justify-start",
+                )}
+              >
                 <span className={cn("text-[10px] font-semibold", config.color)}>
                   {config.label}
                 </span>
-                <span className="text-[9px] text-muted-foreground">#{index + 1}</span>
+                <span className="text-[9px] text-muted-foreground">
+                  #{index + 1}
+                </span>
                 {msg.toolUseId && (
                   <span className="text-[9px] text-muted-foreground font-mono truncate max-w-40">
                     {msg.toolUseId}
@@ -1063,21 +1214,35 @@ function FormattedMessagesView({ requestBody }: { requestBody: unknown }) {
               </div>
 
               <div className={cn("rounded-xl px-3 py-2", config.bubbleColor)}>
-
                 {/* 文本内容（text 和 tool_result） */}
                 {msg.contentParts
-                  .filter((p) => (p.type === "text" || p.type === "tool_result") && p.text)
+                  .filter(
+                    (p) =>
+                      (p.type === "text" || p.type === "tool_result") && p.text,
+                  )
                   .map((part, partIndex) => (
-                    <pre key={partIndex} className="text-xs whitespace-pre-wrap break-words font-mono leading-relaxed max-h-60 overflow-y-auto">
+                    <pre
+                      key={partIndex}
+                      className="text-xs whitespace-pre-wrap break-words font-mono leading-relaxed max-h-60 overflow-y-auto"
+                    >
                       {part.text}
                     </pre>
                   ))}
 
                 {/* 非文本内容标识 */}
                 {msg.contentParts
-                  .filter((p) => p.type !== "text" && p.type !== "tool_use" && p.type !== "tool_result")
+                  .filter(
+                    (p) =>
+                      p.type !== "text" &&
+                      p.type !== "tool_use" &&
+                      p.type !== "tool_result",
+                  )
                   .map((part, partIndex) => (
-                    <Badge key={partIndex} variant="outline" className="text-[10px] mt-1 mr-1">
+                    <Badge
+                      key={partIndex}
+                      variant="outline"
+                      className="text-[10px] mt-1 mr-1"
+                    >
                       {part.type}
                     </Badge>
                   ))}
@@ -1087,7 +1252,10 @@ function FormattedMessagesView({ requestBody }: { requestBody: unknown }) {
                   <div key={toolIndex} className="mt-1">
                     <div className="flex items-center gap-1.5">
                       <Wrench className="w-3 h-3 text-amber-500 shrink-0" />
-                      <Badge variant="secondary" className="text-[10px] font-mono">
+                      <Badge
+                        variant="secondary"
+                        className="text-[10px] font-mono"
+                      >
                         {tool.name}
                       </Badge>
                       {tool.id && (
@@ -1098,7 +1266,9 @@ function FormattedMessagesView({ requestBody }: { requestBody: unknown }) {
                     </div>
                     {tool.input != null && (
                       <pre className="text-[11px] mt-1 whitespace-pre-wrap break-words font-mono leading-relaxed max-h-40 overflow-y-auto bg-black/5 dark:bg-white/5 rounded p-2">
-                        {typeof tool.input === "string" ? tool.input : JSON.stringify(tool.input, null, 2)}
+                        {typeof tool.input === "string"
+                          ? tool.input
+                          : JSON.stringify(tool.input, null, 2)}
                       </pre>
                     )}
                   </div>
@@ -1106,13 +1276,19 @@ function FormattedMessagesView({ requestBody }: { requestBody: unknown }) {
 
                 {/* tool 无内容时 */}
                 {msg.role === "tool" && msg.contentParts.length === 0 && (
-                  <span className="text-[10px] text-muted-foreground italic">（工具返回结果）</span>
+                  <span className="text-[10px] text-muted-foreground italic">
+                    （工具返回结果）
+                  </span>
                 )}
 
                 {/* 完全空内容 */}
-                {msg.contentParts.length === 0 && !msg.toolCalls && msg.role !== "tool" && (
-                  <span className="text-[10px] text-muted-foreground italic">（空）</span>
-                )}
+                {msg.contentParts.length === 0 &&
+                  !msg.toolCalls &&
+                  msg.role !== "tool" && (
+                    <span className="text-[10px] text-muted-foreground italic">
+                      （空）
+                    </span>
+                  )}
               </div>
             </div>
           </div>
@@ -1150,8 +1326,16 @@ interface MergedResponse {
 
 function mergeSSEEvents(events: unknown[]): MergedResponse {
   const result: MergedResponse = {
-    model: "", messageId: "", role: "assistant", stopReason: null, blocks: [],
-    inputTokens: 0, outputTokens: 0, thinkingTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0,
+    model: "",
+    messageId: "",
+    role: "assistant",
+    stopReason: null,
+    blocks: [],
+    inputTokens: 0,
+    outputTokens: 0,
+    thinkingTokens: 0,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
   };
   const blockMap = new Map<number, MergedContentBlock>();
 
@@ -1169,8 +1353,10 @@ function mergeSSEEvents(events: unknown[]): MergedResponse {
         const usage = msg.usage as Record<string, unknown> | undefined;
         if (usage) {
           result.inputTokens = (usage.input_tokens as number) ?? 0;
-          result.cacheCreationTokens = (usage.cache_creation_input_tokens as number) ?? 0;
-          result.cacheReadTokens = (usage.cache_read_input_tokens as number) ?? 0;
+          result.cacheCreationTokens =
+            (usage.cache_creation_input_tokens as number) ?? 0;
+          result.cacheReadTokens =
+            (usage.cache_read_input_tokens as number) ?? 0;
         }
       }
     } else if (eventType === "content_block_start") {
@@ -1198,7 +1384,8 @@ function mergeSSEEvents(events: unknown[]): MergedResponse {
       } else if (deltaType === "thinking_delta") {
         block.text += (delta.thinking as string) ?? "";
       } else if (deltaType === "input_json_delta") {
-        block.toolInput = (block.toolInput ?? "") + ((delta.partial_json as string) ?? "");
+        block.toolInput =
+          (block.toolInput ?? "") + ((delta.partial_json as string) ?? "");
       }
     } else if (eventType === "message_delta") {
       const delta = e.delta as Record<string, unknown> | undefined;
@@ -1206,16 +1393,25 @@ function mergeSSEEvents(events: unknown[]): MergedResponse {
       const usage = e.usage as Record<string, unknown> | undefined;
       if (usage) {
         result.outputTokens = (usage.output_tokens as number) ?? 0;
-        const details = usage.output_tokens_details as Record<string, unknown> | undefined;
-        if (details) result.thinkingTokens = (details.thinking_tokens as number) ?? 0;
+        const details = usage.output_tokens_details as
+          | Record<string, unknown>
+          | undefined;
+        if (details)
+          result.thinkingTokens = (details.thinking_tokens as number) ?? 0;
       }
     }
   }
 
-  result.blocks = Array.from(blockMap.values()).sort((a, b) => a.index - b.index);
+  result.blocks = Array.from(blockMap.values()).sort(
+    (a, b) => a.index - b.index,
+  );
   for (const block of result.blocks) {
     if (block.type === "tool_use" && block.toolInput) {
-      try { block.toolInput = JSON.stringify(JSON.parse(block.toolInput), null, 2); } catch { /* keep raw */ }
+      try {
+        block.toolInput = JSON.stringify(JSON.parse(block.toolInput), null, 2);
+      } catch {
+        /* keep raw */
+      }
     }
   }
   return result;
@@ -1223,8 +1419,16 @@ function mergeSSEEvents(events: unknown[]): MergedResponse {
 
 function formatNonStreamResponse(body: unknown): MergedResponse {
   const result: MergedResponse = {
-    model: "", messageId: "", role: "assistant", stopReason: null, blocks: [],
-    inputTokens: 0, outputTokens: 0, thinkingTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0,
+    model: "",
+    messageId: "",
+    role: "assistant",
+    stopReason: null,
+    blocks: [],
+    inputTokens: 0,
+    outputTokens: 0,
+    thinkingTokens: 0,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
   };
   if (!body || typeof body !== "object") return result;
   const resp = body as Record<string, unknown>;
@@ -1236,7 +1440,8 @@ function formatNonStreamResponse(body: unknown): MergedResponse {
   if (usage) {
     result.inputTokens = (usage.input_tokens as number) ?? 0;
     result.outputTokens = (usage.output_tokens as number) ?? 0;
-    result.cacheCreationTokens = (usage.cache_creation_input_tokens as number) ?? 0;
+    result.cacheCreationTokens =
+      (usage.cache_creation_input_tokens as number) ?? 0;
     result.cacheReadTokens = (usage.cache_read_input_tokens as number) ?? 0;
   }
   const content = resp.content;
@@ -1245,26 +1450,48 @@ function formatNonStreamResponse(body: unknown): MergedResponse {
       const c = item as Record<string, unknown>;
       const blockType = (c.type as string) ?? "unknown";
       if (blockType === "text") {
-        result.blocks.push({ index, type: "text", text: (c.text as string) ?? "" });
+        result.blocks.push({
+          index,
+          type: "text",
+          text: (c.text as string) ?? "",
+        });
       } else if (blockType === "thinking") {
-        result.blocks.push({ index, type: "thinking", text: (c.thinking as string) ?? "" });
+        result.blocks.push({
+          index,
+          type: "thinking",
+          text: (c.thinking as string) ?? "",
+        });
       } else if (blockType === "tool_use") {
         result.blocks.push({
-          index, type: "tool_use", text: "",
-          toolId: (c.id as string) ?? "", toolName: (c.name as string) ?? "",
+          index,
+          type: "tool_use",
+          text: "",
+          toolId: (c.id as string) ?? "",
+          toolName: (c.name as string) ?? "",
           toolInput: c.input ? JSON.stringify(c.input, null, 2) : "",
         });
       } else {
-        result.blocks.push({ index, type: blockType, text: JSON.stringify(c, null, 2) });
+        result.blocks.push({
+          index,
+          type: blockType,
+          text: JSON.stringify(c, null, 2),
+        });
       }
     });
   }
   return result;
 }
 
-function FormattedResponseView({ responseBody, isStream }: { responseBody: unknown; isStream: boolean }) {
+function FormattedResponseView({
+  responseBody,
+  isStream,
+}: {
+  responseBody: unknown;
+  isStream: boolean;
+}) {
   const merged = useMemo(() => {
-    if (isStream && Array.isArray(responseBody)) return mergeSSEEvents(responseBody);
+    if (isStream && Array.isArray(responseBody))
+      return mergeSSEEvents(responseBody);
     return formatNonStreamResponse(responseBody);
   }, [responseBody, isStream]);
 
@@ -1272,18 +1499,61 @@ function FormattedResponseView({ responseBody, isStream }: { responseBody: unkno
     <div className="space-y-4">
       {/* 元信息 */}
       <div className="flex flex-wrap gap-2">
-        {merged.model && <Badge variant="secondary" className="text-[10px]">{merged.model}</Badge>}
-        {merged.messageId && <Badge variant="outline" className="text-[10px] font-mono">{merged.messageId}</Badge>}
-        {merged.stopReason && <Badge variant="outline" className="text-[10px]">stop: {merged.stopReason}</Badge>}
+        {merged.model && (
+          <Badge variant="secondary" className="text-[10px]">
+            {merged.model}
+          </Badge>
+        )}
+        {merged.messageId && (
+          <Badge variant="outline" className="text-[10px] font-mono">
+            {merged.messageId}
+          </Badge>
+        )}
+        {merged.stopReason && (
+          <Badge variant="outline" className="text-[10px]">
+            stop: {merged.stopReason}
+          </Badge>
+        )}
       </div>
 
       {/* Token 统计 */}
       <div className="flex flex-wrap gap-3 text-[10px] text-muted-foreground">
-        <span>Input: <strong className="text-foreground">{merged.inputTokens.toLocaleString()}</strong></span>
-        <span>Output: <strong className="text-foreground">{merged.outputTokens.toLocaleString()}</strong></span>
-        {merged.thinkingTokens > 0 && <span>Thinking: <strong className="text-foreground">{merged.thinkingTokens.toLocaleString()}</strong></span>}
-        {merged.cacheCreationTokens > 0 && <span>Cache Write: <strong className="text-foreground">{merged.cacheCreationTokens.toLocaleString()}</strong></span>}
-        {merged.cacheReadTokens > 0 && <span>Cache Read: <strong className="text-foreground">{merged.cacheReadTokens.toLocaleString()}</strong></span>}
+        <span>
+          Input:{" "}
+          <strong className="text-foreground">
+            {merged.inputTokens.toLocaleString()}
+          </strong>
+        </span>
+        <span>
+          Output:{" "}
+          <strong className="text-foreground">
+            {merged.outputTokens.toLocaleString()}
+          </strong>
+        </span>
+        {merged.thinkingTokens > 0 && (
+          <span>
+            Thinking:{" "}
+            <strong className="text-foreground">
+              {merged.thinkingTokens.toLocaleString()}
+            </strong>
+          </span>
+        )}
+        {merged.cacheCreationTokens > 0 && (
+          <span>
+            Cache Write:{" "}
+            <strong className="text-foreground">
+              {merged.cacheCreationTokens.toLocaleString()}
+            </strong>
+          </span>
+        )}
+        {merged.cacheReadTokens > 0 && (
+          <span>
+            Cache Read:{" "}
+            <strong className="text-foreground">
+              {merged.cacheReadTokens.toLocaleString()}
+            </strong>
+          </span>
+        )}
       </div>
 
       {/* 内容块 */}
@@ -1297,40 +1567,65 @@ function FormattedResponseView({ responseBody, isStream }: { responseBody: unkno
                 <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20">
                   <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-amber-200 dark:border-amber-800">
                     <Settings className="w-3 h-3 text-amber-500" />
-                    <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">Thinking</span>
+                    <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                      Thinking
+                    </span>
                   </div>
-                  <pre className="text-xs px-3 py-2 whitespace-pre-wrap break-words font-mono leading-relaxed max-h-60 overflow-y-auto">{block.text}</pre>
+                  <pre className="text-xs px-3 py-2 whitespace-pre-wrap break-words font-mono leading-relaxed max-h-60 overflow-y-auto">
+                    {block.text}
+                  </pre>
                 </div>
               )}
               {block.type === "text" && (
                 <div className="rounded-lg border border-border bg-muted/30">
                   <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border">
                     <MessageCircle className="w-3 h-3 text-purple-500" />
-                    <span className="text-[10px] font-semibold text-purple-600 dark:text-purple-400">Text</span>
+                    <span className="text-[10px] font-semibold text-purple-600 dark:text-purple-400">
+                      Text
+                    </span>
                   </div>
-                  <pre className="text-xs px-3 py-2 whitespace-pre-wrap break-words font-mono leading-relaxed max-h-80 overflow-y-auto">{block.text}</pre>
+                  <pre className="text-xs px-3 py-2 whitespace-pre-wrap break-words font-mono leading-relaxed max-h-80 overflow-y-auto">
+                    {block.text}
+                  </pre>
                 </div>
               )}
               {block.type === "tool_use" && (
                 <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20">
                   <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-blue-200 dark:border-blue-800">
                     <Wrench className="w-3 h-3 text-blue-500" />
-                    <Badge variant="secondary" className="text-[10px] font-mono">{block.toolName}</Badge>
-                    {block.toolId && <span className="text-[9px] text-muted-foreground font-mono truncate max-w-60">{block.toolId}</span>}
+                    <Badge
+                      variant="secondary"
+                      className="text-[10px] font-mono"
+                    >
+                      {block.toolName}
+                    </Badge>
+                    {block.toolId && (
+                      <span className="text-[9px] text-muted-foreground font-mono truncate max-w-60">
+                        {block.toolId}
+                      </span>
+                    )}
                   </div>
                   {block.toolInput && (
-                    <pre className="text-xs px-3 py-2 whitespace-pre-wrap break-words font-mono leading-relaxed max-h-40 overflow-y-auto">{block.toolInput}</pre>
+                    <pre className="text-xs px-3 py-2 whitespace-pre-wrap break-words font-mono leading-relaxed max-h-40 overflow-y-auto">
+                      {block.toolInput}
+                    </pre>
                   )}
                 </div>
               )}
-              {block.type !== "thinking" && block.type !== "text" && block.type !== "tool_use" && (
-                <div className="rounded-lg border border-border bg-muted/30">
-                  <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border">
-                    <span className="text-[10px] font-semibold text-muted-foreground">{block.type}</span>
+              {block.type !== "thinking" &&
+                block.type !== "text" &&
+                block.type !== "tool_use" && (
+                  <div className="rounded-lg border border-border bg-muted/30">
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border">
+                      <span className="text-[10px] font-semibold text-muted-foreground">
+                        {block.type}
+                      </span>
+                    </div>
+                    <pre className="text-xs px-3 py-2 whitespace-pre-wrap break-words font-mono leading-relaxed max-h-40 overflow-y-auto">
+                      {block.text}
+                    </pre>
                   </div>
-                  <pre className="text-xs px-3 py-2 whitespace-pre-wrap break-words font-mono leading-relaxed max-h-40 overflow-y-auto">{block.text}</pre>
-                </div>
-              )}
+                )}
             </div>
           ))}
         </div>
