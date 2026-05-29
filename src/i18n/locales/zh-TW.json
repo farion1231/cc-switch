@@ -472,6 +472,9 @@
       "profile": "同步設定名稱",
       "autoSync": "自動同步",
       "autoSyncHint": "開啟後每次資料庫變更都會自動上傳至 WebDAV。",
+      "syncCodexSessions": "同步 Codex 會話",
+      "syncCodexSessionsHint": "將 Codex CLI 的會話 JSONL 檔案納入 WebDAV 同步。",
+      "codexSessionsPlaintextWarning": "Codex 會話可能包含提示詞、程式碼、命令輸出、路徑和金鑰；開啟後會以明文上傳到 WebDAV。",
       "test": "測試連線",
       "testing": "測試中...",
       "testSuccess": "連線成功",
@@ -523,6 +526,7 @@
         "artifacts": "包含內容",
         "legacyNotice": "檢測到舊版雲端路徑。還原完成後，下次上傳將寫入新路徑 v2/db-v6。",
         "warning": "還原將覆寫本地所有資料和技能設定",
+        "codexSessionsConflict": "Codex 會話會按 Session ID 合併；兩端都有變更時保留較新的會話，並先備份被替換的本地檔案。",
         "confirm": "確認還原"
       },
       "confirmUpload": {
@@ -530,6 +534,7 @@
         "content": "將同步以下內容至 WebDAV 伺服器：",
         "dbItem": "資料庫（所有 Provider 設定和資料）",
         "skillsItem": "技能包（所有自訂技能）",
+        "codexSessionsItem": "Codex 會話（明文對話歷史）",
         "targetPath": "目標路徑",
         "existingData": "雲端已有資料",
         "deviceName": "上傳裝置",

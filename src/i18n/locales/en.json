@@ -472,6 +472,9 @@
       "profile": "Sync Profile Name",
       "autoSync": "Auto Sync",
       "autoSyncHint": "When enabled, each database change triggers an automatic WebDAV upload.",
+      "syncCodexSessions": "Sync Codex sessions",
+      "syncCodexSessionsHint": "Include Codex CLI conversation JSONL files in WebDAV sync.",
+      "codexSessionsPlaintextWarning": "Codex sessions may contain prompts, code, command output, paths, and secrets. They will be uploaded to WebDAV as plaintext.",
       "test": "Test Connection",
       "testing": "Testing...",
       "testSuccess": "Connection successful",
@@ -523,6 +526,7 @@
         "artifacts": "Contents",
         "legacyNotice": "A legacy remote path was detected. After restoring, the next upload will write to the new v2/db-v6 path.",
         "warning": "This will overwrite all local data and skill configurations",
+        "codexSessionsConflict": "Codex sessions will be merged by session ID. When both sides changed, the newer session wins and the replaced local file is backed up first.",
         "confirm": "Confirm Restore"
       },
       "confirmUpload": {
@@ -530,6 +534,7 @@
         "content": "The following will be synced to the WebDAV server:",
         "dbItem": "Database (all provider configs and data)",
         "skillsItem": "Skills (all custom skills)",
+        "codexSessionsItem": "Codex sessions (plaintext conversation history)",
         "targetPath": "Target path",
         "existingData": "Existing cloud data",
         "deviceName": "Uploaded by",

@@ -281,6 +281,7 @@ export interface WebDavSyncStatus {
 export interface WebDavSyncSettings {
   enabled?: boolean;
   autoSync?: boolean;
+  syncCodexSessions?: boolean;
   baseUrl?: string;
   username?: string;
   password?: string;

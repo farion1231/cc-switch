@@ -39,6 +39,7 @@ export const settingsSchema = z.object({
     .object({
       enabled: z.boolean().optional(),
       autoSync: z.boolean().optional(),
+      syncCodexSessions: z.boolean().optional(),
       baseUrl: z.string().trim().optional().or(z.literal("")),
       username: z.string().trim().optional().or(z.literal("")),
       password: z.string().optional(),

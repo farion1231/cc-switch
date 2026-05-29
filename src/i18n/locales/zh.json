@@ -472,6 +472,9 @@
       "profile": "同步配置名",
       "autoSync": "自动同步",
       "autoSyncHint": "开启后每次数据库变更都会自动上传到 WebDAV。",
+      "syncCodexSessions": "同步 Codex 会话",
+      "syncCodexSessionsHint": "将 Codex CLI 的会话 JSONL 文件纳入 WebDAV 同步。",
+      "codexSessionsPlaintextWarning": "Codex 会话可能包含提示词、代码、命令输出、路径和密钥；开启后会以明文上传到 WebDAV。",
       "test": "测试连接",
       "testing": "测试中...",
       "testSuccess": "连接成功",
@@ -523,6 +526,7 @@
         "artifacts": "包含内容",
         "legacyNotice": "检测到旧版云端路径。恢复完成后，下次上传将写入新路径 v2/db-v6。",
         "warning": "恢复将覆盖本地所有数据和技能配置",
+        "codexSessionsConflict": "Codex 会话会按 Session ID 合并；两端都有变更时保留较新的会话，并先备份被替换的本地文件。",
         "confirm": "确认恢复"
       },
       "confirmUpload": {
@@ -530,6 +534,7 @@
         "content": "将同步以下内容到 WebDAV 服务器：",
         "dbItem": "数据库（所有 Provider 配置和数据）",
         "skillsItem": "技能包（所有自定义技能）",
+        "codexSessionsItem": "Codex 会话（明文对话历史）",
         "targetPath": "目标路径",
         "existingData": "云端已有数据",
         "deviceName": "上传设备",

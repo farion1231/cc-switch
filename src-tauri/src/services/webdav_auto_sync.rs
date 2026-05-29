@@ -1,9 +1,11 @@
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -77,6 +79,12 @@ fn should_run_auto_sync(settings: Option<&WebDavSyncSettings>) -> bool {
         return false;
     };
     sync.enabled && sync.auto_sync
+}
+
+fn should_poll_codex_sessions(settings: Option<&WebDavSyncSettings>) -> bool {
+    settings
+        .map(|sync| sync.enabled && sync.auto_sync && sync.sync_codex_sessions)
+        .unwrap_or(false)
 }
 
 fn persist_auto_sync_error(settings: &mut WebDavSyncSettings, error: &AppError) {
@@ -159,8 +167,15 @@ pub fn start_worker(db: Arc<crate::database::Database>, app: tauri::AppHandle) {
         return;
     }
 
+    let db_for_codex_sessions = Arc::clone(&db);
+    let app_for_codex_sessions = app.clone();
+
     tauri::async_runtime::spawn(async move {
         run_worker_loop(db, rx, app).await;
+    });
+
+    tauri::async_runtime::spawn(async move {
+        run_codex_session_poll_loop(db_for_codex_sessions, app_for_codex_sessions).await;
     });
 }
 
@@ -193,15 +208,116 @@ async fn run_worker_loop(
     }
 }
 
+async fn run_codex_session_poll_loop(db: Arc<crate::database::Database>, app: tauri::AppHandle) {
+    let mut last_fingerprint: Option<String> = None;
+
+    loop {
+        tokio::time::sleep(Duration::from_secs(60)).await;
+
+        let settings = settings::get_webdav_sync_settings();
+        if !should_poll_codex_sessions(settings.as_ref()) {
+            last_fingerprint = None;
+            continue;
+        }
+
+        let fingerprint =
+            match tauri::async_runtime::spawn_blocking(codex_session_fingerprint).await {
+                Ok(Ok(value)) => value,
+                Ok(Err(err)) => {
+                    log::debug!("[WebDAV][AutoSync] Codex session fingerprint failed: {err}");
+                    continue;
+                }
+                Err(err) => {
+                    log::debug!("[WebDAV][AutoSync] Codex session fingerprint task failed: {err}");
+                    continue;
+                }
+            };
+
+        let Some(previous) = last_fingerprint.as_ref() else {
+            last_fingerprint = Some(fingerprint);
+            continue;
+        };
+
+        if previous == &fingerprint {
+            continue;
+        }
+
+        log::debug!("[WebDAV][AutoSync] Triggered by Codex session file change");
+        match run_auto_sync_upload(&db, &app).await {
+            Ok(()) => last_fingerprint = Some(fingerprint),
+            Err(err) => {
+                log::warn!("[WebDAV][AutoSync] Codex session upload failed: {err}");
+            }
+        }
+    }
+}
+
+fn codex_session_fingerprint() -> Result<String, AppError> {
+    let mut files = Vec::new();
+    for root in crate::session_manager::providers::codex::session_roots() {
+        collect_codex_session_file_stats(&root, &root, &mut files)?;
+    }
+    files.sort();
+
+    let mut hasher = Sha256::new();
+    for entry in files {
+        hasher.update(entry.as_bytes());
+        hasher.update(b"\n");
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn collect_codex_session_file_stats(
+    root: &Path,
+    current: &Path,
+    files: &mut Vec<String>,
+) -> Result<(), AppError> {
+    if !current.exists() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(current).map_err(|e| AppError::io(current, e))? {
+        let entry = entry.map_err(|e| AppError::io(current, e))?;
+        let path = entry.path();
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        if metadata.is_dir() {
+            collect_codex_session_file_stats(root, &path, files)?;
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
+            let rel = path
+                .strip_prefix(root)
+                .map(|value| value.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| path.to_string_lossy().to_string());
+            let root_name = root
+                .file_name()
+                .map(|value| value.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let modified = metadata
+                .modified()
+                .ok()
+                .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|value| value.as_nanos())
+                .unwrap_or(0);
+            files.push(format!("{root_name}/{rel}:{}:{modified}", metadata.len()));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        auto_sync_wait_duration, enqueue_change_signal, is_auto_sync_suppressed,
-        should_run_auto_sync, should_trigger_for_table, AutoSyncSuppressionGuard,
-        MAX_AUTO_SYNC_WAIT_MS,
+        auto_sync_wait_duration, collect_codex_session_file_stats, enqueue_change_signal,
+        is_auto_sync_suppressed, should_poll_codex_sessions, should_run_auto_sync,
+        should_trigger_for_table, AutoSyncSuppressionGuard, MAX_AUTO_SYNC_WAIT_MS,
     };
     use crate::settings::WebDavSyncSettings;
     use std::time::{Duration, Instant};
+    use tempfile::tempdir;
     use tokio::sync::mpsc::channel;
 
     #[test]
@@ -260,6 +376,44 @@ mod tests {
             ..WebDavSyncSettings::default()
         };
         assert!(should_run_auto_sync(Some(&enabled)));
+    }
+
+    #[test]
+    fn should_poll_codex_sessions_requires_explicit_opt_in() {
+        let disabled = WebDavSyncSettings {
+            enabled: true,
+            auto_sync: true,
+            sync_codex_sessions: false,
+            ..WebDavSyncSettings::default()
+        };
+        assert!(!should_poll_codex_sessions(Some(&disabled)));
+
+        let enabled = WebDavSyncSettings {
+            enabled: true,
+            auto_sync: true,
+            sync_codex_sessions: true,
+            ..WebDavSyncSettings::default()
+        };
+        assert!(should_poll_codex_sessions(Some(&enabled)));
+    }
+
+    #[test]
+    fn codex_session_file_stats_include_root_and_nested_path() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("sessions");
+        let session_dir = root.join("2026").join("05").join("29");
+        std::fs::create_dir_all(&session_dir).expect("create session dir");
+        std::fs::write(session_dir.join("session.jsonl"), "{}\n").expect("write session");
+
+        let mut files = Vec::new();
+        collect_codex_session_file_stats(&root, &root, &mut files).expect("collect session stats");
+
+        assert_eq!(files.len(), 1);
+        assert!(
+            files[0].starts_with("sessions/2026/05/29/session.jsonl:"),
+            "fingerprint entry should preserve the Codex root and nested relative path: {:?}",
+            files
+        );
     }
 
     #[test]

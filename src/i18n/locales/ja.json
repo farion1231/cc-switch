@@ -472,6 +472,9 @@
       "profile": "同期プロファイル名",
       "autoSync": "自動同期",
       "autoSyncHint": "有効にすると、データベース変更のたびに WebDAV へ自動アップロードします。",
+      "syncCodexSessions": "Codex セッションを同期",
+      "syncCodexSessionsHint": "Codex CLI の会話 JSONL ファイルを WebDAV 同期に含めます。",
+      "codexSessionsPlaintextWarning": "Codex セッションにはプロンプト、コード、コマンド出力、パス、シークレットが含まれる場合があります。有効にすると WebDAV へ平文でアップロードされます。",
       "test": "接続テスト",
       "testing": "テスト中...",
       "testSuccess": "接続成功",
@@ -523,6 +526,7 @@
         "artifacts": "内容",
         "legacyNotice": "旧レイアウトのリモートパスを検出しました。復元後、次回のアップロードは新しい v2/db-v6 パスに書き込まれます。",
         "warning": "ローカルのすべてのデータとスキル設定が上書きされます",
+        "codexSessionsConflict": "Codex セッションは Session ID ごとにマージされます。両方で変更がある場合は新しいセッションを優先し、置き換えるローカルファイルを先にバックアップします。",
         "confirm": "復元を実行"
       },
       "confirmUpload": {
@@ -530,6 +534,7 @@
         "content": "以下の内容を WebDAV サーバーに同期します：",
         "dbItem": "データベース（すべてのプロバイダー設定とデータ）",
         "skillsItem": "スキル（すべてのカスタムスキル）",
+        "codexSessionsItem": "Codex セッション（平文の会話履歴）",
         "targetPath": "保存先パス",
         "existingData": "クラウドの既存データ",
         "deviceName": "アップロード元",

@@ -194,6 +194,7 @@ export function WebdavSyncSection({
     remoteRoot: config?.remoteRoot ?? "cc-switch-sync",
     profile: config?.profile ?? "default",
     autoSync: config?.autoSync ?? false,
+    syncCodexSessions: config?.syncCodexSessions ?? false,
   }));
 
   // Preset selector — derived from initial URL, updated on user selection
@@ -252,6 +253,7 @@ export function WebdavSyncSection({
         remoteRoot: nextRemoteRoot,
         profile: nextProfile,
         autoSync: config.autoSync ?? false,
+        syncCodexSessions: config.syncCodexSessions ?? false,
       };
     });
     setPasswordTouched(false);
@@ -311,6 +313,16 @@ export function WebdavSyncSection({
     [settings?.autoSyncConfirmed],
   );
 
+  const handleSyncCodexSessionsChange = useCallback((checked: boolean) => {
+    setForm((prev) => ({ ...prev, syncCodexSessions: checked }));
+    setDirty(true);
+    setJustSaved(false);
+    if (justSavedTimerRef.current) {
+      clearTimeout(justSavedTimerRef.current);
+      justSavedTimerRef.current = null;
+    }
+  }, []);
+
   const handleAutoSyncConfirm = useCallback(async () => {
     setShowAutoSyncConfirm(false);
     await onAutoSave?.({ autoSyncConfirmed: true });
@@ -335,6 +347,7 @@ export function WebdavSyncSection({
       remoteRoot: form.remoteRoot.trim() || "cc-switch-sync",
       profile: form.profile.trim() || "default",
       autoSync: form.autoSync,
+      syncCodexSessions: form.syncCodexSessions,
     };
   }, [form, passwordTouched]);
 
@@ -539,6 +552,8 @@ export function WebdavSyncSection({
     remoteInfo?.dbCompatVersion,
   );
   const remoteIsLegacy = remoteInfo?.layout === "legacy";
+  const remoteHasCodexSessions =
+    remoteInfo?.artifacts?.includes("codex-sessions.zip") ?? false;
 
   // ─── Render ─────────────────────────────────────────────
 
@@ -682,6 +697,32 @@ export function WebdavSyncSection({
               />
             </div>
           </div>
+
+          <div className="flex items-start gap-4">
+            <label className="w-40 text-xs font-medium text-foreground shrink-0">
+              {t("settings.webdavSync.syncCodexSessions")}
+              <span className="block text-[10px] font-normal text-muted-foreground">
+                {t("settings.webdavSync.syncCodexSessionsHint")}
+              </span>
+            </label>
+            <div className="pt-1">
+              <Switch
+                checked={form.syncCodexSessions}
+                onCheckedChange={handleSyncCodexSessionsChange}
+                aria-label={t("settings.webdavSync.syncCodexSessions")}
+                disabled={isLoading}
+              />
+            </div>
+          </div>
+
+          {form.syncCodexSessions && (
+            <div className="flex max-w-3xl items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:text-amber-200">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+              <span>
+                {t("settings.webdavSync.codexSessionsPlaintextWarning")}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Last sync time */}
@@ -804,6 +845,11 @@ export function WebdavSyncSection({
                 <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
                   <li>{t("settings.webdavSync.confirmUpload.dbItem")}</li>
                   <li>{t("settings.webdavSync.confirmUpload.skillsItem")}</li>
+                  {form.syncCodexSessions && (
+                    <li>
+                      {t("settings.webdavSync.confirmUpload.codexSessionsItem")}
+                    </li>
+                  )}
                 </ul>
                 <p className="text-muted-foreground">
                   {t("settings.webdavSync.confirmUpload.targetPath")}
@@ -932,6 +978,13 @@ export function WebdavSyncSection({
                 <p className="text-destructive font-medium">
                   {t("settings.webdavSync.confirmDownload.warning")}
                 </p>
+                {form.syncCodexSessions && remoteHasCodexSessions && (
+                  <p className="font-medium text-amber-600 dark:text-amber-400">
+                    {t(
+                      "settings.webdavSync.confirmDownload.codexSessionsConflict",
+                    )}
+                  </p>
+                )}
               </div>
             </DialogDescription>
           </DialogHeader>
