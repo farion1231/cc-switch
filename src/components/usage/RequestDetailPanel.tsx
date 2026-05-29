@@ -22,9 +22,11 @@ export function RequestDetailPanel({
   const dateLocale =
     i18n.language === "zh"
       ? "zh-CN"
-      : i18n.language === "ja"
-        ? "ja-JP"
-        : "en-US";
+      : i18n.language === "zh-TW"
+        ? "zh-TW"
+        : i18n.language === "ja"
+          ? "ja-JP"
+          : "en-US";
 
   if (isLoading) {
     return (

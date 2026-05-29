@@ -16,7 +16,8 @@ use std::path::{Path, PathBuf};
 
 use crate::app_config::AppType;
 use crate::codex_config::{
-    codex_config_has_model_provider_table, CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+    codex_config_has_model_provider_table, is_cc_switch_codex_model_provider_id,
+    CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
 };
 use crate::config::{get_claude_settings_path, write_json_file};
 use crate::database::{validate_cost_multiplier, validate_pricing_source};
@@ -79,9 +80,13 @@ pub struct SwitchResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(any(target_os = "macos", windows))]
+    use crate::claude_desktop_config::PROFILE_ID;
     use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
     use crate::database::Database;
     use crate::provider::{ClaudeActivationMode, ProviderMeta};
+    #[cfg(any(target_os = "macos", windows))]
+    use crate::provider::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
     use crate::proxy::types::ProxyConfig;
     use crate::store::AppState;
     use serde_json::json;
@@ -96,6 +101,8 @@ mod tests {
         #[allow(dead_code)]
         dir: TempDir,
         original_home: Option<String>,
+        #[cfg(windows)]
+        original_local_app_data: Option<String>,
         original_userprofile: Option<String>,
         original_test_home: Option<String>,
     }
@@ -126,16 +133,22 @@ mod tests {
         fn new() -> Self {
             let dir = TempDir::new().expect("failed to create temp home");
             let original_home = env::var("HOME").ok();
+            #[cfg(windows)]
+            let original_local_app_data = env::var("LOCALAPPDATA").ok();
             let original_userprofile = env::var("USERPROFILE").ok();
             let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
 
             env::set_var("HOME", dir.path());
+            #[cfg(windows)]
+            env::set_var("LOCALAPPDATA", dir.path().join("AppData").join("Local"));
             env::set_var("USERPROFILE", dir.path());
             env::set_var("CC_SWITCH_TEST_HOME", dir.path());
 
             Self {
                 dir,
                 original_home,
+                #[cfg(windows)]
+                original_local_app_data,
                 original_userprofile,
                 original_test_home,
             }
@@ -149,6 +162,14 @@ mod tests {
                 None => env::remove_var("HOME"),
             }
 
+            #[cfg(windows)]
+            {
+                match &self.original_local_app_data {
+                    Some(value) => env::set_var("LOCALAPPDATA", value),
+                    None => env::remove_var("LOCALAPPDATA"),
+                }
+            }
+
             match &self.original_userprofile {
                 Some(value) => env::set_var("USERPROFILE", value),
                 None => env::remove_var("USERPROFILE"),
@@ -159,6 +180,24 @@ mod tests {
                 None => env::remove_var("CC_SWITCH_TEST_HOME"),
             }
         }
+    }
+
+    #[cfg(windows)]
+    fn claude_desktop_profile_path(home: &Path) -> PathBuf {
+        home.join("AppData")
+            .join("Local")
+            .join("Claude-3p")
+            .join("configLibrary")
+            .join(format!("{PROFILE_ID}.json"))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn claude_desktop_profile_path(home: &Path) -> PathBuf {
+        home.join("Library")
+            .join("Application Support")
+            .join("Claude-3p")
+            .join("configLibrary")
+            .join(format!("{PROFILE_ID}.json"))
     }
 
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
@@ -502,6 +541,52 @@ mod tests {
 
     #[test]
     #[serial]
+    fn switch_codex_to_official_relabels_dangling_ccswitch_history_to_openai() {
+        with_test_home(|state, home| {
+            let api_provider = codex_provider(
+                "codex-api",
+                "Codex API",
+                "model_provider = \"ccswitch\"\nmodel = \"gpt-5.4\"\n",
+            );
+            let official_provider = codex_provider("codex-official", "OpenAI Official", "");
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &official_provider)
+                .expect("save official provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), "codex-api")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some("codex-api"))
+                .expect("set local current provider");
+            seed_codex_threads(home, "ccswitch");
+
+            ProviderService::switch(state, AppType::Codex, "codex-official")
+                .expect("switch to official provider");
+
+            assert_eq!(
+                codex_thread_providers(home),
+                vec![("openai".to_string(), 2)],
+                "OAuth switch should repair dangling ccswitch rows in Codex Desktop state"
+            );
+            assert_eq!(
+                codex_rollout_providers(home),
+                vec![
+                    ("thread-1".to_string(), Some("openai".to_string())),
+                    ("thread-2".to_string(), Some("openai".to_string())),
+                ],
+                "OAuth switch should also repair dangling ccswitch rollout metadata"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn switch_codex_to_official_syncs_desktop_threads_to_openai_provider() {
         with_test_home(|state, home| {
             let api_provider = codex_provider(
@@ -578,16 +663,22 @@ mod tests {
 
             assert_eq!(
                 codex_thread_providers(home),
-                vec![("ccswitch".to_string(), 2)],
-                "API login should make Codex Desktop history visible under the stable cc-switch provider key"
+                vec![(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string(), 2)],
+                "API login should make Codex Desktop history visible under the stable provider key"
             );
             assert_eq!(
                 codex_rollout_providers(home),
                 vec![
-                    ("thread-1".to_string(), Some("ccswitch".to_string())),
-                    ("thread-2".to_string(), Some("ccswitch".to_string())),
+                    (
+                        "thread-1".to_string(),
+                        Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string()),
+                    ),
+                    (
+                        "thread-2".to_string(),
+                        Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string()),
+                    ),
                 ],
-                "API login should update Codex rollout session metadata to the stable cc-switch provider key"
+                "API login should update Codex rollout session metadata to the stable provider key"
             );
         });
     }
@@ -2631,6 +2722,122 @@ base_url = "http://localhost:8080"
         );
     }
 
+    #[cfg(any(target_os = "macos", windows))]
+    #[tokio::test]
+    #[serial]
+    async fn update_current_claude_desktop_provider_syncs_profile_when_proxy_takeover_is_active() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        let mut original = Provider::with_id(
+            "p1".into(),
+            "Desktop A".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-a",
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go"
+                }
+            }),
+            None,
+        );
+        original.meta = Some(ProviderMeta {
+            api_format: Some("openai_chat".into()),
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            claude_desktop_model_routes: std::collections::HashMap::from([(
+                "claude-sonnet-4-6".into(),
+                ClaudeDesktopModelRoute {
+                    model: "deepseek-v4-flash".into(),
+                    label_override: Some("DeepSeek V4 Flash".into()),
+                    supports_1m: None,
+                },
+            )]),
+            ..Default::default()
+        });
+        db.save_provider("claude-desktop", &original)
+            .expect("save provider");
+        db.set_current_provider("claude-desktop", "p1")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::ClaudeDesktop, Some("p1"))
+            .expect("set local current provider");
+
+        // Claude Desktop keeps backup state from takeover startup; this sentinel only
+        // marks takeover as active so provider updates rewrite the 3P profile.
+        db.save_live_backup("claude-desktop", "{}")
+            .await
+            .expect("seed live backup");
+        {
+            let mut config = db
+                .get_proxy_config_for_app("claude-desktop")
+                .await
+                .expect("get app proxy config");
+            config.enabled = true;
+            db.update_proxy_config_for_app(config)
+                .await
+                .expect("update app proxy config");
+        }
+
+        state
+            .proxy_service
+            .start()
+            .await
+            .expect("start proxy service");
+
+        let mut updated = Provider::with_id(
+            "p1".into(),
+            "Desktop A".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-updated",
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go"
+                }
+            }),
+            None,
+        );
+        updated.meta = Some(ProviderMeta {
+            api_format: Some("openai_chat".into()),
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            claude_desktop_model_routes: std::collections::HashMap::from([(
+                "claude-sonnet-4-6".into(),
+                ClaudeDesktopModelRoute {
+                    model: "deepseek-v4-flash".into(),
+                    label_override: Some("DeepSeek V4 Flash Updated".into()),
+                    supports_1m: Some(true),
+                },
+            )]),
+            ..Default::default()
+        });
+
+        ProviderService::update(&state, AppType::ClaudeDesktop, None, updated.clone())
+            .expect("update current provider");
+
+        let backup = db
+            .get_live_backup("claude-desktop")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        assert_eq!(
+            backup.original_config, "{}",
+            "Claude Desktop provider edits should not rewrite takeover backup"
+        );
+
+        let profile_path = claude_desktop_profile_path(home.dir.path());
+        let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
+        assert_eq!(
+            profile["inferenceGatewayBaseUrl"],
+            json!("http://127.0.0.1:15721/claude-desktop"),
+            "desktop profile should stay pointed at the local gateway during takeover"
+        );
+        assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
+        assert_eq!(
+            profile["inferenceModels"],
+            json!([{ "name": "claude-sonnet-4-6", "labelOverride": "DeepSeek V4 Flash Updated", "supports1m": true }]),
+            "provider edits should propagate into the Claude Desktop 3P profile during takeover"
+        );
+    }
+
     #[tokio::test]
     #[serial]
     async fn switch_claude_profile_only_applies_profile_during_proxy_hot_switch() {
@@ -3715,10 +3922,11 @@ impl ProviderService {
 
         let provider_key = crate::codex_config::extract_codex_model_provider(config)
             .unwrap_or_else(|| "openai".to_string());
-        if provider_key.eq_ignore_ascii_case(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
-            && !codex_config_has_model_provider_table(config, &provider_key)
-        {
-            return Ok("openai".to_string());
+        if is_cc_switch_codex_model_provider_id(&provider_key) {
+            if !codex_config_has_model_provider_table(config, &provider_key) {
+                return Ok("openai".to_string());
+            }
+            return Ok(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
         }
         if provider_key.eq_ignore_ascii_case("openai") && config.contains("[model_providers.") {
             return Ok(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
@@ -3729,6 +3937,25 @@ impl ProviderService {
 
     fn codex_provider_where_clause(column: &str) -> String {
         format!("({column} = ?1 OR (?1 = 'openai' AND lower({column}) = 'openai'))")
+    }
+
+    fn codex_provider_switch_where_clause(column: &str) -> String {
+        format!(
+            "({} OR (?2 = 'openai' AND lower({column}) IN ('{}', 'ccswitch')))",
+            Self::codex_provider_where_clause(column),
+            CC_SWITCH_CODEX_MODEL_PROVIDER_ID
+        )
+    }
+
+    fn codex_rollout_provider_matches_source(
+        current_provider: &str,
+        source_provider: &str,
+        target_provider: &str,
+    ) -> bool {
+        current_provider == source_provider
+            || (source_provider == "openai" && current_provider.eq_ignore_ascii_case("openai"))
+            || (target_provider == "openai"
+                && is_cc_switch_codex_model_provider_id(current_provider))
     }
 
     fn codex_threads_have_model_provider(conn: &rusqlite::Connection) -> Result<bool, AppError> {
@@ -3798,8 +4025,7 @@ impl ProviderService {
         if current_provider == Some(target_provider)
             || source_provider.is_some_and(|source| {
                 current_provider.is_some_and(|current| {
-                    current != source
-                        && !(source == "openai" && current.eq_ignore_ascii_case("openai"))
+                    !Self::codex_rollout_provider_matches_source(current, source, target_provider)
                 })
             })
         {
@@ -3851,10 +4077,13 @@ impl ProviderService {
             if let Some(source_provider) = source_provider {
                 let sql = format!(
                     "SELECT rollout_path FROM threads WHERE model_provider IS NULL OR {}",
-                    Self::codex_provider_where_clause("model_provider")
+                    Self::codex_provider_switch_where_clause("model_provider")
                 );
                 let mut stmt = conn.prepare(&sql)?;
-                let rows = stmt.query_map(rusqlite::params![source_provider], |row| row.get(0))?;
+                let rows = stmt.query_map(
+                    rusqlite::params![source_provider, target_provider.as_str()],
+                    |row| row.get(0),
+                )?;
                 rows.collect::<Result<Vec<String>, _>>()?
             } else {
                 let mut stmt = conn.prepare(
@@ -3872,7 +4101,7 @@ impl ProviderService {
         let updated = if let Some(source_provider) = source_provider {
             let sql = format!(
                 "UPDATE threads SET model_provider = ?2 WHERE model_provider IS NULL OR {}",
-                Self::codex_provider_where_clause("model_provider")
+                Self::codex_provider_switch_where_clause("model_provider")
             );
             conn.execute(
                 &sql,
@@ -4275,36 +4504,36 @@ impl ProviderService {
                     Self::apply_claude_switch_plan(plan)?;
                 }
 
-                if should_sync_via_proxy {
-                    futures::executor::block_on(
-                        state
-                            .proxy_service
-                            .update_live_backup_from_provider(app_type.as_str(), &provider),
-                    )
-                    .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
-
-                    let is_claude_profile_only = matches!(
-                        claude_switch_plan
-                            .as_ref()
-                            .map(|plan| &plan.activation_mode),
-                        Some(ClaudeActivationMode::ProfileOnly)
-                    );
-                    if matches!(app_type, AppType::Claude) && !is_claude_profile_only {
-                        futures::executor::block_on(
-                            state
-                                .proxy_service
-                                .sync_claude_live_from_provider_while_proxy_active(&provider),
-                        )
-                        .map_err(|e| {
-                            AppError::Message(format!("同步 Claude Live 配置失败: {e}"))
-                        })?;
-                    }
-                } else if !matches!(
+                let is_claude_profile_only = matches!(
                     claude_switch_plan
                         .as_ref()
                         .map(|plan| &plan.activation_mode),
                     Some(ClaudeActivationMode::ProfileOnly)
-                ) {
+                );
+
+                if should_sync_via_proxy {
+                    if matches!(app_type, AppType::ClaudeDesktop) {
+                        write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
+                    } else if !is_claude_profile_only {
+                        futures::executor::block_on(
+                            state
+                                .proxy_service
+                                .update_live_backup_from_provider(app_type.as_str(), &provider),
+                        )
+                        .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+
+                        if matches!(app_type, AppType::Claude) {
+                            futures::executor::block_on(
+                                state
+                                    .proxy_service
+                                    .sync_claude_live_from_provider_while_proxy_active(&provider),
+                            )
+                            .map_err(|e| {
+                                AppError::Message(format!("同步 Claude Live 配置失败: {e}"))
+                            })?;
+                        }
+                    }
+                } else if !is_claude_profile_only {
                     write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
                     // Sync MCP
                     McpService::sync_all_enabled(state)?;
@@ -4846,7 +5075,10 @@ impl ProviderService {
                     .map(|plan| &plan.activation_mode),
                 Some(ClaudeActivationMode::ProfileOnly)
             );
-            if !is_claude_profile_only {
+
+            if matches!(app_type, AppType::ClaudeDesktop) {
+                write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
+            } else if !is_claude_profile_only {
                 futures::executor::block_on(
                     state
                         .proxy_service
@@ -4854,6 +5086,7 @@ impl ProviderService {
                 )
                 .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
             }
+
             return Ok(());
         }
 
@@ -5452,7 +5685,7 @@ impl ProviderService {
                 Ok((credentials.api_key, credentials.base_url))
             }
             AppType::Codex => {
-                let auth = provider
+                let _auth = provider
                     .settings_config
                     .get("auth")
                     .and_then(|v| v.as_object())
@@ -5464,23 +5697,23 @@ impl ProviderService {
                         )
                     })?;
 
-                let api_key = auth
-                    .get("OPENAI_API_KEY")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.codex.api_key.missing",
-                            "缺少 API Key",
-                            "API key is missing",
-                        )
-                    })?
-                    .to_string();
-
                 let config_toml = provider
                     .settings_config
                     .get("config")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
+
+                let api_key = crate::codex_config::extract_codex_api_key(
+                    provider.settings_config.get("auth"),
+                    Some(config_toml),
+                )
+                .ok_or_else(|| {
+                    AppError::localized(
+                        "provider.codex.api_key.missing",
+                        "缺少 API Key",
+                        "API key is missing",
+                    )
+                })?;
 
                 let base_url = if config_toml.contains("base_url") {
                     let re = Regex::new(r#"base_url\s*=\s*["']([^"']+)["']"#).map_err(|e| {

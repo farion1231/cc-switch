@@ -8,7 +8,10 @@ import { usageApi, settingsApi, type AppId } from "@/lib/api";
 import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
 import { useSettingsQuery } from "@/lib/query";
 import { resolveManagedAccountId } from "@/lib/authBinding";
-import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
+import {
+  extractCodexBaseUrl,
+  extractCodexExperimentalBearerToken,
+} from "@/utils/providerConfigUtils";
 import JsonEditor from "./JsonEditor";
 import * as prettier from "prettier/standalone";
 import * as parserBabel from "prettier/parser-babel";
@@ -25,6 +28,7 @@ import {
   CODING_PLAN_PROVIDERS,
   detectCodingPlanProvider,
 } from "@/config/codingPlanProviders";
+import { formatUsageDataSummary } from "@/utils/usageDisplay";
 
 interface UsageScriptModalProps {
   provider: Provider;
@@ -173,8 +177,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         // Codex: { auth: { OPENAI_API_KEY }, config: TOML string with base_url }
         const auth = (config as any).auth || {};
         const configToml = (config as any).config || "";
+        const apiKey =
+          typeof auth.OPENAI_API_KEY === "string" && auth.OPENAI_API_KEY.trim()
+            ? auth.OPENAI_API_KEY
+            : extractCodexExperimentalBearerToken(configToml);
         return {
-          apiKey: auth.OPENAI_API_KEY,
+          apiKey,
           baseUrl: extractCodexBaseUrl(configToml),
         };
       } else if (appId === "gemini") {
@@ -387,10 +395,13 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         const result = await subscriptionApi.getBalance(baseUrl, apiKey);
         if (result.success && result.data && result.data.length > 0) {
           const summary = result.data
-            .map((d) => {
-              const name = d.planName ? `[${d.planName}] ` : "";
-              return `${name}${t("usage.remaining")} ${d.remaining?.toFixed(2)} ${d.unit || ""}`;
-            })
+            .map((d) =>
+              formatUsageDataSummary(d, {
+                invalid: t("usage.invalid"),
+                remaining: t("usage.remaining"),
+                used: t("usage.used"),
+              }),
+            )
             .join(", ");
           toast.success(`${t("usageScript.testSuccess")}${summary}`, {
             duration: 3000,
@@ -486,10 +497,13 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       );
       if (result.success && result.data && result.data.length > 0) {
         const summary = result.data
-          .map((plan: UsageData) => {
-            const planInfo = plan.planName ? `[${plan.planName}]` : "";
-            return `${planInfo} ${t("usage.remaining")} ${plan.remaining} ${plan.unit}`;
-          })
+          .map((plan: UsageData) =>
+            formatUsageDataSummary(plan, {
+              invalid: t("usage.invalid"),
+              remaining: t("usage.remaining"),
+              used: t("usage.used"),
+            }),
+          )
           .join(", ");
         toast.success(`${t("usageScript.testSuccess")}${summary}`, {
           duration: 3000,
