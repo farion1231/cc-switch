@@ -47,7 +47,7 @@ pub fn get_opencode_config_path() -> PathBuf {
 }
 
 /// 获取 OpenCode SQLite 数据库路径
-/// 优先级: OPENCODE_DB 环境变量 > XDG_DATA_HOME > 平台默认路径
+/// 优先级: OPENCODE_DB 环境变量 > XDG_DATA_HOME > ~/.local/share/opencode
 pub fn get_opencode_db_path() -> PathBuf {
     // 支持 OPENCODE_DB 环境变量覆盖
     if let Ok(custom_path) = std::env::var("OPENCODE_DB") {
@@ -68,21 +68,12 @@ fn get_opencode_data_dir() -> PathBuf {
         return PathBuf::from(xdg_data).join("opencode");
     }
 
-    // 平台默认路径
-    #[cfg(target_os = "macos")]
-    {
-        crate::config::get_home_dir()
-            .join("Library")
-            .join("Application Support")
-            .join("opencode")
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        crate::config::get_home_dir()
-            .join(".local")
-            .join("share")
-            .join("opencode")
-    }
+    // OpenCode 使用 xdg-basedir，不遵守 macOS/Windows 平台约定，
+    // 所有平台默认都落在 ~/.local/share/opencode
+    crate::config::get_home_dir()
+        .join(".local")
+        .join("share")
+        .join("opencode")
 }
 
 #[allow(dead_code)]
