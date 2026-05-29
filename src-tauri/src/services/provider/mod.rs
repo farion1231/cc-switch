@@ -865,6 +865,58 @@ mod tests {
         });
     }
 
+    #[test]
+    #[serial]
+    fn switch_codex_without_source_only_repairs_missing_thread_provider() {
+        with_test_home(|state, home| {
+            let api_provider = codex_provider(
+                "codex-api",
+                "Codex API",
+                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n",
+            );
+            let other_provider = codex_provider(
+                "codex-other",
+                "Codex Other",
+                "model_provider = \"azure\"\nmodel = \"gpt-5.4\"\n",
+            );
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &other_provider)
+                .expect("save other provider");
+            seed_codex_thread_rows_nullable(
+                home,
+                &[
+                    ("missing-thread", None),
+                    ("api-thread", Some("OpenAI")),
+                    ("other-thread", Some("azure")),
+                ],
+            );
+
+            ProviderService::switch(state, AppType::Codex, "codex-api")
+                .expect("switch to api codex provider without current provider");
+
+            assert_eq!(
+                codex_thread_providers(home),
+                vec![("OpenAI".to_string(), 2), ("azure".to_string(), 1)],
+                "source-less switches should not relabel unrelated provider history"
+            );
+            assert_eq!(
+                codex_rollout_providers(home),
+                vec![
+                    ("api-thread".to_string(), Some("OpenAI".to_string())),
+                    ("missing-thread".to_string(), Some("OpenAI".to_string())),
+                    ("other-thread".to_string(), Some("azure".to_string())),
+                ],
+                "source-less rollout sync should only repair rows with missing provider metadata"
+            );
+        });
+    }
+
     #[tokio::test]
     #[serial]
     async fn hot_switch_codex_only_relabels_threads_from_previous_provider() {
@@ -4086,12 +4138,9 @@ impl ProviderService {
                 )?;
                 rows.collect::<Result<Vec<String>, _>>()?
             } else {
-                let mut stmt = conn.prepare(
-                    "SELECT rollout_path FROM threads WHERE model_provider IS NULL OR model_provider <> ?1",
-                )?;
-                let rows = stmt.query_map(rusqlite::params![target_provider.as_str()], |row| {
-                    row.get(0)
-                })?;
+                let mut stmt =
+                    conn.prepare("SELECT rollout_path FROM threads WHERE model_provider IS NULL")?;
+                let rows = stmt.query_map([], |row| row.get(0))?;
                 rows.collect::<Result<Vec<String>, _>>()?
             }
         } else {
@@ -4109,7 +4158,7 @@ impl ProviderService {
             )?
         } else {
             conn.execute(
-                "UPDATE threads SET model_provider = ?1 WHERE model_provider IS NULL OR model_provider <> ?1",
+                "UPDATE threads SET model_provider = ?1 WHERE model_provider IS NULL",
                 rusqlite::params![target_provider.as_str()],
             )?
         };
