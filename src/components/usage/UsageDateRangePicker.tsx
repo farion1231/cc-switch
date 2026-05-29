@@ -15,7 +15,8 @@ import type { UsageRangePreset, UsageRangeSelection } from "@/types/usage";
 
 type DraftField = "start" | "end";
 
-const PRESETS: UsageRangePreset[] = ["today", "1d", "7d", "14d", "30d"];
+const PRESETS: UsageRangePreset[] = ["today", "1d", "7d", "14d", "30d", "all"];
+const DEFAULT_DRAFT_LOOKBACK_SECONDS = 30 * 24 * 60 * 60;
 
 interface UsageDateRangePickerProps {
   selection: UsageRangeSelection;
@@ -96,6 +97,18 @@ function getCalendarDays(month: Date): Date[] {
   });
 }
 
+function getDraftRange(selection: UsageRangeSelection): {
+  startDate: number;
+  endDate: number;
+} {
+  const resolved = resolveUsageRange(selection);
+  const endDate = resolved.endDate ?? Math.floor(Date.now() / 1000);
+  return {
+    startDate: resolved.startDate ?? endDate - DEFAULT_DRAFT_LOOKBACK_SECONDS,
+    endDate,
+  };
+}
+
 /* ── component ── */
 
 export function UsageDateRangePicker({
@@ -106,17 +119,14 @@ export function UsageDateRangePicker({
   const { t, i18n } = useTranslation();
   const [open, setOpen] = useState(false);
   const [activeField, setActiveField] = useState<DraftField>("start");
-  const resolvedRange = useMemo(
-    () => resolveUsageRange(selection),
-    [selection],
-  );
-  const [draftStart, setDraftStart] = useState(resolvedRange.startDate);
-  const [draftEnd, setDraftEnd] = useState(resolvedRange.endDate);
+  const draftRange = useMemo(() => getDraftRange(selection), [selection]);
+  const [draftStart, setDraftStart] = useState(draftRange.startDate);
+  const [draftEnd, setDraftEnd] = useState(draftRange.endDate);
   const [displayMonth, setDisplayMonth] = useState(
     () =>
       new Date(
-        fromTs(resolvedRange.startDate).getFullYear(),
-        fromTs(resolvedRange.startDate).getMonth(),
+        fromTs(draftRange.startDate).getFullYear(),
+        fromTs(draftRange.startDate).getMonth(),
         1,
       ),
   );
@@ -128,7 +138,7 @@ export function UsageDateRangePicker({
   // Reset draft when popover opens
   useEffect(() => {
     if (!open) return;
-    const r = resolveUsageRange(selection);
+    const r = getDraftRange(selection);
     setDraftStart(r.startDate);
     setDraftEnd(r.endDate);
     setDisplayMonth(

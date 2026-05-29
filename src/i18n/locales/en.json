@@ -1221,6 +1221,7 @@
     "preset7d": "7d",
     "preset14d": "14d",
     "preset30d": "30d",
+    "presetAll": "All",
     "totalRequests": "Total Requests",
     "totalCost": "Total Cost",
     "cost": "Cost",

@@ -185,6 +185,36 @@ fn get_primary_endpoint(request: &DeepLinkImportRequest) -> String {
         .unwrap_or_default()
 }
 
+fn parse_inline_config_value(request: &DeepLinkImportRequest) -> Option<serde_json::Value> {
+    let config_b64 = request.config.as_ref()?;
+    let decoded = decode_base64_param("config", config_b64).ok()?;
+    let content = String::from_utf8(decoded).ok()?;
+    match request.config_format.as_deref().unwrap_or("json") {
+        "json" => serde_json::from_str(&content).ok(),
+        "toml" => {
+            let toml_value: toml::Value = toml::from_str(&content).ok()?;
+            serde_json::to_value(toml_value).ok()
+        }
+        _ => None,
+    }
+}
+
+fn config_env_object(
+    request: &DeepLinkImportRequest,
+) -> serde_json::Map<String, serde_json::Value> {
+    parse_inline_config_value(request)
+        .and_then(|config| config.get("env").and_then(|env| env.as_object()).cloned())
+        .unwrap_or_default()
+}
+
+fn config_root_object(
+    request: &DeepLinkImportRequest,
+) -> serde_json::Map<String, serde_json::Value> {
+    parse_inline_config_value(request)
+        .and_then(|config| config.as_object().cloned())
+        .unwrap_or_default()
+}
+
 /// Build provider meta with usage script configuration
 fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<ProviderMeta>, AppError> {
     // Check if any usage script fields are provided
@@ -245,7 +275,7 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
 
 /// Build Claude settings configuration
 fn build_claude_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
-    let mut env = serde_json::Map::new();
+    let mut env = config_env_object(request);
     env.insert(
         "ANTHROPIC_AUTH_TOKEN".to_string(),
         json!(request.api_key.clone().unwrap_or_default()),
@@ -342,7 +372,7 @@ requires_openai_auth = true
 
 /// Build Gemini settings configuration
 fn build_gemini_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
-    let mut env = serde_json::Map::new();
+    let mut env = config_root_object(request);
     env.insert("GEMINI_API_KEY".to_string(), json!(request.api_key));
     env.insert(
         "GOOGLE_GEMINI_BASE_URL".to_string(),
@@ -744,6 +774,7 @@ fn extract_codex_base_url(toml_value: &toml::Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
 
     fn hermes_request() -> DeepLinkImportRequest {
         DeepLinkImportRequest {
@@ -865,5 +896,47 @@ mod tests {
         let obj = settings.as_object().unwrap();
         assert!(obj.contains_key("baseUrl"));
         assert!(obj.contains_key("apiKey"));
+    }
+
+    #[test]
+    fn claude_deeplink_preserves_extra_env_from_inline_config() {
+        let raw_config = r#"{
+            "env": {
+                "ANTHROPIC_CUSTOM_HEADERS": "Cookie: session=abc",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "fast-model",
+                "API_TIMEOUT_MS": "3000000"
+            }
+        }"#;
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("claude".to_string()),
+            name: Some("My Provider".to_string()),
+            endpoint: Some("https://proxy.example.com".to_string()),
+            api_key: Some("sk-url".to_string()),
+            model: Some("custom-model".to_string()),
+            config: Some(STANDARD.encode(raw_config)),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+
+        let settings = build_claude_settings(&request);
+
+        assert_eq!(
+            settings.pointer("/env/ANTHROPIC_CUSTOM_HEADERS"),
+            Some(&json!("Cookie: session=abc"))
+        );
+        assert_eq!(
+            settings.pointer("/env/API_TIMEOUT_MS"),
+            Some(&json!("3000000"))
+        );
+        assert_eq!(
+            settings.pointer("/env/ANTHROPIC_AUTH_TOKEN"),
+            Some(&json!("sk-url")),
+            "URL params should still override config-derived standard fields"
+        );
+        assert_eq!(
+            settings.pointer("/env/ANTHROPIC_MODEL"),
+            Some(&json!("custom-model"))
+        );
     }
 }
