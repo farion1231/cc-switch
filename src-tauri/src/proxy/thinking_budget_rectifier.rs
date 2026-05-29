@@ -148,6 +148,7 @@ mod tests {
             enabled: true,
             request_thinking_signature: true,
             request_thinking_budget: true,
+            normalize_system_messages: true,
         }
     }
 
@@ -156,6 +157,7 @@ mod tests {
             enabled: true,
             request_thinking_signature: true,
             request_thinking_budget: false,
+            normalize_system_messages: true,
         }
     }
 
@@ -164,6 +166,7 @@ mod tests {
             enabled: false,
             request_thinking_signature: true,
             request_thinking_budget: true,
+            normalize_system_messages: true,
         }
     }
 

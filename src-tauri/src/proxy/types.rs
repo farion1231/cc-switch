@@ -213,6 +213,13 @@ pub struct RectifierConfig {
     /// 处理错误：budget_tokens + thinking 相关约束
     #[serde(default = "default_true")]
     pub request_thinking_budget: bool,
+    /// 请求整流：启用 system 消息归一化（默认开启）
+    ///
+    /// Claude Code >= 2.1.154 ("Lean system prompt") 将 system prompt 作为
+    /// `role: "system"` 消息放在 messages 数组中。许多第三方 provider 不支持
+    /// 此格式，需要将其提升到 Anthropic API 标准的顶层 `system` 字段。
+    #[serde(default = "default_true")]
+    pub normalize_system_messages: bool,
 }
 
 fn default_true() -> bool {
@@ -229,6 +236,7 @@ impl Default for RectifierConfig {
             enabled: true,
             request_thinking_signature: true,
             request_thinking_budget: true,
+            normalize_system_messages: true,
         }
     }
 }

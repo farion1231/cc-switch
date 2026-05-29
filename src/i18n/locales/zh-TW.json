@@ -366,7 +366,9 @@
         "thinkingSignature": "Thinking 簽章整流",
         "thinkingSignatureDescription": "當 Anthropic 類型供應商回傳 thinking 簽章不相容或非法請求等錯誤時，自動移除不相容的 thinking 相關區塊，並對同一供應商重試一次",
         "thinkingBudget": "Thinking Budget 整流",
-        "thinkingBudgetDescription": "當 Anthropic 類型供應商回傳 budget_tokens 限制錯誤（如至少 1024）時，自動將 thinking 規範為 enabled，並將 budget 設為 32000，同時在需要時將 max_tokens 設為 64000，然後重試一次"
+        "thinkingBudgetDescription": "當 Anthropic 類型供應商回傳 budget_tokens 限制錯誤（如至少 1024）時，自動將 thinking 規範為 enabled，並將 budget 設為 32000，同時在需要時將 max_tokens 設為 64000，然後重試一次",
+        "normalizeSystemMessages": "System 訊息正規化",
+        "normalizeSystemMessagesDescription": "將 Claude Code ≥ 2.1.154 的 role:system 訊息提升到頂層 system 欄位，相容不支援此格式的第三方 Provider"
       },
       "optimizer": {
         "title": "Bedrock 請求最佳化工具",
