@@ -621,7 +621,8 @@
       }
     },
     "autoReload": "数据已刷新",
-    "languageOptionChinese": "中文",
+    "languageOptionChinese": "简体中文",
+    "languageOptionTraditionalChinese": "繁體中文",
     "languageOptionEnglish": "English",
     "languageOptionJapanese": "日本語",
     "windowBehavior": "窗口行为",
@@ -1180,6 +1181,7 @@
     "editCommonConfig": "编辑通用配置",
     "editCommonConfigTitle": "编辑 Codex 通用配置片段",
     "commonConfigHint": "该片段会在勾选'写入通用配置'时追加到 config.toml 末尾",
+    "enableGoalMode": "启用 Goal mode",
     "apiUrlLabel": "API 请求地址",
     "extractFromCurrent": "从编辑内容提取",
     "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",

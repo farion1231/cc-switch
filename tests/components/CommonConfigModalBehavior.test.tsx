@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import CodexConfigEditor from "@/components/providers/forms/CodexConfigEditor";
 import GeminiConfigEditor from "@/components/providers/forms/GeminiConfigEditor";
+import { isCodexGoalModeEnabled } from "@/utils/providerConfigUtils";
 
 vi.mock("@/components/common/FullScreenPanel", () => ({
   FullScreenPanel: ({
@@ -68,7 +69,9 @@ describe("Common config modals", () => {
     expect(screen.queryByTestId("common-config-panel")).not.toBeInTheDocument();
 
     fireEvent.click(
-      screen.getByRole("button", { name: /codexConfig.editCommonConfig|编辑通用配置/ }),
+      screen.getByRole("button", {
+        name: /codexConfig.editCommonConfig|编辑通用配置/,
+      }),
     );
 
     expect(screen.getByTestId("common-config-panel")).toBeInTheDocument();
@@ -80,6 +83,52 @@ describe("Common config modals", () => {
         screen.queryByTestId("common-config-panel"),
       ).not.toBeInTheDocument(),
     );
+  });
+
+  it("toggles Codex Goal mode in config.toml from the provider editor", () => {
+    const onConfigChange = vi.fn();
+    const configValue = [
+      'model_provider = "custom"',
+      'model = "gpt-5.4"',
+      "",
+      "[model_providers.custom]",
+      'name = "custom"',
+      "",
+    ].join("\n");
+
+    render(
+      <CodexConfigEditor
+        authValue="{}"
+        configValue={configValue}
+        onAuthChange={() => {}}
+        onConfigChange={onConfigChange}
+        useCommonConfig={false}
+        onCommonConfigToggle={() => {}}
+        commonConfigSnippet=""
+        onCommonConfigSnippetChange={() => true}
+        onCommonConfigErrorClear={() => {}}
+        commonConfigError=""
+        authError=""
+        configError=""
+      />,
+    );
+
+    const goalToggle = screen.getByRole("checkbox", {
+      name: "codexConfig.enableGoalMode",
+    });
+
+    expect(goalToggle).not.toBeChecked();
+
+    fireEvent.click(goalToggle);
+
+    const enabledConfig = onConfigChange.mock.lastCall?.[0] ?? "";
+    expect(isCodexGoalModeEnabled(enabledConfig)).toBe(true);
+
+    fireEvent.click(goalToggle);
+
+    const disabledConfig = onConfigChange.mock.lastCall?.[0] ?? "";
+    expect(isCodexGoalModeEnabled(disabledConfig)).toBe(false);
+    expect(disabledConfig).not.toContain("goals = true");
   });
 
   it("keeps the Gemini common config modal closed after user closes it with an error present", async () => {

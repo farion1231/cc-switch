@@ -621,7 +621,8 @@
       }
     },
     "autoReload": "データを更新しました",
-    "languageOptionChinese": "中文",
+    "languageOptionChinese": "简体中文",
+    "languageOptionTraditionalChinese": "繁體中文",
     "languageOptionEnglish": "English",
     "languageOptionJapanese": "日本語",
     "windowBehavior": "ウィンドウ動作",
@@ -1180,6 +1181,7 @@
     "editCommonConfig": "共通設定を編集",
     "editCommonConfigTitle": "Codex 共通設定スニペットを編集",
     "commonConfigHint": "「共通設定を書き込む」がオンの場合、config.toml の末尾に追記されます",
+    "enableGoalMode": "Goal mode を有効化",
     "apiUrlLabel": "API リクエスト URL",
     "extractFromCurrent": "編集内容から抽出",
     "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
