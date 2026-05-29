@@ -824,6 +824,25 @@ pub fn run() {
                             crate::tray::refresh_all_usage_in_tray(&app).await;
                         });
                     }
+                    // Windows: 双击托盘图标
+                    #[cfg(target_os = "windows")]
+                    TrayIconEvent::DoubleClick { .. } => {
+                        let app = tray.app_handle();
+                        if crate::lightweight::is_lightweight_mode() {
+                            // 轻量模式：双击退出轻量模式，打开窗口
+                            if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
+                                log::error!("退出轻量模式重建窗口失败: {e}");
+                            }
+                        } else if app.get_webview_window("main").is_some() {
+                            // 窗口已打开：双击进入轻量模式（关闭窗口）
+                            if let Err(e) = crate::lightweight::enter_lightweight_mode(app) {
+                                log::error!("进入轻量模式失败: {e}");
+                            }
+                        } else {
+                            // 无窗口：双击打开主窗口
+                            tray::handle_tray_menu_event(app, "show_main");
+                        }
+                    }
                     _ => log::debug!("unhandled event {event:?}"),
                 })
                 .menu(&menu)
