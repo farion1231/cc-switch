@@ -456,12 +456,12 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_message_data_skips_non_assistant() {
+    fn test_parse_message_data_ignores_role() {
+        // parse_message_data does not filter by role; that's the caller's job
         let json: serde_json::Value = serde_json::json!({
             "role": "user",
             "tokens": { "input": 100, "output": 0 }
         });
-        // parse_message_data does not check role (caller does), but it should still parse
         let data = parse_message_data(&json).unwrap();
         assert_eq!(data.input_tokens, 100);
     }
