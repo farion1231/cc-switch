@@ -51,7 +51,7 @@ import type {
 } from "@/lib/api/request-log";
 import { requestLogApi } from "@/lib/api/request-log";
 
-/** 列表中使用的精简日志条目 */
+/** Simplified log entry used in the list */
 interface LogListItem {
   id: string;
   timestamp: string;
@@ -65,13 +65,13 @@ interface LogListItem {
   latencyMs: number | null;
   hasSystemPrompt: boolean;
   systemPromptPreview: string | null;
-  /** 用户最后一条消息的最后一个 content 项信息 */
+  /** Information about the last content item of the user's last message */
   userQuery: { type: string; text: string } | null;
 }
 
 /**
- * 从 request_body.messages 中提取最后一个 role=user 的 content 的最后一项，
- * 返回 type 和文本内容。
+ * Extract the last content item from the last role=user message in request_body.messages,
+ * returning its type and text content.
  */
 function extractUserQuery(
   requestBody: unknown,
@@ -86,7 +86,7 @@ function extractUserQuery(
   const messages = (requestBody as Record<string, unknown>).messages;
   if (!Array.isArray(messages)) return null;
 
-  // 找最后一个 role=user 的消息
+  // Find the last role=user message
   let lastUserMessage: Record<string, unknown> | null = null;
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
@@ -103,13 +103,13 @@ function extractUserQuery(
 
   const content = lastUserMessage.content;
 
-  // content 是纯字符串
+  // content is a plain string
   if (typeof content === "string") {
     const text = content.length > 120 ? content.slice(0, 120) + "…" : content;
     return { type: "text", text };
   }
 
-  // content 是数组
+  // content is an array
   if (Array.isArray(content) && content.length > 0) {
     const lastItem = content[content.length - 1];
     if (lastItem && typeof lastItem === "object") {
@@ -164,7 +164,7 @@ function fromEventPayload(payload: RequestLogEventPayload): LogListItem {
     latencyMs: payload.latency_ms,
     hasSystemPrompt: payload.has_system_prompt,
     systemPromptPreview: payload.system_prompt_preview,
-    userQuery: null, // 实时事件不含 request_body，刷新后回填
+    userQuery: null, // Real-time events don't include request_body, will be backfilled after refresh
   };
 }
 
@@ -220,7 +220,7 @@ export function RequestLogPanel() {
   const [showResponseJsonView, setShowResponseJsonView] = useState(false);
   const [maxEntries, setMaxEntries] = useState(200);
 
-  // 过滤
+  // Filtering
   const [searchQuery, setSearchQuery] = useState("");
   const [appTypeFilter, setAppTypeFilter] = useState("all");
   const [systemPromptOnly, setSystemPromptOnly] = useState(false);
@@ -229,7 +229,7 @@ export function RequestLogPanel() {
   const maxEntriesRef = useRef(maxEntries);
   maxEntriesRef.current = maxEntries;
 
-  // 初始化：加载开关状态和已有日志
+  // Initialize: load switch state and existing logs
   useEffect(() => {
     void (async () => {
       try {
@@ -249,7 +249,7 @@ export function RequestLogPanel() {
     })();
   }, []);
 
-  // 实时接收新日志
+  // Receive new logs in real-time
   useTauriEvent<RequestLogEventPayload>("proxy-request-log", (payload) => {
     const item = fromEventPayload(payload);
     setLogs((prev) => {
@@ -258,7 +258,7 @@ export function RequestLogPanel() {
       return next.length > limit ? next.slice(0, limit) : next;
     });
 
-    // 异步获取完整条目以回填 userQuery
+    // Asynchronously fetch full entry to backfill userQuery
     void requestLogApi.getLogDetail(payload.id).then((detail) => {
       if (!detail) return;
       const query = extractUserQuery(detail.request_body);
@@ -272,14 +272,14 @@ export function RequestLogPanel() {
     });
   });
 
-  // 切换捕获开关
+  // Toggle capture switch
   const handleToggleCapture = useCallback(
     async (enabled: boolean) => {
       try {
         await requestLogApi.setCaptureEnabled(enabled);
         setCaptureEnabled(enabled);
         if (enabled) {
-          // 刚启用时加载已有日志
+          // Load existing logs when just enabled
           const existingLogs = await requestLogApi.getLogs();
           setLogs(existingLogs.map(toListItem));
         }
@@ -292,7 +292,7 @@ export function RequestLogPanel() {
     [t],
   );
 
-  // 清空日志
+  // Clear logs
   const handleClear = useCallback(async () => {
     try {
       await requestLogApi.clearLogs();
@@ -304,7 +304,7 @@ export function RequestLogPanel() {
     }
   }, [t]);
 
-  // 查看详情
+  // View details
   const handleSelectLog = useCallback(
     async (id: string) => {
       if (selectedLogId === id) {
@@ -317,7 +317,7 @@ export function RequestLogPanel() {
       try {
         let detail = await requestLogApi.getLogDetail(id);
         setDetailEntry(detail);
-        // 如果 response_body 为空，延迟重试（等待异步回填完成）
+        // If response_body is empty, retry with delay (wait for async backfill to complete)
         if (detail && detail.response_body == null) {
           for (const delay of [500, 1500, 3000]) {
             await new Promise((r) => setTimeout(r, delay));
@@ -338,7 +338,7 @@ export function RequestLogPanel() {
     [selectedLogId],
   );
 
-  // 复制到剪贴板
+  // Copy to clipboard
   const handleCopy = useCallback(
     async (text: string) => {
       try {
@@ -354,7 +354,7 @@ export function RequestLogPanel() {
     [t],
   );
 
-  // 过滤后的日志
+  // Filtered logs
   const filteredLogs = useMemo(() => {
     let result = logs;
 
@@ -383,7 +383,7 @@ export function RequestLogPanel() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden px-6">
-      {/* 工具栏 */}
+      {/* Toolbar */}
       <div className="flex items-center gap-3 py-3 border-b">
         <div className="flex items-center gap-2">
           <Switch
@@ -450,13 +450,13 @@ export function RequestLogPanel() {
               const num = Number(val);
               setMaxEntries(num);
               void requestLogApi.setMaxEntries(num);
-              // 前端也截断已有日志，只保留最新的 num 条
+              // Frontend also truncates existing logs, keeping only the latest num entries
               setLogs((prev) =>
                 prev.length > num ? prev.slice(0, num) : prev,
               );
             }}
           >
-            <SelectTrigger className="h-8 w-24 text-xs" title="最大保留条数">
+            <SelectTrigger className="h-8 w-24 text-xs" title="Maximum entries to keep">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -480,9 +480,9 @@ export function RequestLogPanel() {
         </div>
       </div>
 
-      {/* 主体区域 */}
+      {/* Main area */}
       <div className="flex flex-1 min-h-0 gap-0">
-        {/* 左侧列表 */}
+        {/* Left list */}
         <div
           className={cn(
             "flex flex-col min-h-0 border-r transition-all",
@@ -604,7 +604,7 @@ export function RequestLogPanel() {
             </ScrollArea>
           )}
 
-          {/* 底部统计 */}
+          {/* Bottom stats */}
           <div className="px-3 py-1.5 border-t text-[10px] text-muted-foreground flex items-center gap-3">
             <span>
               {t("requestLog.totalCount", {
@@ -623,7 +623,7 @@ export function RequestLogPanel() {
           </div>
         </div>
 
-        {/* 右侧详情 */}
+        {/* Right details */}
         {selectedLogId && (
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
             <div className="flex items-center justify-between px-4 py-2 border-b">
@@ -650,7 +650,7 @@ export function RequestLogPanel() {
             ) : detailEntry ? (
               <ScrollArea className="flex-1">
                 <div className="p-4 space-y-4">
-                  {/* 基础信息 */}
+                  {/* Basic information */}
                   <div className="space-y-1.5">
                     <DetailRow label="App" value={detailEntry.app_type} />
                     <DetailRow
@@ -725,7 +725,7 @@ export function RequestLogPanel() {
                         {detailEntry.system_prompt}
                       </pre>
 
-                      {/* System Prompt 弹窗 */}
+                      {/* System Prompt dialog */}
                       <Dialog
                         open={showSystemPromptView}
                         onOpenChange={setShowSystemPromptView}
@@ -797,7 +797,7 @@ export function RequestLogPanel() {
                     </pre>
                   </div>
 
-                  {/* Request Body JSON 弹窗 */}
+                  {/* Request Body JSON dialog */}
                   <Dialog
                     open={showRequestJsonView}
                     onOpenChange={setShowRequestJsonView}
@@ -826,7 +826,7 @@ export function RequestLogPanel() {
                     </DialogContent>
                   </Dialog>
 
-                  {/* 格式化对话弹窗 */}
+                  {/* Formatted conversation dialog */}
                   <Dialog
                     open={showFormattedView}
                     onOpenChange={setShowFormattedView}
@@ -907,7 +907,7 @@ export function RequestLogPanel() {
                       </pre>
                     )}
 
-                    {/* Response Body 格式化弹窗 */}
+                    {/* Response Body formatted dialog */}
                     {detailEntry.response_body != null && (
                       <Dialog
                         open={showResponseFormatView}
@@ -940,7 +940,7 @@ export function RequestLogPanel() {
                       </Dialog>
                     )}
 
-                    {/* Response Body JSON 弹窗 */}
+                    {/* Response Body JSON dialog */}
                     {detailEntry.response_body != null && (
                       <Dialog
                         open={showResponseJsonView}
@@ -999,15 +999,15 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 }
 
 // ============================================================================
-// 对话格式化视图
+// Formatted conversation view
 // ============================================================================
 
 interface ParsedMessage {
-  /** 展示用的角色，tool_result 会被修正为 "tool" */
+  /** Display role, tool_result will be corrected to "tool" */
   role: string;
   contentParts: { type: string; text: string }[];
   toolCalls?: { id: string; name: string; input: unknown }[];
-  /** tool_result 的工具 ID */
+  /** Tool ID for tool_result */
   toolUseId?: string;
 }
 
@@ -1040,7 +1040,7 @@ function parseMessages(requestBody: unknown): ParsedMessage[] | null {
       continue;
     }
 
-    // 数组 content：拆分 tool_result 为独立消息，其余归到同一条
+    // Array content: split tool_result into separate messages, group the rest together
     const normalParts: { type: string; text: string }[] = [];
     const toolCalls: { id: string; name: string; input: unknown }[] = [];
     const toolResults: { toolUseId: string; content: string }[] = [];
@@ -1051,7 +1051,7 @@ function parseMessages(requestBody: unknown): ParsedMessage[] | null {
       const partType = typeof p.type === "string" ? p.type : "unknown";
 
       if (partType === "tool_result") {
-        // tool_result 的 content 可能是字符串或嵌套数组
+        // tool_result content may be a string or nested array
         let resultText = "";
         if (typeof p.content === "string") {
           resultText = p.content;
@@ -1073,7 +1073,7 @@ function parseMessages(requestBody: unknown): ParsedMessage[] | null {
       }
     }
 
-    // 每个 text part 拆成独立消息，工具调用单独一条
+    // Split each text part into separate messages, tool calls as a single message
     if (normalParts.length > 1) {
       for (const part of normalParts) {
         result.push({ role: rawRole, contentParts: [part] });
@@ -1089,7 +1089,7 @@ function parseMessages(requestBody: unknown): ParsedMessage[] | null {
       });
     }
 
-    // tool_result 拆分为独立的 tool 消息
+    // Split tool_result into separate tool messages
     for (const tr of toolResults) {
       result.push({
         role: "tool",
@@ -1100,7 +1100,7 @@ function parseMessages(requestBody: unknown): ParsedMessage[] | null {
       });
     }
 
-    // 如果整个消息只有 tool_result 没有其他内容，不要遗漏空的情况
+    // If the entire message only has tool_result and no other content, don't miss the empty case
     if (
       normalParts.length === 0 &&
       toolCalls.length === 0 &&
@@ -1175,7 +1175,7 @@ function FormattedMessagesView({ requestBody }: { requestBody: unknown }) {
               isUser ? "flex-row-reverse" : "flex-row",
             )}
           >
-            {/* 头像 */}
+            {/* Avatar */}
             <div
               className={cn(
                 "w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5",
@@ -1187,7 +1187,7 @@ function FormattedMessagesView({ requestBody }: { requestBody: unknown }) {
               <Icon className="w-3.5 h-3.5" />
             </div>
 
-            {/* 气泡 */}
+            {/* Bubble */}
             <div
               className={cn(
                 "max-w-[80%] min-w-0",
@@ -1214,7 +1214,7 @@ function FormattedMessagesView({ requestBody }: { requestBody: unknown }) {
               </div>
 
               <div className={cn("rounded-xl px-3 py-2", config.bubbleColor)}>
-                {/* 文本内容（text 和 tool_result） */}
+                {/* Text content (text and tool_result) */}
                 {msg.contentParts
                   .filter(
                     (p) =>
@@ -1229,7 +1229,7 @@ function FormattedMessagesView({ requestBody }: { requestBody: unknown }) {
                     </pre>
                   ))}
 
-                {/* 非文本内容标识 */}
+                {/* Non-text content indicators */}
                 {msg.contentParts
                   .filter(
                     (p) =>
@@ -1247,7 +1247,7 @@ function FormattedMessagesView({ requestBody }: { requestBody: unknown }) {
                     </Badge>
                   ))}
 
-                {/* 工具调用 */}
+                {/* Tool calls */}
                 {msg.toolCalls?.map((tool, toolIndex) => (
                   <div key={toolIndex} className="mt-1">
                     <div className="flex items-center gap-1.5">
@@ -1274,14 +1274,14 @@ function FormattedMessagesView({ requestBody }: { requestBody: unknown }) {
                   </div>
                 ))}
 
-                {/* tool 无内容时 */}
+                {/* Tool with no content */}
                 {msg.role === "tool" && msg.contentParts.length === 0 && (
                   <span className="text-[10px] text-muted-foreground italic">
                     （工具返回结果）
                   </span>
                 )}
 
-                {/* 完全空内容 */}
+                {/* Completely empty content */}
                 {msg.contentParts.length === 0 &&
                   !msg.toolCalls &&
                   msg.role !== "tool" && (
@@ -1299,7 +1299,7 @@ function FormattedMessagesView({ requestBody }: { requestBody: unknown }) {
 }
 
 // ============================================================================
-// SSE 流式响应合并 & 格式化展示
+// SSE streaming response merge & formatted display
 // ============================================================================
 
 interface MergedContentBlock {
@@ -1497,7 +1497,7 @@ function FormattedResponseView({
 
   return (
     <div className="space-y-4">
-      {/* 元信息 */}
+      {/* Metadata */}
       <div className="flex flex-wrap gap-2">
         {merged.model && (
           <Badge variant="secondary" className="text-[10px]">
@@ -1516,7 +1516,7 @@ function FormattedResponseView({
         )}
       </div>
 
-      {/* Token 统计 */}
+      {/* Token statistics */}
       <div className="flex flex-wrap gap-3 text-[10px] text-muted-foreground">
         <span>
           Input:{" "}
@@ -1556,7 +1556,7 @@ function FormattedResponseView({
         )}
       </div>
 
-      {/* 内容块 */}
+      {/* Content blocks */}
       {merged.blocks.length === 0 ? (
         <p className="text-xs text-muted-foreground italic">无内容块</p>
       ) : (

@@ -222,7 +222,7 @@ pub async fn handle_streaming(
     // 获取流式超时配置
     let timeout_config = ctx.streaming_timeout_config();
 
-    // 构建 response_log_info（如果 log_id 存在且 request_log 启用）
+    // Build response_log_info (if log_id exists and request_log is enabled)
     let response_log_info = if let Some(id) = &log_id {
         if state.request_log_store.is_enabled() {
             let latency_ms = ctx.latency_ms();
@@ -344,13 +344,13 @@ pub async fn handle_non_streaming(
         log::debug!("[{}] usage logging 已关闭，跳过非流式 usage 解析", ctx.tag);
     }
 
-    // 如果 log_id 存在且 request_log 启用，尝试回填 response_body
+    // If log_id exists and request_log is enabled, attempt to backfill response_body
     if let Some(id) = &log_id {
         if state.request_log_store.is_enabled() {
             let latency_ms = ctx.latency_ms();
-            // 尝试将 body_bytes 解析为 JSON
+            // Attempt to parse body_bytes as JSON
             let response_body = serde_json::from_slice::<Value>(&body_bytes).ok();
-            // 异步回填（不阻塞响应返回）
+            // Backfill asynchronously (without blocking response return)
             let store = state.request_log_store.clone();
             let id = id.clone();
             let status_code = status.as_u16();
@@ -726,7 +726,7 @@ pub fn create_logged_passthrough_stream(
             collector.is_some() || log::log_enabled!(log::Level::Debug) || response_log_info.is_some();
         let mut is_first_chunk = true;
 
-        // 用于收集 SSE events 以便回填 response_body（仅在 response_log_info 存在时启用）
+        // Collect SSE events for response_body backfill (only when response_log_info is present)
         let mut sse_events_for_log: Option<Vec<Value>> = if response_log_info.is_some() {
             Some(Vec::new())
         } else {
@@ -855,7 +855,7 @@ pub fn create_logged_passthrough_stream(
             guard.disarm();
         }
 
-        // 流结束后，如果 response_log_info 存在且收集到了 SSE events，异步回填
+        // After stream ends, if response_log_info exists and SSE events were collected, backfill asynchronously
         if let Some((store, log_id, latency_ms)) = response_log_info {
             if let Some(events) = sse_events_for_log {
                 if !events.is_empty() {

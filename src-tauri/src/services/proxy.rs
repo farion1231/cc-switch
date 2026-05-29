@@ -2333,15 +2333,15 @@ impl ProxyService {
         self.request_log_store.is_enabled()
     }
 
-    /// 获取日志最大保留条数
+    /// Gets the maximum number of log entries to retain
     pub fn get_request_log_max_entries(&self) -> usize {
         self.request_log_store.get_max_entries()
     }
 
-    /// 设置日志最大保留条数
+    /// Sets the maximum number of log entries to retain
     pub async fn set_request_log_max_entries(&self, max: usize) {
         self.request_log_store.set_max_entries(max).await;
-        log::info!("请求日志最大保留条数已设置为 {}", max);
+        log::info!("Request log max entries set to {}", max);
     }
 }
 

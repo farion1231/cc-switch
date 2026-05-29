@@ -44,10 +44,10 @@ use serde_json::{json, Value};
 use tauri::Emitter;
 
 // ============================================================================
-// 请求日志捕获辅助
+// Request Log Capture Helpers
 // ============================================================================
 
-/// 记录请求日志并推送事件给前端
+/// Records request log and emits event to frontend
 async fn capture_request_log(
     state: &ProxyState,
     ctx: &RequestContext,
@@ -74,11 +74,11 @@ async fn capture_request_log(
     );
     let log_id = entry.id.clone();
 
-    // 推送精简事件给前端
+    // Emit concise event to frontend
     if let Some(app) = &state.app_handle {
         let payload = RequestLogEventPayload::from(&entry);
         if let Err(e) = app.emit("proxy-request-log", &payload) {
-            log::debug!("推送请求日志事件失败: {e}");
+            log::debug!("Failed to emit request log event: {e}");
         }
     }
 
@@ -86,12 +86,12 @@ async fn capture_request_log(
     Some(log_id)
 }
 
-/// 更新请求日志的响应信息，如果有 response_body 则通知前端刷新
+/// Updates request log response info; notifies frontend if response_body is present
 async fn update_request_log_response(state: &ProxyState, log_id: Option<&str>, status_code: u16, latency_ms: u64, response_body: Option<Value>) {
     if let Some(id) = log_id {
         let has_body = response_body.is_some();
         state.request_log_store.update_response(id, status_code, latency_ms, response_body).await;
-        // 当 response_body 回填完成时，通知前端刷新详情
+        // When response_body backfill completes, notify frontend to refresh details
         if has_body {
             if let Some(app) = &state.app_handle {
                 let _ = app.emit("proxy-request-log-response-ready", id);
