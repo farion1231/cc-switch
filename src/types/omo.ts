@@ -37,7 +37,7 @@ export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
     display: "Hephaestus",
     descKey: "omo.agentDesc.hephaestus",
     tooltipKey: "omo.agentTooltip.hephaestus",
-    recommended: "gpt-5.4",
+    recommended: "gpt-5.5",
     group: "main",
   },
   {
@@ -53,7 +53,7 @@ export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
     display: "Atlas",
     descKey: "omo.agentDesc.atlas",
     tooltipKey: "omo.agentTooltip.atlas",
-    recommended: "kimi-k2.5",
+    recommended: "claude-sonnet-4-6",
     group: "main",
   },
   {
@@ -61,7 +61,7 @@ export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
     display: "Oracle",
     descKey: "omo.agentDesc.oracle",
     tooltipKey: "omo.agentTooltip.oracle",
-    recommended: "gpt-5.4",
+    recommended: "gpt-5.5",
     group: "sub",
   },
   {
@@ -69,7 +69,7 @@ export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
     display: "Librarian",
     descKey: "omo.agentDesc.librarian",
     tooltipKey: "omo.agentTooltip.librarian",
-    recommended: "gemini-3-flash",
+    recommended: "gpt-5.4-mini-fast",
     group: "sub",
   },
   {
@@ -77,7 +77,7 @@ export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
     display: "Explore",
     descKey: "omo.agentDesc.explore",
     tooltipKey: "omo.agentTooltip.explore",
-    recommended: "grok-code-fast-1",
+    recommended: "gpt-5.4-mini-fast",
     group: "sub",
   },
   {
@@ -85,7 +85,7 @@ export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
     display: "Multimodal-Looker",
     descKey: "omo.agentDesc.multimodalLooker",
     tooltipKey: "omo.agentTooltip.multimodalLooker",
-    recommended: "kimi-k2.5",
+    recommended: "gpt-5.5",
     group: "sub",
   },
   {
@@ -93,7 +93,7 @@ export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
     display: "Metis",
     descKey: "omo.agentDesc.metis",
     tooltipKey: "omo.agentTooltip.metis",
-    recommended: "claude-opus-4-7",
+    recommended: "claude-sonnet-4-6",
     group: "sub",
   },
   {
@@ -101,7 +101,7 @@ export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
     display: "Momus",
     descKey: "omo.agentDesc.momus",
     tooltipKey: "omo.agentTooltip.momus",
-    recommended: "gpt-5.4",
+    recommended: "gpt-5.5",
     group: "sub",
   },
   {
@@ -109,6 +109,7 @@ export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
     display: "Sisyphus-Junior",
     descKey: "omo.agentDesc.sisyphusJunior",
     tooltipKey: "omo.agentTooltip.sisyphusJunior",
+    recommended: "claude-sonnet-4-6",
     group: "sub",
   },
 ];
@@ -119,35 +120,35 @@ export const OMO_BUILTIN_CATEGORIES: OmoCategoryDef[] = [
     display: "Visual Engineering",
     descKey: "omo.categoryDesc.visualEngineering",
     tooltipKey: "omo.categoryTooltip.visualEngineering",
-    recommended: "gemini-3-pro",
+    recommended: "gemini-3.1-pro",
   },
   {
     key: "ultrabrain",
     display: "Ultrabrain",
     descKey: "omo.categoryDesc.ultrabrain",
     tooltipKey: "omo.categoryTooltip.ultrabrain",
-    recommended: "gpt-5.4",
+    recommended: "gpt-5.5",
   },
   {
     key: "deep",
     display: "Deep",
     descKey: "omo.categoryDesc.deep",
     tooltipKey: "omo.categoryTooltip.deep",
-    recommended: "gpt-5.4",
+    recommended: "gpt-5.5",
   },
   {
     key: "artistry",
     display: "Artistry",
     descKey: "omo.categoryDesc.artistry",
     tooltipKey: "omo.categoryTooltip.artistry",
-    recommended: "gemini-3-pro",
+    recommended: "gemini-3.1-pro",
   },
   {
     key: "quick",
     display: "Quick",
     descKey: "omo.categoryDesc.quick",
     tooltipKey: "omo.categoryTooltip.quick",
-    recommended: "claude-haiku-4-5",
+    recommended: "gpt-5.4-mini",
   },
   {
     key: "unspecified-low",
@@ -168,7 +169,7 @@ export const OMO_BUILTIN_CATEGORIES: OmoCategoryDef[] = [
     display: "Writing",
     descKey: "omo.categoryDesc.writing",
     tooltipKey: "omo.categoryTooltip.writing",
-    recommended: "gemini-3-flash",
+    recommended: "k2p5",
   },
 ];
 

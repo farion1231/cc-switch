@@ -558,6 +558,24 @@ pub fn run() {
                             log::warn!("✗ Codex history provider bucket migration failed: {e}");
                         }
                     }
+
+                    match crate::codex_history_migration::maybe_migrate_codex_provider_template_bucket(
+                        &db_for_codex_history_migration,
+                    ) {
+                        Ok(outcome) => {
+                            if let Some(reason) = outcome.skipped_reason {
+                                log::debug!("○ Codex provider template bucket migration skipped: {reason}");
+                            } else if !outcome.migrated_provider_ids.is_empty() {
+                                log::info!(
+                                    "✓ Codex provider template bucket migration completed: providers={}",
+                                    outcome.migrated_provider_ids.len()
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("✗ Codex provider template bucket migration failed: {e}");
+                        }
+                    }
                 });
             }
 

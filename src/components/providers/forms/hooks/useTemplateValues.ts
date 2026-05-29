@@ -5,6 +5,7 @@ import type {
 } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
 import { applyTemplateValues } from "@/utils/providerConfigUtils";
+import { deepClone } from "@/utils/deepClone";
 
 type TemplatePath = Array<string | number>;
 type TemplateValueMap = Record<string, TemplateValueConfig>;
@@ -133,7 +134,7 @@ const applyTemplateValuesToConfigString = (
     if (Array.isArray(parsedConfig)) {
       targetConfig = [...parsedConfig];
     } else if (parsedConfig && typeof parsedConfig === "object") {
-      targetConfig = JSON.parse(JSON.stringify(parsedConfig));
+      targetConfig = deepClone(parsedConfig);
     } else {
       targetConfig = {};
     }

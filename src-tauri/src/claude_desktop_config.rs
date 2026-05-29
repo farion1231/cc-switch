@@ -21,6 +21,8 @@ const CONFIG_LIBRARY_DIR: &str = "configLibrary";
 const GATEWAY_TOKEN_SETTING_KEY: &str = "claude_desktop_gateway_token";
 const CLAUDE_DESKTOP_PROXY_PREFIX: &str = "/claude-desktop";
 const DEFAULT_CREATED_AT: &str = "2024-01-01T00:00:00Z";
+const MIMO_REDACTED_THINKING_PLACEHOLDER: &str = "[redacted thinking]";
+const MIMO_TOOL_CALL_THINKING_PLACEHOLDER: &str = "tool call";
 
 /// Claude Desktop 模型菜单识别的 route ID 前缀。
 pub const CLAUDE_ROUTE_PREFIX: &str = "claude-";
@@ -531,6 +533,18 @@ fn direct_inference_model_specs(provider: &Provider) -> Result<Vec<InferenceMode
                 ),
             ));
         }
+        let upstream_model = route.model.trim();
+        if !upstream_model.is_empty() && upstream_model != route_id {
+            return Err(AppError::localized(
+                "claude_desktop.provider.direct_mapping_unsupported",
+                format!(
+                    "Claude Desktop 直连模式不能映射模型: {route_id} -> {upstream_model}；非 Claude 官方模型请使用本地路由模式"
+                ),
+                format!(
+                    "Claude Desktop direct mode cannot map models: {route_id} -> {upstream_model}; use proxy mode for non-Claude official models"
+                ),
+            ));
+        }
         result.push(InferenceModelSpec {
             name: route_id.to_string(),
             label_override: route
@@ -706,7 +720,123 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
     };
 
     body["model"] = json!(route.upstream_model);
+    if should_normalize_mimo_anthropic_thinking_history(provider, &route.upstream_model) {
+        normalize_mimo_anthropic_thinking_history(&mut body);
+    }
     Ok(body)
+}
+
+fn should_normalize_mimo_anthropic_thinking_history(
+    provider: &Provider,
+    upstream_model: &str,
+) -> bool {
+    if !provider_uses_anthropic_messages_format(provider) {
+        return false;
+    }
+
+    is_mimo_identifier(upstream_model) || provider_has_mimo_endpoint(provider)
+}
+
+fn provider_uses_anthropic_messages_format(provider: &Provider) -> bool {
+    let api_format = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.api_format.as_deref())
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("api_format")
+                .and_then(Value::as_str)
+        })
+        .map(str::trim)
+        .unwrap_or("anthropic");
+
+    api_format.is_empty() || api_format == "anthropic"
+}
+
+fn provider_has_mimo_endpoint(provider: &Provider) -> bool {
+    let settings = &provider.settings_config;
+    [
+        settings
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+            .and_then(Value::as_str),
+        settings.get("base_url").and_then(Value::as_str),
+        settings.get("baseURL").and_then(Value::as_str),
+        settings.get("apiEndpoint").and_then(Value::as_str),
+    ]
+    .into_iter()
+    .flatten()
+    .any(is_mimo_identifier)
+}
+
+fn is_mimo_identifier(value: &str) -> bool {
+    let value = value.to_ascii_lowercase();
+    value.contains("mimo") || value.contains("xiaomimimo")
+}
+
+fn normalize_mimo_anthropic_thinking_history(body: &mut Value) {
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return;
+    };
+
+    for message in messages {
+        if message.get("role").and_then(Value::as_str) != Some("assistant") {
+            continue;
+        }
+
+        let Some(content) = message.get_mut("content").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        if !content
+            .iter()
+            .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"))
+        {
+            continue;
+        }
+
+        let mut has_thinking = false;
+        for block in content.iter_mut() {
+            match block.get("type").and_then(Value::as_str) {
+                Some("thinking") => {
+                    let has_non_empty_thinking = block
+                        .get("thinking")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| !value.trim().is_empty());
+                    if let Some(obj) = block.as_object_mut() {
+                        obj.remove("signature");
+                    }
+                    if has_non_empty_thinking {
+                        has_thinking = true;
+                    } else if let Some(obj) = block.as_object_mut() {
+                        obj.insert(
+                            "thinking".to_string(),
+                            json!(MIMO_TOOL_CALL_THINKING_PLACEHOLDER),
+                        );
+                        has_thinking = true;
+                    }
+                }
+                Some("redacted_thinking") => {
+                    *block = json!({
+                        "type": "thinking",
+                        "thinking": MIMO_REDACTED_THINKING_PLACEHOLDER
+                    });
+                    has_thinking = true;
+                }
+                _ => {}
+            }
+        }
+
+        if !has_thinking {
+            content.insert(
+                0,
+                json!({
+                    "type": "thinking",
+                    "thinking": MIMO_TOOL_CALL_THINKING_PLACEHOLDER
+                }),
+            );
+        }
+    }
 }
 
 pub fn proxy_gateway_base_url_from_db(db: &Database) -> Result<String, AppError> {
@@ -816,6 +946,7 @@ fn build_gateway_profile(
     model_specs: Option<&[InferenceModelSpec]>,
 ) -> Value {
     let mut profile = json!({
+        "coworkEgressAllowedHosts": ["*"],
         "disableDeploymentModeChooser": true,
         "inferenceGatewayApiKey": api_key,
         "inferenceGatewayAuthScheme": "bearer",
@@ -1179,6 +1310,31 @@ mod tests {
         provider
     }
 
+    fn mimo_anthropic_proxy_provider(id: &str) -> Provider {
+        let mut provider = direct_provider(id);
+        provider.name = "MiMo Proxy".to_string();
+        provider.settings_config = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.xiaomimimo.com/anthropic",
+                "ANTHROPIC_AUTH_TOKEN": "test-token"
+            }
+        });
+        provider.meta = Some(ProviderMeta {
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            api_format: Some("anthropic".to_string()),
+            claude_desktop_model_routes: std::collections::HashMap::from([(
+                "claude-sonnet-4-6".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "mimo-v2.5-pro".to_string(),
+                    label_override: Some("MiMo v2.5 Pro".to_string()),
+                    supports_1m: Some(true),
+                },
+            )]),
+            ..Default::default()
+        });
+        provider
+    }
+
     fn oauth_proxy_provider(id: &str, provider_type: &str, api_format: &str) -> Provider {
         let mut provider = Provider::with_id(
             id.to_string(),
@@ -1249,6 +1405,7 @@ mod tests {
         assert_eq!(profile["inferenceGatewayApiKey"], json!("test-token"));
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
         assert_eq!(profile["disableDeploymentModeChooser"], json!(true));
+        assert_eq!(profile["coworkEgressAllowedHosts"], json!(["*"]));
         assert!(profile.get("inferenceModels").is_none());
         assert_eq!(meta["appliedId"], json!(PROFILE_ID));
         assert!(meta["entries"]
@@ -1279,6 +1436,22 @@ mod tests {
     }
 
     #[test]
+    fn claude_desktop_direct_rejects_model_mapping_to_non_claude_upstream() {
+        let mut provider = direct_provider_with_models("direct-non-claude");
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes
+            .get_mut("claude-sonnet-4-6")
+            .expect("route")
+            .model = "mimo-v2.5-pro".to_string();
+
+        let err = validate_provider(&provider).expect_err("direct mapping should fail");
+        assert!(err.to_string().contains("本地路由模式"));
+    }
+
+    #[test]
     fn claude_desktop_proxy_apply_writes_local_gateway_profile_with_safe_models() {
         let temp = TempDir::new().expect("tempdir");
         let paths = test_paths(temp.path());
@@ -1293,6 +1466,7 @@ mod tests {
             json!("http://127.0.0.1:15721/claude-desktop")
         );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
+        assert_eq!(profile["coworkEgressAllowedHosts"], json!(["*"]));
         assert_ne!(profile["inferenceGatewayApiKey"], json!("test-token"));
         assert!(profile["inferenceGatewayApiKey"]
             .as_str()
@@ -1349,6 +1523,100 @@ mod tests {
         let err = map_proxy_request_model(json!({"model": "claude-opus-4-7"}), &provider)
             .expect_err("unknown route should fail");
         assert!(err.to_string().contains("claude-opus-4-7"));
+    }
+
+    #[test]
+    fn claude_desktop_mimo_anthropic_rewrites_redacted_thinking_for_tool_history() {
+        let provider = mimo_anthropic_proxy_provider("mimo");
+
+        let mapped = map_proxy_request_model(
+            json!({
+                "model": "claude-sonnet-4-6",
+                "messages": [{
+                    "role": "assistant",
+                    "content": [
+                        {"type": "redacted_thinking", "data": "opaque"},
+                        {"type": "tool_use", "id": "call_1", "name": "read_file", "input": {"path": "README.md"}}
+                    ]
+                }]
+            }),
+            &provider,
+        )
+        .expect("map MiMo route");
+
+        assert_eq!(mapped["model"], json!("mimo-v2.5-pro"));
+        assert_eq!(
+            mapped["messages"][0]["content"][0]["type"],
+            json!("thinking")
+        );
+        assert_eq!(
+            mapped["messages"][0]["content"][0]["thinking"],
+            json!("[redacted thinking]")
+        );
+        assert_eq!(
+            mapped["messages"][0]["content"][1]["type"],
+            json!("tool_use")
+        );
+    }
+
+    #[test]
+    fn claude_desktop_mimo_anthropic_injects_thinking_for_tool_history_without_one() {
+        let provider = mimo_anthropic_proxy_provider("mimo");
+
+        let mapped = map_proxy_request_model(
+            json!({
+                "model": "claude-sonnet-4-6",
+                "messages": [{
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "call_1", "name": "read_file", "input": {"path": "README.md"}}
+                    ]
+                }]
+            }),
+            &provider,
+        )
+        .expect("map MiMo route");
+
+        assert_eq!(
+            mapped["messages"][0]["content"][0]["type"],
+            json!("thinking")
+        );
+        assert_eq!(
+            mapped["messages"][0]["content"][0]["thinking"],
+            json!("tool call")
+        );
+        assert_eq!(
+            mapped["messages"][0]["content"][1]["type"],
+            json!("tool_use")
+        );
+    }
+
+    #[test]
+    fn claude_desktop_mimo_anthropic_keeps_thinking_text_but_drops_signature() {
+        let provider = mimo_anthropic_proxy_provider("mimo");
+
+        let mapped = map_proxy_request_model(
+            json!({
+                "model": "claude-sonnet-4-6",
+                "messages": [{
+                    "role": "assistant",
+                    "content": [
+                        {"type": "thinking", "thinking": "Need to inspect the file.", "signature": "anthropic-signature"},
+                        {"type": "tool_use", "id": "call_1", "name": "read_file", "input": {"path": "README.md"}}
+                    ]
+                }]
+            }),
+            &provider,
+        )
+        .expect("map MiMo route");
+
+        assert_eq!(
+            mapped["messages"][0]["content"][0]["thinking"],
+            json!("Need to inspect the file.")
+        );
+        assert!(mapped["messages"][0]["content"][0]
+            .get("signature")
+            .is_none());
     }
 
     #[test]

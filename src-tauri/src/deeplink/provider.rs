@@ -285,37 +285,19 @@ fn build_claude_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
 
 /// Build Codex settings configuration
 fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
-    // Generate a safe provider name identifier
-    let clean_provider_name = {
-        let raw: String = request
-            .name
-            .clone()
-            .unwrap_or_else(|| "custom".to_string())
-            .chars()
-            .filter(|c| !c.is_control())
-            .collect();
-        let lower = raw.to_lowercase();
-        let mut key: String = lower
-            .chars()
-            .map(|c| match c {
-                'a'..='z' | '0'..='9' | '_' => c,
-                _ => '_',
-            })
-            .collect();
-
-        // Remove leading/trailing underscores
-        while key.starts_with('_') {
-            key.remove(0);
-        }
-        while key.ends_with('_') {
-            key.pop();
-        }
-
-        if key.is_empty() {
-            "custom".to_string()
-        } else {
-            key
-        }
+    let provider_display_name = request
+        .name
+        .as_deref()
+        .unwrap_or("custom")
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect::<String>()
+        .trim()
+        .to_string();
+    let provider_display_name = if provider_display_name.is_empty() {
+        "custom".to_string()
+    } else {
+        provider_display_name
     };
 
     // Model name: use deeplink model or default
@@ -331,16 +313,20 @@ fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
         .trim_end_matches('/')
         .to_string();
 
+    let provider_display_name = toml_edit::Value::from(provider_display_name.as_str()).to_string();
+    let model_name = toml_edit::Value::from(model_name.as_str()).to_string();
+    let endpoint = toml_edit::Value::from(endpoint.as_str()).to_string();
+
     // Build config.toml content
     let config_toml = format!(
-        r#"model_provider = "{clean_provider_name}"
-model = "{model_name}"
+        r#"model_provider = "custom"
+model = {model_name}
 model_reasoning_effort = "high"
 disable_response_storage = true
 
-[model_providers.{clean_provider_name}]
-name = "{clean_provider_name}"
-base_url = "{endpoint}"
+[model_providers.custom]
+name = {provider_display_name}
+base_url = {endpoint}
 wire_api = "responses"
 requires_openai_auth = true
 "#
@@ -820,6 +806,47 @@ mod tests {
         assert!(obj.get("api_key").is_none());
         assert!(obj.get("models").is_none());
         assert_eq!(obj.get("api_mode").unwrap(), "chat_completions");
+    }
+
+    #[test]
+    fn build_codex_settings_uses_custom_key_and_preserves_display_name() {
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("codex".to_string()),
+            name: Some("My \"Relay\"".to_string()),
+            endpoint: Some("https://api.example.com/v1/".to_string()),
+            api_key: Some("sk-test".to_string()),
+            model: Some("gpt-5-codex".to_string()),
+            ..Default::default()
+        };
+
+        let settings = build_codex_settings(&request);
+        let config_text = settings
+            .get("config")
+            .and_then(|value| value.as_str())
+            .expect("config text");
+        let parsed: toml::Value = toml::from_str(config_text).expect("valid Codex config");
+
+        assert_eq!(
+            parsed
+                .get("model_provider")
+                .and_then(|value| value.as_str()),
+            Some("custom")
+        );
+        let custom_provider = parsed
+            .get("model_providers")
+            .and_then(|value| value.get("custom"))
+            .expect("custom model provider");
+        assert_eq!(
+            custom_provider.get("name").and_then(|value| value.as_str()),
+            Some("My \"Relay\"")
+        );
+        assert_eq!(
+            custom_provider
+                .get("base_url")
+                .and_then(|value| value.as_str()),
+            Some("https://api.example.com/v1")
+        );
     }
 
     #[test]

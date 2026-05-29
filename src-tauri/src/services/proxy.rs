@@ -1774,11 +1774,6 @@ impl ProxyService {
                     existing_value,
                 )?;
             }
-
-            crate::codex_config::normalize_codex_settings_config_model_provider(
-                &mut effective_settings,
-            )
-            .map_err(|e| format!("归一化 Codex restore backup 失败: {e}"))?;
         }
 
         let backup_json = match app_type_enum {
@@ -3566,7 +3561,7 @@ base_url = "https://new.example/v1"
 
     #[tokio::test]
     #[serial]
-    async fn hot_switch_codex_provider_keeps_model_provider_stable_in_backup_and_restore() {
+    async fn hot_switch_codex_provider_preserves_provider_model_provider_in_backup_and_restore() {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
 
@@ -3663,21 +3658,21 @@ requires_openai_auth = true
             toml::from_str(backup_config).expect("parse backup config");
         assert_eq!(
             parsed_backup.get("model_provider").and_then(|v| v.as_str()),
-            Some("custom"),
-            "provider-derived restore backup should retain stable Codex model_provider"
+            Some("aihubmix"),
+            "provider-derived restore backup should preserve the provider's model_provider"
         );
         let backup_model_providers = parsed_backup
             .get("model_providers")
             .and_then(|v| v.as_table())
             .expect("backup model_providers");
-        assert!(backup_model_providers.get("aihubmix").is_none());
+        assert!(backup_model_providers.get("custom").is_none());
         assert_eq!(
             backup_model_providers
-                .get("custom")
+                .get("aihubmix")
                 .and_then(|v| v.get("base_url"))
                 .and_then(|v| v.as_str()),
             Some("https://aihubmix.example/v1"),
-            "stable provider id should point at the hot-switched provider endpoint"
+            "provider id should point at the hot-switched provider endpoint"
         );
 
         service
@@ -3693,8 +3688,8 @@ requires_openai_auth = true
         let parsed_live: toml::Value = toml::from_str(live_config).expect("parse live config");
         assert_eq!(
             parsed_live.get("model_provider").and_then(|v| v.as_str()),
-            Some("custom"),
-            "restored Codex live config should not switch history buckets"
+            Some("aihubmix"),
+            "restored Codex live config should preserve the provider's model_provider"
         );
         assert_eq!(
             live.get("auth")
@@ -3802,7 +3797,7 @@ requires_openai_auth = true
 
         assert_eq!(
             parsed_live.get("model_provider").and_then(|v| v.as_str()),
-            Some("custom")
+            Some("stable")
         );
         assert_eq!(
             parsed_live.get("model").and_then(|v| v.as_str()),
