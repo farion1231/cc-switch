@@ -907,7 +907,7 @@ mod import_claude_desktop_tests {
         let routes = suggested_claude_desktop_routes(&p).expect("routes built");
         assert_eq!(routes.len(), 3);
         assert_eq!(routes.get("claude-sonnet-4-6").unwrap().model, "GLM-4.6");
-        assert_eq!(routes.get("claude-opus-4-7").unwrap().model, "GLM-4-Air");
+        assert_eq!(routes.get("claude-opus-4-8").unwrap().model, "GLM-4-Air");
         assert_eq!(routes.get("claude-haiku-4-5").unwrap().model, "GLM-4-Flash");
         assert_eq!(
             routes
