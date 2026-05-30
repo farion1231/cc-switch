@@ -22,9 +22,23 @@ static UUID_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let root = get_codex_config_dir().join("sessions");
+    let roots = session_roots();
+    scan_sessions_in_roots(&roots)
+}
+
+pub fn session_roots() -> Vec<PathBuf> {
+    let config_dir = get_codex_config_dir();
+    vec![
+        config_dir.join("sessions"),
+        config_dir.join("archived_sessions"),
+    ]
+}
+
+fn scan_sessions_in_roots(roots: &[PathBuf]) -> Vec<SessionMeta> {
     let mut files = Vec::new();
-    collect_jsonl_files(&root, &mut files);
+    for root in roots {
+        collect_jsonl_files(root, &mut files);
+    }
 
     let mut sessions = Vec::new();
     for path in files {
@@ -281,6 +295,42 @@ fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    fn write_codex_session(path: &Path, session_id: &str, message: &str) {
+        std::fs::write(
+            path,
+            format!(
+                "{{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{session_id}\",\"cwd\":\"/tmp/project\"}}}}\n\
+                 {{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"user\",\"content\":\"{message}\"}}}}\n",
+            ),
+        )
+        .expect("write session");
+    }
+
+    #[test]
+    fn scan_sessions_in_roots_includes_active_and_archived_files() {
+        let temp = tempdir().expect("tempdir");
+        let active = temp.path().join("sessions");
+        let archived = temp.path().join("archived_sessions");
+        std::fs::create_dir_all(&active).expect("active dir");
+        std::fs::create_dir_all(&archived).expect("archived dir");
+
+        write_codex_session(&active.join("active.jsonl"), "active-id", "Active session");
+        write_codex_session(
+            &archived.join("archived.jsonl"),
+            "archived-id",
+            "Archived session",
+        );
+
+        let sessions = scan_sessions_in_roots(&[active, archived]);
+        let ids = sessions
+            .into_iter()
+            .map(|session| session.session_id)
+            .collect::<Vec<_>>();
+
+        assert!(ids.contains(&"active-id".to_string()));
+        assert!(ids.contains(&"archived-id".to_string()));
+    }
 
     #[test]
     fn delete_session_removes_jsonl_file() {

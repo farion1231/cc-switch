@@ -45,14 +45,14 @@ const expectedChatPresets = new Map<
     "Zhipu GLM",
     {
       baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-      contextWindows: { "glm-5": 200000 },
+      contextWindows: { "glm-5.1": 200000 },
     },
   ],
   [
     "Zhipu GLM en",
     {
       baseUrl: "https://api.z.ai/api/paas/v4",
-      contextWindows: { "glm-5": 200000 },
+      contextWindows: { "glm-5.1": 200000 },
     },
   ],
   [
@@ -103,7 +103,7 @@ const expectedChatPresets = new Map<
     "ModelScope",
     {
       baseUrl: "https://api-inference.modelscope.cn/v1",
-      contextWindows: { "ZhipuAI/GLM-5": 200000 },
+      contextWindows: { "ZhipuAI/GLM-5.1": 200000 },
     },
   ],
   [
@@ -166,7 +166,7 @@ const expectedChatPresets = new Map<
     "Novita AI",
     {
       baseUrl: "https://api.novita.ai/openai/v1",
-      contextWindows: { "zai-org/glm-5": 202800 },
+      contextWindows: { "zai-org/glm-5.1": 202800 },
     },
   ],
   [

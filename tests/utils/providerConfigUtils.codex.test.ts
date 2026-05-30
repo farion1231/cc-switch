@@ -4,8 +4,10 @@ import {
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
   extractCodexTopLevelInt,
+  isCodexGoalModeEnabled,
   removeCodexTopLevelField,
   setCodexBaseUrl,
+  setCodexGoalMode,
   setCodexModelName,
   setCodexTopLevelInt,
   updateCodexExperimentalBearerToken,
@@ -195,6 +197,83 @@ describe("Codex TOML utils", () => {
     expect(removed).toContain("[model_providers.custom]");
   });
 
+  it("adds Goal mode under the top-level features table", () => {
+    const input = [
+      'model_provider = "custom"',
+      'model = "gpt-5.4"',
+      "",
+      "[model_providers.custom]",
+      'name = "custom"',
+      "",
+    ].join("\n");
+
+    const output = setCodexGoalMode(input, true);
+
+    expect(isCodexGoalModeEnabled(output)).toBe(true);
+    expect(output).toContain(
+      'model = "gpt-5.4"\n\n[features]\ngoals = true\n\n[model_providers.custom]',
+    );
+  });
+
+  it("removes Goal mode without deleting other feature flags", () => {
+    const input = [
+      'model_provider = "custom"',
+      "",
+      "[features]",
+      "goals = true",
+      "experimental_resume = true",
+      "",
+      "[model_providers.custom]",
+      'name = "custom"',
+      "",
+    ].join("\n");
+
+    const output = setCodexGoalMode(input, false);
+
+    expect(isCodexGoalModeEnabled(output)).toBe(false);
+    expect(output).toContain("[features]\nexperimental_resume = true");
+    expect(output).not.toMatch(/^\s*goals\s*=/m);
+  });
+
+  it("removes the features table when disabling the only Goal mode flag", () => {
+    const input = [
+      'model_provider = "custom"',
+      "",
+      "[features]",
+      "goals = true",
+      "",
+      "[model_providers.custom]",
+      'name = "custom"',
+      "",
+    ].join("\n");
+
+    const output = setCodexGoalMode(input, false);
+
+    expect(isCodexGoalModeEnabled(output)).toBe(false);
+    expect(output).not.toContain("[features]");
+    expect(output).toContain("[model_providers.custom]");
+  });
+
+  it("preserves feature-section comments when disabling Goal mode", () => {
+    const input = [
+      'model_provider = "custom"',
+      "",
+      "[features]",
+      "# Keep this note",
+      "goals = true",
+      "",
+      "[model_providers.custom]",
+      'name = "custom"',
+      "",
+    ].join("\n");
+
+    const output = setCodexGoalMode(input, false);
+
+    expect(isCodexGoalModeEnabled(output)).toBe(false);
+    expect(output).toContain("[features]\n# Keep this note");
+    expect(output).not.toMatch(/^\s*goals\s*=/m);
+  });
+
   // P3 回归: 不能在 config 没用 bearer token 模式时, 误为它新增一行
   it("updateCodexExperimentalBearerToken leaves config without the token alone", () => {
     const input = [
@@ -251,10 +330,7 @@ describe("Codex TOML utils", () => {
       "",
     ].join("\n");
 
-    const updated = updateCodexExperimentalBearerToken(
-      input,
-      'abc"def\\ghi',
-    );
+    const updated = updateCodexExperimentalBearerToken(input, 'abc"def\\ghi');
 
     expect(updated).toContain(
       'experimental_bearer_token = "abc\\"def\\\\ghi" # vendor token',
