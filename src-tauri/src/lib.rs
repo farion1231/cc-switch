@@ -1242,6 +1242,14 @@ pub fn run() {
             commands::add_skill_repo,
             commands::remove_skill_repo,
             commands::install_skills_from_zip,
+            // Skill tag management
+            commands::get_skill_tags,
+            commands::create_skill_tag,
+            commands::update_skill_tag,
+            commands::delete_skill_tag,
+            commands::reorder_skill_tags,
+            commands::set_skill_tags,
+            commands::get_all_skill_tag_assignments,
             // Auto launch
             commands::set_auto_launch,
             commands::get_auto_launch_status,

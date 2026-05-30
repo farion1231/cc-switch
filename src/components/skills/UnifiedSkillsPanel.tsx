@@ -1,4 +1,10 @@
-import React, { useMemo, useState } from "react";
+import React, {
+  useMemo,
+  useState,
+  useCallback,
+  useRef,
+  useEffect,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
   Sparkles,
@@ -6,10 +12,37 @@ import {
   ExternalLink,
   RefreshCw,
   Loader2,
+  Tag,
+  LayoutList,
+  Layers,
+  Settings2,
+  ChevronDown,
+  ChevronRight,
+  GripVertical,
+  Check,
+  X,
 } from "lucide-react";
+import {
+  DndContext,
+  DragOverlay,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragStartEvent,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { Input } from "@/components/ui/input";
 import {
   type ImportSkillSelection,
   type SkillBackupEntry,
@@ -24,8 +57,14 @@ import {
   useInstallSkillsFromZip,
   useCheckSkillUpdates,
   useUpdateSkill,
+  useSkillTags,
+  useAllTagAssignments,
+  useSetSkillTags,
+  useUpdateTag,
+  useReorderTags,
   type InstalledSkill,
   type SkillUpdateInfo,
+  type SkillTag,
 } from "@/hooks/useSkills";
 import type { AppId } from "@/lib/api/types";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -35,6 +74,8 @@ import { SKILLS_APP_IDS } from "@/config/appConfig";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
+import { TagManagerDialog } from "@/components/skills/TagManagerDialog";
+import { TagAssignPopover } from "@/components/skills/TagAssignPopover";
 import {
   Dialog,
   DialogContent,
@@ -79,8 +120,13 @@ const UnifiedSkillsPanel = React.forwardRef<
   } | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<"list" | "grouped">("list");
+  const [tagManagerOpen, setTagManagerOpen] = useState(false);
+  const [collapsedTags, setCollapsedTags] = useState<Set<number>>(new Set());
 
   const { data: skills, isLoading } = useInstalledSkills();
+  const { data: tags = [] } = useSkillTags();
+  const { data: tagAssignments = [] } = useAllTagAssignments();
   const {
     data: skillBackups = [],
     refetch: refetchSkillBackups,
@@ -100,7 +146,18 @@ const UnifiedSkillsPanel = React.forwardRef<
     isFetching: isCheckingUpdates,
   } = useCheckSkillUpdates();
   const updateSkillMutation = useUpdateSkill();
+  const setSkillTagsMutation = useSetSkillTags();
+  const updateTagMutation = useUpdateTag();
+  const reorderTagsMutation = useReorderTags();
   const [isUpdatingAll, setIsUpdatingAll] = useState(false);
+
+  // 拖拽状态
+  const [activeDragSkill, setActiveDragSkill] = useState<InstalledSkill | null>(
+    null,
+  );
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
 
   const updatesMap = useMemo(() => {
     const map: Record<string, SkillUpdateInfo> = {};
@@ -130,6 +187,176 @@ const UnifiedSkillsPanel = React.forwardRef<
     });
     return counts;
   }, [skills]);
+
+  // 按标签分组的 skills
+  const groupedSkills = useMemo(() => {
+    if (!skills) return [];
+    const groups: {
+      tag: SkillTag | null;
+      tagId: number | null;
+      skills: InstalledSkill[];
+    }[] = [];
+    const assignedSkillIds = new Set<string>();
+
+    // 按 tag 分组
+    for (const tag of tags) {
+      const skillIds = tagAssignments
+        .filter(([, tid]) => tid === tag.id)
+        .map(([sid]) => sid);
+      const groupSkills = skills.filter((s) => skillIds.includes(s.id));
+      if (groupSkills.length > 0) {
+        groups.push({ tag, tagId: tag.id, skills: groupSkills });
+        groupSkills.forEach((s) => assignedSkillIds.add(s.id));
+      }
+    }
+
+    // 未分组
+    const ungrouped = skills.filter((s) => !assignedSkillIds.has(s.id));
+    if (ungrouped.length > 0) {
+      groups.push({ tag: null, tagId: null, skills: ungrouped });
+    }
+
+    return groups;
+  }, [skills, tags, tagAssignments]);
+
+  const toggleTagCollapse = useCallback((tagId: number) => {
+    setCollapsedTags((prev) => {
+      const next = new Set(prev);
+      if (next.has(tagId)) {
+        next.delete(tagId);
+      } else {
+        next.add(tagId);
+      }
+      return next;
+    });
+  }, []);
+
+  // 分组名称内联编辑状态
+  const [editingTagId, setEditingTagId] = useState<number | null>(null);
+  const [editingTagName, setEditingTagName] = useState("");
+  const editInputRef = useRef<HTMLInputElement>(null!);
+
+  useEffect(() => {
+    if (editingTagId !== null && editInputRef.current) {
+      editInputRef.current.focus();
+      editInputRef.current.select();
+    }
+  }, [editingTagId]);
+
+  const handleStartEditTag = useCallback((tag: SkillTag) => {
+    setEditingTagId(tag.id);
+    setEditingTagName(tag.name);
+  }, []);
+
+  const handleSaveEditTag = useCallback(async () => {
+    if (editingTagId === null) return;
+    const trimmed = editingTagName.trim();
+    if (!trimmed) {
+      setEditingTagId(null);
+      return;
+    }
+    try {
+      await updateTagMutation.mutateAsync({ id: editingTagId, name: trimmed });
+      toast.success(t("skills.tags.renameSuccess"), { closeButton: true });
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    }
+    setEditingTagId(null);
+  }, [editingTagId, editingTagName, updateTagMutation, t]);
+
+  const handleCancelEditTag = useCallback(() => {
+    setEditingTagId(null);
+  }, []);
+
+  // 拖拽开始
+  const handleDragStart = useCallback(
+    (event: DragStartEvent) => {
+      const { active } = event;
+      const activeId = active.id as string;
+      // 判断是 skill 拖拽还是 group 拖拽
+      if (activeId.startsWith("skill:")) {
+        const skillId = activeId.replace("skill:", "");
+        const skill = skills?.find((s) => s.id === skillId);
+        if (skill) setActiveDragSkill(skill);
+      }
+    },
+    [skills],
+  );
+
+  // 拖拽结束
+  const handleDragEnd = useCallback(
+    async (event: DragEndEvent) => {
+      const { active, over } = event;
+      setActiveDragSkill(null);
+      if (!over) return;
+
+      const activeId = active.id as string;
+      const overId = over.id as string;
+
+      // 分组排序（group header 拖拽）
+      if (
+        activeId.startsWith("group:") &&
+        overId.startsWith("group:") &&
+        activeId !== overId
+      ) {
+        const activeTagId = parseInt(activeId.replace("group:", ""), 10);
+        const overTagId = parseInt(overId.replace("group:", ""), 10);
+        const tagIds = tags.map((t) => t.id);
+        const oldIndex = tagIds.indexOf(activeTagId);
+        const newIndex = tagIds.indexOf(overTagId);
+        if (oldIndex !== -1 && newIndex !== -1) {
+          const newOrder = arrayMove(tagIds, oldIndex, newIndex);
+          try {
+            await reorderTagsMutation.mutateAsync(newOrder);
+          } catch (error) {
+            toast.error(t("common.error"), { description: String(error) });
+          }
+        }
+        return;
+      }
+
+      // 技能拖拽到不同分组
+      if (activeId.startsWith("skill:")) {
+        const skillId = activeId.replace("skill:", "");
+        let targetTagId: number | null = null;
+
+        if (overId.startsWith("group:")) {
+          targetTagId = parseInt(overId.replace("group:", ""), 10);
+        } else if (overId.startsWith("skill:")) {
+          // 拖到另一个 skill 上，找到该 skill 所在的分组
+          const overSkillId = overId.replace("skill:", "");
+          for (const [sid, tid] of tagAssignments) {
+            if (sid === overSkillId) {
+              targetTagId = tid;
+              break;
+            }
+          }
+        }
+
+        if (targetTagId === null || isNaN(targetTagId)) return;
+
+        // 获取该 skill 当前的标签
+        const currentTagIds = tagAssignments
+          .filter(([sid]) => sid === skillId)
+          .map(([, tid]) => tid);
+
+        // 如果已经在目标分组中，不处理
+        if (currentTagIds.includes(targetTagId)) return;
+
+        // 分配新标签（替换现有分配）
+        try {
+          await setSkillTagsMutation.mutateAsync({
+            skillId,
+            tagIds: [targetTagId],
+          });
+          toast.success(t("skills.tags.moveSuccess"), { closeButton: true });
+        } catch (error) {
+          toast.error(t("common.error"), { description: String(error) });
+        }
+      }
+    },
+    [tags, tagAssignments, reorderTagsMutation, setSkillTagsMutation, t],
+  );
 
   const handleToggleApp = async (id: string, app: AppId, enabled: boolean) => {
     try {
@@ -353,6 +580,40 @@ const UnifiedSkillsPanel = React.forwardRef<
           appIds={SKILLS_APP_IDS}
         />
         <div className="flex items-center gap-1.5">
+          {/* 视图切换 */}
+          <div className="flex items-center rounded-md border border-border-default">
+            <Button
+              type="button"
+              variant={viewMode === "list" ? "secondary" : "ghost"}
+              size="sm"
+              className="h-7 px-2 text-xs rounded-r-none"
+              onClick={() => setViewMode("list")}
+              title={t("skills.tags.listView")}
+            >
+              <LayoutList size={12} />
+            </Button>
+            <Button
+              type="button"
+              variant={viewMode === "grouped" ? "secondary" : "ghost"}
+              size="sm"
+              className="h-7 px-2 text-xs rounded-l-none"
+              onClick={() => setViewMode("grouped")}
+              title={t("skills.tags.groupedView")}
+            >
+              <Layers size={12} />
+            </Button>
+          </div>
+          {/* 标签管理入口 */}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs gap-1"
+            onClick={() => setTagManagerOpen(true)}
+          >
+            <Tag size={12} />
+            <Settings2 size={10} />
+          </Button>
           <div
             className="transition-all duration-300 ease-out overflow-hidden"
             style={{
@@ -418,23 +679,107 @@ const UnifiedSkillsPanel = React.forwardRef<
           </div>
         ) : (
           <TooltipProvider delayDuration={300}>
-            <div className="rounded-xl border border-border-default overflow-hidden">
-              {skills.map((skill, index) => (
-                <InstalledSkillListItem
-                  key={skill.id}
-                  skill={skill}
-                  hasUpdate={!!updatesMap[skill.id]}
-                  isUpdating={
-                    updateSkillMutation.isPending &&
-                    updateSkillMutation.variables === skill.id
-                  }
-                  onToggleApp={handleToggleApp}
-                  onUninstall={() => handleUninstall(skill)}
-                  onUpdate={() => handleUpdateSkill(skill)}
-                  isLast={index === skills.length - 1}
-                />
-              ))}
-            </div>
+            {viewMode === "grouped" && groupedSkills.length > 0 ? (
+              /* 分组视图（支持拖拽排序 + 技能拖拽分组 + 内联编辑） */
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
+              >
+                <SortableContext
+                  items={groupedSkills
+                    .filter((g) => g.tagId !== null)
+                    .map((g) => `group:${g.tagId}`)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <div className="space-y-3">
+                    {groupedSkills.map((group) => {
+                      const tagKey = group.tagId ?? -1;
+                      const isCollapsed = collapsedTags.has(tagKey);
+                      return (
+                        <DroppableGroup
+                          key={tagKey}
+                          tagId={tagKey}
+                          isUntagged={group.tagId === null}
+                        >
+                          <SortableGroupHeader
+                            tag={group.tag}
+                            tagId={group.tagId}
+                            skillCount={group.skills.length}
+                            isCollapsed={isCollapsed}
+                            isEditing={
+                              editingTagId !== null &&
+                              editingTagId === group.tagId
+                            }
+                            editingName={editingTagName}
+                            editInputRef={editInputRef}
+                            onToggleCollapse={() =>
+                              group.tagId !== null &&
+                              toggleTagCollapse(group.tagId)
+                            }
+                            onStartEdit={() =>
+                              group.tag && handleStartEditTag(group.tag)
+                            }
+                            onEditingNameChange={setEditingTagName}
+                            onSaveEdit={handleSaveEditTag}
+                            onCancelEdit={handleCancelEditTag}
+                          />
+                          {!isCollapsed && (
+                            <div>
+                              {group.skills.map((skill, index) => (
+                                <DraggableSkillRow key={skill.id} skill={skill}>
+                                  <InstalledSkillListItem
+                                    skill={skill}
+                                    hasUpdate={!!updatesMap[skill.id]}
+                                    isUpdating={
+                                      updateSkillMutation.isPending &&
+                                      updateSkillMutation.variables === skill.id
+                                    }
+                                    onToggleApp={handleToggleApp}
+                                    onUninstall={() => handleUninstall(skill)}
+                                    onUpdate={() => handleUpdateSkill(skill)}
+                                    isLast={index === group.skills.length - 1}
+                                  />
+                                </DraggableSkillRow>
+                              ))}
+                            </div>
+                          )}
+                        </DroppableGroup>
+                      );
+                    })}
+                  </div>
+                </SortableContext>
+                <DragOverlay>
+                  {activeDragSkill && (
+                    <div className="rounded-lg border border-primary bg-background px-4 py-2 shadow-lg opacity-90">
+                      <span className="text-sm font-medium">
+                        {activeDragSkill.name}
+                      </span>
+                    </div>
+                  )}
+                </DragOverlay>
+              </DndContext>
+            ) : (
+              /* 列表视图 */
+              <div className="rounded-xl border border-border-default overflow-hidden">
+                {skills.map((skill, index) => (
+                  <InstalledSkillListItem
+                    key={skill.id}
+                    skill={skill}
+                    hasUpdate={!!updatesMap[skill.id]}
+                    isUpdating={
+                      updateSkillMutation.isPending &&
+                      updateSkillMutation.variables === skill.id
+                    }
+                    onToggleApp={handleToggleApp}
+                    onUninstall={() => handleUninstall(skill)}
+                    onUpdate={() => handleUpdateSkill(skill)}
+                    isLast={index === skills.length - 1}
+                  />
+                ))}
+              </div>
+            )}
           </TooltipProvider>
         )}
       </div>
@@ -458,6 +803,14 @@ const UnifiedSkillsPanel = React.forwardRef<
           isImporting={importMutation.isPending}
           onImport={handleImport}
           onClose={() => setImportDialogOpen(false)}
+        />
+      )}
+
+      {/* 标签管理弹窗 */}
+      {tagManagerOpen && (
+        <TagManagerDialog
+          open={tagManagerOpen}
+          onClose={() => setTagManagerOpen(false)}
         />
       )}
 
@@ -530,6 +883,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
               <ExternalLink size={12} />
             </button>
           )}
+          <TagAssignPopover skillId={skill.id} skillName={skill.name} />
           <span className="text-xs text-muted-foreground/50 flex-shrink-0">
             {sourceLabel}
           </span>
@@ -863,6 +1217,213 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
         </div>
       </div>
     </TooltipProvider>
+  );
+};
+
+// ========== 分组视图辅助组件 ==========
+
+/** 可放置技能的分组容器 */
+const DroppableGroup: React.FC<{
+  tagId: number;
+  isUntagged: boolean;
+  children: React.ReactNode;
+}> = ({ tagId, isUntagged, children }) => {
+  // 未分组区域不参与拖拽
+  if (isUntagged) {
+    return (
+      <div className="rounded-xl border border-border-default overflow-hidden">
+        {children}
+      </div>
+    );
+  }
+
+  return (
+    <SortableDroppableGroup tagId={tagId}>{children}</SortableDroppableGroup>
+  );
+};
+
+/** 可排序 + 可放置的分组容器 */
+const SortableDroppableGroup: React.FC<{
+  tagId: number;
+  children: React.ReactNode;
+}> = ({ tagId, children }) => {
+  const { setNodeRef, transform, transition, isDragging } = useSortable({
+    id: `group:${tagId}`,
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="rounded-xl border border-border-default overflow-hidden"
+      data-group-id={tagId}
+    >
+      {children}
+    </div>
+  );
+};
+
+/** 可排序的分组头部（支持内联编辑名称） */
+const SortableGroupHeader: React.FC<{
+  tag: SkillTag | null;
+  tagId: number | null;
+  skillCount: number;
+  isCollapsed: boolean;
+  isEditing: boolean;
+  editingName: string;
+  editInputRef: React.RefObject<HTMLInputElement>;
+  onToggleCollapse: () => void;
+  onStartEdit: () => void;
+  onEditingNameChange: (name: string) => void;
+  onSaveEdit: () => void;
+  onCancelEdit: () => void;
+}> = ({
+  tag,
+  tagId,
+  skillCount,
+  isCollapsed,
+  isEditing,
+  editingName,
+  editInputRef,
+  onToggleCollapse,
+  onStartEdit,
+  onEditingNameChange,
+  onSaveEdit,
+  onCancelEdit,
+}) => {
+  const { t } = useTranslation();
+
+  // 可排序 hook（仅对有 tagId 的分组生效）
+  const sortable =
+    tagId !== null ? useSortable({ id: `group:${tagId}` }) : null;
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      onSaveEdit();
+    } else if (e.key === "Escape") {
+      onCancelEdit();
+    }
+  };
+
+  return (
+    <div
+      className="flex items-center gap-2 px-4 py-2 bg-muted/50 hover:bg-muted/70 transition-colors"
+      ref={sortable?.setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(sortable?.transform ?? null),
+        transition: sortable?.transition,
+        opacity: sortable?.isDragging ? 0.5 : 1,
+      }}
+    >
+      {/* 拖拽手柄（仅自定义分组） */}
+      {tagId !== null && (
+        <button
+          type="button"
+          className="cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground flex-shrink-0"
+          {...sortable?.attributes}
+          {...sortable?.listeners}
+        >
+          <GripVertical size={14} />
+        </button>
+      )}
+
+      {/* 展开/折叠 */}
+      <button
+        type="button"
+        className="flex-shrink-0"
+        onClick={onToggleCollapse}
+      >
+        {tagId !== null ? (
+          isCollapsed ? (
+            <ChevronRight size={14} />
+          ) : (
+            <ChevronDown size={14} />
+          )
+        ) : (
+          <span className="w-[14px]" />
+        )}
+      </button>
+
+      <Tag size={14} className="text-muted-foreground flex-shrink-0" />
+
+      {/* 分组名称：显示态 vs 编辑态 */}
+      {isEditing ? (
+        <div className="flex items-center gap-1 flex-1 min-w-0">
+          <Input
+            ref={editInputRef}
+            value={editingName}
+            onChange={(e) => onEditingNameChange(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onBlur={onSaveEdit}
+            className="h-6 text-sm py-0 px-1"
+          />
+          <button
+            type="button"
+            onClick={onSaveEdit}
+            className="text-green-500 hover:text-green-600 flex-shrink-0"
+          >
+            <Check size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={onCancelEdit}
+            className="text-muted-foreground hover:text-foreground flex-shrink-0"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      ) : (
+        <span
+          className="text-sm font-medium truncate"
+          onDoubleClick={tagId !== null ? onStartEdit : undefined}
+          title={tag ? t("skills.tags.doubleClickToEdit") : undefined}
+        >
+          {tag ? tag.name : t("skills.tags.untagged")}
+        </span>
+      )}
+
+      <Badge
+        variant="secondary"
+        className="ml-auto text-[10px] px-1.5 py-0 h-4 flex-shrink-0"
+      >
+        {skillCount}
+      </Badge>
+    </div>
+  );
+};
+
+/** 可拖拽的技能行 */
+const DraggableSkillRow: React.FC<{
+  skill: InstalledSkill;
+  children: React.ReactNode;
+}> = ({ skill, children }) => {
+  const { attributes, listeners, setNodeRef, isDragging } = useSortable({
+    id: `skill:${skill.id}`,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      className="relative group"
+      style={{ opacity: isDragging ? 0.4 : 1 }}
+    >
+      {/* 拖拽手柄覆盖在技能行左侧 */}
+      <div
+        className="absolute left-0 top-0 bottom-0 w-6 flex items-center justify-center cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity z-10"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical size={12} className="text-muted-foreground/50" />
+      </div>
+      <div className="pl-5">{children}</div>
+    </div>
   );
 };
 

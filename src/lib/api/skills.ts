@@ -49,6 +49,14 @@ export interface SkillBackupEntry {
   skill: InstalledSkill;
 }
 
+/** 技能标签 */
+export interface SkillTag {
+  id: number;
+  name: string;
+  sort_index: number;
+  created_at: number;
+}
+
 /** 可发现的 Skill（来自仓库） */
 export interface DiscoverableSkill {
   key: string;
@@ -279,5 +287,42 @@ export const skillsApi = {
     currentApp: AppId,
   ): Promise<InstalledSkill[]> {
     return await invoke("install_skills_from_zip", { filePath, currentApp });
+  },
+
+  // ========== 标签管理 ==========
+
+  /** 获取所有标签 */
+  async getTags(): Promise<SkillTag[]> {
+    return await invoke("get_skill_tags");
+  },
+
+  /** 创建标签 */
+  async createTag(name: string): Promise<SkillTag> {
+    return await invoke("create_skill_tag", { name });
+  },
+
+  /** 更新标签名称 */
+  async updateTag(id: number, name: string): Promise<boolean> {
+    return await invoke("update_skill_tag", { id, name });
+  },
+
+  /** 删除标签 */
+  async deleteTag(id: number): Promise<boolean> {
+    return await invoke("delete_skill_tag", { id });
+  },
+
+  /** 批量更新标签排序 */
+  async reorderTags(orderedIds: number[]): Promise<void> {
+    return await invoke("reorder_skill_tags", { orderedIds });
+  },
+
+  /** 设置技能的标签分配（替换现有分配） */
+  async setSkillTags(skillId: string, tagIds: number[]): Promise<void> {
+    return await invoke("set_skill_tags", { skillId, tagIds });
+  },
+
+  /** 获取所有标签分配关系 */
+  async getAllTagAssignments(): Promise<[string, number][]> {
+    return await invoke("get_all_skill_tag_assignments");
   },
 };

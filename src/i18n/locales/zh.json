@@ -2054,6 +2054,22 @@
       "successSingle": "技能 {{name}} 已安装",
       "successMultiple": "成功安装 {{count}} 个技能",
       "noSkillsFound": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）"
+    },
+    "tags": {
+      "manage": "管理标签",
+      "create": "创建标签",
+      "rename": "重命名标签",
+      "delete": "删除标签",
+      "deleteConfirm": "删除标签「{{name}}」将从所有关联技能中移除该标签，技能本身不会被删除。",
+      "untagged": "默认",
+      "assignTag": "分配标签",
+      "noTags": "还没有创建标签",
+      "tagNamePlaceholder": "标签名称...",
+      "listView": "列表视图",
+      "groupedView": "分组视图",
+      "doubleClickToEdit": "双击重命名",
+      "moveSuccess": "技能已移动到新分组",
+      "renameSuccess": "标签已重命名"
     }
   },
   "deeplink": {

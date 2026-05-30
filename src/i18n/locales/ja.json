@@ -2054,6 +2054,22 @@
       "successSingle": "スキル {{name}} をインストールしました",
       "successMultiple": "{{count}} 件のスキルをインストールしました",
       "noSkillsFound": "ZIP ファイルにスキルが見つかりません（SKILL.md が必要です）"
+    },
+    "tags": {
+      "manage": "タグ管理",
+      "create": "タグ作成",
+      "rename": "タグ名変更",
+      "delete": "タグ削除",
+      "deleteConfirm": "タグ「{{name}}」を削除すると、関連するすべてのスキルからこのタグが解除されます。スキル自体は削除されません。",
+      "untagged": "デフォルト",
+      "assignTag": "タグ割り当て",
+      "noTags": "タグがまだ作成されていません",
+      "tagNamePlaceholder": "タグ名...",
+      "listView": "リスト表示",
+      "groupedView": "グループ表示",
+      "doubleClickToEdit": "ダブルクリックで名前変更",
+      "moveSuccess": "スキルをグループに移動しました",
+      "renameSuccess": "タグ名を変更しました"
     }
   },
   "deeplink": {

@@ -334,3 +334,83 @@ pub fn install_skills_from_zip(
 
     SkillService::install_from_zip(&app_state.db, path, &app_type).map_err(|e| e.to_string())
 }
+
+// ========== 标签管理命令 ==========
+
+/// 获取所有技能标签
+#[tauri::command]
+pub fn get_skill_tags(
+    app_state: State<'_, AppState>,
+) -> Result<Vec<crate::database::SkillTag>, String> {
+    app_state.db.get_all_skill_tags().map_err(|e| e.to_string())
+}
+
+/// 创建技能标签
+#[tauri::command]
+pub fn create_skill_tag(
+    name: String,
+    app_state: State<'_, AppState>,
+) -> Result<crate::database::SkillTag, String> {
+    app_state
+        .db
+        .create_skill_tag(&name)
+        .map_err(|e| e.to_string())
+}
+
+/// 更新技能标签名称
+#[tauri::command]
+pub fn update_skill_tag(
+    id: i64,
+    name: String,
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    app_state
+        .db
+        .update_skill_tag(id, &name)
+        .map_err(|e| e.to_string())
+}
+
+/// 删除技能标签
+#[tauri::command]
+pub fn delete_skill_tag(id: i64, app_state: State<'_, AppState>) -> Result<bool, String> {
+    app_state
+        .db
+        .delete_skill_tag(id)
+        .map_err(|e| e.to_string())
+}
+
+/// 批量更新标签排序
+#[tauri::command]
+pub fn reorder_skill_tags(
+    ordered_ids: Vec<i64>,
+    app_state: State<'_, AppState>,
+) -> Result<(), String> {
+    app_state
+        .db
+        .reorder_skill_tags(&ordered_ids)
+        .map_err(|e| e.to_string())
+}
+
+/// 设置技能的标签分配（替换现有分配）
+#[tauri::command]
+pub fn set_skill_tags(
+    skill_id: String,
+    tag_ids: Vec<i64>,
+    app_state: State<'_, AppState>,
+) -> Result<(), String> {
+    app_state
+        .db
+        .set_skill_tags(&skill_id, &tag_ids)
+        .map_err(|e| e.to_string())
+}
+
+/// 获取所有标签分配关系
+#[tauri::command]
+pub fn get_all_skill_tag_assignments(
+    app_state: State<'_, AppState>,
+) -> Result<Vec<(String, i64)>, String> {
+    app_state
+        .db
+        .get_all_skill_tag_assignments()
+        .map_err(|e| e.to_string())
+}
