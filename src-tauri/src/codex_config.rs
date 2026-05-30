@@ -393,37 +393,71 @@ fn load_codex_model_template_from_cache() -> Result<Option<Value>, AppError> {
     Ok(find_codex_model_template(&catalog))
 }
 
-fn load_codex_model_template_from_bundled() -> Result<Option<Value>, AppError> {
-    let output = match Command::new("codex")
-        .args(["debug", "models", "--bundled"])
-        .output()
-    {
-        Ok(output) => output,
-        Err(err) => {
-            log::debug!("failed to run `codex debug models --bundled`: {err}");
-            return Ok(None);
-        }
-    };
+/// Platform-specific candidates for locating the `codex` CLI when it is not
+/// on the process PATH (common in macOS GUI apps launched outside a terminal).
+const CODEX_CLI_CANDIDATES: &[&str] = &[
+    "codex",                                // PATH (all platforms)
+    "/opt/homebrew/bin/codex",              // macOS Apple Silicon Homebrew
+    "/usr/local/bin/codex",                 // macOS Intel Homebrew / Linux
+    "/home/linuxbrew/.linuxbrew/bin/codex", // Linux Homebrew
+];
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        log::debug!("`codex debug models --bundled` failed: {stderr}");
-        return Ok(None);
+fn load_codex_model_template_from_bundled() -> Result<Option<Value>, AppError> {
+    for candidate in CODEX_CLI_CANDIDATES {
+        let output = match Command::new(candidate)
+            .args(["debug", "models", "--bundled"])
+            .output()
+        {
+            Ok(output) => output,
+            Err(err) => {
+                log::debug!("failed to run `{candidate} debug models --bundled`: {err}");
+                continue;
+            }
+        };
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::debug!("`{candidate} debug models --bundled` failed: {stderr}");
+            continue;
+        }
+
+        let catalog: Value = match serde_json::from_slice(&output.stdout) {
+            Ok(catalog) => catalog,
+            Err(e) => {
+                log::debug!("Failed to parse `{candidate} debug models --bundled` output: {e}");
+                continue;
+            }
+        };
+        if let Some(template) = find_codex_model_template(&catalog) {
+            return Ok(Some(template));
+        }
     }
 
-    let catalog: Value = serde_json::from_slice(&output.stdout).map_err(|e| {
-        AppError::Message(format!(
-            "Failed to parse `codex debug models --bundled` output: {e}"
-        ))
-    })?;
-    Ok(find_codex_model_template(&catalog))
+    Ok(None)
+}
+
+fn load_codex_model_template_static() -> Option<Value> {
+    let text = include_str!("resources/gpt5_5_template.json");
+    match serde_json::from_str(text) {
+        Ok(template) => Some(template),
+        Err(e) => {
+            log::warn!("Failed to parse bundled gpt-5.5 template: {e}");
+            None
+        }
+    }
 }
 
 fn load_codex_model_catalog_template() -> Result<Value, AppError> {
+    // ① models_cache.json (created by Codex when it connects to OpenAI)
     if let Some(template) = load_codex_model_template_from_cache()? {
         return Ok(template);
     }
+    // ② codex CLI (PATH + platform-specific common paths)
     if let Some(template) = load_codex_model_template_from_bundled()? {
+        return Ok(template);
+    }
+    // ③ Static fallback bundled at compile time
+    if let Some(template) = load_codex_model_template_static() {
         return Ok(template);
     }
 
@@ -1676,5 +1710,38 @@ name = "any"
             .is_none(),
             "entries lacking slug are skipped; a fully-skipped catalog yields None"
         );
+    }
+
+    #[test]
+    fn codex_cli_candidates_are_non_empty() {
+        assert!(
+            !CODEX_CLI_CANDIDATES.is_empty(),
+            "CODEX_CLI_CANDIDATES must have at least the PATH entry"
+        );
+    }
+
+    #[test]
+    fn static_template_is_valid_json_with_slug() {
+        let template = load_codex_model_template_static()
+            .expect("static template must parse as valid JSON");
+        assert_eq!(
+            template
+                .get("slug")
+                .and_then(|v| v.as_str()),
+            Some("gpt-5.5"),
+            "static template slug must be gpt-5.5"
+        );
+    }
+
+    #[test]
+    fn static_template_has_required_keys() {
+        let template = load_codex_model_template_static()
+            .expect("static template must parse as valid JSON");
+        for key in &["model_messages", "base_instructions", "context_window", "display_name"] {
+            assert!(
+                template.get(key).is_some(),
+                "static template must contain key '{key}'"
+            );
+        }
     }
 }
