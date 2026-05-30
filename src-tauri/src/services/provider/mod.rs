@@ -349,6 +349,77 @@ mod tests {
     }
 
     #[test]
+    fn update_codex_provider_preserves_existing_model_catalog_when_update_omits_it() {
+        with_test_home(|state, _home| {
+            let existing = Provider::with_id(
+                "deepseek-direct".into(),
+                "DeepSeek Direct".into(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": "test-key" },
+                    "config": "model_catalog_json = \"/tmp/cc-switch-model-catalog.json\"\nmodel_provider = \"deepseek_direct\"\nmodel = \"deepseek-v4-flash\"\n",
+                    "modelCatalog": {
+                        "models": [
+                            { "model": "deepseek-v4-flash", "displayName": "DeepSeek V4 Flash", "contextWindow": 1000000 },
+                            { "model": "deepseek-v4-pro", "displayName": "DeepSeek V4 Pro", "contextWindow": 1000000 }
+                        ]
+                    }
+                }),
+                None,
+            );
+            state
+                .db
+                .save_provider("codex", &existing)
+                .expect("save existing codex provider");
+
+            let update_without_catalog = Provider::with_id(
+                "deepseek-direct".into(),
+                "DeepSeek Direct".into(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": "test-key" },
+                    "config": "model_provider = \"deepseek_direct\"\nmodel = \"deepseek-v4-flash\"\n"
+                }),
+                None,
+            );
+
+            ProviderService::update(
+                state,
+                AppType::Codex,
+                None,
+                update_without_catalog,
+            )
+            .expect("update codex provider");
+
+            let stored = state
+                .db
+                .get_provider_by_id("deepseek-direct", "codex")
+                .expect("read stored provider")
+                .expect("provider exists");
+            assert_eq!(
+                stored
+                    .settings_config
+                    .pointer("/modelCatalog/models/0/model")
+                    .and_then(Value::as_str),
+                Some("deepseek-v4-flash")
+            );
+            assert_eq!(
+                stored
+                    .settings_config
+                    .pointer("/modelCatalog/models/1/model")
+                    .and_then(Value::as_str),
+                Some("deepseek-v4-pro")
+            );
+            assert!(
+                stored
+                    .settings_config
+                    .get("config")
+                    .and_then(Value::as_str)
+                    .is_some_and(|config| config.contains("model_catalog_json")),
+                "existing model_catalog_json reference should be preserved"
+            );
+        });
+    }
+
+    #[test]
     fn extract_codex_common_config_preserves_mcp_servers_base_url() {
         let config_toml = r#"model_provider = "azure"
 model = "gpt-4"
@@ -1153,6 +1224,61 @@ impl ProviderService {
             .live_config_managed = Some(managed);
     }
 
+    fn preserve_codex_model_catalog_from_existing(
+        app_type: &AppType,
+        provider: &mut Provider,
+        existing_provider: Option<&Provider>,
+    ) {
+        if !matches!(app_type, AppType::Codex) {
+            return;
+        }
+
+        let Some(existing) = existing_provider else {
+            return;
+        };
+
+        let Some(target) = provider.settings_config.as_object_mut() else {
+            return;
+        };
+
+        if !target.contains_key("modelCatalog") {
+            if let Some(model_catalog) = existing.settings_config.get("modelCatalog").cloned() {
+                target.insert("modelCatalog".to_string(), model_catalog);
+            }
+        }
+
+        let Some(existing_config) = existing
+            .settings_config
+            .get("config")
+            .and_then(Value::as_str)
+        else {
+            return;
+        };
+        let Some(model_catalog_line) = existing_config
+            .lines()
+            .find(|line| line.trim_start().starts_with("model_catalog_json"))
+        else {
+            return;
+        };
+
+        let Some(config) = target.get("config").and_then(Value::as_str) else {
+            return;
+        };
+        if config
+            .lines()
+            .any(|line| line.trim_start().starts_with("model_catalog_json"))
+        {
+            return;
+        }
+
+        let config = config.to_string();
+        let mut merged_config = String::with_capacity(model_catalog_line.len() + 1 + config.len());
+        merged_config.push_str(model_catalog_line);
+        merged_config.push('\n');
+        merged_config.push_str(&config);
+        target.insert("config".to_string(), Value::String(merged_config));
+    }
+
     /// List all providers for an app type
     pub fn list(
         state: &AppState,
@@ -1243,6 +1369,11 @@ impl ProviderService {
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
+        Self::preserve_codex_model_catalog_from_existing(
+            &app_type,
+            &mut provider,
+            existing_provider.as_ref(),
+        );
 
         if provider_id_changed {
             if !app_type.is_additive_mode() {
