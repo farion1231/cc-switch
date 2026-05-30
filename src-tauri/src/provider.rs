@@ -129,6 +129,24 @@ impl Provider {
         let str_at =
             |value: Option<&Value>| value.and_then(|v| v.as_str()).unwrap_or("").to_string();
 
+        // First present, non-empty string among `keys`, mirroring the frontend's
+        // `a || b || c` — JS `||` skips empty strings, and presets seed fields like
+        // `ANTHROPIC_AUTH_TOKEN` as present-but-empty placeholders, so a plain
+        // `.get().or_else()` chain (which only skips *absent* keys) would stop short.
+        fn first_non_empty(env: Option<&Value>, keys: &[&str]) -> String {
+            let Some(env) = env else {
+                return String::new();
+            };
+            for key in keys {
+                if let Some(s) = env.get(key).and_then(|v| v.as_str()) {
+                    if !s.is_empty() {
+                        return s.to_string();
+                    }
+                }
+            }
+            String::new()
+        }
+
         let (base_url, api_key) = match app_type {
             // Codex keeps its key in `auth.OPENAI_API_KEY` and its base URL
             // inside a TOML `config` string, not in an `env` map.
@@ -146,9 +164,7 @@ impl Provider {
             AppType::Gemini => {
                 let env = settings.get("env");
                 let base_url = str_at(env.and_then(|e| e.get("GOOGLE_GEMINI_BASE_URL")));
-                let api_key = str_at(
-                    env.and_then(|e| e.get("GEMINI_API_KEY").or_else(|| e.get("GOOGLE_API_KEY"))),
-                );
+                let api_key = first_non_empty(env, &["GEMINI_API_KEY", "GOOGLE_API_KEY"]);
                 (base_url, api_key)
             }
             // Hermes (config.yaml) flattens credentials at the top level, snake_case.
@@ -175,12 +191,15 @@ impl Provider {
             AppType::Claude | AppType::ClaudeDesktop => {
                 let env = settings.get("env");
                 let base_url = str_at(env.and_then(|e| e.get("ANTHROPIC_BASE_URL")));
-                let api_key = str_at(env.and_then(|e| {
-                    e.get("ANTHROPIC_AUTH_TOKEN")
-                        .or_else(|| e.get("ANTHROPIC_API_KEY"))
-                        .or_else(|| e.get("OPENROUTER_API_KEY"))
-                        .or_else(|| e.get("GOOGLE_API_KEY"))
-                }));
+                let api_key = first_non_empty(
+                    env,
+                    &[
+                        "ANTHROPIC_AUTH_TOKEN",
+                        "ANTHROPIC_API_KEY",
+                        "OPENROUTER_API_KEY",
+                        "GOOGLE_API_KEY",
+                    ],
+                );
                 (base_url, api_key)
             }
         };
@@ -1302,6 +1321,36 @@ mod tests {
         let (base_url, api_key) = p.resolve_usage_credentials(&AppType::Gemini);
         assert_eq!(base_url, "https://generativelanguage.googleapis.com");
         assert_eq!(api_key, "g-legacy");
+    }
+
+    #[test]
+    fn resolve_credentials_claude_skips_empty_primary_key() {
+        // Presets seed ANTHROPIC_AUTH_TOKEN as a present-but-empty placeholder.
+        // The fallback chain must skip empty values (matching the frontend's
+        // `a || b` semantics), not just absent keys.
+        let p = provider_with(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api/v1",
+                "ANTHROPIC_AUTH_TOKEN": "",
+                "ANTHROPIC_API_KEY": "",
+                "OPENROUTER_API_KEY": "sk-or",
+            }
+        }));
+        let (_, api_key) = p.resolve_usage_credentials(&AppType::Claude);
+        assert_eq!(api_key, "sk-or");
+    }
+
+    #[test]
+    fn resolve_credentials_gemini_skips_empty_primary_key() {
+        let p = provider_with(json!({
+            "env": {
+                "GOOGLE_GEMINI_BASE_URL": "https://generativelanguage.googleapis.com",
+                "GEMINI_API_KEY": "",
+                "GOOGLE_API_KEY": "g-real",
+            }
+        }));
+        let (_, api_key) = p.resolve_usage_credentials(&AppType::Gemini);
+        assert_eq!(api_key, "g-real");
     }
 
     #[test]
