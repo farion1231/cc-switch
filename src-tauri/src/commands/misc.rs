@@ -1459,8 +1459,9 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
 
             #[cfg(target_os = "windows")]
             let output = {
-                Command::new("cmd")
-                    .args(["/C", &format!("\"{}\" --version", tool_path.display())])
+                use std::os::windows::process::CommandExt;
+                Command::new(&tool_path)
+                    .arg("--version")
                     .env("PATH", &new_path)
                     .creation_flags(CREATE_NO_WINDOW)
                     .output()
@@ -1650,8 +1651,8 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
             #[cfg(target_os = "windows")]
             let output = {
                 use std::os::windows::process::CommandExt;
-                Command::new("cmd")
-                    .args(["/C", &format!("\"{}\" --version", tool_path.display())])
+                Command::new(&tool_path)
+                    .arg("--version")
                     .env("PATH", &new_path)
                     .creation_flags(CREATE_NO_WINDOW)
                     .output()
