@@ -325,4 +325,9 @@ export const skillsApi = {
   async getAllTagAssignments(): Promise<[string, number][]> {
     return await invoke("get_all_skill_tag_assignments");
   },
+
+  /** 在系统文件管理器中打开技能目录 */
+  async openDirectory(directory: string): Promise<void> {
+    return await invoke("open_skill_directory", { directory });
+  },
 };

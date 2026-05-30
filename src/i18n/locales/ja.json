@@ -2070,7 +2070,8 @@
       "doubleClickToEdit": "ダブルクリックで名前変更",
       "moveSuccess": "スキルをグループに移動しました",
       "renameSuccess": "タグ名を変更しました"
-    }
+    },
+    "openDirectory": "ファイルマネージャーで開く"
   },
   "deeplink": {
     "confirmImport": "プロバイダーのインポートを確認",

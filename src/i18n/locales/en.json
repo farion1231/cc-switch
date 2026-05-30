@@ -2070,7 +2070,8 @@
       "doubleClickToEdit": "Double-click to rename",
       "moveSuccess": "Skill moved to group",
       "renameSuccess": "Tag renamed"
-    }
+    },
+    "openDirectory": "Open in file manager"
   },
   "deeplink": {
     "confirmImport": "Confirm Import Provider",

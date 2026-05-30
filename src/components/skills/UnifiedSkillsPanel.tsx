@@ -21,6 +21,7 @@ import {
   GripVertical,
   Check,
   X,
+  FolderOpen,
 } from "lucide-react";
 import {
   DndContext,
@@ -860,6 +861,14 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
     }
   };
 
+  const openInExplorer = async () => {
+    try {
+      await skillsApi.openDirectory(skill.directory);
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    }
+  };
+
   const sourceLabel = useMemo(() => {
     if (skill.repoOwner && skill.repoName) {
       return `${skill.repoOwner}/${skill.repoName}`;
@@ -883,6 +892,14 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
               <ExternalLink size={12} />
             </button>
           )}
+          <button
+            type="button"
+            onClick={openInExplorer}
+            className="text-muted-foreground/60 hover:text-foreground flex-shrink-0"
+            title={t("skills.openDirectory")}
+          >
+            <FolderOpen size={12} />
+          </button>
           <TagAssignPopover skillId={skill.id} skillName={skill.name} />
           <span className="text-xs text-muted-foreground/50 flex-shrink-0">
             {sourceLabel}

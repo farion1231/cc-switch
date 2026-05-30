@@ -14,7 +14,9 @@ use crate::services::skill::{
 use crate::store::AppState;
 use std::str::FromStr;
 use std::sync::Arc;
+use tauri::AppHandle;
 use tauri::State;
+use tauri_plugin_opener::OpenerExt;
 
 /// SkillService 状态包装
 pub struct SkillServiceState(pub Arc<SkillService>);
@@ -373,10 +375,7 @@ pub fn update_skill_tag(
 /// 删除技能标签
 #[tauri::command]
 pub fn delete_skill_tag(id: i64, app_state: State<'_, AppState>) -> Result<bool, String> {
-    app_state
-        .db
-        .delete_skill_tag(id)
-        .map_err(|e| e.to_string())
+    app_state.db.delete_skill_tag(id).map_err(|e| e.to_string())
 }
 
 /// 批量更新标签排序
@@ -413,4 +412,18 @@ pub fn get_all_skill_tag_assignments(
         .db
         .get_all_skill_tag_assignments()
         .map_err(|e| e.to_string())
+}
+
+/// 在系统文件管理器中打开技能目录
+#[tauri::command]
+pub async fn open_skill_directory(handle: AppHandle, directory: String) -> Result<(), String> {
+    let ssot_dir = SkillService::get_ssot_dir().map_err(|e| e.to_string())?;
+    let dir = ssot_dir.join(&directory);
+    if !dir.exists() {
+        return Err(format!("目录不存在: {}", dir.display()));
+    }
+    handle
+        .opener()
+        .open_path(dir.to_string_lossy().to_string(), None::<String>)
+        .map_err(|e| format!("打开目录失败: {e}"))
 }

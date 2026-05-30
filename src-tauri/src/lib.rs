@@ -1250,6 +1250,7 @@ pub fn run() {
             commands::reorder_skill_tags,
             commands::set_skill_tags,
             commands::get_all_skill_tag_assignments,
+            commands::open_skill_directory,
             // Auto launch
             commands::set_auto_launch,
             commands::get_auto_launch_status,

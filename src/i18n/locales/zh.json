@@ -2070,7 +2070,8 @@
       "doubleClickToEdit": "双击重命名",
       "moveSuccess": "技能已移动到新分组",
       "renameSuccess": "标签已重命名"
-    }
+    },
+    "openDirectory": "在文件管理器中打开"
   },
   "deeplink": {
     "confirmImport": "确认导入供应商配置",

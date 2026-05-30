@@ -2016,7 +2016,8 @@
       "doubleClickToEdit": "雙擊重新命名",
       "moveSuccess": "技能已移動到新分組",
       "renameSuccess": "標籤已重新命名"
-    }
+    },
+    "openDirectory": "在檔案管理員中開啟"
   },
   "deeplink": {
     "confirmImport": "確認匯入供應商設定",
