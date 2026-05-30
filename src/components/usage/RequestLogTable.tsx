@@ -28,6 +28,7 @@ import {
 import { ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import {
+  formatOutputTokensPerSecond,
   fmtInt,
   fmtUsd,
   getLocaleFromLanguage,
@@ -371,10 +372,8 @@ export function RequestLogTable({
                           <div className="tabular-nums">
                             {fmtInt(log.outputTokens, locale)}
                             {(() => {
-                              if (!log.latencyMs || log.outputTokens <= 0) return null;
-                              const rawTps = log.outputTokens / (log.latencyMs / 1000);
-                              if (rawTps <= 0) return null;
-                              const tpsStr = rawTps >= 1 ? Math.round(rawTps).toString() : rawTps.toFixed(1);
+                              const tpsStr = formatOutputTokensPerSecond(log);
+                              if (tpsStr == null) return null;
                               return (
                                 <span className="text-muted-foreground text-xs">
                                   /{tpsStr} tps
