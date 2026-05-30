@@ -574,11 +574,12 @@
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode",
-    "openclaw": "OpenClaw"
+    "openclaw": "OpenClaw",
+    "pi": "Pi Agent"
   },
   "sessionManager": {
     "title": "会话管理",
-    "subtitle": "管理 Claude Code、Codex、OpenCode、OpenClaw 与 Gemini CLI 会话记录",
+    "subtitle": "管理 Claude Code、Codex、OpenCode、OpenClaw、Gemini CLI 与 Pi Agent 会话记录",
     "searchPlaceholder": "搜索会话内容、目录或 ID",
     "searchSessions": "搜索会话",
     "providerFilterAll": "全部",

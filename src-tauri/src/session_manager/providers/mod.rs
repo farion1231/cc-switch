@@ -3,4 +3,5 @@ pub mod codex;
 pub mod gemini;
 pub mod openclaw;
 pub mod opencode;
+pub mod pi;
 mod utils;

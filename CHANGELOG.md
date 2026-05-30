@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- [2026-05-30 12:36] FEAT: 适配 Pi Agent 会话扫描、消息读取、恢复命令与前端过滤展示 (Files: src-tauri/src/session_manager/providers/pi.rs, src-tauri/src/session_manager/providers/mod.rs, src-tauri/src/session_manager/mod.rs, src/components/sessions/SessionManagerPage.tsx, src/components/sessions/utils.ts, src/icons/extracted/index.ts, src/icons/extracted/metadata.ts, src/i18n/locales/zh.json, src/i18n/locales/en.json, src/i18n/locales/ja.json, CHANGELOG.md)
 ---
 
 ## [3.11.1] - 2026-02-28

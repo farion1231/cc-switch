@@ -574,11 +574,12 @@
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode",
-    "openclaw": "OpenClaw"
+    "openclaw": "OpenClaw",
+    "pi": "Pi Agent"
   },
   "sessionManager": {
     "title": "Session Manager",
-    "subtitle": "Manage Claude Code, Codex, OpenCode, OpenClaw and Gemini CLI sessions",
+    "subtitle": "Manage Claude Code, Codex, OpenCode, OpenClaw, Gemini CLI and Pi Agent sessions",
     "searchPlaceholder": "Search by content, directory, or ID",
     "searchSessions": "Search sessions",
     "providerFilterAll": "All",

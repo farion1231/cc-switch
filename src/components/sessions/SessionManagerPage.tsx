@@ -52,7 +52,8 @@ type ProviderFilter =
   | "claude"
   | "opencode"
   | "openclaw"
-  | "gemini";
+  | "gemini"
+  | "pi";
 
 export function SessionManagerPage({ appId }: { appId: string }) {
   const { t } = useTranslation();
@@ -343,6 +344,12 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                 size={14}
                               />
                               <span>Gemini CLI</span>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="pi">
+                            <div className="flex items-center gap-2">
+                              <ProviderIcon icon="pi" name="pi" size={14} />
+                              <span>Pi Agent</span>
                             </div>
                           </SelectItem>
                         </SelectContent>
