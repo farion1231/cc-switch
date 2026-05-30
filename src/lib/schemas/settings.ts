@@ -7,6 +7,24 @@ const directorySchema = z
   .optional()
   .or(z.literal(""));
 
+const profileSchema = z.object({
+  id: z.string().trim().min(1, "Profile ID 不能为空"),
+  label: z.string().trim().min(1, "Profile 名称不能为空"),
+  claudeConfigDir: directorySchema.nullable().optional(),
+  codexConfigDir: directorySchema.nullable().optional(),
+  geminiConfigDir: directorySchema.nullable().optional(),
+  opencodeConfigDir: directorySchema.nullable().optional(),
+  openclawConfigDir: directorySchema.nullable().optional(),
+  hermesConfigDir: directorySchema.nullable().optional(),
+  currentProviderClaude: z.string().optional(),
+  currentProviderClaudeDesktop: z.string().optional(),
+  currentProviderCodex: z.string().optional(),
+  currentProviderGemini: z.string().optional(),
+  currentProviderOpencode: z.string().optional(),
+  currentProviderOpenclaw: z.string().optional(),
+  currentProviderHermes: z.string().optional(),
+});
+
 export const settingsSchema = z.object({
   // 设备级 UI 设置
   showInTray: z.boolean(),
@@ -23,12 +41,20 @@ export const settingsSchema = z.object({
   geminiConfigDir: directorySchema.nullable().optional(),
   opencodeConfigDir: directorySchema.nullable().optional(),
   openclawConfigDir: directorySchema.nullable().optional(),
+  hermesConfigDir: directorySchema.nullable().optional(),
 
   // 当前供应商 ID（设备级）
   currentProviderClaude: z.string().optional(),
   currentProviderClaudeDesktop: z.string().optional(),
   currentProviderCodex: z.string().optional(),
   currentProviderGemini: z.string().optional(),
+  currentProviderOpencode: z.string().optional(),
+  currentProviderOpenclaw: z.string().optional(),
+  currentProviderHermes: z.string().optional(),
+
+  // 环境配置档
+  profiles: z.array(profileSchema).optional(),
+  activeProfileId: z.string().optional(),
 
   // Skill 同步设置
   skillSyncMethod: z.enum(["auto", "symlink", "copy"]).optional(),

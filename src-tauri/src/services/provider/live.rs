@@ -890,6 +890,16 @@ pub(crate) fn sync_current_provider_for_app_to_live(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<(), AppError> {
+    sync_current_provider_config_for_app_to_live(state, app_type)?;
+    McpService::sync_all_enabled(state)?;
+
+    Ok(())
+}
+
+fn sync_current_provider_config_for_app_to_live(
+    state: &AppState,
+    app_type: &AppType,
+) -> Result<(), AppError> {
     if app_type.is_additive_mode() {
         sync_all_providers_to_live(state, app_type)?;
     } else {
@@ -905,7 +915,23 @@ pub(crate) fn sync_current_provider_for_app_to_live(
         }
     }
 
-    McpService::sync_all_enabled(state)?;
+    Ok(())
+}
+
+pub fn sync_profile_managed_to_live(state: &AppState) -> Result<(), AppError> {
+    let apps = [AppType::Claude, AppType::Codex];
+
+    for app_type in &apps {
+        sync_current_provider_config_for_app_to_live(state, app_type)?;
+    }
+
+    McpService::sync_enabled_for_apps(state, &apps)?;
+
+    for app_type in &apps {
+        if let Err(e) = crate::services::skill::SkillService::sync_to_app(&state.db, app_type) {
+            log::warn!("同步 Profile 管理的 Skill 到 {app_type:?} 失败: {e}");
+        }
+    }
 
     Ok(())
 }

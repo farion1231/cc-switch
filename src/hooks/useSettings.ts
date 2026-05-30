@@ -3,7 +3,10 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { providersApi, settingsApi } from "@/lib/api";
-import { syncCurrentProvidersLiveSafe } from "@/utils/postChangeSync";
+import {
+  syncCurrentProvidersLiveSafe,
+  syncProfileManagedProvidersLiveSafe,
+} from "@/utils/postChangeSync";
 import { useSettingsQuery, useSaveSettingsMutation } from "@/lib/query";
 import type { Settings } from "@/types";
 import { useSettingsForm, type SettingsFormState } from "./useSettingsForm";
@@ -147,7 +150,7 @@ export function useSettings(): UseSettingsResult {
           await settingsApi.applyClaudePluginConfig({ official: true });
         }
 
-        const syncResult = await syncCurrentProvidersLiveSafe();
+        const syncResult = await syncProfileManagedProvidersLiveSafe();
         if (!syncResult.ok) {
           console.warn(
             "[useSettings] Failed to sync providers after toggling Claude plugin",
@@ -193,6 +196,7 @@ export function useSettings(): UseSettingsResult {
         const sanitizedOpenclawDir = sanitizeDir(
           mergedSettings.openclawConfigDir,
         );
+        const sanitizedHermesDir = sanitizeDir(mergedSettings.hermesConfigDir);
         const { webdavSync: _ignoredWebdavSync, ...restSettings } =
           mergedSettings;
 
@@ -203,6 +207,7 @@ export function useSettings(): UseSettingsResult {
           geminiConfigDir: sanitizedGeminiDir,
           opencodeConfigDir: sanitizedOpencodeDir,
           openclawConfigDir: sanitizedOpenclawDir,
+          hermesConfigDir: sanitizedHermesDir,
           language: mergedSettings.language,
         };
 
@@ -321,12 +326,14 @@ export function useSettings(): UseSettingsResult {
         const sanitizedOpenclawDir = sanitizeDir(
           mergedSettings.openclawConfigDir,
         );
+        const sanitizedHermesDir = sanitizeDir(mergedSettings.hermesConfigDir);
         const previousAppDir = initialAppConfigDir;
         const previousClaudeDir = sanitizeDir(data?.claudeConfigDir);
         const previousCodexDir = sanitizeDir(data?.codexConfigDir);
         const previousGeminiDir = sanitizeDir(data?.geminiConfigDir);
         const previousOpencodeDir = sanitizeDir(data?.opencodeConfigDir);
         const previousOpenclawDir = sanitizeDir(data?.openclawConfigDir);
+        const previousHermesDir = sanitizeDir(data?.hermesConfigDir);
         const { webdavSync: _ignoredWebdavSync, ...restSettings } =
           mergedSettings;
 
@@ -337,6 +344,7 @@ export function useSettings(): UseSettingsResult {
           geminiConfigDir: sanitizedGeminiDir,
           opencodeConfigDir: sanitizedOpencodeDir,
           openclawConfigDir: sanitizedOpenclawDir,
+          hermesConfigDir: sanitizedHermesDir,
           language: mergedSettings.language,
         };
 
@@ -423,18 +431,36 @@ export function useSettings(): UseSettingsResult {
         const geminiDirChanged = sanitizedGeminiDir !== previousGeminiDir;
         const opencodeDirChanged = sanitizedOpencodeDir !== previousOpencodeDir;
         const openclawDirChanged = sanitizedOpenclawDir !== previousOpenclawDir;
-        if (
-          !pluginSynced &&
-          (claudeDirChanged ||
-            codexDirChanged ||
-            geminiDirChanged ||
-            opencodeDirChanged ||
-            openclawDirChanged)
-        ) {
+        const hermesDirChanged = sanitizedHermesDir !== previousHermesDir;
+        const profilesChanged =
+          JSON.stringify(payload.profiles ?? []) !==
+          JSON.stringify(data?.profiles ?? []);
+        const activeProfileChanged =
+          (payload.activeProfileId ?? undefined) !==
+          (data?.activeProfileId ?? undefined);
+        const profileManagedChanged =
+          claudeDirChanged ||
+          codexDirChanged ||
+          profilesChanged ||
+          activeProfileChanged;
+        const otherDirChanged =
+          geminiDirChanged ||
+          opencodeDirChanged ||
+          openclawDirChanged ||
+          hermesDirChanged;
+        if (!pluginSynced && otherDirChanged) {
           const syncResult = await syncCurrentProvidersLiveSafe();
           if (!syncResult.ok) {
             console.warn(
               "[useSettings] Failed to sync current providers after directory change",
+              syncResult.error,
+            );
+          }
+        } else if (!pluginSynced && profileManagedChanged) {
+          const syncResult = await syncProfileManagedProvidersLiveSafe();
+          if (!syncResult.ok) {
+            console.warn(
+              "[useSettings] Failed to sync profile-managed providers after profile change",
               syncResult.error,
             );
           }

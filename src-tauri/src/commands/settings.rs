@@ -1,11 +1,20 @@
 #![allow(non_snake_case)]
 
 use tauri::AppHandle;
+use tauri::{Emitter, State};
 
 fn merge_settings_for_save(
     mut incoming: crate::settings::AppSettings,
     existing: &crate::settings::AppSettings,
 ) -> crate::settings::AppSettings {
+    if incoming.profiles.is_empty()
+        && incoming.active_profile_id.is_none()
+        && !existing.profiles.is_empty()
+    {
+        incoming.profiles = existing.profiles.clone();
+        incoming.active_profile_id = existing.active_profile_id.clone();
+    }
+
     match (&mut incoming.webdav_sync, &existing.webdav_sync) {
         // incoming 没有 webdav → 保留现有
         (None, _) => {
@@ -53,11 +62,66 @@ pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
 pub async fn save_settings(settings: crate::settings::AppSettings) -> Result<bool, String> {
     let existing = crate::settings::get_settings();
     let merged = merge_settings_for_save(settings, &existing);
-    crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
+    let profiles_are_authoritative = merged.profiles != existing.profiles
+        || merged.active_profile_id != existing.active_profile_id;
+    crate::settings::update_settings_from_frontend(merged, profiles_are_authoritative)
+        .map_err(|e| e.to_string())?;
     Ok(true)
 }
 
+/// 切换环境配置档
+#[tauri::command]
+pub async fn switch_profile(
+    app: AppHandle,
+    state: State<'_, crate::AppState>,
+    #[allow(non_snake_case)] profileId: String,
+) -> Result<crate::settings::AppSettings, String> {
+    let db = state.db.clone();
+    let profile_id_for_event = profileId.clone();
+    let _settings = tauri::async_runtime::spawn_blocking(move || {
+        let settings = crate::settings::switch_profile(&profileId)?;
+        let app_state = crate::AppState::new(db);
+        crate::services::ProviderService::sync_profile_managed_to_live(&app_state)?;
+        Ok::<_, crate::AppError>(settings)
+    })
+    .await
+    .map_err(|e| format!("切换 Profile 失败: {e}"))?
+    .map_err(|e| e.to_string())?;
+
+    let frontend_settings = crate::settings::get_settings_for_frontend();
+    crate::tray::refresh_tray_menu(&app);
+    if let Err(err) = app.emit(
+        "profile-switched",
+        serde_json::json!({
+            "profileId": profile_id_for_event,
+            "settings": frontend_settings,
+        }),
+    ) {
+        log::warn!("发射 profile-switched 事件失败: {err}");
+    }
+
+    Ok(frontend_settings)
+}
+
 /// 重启应用程序（当 app_config_dir 变更后使用）
+#[tauri::command]
+pub async fn sync_profile_managed_providers_live(
+    state: State<'_, crate::AppState>,
+) -> Result<serde_json::Value, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let app_state = crate::AppState::new(db);
+        crate::services::ProviderService::sync_profile_managed_to_live(&app_state)?;
+        Ok::<_, crate::AppError>(serde_json::json!({
+            "success": true,
+            "message": "Profile-managed live configuration synchronized"
+        }))
+    })
+    .await
+    .map_err(|e| format!("同步 Profile 供应商失败: {e}"))?
+    .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
     crate::save_window_state_before_exit(&app);
@@ -103,7 +167,7 @@ mod tests {
     use super::merge_settings_for_save;
     use crate::settings::{
         AppSettings, CodexProviderTemplateMigration, CodexThirdPartyHistoryProviderBucketMigration,
-        LocalMigrations, WebDavSyncSettings,
+        LocalMigrations, Profile, WebDavSyncSettings,
     };
 
     #[test]
@@ -224,6 +288,36 @@ mod tests {
             merged.webdav_sync.as_ref().map(|v| v.password.as_str()),
             Some("")
         );
+    }
+
+    #[test]
+    fn save_settings_should_preserve_existing_profiles_when_payload_omits_them() {
+        let existing = AppSettings {
+            profiles: vec![Profile {
+                id: "wsl".to_string(),
+                label: "WSL".to_string(),
+                claude_config_dir: Some("\\\\wsl.localhost\\Ubuntu\\home\\me\\.claude".to_string()),
+                codex_config_dir: Some("\\\\wsl.localhost\\Ubuntu\\home\\me\\.codex".to_string()),
+                current_provider_claude: Some("claude-wsl".to_string()),
+                current_provider_codex: Some("codex-wsl".to_string()),
+                ..Profile::default()
+            }],
+            active_profile_id: Some("wsl".to_string()),
+            ..AppSettings::default()
+        };
+
+        let incoming = AppSettings {
+            claude_config_dir: Some("C:\\Users\\me\\.claude".to_string()),
+            codex_config_dir: Some("C:\\Users\\me\\.codex".to_string()),
+            current_provider_claude: Some("claude-win".to_string()),
+            current_provider_codex: Some("codex-win".to_string()),
+            ..AppSettings::default()
+        };
+
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert_eq!(merged.active_profile_id.as_deref(), Some("wsl"));
+        assert_eq!(merged.profiles, existing.profiles);
     }
 
     #[test]

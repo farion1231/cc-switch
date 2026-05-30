@@ -246,6 +246,8 @@
     "deleteFailed": "プロバイダーの削除に失敗しました: {{error}}",
     "settingsSaved": "設定を保存しました",
     "settingsSaveFailed": "設定の保存に失敗しました: {{error}}",
+    "profileSwitchSuccess": "{{profile}} に切り替えました",
+    "profileSwitchFailed": "プロファイルの切り替えに失敗しました: {{error}}",
     "proxyRequiredForSwitch": "このプロバイダーは{{reason}}、ルーティングサービスが必要です。先にルーティングを起動してください",
     "proxyReasonCopilot": "GitHub Copilot を Claude プロバイダーとして使用しており",
     "proxyReasonOpenAIChat": "OpenAI Chat API フォーマットを使用しており",
@@ -314,6 +316,10 @@
       "codexOauthDescription": "ChatGPT アカウントを管理します"
     },
     "advanced": {
+      "profiles": {
+        "title": "プロファイル",
+        "description": "ローカル環境ごとにディレクトリ上書きと現在のプロバイダーを分離"
+      },
       "configDir": {
         "title": "設定ディレクトリ",
         "description": "Claude、Codex、Gemini の設定保存パスを管理"
@@ -402,6 +408,28 @@
           "debug": "SSE ストリームとリクエスト/レスポンスを含む詳細情報",
           "trace": "すべてのログ、最も詳細"
         }
+      }
+    },
+    "profiles": {
+      "title": "プロファイル",
+      "description": "ローカルディレクトリと現在のプロバイダー選択を分離します。",
+      "switch": "プロファイルを切り替え",
+      "placeholder": "プロファイル",
+      "add": "プロファイルを追加",
+      "active": "現在",
+      "name": "名前",
+      "id": "ID",
+      "configDirectories": "設定ディレクトリ",
+      "emptyHint": "空欄の場合、そのアプリのデフォルト位置を使用します。",
+      "duplicate": "複製",
+      "setActive": "現在に設定",
+      "defaultPlaceholder": "デフォルト",
+      "defaultName": "デフォルト",
+      "defaultLabel": "プロファイル {{number}}",
+      "copyLabel": "{{label}} のコピー",
+      "apps": {
+        "claudeCode": "Claude Code",
+        "codex": "Codex"
       }
     },
     "language": "言語",

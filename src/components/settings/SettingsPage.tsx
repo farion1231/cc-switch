@@ -4,6 +4,7 @@ import {
   Loader2,
   Save,
   FolderSearch,
+  Layers,
   Database,
   Cloud,
   ScrollText,
@@ -35,6 +36,7 @@ import { SkillStorageLocationSettings } from "@/components/settings/SkillStorage
 import { SkillSyncMethodSettings } from "@/components/settings/SkillSyncMethodSettings";
 import { TerminalSettings } from "@/components/settings/TerminalSettings";
 import { DirectorySettings } from "@/components/settings/DirectorySettings";
+import { ProfilesSettings } from "@/components/settings/ProfilesSettings";
 import { ImportExportSection } from "@/components/settings/ImportExportSection";
 import { BackupListSection } from "@/components/settings/BackupListSection";
 import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
@@ -288,6 +290,36 @@ export function SettingsPage({
                       defaultValue={[]}
                       className="w-full space-y-4"
                     >
+                      <AccordionItem
+                        value="profiles"
+                        className="rounded-xl glass-card overflow-hidden"
+                      >
+                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                          <div className="flex items-center gap-3">
+                            <Layers className="h-5 w-5 text-blue-500" />
+                            <div className="text-left">
+                              <h3 className="text-base font-semibold">
+                                {t("settings.advanced.profiles.title", {
+                                  defaultValue: "Profiles",
+                                })}
+                              </h3>
+                              <p className="text-sm text-muted-foreground font-normal">
+                                {t("settings.advanced.profiles.description", {
+                                  defaultValue:
+                                    "Switch local environments without changing provider data",
+                                })}
+                              </p>
+                            </div>
+                          </div>
+                        </AccordionTrigger>
+                        <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+                          <ProfilesSettings
+                            settings={settings}
+                            onChange={updateSettings}
+                          />
+                        </AccordionContent>
+                      </AccordionItem>
+
                       <AccordionItem
                         value="directory"
                         className="rounded-xl glass-card overflow-hidden"

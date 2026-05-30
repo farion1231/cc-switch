@@ -246,6 +246,8 @@
     "deleteFailed": "Failed to delete provider: {{error}}",
     "settingsSaved": "Settings saved",
     "settingsSaveFailed": "Failed to save settings: {{error}}",
+    "profileSwitchSuccess": "Switched to {{profile}}",
+    "profileSwitchFailed": "Switch profile failed: {{error}}",
     "proxyRequiredForSwitch": "This provider {{reason}}, requires the routing service to work properly. Start routing first.",
     "proxyReasonCopilot": "uses GitHub Copilot as a Claude provider",
     "proxyReasonOpenAIChat": "uses OpenAI Chat API format",
@@ -314,6 +316,10 @@
       "codexOauthDescription": "Manage ChatGPT accounts"
     },
     "advanced": {
+      "profiles": {
+        "title": "Profiles",
+        "description": "Isolate directory overrides and current providers by local environment"
+      },
       "configDir": {
         "title": "Configuration Directory",
         "description": "Manage storage paths for Claude, Codex and Gemini configurations"
@@ -402,6 +408,28 @@
           "debug": "Detailed info including SSE stream and request/response",
           "trace": "All logs, most verbose"
         }
+      }
+    },
+    "profiles": {
+      "title": "Profiles",
+      "description": "Isolate local directories and current provider selections.",
+      "switch": "Switch profile",
+      "placeholder": "Profile",
+      "add": "Add profile",
+      "active": "Active",
+      "name": "Name",
+      "id": "ID",
+      "configDirectories": "Config directories",
+      "emptyHint": "Empty fields use the default location for that app.",
+      "duplicate": "Duplicate",
+      "setActive": "Set active",
+      "defaultPlaceholder": "Default",
+      "defaultName": "Default",
+      "defaultLabel": "Profile {{number}}",
+      "copyLabel": "{{label}} Copy",
+      "apps": {
+        "claudeCode": "Claude Code",
+        "codex": "Codex"
       }
     },
     "language": "Language",

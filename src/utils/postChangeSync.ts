@@ -16,3 +16,16 @@ export async function syncCurrentProvidersLiveSafe(): Promise<{
     return { ok: false, error };
   }
 }
+
+export async function syncProfileManagedProvidersLiveSafe(): Promise<{
+  ok: boolean;
+  error?: Error;
+}> {
+  try {
+    await settingsApi.syncProfileManagedProvidersLive();
+    return { ok: true };
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err ?? ""));
+    return { ok: false, error };
+  }
+}

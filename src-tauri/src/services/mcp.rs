@@ -178,18 +178,23 @@ impl McpService {
 
     /// 手动同步所有启用的 MCP 服务器到对应的应用
     pub fn sync_all_enabled(state: &AppState) -> Result<(), AppError> {
+        let apps: Vec<AppType> = AppType::all().collect();
+        Self::sync_enabled_for_apps(state, &apps)
+    }
+
+    pub fn sync_enabled_for_apps(state: &AppState, apps: &[AppType]) -> Result<(), AppError> {
         let servers = Self::get_all_servers(state)?;
 
-        for app in AppType::all() {
+        for app in apps {
             if matches!(app, AppType::OpenClaw | AppType::ClaudeDesktop) {
                 continue;
             }
 
             for server in servers.values() {
-                if server.apps.is_enabled_for(&app) {
-                    Self::sync_server_to_app(state, server, &app)?;
+                if server.apps.is_enabled_for(app) {
+                    Self::sync_server_to_app(state, server, app)?;
                 } else {
-                    Self::remove_server_from_app(state, &server.id, &app)?;
+                    Self::remove_server_from_app(state, &server.id, app)?;
                 }
             }
         }
