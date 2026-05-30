@@ -108,6 +108,10 @@ pub const TRAY_SECTIONS: [TrayAppSection; 3] = [
 const UTIL_WARN_PCT: f64 = 70.0;
 const UTIL_DANGER_PCT: f64 = 90.0;
 
+pub(crate) fn supports_in_place_tray_submenu_text_updates() -> bool {
+    !cfg!(target_os = "linux")
+}
+
 fn emoji_for_utilization(pct: f64) -> &'static str {
     if pct >= UTIL_DANGER_PCT {
         "\u{1F534}" // 🔴
@@ -758,7 +762,13 @@ pub fn schedule_tray_refresh(app: &tauri::AppHandle) {
         // 共享一次标题更新。
         std::thread::sleep(std::time::Duration::from_millis(50));
         TRAY_REBUILD_SCHEDULED.store(false, Ordering::Release);
-        update_tray_usage_labels(&app);
+        if supports_in_place_tray_submenu_text_updates() {
+            update_tray_usage_labels(&app);
+        } else {
+            // Linux / AppIndicator 后端上 Submenu::set_text 会导致 Fedora 44 等环境
+            // 的托盘子菜单标题丢失；退回整菜单重建，避免出现“空白但可点击”的条目。
+            refresh_tray_menu(&app);
+        }
     });
 }
 
@@ -872,7 +882,10 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_script_summary, format_subscription_summary, TRAY_ID};
+    use super::{
+        format_script_summary, format_subscription_summary,
+        supports_in_place_tray_submenu_text_updates, TRAY_ID,
+    };
     use crate::provider::{UsageData, UsageResult};
     use crate::services::subscription::{
         CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_WEEKLY_LIMIT,
@@ -882,6 +895,21 @@ mod tests {
     fn tray_id_is_unique_to_app() {
         assert_eq!(TRAY_ID, "cc-switch");
         assert_ne!(TRAY_ID, "main");
+    }
+
+    #[test]
+    fn linux_avoids_in_place_submenu_title_updates() {
+        #[cfg(target_os = "linux")]
+        assert!(
+            !supports_in_place_tray_submenu_text_updates(),
+            "linux tray submenu title updates should avoid Submenu::set_text"
+        );
+
+        #[cfg(not(target_os = "linux"))]
+        assert!(
+            supports_in_place_tray_submenu_text_updates(),
+            "non-linux platforms should keep in-place submenu title updates"
+        );
     }
 
     fn make_quota(tool: &str, success: bool, tiers: Vec<QuotaTier>) -> SubscriptionQuota {
