@@ -13,6 +13,7 @@ use crate::services::webdav_sync as webdav_sync_service;
 use crate::settings::{self, WebDavSyncSettings};
 
 const AUTO_SYNC_DEBOUNCE_MS: u64 = 1000;
+const CODEX_AUTO_SYNC_POLL_MS: u64 = 60_000;
 pub(crate) const MAX_AUTO_SYNC_WAIT_MS: u64 = 10_000;
 
 static DB_CHANGE_TX: OnceLock<Sender<String>> = OnceLock::new();
@@ -77,6 +78,13 @@ fn should_run_auto_sync(settings: Option<&WebDavSyncSettings>) -> bool {
         return false;
     };
     sync.enabled && sync.auto_sync
+}
+
+fn should_poll_codex_data(settings: Option<&WebDavSyncSettings>) -> bool {
+    let Some(sync) = settings else {
+        return false;
+    };
+    should_run_auto_sync(Some(sync)) && sync.sync_codex_data
 }
 
 fn persist_auto_sync_error(settings: &mut WebDavSyncSettings, error: &AppError) {
@@ -159,8 +167,14 @@ pub fn start_worker(db: Arc<crate::database::Database>, app: tauri::AppHandle) {
         return;
     }
 
+    let codex_db = db.clone();
+    let codex_app = app.clone();
+
     tauri::async_runtime::spawn(async move {
         run_worker_loop(db, rx, app).await;
+    });
+    tauri::async_runtime::spawn(async move {
+        run_codex_data_poll_loop(codex_db, codex_app).await;
     });
 }
 
@@ -193,12 +207,55 @@ async fn run_worker_loop(
     }
 }
 
+async fn run_codex_data_poll_loop(db: Arc<crate::database::Database>, app: tauri::AppHandle) {
+    let mut last_fingerprint: Option<String> = None;
+    let interval = Duration::from_millis(CODEX_AUTO_SYNC_POLL_MS);
+
+    loop {
+        let settings = settings::get_webdav_sync_settings();
+        if !should_poll_codex_data(settings.as_ref()) {
+            last_fingerprint = None;
+            tokio::time::sleep(interval).await;
+            continue;
+        }
+
+        let fingerprint = match webdav_sync_service::codex_sync_fingerprint() {
+            Ok(value) => value,
+            Err(err) => {
+                log::debug!("[WebDAV][AutoSync] Failed to fingerprint Codex data: {err}");
+                tokio::time::sleep(interval).await;
+                continue;
+            }
+        };
+
+        match (&last_fingerprint, fingerprint.as_ref()) {
+            (Some(previous), Some(current)) if previous != current => {
+                let current = current.clone();
+                log::debug!("[WebDAV][AutoSync] Triggered by Codex data change");
+                match run_auto_sync_upload(&db, &app).await {
+                    Ok(()) => last_fingerprint = Some(current),
+                    Err(err) => log::warn!("[WebDAV][AutoSync] Codex data upload failed: {err}"),
+                }
+            }
+            (None, Some(current)) => {
+                last_fingerprint = Some(current.clone());
+            }
+            (Some(_), None) => {
+                last_fingerprint = None;
+            }
+            _ => {}
+        }
+
+        tokio::time::sleep(interval).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         auto_sync_wait_duration, enqueue_change_signal, is_auto_sync_suppressed,
-        should_run_auto_sync, should_trigger_for_table, AutoSyncSuppressionGuard,
-        MAX_AUTO_SYNC_WAIT_MS,
+        should_poll_codex_data, should_run_auto_sync, should_trigger_for_table,
+        AutoSyncSuppressionGuard, MAX_AUTO_SYNC_WAIT_MS,
     };
     use crate::settings::WebDavSyncSettings;
     use std::time::{Duration, Instant};
@@ -260,6 +317,27 @@ mod tests {
             ..WebDavSyncSettings::default()
         };
         assert!(should_run_auto_sync(Some(&enabled)));
+    }
+
+    #[test]
+    fn should_poll_codex_data_requires_enabled_auto_sync_and_codex_flag() {
+        assert!(!should_poll_codex_data(None));
+
+        let without_codex = WebDavSyncSettings {
+            enabled: true,
+            auto_sync: true,
+            sync_codex_data: false,
+            ..WebDavSyncSettings::default()
+        };
+        assert!(!should_poll_codex_data(Some(&without_codex)));
+
+        let enabled = WebDavSyncSettings {
+            enabled: true,
+            auto_sync: true,
+            sync_codex_data: true,
+            ..WebDavSyncSettings::default()
+        };
+        assert!(should_poll_codex_data(Some(&enabled)));
     }
 
     #[test]

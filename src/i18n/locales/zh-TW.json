@@ -461,7 +461,7 @@
     },
     "webdavSync": {
       "title": "WebDAV 雲端同步",
-      "description": "透過 WebDAV 在多裝置間同步資料庫和技能設定。",
+      "description": "透過 WebDAV 在多裝置間同步資料庫、技能設定和可選 Codex 資料。",
       "baseUrl": "WebDAV 伺服器位址",
       "baseUrlPlaceholder": "https://dav.jianguoyun.com/dav/",
       "username": "WebDAV 帳號",
@@ -472,6 +472,9 @@
       "profile": "同步設定名稱",
       "autoSync": "自動同步",
       "autoSyncHint": "開啟後每次資料庫變更都會自動上傳至 WebDAV。",
+      "syncCodexData": "同步 Codex 資料",
+      "syncCodexDataHint": "包含會話、專案狀態、目標、config.toml 和 auth.json。",
+      "codexDataAuthWarning": "Codex 同步會包含 auth.json，WebDAV 儲存空間中將保存 Codex 登入憑證。",
       "test": "測試連線",
       "testing": "測試中...",
       "testSuccess": "連線成功",
@@ -523,6 +526,7 @@
         "artifacts": "包含內容",
         "legacyNotice": "檢測到舊版雲端路徑。還原完成後，下次上傳將寫入新路徑 v2/db-v6。",
         "warning": "還原將覆寫本地所有資料和技能設定",
+        "codexDataMerge": "Codex 資料會與本機會話合併，衝突檔案替換前會先備份。",
         "confirm": "確認還原"
       },
       "confirmUpload": {
@@ -530,6 +534,7 @@
         "content": "將同步以下內容至 WebDAV 伺服器：",
         "dbItem": "資料庫（所有 Provider 設定和資料）",
         "skillsItem": "技能包（所有自訂技能）",
+        "codexDataItem": "Codex 資料（會話、專案狀態、目標、config.toml、auth.json）",
         "targetPath": "目標路徑",
         "existingData": "雲端已有資料",
         "deviceName": "上傳裝置",
