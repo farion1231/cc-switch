@@ -97,7 +97,11 @@ fn is_reasoning_content_compatible_identifier(value: &str) -> bool {
 
 fn is_anthropic_tool_thinking_history_identifier(value: &str) -> bool {
     let value = value.to_ascii_lowercase();
-    value.contains("deepseek") || value.contains("mimo") || value.contains("xiaomimimo")
+    value.contains("deepseek")
+        || value.contains("mimo")
+        || value.contains("xiaomimimo")
+        || value.contains("kimi")
+        || value.contains("moonshot")
 }
 
 fn should_normalize_anthropic_tool_thinking_history(
