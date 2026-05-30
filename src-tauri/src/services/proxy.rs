@@ -1860,6 +1860,25 @@ impl ProxyService {
             }
         }
 
+        // When proxy is not active, catalog update is skipped by the block above.
+        // Always regenerate the Codex model catalog JSON on provider switch so that
+        // `/model` reflects the new provider's models without requiring a restart.
+        if !live_taken_over && matches!(app_type_enum, AppType::Codex) {
+            let auth = provider.settings_config.get("auth");
+            let config_str = provider
+                .settings_config
+                .get("config")
+                .and_then(|v| v.as_str());
+            if let Some(auth) = auth {
+                let _ = crate::codex_config::write_codex_provider_live_with_catalog(
+                    &provider.settings_config,
+                    provider.category.as_deref(),
+                    auth,
+                    config_str,
+                );
+            }
+        }
+
         if let Some(server) = self.server.read().await.as_ref() {
             server
                 .set_active_target(app_type_enum.as_str(), &provider.id, &provider.name)
@@ -3899,6 +3918,137 @@ command = "latest-command"
                 .and_then(|v| v.as_str()),
             Some("latest-command"),
             "new MCP entries should remain in the restore backup"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn hot_switch_codex_provider_updates_model_catalog_json_without_proxy_takeover() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        // Seed models_cache.json so catalog generation doesn't need the codex CLI.
+        let codex_dir = crate::codex_config::get_codex_config_dir();
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_string(&serde_json::json!({
+                "models": [{
+                    "slug": "gpt-5.5",
+                    "display_name": "GPT-5.5",
+                    "model_messages": { "instructions_template": "t" },
+                    "additional_speed_tiers": [],
+                    "context_window": 128000
+                }]
+            }))
+            .expect("serialize models_cache"),
+        )
+        .expect("write models_cache.json");
+
+        // Seed a live Codex config (no proxy takeover, no backup).
+        let config_a = r#"model_provider = "provider-a"
+model = "model-a"
+
+[model_providers.provider-a]
+name = "ProviderA"
+base_url = "https://provider-a.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+        let auth_path = crate::codex_config::get_codex_auth_path();
+        let config_path = crate::codex_config::get_codex_config_path();
+        std::fs::write(&auth_path, r#"{"OPENAI_API_KEY":"key-a"}"#)
+            .expect("write auth.json");
+        std::fs::write(&config_path, config_a).expect("write config.toml");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "ProviderA".to_string(),
+            serde_json::json!({
+                "auth": { "OPENAI_API_KEY": "key-a" },
+                "config": config_a,
+                "modelCatalog": { "models": [{ "model": "model-a" }] }
+            }),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "b".to_string(),
+            "ProviderB".to_string(),
+            serde_json::json!({
+                "auth": { "OPENAI_API_KEY": "key-b" },
+                "config": r#"model_provider = "provider-b"
+model = "model-b"
+
+[model_providers.provider-b]
+name = "ProviderB"
+base_url = "https://provider-b.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#,
+                "modelCatalog": { "models": [{ "model": "model-b" }] }
+            }),
+            None,
+        );
+
+        db.save_provider("codex", &provider_a)
+            .expect("save provider a");
+        db.save_provider("codex", &provider_b)
+            .expect("save provider b");
+        db.set_current_provider("codex", "a")
+            .expect("set current provider a");
+        crate::settings::set_current_provider(&AppType::Codex, Some("a"))
+            .expect("set local current provider a");
+
+        // Sanity: no backup, no takeover — should_sync_backup is false.
+        assert!(
+            db.get_live_backup("codex")
+                .await
+                .expect("check backup")
+                .is_none(),
+            "no backup should exist before the switch"
+        );
+
+        service
+            .hot_switch_provider("codex", "b")
+            .await
+            .expect("hot switch to provider b");
+
+        // The catalog JSON file must now contain provider B's model.
+        let catalog_path = crate::codex_config::get_codex_model_catalog_path();
+        assert!(
+            catalog_path.exists(),
+            "cc-switch-model-catalog.json must be created on provider switch"
+        );
+        let catalog_text =
+            std::fs::read_to_string(&catalog_path).expect("read catalog json");
+        let catalog: serde_json::Value =
+            serde_json::from_str(&catalog_text).expect("parse catalog json");
+        let slugs: Vec<&str> = catalog
+            .get("models")
+            .and_then(|m| m.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|e| e.get("slug").and_then(|s| s.as_str()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            slugs.contains(&"model-b"),
+            "catalog must contain provider B's model after switch; got: {slugs:?}"
+        );
+        assert!(
+            !slugs.contains(&"model-a"),
+            "catalog must not contain stale provider A model after switch; got: {slugs:?}"
+        );
+
+        // config.toml must point at the catalog file.
+        let config_text = std::fs::read_to_string(&config_path).expect("read config.toml");
+        assert!(
+            config_text.contains("model_catalog_json"),
+            "config.toml must reference model_catalog_json after switch"
         );
     }
 }
