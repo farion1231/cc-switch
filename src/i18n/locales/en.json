@@ -1828,7 +1828,9 @@
       "fallbackModel": "Alternate",
       "providerAdvanced": "Provider advanced options",
       "rateLimitDelay": "Rate limit delay (seconds)",
-      "rateLimitDelayHint": "Minimum delay in seconds between consecutive requests (optional). Leave empty for no limit."
+      "rateLimitDelayHint": "Minimum delay in seconds between consecutive requests (optional). Leave empty for no limit.",
+      "discoverModelsLabel": "Discover models from API",
+      "discoverModelsDescription": "When disabled, only the manually configured models below are used and the /models endpoint is not probed. Corresponds to discover_models: false in Hermes config."
     },
     "webui": {
       "open": "Open Hermes Web UI",
