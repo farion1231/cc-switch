@@ -2,7 +2,6 @@ import { useState, useMemo, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { Tag, Check, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   Popover,
   PopoverContent,
@@ -49,14 +48,12 @@ export function TagAssignPopover({
     return new Set<number>(ids);
   }, [assignmentsMap, skillId]);
 
-  // 切换标签分配
+  // 切换标签分配（单选：每个技能只属于一个分组）
   const handleToggleTag = useCallback(
     async (tagId: number) => {
       const isAssigned = assignedTagIds.has(tagId);
-      const idsArray = Array.from(assignedTagIds);
-      const newTagIds = isAssigned
-        ? idsArray.filter((id) => id !== tagId)
-        : [...idsArray, tagId];
+      // 取消勾选 → 清空分组；勾选 → 替换为当前分组
+      const newTagIds = isAssigned ? [] : [tagId];
 
       try {
         await setSkillTagsMutation.mutateAsync({
@@ -70,32 +67,22 @@ export function TagAssignPopover({
     [assignedTagIds, skillId, setSkillTagsMutation, t],
   );
 
-  // 创建新标签并分配
+  // 创建新标签并分配（替换现有分组）
   const handleCreateAndAssign = useCallback(async () => {
     const name = newTagName.trim();
     if (!name) return;
 
     try {
       const newTag = await createTagMutation.mutateAsync(name);
-      const newTagIds = [...Array.from(assignedTagIds), newTag.id];
       await setSkillTagsMutation.mutateAsync({
         skillId,
-        tagIds: newTagIds,
+        tagIds: [newTag.id],
       });
       setNewTagName("");
     } catch (error) {
       toast.error(t("common.error"), { description: String(error) });
     }
-  }, [
-    newTagName,
-    createTagMutation,
-    assignedTagIds,
-    setSkillTagsMutation,
-    skillId,
-    t,
-  ]);
-
-  const tagCount = assignedTagIds.size;
+  }, [newTagName, createTagMutation, setSkillTagsMutation, skillId, t]);
 
   return (
     <Popover>
@@ -106,14 +93,6 @@ export function TagAssignPopover({
           title={t("skills.assignTags")}
         >
           <Tag size={12} />
-          {tagCount > 0 && (
-            <Badge
-              variant="secondary"
-              className="absolute -top-1.5 -right-1.5 h-3.5 min-w-3.5 px-0.5 text-[9px] leading-none"
-            >
-              {tagCount}
-            </Badge>
-          )}
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-56">
