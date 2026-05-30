@@ -63,7 +63,9 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use tauri::image::Image;
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+#[cfg(target_os = "windows")]
+use tauri::tray::{MouseButton, MouseButtonState};
+use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::RunEvent;
 use tauri::{Emitter, Manager};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
@@ -815,6 +817,7 @@ pub fn run() {
             let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
                 .tooltip("CC Switch") // 鼠标悬停提示
                 .on_tray_icon_event(|tray, event| match event {
+                    #[cfg(target_os = "windows")]
                     TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,
@@ -840,8 +843,17 @@ pub fn run() {
                 .menu(&menu)
                 .on_menu_event(|app, event| {
                     tray::handle_tray_menu_event(app, &event.id.0);
-                })
-                .show_menu_on_left_click(false);
+                });
+
+            #[cfg(target_os = "windows")]
+            {
+                tray_builder = tray_builder.show_menu_on_left_click(false);
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            {
+                tray_builder = tray_builder.show_menu_on_left_click(true);
+            }
 
             // 使用平台对应的托盘图标（macOS 使用模板图标适配深浅色）
             #[cfg(target_os = "macos")]
