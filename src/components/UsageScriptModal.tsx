@@ -166,11 +166,16 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       if (!config) return { apiKey: undefined, baseUrl: undefined };
 
       // 处理不同应用的配置格式
-      if (appId === "claude") {
-        // Claude: { env: { ANTHROPIC_AUTH_TOKEN | ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL } }
+      if (appId === "claude" || appId === "claude-desktop") {
+        // Claude / Claude Desktop: { env: { ANTHROPIC_AUTH_TOKEN | ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL } }
+        // Key fallbacks mirror the backend resolver (Provider::resolve_usage_credentials).
         const env = (config as any).env || {};
         return {
-          apiKey: env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY,
+          apiKey:
+            env.ANTHROPIC_AUTH_TOKEN ||
+            env.ANTHROPIC_API_KEY ||
+            env.OPENROUTER_API_KEY ||
+            env.GOOGLE_API_KEY,
           baseUrl: env.ANTHROPIC_BASE_URL,
         };
       } else if (appId === "codex") {
@@ -187,9 +192,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         };
       } else if (appId === "gemini") {
         // Gemini: { env: { GEMINI_API_KEY, GOOGLE_GEMINI_BASE_URL } }
+        // Key fallback mirrors the backend resolver (Provider::resolve_usage_credentials).
         const env = (config as any).env || {};
         return {
-          apiKey: env.GEMINI_API_KEY,
+          apiKey: env.GEMINI_API_KEY || env.GOOGLE_API_KEY,
           baseUrl: env.GOOGLE_GEMINI_BASE_URL,
         };
       } else if (appId === "hermes") {
@@ -203,6 +209,13 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         return {
           apiKey: (config as any).apiKey,
           baseUrl: (config as any).baseUrl,
+        };
+      } else if (appId === "opencode") {
+        // OpenCode (OMO): 凭据嵌在 options.{baseURL, apiKey}（SDK options 对象）
+        const options = (config as any).options || {};
+        return {
+          apiKey: options.apiKey,
+          baseUrl: options.baseURL,
         };
       }
       return { apiKey: undefined, baseUrl: undefined };
