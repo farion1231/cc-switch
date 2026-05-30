@@ -157,6 +157,16 @@ export function RequestDetailPanel({
                 </dt>
                 <dd className="font-mono">
                   {request.outputTokens.toLocaleString()}
+                  {request.latencyMs > 0 && request.outputTokens > 0 && (
+                    <span className="ml-2 text-xs text-muted-foreground font-normal">
+                      (
+                      {(() => {
+                        const rawTps = request.outputTokens / (request.latencyMs / 1000);
+                        return rawTps >= 1 ? Math.round(rawTps).toString() : rawTps.toFixed(1);
+                      })()}
+                      tps)
+                    </span>
+                  )}
                 </dd>
               </div>
               <div>

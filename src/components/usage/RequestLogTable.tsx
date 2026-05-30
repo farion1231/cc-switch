@@ -367,8 +367,21 @@ export function RequestLogTable({
                             </div>
                           )}
                         </TableCell>
-                        <TableCell className="text-center">
-                          {fmtInt(log.outputTokens, locale)}
+                        <TableCell className="text-center px-1.5">
+                          <div className="tabular-nums">
+                            {fmtInt(log.outputTokens, locale)}
+                            {(() => {
+                              if (!log.latencyMs || log.outputTokens <= 0) return null;
+                              const rawTps = log.outputTokens / (log.latencyMs / 1000);
+                              if (rawTps <= 0) return null;
+                              const tpsStr = rawTps >= 1 ? Math.round(rawTps).toString() : rawTps.toFixed(1);
+                              return (
+                                <span className="text-muted-foreground text-xs">
+                                  /{tpsStr} tps
+                                </span>
+                              );
+                            })()}
+                          </div>
                         </TableCell>
                         <TableCell className="text-center px-1.5">
                           <div
