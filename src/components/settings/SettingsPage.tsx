@@ -44,6 +44,7 @@ import { ModelTestConfigPanel } from "@/components/usage/ModelTestConfigPanel";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
 import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
+import { CodexAuthSettings } from "@/components/settings/CodexAuthSettings";
 import { useInstalledSkills } from "@/hooks/useSkills";
 import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
@@ -240,6 +241,10 @@ export function SettingsPage({
                       onChange={(method) =>
                         handleAutoSave({ skillSyncMethod: method })
                       }
+                    />
+                    <CodexAuthSettings
+                      settings={settings}
+                      onChange={handleAutoSave}
                     />
                     <WindowSettings
                       settings={settings}

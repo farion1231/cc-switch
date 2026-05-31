@@ -50,6 +50,15 @@ pub fn reset_test_fs() {
     let _ = update_settings(AppSettings::default());
 }
 
+#[allow(dead_code)]
+pub fn enable_codex_official_auth_preservation() {
+    update_settings(AppSettings {
+        preserve_codex_official_auth_on_switch: true,
+        ..Default::default()
+    })
+    .expect("enable Codex official auth preservation");
+}
+
 /// 全局互斥锁，避免多测试并发写入相同的 HOME 目录。
 pub fn test_mutex() -> &'static Mutex<()> {
     static MUTEX: OnceLock<Mutex<()>> = OnceLock::new();

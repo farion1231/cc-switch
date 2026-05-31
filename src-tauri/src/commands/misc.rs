@@ -249,8 +249,8 @@ fn finish_lifecycle_output(output: &std::process::Output) -> Result<(), String> 
     if output.status.success() {
         return Ok(());
     }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = decode_command_output(&output.stderr);
+    let stdout = decode_command_output(&output.stdout);
     let raw = if stderr.trim().is_empty() {
         stdout.trim()
     } else {
@@ -269,6 +269,81 @@ fn last_lines(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
     let start = lines.len().saturating_sub(n);
     lines[start..].join("\n")
+}
+
+fn decode_command_output(bytes: &[u8]) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        decode_windows_command_output(bytes)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        String::from_utf8_lossy(bytes).into_owned()
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn decode_windows_command_output(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return text.to_string();
+    }
+
+    use windows_sys::Win32::Globalization::{GetACP, GetOEMCP, MultiByteToWideChar};
+
+    fn decode_codepage(bytes: &[u8], codepage: u32) -> Option<String> {
+        if codepage == 0 {
+            return None;
+        }
+
+        let input_len = i32::try_from(bytes.len()).ok()?;
+        unsafe {
+            let wide_len = MultiByteToWideChar(
+                codepage,
+                0,
+                bytes.as_ptr(),
+                input_len,
+                std::ptr::null_mut(),
+                0,
+            );
+            if wide_len <= 0 {
+                return None;
+            }
+
+            let mut wide = vec![0u16; wide_len as usize];
+            let written = MultiByteToWideChar(
+                codepage,
+                0,
+                bytes.as_ptr(),
+                input_len,
+                wide.as_mut_ptr(),
+                wide_len,
+            );
+            if written <= 0 {
+                return None;
+            }
+
+            Some(String::from_utf16_lossy(&wide[..written as usize]))
+        }
+    }
+
+    let oem_cp = unsafe { GetOEMCP() };
+    if let Some(decoded) = decode_codepage(bytes, oem_cp) {
+        return decoded;
+    }
+
+    let ansi_cp = unsafe { GetACP() };
+    if ansi_cp != oem_cp {
+        if let Some(decoded) = decode_codepage(bytes, ansi_cp) {
+            return decoded;
+        }
+    }
+
+    String::from_utf8_lossy(bytes).into_owned()
 }
 
 fn normalize_requested_tools(tools: &[String]) -> Vec<&'static str> {
@@ -936,8 +1011,8 @@ fn try_get_version(tool: &str) -> ShellProbe {
 
     match output {
         Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            let stdout = decode_command_output(&out.stdout).trim().to_string();
+            let stderr = decode_command_output(&out.stderr).trim().to_string();
             if out.status.success() {
                 let raw = if stdout.is_empty() { &stderr } else { &stdout };
                 if raw.is_empty() {
@@ -1051,8 +1126,8 @@ fn try_get_version_wsl(
 
     match output {
         Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            let stdout = decode_command_output(&out.stdout).trim().to_string();
+            let stderr = decode_command_output(&out.stderr).trim().to_string();
             if out.status.success() {
                 let raw = if stdout.is_empty() { &stderr } else { &stdout };
                 if raw.is_empty() {
@@ -1431,8 +1506,43 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
     search_paths
 }
 
+#[cfg(target_os = "windows")]
+fn is_windows_command_script(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_tool_version_command(
+    tool_path: &Path,
+    new_path: &str,
+) -> std::io::Result<std::process::Output> {
+    use std::process::Command;
+
+    if is_windows_command_script(tool_path) {
+        let path = tool_path.to_string_lossy();
+        let command = format!("call {} --version", win_quote_path_for_batch(&path));
+        let mut cmd = Command::new("cmd");
+        return cmd
+            .args(["/D", "/S", "/C"])
+            .raw_arg(&command)
+            .env("PATH", new_path)
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+    }
+
+    Command::new(tool_path)
+        .arg("--version")
+        .env("PATH", new_path)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+}
+
 /// 扫描常见路径查找 CLI（PATH 主命令未命中时的兜底单探）。
 fn scan_cli_version(tool: &str) -> ShellProbe {
+    #[cfg(not(target_os = "windows"))]
     use std::process::Command;
 
     let search_paths = build_tool_search_paths(tool);
@@ -1458,13 +1568,7 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
             }
 
             #[cfg(target_os = "windows")]
-            let output = {
-                Command::new("cmd")
-                    .args(["/C", &format!("\"{}\" --version", tool_path.display())])
-                    .env("PATH", &new_path)
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .output()
-            };
+            let output = run_windows_tool_version_command(&tool_path, &new_path);
 
             #[cfg(not(target_os = "windows"))]
             let output = {
@@ -1475,8 +1579,8 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
             };
 
             if let Ok(out) = output {
-                let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                let stdout = decode_command_output(&out.stdout).trim().to_string();
+                let stderr = decode_command_output(&out.stderr).trim().to_string();
                 if out.status.success() {
                     let raw = if stdout.is_empty() { &stderr } else { &stdout };
                     if !raw.is_empty() {
@@ -1588,7 +1692,7 @@ fn resolve_path_default(tool: &str) -> Option<std::path::PathBuf> {
     if !out.status.success() {
         return None;
     }
-    let raw = String::from_utf8_lossy(&out.stdout);
+    let raw = decode_command_output(&out.stdout);
     // 不能死取第一行：交互式 .zshrc 可能先打印欢迎语（如 "🚀 Welcome back"），
     // command -v 的真实路径在其后；取第一个 `/` 开头的行才稳。
     let first = first_abs_path_line(&raw)?;
@@ -1607,7 +1711,7 @@ fn resolve_path_default(tool: &str) -> Option<std::path::PathBuf> {
     if !out.status.success() {
         return None;
     }
-    let raw = String::from_utf8_lossy(&out.stdout);
+    let raw = decode_command_output(&out.stdout);
     let first = raw.lines().next()?.trim();
     if first.is_empty() {
         return None;
@@ -1619,6 +1723,7 @@ fn resolve_path_default(tool: &str) -> Option<std::path::PathBuf> {
 /// `build_tool_search_paths`，但不在首个命中处停止——而是对每个去重后的真实
 /// 可执行文件都跑一次 `--version`，从而能发现"升级写入 A 处、PATH 实际用 B 处"。
 fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
+    #[cfg(not(target_os = "windows"))]
     use std::process::Command;
 
     let search_paths = build_tool_search_paths(tool);
@@ -1648,14 +1753,7 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
             }
 
             #[cfg(target_os = "windows")]
-            let output = {
-                use std::os::windows::process::CommandExt;
-                Command::new("cmd")
-                    .args(["/C", &format!("\"{}\" --version", tool_path.display())])
-                    .env("PATH", &new_path)
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .output()
-            };
+            let output = run_windows_tool_version_command(&tool_path, &new_path);
             #[cfg(not(target_os = "windows"))]
             let output = Command::new(&tool_path)
                 .arg("--version")
@@ -1664,14 +1762,14 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
 
             let (version, runnable, error) = match output {
                 Ok(out) if out.status.success() => {
-                    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                    let stdout = decode_command_output(&out.stdout).trim().to_string();
+                    let stderr = decode_command_output(&out.stderr).trim().to_string();
                     let raw = if stdout.is_empty() { stderr } else { stdout };
                     (Some(extract_version(&raw)), true, None)
                 }
                 Ok(out) => {
-                    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    let stderr = decode_command_output(&out.stderr).trim().to_string();
+                    let stdout = decode_command_output(&out.stdout).trim().to_string();
                     let detail = if stderr.is_empty() { stdout } else { stderr };
                     let detail = detail.trim();
                     let error = if detail.is_empty() {
@@ -2542,7 +2640,7 @@ end tell"#,
         .map_err(|e| format!("执行 osascript 失败: {e}"))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = decode_command_output(&output.stderr);
         return Err(format!(
             "Terminal.app 执行失败 (exit code: {:?}): {}",
             output.status.code(),
@@ -2603,7 +2701,7 @@ fn launch_macos_iterm2(script_file: &std::path::Path) -> Result<(), String> {
         .map_err(|e| format!("执行 osascript 失败: {e}"))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = decode_command_output(&output.stderr);
         return Err(format!(
             "iTerm2 执行失败 (exit code: {:?}): {}",
             output.status.code(),
@@ -2633,7 +2731,7 @@ fn launch_macos_ghostty(script_file: &std::path::Path) -> Result<(), String> {
         .map_err(|e| format!("启动 Ghostty 失败: {e}"))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = decode_command_output(&output.stderr);
         return Err(format!(
             "Ghostty 启动失败 (exit code: {:?}): {}",
             output.status.code(),
@@ -2666,7 +2764,7 @@ fn launch_macos_open_app(
         .map_err(|e| format!("启动 {app_name} 失败: {e}"))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = decode_command_output(&output.stderr);
         return Err(format!(
             "{} 启动失败 (exit code: {:?}): {}",
             app_name,
@@ -2718,7 +2816,7 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 
     let output = cmd.output().map_err(|e| format!("启动 Warp 失败: {e}"))?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = decode_command_output(&output.stderr);
         return Err(format!(
             "Warp 启动失败 (exit code: {:?}): {}",
             output.status.code(),
@@ -2961,7 +3059,7 @@ fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), S
         .map_err(|e| format!("启动 {} 失败: {e}", terminal_name))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = decode_command_output(&output.stderr);
         return Err(format!(
             "{} 启动失败 (exit code: {:?}): {}",
             terminal_name,
