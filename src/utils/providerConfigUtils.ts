@@ -1349,27 +1349,38 @@ export const setCodexModelName = (
   const normalizedText = normalizeTomlText(configText);
   const lines = normalizedText ? normalizedText.split("\n") : [];
   const topLevelEndIndex = getTopLevelEndIndex(lines);
-  const topLevelMatch = findTomlAssignmentInRange(
-    lines,
-    TOML_MODEL_PATTERN,
-    0,
-    topLevelEndIndex,
-  );
 
+  // 只在 top-level 区域查找 model 键，不碰 [profiles.*] / [model_providers.*] 等嵌套节
+  const modelLineIndices: number[] = [];
+  for (let i = 0; i <= topLevelEndIndex && i < lines.length; i += 1) {
+    if (TOML_MODEL_PATTERN.test(lines[i])) {
+      modelLineIndices.push(i);
+    }
+  }
+
+  // 清空 model name 时：删除所有 model 键
   if (!trimmed) {
-    if (!normalizedText) return normalizedText;
-    if (topLevelMatch) {
-      lines.splice(topLevelMatch.index, 1);
+    if (modelLineIndices.length > 0) {
+      // 从后往前删除，避免索引偏移
+      for (let i = modelLineIndices.length - 1; i >= 0; i -= 1) {
+        lines.splice(modelLineIndices[i], 1);
+      }
     }
     return finalizeTomlText(lines);
   }
 
   const replacementLine = `model = "${trimmed}"`;
-  if (topLevelMatch) {
-    lines[topLevelMatch.index] = replacementLine;
+
+  if (modelLineIndices.length > 0) {
+    // 有已有的 model 键：更新第一个，删除其余的（去重）
+    lines[modelLineIndices[0]] = replacementLine;
+    for (let i = modelLineIndices.length - 1; i >= 1; i -= 1) {
+      lines.splice(modelLineIndices[i], 1);
+    }
     return finalizeTomlText(lines);
   }
 
+  // 没有已有的 model 键：插入新行
   const modelProviderIndex = getTopLevelModelProviderLineIndex(lines);
   if (modelProviderIndex !== -1) {
     lines.splice(modelProviderIndex + 1, 0, replacementLine);

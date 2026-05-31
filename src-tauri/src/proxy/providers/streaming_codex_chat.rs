@@ -413,11 +413,18 @@ impl ChatToResponsesState {
 
         {
             let state = self.tools.entry(chat_index).or_default();
+            // Only set call_id if upstream sends a non-empty value AND we don't
+            // already have one — prevents subsequent SSE chunks from overwriting
+            // the real ID with empty strings.
             if let Some(id) = id_delta {
-                state.call_id = id;
+                if !id.is_empty() && state.call_id.is_empty() {
+                    state.call_id = id;
+                }
             }
             if let Some(name) = name_delta {
-                state.name = name;
+                if !name.is_empty() && state.name.is_empty() {
+                    state.name = name;
+                }
             }
             if !args_delta.is_empty() {
                 state.arguments.push_str(&args_delta);
@@ -429,9 +436,18 @@ impl ChatToResponsesState {
                 }
             }
 
+            // Wait for both id and name before emitting added, unless we see a
+            // finish_reason (last chunk before [DONE]) — then force-add with what we have.
+            // This prevents emitting the added event with an empty call_id when name
+            // arrives before id in upstream SSE chunks.
+            let should_force = self.finish_reason.is_some();
             if !state.added && (!state.call_id.is_empty() || !state.name.is_empty()) {
-                should_add = true;
-                pending_arguments = state.arguments.clone();
+                if state.call_id.is_empty() && !should_force {
+                    // Name arrived but id hasn't yet — buffer and wait
+                } else {
+                    should_add = true;
+                    pending_arguments = state.arguments.clone();
+                }
             } else if state.added {
                 output_index = state.output_index;
                 item_id = state.item_id.clone();
@@ -994,6 +1010,45 @@ mod tests {
         assert!(!output.contains("<think>"));
         assert!(!output.contains("</think>"));
         assert!(output.contains("event: response.completed"));
+    }
+
+    #[tokio::test]
+    async fn tool_call_name_before_id_buffers_until_id_arrives() {
+        // First chunk has name but no id; second chunk has id.
+        // The output_item.added event should only be emitted after the id arrives,
+        // with the real call_id, not a synthetic "call_0".
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_tool\",\"model\":\"qwen3.6-plus\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"type\":\"function\",\"function\":{\"name\":\"get_weather\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_tool\",\"model\":\"qwen3.6-plus\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_real123\",\"function\":{\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        // Should contain the real call_id, not a synthetic one
+        assert!(output.contains("\"call_id\":\"call_real123\""));
+        // Should NOT contain synthetic call_0
+        assert!(!output.contains("\"call_id\":\"call_0\""));
+        assert!(output.contains("event: response.function_call_arguments.delta"));
+        assert!(output.contains("\"type\":\"function_call\""));
+    }
+
+    #[tokio::test]
+    async fn tool_call_call_id_preserved_in_done_and_completed() {
+        // Upstream sends id in first chunk but empty id in subsequent chunks.
+        // The call_id must be preserved in output_item.done and response.completed.
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_tool\",\"model\":\"qwen3.6-plus\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_abc123\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_tool\",\"model\":\"qwen3.6-plus\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"\",\"function\":{\"arguments\":\"{\\\"city\\\":\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: {\"id\":\"chatcmpl_tool\",\"model\":\"qwen3.6-plus\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"\",\"function\":{\"arguments\":\"\\\"Tokyo\\\"}\"}}]}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        // call_id must be preserved in output_item.done
+        assert!(output.contains("\"call_id\":\"call_abc123\""), "call_id should be preserved in output_item.done");
+
+        // response.completed should also have the real call_id
+        assert!(output.contains("\"id\":\"fc_call_abc123\""), "fc_call_abc123 should appear in response.completed");
     }
 
     #[tokio::test]

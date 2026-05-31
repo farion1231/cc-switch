@@ -246,6 +246,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                       AND {log_alias}.created_at + {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
                   AND (
                       LOWER(proxy_dedup.model) = LOWER({log_alias}.model)
+                      OR LOWER(proxy_dedup.request_model) = LOWER({log_alias}.model)
                       OR LOWER(proxy_dedup.model) = 'unknown'
                       OR LOWER({log_alias}.model) = 'unknown'
                   )
@@ -316,6 +317,7 @@ pub(crate) fn has_matching_proxy_usage_log(
               AND l.created_at BETWEEN ?7 - ?8 AND ?7 + ?8
               AND (
                   LOWER(l.model) = LOWER(?2)
+                  OR LOWER(l.request_model) = LOWER(?2)
                   OR LOWER(l.model) = 'unknown'
                   OR LOWER(?2) = 'unknown'
               )
@@ -2011,6 +2013,7 @@ mod tests {
                 request_id TEXT PRIMARY KEY,
                 app_type TEXT NOT NULL,
                 model TEXT NOT NULL,
+                request_model TEXT,
                 input_tokens INTEGER NOT NULL,
                 output_tokens INTEGER NOT NULL,
                 cache_read_tokens INTEGER NOT NULL,

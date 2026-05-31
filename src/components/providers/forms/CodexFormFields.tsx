@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { FormLabel } from "@/components/ui/form";
@@ -9,6 +9,13 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import {
   ChevronDown,
@@ -28,6 +35,7 @@ import {
 import type {
   CodexApiFormat,
   CodexCatalogModel,
+  CodexChatCompatibilityMode,
   CodexChatReasoning,
   ProviderCategory,
 } from "@/types";
@@ -65,6 +73,13 @@ interface CodexFormFieldsProps {
   onApiFormatChange: (format: CodexApiFormat) => void;
   codexChatReasoning?: CodexChatReasoning;
   onCodexChatReasoningChange?: (value: CodexChatReasoning) => void;
+
+  // Chat 兼容模式
+  chatCompatibilityMode: CodexChatCompatibilityMode;
+  onChatCompatibilityModeChange: (mode: CodexChatCompatibilityMode) => void;
+
+  // Model Name (for DeepSeek model detection)
+  modelName?: string;
 
   // Model Catalog
   catalogModels?: CodexCatalogModel[];
@@ -123,6 +138,9 @@ export function CodexFormFields({
   onAutoSelectChange,
   apiFormat,
   onApiFormatChange,
+  chatCompatibilityMode,
+  onChatCompatibilityModeChange,
+  modelName = "",
   codexChatReasoning = {},
   onCodexChatReasoningChange,
   catalogModels = [],
@@ -206,6 +224,12 @@ export function CodexFormFields({
     },
     [codexChatReasoning, onCodexChatReasoningChange],
   );
+
+  // DeepSeek 模型检测：基于模型名检测（与 ProviderForm 的写入/清理条件一致）
+  const isDeepSeekModel = useMemo(() => {
+    const model = (modelName || "").toLowerCase();
+    return model.includes("deepseek") || model.includes("deep-seek");
+  }, [modelName]);
 
   const handleFetchModels = useCallback(() => {
     if (!codexBaseUrl || !codexApiKey) {
@@ -312,8 +336,21 @@ export function CodexFormFields({
           label={t("codexConfig.apiUrlLabel")}
           value={codexBaseUrl}
           onChange={onBaseUrlChange}
-          placeholder={t("providerForm.codexApiEndpointPlaceholder")}
-          hint={t("providerForm.codexApiHint")}
+          placeholder={
+            apiFormat === "openai_chat"
+              ? t("providerForm.codexApiChatEndpointPlaceholder")
+              : t("providerForm.codexApiEndpointPlaceholder")
+          }
+          hint={
+            apiFormat === "openai_chat"
+              ? t("providerForm.codexApiHintChat")
+              : t("providerForm.codexApiHint")
+          }
+          fullUrlHint={
+            apiFormat === "openai_chat"
+              ? t("providerForm.codexApiHintChat")
+              : undefined
+          }
           showFullUrlToggle
           isFullUrl={isFullUrl}
           onFullUrlChange={onFullUrlChange}
@@ -350,6 +387,70 @@ export function CodexFormFields({
               })}
             />
           </div>
+        </div>
+      )}
+
+      {shouldShowSpeedTest && (
+        <div className="space-y-2">
+          <FormLabel htmlFor="codexApiFormat">
+            {t("providerForm.apiFormat", { defaultValue: "API 格式" })}
+          </FormLabel>
+          <Select value={apiFormat} onValueChange={onApiFormatChange}>
+            <SelectTrigger id="codexApiFormat" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="openai_responses">
+                {t("providerForm.codexApiFormatResponses", {
+                  defaultValue: "OpenAI Responses API (原生)",
+                })}
+              </SelectItem>
+              <SelectItem value="responses_passthrough">
+                {t("providerForm.codexApiFormatResponsesPassthrough", {
+                  defaultValue: "OpenAI Responses API (原生，本地代理透传)",
+                })}
+              </SelectItem>
+              <SelectItem value="openai_chat">
+                {t("providerForm.codexApiFormatOpenAIChat", {
+                  defaultValue: "OpenAI Chat Completions (需开启路由)",
+                })}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            {t("providerForm.codexApiFormatHint", {
+              defaultValue:
+                "选择供应商真实支持的 Codex API 格式；Chat Completions 会通过本地路由自动转换为 Responses；Responses Passthrough 会在代理层按当前 provider 配置覆盖 model 字段。",
+            })}
+          </p>
+        </div>
+      )}
+
+      {/* Codex Chat 兼容模式 — 仅在 openai_chat 且模型名包含 DeepSeek 时显示 */}
+      {shouldShowSpeedTest && apiFormat === "openai_chat" && isDeepSeekModel && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <FormLabel htmlFor="codexChatCompatSwitch">
+              {t("providerForm.codexChatCompatibilityMode", {
+                defaultValue: "DeepSeek 兼容开关",
+              })}
+            </FormLabel>
+            <Switch
+              id="codexChatCompatSwitch"
+              checked={chatCompatibilityMode === "deepseek_thinking"}
+              onCheckedChange={(checked) =>
+                onChatCompatibilityModeChange(
+                  checked ? "deepseek_thinking" : "standard",
+                )
+              }
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {t("providerForm.codexChatCompatibilityModeHint", {
+              defaultValue:
+                "DeepSeek 模型专用兼容开关，开启后会适配 reasoning_content 与 tool_calls 的合并，确保 Thinking 模式正常工作。",
+            })}
+          </p>
         </div>
       )}
 

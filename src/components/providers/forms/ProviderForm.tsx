@@ -15,6 +15,7 @@ import type {
   ProviderTestConfig,
   ClaudeApiFormat,
   CodexApiFormat,
+  CodexChatCompatibilityMode,
   CodexCatalogModel,
   CodexChatReasoning,
   ClaudeApiKeyField,
@@ -57,6 +58,7 @@ import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import {
   extractCodexWireApi,
   setCodexWireApi,
+  extractCodexModelName,
   setCodexModelName as setCodexModelNameInConfig,
 } from "@/utils/providerConfigUtils";
 import { isNonNegativeDecimalString } from "@/types/usage";
@@ -140,6 +142,11 @@ const codexApiFormatFromWireApi = (
     case "openai_responses":
     case "openai-responses":
       return "openai_responses";
+    // 防御性保留：TOML wire_api 对 passthrough 始终写入 "responses"，
+    // 该分支仅在有历史遗留 "responses_passthrough" 值时才会命中。
+    case "responses_passthrough":
+    case "responses-passthrough":
+      return "responses_passthrough";
     default:
       return undefined;
   }
@@ -454,7 +461,11 @@ function ProviderFormFull({
 
   const [localApiFormat, setLocalApiFormat] = useState<ClaudeApiFormat>(() => {
     if (appId !== "claude") return "anthropic";
-    return initialData?.meta?.apiFormat ?? "anthropic";
+    const f = initialData?.meta?.apiFormat;
+    if (f === "openai_chat") return "openai_chat";
+    if (f === "openai_responses") return "openai_responses";
+    if (f === "gemini_native") return "gemini_native";
+    return "anthropic";
   });
 
   const handleApiFormatChange = useCallback((format: ClaudeApiFormat) => {
@@ -532,6 +543,9 @@ function ProviderFormFull({
       if (initialData?.meta?.apiFormat === "openai_responses") {
         return "openai_responses";
       }
+      if (initialData?.meta?.apiFormat === "responses_passthrough") {
+        return "responses_passthrough";
+      }
       return (
         codexApiFormatFromWireApi(
           extractCodexWireApi(
@@ -539,9 +553,39 @@ function ProviderFormFull({
               ? initialData.settingsConfig.config
               : "",
           ),
-        ) ?? "openai_responses"
+        ) ?? "openai_chat"
       );
     });
+
+  // Sync apiFormat from initialData.meta after mount (e.g. when editing a
+  // saved Codex provider, the meta may arrive after the first render).
+  useEffect(() => {
+    if (initialData?.meta?.apiFormat === "openai_chat") {
+      setLocalCodexApiFormat("openai_chat");
+    } else if (initialData?.meta?.apiFormat === "openai_responses") {
+      setLocalCodexApiFormat("openai_responses");
+    } else if (initialData?.meta?.apiFormat === "responses_passthrough") {
+      setLocalCodexApiFormat("responses_passthrough");
+    }
+  }, [initialData?.meta?.apiFormat]);
+
+  const [localCodexChatCompatibilityMode, setLocalCodexChatCompatibilityMode] =
+    useState<CodexChatCompatibilityMode>(() => {
+      const meta = initialData?.meta;
+      if (meta?.chatCompatibilityMode === "deepseek_thinking") {
+        return "deepseek_thinking";
+      }
+      return "standard";
+    });
+
+  // Sync chatCompatibilityMode from initialData.meta after mount.
+  useEffect(() => {
+    if (initialData?.meta?.chatCompatibilityMode === "deepseek_thinking") {
+      setLocalCodexChatCompatibilityMode("deepseek_thinking");
+    } else if (initialData?.meta?.chatCompatibilityMode === "standard") {
+      setLocalCodexChatCompatibilityMode("standard");
+    }
+  }, [initialData?.meta?.chatCompatibilityMode]);
 
   const { configError: codexConfigError, debouncedValidate } =
     useCodexTomlValidation();
@@ -559,12 +603,22 @@ function ProviderFormFull({
       setLocalCodexApiFormat(format);
       // wire_api is always "responses" for Codex; format controls proxy-layer conversion
       setCodexConfig((prev) => {
-        const updated = setCodexWireApi(prev, "responses");
+        // responses_passthrough 是 cc-switch meta 语义，TOML wire_api 写为 "responses"
+        const wireApiValue =
+          format === "openai_chat" ? "chat" : "responses";
+        const updated = setCodexWireApi(prev, wireApiValue);
         debouncedValidate(updated);
         return updated;
       });
     },
     [setCodexConfig, debouncedValidate],
+  );
+
+  const handleCodexChatCompatibilityModeChange = useCallback(
+    (mode: CodexChatCompatibilityMode) => {
+      setLocalCodexChatCompatibilityMode(mode);
+    },
+    [],
   );
 
   useEffect(() => {
@@ -1165,6 +1219,15 @@ function ProviderFormFull({
     await performSubmit(values);
   };
 
+  /**
+   * DeepSeek 模型名检测（与 CodexFormFields isDeepSeekModel 保持一致）。
+   * 同时支持 "deepseek" 和 "deep-seek" 两种写法。
+   */
+  const isDeepSeekModelForCompatCheck = (model: string) => {
+    const lower = model.toLowerCase();
+    return lower.includes("deepseek") || lower.includes("deep-seek");
+  };
+
   const performSubmit = async (values: ProviderFormData) => {
     // OAuth / 其它身份识别（与 handleSubmit 保持一致）
     const isCopilotProvider =
@@ -1182,7 +1245,10 @@ function ProviderFormFull({
         const authJson = JSON.parse(codexAuth);
         let normalizedCodexConfig =
           category !== "official" && (codexConfig ?? "").trim()
-            ? setCodexWireApi(codexConfig ?? "", "responses")
+            ? setCodexWireApi(
+                codexConfig ?? "",
+                localCodexApiFormat === "openai_chat" ? "chat" : "responses",
+              )
             : (codexConfig ?? "");
         const normalizedCatalogModels =
           category !== "official" && localCodexApiFormat === "openai_chat"
@@ -1392,12 +1458,14 @@ function ProviderFormFull({
         pricingConfig.enabled && pricingConfig.pricingModelSource !== "inherit"
           ? pricingConfig.pricingModelSource
           : undefined,
-      apiFormat:
-        appId === "claude" && category !== "official"
-          ? localApiFormat
-          : appId === "codex" && category !== "official"
-            ? localCodexApiFormat
-            : undefined,
+      // Codex: 非官方供应商始终保存 apiFormat
+      ...(appId === "codex" && category !== "official"
+        ? { apiFormat: localCodexApiFormat }
+        : {}),
+      // Claude: 非官方供应商保存 apiFormat
+      ...(appId === "claude" && category !== "official"
+        ? { apiFormat: localApiFormat }
+        : {}),
       apiKeyField:
         appId === "claude" &&
         category !== "official" &&
@@ -1408,7 +1476,32 @@ function ProviderFormFull({
         supportsFullUrl && category !== "official" && localIsFullUrl
           ? true
           : undefined,
+      // DeepSeek 兼容开关：仅当模型名包含 DeepSeek / deep-seek 时才写入
+      // 与 CodexFormFields isDeepSeekModel 检测逻辑保持一致
+      ...(
+        appId === "codex" &&
+        category !== "official" &&
+        localCodexApiFormat === "openai_chat" &&
+        localCodexChatCompatibilityMode !== "standard" &&
+        isDeepSeekModelForCompatCheck(
+          extractCodexModelName(codexConfig) ?? "",
+        )
+          ? { chatCompatibilityMode: localCodexChatCompatibilityMode }
+          : {}
+      ),
     };
+
+    // 删除不应存在的 chatCompatibilityMode（关开关 / 非 DeepSeek 模型 / 非 openai_chat 格式时清理残留）
+    const codexModelForCompatCheck = extractCodexModelName(codexConfig) ?? "";
+    const shouldHaveCompat =
+      appId === "codex" &&
+      category !== "official" &&
+      localCodexApiFormat === "openai_chat" &&
+      isDeepSeekModelForCompatCheck(codexModelForCompatCheck) &&
+      localCodexChatCompatibilityMode !== "standard";
+    if (!shouldHaveCompat) {
+      delete nextMeta.chatCompatibilityMode;
+    }
 
     if (!isCodexOauthProvider && "codexFastMode" in nextMeta) {
       delete nextMeta.codexFastMode;
@@ -1524,7 +1617,7 @@ function ProviderFormFull({
         setCodexChatReasoning({});
         setLocalCodexApiFormat(
           codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
-            "openai_responses",
+            "openai_chat",
         );
       }
       if (appId === "gemini") {
@@ -1566,7 +1659,7 @@ function ProviderFormFull({
       setLocalCodexApiFormat(
         preset.apiFormat ??
           codexApiFormatFromWireApi(extractCodexWireApi(config)) ??
-          "openai_responses",
+          "openai_chat",
       );
 
       form.reset({
@@ -2034,6 +2127,11 @@ function ProviderFormFull({
               onAutoSelectChange={setEndpointAutoSelect}
               apiFormat={localCodexApiFormat}
               onApiFormatChange={handleCodexApiFormatChange}
+              chatCompatibilityMode={localCodexChatCompatibilityMode}
+              onChatCompatibilityModeChange={
+                handleCodexChatCompatibilityModeChange
+              }
+              modelName={extractCodexModelName(codexConfig) ?? ""}
               codexChatReasoning={codexChatReasoning}
               onCodexChatReasoningChange={setCodexChatReasoning}
               catalogModels={codexCatalogModels}

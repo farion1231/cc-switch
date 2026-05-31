@@ -35,6 +35,7 @@ pub async fn stream_check_provider(
         auth_override.as_ref(),
     )
     .await?;
+    let codex_api_format_override = resolve_codex_api_format_override(&app_type, provider);
     let result = StreamCheckService::check_with_retry(
         &app_type,
         provider,
@@ -42,6 +43,7 @@ pub async fn stream_check_provider(
         auth_override,
         base_url_override,
         claude_api_format_override,
+        codex_api_format_override,
     )
     .await?;
 
@@ -107,6 +109,7 @@ pub async fn stream_check_all_providers(
             );
             None
         });
+        let codex_api_format_override = resolve_codex_api_format_override(&app_type, &provider);
         let result = StreamCheckService::check_with_retry(
             &app_type,
             &provider,
@@ -114,6 +117,7 @@ pub async fn stream_check_all_providers(
             auth_override,
             base_url_override,
             claude_api_format_override,
+            codex_api_format_override,
         )
         .await
         .unwrap_or_else(|e| {
@@ -284,6 +288,23 @@ async fn resolve_claude_api_format_override(
     };
 
     Ok(Some(api_format.to_string()))
+}
+
+/// 解析 Codex 供应商的 apiFormat，用于流式健康检查。
+///
+/// 优先级：meta.apiFormat > 默认 "openai_chat"
+fn resolve_codex_api_format_override(
+    app_type: &AppType,
+    provider: &crate::provider::Provider,
+) -> Option<String> {
+    if *app_type != AppType::Codex {
+        return None;
+    }
+
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.api_format.clone())
 }
 
 #[cfg(test)]

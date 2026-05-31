@@ -18,6 +18,7 @@ use crate::proxy::providers::transform_gemini::anthropic_to_gemini;
 use crate::proxy::providers::transform_responses::anthropic_to_responses;
 use crate::proxy::providers::{
     get_adapter, AuthInfo, AuthStrategy, ClaudeAdapter, ProviderAdapter,
+    is_chat_wire_api, extract_codex_wire_api_from_toml,
 };
 
 /// 健康状态枚举
@@ -96,6 +97,7 @@ impl StreamCheckService {
         auth_override: Option<AuthInfo>,
         base_url_override: Option<String>,
         claude_api_format_override: Option<String>,
+        codex_api_format_override: Option<String>,
     ) -> Result<StreamCheckResult, AppError> {
         // 合并供应商单独配置和全局配置
         let effective_config = Self::merge_provider_config(provider, config);
@@ -109,6 +111,7 @@ impl StreamCheckService {
                 auth_override.clone(),
                 base_url_override.clone(),
                 claude_api_format_override.clone(),
+                codex_api_format_override.clone(),
             )
             .await;
 
@@ -202,6 +205,7 @@ impl StreamCheckService {
         auth_override: Option<AuthInfo>,
         base_url_override: Option<String>,
         claude_api_format_override: Option<String>,
+        codex_api_format_override: Option<String>,
     ) -> Result<StreamCheckResult, AppError> {
         let start = Instant::now();
 
@@ -263,6 +267,7 @@ impl StreamCheckService {
                     test_prompt,
                     request_timeout,
                     provider,
+                    codex_api_format_override.as_deref(),
                 )
                 .await
             }
@@ -517,7 +522,9 @@ impl StreamCheckService {
 
     /// Codex 流式检查
     ///
-    /// 严格按照 Codex CLI 真实请求格式构建请求 (Responses API)
+    /// 根据 apiFormat 选择请求格式：
+    /// - `openai_chat`（默认）: OpenAI Chat Completions API (/v1/chat/completions)
+    /// - `openai_responses`: OpenAI Responses API (/v1/responses)
     async fn check_codex_stream(
         client: &Client,
         base_url: &str,
@@ -526,15 +533,18 @@ impl StreamCheckService {
         test_prompt: &str,
         timeout: std::time::Duration,
         provider: &Provider,
+        api_format_override: Option<&str>,
     ) -> Result<(u16, String), AppError> {
         let is_full_url = provider
             .meta
             .as_ref()
             .and_then(|meta| meta.is_full_url)
             .unwrap_or(false);
+
         // 当 provider 的 api_format 标记为 openai_chat 时，上游不接受 Responses API；
         // 必须改打 /chat/completions 并发送 Chat 格式 body，否则 Stream Check 与代理路径不一致，
         // 会把"实际可用"的供应商误报为不可用（典型如 DeepSeek、MiniMax、Kimi 等 Chat 兼容厂商）。
+        // passthrough 模式 codex_provider_uses_chat_completions 返回 false，走 Responses 路径。
         let uses_chat = crate::proxy::providers::codex_provider_uses_chat_completions(provider);
         let urls = if uses_chat {
             Self::resolve_codex_chat_stream_urls(base_url, is_full_url)
@@ -542,10 +552,36 @@ impl StreamCheckService {
             Self::resolve_codex_stream_urls(base_url, is_full_url)
         };
 
-        // 解析模型名和推理等级 (支持 model@level 或 model#level 格式)
-        let (actual_model, reasoning_effort) = Self::parse_model_with_effort(model);
+        // 检测 apiFormat（用于流式检查格式选择）：override > meta.apiFormat > TOML wire_api > 默认 "openai_chat"
+        // 注意：TOML wire_api 对 passthrough 始终是 "responses"，
+        // 因此 passthrough 必须通过 meta.apiFormat 识别。
+        // 当前 uses_chat 已覆盖路由判定，api_format 仅作为诊断参考。
+        let _api_format = api_format_override
+            .or_else(|| {
+                provider
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.api_format.as_deref())
+            })
+            .or_else(|| {
+                provider
+                    .settings_config
+                    .get("config")
+                    .and_then(|v| v.as_str())
+                    .and_then(extract_codex_wire_api_from_toml)
+                    .as_deref()
+                    .map(|wire| {
+                        if is_chat_wire_api(wire) {
+                            "openai_chat"
+                        } else {
+                            "openai_responses"
+                        }
+                    })
+            })
+            .unwrap_or("openai_chat");
 
-        // 获取本地系统信息
+        // 解析模型名和推理等级
+        let (actual_model, reasoning_effort) = Self::parse_model_with_effort(model);
         let os_name = Self::get_os_name();
         let arch_name = Self::get_arch_name();
 
@@ -559,6 +595,7 @@ impl StreamCheckService {
             })
         } else {
             // Responses API 请求体格式 (input 必须是数组)
+            // passthrough 也走此路径（uses_chat 对 passthrough 返回 false）
             json!({
                 "model": actual_model,
                 "input": [{ "role": "user", "content": test_prompt }],
@@ -579,7 +616,6 @@ impl StreamCheckService {
         }
 
         for (i, url) in urls.iter().enumerate() {
-            // 严格按照 Codex CLI 请求格式设置 headers
             let response = client
                 .post(url)
                 .header("authorization", format!("Bearer {}", auth.api_key))
@@ -601,7 +637,6 @@ impl StreamCheckService {
 
             if !response.status().is_success() {
                 let error_text = response.text().await.unwrap_or_default();
-                // 回退策略：仅当首选 URL 返回 404 时尝试下一个
                 if i == 0 && status == 404 && urls.len() > 1 {
                     continue;
                 }

@@ -43,6 +43,10 @@ pub fn codex_provider_uses_chat_completions(provider: &Provider) -> bool {
                 .and_then(|v| v.as_str())
         })
     {
+        // responses_passthrough must NOT trigger Chat conversion
+        if is_responses_passthrough(api_format) {
+            return false;
+        }
         return is_chat_wire_api(api_format);
     }
 
@@ -73,6 +77,40 @@ pub fn codex_provider_uses_chat_completions(provider: &Provider) -> bool {
         .unwrap_or(false)
 }
 
+/// Whether the api_format indicates Responses passthrough with model override.
+pub fn is_responses_passthrough(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "responses_passthrough" | "responses-passthrough"
+    )
+}
+
+/// Check whether this Codex provider uses Responses passthrough mode
+/// (meta/apiFormat only; TOML wire_api is always "responses" for passthrough).
+pub fn codex_provider_uses_responses_passthrough(provider: &Provider) -> bool {
+    if let Some(api_format) = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.api_format.as_deref())
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("api_format")
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("apiFormat")
+                .and_then(|v| v.as_str())
+        })
+    {
+        return is_responses_passthrough(api_format);
+    }
+
+    false
+}
+
 pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &str) -> bool {
     let path = endpoint
         .split_once('?')
@@ -82,6 +120,17 @@ pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &st
         path,
         "/responses" | "/v1/responses" | "/responses/compact" | "/v1/responses/compact"
     ) && codex_provider_uses_chat_completions(provider)
+}
+
+/// Read the chat compatibility mode from provider meta.
+/// Supports both `chatCompatibilityMode` (camelCase) and
+/// `chat_compatibility_mode` (snake_case) for backward compat.
+pub fn codex_chat_compatibility_mode(provider: &Provider) -> Option<String> {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.chat_compatibility_mode.as_deref())
+        .map(ToString::to_string)
 }
 
 /// Extract the real upstream model configured for a Codex provider.
@@ -333,7 +382,7 @@ fn infer_aggregator_platform_config(
     None
 }
 
-fn is_chat_wire_api(value: &str) -> bool {
+pub fn is_chat_wire_api(value: &str) -> bool {
     matches!(
         value.trim().to_ascii_lowercase().as_str(),
         "chat"
@@ -362,7 +411,7 @@ pub fn is_origin_only_url(value: &str) -> bool {
     }
 }
 
-fn extract_codex_wire_api_from_toml(config_text: &str) -> Option<String> {
+pub fn extract_codex_wire_api_from_toml(config_text: &str) -> Option<String> {
     let doc = config_text.parse::<TomlValue>().ok()?;
 
     if let Some(active_provider) = doc.get("model_provider").and_then(|v| v.as_str()) {
@@ -381,8 +430,19 @@ fn extract_codex_wire_api_from_toml(config_text: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn extract_codex_model_from_toml(config_text: &str) -> Option<String> {
+pub fn extract_codex_model_from_toml(config_text: &str) -> Option<String> {
     let doc = config_text.parse::<TomlValue>().ok()?;
+
+    if let Some(active_provider) = doc.get("model_provider").and_then(|v| v.as_str()) {
+        if let Some(model) = doc
+            .get("model_providers")
+            .and_then(|providers| providers.get(active_provider))
+            .and_then(|provider| provider.get("model"))
+            .and_then(|v| v.as_str())
+        {
+            return Some(model.to_string());
+        }
+    }
 
     doc.get("model")
         .and_then(|v| v.as_str())
@@ -785,6 +845,61 @@ wire_api = "chat"
     }
 
     #[test]
+    fn test_extract_codex_model_from_toml_top_level() {
+        let config = r#"
+model = "deepseek-v4-flash"
+base_url = "https://platform.deepseek.com/v1/chat/completions"
+"#;
+        assert_eq!(
+            extract_codex_model_from_toml(config),
+            Some("deepseek-v4-flash".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_codex_model_from_active_provider() {
+        let config = r#"
+model_provider = "chat_only"
+model = "gpt-4o"
+
+[model_providers.chat_only]
+name = "Chat Only"
+model = "deepseek-v4-flash"
+base_url = "https://platform.deepseek.com/v1/chat/completions"
+"#;
+        assert_eq!(
+            extract_codex_model_from_toml(config),
+            Some("deepseek-v4-flash".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_codex_model_from_toml_no_model() {
+        let config = r#"
+base_url = "https://api.openai.com/v1"
+"#;
+        assert_eq!(extract_codex_model_from_toml(config), None);
+    }
+
+    #[test]
+    fn test_codex_provider_uses_responses_passthrough_from_meta() {
+        let mut provider = create_provider(json!({
+            "base_url": "https://example.com/v1"
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("responses_passthrough".to_string()),
+            ..Default::default()
+        });
+
+        assert!(codex_provider_uses_responses_passthrough(&provider));
+        assert!(!codex_provider_uses_chat_completions(&provider));
+        assert!(!should_convert_codex_responses_to_chat(
+            &provider,
+            "/v1/responses"
+        ));
+    }
+
+    #[test]
     fn test_codex_provider_uses_chat_completions_from_meta_api_format_for_responses() {
         let mut provider = create_provider(json!({
             "base_url": "https://api.deepseek.com/v1"
@@ -797,6 +912,33 @@ wire_api = "chat"
         assert!(should_convert_codex_responses_to_chat(
             &provider,
             "/v1/responses"
+        ));
+    }
+
+    #[test]
+    fn test_codex_provider_uses_responses_passthrough_from_meta_with_toml_responses() {
+        // Passthrough 是 cc-switch meta 语义，TOML wire_api 为 "responses"
+        let mut provider = create_provider(json!({
+            "config": r#"
+model_provider = "passthrough"
+model = "gpt-5"
+
+[model_providers.passthrough]
+name = "Passthrough"
+base_url = "https://example.com/v1"
+wire_api = "responses"
+"#
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("responses_passthrough".to_string()),
+            ..Default::default()
+        });
+
+        assert!(codex_provider_uses_responses_passthrough(&provider));
+        assert!(!codex_provider_uses_chat_completions(&provider));
+        assert!(!should_convert_codex_responses_to_chat(
+            &provider,
+            "/responses?stream=true"
         ));
     }
 
@@ -863,6 +1005,33 @@ wire_api = "responses"
 
         assert_eq!(upstream_model.as_deref(), Some("kimi-k2"));
         assert_eq!(body.get("model").and_then(|v| v.as_str()), Some("kimi-k2"));
+    }
+
+    #[test]
+    fn test_codex_provider_toml_wire_api_passthrough_not_detected() {
+        // TOML wire_api = "responses_passthrough" 不再被检测（因为现在写入的是 "responses"）
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "passthrough"
+model = "gpt-5"
+
+[model_providers.passthrough]
+name = "Passthrough"
+base_url = "https://example.com/v1"
+wire_api = "responses_passthrough"
+"#
+        }));
+
+        // 不通过 meta 时，不检测为 passthrough
+        assert!(!codex_provider_uses_responses_passthrough(&provider));
+    }
+
+    #[test]
+    fn test_responses_passthrough_not_detected_for_other_formats() {
+        let provider = create_provider(json!({
+            "base_url": "https://example.com/v1"
+        }));
+        assert!(!codex_provider_uses_responses_passthrough(&provider));
     }
 
     #[test]

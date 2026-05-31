@@ -45,6 +45,11 @@ pub use claude::{
     normalize_anthropic_tool_thinking_history_for_provider,
     transform_claude_request_for_api_format, ClaudeAdapter,
 };
+pub use codex::codex_chat_compatibility_mode;
+pub use codex::codex_provider_uses_responses_passthrough;
+pub use codex::extract_codex_model_from_toml;
+pub use codex::extract_codex_wire_api_from_toml;
+pub use codex::is_chat_wire_api;
 pub use codex::CodexAdapter;
 pub use codex::{
     apply_codex_chat_upstream_model, codex_provider_upstream_model,
