@@ -1164,32 +1164,10 @@ impl ProxyService {
         }
 
         // Codex: 修改 config.toml 的 base_url，auth.json 的 OPENAI_API_KEY（代理会注入真实 Token）
-        if let Ok(mut live_config) = self.read_codex_live() {
-            // 1. 修改 auth.json 中的 OPENAI_API_KEY（使用占位符）
-            if let Some(auth) = live_config.get_mut("auth").and_then(|v| v.as_object_mut()) {
-                auth.insert("OPENAI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
-            }
-
-            // 2. 修改 config.toml 中的 base_url
-            let config_str = live_config
-                .get("config")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let codex_provider = self
-                .get_current_provider_for_app(&AppType::Codex)
-                .ok()
-                .flatten();
-            let updated_config = Self::apply_codex_proxy_toml_config_for_provider(
-                config_str,
-                &proxy_codex_base_url,
-                codex_provider.as_ref(),
-            );
-            live_config["config"] = json!(updated_config);
-            Self::attach_codex_model_catalog_from_provider(
-                &mut live_config,
-                codex_provider.as_ref(),
-            );
-
+        if let Ok(live_config) = self.read_codex_live() {
+            let (live_config, codex_provider) = self
+                .build_codex_takeover_live_config(live_config, &proxy_codex_base_url)
+                .await?;
             self.write_codex_live_for_provider(&live_config, codex_provider.as_ref())?;
             log::info!("Codex Live 配置已接管，代理地址: {proxy_codex_base_url}");
         }
@@ -1232,29 +1210,11 @@ impl ProxyService {
                 log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
             }
             AppType::Codex => {
-                let mut live_config = self.read_codex_live()?;
-
-                if let Some(auth) = live_config.get_mut("auth").and_then(|v| v.as_object_mut()) {
-                    auth.insert("OPENAI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
-                }
-
-                let config_str = live_config
-                    .get("config")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let codex_provider = self.require_current_provider_for_app(&AppType::Codex)?;
-                let updated_config = Self::apply_codex_proxy_toml_config_for_provider(
-                    config_str,
-                    &proxy_codex_base_url,
-                    Some(&codex_provider),
-                );
-                live_config["config"] = json!(updated_config);
-                Self::attach_codex_model_catalog_from_provider(
-                    &mut live_config,
-                    Some(&codex_provider),
-                );
-
-                self.write_codex_live_for_provider(&live_config, Some(&codex_provider))?;
+                let live_config = self.read_codex_live()?;
+                let (live_config, codex_provider) = self
+                    .build_codex_takeover_live_config(live_config, &proxy_codex_base_url)
+                    .await?;
+                self.write_codex_live_for_provider(&live_config, codex_provider.as_ref())?;
                 log::info!("Codex Live 配置已接管，代理地址: {proxy_codex_base_url}");
             }
             AppType::Gemini => {
@@ -1309,32 +1269,26 @@ impl ProxyService {
             }
             AppType::Codex => {
                 if let Ok(mut live_config) = self.read_codex_live() {
-                    if let Some(auth) = live_config.get_mut("auth").and_then(|v| v.as_object_mut())
+                    match self
+                        .build_codex_takeover_live_config(
+                            live_config.clone(),
+                            &proxy_codex_base_url,
+                        )
+                        .await
                     {
-                        auth.insert("OPENAI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                        Ok((updated, codex_provider)) => {
+                            let _ = self
+                                .write_codex_live_for_provider(&updated, codex_provider.as_ref());
+                        }
+                        Err(_) => {
+                            Self::apply_codex_takeover_fields(
+                                &mut live_config,
+                                &proxy_codex_base_url,
+                                None,
+                            );
+                            let _ = self.write_codex_live(&live_config);
+                        }
                     }
-
-                    let config_str = live_config
-                        .get("config")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    let codex_provider = self
-                        .get_current_provider_for_app(&AppType::Codex)
-                        .ok()
-                        .flatten();
-                    let updated_config = Self::apply_codex_proxy_toml_config_for_provider(
-                        config_str,
-                        &proxy_codex_base_url,
-                        codex_provider.as_ref(),
-                    );
-                    live_config["config"] = json!(updated_config);
-                    Self::attach_codex_model_catalog_from_provider(
-                        &mut live_config,
-                        codex_provider.as_ref(),
-                    );
-
-                    let _ =
-                        self.write_codex_live_for_provider(&live_config, codex_provider.as_ref());
                 }
             }
             AppType::Gemini => {
@@ -2014,6 +1968,60 @@ impl ProxyService {
         if let Some(root) = live_config.as_object_mut() {
             root.insert("modelCatalog".to_string(), model_catalog);
         }
+    }
+
+    async fn build_codex_takeover_live_config(
+        &self,
+        mut live_config: Value,
+        proxy_url: &str,
+    ) -> Result<(Value, Option<Provider>), String> {
+        let codex_provider = self.get_current_provider_for_app(&AppType::Codex)?;
+        if let Some(provider) = codex_provider.as_ref() {
+            let mut effective_settings = build_effective_settings_with_common_config(
+                self.db.as_ref(),
+                &AppType::Codex,
+                provider,
+            )
+            .map_err(|e| format!("构建 Codex 有效配置失败: {e}"))?;
+
+            Self::preserve_codex_mcp_servers_in_backup(&mut effective_settings, &live_config)?;
+            live_config = effective_settings;
+        }
+
+        Self::apply_codex_takeover_fields(&mut live_config, proxy_url, codex_provider.as_ref());
+        Ok((live_config, codex_provider))
+    }
+
+    fn apply_codex_takeover_fields(
+        live_config: &mut Value,
+        proxy_url: &str,
+        provider: Option<&Provider>,
+    ) {
+        if !live_config.is_object() {
+            *live_config = json!({});
+        }
+
+        if !live_config
+            .get("auth")
+            .map(|value| value.is_object())
+            .unwrap_or(false)
+        {
+            live_config["auth"] = json!({});
+        }
+
+        if let Some(auth) = live_config.get_mut("auth").and_then(|v| v.as_object_mut()) {
+            auth.insert("OPENAI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+            auth.insert("auth_mode".to_string(), json!("apikey"));
+        }
+
+        let config_str = live_config
+            .get("config")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let updated_config =
+            Self::apply_codex_proxy_toml_config_for_provider(config_str, proxy_url, provider);
+        live_config["config"] = json!(updated_config);
+        Self::attach_codex_model_catalog_from_provider(live_config, provider);
     }
 
     fn read_claude_live(&self) -> Result<Value, String> {
