@@ -1545,15 +1545,13 @@ function App() {
                       </AnimatePresence>
                     </div>
 
-                    {activeApp !== "pi" && (
-                      <Button
-                        onClick={() => setIsAddOpen(true)}
-                        size="icon"
-                        className={`ml-2 ${addActionButtonClass}`}
-                      >
-                        <Plus className="w-5 h-5" />
-                      </Button>
-                    )}
+                    <Button
+                      onClick={() => setIsAddOpen(true)}
+                      size="icon"
+                      className={`ml-2 ${addActionButtonClass}`}
+                    >
+                      <Plus className="w-5 h-5" />
+                    </Button>
                   </>
                 )}
               </div>
@@ -1569,14 +1567,12 @@ function App() {
         {renderContent()}
       </main>
 
-      {activeApp !== "pi" && (
-        <AddProviderDialog
-          open={isAddOpen}
-          onOpenChange={setIsAddOpen}
-          appId={activeApp}
-          onSubmit={addProvider}
-        />
-      )}
+      <AddProviderDialog
+        open={isAddOpen}
+        onOpenChange={setIsAddOpen}
+        appId={activeApp}
+        onSubmit={addProvider}
+      />
 
       <EditProviderDialog
         open={Boolean(editingProvider)}

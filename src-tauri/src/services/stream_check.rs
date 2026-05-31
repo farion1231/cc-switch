@@ -971,8 +971,7 @@ impl StreamCheckService {
         provider
             .settings_config
             .get("authHeader")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
+            .is_some_and(|v| v.as_bool().unwrap_or_else(|| v.is_string()))
     }
 
     /// 提取 OpenClaw 供应商的自定义 headers（来自 `settings_config.headers`）
@@ -1616,6 +1615,17 @@ mod tests {
             "apiKey": "k",
             "api": "openai-completions",
             "authHeader": true,
+        }));
+        assert!(StreamCheckService::additive_app_uses_auth_header(&p));
+    }
+
+    #[test]
+    fn test_additive_app_uses_auth_header_string_for_legacy_pi() {
+        let p = make_provider(serde_json::json!({
+            "baseUrl": "https://api.example.com/v1",
+            "apiKey": "k",
+            "api": "anthropic-messages",
+            "authHeader": "Authorization",
         }));
         assert!(StreamCheckService::additive_app_uses_auth_header(&p));
     }

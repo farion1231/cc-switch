@@ -72,6 +72,15 @@ fn first_model_id(provider_config: &Value) -> Option<String> {
     }
 }
 
+fn normalize_provider_config_for_write(mut provider_config: Value) -> Value {
+    if let Some(obj) = provider_config.as_object_mut() {
+        if matches!(obj.get("authHeader"), Some(Value::String(_))) {
+            obj.insert("authHeader".to_string(), Value::Bool(true));
+        }
+    }
+    provider_config
+}
+
 pub fn read_pi_models_config() -> Result<Value, AppError> {
     let path = get_pi_models_path();
     if !path.exists() {
@@ -118,6 +127,7 @@ pub fn set_provider(id: &str, provider_config: Value) -> Result<(), AppError> {
         ));
     }
 
+    let provider_config = normalize_provider_config_for_write(provider_config);
     let _guard = pi_write_lock().lock()?;
     let mut config = read_pi_models_config()?;
     ensure_providers(&mut config).insert(trimmed_id.to_string(), provider_config);
@@ -149,6 +159,7 @@ pub fn apply_switch_defaults(provider_id: &str, provider_config: &Value) -> Resu
         return Ok(());
     }
 
+    let provider_config = normalize_provider_config_for_write(provider_config.clone());
     let _guard = pi_write_lock().lock()?;
     let mut config = read_pi_models_config()?;
     ensure_providers(&mut config).insert(trimmed_id.to_string(), provider_config.clone());
@@ -160,7 +171,7 @@ pub fn apply_switch_defaults(provider_id: &str, provider_config: &Value) -> Resu
     );
     root.insert(
         "defaultModel".to_string(),
-        first_model_id(provider_config)
+        first_model_id(&provider_config)
             .map(Value::String)
             .unwrap_or(Value::Null),
     );

@@ -67,7 +67,7 @@ export const PI_DEFAULT_CONFIG = JSON.stringify(
     baseUrl: "",
     apiKey: "",
     api: "anthropic-messages",
-    authHeader: "Authorization",
+    authHeader: true,
     headers: {},
     models: [],
   },

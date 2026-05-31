@@ -645,7 +645,7 @@ export interface OpenClawProviderConfig {
   api?: string; // API 协议类型（如 "openai-completions"、"anthropic"）
   models?: OpenClawModel[]; // 可用模型列表
   headers?: Record<string, string>; // 自定义请求头（如 User-Agent）
-  authHeader?: boolean; // 供应商自定义认证开关（如 Longcat）
+  authHeader?: boolean | string; // 自定义认证头开关；Pi Agent 也兼容字符串 header 名
 }
 
 // OpenClaw agents.defaults 完整配置

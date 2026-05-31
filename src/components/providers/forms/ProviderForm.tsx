@@ -1060,11 +1060,11 @@ function ProviderFormFull({
 
     if (appId === "pi") {
       if (!openclawForm.openclawProviderKey.trim()) {
-        toast.error(t("openclaw.providerKeyRequired"));
+        toast.error(t("pi.providerKeyRequired"));
         return;
       }
       if (!keyPattern.test(openclawForm.openclawProviderKey)) {
-        toast.error(t("openclaw.providerKeyInvalid"));
+        toast.error(t("pi.providerKeyInvalid"));
         return;
       }
       if (isProviderKeyLockStateLoading) {
@@ -1079,7 +1079,7 @@ function ProviderFormFull({
         !isProviderKeyLocked &&
         additiveExistingProviderKeys.includes(openclawForm.openclawProviderKey)
       ) {
-        toast.error(t("openclaw.providerKeyDuplicate"));
+        toast.error(t("pi.providerKeyDuplicate"));
         return;
       }
     }
@@ -1545,7 +1545,7 @@ function ProviderFormFull({
     isPartner: isOpenclawPartner,
     partnerPromotionKey: openclawPartnerPromotionKey,
   } = useApiKeyLink({
-    appId: "openclaw",
+    appId: appId === "pi" ? "opencode" : "openclaw",
     category,
     selectedPresetId,
     presetEntries,
@@ -1860,7 +1860,9 @@ function ProviderFormFull({
               ) : appId === "openclaw" || appId === "pi" ? (
                 <div className="space-y-2">
                   <Label htmlFor="openclaw-key">
-                    {t("openclaw.providerKey")}
+                    {t(`${appId}.providerKey`, {
+                      defaultValue: t("openclaw.providerKey"),
+                    })}
                     <span className="text-destructive ml-1">*</span>
                   </Label>
                   <Input
@@ -1871,7 +1873,9 @@ function ProviderFormFull({
                         e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""),
                       )
                     }
-                    placeholder={t("openclaw.providerKeyPlaceholder")}
+                    placeholder={t(`${appId}.providerKeyPlaceholder`, {
+                      defaultValue: t("openclaw.providerKeyPlaceholder"),
+                    })}
                     disabled={
                       isProviderKeyLocked || isProviderKeyLockStateLoading
                     }
@@ -1893,7 +1897,9 @@ function ProviderFormFull({
                   ) &&
                     !isProviderKeyLocked && (
                       <p className="text-xs text-destructive">
-                        {t("openclaw.providerKeyDuplicate")}
+                        {t(`${appId}.providerKeyDuplicate`, {
+                          defaultValue: t("openclaw.providerKeyDuplicate"),
+                        })}
                       </p>
                     )}
                   {openclawForm.openclawProviderKey.trim() !== "" &&
@@ -1901,7 +1907,9 @@ function ProviderFormFull({
                       openclawForm.openclawProviderKey,
                     ) && (
                       <p className="text-xs text-destructive">
-                        {t("openclaw.providerKeyInvalid")}
+                        {t(`${appId}.providerKeyInvalid`, {
+                          defaultValue: t("openclaw.providerKeyInvalid"),
+                        })}
                       </p>
                     )}
                   {!(
@@ -1915,11 +1923,13 @@ function ProviderFormFull({
                       )) && (
                       <p className="text-xs text-muted-foreground">
                         {isProviderKeyLocked
-                          ? t("openclaw.providerKeyLockedHint", {
+                          ? t(`${appId}.providerKeyLockedHint`, {
                               defaultValue:
                                 "该供应商已添加到应用配置中，供应商标识不可修改",
                             })
-                          : t("openclaw.providerKeyHint")}
+                          : t(`${appId}.providerKeyHint`, {
+                              defaultValue: t("openclaw.providerKeyHint"),
+                            })}
                       </p>
                     )}
                 </div>
@@ -2191,10 +2201,13 @@ function ProviderFormFull({
               partnerPromotionKey={openclawPartnerPromotionKey}
               api={openclawForm.openclawApi}
               onApiChange={openclawForm.handleOpenclawApiChange}
+              authHeader={openclawForm.openclawAuthHeader}
+              onAuthHeaderChange={openclawForm.handleOpenclawAuthHeaderChange}
               models={openclawForm.openclawModels}
               onModelsChange={openclawForm.handleOpenclawModelsChange}
               userAgent={openclawForm.openclawUserAgent}
               onUserAgentChange={openclawForm.handleOpenclawUserAgentChange}
+              appId={appId === "pi" ? "pi" : "openclaw"}
             />
           )}
 
@@ -2327,7 +2340,7 @@ function ProviderFormFull({
   "baseUrl": "https://api.example.com/v1",
   "apiKey": "your-api-key-here",
   "api": "anthropic-messages",
-  "authHeader": "Authorization",
+  "authHeader": true,
   "headers": {},
   "models": []
 }`

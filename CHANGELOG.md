@@ -1,3 +1,4 @@
+- [2026-06-01 00:29] FEAT: 完善 Pi Agent 添加供应商入口、专属认证头配置与旧版 authHeader 兼容，并删除 kiro_cache 临时产物 (Files: src/App.tsx, src/components/providers/forms/ProviderForm.tsx, src/components/providers/forms/OpenClawFormFields.tsx, src/components/providers/forms/hooks/useOpenclawFormState.ts, src/components/providers/forms/helpers/opencodeFormUtils.ts, src/i18n/locales/zh.json, src/i18n/locales/en.json, src/i18n/locales/ja.json, src/i18n/locales/zh-TW.json, src/types.ts, src-tauri/src/pi_config.rs, src-tauri/src/services/stream_check.rs)
 # Changelog
 
 All notable changes to CC Switch will be documented in this file.

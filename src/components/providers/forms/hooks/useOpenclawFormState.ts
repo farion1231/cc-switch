@@ -26,12 +26,14 @@ export interface OpenclawFormState {
   openclawBaseUrl: string;
   openclawApiKey: string;
   openclawApi: string;
+  openclawAuthHeader: boolean;
   openclawModels: OpenClawModel[];
   openclawUserAgent: boolean;
   existingOpenclawKeys: string[];
   handleOpenclawBaseUrlChange: (baseUrl: string) => void;
   handleOpenclawApiKeyChange: (apiKey: string) => void;
   handleOpenclawApiChange: (api: string) => void;
+  handleOpenclawAuthHeaderChange: (enabled: boolean) => void;
   handleOpenclawModelsChange: (models: OpenClawModel[]) => void;
   handleOpenclawUserAgentChange: (enabled: boolean) => void;
   resetOpenclawState: (config?: OpenClawProviderConfig) => void;
@@ -100,6 +102,17 @@ export function useOpenclawFormState({
     );
   });
 
+  const [openclawAuthHeader, setOpenclawAuthHeader] = useState<boolean>(() => {
+    if (appId !== "openclaw" && appId !== "pi") return false;
+    const fallback = appId === "pi";
+    return parseOpenclawField<boolean | string>(
+      initialData,
+      appId,
+      "authHeader",
+      fallback,
+    ) !== false;
+  });
+
   const [openclawModels, setOpenclawModels] = useState<OpenClawModel[]>(() => {
     if (appId !== "openclaw" && appId !== "pi") return [];
     return parseOpenclawField<OpenClawModel[]>(initialData, appId, "models", []);
@@ -162,6 +175,20 @@ export function useOpenclawFormState({
     [updateOpenclawConfig],
   );
 
+  const handleOpenclawAuthHeaderChange = useCallback(
+    (enabled: boolean) => {
+      setOpenclawAuthHeader(enabled);
+      updateOpenclawConfig((config) => {
+        if (enabled) {
+          config.authHeader = true;
+        } else {
+          delete config.authHeader;
+        }
+      });
+    },
+    [updateOpenclawConfig],
+  );
+
   const handleOpenclawModelsChange = useCallback(
     (models: OpenClawModel[]) => {
       setOpenclawModels(models);
@@ -193,6 +220,9 @@ export function useOpenclawFormState({
     setOpenclawApi(
       config?.api || (appId === "pi" ? "anthropic-messages" : "openai-completions"),
     );
+    setOpenclawAuthHeader(
+      appId === "pi" ? config?.authHeader !== false : config?.authHeader === true,
+    );
     setOpenclawModels(config?.models || []);
     const ua = config?.headers ? "User-Agent" in config.headers : false;
     setOpenclawUserAgent(ua);
@@ -204,12 +234,14 @@ export function useOpenclawFormState({
     openclawBaseUrl,
     openclawApiKey,
     openclawApi,
+    openclawAuthHeader,
     openclawModels,
     openclawUserAgent,
     existingOpenclawKeys,
     handleOpenclawBaseUrlChange,
     handleOpenclawApiKeyChange,
     handleOpenclawApiChange,
+    handleOpenclawAuthHeaderChange,
     handleOpenclawModelsChange,
     handleOpenclawUserAgentChange,
     resetOpenclawState,
