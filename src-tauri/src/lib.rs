@@ -825,9 +825,6 @@ pub fn run() {
                     // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
                     // refresh_all_usage_in_tray 内部有 10 秒防抖。
                     TrayIconEvent::Enter { .. } | TrayIconEvent::Click { .. } => {
-                        if !crate::tray::supports_in_place_tray_submenu_text_updates() {
-                            return;
-                        }
                         let app = tray.app_handle().clone();
                         tauri::async_runtime::spawn(async move {
                             crate::tray::refresh_all_usage_in_tray(&app).await;
