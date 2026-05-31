@@ -29,6 +29,9 @@ const iconMappings = {
   huggingface: { icon: "huggingface", iconColor: "#FFD21E" },
   novita: { icon: "novita", iconColor: "#000000" },
 
+  // 第三方代理服务
+  coderplan: { icon: "coderplan", iconColor: "#CBA6F7" },
+
   // 云平台
   aws: { icon: "aws", iconColor: "#FF9900" },
   azure: { icon: "azure", iconColor: "#0078D4" },
