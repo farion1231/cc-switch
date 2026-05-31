@@ -26,8 +26,8 @@ export function useStreamCheck(appId: AppId) {
         if (result.status === "operational") {
           toast.success(
             t("streamCheck.operational", {
-              name: providerName,
-              time: result.responseTimeMs,
+              providerName: providerName,
+              responseTimeMs: result.responseTimeMs,
               defaultValue: `${providerName} 运行正常 (${result.responseTimeMs}ms)`,
             }),
             { closeButton: true },
@@ -38,29 +38,83 @@ export function useStreamCheck(appId: AppId) {
         } else if (result.status === "degraded") {
           toast.warning(
             t("streamCheck.degraded", {
-              name: providerName,
-              time: result.responseTimeMs,
+              providerName: providerName,
+              responseTimeMs: result.responseTimeMs,
               defaultValue: `${providerName} 响应较慢 (${result.responseTimeMs}ms)`,
             }),
           );
 
           // 降级状态也重置熔断器，因为至少能通信
           resetCircuitBreaker.mutate({ providerId, appType: appId });
-        } else {
+        } else if (result.errorCategory === "modelNotFound") {
+          // 专门处理"模型不存在/已下架"：指向配置入口，比通用 404 文案更有指导性
           toast.error(
-            t("streamCheck.failed", {
-              name: providerName,
-              error: result.message,
-              defaultValue: `${providerName} 检查失败: ${result.message}`,
+            t("streamCheck.modelNotFound", {
+              providerName: providerName,
+              model: result.modelUsed,
+              defaultValue: `${providerName} 测试模型 ${result.modelUsed} 不存在或已下架`,
             }),
+            {
+              description: t("streamCheck.modelNotFoundHint", {
+                defaultValue: "",
+              }),
+              duration: 10000,
+              closeButton: true,
+            },
           );
+        } else if (result.errorCategory === "quotaExceeded") {
+          toast.warning(
+            t("streamCheck.quotaExceeded", {
+              providerName: providerName,
+              defaultValue: `${providerName} Coding Plan quota has been exceeded`,
+            }),
+            {
+              description: t("streamCheck.quotaExceededHint", {
+                defaultValue: "",
+              }),
+              duration: 10000,
+              closeButton: true,
+            },
+          );
+        } else {
+          const httpStatus = result.httpStatus;
+          const hintKey = httpStatus
+            ? `streamCheck.httpHint.${httpStatus >= 500 ? "5xx" : httpStatus}`
+            : null;
+          const description =
+            (hintKey ? t(hintKey, { defaultValue: "" }) : "") || undefined;
+
+          // 401/403/400 = 检查被拒（供应商可能正常）；429/5xx = 临时问题
+          const isProbeRejection =
+            httpStatus != null &&
+            ([401, 403, 400, 429].includes(httpStatus) || httpStatus >= 500);
+
+          if (isProbeRejection) {
+            toast.warning(
+              t("streamCheck.rejected", {
+                providerName: providerName,
+                message: result.message,
+                defaultValue: `${providerName} 检查被拒: ${result.message}`,
+              }),
+              { description, duration: 8000, closeButton: true },
+            );
+          } else {
+            toast.error(
+              t("streamCheck.failed", {
+                providerName: providerName,
+                message: result.message,
+                defaultValue: `${providerName} 检查失败: ${result.message}`,
+              }),
+              { description, duration: 8000, closeButton: true },
+            );
+          }
         }
 
         return result;
       } catch (e) {
         toast.error(
           t("streamCheck.error", {
-            name: providerName,
+            providerName: providerName,
             error: String(e),
             defaultValue: `${providerName} 检查出错: ${String(e)}`,
           }),

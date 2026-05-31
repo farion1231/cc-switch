@@ -1,22 +1,33 @@
 //! HTTP代理服务器
 //!
 //! 基于Axum的HTTP服务器，处理代理请求
+//!
+//! Uses a manual hyper HTTP/1.1 accept loop with `preserve_header_case(true)` so
+//! that the original header-name casing from the CLI client is captured in a
+//! `HeaderCaseMap` extension.  This map is later forwarded to the upstream via
+//! the hyper-based HTTP client, producing wire-level header casing identical to
+//! a direct (non-proxied) CLI request.
 
 use super::{
-    failover_switch::FailoverSwitchManager, handlers, log_codes::srv as log_srv,
-    provider_router::ProviderRouter, types::*, ProxyError,
+    failover_switch::FailoverSwitchManager,
+    handlers,
+    log_codes::srv as log_srv,
+    provider_router::ProviderRouter,
+    providers::{codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore},
+    types::*,
+    ProxyError,
 };
 use crate::database::Database;
 use axum::{
     extract::DefaultBodyLimit,
-    routing::{get, post},
+    routing::{any, get, post},
     Router,
 };
+use hyper_util::rt::TokioIo;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{oneshot, RwLock};
 use tokio::task::JoinHandle;
-use tower_http::cors::{Any, CorsLayer};
 
 /// 代理服务器状态（共享）
 #[derive(Clone)]
@@ -29,6 +40,10 @@ pub struct ProxyState {
     pub current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
     /// 共享的 ProviderRouter（持有熔断器状态，跨请求保持）
     pub provider_router: Arc<ProviderRouter>,
+    /// Gemini Native shadow state，用于 thoughtSignature / tool call 回放
+    pub gemini_shadow: Arc<GeminiShadowStore>,
+    /// Codex Chat bridge history，用于恢复 previous_response_id 指向的 tool call
+    pub codex_chat_history: Arc<CodexChatHistoryStore>,
     /// AppHandle，用于发射事件和更新托盘菜单
     pub app_handle: Option<tauri::AppHandle>,
     /// 故障转移切换管理器
@@ -62,6 +77,8 @@ impl ProxyServer {
             start_time: Arc::new(RwLock::new(None)),
             current_providers: Arc::new(RwLock::new(std::collections::HashMap::new())),
             provider_router,
+            gemini_shadow: Arc::new(GeminiShadowStore::default()),
+            codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             app_handle,
             failover_manager,
         };
@@ -114,15 +131,77 @@ impl ProxyServer {
         // 记录启动时间
         *self.state.start_time.write().await = Some(std::time::Instant::now());
 
-        // 启动服务器
+        // 启动服务器 — 使用手动 hyper HTTP/1.1 accept loop
+        // 开启 preserve_header_case 以捕获客户端请求头的原始大小写
         let state = self.state.clone();
         let handle = tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    shutdown_rx.await.ok();
-                })
-                .await
-                .ok();
+            let mut shutdown_rx = shutdown_rx;
+            loop {
+                tokio::select! {
+                    result = listener.accept() => {
+                        let (stream, _remote_addr) = match result {
+                            Ok(v) => v,
+                            Err(e) => {
+                                log::error!("[{SRV}] accept 失败: {e}", SRV = log_srv::ACCEPT_ERR);
+                                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                                continue;
+                            }
+                        };
+
+                        let app = app.clone();
+                        tokio::spawn(async move {
+                            // Peek raw TCP bytes to capture original header casing
+                            // before hyper parses (and lowercases) the header names.
+                            let original_cases = {
+                                let mut peek_buf = vec![0u8; 8192];
+                                match stream.peek(&mut peek_buf).await {
+                                    Ok(n) => {
+                                        let cases = super::hyper_client::OriginalHeaderCases::from_raw_bytes(&peek_buf[..n]);
+                                        log::debug!(
+                                            "[ProxyServer] Peeked {} bytes, captured {} header casings",
+                                            n, cases.cases.len()
+                                        );
+                                        cases
+                                    }
+                                    Err(e) => {
+                                        log::debug!("[ProxyServer] peek failed (non-fatal): {e}");
+                                        super::hyper_client::OriginalHeaderCases::default()
+                                    }
+                                }
+                            };
+
+                            // service_fn 将 axum Router（tower::Service）桥接到 hyper
+                            let service = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
+                                let mut router = app.clone();
+                                let cases = original_cases.clone();
+                                async move {
+                                    // 将 hyper::body::Incoming 转为 axum::body::Body，保留 extensions
+                                    let (mut parts, body) = req.into_parts();
+
+                                    // Insert our own header case map alongside hyper's internal one
+                                    parts.extensions.insert(cases);
+
+                                    let body = axum::body::Body::new(body);
+                                    let axum_req = http::Request::from_parts(parts, body);
+                                    <Router as tower::Service<http::Request<axum::body::Body>>>::call(&mut router, axum_req).await
+                                }
+                            });
+
+                            if let Err(e) = hyper::server::conn::http1::Builder::new()
+                                .preserve_header_case(true)
+                                .serve_connection(TokioIo::new(stream), service)
+                                .await
+                            {
+                                // Connection reset / broken pipe 等在代理场景下很常见，debug 级别
+                                log::debug!("[{SRV}] connection error: {e}", SRV = log_srv::CONN_ERR);
+                            }
+                        });
+                    }
+                    _ = &mut shutdown_rx => {
+                        break;
+                    }
+                }
+            }
 
             // 服务器停止后更新状态
             state.status.write().await.running = false;
@@ -206,11 +285,6 @@ impl ProxyServer {
     }
 
     fn build_router(&self) -> Router {
-        let cors = CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any);
-
         Router::new()
             // 健康检查
             .route("/health", get(handlers::health_check))
@@ -218,6 +292,15 @@ impl ProxyServer {
             // Claude API (支持带前缀和不带前缀两种格式)
             .route("/v1/messages", post(handlers::handle_messages))
             .route("/claude/v1/messages", post(handlers::handle_messages))
+            // Claude Desktop 3P 本地 gateway（独立 provider namespace）
+            .route(
+                "/claude-desktop/v1/models",
+                get(handlers::handle_claude_desktop_models),
+            )
+            .route(
+                "/claude-desktop/v1/messages",
+                post(handlers::handle_claude_desktop_messages),
+            )
             // OpenAI Chat Completions API (Codex CLI，支持带前缀和不带前缀)
             .route("/chat/completions", post(handlers::handle_chat_completions))
             .route(
@@ -255,11 +338,17 @@ impl ProxyServer {
                 post(handlers::handle_responses_compact),
             )
             // Gemini API (支持带前缀和不带前缀)
-            .route("/v1beta/*path", post(handlers::handle_gemini))
-            .route("/gemini/v1beta/*path", post(handlers::handle_gemini))
+            //
+            // 用 `any(..)` 覆盖所有 HTTP 方法：除了 POST `:generateContent` /
+            // `:streamGenerateContent` / `:countTokens` 之外，Gemini SDK / CLI 还会发
+            // GET `/models`、GET `/models/<id>` 等只读端点。如果只挂 POST，这些 GET
+            // 请求会在路由层 404，绕过本地代理的统计、整流和故障转移。
+            .route("/v1beta/*path", any(handlers::handle_gemini))
+            .route("/gemini/v1beta/*path", any(handlers::handle_gemini))
+            // Gemini 的 GA 版本也叫 /v1，给原 SDK 留一条出口
+            .route("/gemini/v1/*path", any(handlers::handle_gemini))
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
             .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
-            .layer(cors)
             .with_state(self.state.clone())
     }
 
@@ -276,6 +365,17 @@ impl ProxyServer {
         config: super::circuit_breaker::CircuitBreakerConfig,
     ) {
         self.state.provider_router.update_all_configs(config).await;
+    }
+
+    pub async fn update_circuit_breaker_config_for_app(
+        &self,
+        app_type: &str,
+        config: super::circuit_breaker::CircuitBreakerConfig,
+    ) {
+        self.state
+            .provider_router
+            .update_app_configs(app_type, config)
+            .await;
     }
 
     /// 重置指定 Provider 的熔断器

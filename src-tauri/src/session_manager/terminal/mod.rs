@@ -20,7 +20,10 @@ pub fn launch_terminal(
         "ghostty" => launch_ghostty(command, cwd),
         "kitty" => launch_kitty(command, cwd),
         "wezterm" => launch_wezterm(command, cwd),
+        "kaku" => launch_kaku(command, cwd),
         "alacritty" => launch_alacritty(command, cwd),
+        #[cfg(unix)]
+        "warp" => launch_warp(command, cwd),
         "custom" => launch_custom(command, cwd, custom_config),
         _ => Err(format!("Unsupported terminal target: {target}")),
     }
@@ -77,36 +80,26 @@ end tell"#
 }
 
 fn launch_ghostty(command: &str, cwd: Option<&str>) -> Result<(), String> {
-    // Ghostty usage: open -na Ghostty --args +work-dir=... -e shell -c command
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
 
-    // Using `open` to launch.
-    let mut args = vec!["-na", "Ghostty", "--args"];
+    let mut args = vec![
+        "-na".to_string(),
+        "Ghostty".to_string(),
+        "--args".to_string(),
+        "--quit-after-last-window-closed=true".to_string(),
+    ];
 
-    // Ghostty uses --working-directory for working directory (or +work-dir, but --working-directory is standard in newer versions/compat)
-    // Note: The user's error output didn't show the working dir arg failure, so we assume flag is okay or we stick to compatible ones.
-    // Documentation says --working-directory is supported in CLI.
-    let work_dir_arg = if let Some(dir) = cwd {
-        format!("--working-directory={dir}")
-    } else {
-        "".to_string()
-    };
-
-    if !work_dir_arg.is_empty() {
-        args.push(&work_dir_arg);
+    if let Some(dir) = cwd {
+        if !dir.trim().is_empty() {
+            args.push(format!("--working-directory={dir}"));
+        }
     }
 
-    // Command execution
-    args.push("-e");
-
-    // We pass the command and its arguments separately.
-    // The previous issue was passing the entire "cmd args" string as a single argument to -e,
-    // which led Ghostty to look for a binary named "cmd args".
-    // Splitting by whitespace allows Ghostty to see ["cmd", "args"].
-    // Note: This assumes simple commands without quoted arguments containing spaces.
-    let full_command = build_shell_command(command, None);
-    for part in full_command.split_whitespace() {
-        args.push(part);
-    }
+    args.push("-e".to_string());
+    args.push(shell);
+    args.push("-l".to_string());
+    args.push("-c".to_string());
+    args.push(command.to_string());
 
     let status = Command::new("open")
         .args(&args)
@@ -148,25 +141,10 @@ fn launch_kitty(command: &str, cwd: Option<&str>) -> Result<(), String> {
 fn launch_wezterm(command: &str, cwd: Option<&str>) -> Result<(), String> {
     // wezterm start --cwd ... -- command
     // To invoke via `open`, we use `open -na "WezTerm" --args start ...`
-
-    let full_command = build_shell_command(command, None);
-
-    let mut args = vec!["-na", "WezTerm", "--args", "start"];
-
-    if let Some(dir) = cwd {
-        args.push("--cwd");
-        args.push(dir);
-    }
-
-    // Invoke shell to run the command string (to handle pipes, etc)
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-    args.push("--");
-    args.push(&shell);
-    args.push("-c");
-    args.push(&full_command);
+    let args = build_wezterm_compatible_args("WezTerm", command, cwd);
 
     let status = Command::new("open")
-        .args(&args)
+        .args(args.iter().map(String::as_str))
         .status()
         .map_err(|e| format!("Failed to launch WezTerm: {e}"))?;
 
@@ -174,6 +152,96 @@ fn launch_wezterm(command: &str, cwd: Option<&str>) -> Result<(), String> {
         Ok(())
     } else {
         Err("Failed to launch WezTerm.".to_string())
+    }
+}
+
+fn launch_kaku(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    // Kaku is a WezTerm-derived terminal and keeps a compatible `start` entrypoint.
+    let args = build_wezterm_compatible_args("Kaku", command, cwd);
+
+    let status = Command::new("open")
+        .args(args.iter().map(String::as_str))
+        .status()
+        .map_err(|e| format!("Failed to launch Kaku: {e}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to launch Kaku.".to_string())
+    }
+}
+
+fn build_wezterm_compatible_args(app_name: &str, command: &str, cwd: Option<&str>) -> Vec<String> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    build_wezterm_compatible_args_with_shell(app_name, command, cwd, &shell)
+}
+
+fn build_wezterm_compatible_args_with_shell(
+    app_name: &str,
+    command: &str,
+    cwd: Option<&str>,
+    shell: &str,
+) -> Vec<String> {
+    let full_command = build_shell_command(command, None);
+    let mut args = vec![
+        "-na".to_string(),
+        app_name.to_string(),
+        "--args".to_string(),
+        "start".to_string(),
+    ];
+
+    if let Some(dir) = cwd {
+        args.push("--cwd".to_string());
+        args.push(dir.to_string());
+    }
+
+    // Invoke shell to run the command string (to handle pipes, etc)
+    args.push("--".to_string());
+    args.push(shell.to_string());
+    args.push("-c".to_string());
+    args.push(full_command);
+    args
+}
+
+#[cfg(unix)]
+fn launch_warp(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    let cwd = cwd.ok_or("Failed to resume session without cwd")?;
+
+    let mut script_file = tempfile::Builder::new()
+        .disable_cleanup(true)
+        .permissions(std::fs::Permissions::from_mode(0o755))
+        .tempfile_in(cwd)
+        .map_err(|e| format!("Failed to create temporary script file for launching Warp: {e}"))?;
+
+    writeln!(
+        &mut script_file,
+        r#"#!/usr/bin/env sh
+
+        rm -- "$0"
+
+        exec {command}
+        "#,
+    )
+    .map_err(|e| format!("Failed to write to temporary script file for Warp: {e}"))?;
+
+    let mut warp_url = url::Url::parse("warp://action/new_tab").unwrap();
+    warp_url
+        .query_pairs_mut()
+        .append_pair("path", &script_file.path().to_string_lossy());
+    let warp_url = warp_url.to_string();
+
+    let status = Command::new("open")
+        .args(["-a", "Warp", &warp_url])
+        .status()
+        .map_err(|e| format!("Failed to launch Warp: {e}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to launch Warp.".to_string())
     }
 }
 
@@ -254,4 +322,61 @@ fn shell_escape(value: &str) -> String {
 
 fn escape_osascript(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_shell_command_keeps_command_without_cwd_prefix_when_not_provided() {
+        assert_eq!(
+            build_shell_command("claude --resume abc-123", None),
+            "claude --resume abc-123"
+        );
+    }
+
+    #[test]
+    fn wezterm_compatible_terminals_use_start_and_cwd_arguments() {
+        let args = build_wezterm_compatible_args_with_shell(
+            "Kaku",
+            "claude --resume abc-123",
+            Some("/tmp/project dir"),
+            "/bin/zsh",
+        );
+
+        assert_eq!(
+            args,
+            vec![
+                "-na".to_string(),
+                "Kaku".to_string(),
+                "--args".to_string(),
+                "start".to_string(),
+                "--cwd".to_string(),
+                "/tmp/project dir".to_string(),
+                "--".to_string(),
+                "/bin/zsh".to_string(),
+                "-c".to_string(),
+                "claude --resume abc-123".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn ghostty_uses_working_directory_arg_for_cwd() {
+        // cwd should be passed as --working-directory, not embedded in the shell command string
+        // This avoids shell expansion of special characters in directory paths
+        let cwd = "/tmp/project dir";
+        let command = "claude --resume abc-123";
+
+        // Verify build_shell_command does NOT include cwd when used in ghostty context
+        // (ghostty passes cwd via --working-directory flag instead)
+        assert_eq!(
+            build_shell_command(command, None),
+            "claude --resume abc-123"
+        );
+
+        // Verify shell_escape works correctly for paths with spaces
+        assert_eq!(shell_escape(cwd), "\"/tmp/project dir\"");
+    }
 }

@@ -17,19 +17,25 @@ export interface AppConfig {
 
 export const APP_IDS: AppId[] = [
   "claude",
+  "claude-desktop",
   "codex",
   "gemini",
   "opencode",
   "openclaw",
+  "hermes",
 ];
 
-/** App IDs shown in MCP & Skills panels (excludes OpenClaw) */
-export const MCP_SKILLS_APP_IDS: AppId[] = [
+/** App IDs shown in Skills panels (excludes OpenClaw — it doesn't support Skills) */
+export const SKILLS_APP_IDS: AppId[] = [
   "claude",
   "codex",
   "gemini",
   "opencode",
+  "hermes",
 ];
+
+/** App IDs shown in MCP panels (excludes OpenClaw) */
+export const MCP_APP_IDS: AppId[] = [...SKILLS_APP_IDS];
 
 export const APP_ICON_MAP: Record<AppId, AppConfig> = {
   claude: {
@@ -39,6 +45,14 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-orange-500/10 ring-1 ring-orange-500/20 hover:bg-orange-500/20 text-orange-600 dark:text-orange-400",
     badgeClass:
       "bg-orange-500/10 text-orange-700 dark:text-orange-300 hover:bg-orange-500/20 border-0 gap-1.5",
+  },
+  "claude-desktop": {
+    label: "Claude Desktop",
+    icon: <ClaudeIcon size={14} />,
+    activeClass:
+      "bg-amber-500/10 ring-1 ring-amber-500/20 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300",
+    badgeClass:
+      "bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 border-0 gap-1.5",
   },
   codex: {
     label: "Codex",
@@ -78,5 +92,20 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-rose-500/10 ring-1 ring-rose-500/20 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400",
     badgeClass:
       "bg-rose-500/10 text-rose-700 dark:text-rose-300 hover:bg-rose-500/20 border-0 gap-1.5",
+  },
+  hermes: {
+    label: "Hermes",
+    icon: (
+      <ProviderIcon
+        icon="hermes"
+        name="Hermes"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-violet-500/10 ring-1 ring-violet-500/20 hover:bg-violet-500/20 text-violet-600 dark:text-violet-400",
+    badgeClass:
+      "bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 border-0 gap-1.5",
   },
 };

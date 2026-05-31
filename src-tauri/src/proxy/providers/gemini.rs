@@ -9,7 +9,6 @@
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
-use reqwest::RequestBuilder;
 
 /// Gemini 适配器
 pub struct GeminiAdapter;
@@ -71,6 +70,11 @@ impl GeminiAdapter {
 
     /// 解析 OAuth 凭证
     pub fn parse_oauth_credentials(&self, key: &str) -> Option<OAuthCredentials> {
+        // 防御性 trim:前端在 input 事件中会 trim,但 JSON 编辑器 / deeplink
+        // 导入 / live 回填等路径会绕过。带前导换行的 oauth_creds.json 粘贴
+        // 是常见场景,此处统一兜底。
+        let key = key.trim();
+
         // 直接是 access_token
         if key.starts_with("ya29.") {
             return Some(OAuthCredentials {
@@ -121,7 +125,12 @@ impl GeminiAdapter {
     fn extract_key_raw(&self, provider: &Provider) -> Option<String> {
         if let Some(env) = provider.settings_config.get("env") {
             // 使用 GEMINI_API_KEY
-            if let Some(key) = env.get("GEMINI_API_KEY").and_then(|v| v.as_str()) {
+            if let Some(key) = env
+                .get("GEMINI_API_KEY")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
                 return Some(key.to_string());
             }
         }
@@ -132,6 +141,8 @@ impl GeminiAdapter {
             .get("apiKey")
             .or_else(|| provider.settings_config.get("api_key"))
             .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
         {
             return Some(key.to_string());
         }
@@ -217,18 +228,31 @@ impl ProviderAdapter for GeminiAdapter {
         url
     }
 
-    fn add_auth_headers(&self, request: RequestBuilder, auth: &AuthInfo) -> RequestBuilder {
-        match auth.strategy {
-            // OAuth Bearer 认证
+    fn get_auth_headers(
+        &self,
+        auth: &AuthInfo,
+    ) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, ProxyError> {
+        use super::adapter::auth_header_value as hv;
+        use http::{HeaderName, HeaderValue};
+        Ok(match auth.strategy {
             AuthStrategy::GoogleOAuth => {
                 let token = auth.access_token.as_ref().unwrap_or(&auth.api_key);
-                request
-                    .header("Authorization", format!("Bearer {token}"))
-                    .header("x-goog-api-client", "GeminiCLI/1.0")
+                vec![
+                    (
+                        HeaderName::from_static("authorization"),
+                        hv(&format!("Bearer {token}"))?,
+                    ),
+                    (
+                        HeaderName::from_static("x-goog-api-client"),
+                        HeaderValue::from_static("GeminiCLI/1.0"),
+                    ),
+                ]
             }
-            // API Key 认证
-            _ => request.header("x-goog-api-key", &auth.api_key),
-        }
+            _ => vec![(
+                HeaderName::from_static("x-goog-api-key"),
+                hv(&auth.api_key)?,
+            )],
+        })
     }
 }
 

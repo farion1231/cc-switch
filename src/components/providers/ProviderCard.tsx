@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { GripVertical, ChevronDown, ChevronUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type {
@@ -11,8 +11,19 @@ import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import UsageFooter from "@/components/UsageFooter";
+import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
+import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
+import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
+import { PROVIDER_TYPES } from "@/config/constants";
+import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
+import {
+  extractCodexBaseUrl,
+  extractCodexExperimentalBearerToken,
+  extractCodexWireApi,
+  isCodexChatWireApi,
+} from "@/utils/providerConfigUtils";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 
@@ -54,6 +65,41 @@ interface ProviderCardProps {
   onSetAsDefault?: () => void;
 }
 
+/** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
+function isOfficialProvider(provider: Provider, appId: AppId): boolean {
+  if (provider.category === "official") {
+    return true;
+  }
+
+  const config = provider.settingsConfig as Record<string, any>;
+  if (appId === "claude") {
+    const baseUrl = config?.env?.ANTHROPIC_BASE_URL;
+    return !baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === "");
+  }
+  if (appId === "codex") {
+    // 无 OPENAI_API_KEY → 使用 Codex CLI 内置 OAuth（官方）
+    const apiKey = config?.auth?.OPENAI_API_KEY;
+    const bearerToken =
+      typeof config?.config === "string"
+        ? extractCodexExperimentalBearerToken(config.config)
+        : undefined;
+    return (
+      !bearerToken &&
+      (!apiKey || (typeof apiKey === "string" && apiKey.trim() === ""))
+    );
+  }
+  if (appId === "gemini") {
+    // 无 GEMINI_API_KEY 且无 GOOGLE_GEMINI_BASE_URL → Google OAuth 官方模式
+    const apiKey = config?.env?.GEMINI_API_KEY;
+    const baseUrl = config?.env?.GOOGLE_GEMINI_BASE_URL;
+    return (
+      (!apiKey || (typeof apiKey === "string" && apiKey.trim() === "")) &&
+      (!baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === ""))
+    );
+  }
+  return false;
+}
+
 const extractApiUrl = (provider: Provider, fallbackText: string) => {
   if (provider.notes?.trim()) {
     return provider.notes.trim();
@@ -76,9 +122,9 @@ const extractApiUrl = (provider: Provider, fallbackText: string) => {
     const baseUrl = (config as Record<string, any>)?.config;
 
     if (typeof baseUrl === "string" && baseUrl.includes("base_url")) {
-      const match = baseUrl.match(/base_url\s*=\s*['"]([^'"]+)['"]/);
-      if (match?.[1]) {
-        return match[1];
+      const extractedBaseUrl = extractCodexBaseUrl(baseUrl);
+      if (extractedBaseUrl) {
+        return extractedBaseUrl;
       }
     }
   }
@@ -122,6 +168,7 @@ export function ProviderCard({
   // OMO and OMO Slim share the same card behavior
   const isAnyOmo = isOmo || isOmoSlim;
   const handleDisableAnyOmo = isOmoSlim ? onDisableOmoSlim : onDisableOmo;
+  const isAdditiveMode = appId === "opencode" && !isAnyOmo;
 
   const { data: health } = useProviderHealth(provider.id, appId);
 
@@ -144,11 +191,41 @@ export function ProviderCard({
   }, [provider.notes, displayUrl, fallbackUrlText]);
 
   const usageEnabled = provider.meta?.usage_script?.enabled ?? false;
+  const isOfficial = isOfficialProvider(provider, appId);
+  const isOfficialBlockedByProxy =
+    isProxyTakeover && (provider.category === "official" || isOfficial);
+  const isCopilot =
+    provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
+    provider.meta?.usage_script?.templateType === "github_copilot";
+  // Hermes v12+ overlay entries live under the `providers:` dict and are
+  // read-only here — writes have to go through Hermes Web UI.
+  const isHermesReadOnly =
+    appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
+  const isCodexOauth =
+    provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
+  const codexNeedsRouting = useMemo(() => {
+    if (appId !== "codex" || provider.category === "official") return false;
+    if (provider.meta?.apiFormat === "openai_chat") return true;
+    const config = (provider.settingsConfig as Record<string, any>)?.config;
+    return (
+      typeof config === "string" &&
+      isCodexChatWireApi(extractCodexWireApi(config))
+    );
+  }, [
+    appId,
+    provider.category,
+    provider.meta?.apiFormat,
+    (provider.settingsConfig as Record<string, any>)?.config,
+  ]);
+  const isClaudeThirdParty =
+    appId === "claude" && provider.category === "third_party";
 
   // 获取用量数据以判断是否有多套餐
-  // 累加模式应用（OpenCode/OpenClaw）：使用 isInConfig 代替 isCurrent
+  // 累加模式应用（OpenCode/OpenClaw/Hermes）：使用 isInConfig 代替 isCurrent
   const shouldAutoQuery =
-    appId === "opencode" || appId === "openclaw" ? isInConfig : isCurrent;
+    appId === "opencode" || appId === "openclaw" || appId === "hermes"
+      ? isInConfig
+      : isCurrent;
   const autoQueryInterval = shouldAutoQuery
     ? provider.meta?.usage_script?.autoQueryInterval || 0
     : 0;
@@ -158,31 +235,18 @@ export function ProviderCard({
     autoQueryInterval,
   });
 
+  const isTokenPlan =
+    provider.meta?.usage_script?.templateType === "token_plan";
   const hasMultiplePlans =
-    usage?.success && usage.data && usage.data.length > 1;
+    usage?.success && usage.data && usage.data.length > 1 && !isTokenPlan;
 
   const [isExpanded, setIsExpanded] = useState(false);
-
-  const actionsRef = useRef<HTMLDivElement>(null);
-  const [actionsWidth, setActionsWidth] = useState(0);
 
   useEffect(() => {
     if (hasMultiplePlans) {
       setIsExpanded(true);
     }
   }, [hasMultiplePlans]);
-
-  useEffect(() => {
-    if (actionsRef.current) {
-      const updateWidth = () => {
-        const width = actionsRef.current?.offsetWidth || 0;
-        setActionsWidth(width);
-      };
-      updateWidth();
-      window.addEventListener("resize", updateWidth);
-      return () => window.removeEventListener("resize", updateWidth);
-    }
-  }, [onTest, onOpenTerminal]); // 按钮数量可能变化时重新计算
 
   const handleOpenWebsite = () => {
     if (!isClickableUrl) {
@@ -193,21 +257,27 @@ export function ProviderCard({
 
   // 判断是否是"当前使用中"的供应商
   // - OMO/OMO Slim 供应商：使用 isCurrent
-  // - 累加模式应用（OpenCode 非 OMO / OpenClaw）：不存在"当前"概念，始终返回 false
+  // - OpenClaw：使用默认模型归属的 provider 作为当前项（蓝色边框）
+  // - OpenCode（非 OMO）：不存在"当前"概念，返回 false
   // - 故障转移模式：代理实际使用的供应商（activeProviderId）
   // - 普通模式：isCurrent
   const isActiveProvider = isAnyOmo
     ? isCurrent
-    : appId === "opencode" || appId === "openclaw"
-      ? false
-      : isAutoFailoverEnabled
-        ? activeProviderId === provider.id
-        : isCurrent;
+    : appId === "openclaw"
+      ? Boolean(isDefaultModel)
+      : appId === "opencode"
+        ? false
+        : isAutoFailoverEnabled
+          ? activeProviderId === provider.id
+          : isCurrent;
 
   const shouldUseGreen = !isAnyOmo && isProxyTakeover && isActiveProvider;
+  const hasPersistentConfigHighlight = isAdditiveMode && isInConfig;
   const shouldUseBlue =
     (isAnyOmo && isActiveProvider) ||
-    (!isAnyOmo && !isProxyTakeover && isActiveProvider);
+    (!isAnyOmo &&
+      !isProxyTakeover &&
+      (isActiveProvider || hasPersistentConfigHighlight));
 
   return (
     <div
@@ -220,7 +290,8 @@ export function ProviderCard({
         shouldUseGreen &&
           "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
         shouldUseBlue && "border-blue-500/60 shadow-sm shadow-blue-500/10",
-        !isActiveProvider && "hover:shadow-sm",
+        !(isActiveProvider || hasPersistentConfigHighlight) &&
+          "hover:shadow-sm",
         dragHandleProps?.isDragging &&
           "cursor-grabbing border-primary shadow-lg scale-105 z-10",
       )}
@@ -230,8 +301,10 @@ export function ProviderCard({
           "absolute inset-0 bg-gradient-to-r to-transparent transition-opacity duration-500 pointer-events-none",
           shouldUseGreen && "from-emerald-500/10",
           shouldUseBlue && "from-blue-500/10",
-          !isActiveProvider && "from-primary/10",
-          isActiveProvider ? "opacity-100" : "opacity-0",
+          !shouldUseGreen && !shouldUseBlue && "from-primary/10",
+          isActiveProvider || hasPersistentConfigHighlight
+            ? "opacity-100"
+            : "opacity-0",
         )}
       />
       <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -277,9 +350,55 @@ export function ProviderCard({
                 </span>
               )}
 
+              {appId === "claude-desktop" &&
+                provider.category !== "official" &&
+                provider.meta?.claudeDesktopMode === "proxy" && (
+                  <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                    {t("claudeDesktop.modeProxy", {
+                      defaultValue: "需要路由",
+                    })}
+                  </span>
+                )}
+
+              {appId === "claude" &&
+                provider.category !== "official" &&
+                provider.meta?.apiFormat &&
+                provider.meta.apiFormat !== "anthropic" && (
+                  <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                    {t("claudeCode.needsRouting", {
+                      defaultValue: "需要路由",
+                    })}
+                  </span>
+                )}
+
+              {codexNeedsRouting && (
+                <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                  {t("codex.needsRouting", {
+                    defaultValue: "需要路由",
+                  })}
+                </span>
+              )}
+
+              {appId === "claude" && provider.category === "official" && (
+                <span className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200">
+                  {t("claudeCode.noRoutingSupport", {
+                    defaultValue: "不支持路由",
+                  })}
+                </span>
+              )}
+
+              {appId === "codex" && provider.category === "official" && (
+                <span className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200">
+                  {t("codex.noRoutingSupport", {
+                    defaultValue: "不支持路由",
+                  })}
+                </span>
+              )}
+
               {isProxyRunning && isInFailoverQueue && health && (
                 <ProviderHealthBadge
                   consecutiveFailures={health.consecutive_failures}
+                  isHealthy={health.is_healthy}
                 />
               )}
 
@@ -300,6 +419,19 @@ export function ProviderCard({
                     ⭐
                   </span>
                 )}
+
+              {isHermesReadOnly && (
+                <span
+                  className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200"
+                  title={t("provider.managedByHermesHint", {
+                    defaultValue: "由 Hermes 管理，请在 Hermes Web UI 中编辑",
+                  })}
+                >
+                  {t("provider.managedByHermes", {
+                    defaultValue: "Hermes Managed",
+                  })}
+                </span>
+              )}
             </div>
 
             {displayUrl && (
@@ -321,17 +453,28 @@ export function ProviderCard({
           </div>
         </div>
 
-        <div
-          className="relative flex items-center ml-auto min-w-0 gap-3"
-          style={
-            {
-              "--actions-width": `${actionsWidth || 320}px`,
-            } as React.CSSProperties
-          }
-        >
+        <div className="flex items-center ml-auto min-w-0 gap-3">
           <div className="ml-auto">
-            <div className="flex items-center gap-1 transition-transform duration-200 group-hover:-translate-x-[var(--actions-width)] group-focus-within:-translate-x-[var(--actions-width)]">
-              {hasMultiplePlans ? (
+            <div className="flex items-center gap-1">
+              {isCopilot ? (
+                <CopilotQuotaFooter
+                  meta={provider.meta}
+                  inline={true}
+                  isCurrent={isCurrent}
+                />
+              ) : isCodexOauth ? (
+                <CodexOauthQuotaFooter
+                  meta={provider.meta}
+                  inline={true}
+                  isCurrent={isCurrent}
+                />
+              ) : isOfficial ? (
+                <SubscriptionQuotaFooter
+                  appId={appId}
+                  inline={true}
+                  isCurrent={isCurrent}
+                />
+              ) : hasMultiplePlans ? (
                 <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
                   <span className="font-medium">
                     {t("usage.multiplePlans", {
@@ -374,22 +517,33 @@ export function ProviderCard({
             </div>
           </div>
 
-          <div
-            ref={actionsRef}
-            className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1.5 pl-3 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-all duration-200 translate-x-2 group-hover:translate-x-0 group-focus-within:translate-x-0"
-          >
+          <div className="flex items-center gap-1.5 flex-shrink-0 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-opacity duration-200">
             <ProviderActions
               appId={appId}
               isCurrent={isCurrent}
               isInConfig={isInConfig}
               isTesting={isTesting}
               isProxyTakeover={isProxyTakeover}
+              isOfficialBlockedByProxy={isOfficialBlockedByProxy}
+              isReadOnly={isHermesReadOnly}
               isOmo={isAnyOmo}
               onSwitch={() => onSwitch(provider)}
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}
-              onTest={onTest ? () => onTest(provider) : undefined}
-              onConfigureUsage={() => onConfigureUsage(provider)}
+              onTest={
+                onTest &&
+                !isOfficial &&
+                !isCopilot &&
+                !isCodexOauth &&
+                !isClaudeThirdParty
+                  ? () => onTest(provider)
+                  : undefined
+              }
+              onConfigureUsage={
+                isOfficial || isCopilot || isCodexOauth
+                  ? undefined
+                  : () => onConfigureUsage(provider)
+              }
               onDelete={() => onDelete(provider)}
               onRemoveFromConfig={
                 onRemoveFromConfig

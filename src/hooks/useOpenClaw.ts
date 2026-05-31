@@ -18,6 +18,7 @@ export const openclawKeys = {
   env: ["openclaw", "env"] as const,
   tools: ["openclaw", "tools"] as const,
   agentsDefaults: ["openclaw", "agentsDefaults"] as const,
+  health: ["openclaw", "health"] as const,
 };
 
 // ============================================================
@@ -81,6 +82,15 @@ export function useOpenClawAgentsDefaults() {
   });
 }
 
+export function useOpenClawHealth(enabled: boolean) {
+  return useQuery({
+    queryKey: openclawKeys.health,
+    queryFn: () => openclawApi.scanHealth(),
+    staleTime: 30_000,
+    enabled,
+  });
+}
+
 // ============================================================
 // Mutation hooks
 // ============================================================
@@ -95,6 +105,7 @@ export function useSaveOpenClawEnv() {
     mutationFn: (env: OpenClawEnvConfig) => openclawApi.setEnv(env),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: openclawKeys.env });
+      queryClient.invalidateQueries({ queryKey: openclawKeys.health });
     },
   });
 }
@@ -109,6 +120,7 @@ export function useSaveOpenClawTools() {
     mutationFn: (tools: OpenClawToolsConfig) => openclawApi.setTools(tools),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: openclawKeys.tools });
+      queryClient.invalidateQueries({ queryKey: openclawKeys.health });
     },
   });
 }
@@ -126,6 +138,7 @@ export function useSaveOpenClawAgentsDefaults() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: openclawKeys.agentsDefaults });
       queryClient.invalidateQueries({ queryKey: openclawKeys.defaultModel });
+      queryClient.invalidateQueries({ queryKey: openclawKeys.health });
     },
   });
 }

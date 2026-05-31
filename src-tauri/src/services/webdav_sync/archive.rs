@@ -350,8 +350,8 @@ fn copy_entry_with_total_limit<R: Read, W: Write>(
             let max_mb = max_total_bytes / 1024 / 1024;
             return Err(localized(
                 "webdav.sync.skills_zip_too_large",
-                format!("skills.zip 解压后体积超过上限（{} MB）", max_mb),
-                format!("skills.zip extracted size exceeds limit ({} MB)", max_mb),
+                format!("skills.zip 解压后体积超过上限（{max_mb} MB）"),
+                format!("skills.zip extracted size exceeds limit ({max_mb} MB)"),
             ));
         }
 

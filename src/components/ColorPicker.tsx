@@ -2,6 +2,7 @@ import React from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "react-i18next";
 
 interface ColorPickerProps {
   value?: string;
@@ -28,12 +29,14 @@ const DEFAULT_PRESETS = [
 export const ColorPicker: React.FC<ColorPickerProps> = ({
   value = "#4285F4",
   onValueChange,
-  label = "图标颜色",
+  label,
   presets = DEFAULT_PRESETS,
 }) => {
+  const { t } = useTranslation();
+  const displayLabel = label ?? t("providerIcon.color", "图标颜色");
   return (
     <div className="space-y-3">
-      <Label>{label}</Label>
+      <Label>{displayLabel}</Label>
 
       {/* 颜色预设 */}
       <div className="grid grid-cols-6 gap-2">

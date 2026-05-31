@@ -3,7 +3,7 @@ use crate::error::AppError;
 use crate::provider::{Provider, ProviderMeta};
 use indexmap::IndexMap;
 use rusqlite::params;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 type OmoProviderRow = (
     String,
@@ -500,5 +500,287 @@ impl Database {
             icon_color: None,
             in_failover_queue: false,
         }))
+    }
+
+    /// 判断 providers 表是否为空（全 app_type 一起算）。
+    ///
+    /// 用于区分"全新安装"和"升级用户"：在启动流程 import/seed 之前调用。
+    /// 使用 `EXISTS` 短路查询，比 `COUNT(*)` 在将来表变大时更高效。
+    pub fn is_providers_empty(&self) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        let exists: bool = conn
+            .query_row("SELECT EXISTS(SELECT 1 FROM providers)", [], |row| {
+                row.get(0)
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(!exists)
+    }
+
+    /// 仅获取指定 app 下所有 provider 的 id 集合。
+    ///
+    /// 比 `get_all_providers` 轻量得多：只读 id 列、无 endpoint 子查询。
+    /// 用于只需要做存在性检查的场景（如 additive 模式的 live 同步去重）。
+    pub fn get_provider_ids(&self, app_type: &str) -> Result<HashSet<String>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let mut stmt = conn
+            .prepare("SELECT id FROM providers WHERE app_type = ?1")
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![app_type], |row| row.get::<_, String>(0))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let mut ids = HashSet::new();
+        for row in rows {
+            ids.insert(row.map_err(|e| AppError::Database(e.to_string()))?);
+        }
+        Ok(ids)
+    }
+
+    /// 判断指定 app 下是否已存在任意 provider。
+    ///
+    /// 启动阶段的 live import 需要使用这个更严格的判断：
+    /// 只要该 app 已经有任何 provider（包括官方 seed），就不应再自动导入 `default`。
+    pub fn has_any_provider_for_app(&self, app_type: &str) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM providers WHERE app_type = ?1)",
+                params![app_type],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(exists)
+    }
+
+    /// 判断指定 app 下是否存在非官方种子的供应商。
+    ///
+    /// 比 `get_all_providers` 轻量得多：只读 id 列、无 endpoint 子查询、首条命中即返回。
+    /// 用于 `import_default_config` 决定是否跳过 live 导入。
+    pub fn has_non_official_seed_provider(&self, app_type: &str) -> Result<bool, AppError> {
+        use crate::database::dao::providers_seed::is_official_seed_id;
+        let conn = lock_conn!(self.conn);
+        let mut stmt = conn
+            .prepare("SELECT id FROM providers WHERE app_type = ?1")
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let mut rows = stmt
+            .query(params![app_type])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        while let Some(row) = rows.next().map_err(|e| AppError::Database(e.to_string()))? {
+            let id: String = row.get(0).map_err(|e| AppError::Database(e.to_string()))?;
+            if !is_official_seed_id(&id) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// 计算指定 app 下一个可用的 sort_index（追加到末尾）。
+    fn next_sort_index_for_app(&self, app_type: &str) -> Result<usize, AppError> {
+        let conn = lock_conn!(self.conn);
+        let max: Option<i64> = conn
+            .query_row(
+                "SELECT MAX(sort_index) FROM providers WHERE app_type = ?1",
+                params![app_type],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(max.map(|v| (v + 1) as usize).unwrap_or(0))
+    }
+
+    /// 启动时调用：补齐缺失的官方预设供应商（Claude / Codex / Gemini）。
+    ///
+    /// 使用 settings flag `official_providers_seeded` 保证每个数据库只执行一次：
+    /// - 全新用户：seed 三条官方预设
+    /// - 老用户升级：同样会触发一次（flag 不存在），追加到末尾，不影响已有排序
+    /// - 用户删除 seed 后：不再重建（flag 已为 true），尊重用户意图
+    ///
+    /// 与 `Database::save_provider` 的 UPSERT 语义配合，即使被意外重复调用
+    /// 也不会覆盖用户当前激活的供应商（is_current 字段会被保留）。
+    pub fn init_default_official_providers(&self) -> Result<usize, AppError> {
+        use crate::database::dao::providers_seed::OFFICIAL_SEEDS;
+
+        if self
+            .get_bool_flag("official_providers_seeded")
+            .unwrap_or(false)
+        {
+            return Ok(0);
+        }
+
+        let mut inserted = 0_usize;
+        let now_ms = chrono::Utc::now().timestamp_millis();
+
+        for seed in OFFICIAL_SEEDS {
+            let app_type_str = seed.app_type.as_str();
+
+            // 若该 id 已存在（极端情况：用户曾手动用过同 id），跳过
+            if self.get_provider_by_id(seed.id, app_type_str)?.is_some() {
+                continue;
+            }
+
+            let next_sort_index = self.next_sort_index_for_app(app_type_str)?;
+
+            let settings_config: serde_json::Value =
+                serde_json::from_str(seed.settings_config_json).map_err(|e| {
+                    AppError::Database(format!("Seed JSON parse failed for {}: {e}", seed.id))
+                })?;
+
+            let mut provider = Provider::with_id(
+                seed.id.to_string(),
+                seed.name.to_string(),
+                settings_config,
+                Some(seed.website_url.to_string()),
+            );
+            provider.category = Some("official".to_string());
+            provider.icon = Some(seed.icon.to_string());
+            provider.icon_color = Some(seed.icon_color.to_string());
+            provider.sort_index = Some(next_sort_index);
+            provider.created_at = Some(now_ms);
+
+            self.save_provider(app_type_str, &provider)?;
+            inserted += 1;
+            log::info!(
+                "✓ Seeded official provider: {} ({})",
+                seed.name,
+                app_type_str
+            );
+        }
+
+        // 即使 inserted=0（例如用户手动创建过同 id）也设置 flag 防止反复检查
+        self.set_setting("official_providers_seeded", "true")?;
+
+        Ok(inserted)
+    }
+
+    /// 按 id 兜底插入单条 official seed（仅当目标表中该 id 不存在时插入）。
+    ///
+    /// 与 `init_default_official_providers` 不同：
+    /// - 不触碰 `official_providers_seeded` 全局 flag，是 on-demand 修复
+    /// - 只处理一条 seed，由调用方决定 id + app_type
+    /// - 已存在则尊重用户自定义，不覆盖
+    ///
+    /// 返回 Ok(true) 表示插入了新行，Ok(false) 表示已存在被跳过。
+    pub fn ensure_official_seed_by_id(
+        &self,
+        seed_id: &str,
+        app_type: crate::app_config::AppType,
+    ) -> Result<bool, AppError> {
+        use crate::database::dao::providers_seed::OFFICIAL_SEEDS;
+
+        let seed = OFFICIAL_SEEDS
+            .iter()
+            .find(|s| s.id == seed_id && s.app_type == app_type)
+            .ok_or_else(|| {
+                AppError::Database(format!(
+                    "unknown official seed: id={seed_id}, app_type={}",
+                    app_type.as_str()
+                ))
+            })?;
+
+        let app_type_str = seed.app_type.as_str();
+
+        if self.get_provider_by_id(seed_id, app_type_str)?.is_some() {
+            return Ok(false);
+        }
+
+        let settings_config: serde_json::Value = serde_json::from_str(seed.settings_config_json)
+            .map_err(|e| {
+                AppError::Database(format!("Seed JSON parse failed for {}: {e}", seed.id))
+            })?;
+
+        let next_sort_index = self.next_sort_index_for_app(app_type_str)?;
+        let now_ms = chrono::Utc::now().timestamp_millis();
+
+        let mut provider = Provider::with_id(
+            seed.id.to_string(),
+            seed.name.to_string(),
+            settings_config,
+            Some(seed.website_url.to_string()),
+        );
+        provider.category = Some("official".to_string());
+        provider.icon = Some(seed.icon.to_string());
+        provider.icon_color = Some(seed.icon_color.to_string());
+        provider.sort_index = Some(next_sort_index);
+        provider.created_at = Some(now_ms);
+
+        self.save_provider(app_type_str, &provider)?;
+
+        Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod ensure_official_seed_tests {
+    use crate::app_config::AppType;
+    use crate::database::{Database, CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID};
+
+    #[test]
+    fn ensure_inserts_when_missing() {
+        let db = Database::memory().expect("memory db");
+        let inserted = db
+            .ensure_official_seed_by_id(CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID, AppType::ClaudeDesktop)
+            .expect("ensure ok");
+        assert!(inserted, "should insert when missing");
+
+        let provider = db
+            .get_provider_by_id(
+                CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID,
+                AppType::ClaudeDesktop.as_str(),
+            )
+            .expect("query ok")
+            .expect("provider exists after ensure");
+
+        assert_eq!(provider.id, CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID);
+        assert_eq!(provider.name, "Claude Desktop Official");
+        assert_eq!(provider.category.as_deref(), Some("official"));
+        assert_eq!(provider.icon.as_deref(), Some("anthropic"));
+        assert_eq!(provider.icon_color.as_deref(), Some("#D4915D"));
+    }
+
+    #[test]
+    fn ensure_skips_when_present_and_preserves_customization() {
+        let db = Database::memory().expect("memory db");
+        db.init_default_official_providers().expect("seed");
+
+        let mut renamed = db
+            .get_provider_by_id(
+                CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID,
+                AppType::ClaudeDesktop.as_str(),
+            )
+            .expect("query ok")
+            .expect("seed present");
+        renamed.name = "My Custom Backup".to_string();
+        db.save_provider(AppType::ClaudeDesktop.as_str(), &renamed)
+            .expect("save customization");
+
+        let inserted = db
+            .ensure_official_seed_by_id(CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID, AppType::ClaudeDesktop)
+            .expect("ensure ok");
+        assert!(!inserted, "should skip when present");
+
+        let after = db
+            .get_provider_by_id(
+                CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID,
+                AppType::ClaudeDesktop.as_str(),
+            )
+            .expect("query ok")
+            .expect("still present");
+        assert_eq!(
+            after.name, "My Custom Backup",
+            "customization must not be overwritten"
+        );
+    }
+
+    #[test]
+    fn ensure_rejects_unknown_seed() {
+        let db = Database::memory().expect("memory db");
+        let result = db.ensure_official_seed_by_id("nonexistent-id", AppType::ClaudeDesktop);
+        assert!(result.is_err(), "unknown seed id should be Err");
+    }
+
+    #[test]
+    fn ensure_rejects_seed_app_type_mismatch() {
+        let db = Database::memory().expect("memory db");
+        let result =
+            db.ensure_official_seed_by_id(CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID, AppType::Claude);
+        assert!(result.is_err(), "(id, app_type) mismatch should be Err");
     }
 }

@@ -8,7 +8,8 @@ use cc_switch_lib::{
 #[path = "support.rs"]
 mod support;
 use support::{
-    create_test_state, create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex,
+    create_test_state, create_test_state_with_config, enable_codex_official_auth_preservation,
+    ensure_test_home, reset_test_fs, test_mutex,
 };
 
 fn sanitize_provider_name(name: &str) -> String {
@@ -22,9 +23,84 @@ fn sanitize_provider_name(name: &str) -> String {
 }
 
 #[test]
+fn migrate_legacy_common_config_usage_marks_historical_provider_enabled() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "legacy-provider".to_string();
+        manager.providers.insert(
+            "legacy-provider".to_string(),
+            Provider::with_id(
+                "legacy-provider".to_string(),
+                "Legacy".to_string(),
+                json!({
+                    "includeCoAuthoredBy": false,
+                    "env": {
+                        "ANTHROPIC_API_KEY": "legacy-key"
+                    }
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .set_config_snippet(
+            AppType::Claude.as_str(),
+            Some(r#"{ "includeCoAuthoredBy": false }"#.to_string()),
+        )
+        .expect("set common config snippet");
+
+    ProviderService::migrate_legacy_common_config_usage_if_needed(&state, AppType::Claude)
+        .expect("migrate legacy common config");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Claude.as_str())
+        .expect("get providers after migration");
+    let provider = providers
+        .get("legacy-provider")
+        .expect("legacy provider exists");
+
+    assert_eq!(
+        provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.common_config_enabled),
+        Some(true),
+        "historical provider should be explicitly marked as using common config"
+    );
+    assert!(
+        provider
+            .settings_config
+            .get("includeCoAuthoredBy")
+            .is_none(),
+        "common config fields should be stripped from provider storage after migration"
+    );
+    assert_eq!(
+        provider
+            .settings_config
+            .get("env")
+            .and_then(|v| v.get("ANTHROPIC_API_KEY"))
+            .and_then(|v| v.as_str()),
+        Some("legacy-key"),
+        "provider-specific auth should remain untouched"
+    );
+}
+
+#[test]
 fn provider_service_switch_codex_updates_live_and_config() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
+    enable_codex_official_auth_preservation();
     let _home = ensure_test_home();
 
     let legacy_auth = json!({ "OPENAI_API_KEY": "legacy-key" });
@@ -89,6 +165,7 @@ command = "say"
                 codex: true,
                 gemini: false,
                 opencode: false,
+                hermes: false,
             },
             description: None,
             homepage: None,
@@ -106,8 +183,8 @@ command = "say"
         read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
     assert_eq!(
         auth_value.get("OPENAI_API_KEY").and_then(|v| v.as_str()),
-        Some("fresh-key"),
-        "live auth.json should reflect new provider"
+        Some("legacy-key"),
+        "Codex provider switching should preserve the existing live auth.json"
     );
 
     let config_text =
@@ -115,6 +192,10 @@ command = "say"
     assert!(
         config_text.contains("mcp_servers.echo-server"),
         "config.toml should contain synced MCP servers"
+    );
+    assert!(
+        config_text.contains("experimental_bearer_token"),
+        "config.toml should carry the selected provider API key"
     );
 
     let current_id = state
@@ -161,6 +242,859 @@ command = "say"
     assert_eq!(
         legacy_auth_value, "legacy-key",
         "previous provider should be backfilled with live auth"
+    );
+}
+
+#[test]
+fn provider_service_switch_codex_preserves_user_model_provider_id_after_migration() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let legacy_auth = json!({ "OPENAI_API_KEY": "rightcode-key" });
+    let legacy_config = r#"model_provider = "rightcode"
+model = "gpt-5.4"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+    write_codex_live_atomic(&legacy_auth, Some(legacy_config))
+        .expect("seed existing codex live config");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "old-provider".to_string();
+        manager.providers.insert(
+            "old-provider".to_string(),
+            Provider::with_id(
+                "old-provider".to_string(),
+                "RightCode".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "stale"},
+                    "config": legacy_config
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "new-provider".to_string(),
+            Provider::with_id(
+                "new-provider".to_string(),
+                "AiHubMix".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "fresh-key"},
+                    "config": r#"model_provider = "aihubmix"
+model = "gpt-5.4"
+
+[model_providers.aihubmix]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "new-provider")
+        .expect("switch provider should succeed");
+
+    let config_text =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    let parsed: toml::Value = toml::from_str(&config_text).expect("parse config.toml");
+
+    assert_eq!(
+        parsed.get("model_provider").and_then(|v| v.as_str()),
+        Some("aihubmix"),
+        "provider switching should preserve user-editable model_provider after the one-time migration"
+    );
+
+    let model_providers = parsed
+        .get("model_providers")
+        .and_then(|v| v.as_table())
+        .expect("model_providers table exists");
+    assert!(
+        model_providers.get("custom").is_none(),
+        "provider switching should not force user-edited provider ids back to custom"
+    );
+    assert_eq!(
+        model_providers
+            .get("aihubmix")
+            .and_then(|v| v.get("base_url"))
+            .and_then(|v| v.as_str()),
+        Some("https://aihubmix.example/v1"),
+        "selected provider id should point at the newly selected supplier endpoint"
+    );
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
+        .expect("read providers after switch");
+    let new_config_text = providers
+        .get("new-provider")
+        .expect("new provider exists")
+        .settings_config
+        .get("config")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    assert!(
+        new_config_text.contains("[model_providers.aihubmix]"),
+        "stored provider template should remain provider-specific"
+    );
+}
+
+#[test]
+fn provider_service_switch_codex_preserves_oauth_and_backfills_api_key_from_live_token() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let _home = ensure_test_home();
+
+    let live_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": {
+            "access_token": "oauth-token",
+            "account_id": "acct-1"
+        }
+    });
+    let legacy_config = r#"model_provider = "rightcode"
+model = "gpt-5.4"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+    write_codex_live_atomic(&live_auth, Some(legacy_config))
+        .expect("seed existing Codex OAuth live config");
+
+    let bridge_provider = Provider::with_id(
+        "bridge-provider".to_string(),
+        "Bridge Provider".to_string(),
+        json!({
+            "auth": {"OPENAI_API_KEY": "bridge-key"},
+            "config": r#"model_provider = "aihubmix"
+model = "gpt-5.4"
+
+[model_providers.aihubmix]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+        }),
+        None,
+    );
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "legacy-provider".to_string();
+        manager.providers.insert(
+            "legacy-provider".to_string(),
+            Provider::with_id(
+                "legacy-provider".to_string(),
+                "RightCode".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "rightcode-key"},
+                    "config": legacy_config
+                }),
+                None,
+            ),
+        );
+        manager
+            .providers
+            .insert("bridge-provider".to_string(), bridge_provider);
+        manager.providers.insert(
+            "plain-provider".to_string(),
+            Provider::with_id(
+                "plain-provider".to_string(),
+                "Plain Provider".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "plain-key"},
+                    "config": r#"model_provider = "plain"
+model = "gpt-5.4"
+
+[model_providers.plain]
+name = "Plain"
+base_url = "https://plain.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "bridge-provider")
+        .expect("switch to bridge provider should succeed");
+
+    let auth_value: serde_json::Value =
+        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
+    assert_eq!(
+        auth_value.get("auth_mode").and_then(|v| v.as_str()),
+        Some("chatgpt")
+    );
+    assert!(
+        auth_value
+            .get("OPENAI_API_KEY")
+            .is_some_and(|v| v.is_null()),
+        "provider switching should keep OPENAI_API_KEY null in live auth.json"
+    );
+    assert_eq!(
+        auth_value
+            .pointer("/tokens/access_token")
+            .and_then(|v| v.as_str()),
+        Some("oauth-token"),
+        "existing ChatGPT OAuth token should be preserved"
+    );
+
+    let live_config =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    let parsed_live: toml::Value = toml::from_str(&live_config).expect("parse live config");
+    assert_eq!(
+        parsed_live
+            .get("model_providers")
+            .and_then(|v| v.get("aihubmix"))
+            .and_then(|v| v.get("experimental_bearer_token"))
+            .and_then(|v| v.as_str()),
+        Some("bridge-key"),
+        "third-party key should be injected into the selected live provider table"
+    );
+    assert_eq!(
+        parsed_live
+            .get("model_providers")
+            .and_then(|v| v.get("aihubmix"))
+            .and_then(|v| v.get("requires_openai_auth"))
+            .and_then(|v| v.as_bool()),
+        Some(true)
+    );
+
+    ProviderService::switch(&state, AppType::Codex, "plain-provider")
+        .expect("switch away should backfill bridge provider");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
+        .expect("read providers");
+    let stored_bridge = providers
+        .get("bridge-provider")
+        .expect("bridge provider exists after backfill");
+    assert_eq!(
+        stored_bridge
+            .settings_config
+            .pointer("/auth/OPENAI_API_KEY")
+            .and_then(|v| v.as_str()),
+        Some("bridge-key"),
+        "backfill should restore the API key into stored provider auth"
+    );
+    assert!(
+        stored_bridge
+            .settings_config
+            .pointer("/auth/tokens")
+            .is_none(),
+        "backfill should not persist ChatGPT OAuth tokens into provider storage"
+    );
+    assert!(
+        !stored_bridge
+            .settings_config
+            .get("config")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .contains("experimental_bearer_token"),
+        "stored provider config should stay clean; bridge token is generated only for live config"
+    );
+}
+
+#[test]
+fn provider_service_switch_codex_default_overwrites_official_auth_when_preservation_off() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    // Intentionally do NOT enable preservation: this locks the default opt-out
+    // behavior where switching to a third-party provider rewrites auth.json,
+    // discarding the user's ChatGPT OAuth login. It is the dual of
+    // `provider_service_switch_codex_preserves_oauth_and_backfills_api_key_from_live_token`.
+    let _home = ensure_test_home();
+
+    let live_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": {
+            "access_token": "official-oauth-token",
+            "account_id": "acct-1"
+        }
+    });
+    let legacy_config = r#"model_provider = "rightcode"
+model = "gpt-5.4"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+    write_codex_live_atomic(&live_auth, Some(legacy_config))
+        .expect("seed existing Codex OAuth live config");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "legacy-provider".to_string();
+        manager.providers.insert(
+            "legacy-provider".to_string(),
+            Provider::with_id(
+                "legacy-provider".to_string(),
+                "RightCode".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "rightcode-key"},
+                    "config": legacy_config
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "third-party".to_string(),
+            Provider::with_id(
+                "third-party".to_string(),
+                "AiHubMix".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "third-party-key"},
+                    "config": r#"model_provider = "aihubmix"
+model = "gpt-5.4"
+
+[model_providers.aihubmix]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "third-party")
+        .expect("switch to third-party provider should succeed");
+
+    let auth_value: serde_json::Value =
+        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
+    assert_eq!(
+        auth_value.get("OPENAI_API_KEY").and_then(|v| v.as_str()),
+        Some("third-party-key"),
+        "default (preservation off) should overwrite auth.json with the third-party API key"
+    );
+    assert!(
+        auth_value.pointer("/tokens/access_token").is_none(),
+        "default switch must clear the official ChatGPT OAuth token from live auth.json"
+    );
+}
+
+#[test]
+fn provider_service_switch_codex_supports_official_login_provider_without_auth_write() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let live_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": {
+            "access_token": "official-oauth-token",
+            "account_id": "acct-official"
+        }
+    });
+    write_codex_live_atomic(&live_auth, Some("")).expect("seed official OAuth live config");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "legacy-provider".to_string();
+        manager.providers.insert(
+            "legacy-provider".to_string(),
+            Provider::with_id(
+                "legacy-provider".to_string(),
+                "Legacy".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "legacy-key"},
+                    "config": r#"model_provider = "legacy"
+
+[model_providers.legacy]
+name = "Legacy"
+base_url = "https://legacy.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+                }),
+                None,
+            ),
+        );
+        let mut official_provider = Provider::with_id(
+            "official-provider".to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": {},
+                "config": ""
+            }),
+            None,
+        );
+        official_provider.category = Some("official".to_string());
+        manager
+            .providers
+            .insert("official-provider".to_string(), official_provider);
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "official-provider")
+        .expect("switch to official provider should succeed without API key");
+
+    let auth_value: serde_json::Value =
+        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
+    assert_eq!(
+        auth_value.get("auth_mode").and_then(|v| v.as_str()),
+        Some("chatgpt")
+    );
+    assert!(
+        auth_value
+            .get("OPENAI_API_KEY")
+            .is_some_and(|v| v.is_null()),
+        "official provider switching should keep OPENAI_API_KEY null"
+    );
+    assert_eq!(
+        auth_value
+            .pointer("/tokens/access_token")
+            .and_then(|v| v.as_str()),
+        Some("official-oauth-token"),
+        "official provider should preserve the existing ChatGPT OAuth token"
+    );
+
+    let live_config =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    assert!(
+        !live_config.contains("experimental_bearer_token"),
+        "official login provider has no API key to inject"
+    );
+}
+
+#[test]
+fn provider_service_switch_codex_official_accounts_write_auth_json() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let live_auth_a = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": {
+            "access_token": "official-a-live-token",
+            "account_id": "acct-a"
+        }
+    });
+    write_codex_live_atomic(&live_auth_a, Some("")).expect("seed official account A live auth");
+
+    let mut official_a = Provider::with_id(
+        "official-a".to_string(),
+        "Official A".to_string(),
+        json!({
+            "auth": {
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": null,
+                "tokens": {
+                    "access_token": "stale-a-token",
+                    "account_id": "acct-a"
+                }
+            },
+            "config": ""
+        }),
+        None,
+    );
+    official_a.category = Some("official".to_string());
+
+    let mut official_b = Provider::with_id(
+        "official-b".to_string(),
+        "Official B".to_string(),
+        json!({
+            "auth": {
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": null,
+                "tokens": {
+                    "access_token": "official-b-token",
+                    "account_id": "acct-b"
+                }
+            },
+            "config": ""
+        }),
+        None,
+    );
+    official_b.category = Some("official".to_string());
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "official-a".to_string();
+        manager
+            .providers
+            .insert("official-a".to_string(), official_a);
+        manager
+            .providers
+            .insert("official-b".to_string(), official_b);
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "official-b")
+        .expect("switch to official account B should write auth.json");
+    let auth_b: serde_json::Value =
+        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth B");
+    assert_eq!(
+        auth_b
+            .pointer("/tokens/access_token")
+            .and_then(|v| v.as_str()),
+        Some("official-b-token"),
+        "switching official accounts must replace auth.json with the selected account"
+    );
+
+    ProviderService::switch(&state, AppType::Codex, "official-a")
+        .expect("switch back to official account A should use backfilled live auth");
+    let auth_a: serde_json::Value =
+        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth A");
+    assert_eq!(
+        auth_a
+            .pointer("/tokens/access_token")
+            .and_then(|v| v.as_str()),
+        Some("official-a-live-token"),
+        "backfill should preserve account A's latest live token for later official switches"
+    );
+}
+
+#[test]
+fn provider_service_switch_codex_backfill_keeps_provider_specific_model_provider_id() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let legacy_auth = json!({ "OPENAI_API_KEY": "rightcode-key" });
+    let provider_a_config = r#"model_provider = "rightcode"
+model = "gpt-5.4"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+    write_codex_live_atomic(&legacy_auth, Some(provider_a_config))
+        .expect("seed existing codex live config");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "provider-a".to_string();
+        manager.providers.insert(
+            "provider-a".to_string(),
+            Provider::with_id(
+                "provider-a".to_string(),
+                "RightCode".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "rightcode-key"},
+                    "config": provider_a_config
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "provider-b".to_string(),
+            Provider::with_id(
+                "provider-b".to_string(),
+                "AiHubMix".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "aihubmix-key"},
+                    "config": r#"model_provider = "aihubmix"
+model = "gpt-5.4"
+profile = "work"
+
+[model_providers.aihubmix]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[profiles.work]
+model_provider = "aihubmix"
+model = "gpt-5.4"
+"#
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "provider-c".to_string(),
+            Provider::with_id(
+                "provider-c".to_string(),
+                "Vendor C".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "vendor-c-key"},
+                    "config": r#"model_provider = "vendor_c"
+model = "gpt-5.4"
+
+[model_providers.vendor_c]
+name = "Vendor C"
+base_url = "https://vendor-c.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "provider-b")
+        .expect("switch to provider b should succeed");
+    ProviderService::switch(&state, AppType::Codex, "provider-c")
+        .expect("switch to provider c should succeed");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
+        .expect("read providers after switches");
+    let provider_b_config = providers
+        .get("provider-b")
+        .expect("provider b exists")
+        .settings_config
+        .get("config")
+        .and_then(|v| v.as_str())
+        .expect("provider b config");
+    let parsed: toml::Value = toml::from_str(provider_b_config).expect("parse provider b config");
+
+    assert_eq!(
+        parsed.get("model_provider").and_then(|v| v.as_str()),
+        Some("aihubmix"),
+        "backfill should restore provider b's storage-specific model_provider id"
+    );
+    assert!(
+        parsed
+            .get("model_providers")
+            .and_then(|v| v.get("aihubmix"))
+            .is_some(),
+        "provider b should keep its own model_providers table after backfill"
+    );
+    assert_eq!(
+        parsed
+            .get("profiles")
+            .and_then(|v| v.get("work"))
+            .and_then(|v| v.get("model_provider"))
+            .and_then(|v| v.as_str()),
+        Some("aihubmix"),
+        "profile overrides should be restored to provider b's storage-specific id"
+    );
+}
+
+#[test]
+fn sync_current_provider_for_app_keeps_live_takeover_and_updates_restore_backup() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "current-provider".to_string();
+
+        let mut provider = Provider::with_id(
+            "current-provider".to_string(),
+            "Current".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "real-token",
+                    "ANTHROPIC_BASE_URL": "https://claude.example"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+
+        manager
+            .providers
+            .insert("current-provider".to_string(), provider);
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .set_config_snippet(
+            AppType::Claude.as_str(),
+            Some(r#"{ "includeCoAuthoredBy": false }"#.to_string()),
+        )
+        .expect("set common config snippet");
+
+    let taken_over_live = json!({
+        "env": {
+            "ANTHROPIC_BASE_URL": "http://127.0.0.1:5000",
+            "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED"
+        }
+    });
+    let settings_path = get_claude_settings_path();
+    std::fs::create_dir_all(settings_path.parent().expect("settings dir")).expect("create dir");
+    std::fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&taken_over_live).expect("serialize taken over live"),
+    )
+    .expect("write taken over live");
+
+    futures::executor::block_on(state.db.save_live_backup("claude", "{\"env\":{}}"))
+        .expect("seed live backup");
+
+    let mut proxy_config = futures::executor::block_on(state.db.get_proxy_config_for_app("claude"))
+        .expect("get proxy config");
+    proxy_config.enabled = true;
+    futures::executor::block_on(state.db.update_proxy_config_for_app(proxy_config))
+        .expect("enable takeover");
+
+    ProviderService::sync_current_provider_for_app(&state, AppType::Claude)
+        .expect("sync current provider should succeed");
+
+    let live_after: serde_json::Value =
+        read_json_file(&settings_path).expect("read live settings after sync");
+    assert_eq!(
+        live_after, taken_over_live,
+        "sync should not overwrite live config while takeover is active"
+    );
+
+    let backup = futures::executor::block_on(state.db.get_live_backup("claude"))
+        .expect("get live backup")
+        .expect("backup exists");
+    let backup_value: serde_json::Value =
+        serde_json::from_str(&backup.original_config).expect("parse backup value");
+
+    assert_eq!(
+        backup_value
+            .get("includeCoAuthoredBy")
+            .and_then(|v| v.as_bool()),
+        Some(false),
+        "restore backup should receive the updated effective config"
+    );
+    assert_eq!(
+        backup_value
+            .get("env")
+            .and_then(|v| v.get("ANTHROPIC_AUTH_TOKEN"))
+            .and_then(|v| v.as_str()),
+        Some("real-token"),
+        "restore backup should preserve the provider token rather than proxy placeholder"
+    );
+}
+
+#[test]
+fn explicitly_cleared_common_snippet_is_not_auto_extracted() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .set_config_snippet_cleared(AppType::Claude.as_str(), true)
+        .expect("mark snippet explicitly cleared");
+
+    assert!(
+        !state
+            .db
+            .should_auto_extract_config_snippet(AppType::Claude.as_str())
+            .expect("check auto-extract eligibility"),
+        "explicitly cleared snippets should block auto-extraction"
+    );
+
+    state
+        .db
+        .set_config_snippet(AppType::Claude.as_str(), Some("{}".to_string()))
+        .expect("set snippet");
+    state
+        .db
+        .set_config_snippet_cleared(AppType::Claude.as_str(), false)
+        .expect("clear explicit-empty marker");
+
+    assert!(
+        !state
+            .db
+            .should_auto_extract_config_snippet(AppType::Claude.as_str())
+            .expect("check auto-extract after snippet saved"),
+        "existing snippets should also block auto-extraction"
+    );
+}
+
+#[test]
+fn legacy_common_config_migration_flag_roundtrip() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+
+    assert!(
+        !state
+            .db
+            .is_legacy_common_config_migrated()
+            .expect("initial migration flag"),
+        "migration flag should default to false"
+    );
+
+    state
+        .db
+        .set_legacy_common_config_migrated(true)
+        .expect("set migration flag");
+    assert!(
+        state
+            .db
+            .is_legacy_common_config_migrated()
+            .expect("read migration flag"),
+        "migration flag should persist once set"
+    );
+
+    state
+        .db
+        .set_legacy_common_config_migrated(false)
+        .expect("clear migration flag");
+    assert!(
+        !state
+            .db
+            .is_legacy_common_config_migrated()
+            .expect("read migration flag after clear"),
+        "migration flag should be removable for tests/debugging"
     );
 }
 
@@ -273,7 +1207,7 @@ fn packycode_partner_meta_triggers_security_flag_even_without_keywords() {
 }
 
 #[test]
-fn switch_google_official_gemini_sets_oauth_security() {
+fn switch_google_official_gemini_preserves_env_vars() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
     let home = ensure_test_home();
@@ -288,7 +1222,9 @@ fn switch_google_official_gemini_sets_oauth_security() {
             "google-official".to_string(),
             "Google".to_string(),
             json!({
-                "env": {}
+                "env": {
+                    "GEMINI_MODEL": "gemini-2.5-pro"
+                }
             }),
             Some("https://ai.google.dev".to_string()),
         );
@@ -306,23 +1242,30 @@ fn switch_google_official_gemini_sets_oauth_security() {
     ProviderService::switch(&state, AppType::Gemini, "google-official")
         .expect("switching to Google official Gemini should succeed");
 
-    // Gemini security settings are written to ~/.gemini/settings.json, not ~/.cc-switch/settings.json
-    let gemini_settings = home.join(".gemini").join("settings.json");
+    // Verify env vars are preserved in ~/.gemini/.env
+    let env_path = home.join(".gemini").join(".env");
     assert!(
-        gemini_settings.exists(),
-        "Gemini settings.json should exist at {}",
-        gemini_settings.display()
+        env_path.exists(),
+        "Gemini .env should exist at {}",
+        env_path.display()
     );
+    let env_content = std::fs::read_to_string(&env_path).expect("read gemini .env");
+    assert!(
+        env_content.contains("GEMINI_MODEL=gemini-2.5-pro"),
+        "GEMINI_MODEL should be preserved in .env, got: {env_content}"
+    );
+
+    // Verify OAuth security flag is still set correctly
+    let gemini_settings = home.join(".gemini").join("settings.json");
     let gemini_raw = std::fs::read_to_string(&gemini_settings).expect("read gemini settings");
     let gemini_value: serde_json::Value =
         serde_json::from_str(&gemini_raw).expect("parse gemini settings");
-
     assert_eq!(
         gemini_value
             .pointer("/security/auth/selectedType")
             .and_then(|v| v.as_str()),
         Some("oauth-personal"),
-        "Gemini settings json should reflect oauth-personal for Google Official"
+        "OAuth security flag should still be set"
     );
 }
 

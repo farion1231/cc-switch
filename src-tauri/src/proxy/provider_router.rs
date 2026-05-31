@@ -201,6 +201,17 @@ impl ProviderRouter {
         }
     }
 
+    /// 更新指定应用已创建熔断器的配置（热更新）
+    pub async fn update_app_configs(&self, app_type: &str, config: CircuitBreakerConfig) {
+        let prefix = format!("{app_type}:");
+        let breakers = self.circuit_breakers.read().await;
+        for (key, breaker) in breakers.iter() {
+            if key.starts_with(&prefix) {
+                breaker.update_config(config.clone()).await;
+            }
+        }
+    }
+
     /// 获取熔断器状态
     #[allow(dead_code)]
     pub async fn get_circuit_breaker_stats(
@@ -272,6 +283,7 @@ mod tests {
         dir: TempDir,
         original_home: Option<String>,
         original_userprofile: Option<String>,
+        original_test_home: Option<String>,
     }
 
     impl TempHome {
@@ -279,15 +291,18 @@ mod tests {
             let dir = TempDir::new().expect("failed to create temp home");
             let original_home = env::var("HOME").ok();
             let original_userprofile = env::var("USERPROFILE").ok();
+            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
 
             env::set_var("HOME", dir.path());
             env::set_var("USERPROFILE", dir.path());
+            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
             crate::settings::reload_settings().expect("reload settings");
 
             Self {
                 dir,
                 original_home,
                 original_userprofile,
+                original_test_home,
             }
         }
     }
@@ -302,6 +317,11 @@ mod tests {
             match &self.original_userprofile {
                 Some(value) => env::set_var("USERPROFILE", value),
                 None => env::remove_var("USERPROFILE"),
+            }
+
+            match &self.original_test_home {
+                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => env::remove_var("CC_SWITCH_TEST_HOME"),
             }
         }
     }

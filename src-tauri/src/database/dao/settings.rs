@@ -7,6 +7,12 @@ use crate::error::AppError;
 use rusqlite::params;
 
 impl Database {
+    const LEGACY_COMMON_CONFIG_MIGRATED_KEY: &'static str = "common_config_legacy_migrated_v1";
+
+    fn config_snippet_cleared_key(app_type: &str) -> String {
+        format!("common_config_{app_type}_cleared")
+    }
+
     /// 获取设置值
     pub fn get_setting(&self, key: &str) -> Result<Option<String>, AppError> {
         let conn = lock_conn!(self.conn);
@@ -27,6 +33,18 @@ impl Database {
         }
     }
 
+    /// 以布尔语义读取 flag：`"true"` 或 `"1"` → true，其它全部 false。
+    ///
+    /// 用于一次性启动 flag（`official_providers_seeded` / `first_run_notice_shown` 等）。
+    /// 与 `is_legacy_common_config_migrated` 等只认 `"true"` 的历史辅助函数**不同**——
+    /// 这里同时接受 `"1"` 是为了兼容 `init_default_official_providers` 既有写法。
+    pub fn get_bool_flag(&self, key: &str) -> Result<bool, AppError> {
+        Ok(matches!(
+            self.get_setting(key)?.as_deref(),
+            Some("true") | Some("1")
+        ))
+    }
+
     /// 设置值
     pub fn set_setting(&self, key: &str, value: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
@@ -43,6 +61,60 @@ impl Database {
     /// 获取通用配置片段
     pub fn get_config_snippet(&self, app_type: &str) -> Result<Option<String>, AppError> {
         self.get_setting(&format!("common_config_{app_type}"))
+    }
+
+    /// 检查通用配置片段是否被用户显式清空
+    pub fn is_config_snippet_cleared(&self, app_type: &str) -> Result<bool, AppError> {
+        Ok(self
+            .get_setting(&Self::config_snippet_cleared_key(app_type))?
+            .as_deref()
+            == Some("true"))
+    }
+
+    /// 设置通用配置片段是否被显式清空
+    pub fn set_config_snippet_cleared(
+        &self,
+        app_type: &str,
+        cleared: bool,
+    ) -> Result<(), AppError> {
+        let key = Self::config_snippet_cleared_key(app_type);
+        if cleared {
+            self.set_setting(&key, "true")
+        } else {
+            let conn = lock_conn!(self.conn);
+            conn.execute("DELETE FROM settings WHERE key = ?1", params![key])
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            Ok(())
+        }
+    }
+
+    /// 当前是否允许从 live 配置自动抽取通用配置片段
+    pub fn should_auto_extract_config_snippet(&self, app_type: &str) -> Result<bool, AppError> {
+        Ok(self.get_config_snippet(app_type)?.is_none()
+            && !self.is_config_snippet_cleared(app_type)?)
+    }
+
+    /// 检查历史通用配置迁移是否已经执行过
+    pub fn is_legacy_common_config_migrated(&self) -> Result<bool, AppError> {
+        Ok(self
+            .get_setting(Self::LEGACY_COMMON_CONFIG_MIGRATED_KEY)?
+            .as_deref()
+            == Some("true"))
+    }
+
+    /// 标记历史通用配置迁移已经执行完成
+    pub fn set_legacy_common_config_migrated(&self, migrated: bool) -> Result<(), AppError> {
+        if migrated {
+            self.set_setting(Self::LEGACY_COMMON_CONFIG_MIGRATED_KEY, "true")
+        } else {
+            let conn = lock_conn!(self.conn);
+            conn.execute(
+                "DELETE FROM settings WHERE key = ?1",
+                params![Self::LEGACY_COMMON_CONFIG_MIGRATED_KEY],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+            Ok(())
+        }
     }
 
     /// 设置通用配置片段
@@ -208,6 +280,31 @@ impl Database {
         let json = serde_json::to_string(config)
             .map_err(|e| AppError::Database(format!("序列化优化器配置失败: {e}")))?;
         self.set_setting("optimizer_config", &json)
+    }
+
+    // --- Copilot 优化器配置 ---
+
+    /// 获取 Copilot 优化器配置
+    ///
+    /// 返回配置，如果不存在则返回默认值（默认开启）
+    pub fn get_copilot_optimizer_config(
+        &self,
+    ) -> Result<crate::proxy::types::CopilotOptimizerConfig, AppError> {
+        match self.get_setting("copilot_optimizer_config")? {
+            Some(json) => serde_json::from_str(&json)
+                .map_err(|e| AppError::Database(format!("解析 Copilot 优化器配置失败: {e}"))),
+            None => Ok(crate::proxy::types::CopilotOptimizerConfig::default()),
+        }
+    }
+
+    /// 更新 Copilot 优化器配置
+    pub fn set_copilot_optimizer_config(
+        &self,
+        config: &crate::proxy::types::CopilotOptimizerConfig,
+    ) -> Result<(), AppError> {
+        let json = serde_json::to_string(config)
+            .map_err(|e| AppError::Database(format!("序列化 Copilot 优化器配置失败: {e}")))?;
+        self.set_setting("copilot_optimizer_config", &json)
     }
 
     // --- 日志配置 ---

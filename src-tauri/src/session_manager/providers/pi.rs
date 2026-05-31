@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
@@ -20,7 +20,7 @@ struct PiMessageEntry {
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let root = get_pi_session_dir();
+    let root = session_root();
     let mut files = Vec::new();
     collect_jsonl_files(&root, &mut files);
 
@@ -74,7 +74,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     Ok(active_branch_messages(entries))
 }
 
-fn get_pi_session_dir() -> PathBuf {
+pub fn session_root() -> PathBuf {
     if let Ok(value) = std::env::var("PI_CODING_AGENT_SESSION_DIR") {
         if !value.trim().is_empty() {
             return PathBuf::from(value);
@@ -87,9 +87,28 @@ fn get_pi_session_dir() -> PathBuf {
         }
     }
 
-    dirs::home_dir()
-        .map(|home| home.join(DEFAULT_SESSION_RELATIVE_DIR))
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_SESSION_RELATIVE_DIR))
+    crate::config::get_home_dir().join(DEFAULT_SESSION_RELATIVE_DIR)
+}
+
+pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let matches_session = parse_session(path)
+        .map(|meta| meta.session_id == session_id)
+        .unwrap_or_else(|| {
+            infer_session_id_from_filename(path)
+                .map(|id| id == session_id)
+                .unwrap_or(false)
+        });
+
+    if !matches_session {
+        return Err("Session id does not match source path".to_string());
+    }
+
+    fs::remove_file(path).map_err(|e| format!("Failed to delete session file: {e}"))?;
+    Ok(true)
 }
 
 fn parse_session(path: &Path) -> Option<SessionMeta> {

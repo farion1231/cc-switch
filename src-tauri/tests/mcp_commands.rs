@@ -10,7 +10,9 @@ use cc_switch_lib::{
 
 #[path = "support.rs"]
 mod support;
-use support::{create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex};
+use support::{
+    create_test_state, create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex,
+};
 
 #[test]
 fn import_default_config_claude_persists_provider() {
@@ -149,6 +151,110 @@ fn import_mcp_from_claude_creates_config_and_enables_servers() {
 }
 
 #[test]
+fn import_mcp_from_codex_does_not_rewrite_codex_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    let config_path = codex_dir.join("config.toml");
+    let original = r#"# keep user formatting intact
+model = "gpt-5"
+
+[mcp.servers.legacy]
+type = "stdio"
+command = "echo"
+
+[mcp_servers.echo]
+type = "stdio"
+command = "echo"
+"#;
+    fs::write(&config_path, original).expect("seed codex config");
+
+    let state = create_test_state().expect("create test state");
+    let changed = McpService::import_from_codex(&state).expect("import from codex");
+    assert!(changed > 0, "should import servers from Codex config");
+
+    let after = fs::read_to_string(&config_path).expect("read codex config");
+    assert_eq!(
+        after, original,
+        "importing from Codex should not rewrite ~/.codex/config.toml"
+    );
+}
+
+#[test]
+fn import_mcp_from_claude_does_not_sync_existing_codex_enabled_server() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    let codex_config_path = codex_dir.join("config.toml");
+    let codex_original = r#"[mcp.servers.keep_me]
+type = "stdio"
+command = "echo"
+"#;
+    fs::write(&codex_config_path, codex_original).expect("seed codex config");
+
+    let claude_json = json!({
+        "mcpServers": {
+            "shared": {
+                "type": "stdio",
+                "command": "echo"
+            }
+        }
+    });
+    fs::write(
+        get_claude_mcp_path(),
+        serde_json::to_string_pretty(&claude_json).expect("serialize claude mcp"),
+    )
+    .expect("seed claude mcp");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_mcp_server(&McpServer {
+            id: "shared".to_string(),
+            name: "shared".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: true,
+                gemini: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        })
+        .expect("seed existing mcp server");
+
+    let changed = McpService::import_from_claude(&state).expect("import from claude");
+    assert_eq!(changed, 0, "existing server should not count as new");
+
+    let after = fs::read_to_string(&codex_config_path).expect("read codex config");
+    assert_eq!(
+        after, codex_original,
+        "importing from Claude should not sync an existing Codex-enabled server"
+    );
+
+    let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
+    let shared = servers.get("shared").expect("shared server exists");
+    assert!(
+        shared.apps.claude,
+        "import should enable Claude in database"
+    );
+    assert!(shared.apps.codex, "existing Codex flag should be preserved");
+}
+
+#[test]
 fn import_mcp_from_claude_invalid_json_preserves_state() {
     use support::create_test_state;
 
@@ -215,6 +321,7 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
                 codex: false, // 初始未启用
                 gemini: false,
                 opencode: false,
+                hermes: false,
             },
             description: None,
             homepage: None,
@@ -279,6 +386,7 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
                 codex: false,
                 gemini: false,
                 opencode: false,
+                hermes: false,
             },
             description: None,
             homepage: None,
@@ -323,6 +431,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 codex: false,
                 gemini: false,
                 opencode: false,
+                hermes: false,
             },
             description: None,
             homepage: None,
@@ -356,6 +465,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 codex: false,
                 gemini: false,
                 opencode: false,
+                hermes: false,
             },
             description: None,
             homepage: None,
@@ -488,6 +598,7 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
                 codex: false,
                 gemini: false,
                 opencode: false,
+                hermes: false,
             },
             description: None,
             homepage: None,
@@ -542,6 +653,7 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
                 codex: false,
                 gemini: false,
                 opencode: false,
+                hermes: false,
             },
             description: None,
             homepage: None,
@@ -558,5 +670,100 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
     assert!(
         !home.join(".claude.json").exists(),
         "~/.claude.json should still not exist after skipped sync"
+    );
+}
+
+#[test]
+fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let mcp_path = get_claude_mcp_path();
+    fs::write(
+        &mcp_path,
+        serde_json::to_string_pretty(&json!({
+            "mcpServers": {
+                "managed-disabled": {
+                    "type": "stdio",
+                    "command": "echo"
+                },
+                "external-only": {
+                    "type": "stdio",
+                    "command": "external"
+                }
+            }
+        }))
+        .expect("serialize claude mcp"),
+    )
+    .expect("seed claude mcp");
+
+    let state = create_test_state().expect("create test state");
+
+    state
+        .db
+        .save_mcp_server(&McpServer {
+            id: "managed-disabled".to_string(),
+            name: "Managed Disabled".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: false,
+                gemini: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        })
+        .expect("save disabled server");
+    state
+        .db
+        .save_mcp_server(&McpServer {
+            id: "managed-enabled".to_string(),
+            name: "Managed Enabled".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "managed"
+            }),
+            apps: McpApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        })
+        .expect("save enabled server");
+
+    McpService::sync_all_enabled(&state).expect("reconcile mcp");
+
+    let text = fs::read_to_string(&mcp_path).expect("read claude mcp");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("parse claude mcp");
+    let servers = value
+        .get("mcpServers")
+        .and_then(|entry| entry.as_object())
+        .expect("mcpServers object");
+
+    assert!(
+        !servers.contains_key("managed-disabled"),
+        "DB-known disabled server should be removed from live config"
+    );
+    assert!(
+        servers.contains_key("managed-enabled"),
+        "DB-known enabled server should be present in live config"
+    );
+    assert!(
+        servers.contains_key("external-only"),
+        "live entries unknown to DB should be preserved"
     );
 }

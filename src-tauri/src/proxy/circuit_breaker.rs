@@ -3,6 +3,7 @@
 //! 实现熔断器模式，用于防止向不健康的供应商发送请求
 
 use super::log_codes::cb as log_cb;
+use super::types::AppProxyConfig;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -45,6 +46,18 @@ pub struct CircuitBreakerConfig {
     pub error_rate_threshold: f64,
     /// 最小请求数 - 计算错误率前的最小请求数
     pub min_requests: u32,
+}
+
+impl From<&AppProxyConfig> for CircuitBreakerConfig {
+    fn from(config: &AppProxyConfig) -> Self {
+        Self {
+            failure_threshold: config.circuit_failure_threshold,
+            success_threshold: config.circuit_success_threshold,
+            timeout_seconds: config.circuit_timeout_seconds as u64,
+            error_rate_threshold: config.circuit_error_rate_threshold,
+            min_requests: config.circuit_min_requests,
+        }
+    }
 }
 
 impl Default for CircuitBreakerConfig {

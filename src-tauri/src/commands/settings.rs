@@ -6,8 +6,38 @@ fn merge_settings_for_save(
     mut incoming: crate::settings::AppSettings,
     existing: &crate::settings::AppSettings,
 ) -> crate::settings::AppSettings {
-    if incoming.webdav_sync.is_none() {
-        incoming.webdav_sync = existing.webdav_sync.clone();
+    match (&mut incoming.webdav_sync, &existing.webdav_sync) {
+        // incoming 没有 webdav → 保留现有
+        (None, _) => {
+            incoming.webdav_sync = existing.webdav_sync.clone();
+        }
+        // incoming 有 webdav 但密码为空，且现有有密码 → 填回现有密码
+        // （get_settings_for_frontend 总是清空密码，所以通过 save_settings
+        //   传入的空密码意味着"保持现有"而非"用户主动清空"）
+        (Some(incoming_sync), Some(existing_sync))
+            if incoming_sync.password.is_empty() && !existing_sync.password.is_empty() =>
+        {
+            incoming_sync.password = existing_sync.password.clone();
+        }
+        _ => {}
+    }
+    if incoming.local_migrations.is_none() {
+        incoming.local_migrations = existing.local_migrations.clone();
+    } else if let (Some(incoming_migrations), Some(existing_migrations)) =
+        (&mut incoming.local_migrations, &existing.local_migrations)
+    {
+        if incoming_migrations
+            .codex_third_party_history_provider_bucket_v1
+            .is_none()
+        {
+            incoming_migrations.codex_third_party_history_provider_bucket_v1 = existing_migrations
+                .codex_third_party_history_provider_bucket_v1
+                .clone();
+        }
+        if incoming_migrations.codex_provider_template_v1.is_none() {
+            incoming_migrations.codex_provider_template_v1 =
+                existing_migrations.codex_provider_template_v1.clone();
+        }
     }
     incoming
 }
@@ -30,6 +60,8 @@ pub async fn save_settings(settings: crate::settings::AppSettings) -> Result<boo
 /// 重启应用程序（当 app_config_dir 变更后使用）
 #[tauri::command]
 pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
+    crate::save_window_state_before_exit(&app);
+
     // 在后台延迟重启，让函数有时间返回响应
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -69,17 +101,22 @@ pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::merge_settings_for_save;
-    use crate::settings::{AppSettings, WebDavSyncSettings};
+    use crate::settings::{
+        AppSettings, CodexProviderTemplateMigration, CodexThirdPartyHistoryProviderBucketMigration,
+        LocalMigrations, WebDavSyncSettings,
+    };
 
     #[test]
     fn save_settings_should_preserve_existing_webdav_when_payload_omits_it() {
-        let mut existing = AppSettings::default();
-        existing.webdav_sync = Some(WebDavSyncSettings {
-            base_url: "https://dav.example.com".to_string(),
-            username: "alice".to_string(),
-            password: "secret".to_string(),
-            ..WebDavSyncSettings::default()
-        });
+        let existing = AppSettings {
+            webdav_sync: Some(WebDavSyncSettings {
+                base_url: "https://dav.example.com".to_string(),
+                username: "alice".to_string(),
+                password: "secret".to_string(),
+                ..WebDavSyncSettings::default()
+            }),
+            ..AppSettings::default()
+        };
 
         let incoming = AppSettings::default();
         let merged = merge_settings_for_save(incoming, &existing);
@@ -93,27 +130,148 @@ mod tests {
 
     #[test]
     fn save_settings_should_keep_incoming_webdav_when_present() {
-        let mut existing = AppSettings::default();
-        existing.webdav_sync = Some(WebDavSyncSettings {
-            base_url: "https://dav.old.example.com".to_string(),
-            username: "old".to_string(),
-            password: "old-pass".to_string(),
-            ..WebDavSyncSettings::default()
-        });
+        let existing = AppSettings {
+            webdav_sync: Some(WebDavSyncSettings {
+                base_url: "https://dav.old.example.com".to_string(),
+                username: "old".to_string(),
+                password: "old-pass".to_string(),
+                ..WebDavSyncSettings::default()
+            }),
+            ..AppSettings::default()
+        };
 
-        let mut incoming = AppSettings::default();
-        incoming.webdav_sync = Some(WebDavSyncSettings {
-            base_url: "https://dav.new.example.com".to_string(),
-            username: "new".to_string(),
-            password: "new-pass".to_string(),
-            ..WebDavSyncSettings::default()
-        });
+        let incoming = AppSettings {
+            webdav_sync: Some(WebDavSyncSettings {
+                base_url: "https://dav.new.example.com".to_string(),
+                username: "new".to_string(),
+                password: "new-pass".to_string(),
+                ..WebDavSyncSettings::default()
+            }),
+            ..AppSettings::default()
+        };
 
         let merged = merge_settings_for_save(incoming, &existing);
 
         assert_eq!(
             merged.webdav_sync.as_ref().map(|v| v.base_url.as_str()),
             Some("https://dav.new.example.com")
+        );
+    }
+
+    /// Regression test: frontend always receives empty password from
+    /// get_settings_for_frontend(). If a component accidentally spreads
+    /// the full settings object into save_settings, the empty password
+    /// must NOT overwrite the existing one.
+    #[test]
+    fn save_settings_should_preserve_password_when_incoming_has_empty_password() {
+        let existing = AppSettings {
+            webdav_sync: Some(WebDavSyncSettings {
+                base_url: "https://dav.example.com".to_string(),
+                username: "alice".to_string(),
+                password: "secret".to_string(),
+                ..WebDavSyncSettings::default()
+            }),
+            ..AppSettings::default()
+        };
+
+        // Simulate frontend sending settings with cleared password
+        let incoming = AppSettings {
+            webdav_sync: Some(WebDavSyncSettings {
+                base_url: "https://dav.example.com".to_string(),
+                username: "alice".to_string(),
+                password: "".to_string(),
+                ..WebDavSyncSettings::default()
+            }),
+            ..AppSettings::default()
+        };
+
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert_eq!(
+            merged.webdav_sync.as_ref().map(|v| v.password.as_str()),
+            Some("secret"),
+            "empty password from frontend must not overwrite existing password"
+        );
+    }
+
+    /// When both incoming and existing have no password, merge should
+    /// work without panicking and keep the empty state.
+    #[test]
+    fn save_settings_should_handle_both_empty_passwords() {
+        let existing = AppSettings {
+            webdav_sync: Some(WebDavSyncSettings {
+                base_url: "https://dav.example.com".to_string(),
+                username: "alice".to_string(),
+                password: "".to_string(),
+                ..WebDavSyncSettings::default()
+            }),
+            ..AppSettings::default()
+        };
+
+        let incoming = AppSettings {
+            webdav_sync: Some(WebDavSyncSettings {
+                base_url: "https://dav.example.com".to_string(),
+                username: "alice".to_string(),
+                password: "".to_string(),
+                ..WebDavSyncSettings::default()
+            }),
+            ..AppSettings::default()
+        };
+
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert_eq!(
+            merged.webdav_sync.as_ref().map(|v| v.password.as_str()),
+            Some("")
+        );
+    }
+
+    #[test]
+    fn save_settings_should_preserve_local_migrations_when_payload_omits_it() {
+        let existing = AppSettings {
+            local_migrations: Some(LocalMigrations {
+                codex_third_party_history_provider_bucket_v1: Some(
+                    CodexThirdPartyHistoryProviderBucketMigration {
+                        completed_at: "2026-05-20T00:00:00Z".to_string(),
+                        target_provider_id: "custom".to_string(),
+                        source_provider_ids: vec!["rightcode".to_string()],
+                        migrated_jsonl_files: 2,
+                        migrated_state_rows: 3,
+                        scanned_history_files: true,
+                    },
+                ),
+                codex_provider_template_v1: Some(CodexProviderTemplateMigration {
+                    completed_at: "2026-05-20T00:01:00Z".to_string(),
+                    migrated_provider_ids: vec!["legacy".to_string()],
+                }),
+            }),
+            ..AppSettings::default()
+        };
+
+        let incoming = AppSettings::default();
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        let migration = merged
+            .local_migrations
+            .as_ref()
+            .and_then(|migrations| {
+                migrations
+                    .codex_third_party_history_provider_bucket_v1
+                    .as_ref()
+            })
+            .expect("local migration marker should be preserved");
+        assert_eq!(migration.target_provider_id, "custom");
+        assert_eq!(migration.migrated_jsonl_files, 2);
+        assert_eq!(migration.migrated_state_rows, 3);
+
+        let template_migration = merged
+            .local_migrations
+            .as_ref()
+            .and_then(|migrations| migrations.codex_provider_template_v1.as_ref())
+            .expect("template migration marker should be preserved");
+        assert_eq!(
+            template_migration.migrated_provider_ids,
+            vec!["legacy".to_string()]
         );
     }
 }
@@ -171,6 +329,30 @@ pub async fn set_optimizer_config(
     state
         .db
         .set_optimizer_config(&config)
+        .map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// 获取 Copilot 优化器配置
+#[tauri::command]
+pub async fn get_copilot_optimizer_config(
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<crate::proxy::types::CopilotOptimizerConfig, String> {
+    state
+        .db
+        .get_copilot_optimizer_config()
+        .map_err(|e| e.to_string())
+}
+
+/// 设置 Copilot 优化器配置
+#[tauri::command]
+pub async fn set_copilot_optimizer_config(
+    state: tauri::State<'_, crate::AppState>,
+    config: crate::proxy::types::CopilotOptimizerConfig,
+) -> Result<bool, String> {
+    state
+        .db
+        .set_copilot_optimizer_config(&config)
         .map_err(|e| e.to_string())?;
     Ok(true)
 }
