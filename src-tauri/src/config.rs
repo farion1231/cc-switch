@@ -278,19 +278,25 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
         .as_nanos();
     tmp.push(format!("{file_name}.tmp.{ts}"));
 
+    #[cfg(unix)]
     {
-        let mut f = fs::File::create(&tmp).map_err(|e| AppError::io(&tmp, e))?;
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut f = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&tmp)
+            .map_err(|e| AppError::io(&tmp, e))?;
         f.write_all(data).map_err(|e| AppError::io(&tmp, e))?;
         f.flush().map_err(|e| AppError::io(&tmp, e))?;
     }
 
-    #[cfg(unix)]
+    #[cfg(not(unix))]
     {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = fs::metadata(path) {
-            let perm = meta.permissions().mode();
-            let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(perm));
-        }
+        let mut f = fs::File::create(&tmp).map_err(|e| AppError::io(&tmp, e))?;
+        f.write_all(data).map_err(|e| AppError::io(&tmp, e))?;
+        f.flush().map_err(|e| AppError::io(&tmp, e))?;
     }
 
     #[cfg(windows)]
@@ -386,6 +392,45 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_creates_private_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("config.json");
+
+        atomic_write(&path, b"{}").expect("atomic write");
+
+        let mode = fs::metadata(&path)
+            .expect("file metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_repairs_existing_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("config.json");
+        fs::write(&path, "{}").expect("write existing file");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644))
+            .expect("widen file permissions");
+
+        atomic_write(&path, b"{\"ok\":true}").expect("atomic write");
+
+        let mode = fs::metadata(&path)
+            .expect("file metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
     }
 
     #[test]
