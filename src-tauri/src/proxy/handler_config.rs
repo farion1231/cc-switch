@@ -44,11 +44,13 @@ pub fn claude_stream_usage_event_filter(data: &str) -> bool {
 }
 
 fn openai_stream_usage_event_filter(data: &str) -> bool {
-    data.contains("\"usage\"")
+    data.contains("\"usage\"") || data.contains("\"model\"")
 }
 
 pub fn codex_stream_usage_event_filter(data: &str) -> bool {
-    data.contains("\"response.completed\"") || data.contains("\"usage\"")
+    data.contains("\"response.created\"")
+        || data.contains("\"response.completed\"")
+        || data.contains("\"usage\"")
 }
 
 fn gemini_stream_usage_event_filter(data: &str) -> bool {
@@ -94,15 +96,12 @@ fn codex_auto_model_extractor(events: &[Value], request_model: &str) -> String {
             return model;
         }
     }
-    // 回退：从 response.completed 事件中提取
+    // 回退：从 Responses 事件中提取
     events
         .iter()
-        .find_map(|e| {
-            if e.get("type")?.as_str()? == "response.completed" {
-                e.get("response")?.get("model")?.as_str()
-            } else {
-                None
-            }
+        .find_map(|e| match e.get("type")?.as_str()? {
+            "response.created" | "response.completed" => e.get("response")?.get("model")?.as_str(),
+            _ => None,
         })
         .or_else(|| {
             // 再回退：从 OpenAI 格式事件中提取
