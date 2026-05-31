@@ -754,7 +754,7 @@
     "appConfigDirDescription": "CC Switch の保存場所をカスタマイズします（クラウド同期フォルダを指定すると設定を同期できます）",
     "browsePlaceholderApp": "例: C:\\\\Users\\\\Administrator\\\\.cc-switch",
     "claudeConfigDir": "Claude Code 設定ディレクトリ",
-    "claudeConfigDirDescription": "Claude の設定ディレクトリ（settings.json）を上書きし、claude.json（MCP）も同じ場所に置きます。",
+    "claudeConfigDirDescription": "Claude の設定ディレクトリ（settings.json）を上書きします。カスタムディレクトリでは .claude.json（MCP）をその中に保存し、既定の ~/.claude では Claude Code の既定どおり ~/.claude.json を使います。",
     "codexConfigDir": "Codex 設定ディレクトリ",
     "codexConfigDirDescription": "Codex の設定ディレクトリを上書きします。",
     "geminiConfigDir": "Gemini 設定ディレクトリ",
