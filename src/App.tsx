@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useRef } from "react";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
@@ -1002,6 +1003,7 @@ function App() {
   };
 
   return (
+    <ErrorBoundary>
     <div
       className="flex flex-col h-screen overflow-hidden bg-background text-foreground selection:bg-primary/30 pb-4"
       style={{ overflowX: "hidden", paddingTop: contentTopOffset }}
@@ -1598,6 +1600,7 @@ function App() {
       <DeepLinkImportDialog />
       <FirstRunNoticeDialog />
     </div>
+    </ErrorBoundary>
   );
 }
 
