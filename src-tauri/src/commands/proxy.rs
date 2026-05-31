@@ -359,22 +359,22 @@ pub async fn reset_circuit_breaker(
                 .get_failover_queue(&app_type)
                 .map_err(|e| e.to_string())?;
 
-            // 找到恢复的供应商和当前供应商在队列中的位置（使用 sort_index）
+            // 找到恢复的供应商和当前供应商在队列中的位置（使用队列下标，而非 sort_index）
+            // sort_index = None 表示最高优先级，若用 sort_index 值比较，P1 恢复时因 None
+            // 导致 if let (Some, Some) 匹配失败而无法触发切回，因此改用队列顺序索引。
             let restored_order = queue
                 .iter()
-                .find(|item| item.provider_id == provider_id)
-                .and_then(|item| item.sort_index);
+                .position(|item| item.provider_id == provider_id);
 
             let current_order = queue
                 .iter()
-                .find(|item| item.provider_id == current_id)
-                .and_then(|item| item.sort_index);
+                .position(|item| item.provider_id == current_id);
 
-            // 如果恢复的供应商优先级更高（sort_index 更小），则切换
+            // 如果恢复的供应商优先级更高（队列下标更小），则切换
             if let (Some(restored), Some(current)) = (restored_order, current_order) {
                 if restored < current {
                     log::info!(
-                        "[Recovery] 供应商 {provider_id} 已恢复且优先级更高 (P{restored} vs P{current})，自动切换"
+                        "[Recovery] 供应商 {provider_id} 已恢复且优先级更高 (队列位置 {restored} vs {current})，自动切换"
                     );
 
                     // 获取供应商名称用于日志和事件

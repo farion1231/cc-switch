@@ -25,7 +25,7 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
              FROM providers WHERE app_type = ?1
-             ORDER BY COALESCE(sort_index, 999999), created_at ASC, id ASC"
+             ORDER BY CASE WHEN sort_index IS NULL THEN 0 ELSE 1 END ASC, sort_index ASC, created_at DESC, id ASC"
         ).map_err(|e| AppError::Database(e.to_string()))?;
 
         let provider_iter = stmt

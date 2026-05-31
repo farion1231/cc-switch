@@ -24,10 +24,11 @@ const sortProviders = (
 ): Record<string, Provider> => {
   const sortedEntries = Object.values(providers)
     .sort((a, b) => {
-      const indexA = a.sortIndex ?? Number.MAX_SAFE_INTEGER;
-      const indexB = b.sortIndex ?? Number.MAX_SAFE_INTEGER;
-      if (indexA !== indexB) {
-        return indexA - indexB;
+      // Providers without sortIndex (newly added) appear first
+      if (a.sortIndex === undefined && b.sortIndex !== undefined) return -1;
+      if (a.sortIndex !== undefined && b.sortIndex === undefined) return 1;
+      if (a.sortIndex !== undefined && b.sortIndex !== undefined) {
+        return a.sortIndex - b.sortIndex;
       }
 
       const timeA = a.createdAt ?? 0;
@@ -35,7 +36,7 @@ const sortProviders = (
       if (timeA === timeB) {
         return a.name.localeCompare(b.name, "zh-CN");
       }
-      return timeA - timeB;
+      return timeB - timeA;
     })
     .map((provider) => [provider.id, provider] as const);
 
