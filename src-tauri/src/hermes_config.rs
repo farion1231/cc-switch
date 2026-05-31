@@ -44,16 +44,79 @@ use std::sync::{Mutex, OnceLock};
 // Path Functions
 // ============================================================================
 
+/// Discover WSL home directory by probing `\\wsl$\` and `\\wsl.localhost\`
+/// for distros that contain a `.hermes/config.yaml`.
+///
+/// On Windows, `dirs::home_dir()` returns the Windows home (e.g. `C:\Users\luyh7`),
+/// but Hermes installed inside WSL lives at `\\wsl$\Ubuntu\home\luyh7\.hermes\`.
+/// This function bridges that gap for users who run Hermes in WSL but CC Switch
+/// natively on Windows.
+#[cfg(target_os = "windows")]
+fn discover_wsl_hermes_home() -> Option<PathBuf> {
+    // Derive the Windows username so we can look for the same user inside WSL.
+    let username = dirs::home_dir()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))?;
+
+    // Collect candidate WSL root prefixes.  `\\wsl$\` is the classic 9p
+    // UNC prefix; `\\wsl.localhost\` is the newer namespace.
+    let mut wsl_roots: Vec<PathBuf> = Vec::new();
+    for prefix in [r"\\wsl$", r"\\wsl.localhost"] {
+        if let Ok(entries) = std::fs::read_dir(prefix) {
+            for entry in entries.flatten() {
+                wsl_roots.push(entry.path());
+            }
+        }
+    }
+
+    // Walk discovered distro roots and look for the user's hermes config.
+    for root in &wsl_roots {
+        let candidate = root
+            .join("home")
+            .join(&username)
+            .join(".hermes")
+            .join("config.yaml");
+        if candidate.exists() {
+            log::info!(
+                "Discovered Hermes config via WSL at {}",
+                candidate.display()
+            );
+            return Some(root.join("home").join(&username));
+        }
+    }
+
+    None
+}
+
 /// 获取 Hermes 配置目录
 ///
 /// 默认路径: `~/.hermes/`
 /// 可通过 settings.hermes_config_dir 覆盖
+///
+/// On Windows, if no Hermes config is found under the Windows home directory,
+/// this function probes WSL distros (``\\wsl$\``, ``\\wsl.localhost\``) and
+/// returns the matching WSL home when ``.hermes/config.yaml`` exists there.
 pub fn get_hermes_dir() -> PathBuf {
     if let Some(override_dir) = get_hermes_override_dir() {
         return override_dir;
     }
 
-    crate::config::get_home_dir().join(".hermes")
+    let default_dir = crate::config::get_home_dir().join(".hermes");
+
+    // If the default hermes config exists on disk, use it — this preserves
+    // the existing behaviour for native-Windows Hermes installations and
+    // avoids a spurious WSL probe.
+    if default_dir.join("config.yaml").exists() {
+        return default_dir;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(wsl_home) = discover_wsl_hermes_home() {
+            return wsl_home.join(".hermes");
+        }
+    }
+
+    default_dir
 }
 
 /// 获取 Hermes 配置文件路径
