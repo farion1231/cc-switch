@@ -271,7 +271,7 @@ export function ProviderList({
       }
     },
     onError: (error: Error) => {
-      toast.error(error.message);
+      toast.error(error.message || t("provider.importCurrentFailed"));
     },
   });
 
