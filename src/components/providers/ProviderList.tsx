@@ -293,10 +293,11 @@ export function ProviderList({
     setRoutingSwitchInFlight(true);
     try {
       if (enabled) {
-        // 先切；仅当切换成功（返回非 false）才开接管。失败则中止——switchProvider
-        // 的 mutation onError 已弹「切换失败」toast，且 live 仍停在原 provider。
+        // 仅当切换**明确**返回 true 才开接管：非 true（含 false / void 实现的
+        // undefined）一律中止，绝不在切换未确认下开接管（防封号）。切换失败的 toast
+        // 由 switchProvider 自身弹出。
         const switched = await onSwitch(provider, { fromRoutingGuard: true });
-        if (switched === false) return;
+        if (switched !== true) return;
         try {
           await setProxyTakeover.mutateAsync({ appType: appId, enabled: true });
         } catch {
@@ -335,7 +336,9 @@ export function ProviderList({
         { closeButton: true },
       );
       await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
-      onSwitch(provider, { fromRoutingGuard: true });
+      // await：保持 in-flight 直到切换完成，否则 finally 会在切换在途时提前清标记 →
+      // 按钮重新可点，用户可重复触发。
+      await onSwitch(provider, { fromRoutingGuard: true });
     } finally {
       setRoutingSwitchInFlight(false);
     }

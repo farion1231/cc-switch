@@ -5,19 +5,13 @@ import {
   type SwitchDecisionInput,
 } from "../switchDecision";
 
-/**
- * Typed expectation helper: keeps the expected literal constrained to the
- * SwitchAction union without relying on a (non-existent) type argument on
- * vitest's `toBe`.
- */
+// Constrains the expected literal to the SwitchAction union (vitest's `toBe`
+// takes no type argument).
 function expectAction(actual: SwitchAction, expected: SwitchAction): void {
   expect(actual).toBe(expected);
 }
 
-/**
- * Helper to build a fully-specified input with sensible defaults so each
- * test only states the fields it cares about.
- */
+// Defaults so each test only states the fields it cares about.
 function makeInput(
   overrides: Partial<SwitchDecisionInput> = {},
 ): SwitchDecisionInput {
@@ -177,18 +171,53 @@ describe("decideSwitchAction — §4 state machine", () => {
   describe("exhaustive truth table (all 32 combinations)", () => {
     const bools = [false, true] as const;
 
+    // Independent oracle expressed as DATA, not as the implementation's nested-if
+    // flow — a copy-pasted oracle could mirror a source bug and stay green. Only
+    // the four non-"direct" situations are listed; everything else is "direct".
+    // Rules are mutually exclusive, so order does not matter.
+    const RULES: Array<{
+      when: Partial<SwitchDecisionInput>;
+      then: SwitchAction;
+    }> = [
+      // Official under takeover → must leave routing before switching.
+      {
+        when: { isOfficial: true, isProxyTakeover: true, autoDisable: true },
+        then: "directDisable",
+      },
+      {
+        when: { isOfficial: true, isProxyTakeover: true, autoDisable: false },
+        then: "confirmDisable",
+      },
+      // Non-official that needs routing, not yet routed → enable routing.
+      {
+        when: {
+          isOfficial: false,
+          needsRouting: true,
+          isProxyTakeover: false,
+          autoEnable: true,
+        },
+        then: "directEnable",
+      },
+      {
+        when: {
+          isOfficial: false,
+          needsRouting: true,
+          isProxyTakeover: false,
+          autoEnable: false,
+        },
+        then: "confirmEnable",
+      },
+    ];
+
     function expected(input: SwitchDecisionInput): SwitchAction {
-      // Independent reference implementation: isOfficial dominates needsRouting.
-      if (input.isOfficial) {
-        if (input.isProxyTakeover) {
-          return input.autoDisable ? "directDisable" : "confirmDisable";
-        }
-        return "direct";
-      }
-      if (input.needsRouting && !input.isProxyTakeover) {
-        return input.autoEnable ? "directEnable" : "confirmEnable";
-      }
-      return "direct";
+      const match = RULES.find((rule) =>
+        (
+          Object.entries(rule.when) as Array<
+            [keyof SwitchDecisionInput, boolean]
+          >
+        ).every(([key, value]) => input[key] === value),
+      );
+      return match ? match.then : "direct";
     }
 
     for (const needsRouting of bools) {
