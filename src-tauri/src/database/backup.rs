@@ -3,7 +3,7 @@
 //! 提供 SQL 导出/导入和二进制快照备份功能。
 
 use super::{lock_conn, Database};
-use crate::config::get_app_config_dir;
+use crate::config::{create_private_dir_all, ensure_app_config_dir, get_app_config_dir};
 use crate::error::AppError;
 use chrono::{Local, Utc};
 use rusqlite::backup::Backup;
@@ -296,7 +296,7 @@ impl Database {
 
     /// 生成一致性快照备份，返回备份文件路径（不存在主库时返回 None）
     pub(crate) fn backup_database_file(&self) -> Result<Option<PathBuf>, AppError> {
-        let db_path = get_app_config_dir().join("cc-switch.db");
+        let db_path = ensure_app_config_dir()?.join("cc-switch.db");
         if !db_path.exists() {
             return Ok(None);
         }
@@ -306,7 +306,7 @@ impl Database {
             .ok_or_else(|| AppError::Config("无效的数据库路径".to_string()))?
             .join("backups");
 
-        fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+        create_private_dir_all(&backup_dir)?;
 
         let base_id = format!("db_backup_{}", Local::now().format("%Y%m%d_%H%M%S"));
         let mut backup_id = base_id.clone();

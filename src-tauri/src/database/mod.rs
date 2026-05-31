@@ -39,7 +39,7 @@ pub(crate) use dao::proxy::{
 };
 pub use dao::FailoverQueueItem;
 
-use crate::config::get_app_config_dir;
+use crate::config::ensure_app_config_dir;
 use crate::error::AppError;
 use rusqlite::{hooks::Action, Connection};
 use serde::Serialize;
@@ -93,13 +93,8 @@ impl Database {
     ///
     /// 数据库文件位于 `~/.cc-switch/cc-switch.db`
     pub fn init() -> Result<Self, AppError> {
-        let db_path = get_app_config_dir().join("cc-switch.db");
+        let db_path = ensure_app_config_dir()?.join("cc-switch.db");
         let db_exists = db_path.exists();
-
-        // 确保父目录存在
-        if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
-        }
 
         let conn = Connection::open(&db_path).map_err(|e| AppError::Database(e.to_string()))?;
 
