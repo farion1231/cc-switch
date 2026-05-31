@@ -125,6 +125,18 @@ export function ProxyTabContent({
               onEnableLocalProxyChange={(checked) =>
                 onAutoSave({ enableLocalProxy: checked })
               }
+              autoEnableForNeedsRouting={
+                settings?.autoEnableForNeedsRouting ?? false
+              }
+              onAutoEnableForNeedsRoutingChange={(checked) =>
+                onAutoSave({ autoEnableForNeedsRouting: checked })
+              }
+              autoDisableForNoRouting={
+                settings?.autoDisableForNoRouting ?? false
+              }
+              onAutoDisableForNoRoutingChange={(checked) =>
+                onAutoSave({ autoDisableForNoRouting: checked })
+              }
               onToggleProxy={handleToggleProxy}
               isProxyPending={isProxyPending}
             />
