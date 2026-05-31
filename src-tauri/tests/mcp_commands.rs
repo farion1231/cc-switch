@@ -4,8 +4,9 @@ use std::fs;
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_claude_mcp_path, get_claude_settings_path, import_default_config_test_hook, AppError,
-    AppType, McpApps, McpServer, McpService, MultiAppConfig,
+    get_claude_mcp_path, get_claude_settings_path, import_default_config_test_hook,
+    update_settings, AppError, AppSettings, AppType, McpApps, McpServer, McpService,
+    MultiAppConfig,
 };
 
 #[path = "support.rs"]
@@ -670,6 +671,117 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
     assert!(
         !home.join(".claude.json").exists(),
         "~/.claude.json should still not exist after skipped sync"
+    );
+}
+
+#[test]
+fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let claude_dir = home.join(".claude");
+    fs::create_dir_all(&claude_dir).expect("create explicit default claude dir");
+
+    update_settings(AppSettings {
+        claude_config_dir: Some(claude_dir.to_string_lossy().to_string()),
+        ..AppSettings::default()
+    })
+    .expect("set explicit default claude config dir");
+
+    assert_eq!(
+        get_claude_mcp_path(),
+        home.join(".claude.json"),
+        "explicit default Claude dir should keep Claude Code's split MCP path"
+    );
+
+    let state = create_test_state().expect("create test state");
+    McpService::upsert_server(
+        &state,
+        McpServer {
+            id: "claude-default".to_string(),
+            name: "Claude Default".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    )
+    .expect("sync default Claude MCP");
+
+    assert!(
+        home.join(".claude.json").exists(),
+        "default split MCP file should be written at home/.claude.json"
+    );
+    assert!(
+        !claude_dir.join(".claude.json").exists(),
+        "explicit default dir should not use nested .claude/.claude.json"
+    );
+}
+
+#[test]
+fn custom_claude_dir_writes_mcp_inside_config_dir() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let custom_dir = home.join("profiles").join(".claude");
+    fs::create_dir_all(&custom_dir).expect("create custom claude dir");
+
+    update_settings(AppSettings {
+        claude_config_dir: Some(custom_dir.to_string_lossy().to_string()),
+        ..AppSettings::default()
+    })
+    .expect("set custom claude config dir");
+
+    let expected_mcp_path = custom_dir.join(".claude.json");
+    assert_eq!(
+        get_claude_mcp_path(),
+        expected_mcp_path,
+        "custom Claude dir should keep MCP state inside the config dir"
+    );
+
+    let state = create_test_state().expect("create test state");
+    McpService::upsert_server(
+        &state,
+        McpServer {
+            id: "claude-custom".to_string(),
+            name: "Claude Custom".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    )
+    .expect("sync custom Claude MCP");
+
+    assert!(
+        expected_mcp_path.exists(),
+        "custom Claude MCP file should be written inside custom dir"
+    );
+    assert!(
+        !home.join("profiles").join(".claude.json").exists(),
+        "custom Claude dir should not write sibling .claude.json"
     );
 }
 
