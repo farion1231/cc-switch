@@ -17,6 +17,9 @@
     "core:window:allow-close",
     "core:window:allow-set-decorations",
     "process:allow-restart",
-    "dialog:default"
+    "dialog:default",
+    "deep-link:default",
+    "store:default",
+    "window-state:default"
   ]
 }
