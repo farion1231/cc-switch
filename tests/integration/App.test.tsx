@@ -342,6 +342,11 @@ describe("App integration with MSW", () => {
       ),
     );
 
+    expect(() => {
+      emitTauriEvent("webdav-sync-status-updated", null);
+    }).not.toThrow();
+    expect(toastErrorMock).not.toHaveBeenCalled();
+
     emitTauriEvent("webdav-sync-status-updated", {
       source: "auto",
       status: "error",

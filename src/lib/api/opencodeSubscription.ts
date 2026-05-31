@@ -58,7 +58,9 @@ export const opencodeSubscriptionApi = {
   async testConnection(
     providerId: string,
   ): Promise<OpenCodeSubscriptionConnectionResult> {
-    return await invoke("opencode_subscription_test_connection", { providerId });
+    return await invoke("opencode_subscription_test_connection", {
+      providerId,
+    });
   },
 
   async testStream(

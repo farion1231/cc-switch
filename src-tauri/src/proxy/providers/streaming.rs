@@ -341,151 +341,153 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
 
                                         // 处理工具调用
                                         if let Some(tool_calls) = &choice.delta.tool_calls {
-                                            if let Some(index) = current_non_tool_block_index.take() {
-                                                let event = json!({
-                                                    "type": "content_block_stop",
-                                                    "index": index
-                                                });
-                                                let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
-                                                    serde_json::to_string(&event).unwrap_or_default());
-                                                yield Ok(Bytes::from(sse_data));
-                                            }
-                                            current_non_tool_block_type = None;
+                                            if !tool_calls.is_empty() {
+                                                if let Some(index) = current_non_tool_block_index.take() {
+                                                    let event = json!({
+                                                        "type": "content_block_stop",
+                                                        "index": index
+                                                    });
+                                                    let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
+                                                        serde_json::to_string(&event).unwrap_or_default());
+                                                    yield Ok(Bytes::from(sse_data));
+                                                }
+                                                current_non_tool_block_type = None;
 
-                                            for tool_call in tool_calls {
-                                                let (
-                                                    anthropic_index,
-                                                    id,
-                                                    name,
-                                                    should_start,
-                                                    pending_after_start,
-                                                    immediate_delta,
-                                                ) = {
-                                                    let state = tool_blocks_by_index
-                                                        .entry(tool_call.index)
-                                                        .or_insert_with(|| {
-                                                            let index = next_content_index;
-                                                            next_content_index += 1;
-                                                            ToolBlockState {
-                                                                anthropic_index: index,
-                                                                id: String::new(),
-                                                                name: String::new(),
-                                                                started: false,
-                                                                pending_args: String::new(),
-                                                                consecutive_whitespace: 0,
-                                                                aborted: false,
-                                                            }
-                                                        });
-
-                                                    // 如果此 tool call 已被中止（无限空白 bug），跳过后续处理
-                                                    if state.aborted {
-                                                        continue;
-                                                    }
-
-                                                    if let Some(id) = &tool_call.id {
-                                                        state.id = id.clone();
-                                                    }
-                                                    if let Some(function) = &tool_call.function {
-                                                        if let Some(name) = &function.name {
-                                                            state.name = name.clone();
-                                                        }
-                                                    }
-
-                                                    let should_start =
-                                                        !state.started
-                                                            && !state.id.is_empty()
-                                                            && !state.name.is_empty();
-                                                    if should_start {
-                                                        state.started = true;
-                                                    }
-                                                    let pending_after_start = if should_start
-                                                        && !state.pending_args.is_empty()
-                                                    {
-                                                        Some(std::mem::take(&mut state.pending_args))
-                                                    } else {
-                                                        None
-                                                    };
-                                                    let args_delta = tool_call
-                                                        .function
-                                                        .as_ref()
-                                                        .and_then(|f| f.arguments.clone());
-                                                    let immediate_delta = if let Some(args) = args_delta {
-                                                        // 无限空白 bug 检测：跟踪连续空白字符
-                                                        for ch in args.chars() {
-                                                            if ch.is_whitespace() {
-                                                                state.consecutive_whitespace += 1;
-                                                            } else {
-                                                                state.consecutive_whitespace = 0;
-                                                            }
-                                                        }
-                                                        if state.consecutive_whitespace >= INFINITE_WHITESPACE_THRESHOLD {
-                                                            log::warn!(
-                                                                "[Copilot] 检测到无限空白 bug (tool: {}), 中止此 tool call 流",
-                                                                state.name
-                                                            );
-                                                            state.aborted = true;
-                                                            None
-                                                        } else if state.started {
-                                                            Some(args)
-                                                        } else {
-                                                            state.pending_args.push_str(&args);
-                                                            None
-                                                        }
-                                                    } else {
-                                                        None
-                                                    };
-                                                    (
-                                                        state.anthropic_index,
-                                                        state.id.clone(),
-                                                        state.name.clone(),
+                                                for tool_call in tool_calls {
+                                                    let (
+                                                        anthropic_index,
+                                                        id,
+                                                        name,
                                                         should_start,
                                                         pending_after_start,
                                                         immediate_delta,
-                                                    )
-                                                };
+                                                    ) = {
+                                                        let state = tool_blocks_by_index
+                                                            .entry(tool_call.index)
+                                                            .or_insert_with(|| {
+                                                                let index = next_content_index;
+                                                                next_content_index += 1;
+                                                                ToolBlockState {
+                                                                    anthropic_index: index,
+                                                                    id: String::new(),
+                                                                    name: String::new(),
+                                                                    started: false,
+                                                                    pending_args: String::new(),
+                                                                    consecutive_whitespace: 0,
+                                                                    aborted: false,
+                                                                }
+                                                            });
 
-                                                if should_start {
-                                                    let event = json!({
-                                                        "type": "content_block_start",
-                                                        "index": anthropic_index,
-                                                        "content_block": {
-                                                            "type": "tool_use",
-                                                            "id": id,
-                                                            "name": name
+                                                        // 如果此 tool call 已被中止（无限空白 bug），跳过后续处理
+                                                        if state.aborted {
+                                                            continue;
                                                         }
-                                                    });
-                                                    let sse_data = format!("event: content_block_start\ndata: {}\n\n",
-                                                        serde_json::to_string(&event).unwrap_or_default());
-                                                    yield Ok(Bytes::from(sse_data));
-                                                    open_tool_block_indices.insert(anthropic_index);
-                                                }
 
-                                                if let Some(args) = pending_after_start {
-                                                    let event = json!({
-                                                        "type": "content_block_delta",
-                                                        "index": anthropic_index,
-                                                        "delta": {
-                                                            "type": "input_json_delta",
-                                                            "partial_json": args
+                                                        if let Some(id) = &tool_call.id {
+                                                            state.id = id.clone();
                                                         }
-                                                    });
-                                                    let sse_data = format!("event: content_block_delta\ndata: {}\n\n",
-                                                        serde_json::to_string(&event).unwrap_or_default());
-                                                    yield Ok(Bytes::from(sse_data));
-                                                }
+                                                        if let Some(function) = &tool_call.function {
+                                                            if let Some(name) = &function.name {
+                                                                state.name = name.clone();
+                                                            }
+                                                        }
 
-                                                if let Some(args) = immediate_delta {
-                                                    let event = json!({
-                                                        "type": "content_block_delta",
-                                                        "index": anthropic_index,
-                                                        "delta": {
-                                                            "type": "input_json_delta",
-                                                            "partial_json": args
+                                                        let should_start =
+                                                            !state.started
+                                                                && !state.id.is_empty()
+                                                                && !state.name.is_empty();
+                                                        if should_start {
+                                                            state.started = true;
                                                         }
-                                                    });
-                                                    let sse_data = format!("event: content_block_delta\ndata: {}\n\n",
-                                                        serde_json::to_string(&event).unwrap_or_default());
-                                                    yield Ok(Bytes::from(sse_data));
+                                                        let pending_after_start = if should_start
+                                                            && !state.pending_args.is_empty()
+                                                        {
+                                                            Some(std::mem::take(&mut state.pending_args))
+                                                        } else {
+                                                            None
+                                                        };
+                                                        let args_delta = tool_call
+                                                            .function
+                                                            .as_ref()
+                                                            .and_then(|f| f.arguments.clone());
+                                                        let immediate_delta = if let Some(args) = args_delta {
+                                                            // 无限空白 bug 检测：跟踪连续空白字符
+                                                            for ch in args.chars() {
+                                                                if ch.is_whitespace() {
+                                                                    state.consecutive_whitespace += 1;
+                                                                } else {
+                                                                    state.consecutive_whitespace = 0;
+                                                                }
+                                                            }
+                                                            if state.consecutive_whitespace >= INFINITE_WHITESPACE_THRESHOLD {
+                                                                log::warn!(
+                                                                    "[Copilot] 检测到无限空白 bug (tool: {}), 中止此 tool call 流",
+                                                                    state.name
+                                                                );
+                                                                state.aborted = true;
+                                                                None
+                                                            } else if state.started {
+                                                                Some(args)
+                                                            } else {
+                                                                state.pending_args.push_str(&args);
+                                                                None
+                                                            }
+                                                        } else {
+                                                            None
+                                                        };
+                                                        (
+                                                            state.anthropic_index,
+                                                            state.id.clone(),
+                                                            state.name.clone(),
+                                                            should_start,
+                                                            pending_after_start,
+                                                            immediate_delta,
+                                                        )
+                                                    };
+
+                                                    if should_start {
+                                                        let event = json!({
+                                                            "type": "content_block_start",
+                                                            "index": anthropic_index,
+                                                            "content_block": {
+                                                                "type": "tool_use",
+                                                                "id": id,
+                                                                "name": name
+                                                            }
+                                                        });
+                                                        let sse_data = format!("event: content_block_start\ndata: {}\n\n",
+                                                            serde_json::to_string(&event).unwrap_or_default());
+                                                        yield Ok(Bytes::from(sse_data));
+                                                        open_tool_block_indices.insert(anthropic_index);
+                                                    }
+
+                                                    if let Some(args) = pending_after_start {
+                                                        let event = json!({
+                                                            "type": "content_block_delta",
+                                                            "index": anthropic_index,
+                                                            "delta": {
+                                                                "type": "input_json_delta",
+                                                                "partial_json": args
+                                                            }
+                                                        });
+                                                        let sse_data = format!("event: content_block_delta\ndata: {}\n\n",
+                                                            serde_json::to_string(&event).unwrap_or_default());
+                                                        yield Ok(Bytes::from(sse_data));
+                                                    }
+
+                                                    if let Some(args) = immediate_delta {
+                                                        let event = json!({
+                                                            "type": "content_block_delta",
+                                                            "index": anthropic_index,
+                                                            "delta": {
+                                                                "type": "input_json_delta",
+                                                                "partial_json": args
+                                                            }
+                                                        });
+                                                        let sse_data = format!("event: content_block_delta\ndata: {}\n\n",
+                                                            serde_json::to_string(&event).unwrap_or_default());
+                                                        yield Ok(Bytes::from(sse_data));
+                                                    }
                                                 }
                                             }
                                         }

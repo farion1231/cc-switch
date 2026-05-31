@@ -37,8 +37,23 @@ describe("provider preset order", () => {
     ]);
   });
 
-  it("Codex 预设把 PatewayAI 放在胜算云后面", () => {
-    expectInOrder(namesOf(codexProviderPresets), ["Shengsuanyun", "PatewayAI"]);
+  it("Claude Desktop 预设包含官方登录入口", () => {
+    expect(claudeDesktopProviderPresets[0]).toMatchObject({
+      name: "Claude Desktop Official",
+      category: "official",
+      baseUrl: "",
+      mode: "direct",
+    });
+  });
+
+  it("Codex 预设按合作伙伴优先顺序排列", () => {
+    expectInOrder(namesOf(codexProviderPresets), [
+      "Shengsuanyun",
+      "PatewayAI",
+      "火山Agentplan",
+      "BytePlus",
+      "DouBaoSeed",
+    ]);
   });
 
   it("OpenCode 预设把火山、BytePlus、DouBaoSeed 放在胜算云后面", () => {

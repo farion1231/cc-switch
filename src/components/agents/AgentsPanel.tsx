@@ -48,10 +48,7 @@ import {
   type ProviderRuntimeSnapshot,
   type RunProfile,
 } from "@/lib/api/agentGateway";
-import {
-  diagnosticsApi,
-  type DiagnosticReport,
-} from "@/lib/api/diagnostics";
+import { diagnosticsApi, type DiagnosticReport } from "@/lib/api/diagnostics";
 import { useProvidersQuery } from "@/lib/query/queries";
 import { sessionsApi } from "@/lib/api/sessions";
 import type { SessionMeta } from "@/types";
@@ -120,10 +117,12 @@ const copy = {
       "只有 claude-* 入口模型才会传给 claude --model；DeepSeek/MiniMax 等上游模型交给代理映射，避免 400 参数错误。",
     safeDesc: "默认权限：直接运行 claude，保留 Claude Code 官方默认权限确认。",
     planDesc: "计划模式：先规划再执行，适合审查改动范围。",
-    acceptEditsDesc: "自动接受编辑：允许编辑类操作自动通过，仍保留更高风险确认。",
+    acceptEditsDesc:
+      "自动接受编辑：允许编辑类操作自动通过，仍保留更高风险确认。",
     autoDesc: "自动模式：按 Claude Code 官方 auto 权限模式运行。",
     dontAskDesc: "不询问模式：按官方 dontAsk 权限模式运行，风险更高。",
-    dangerDesc: "跳过权限：使用官方危险参数，适合你明确信任当前任务时手动选择。",
+    dangerDesc:
+      "跳过权限：使用官方危险参数，适合你明确信任当前任务时手动选择。",
     launchAuto: "自动选择（推荐）",
     launchWt: "Windows Terminal 标签页",
     launchPs: "PowerShell 窗口",
@@ -179,8 +178,10 @@ const copy = {
     lastError: "最后错误",
     startedAt: "启动时间",
     stoppedAt: "停止时间",
-    sessionHelp: "这里需要 Claude Code session_id，不是 Agent ID，也不是 CCSA ID。",
-    deleteConfirm: "只删除 Agent Gateway 记录，不会删除 Claude 会话或 .claude 配置。确认删除？",
+    sessionHelp:
+      "这里需要 Claude Code session_id，不是 Agent ID，也不是 CCSA ID。",
+    deleteConfirm:
+      "只删除 Agent Gateway 记录，不会删除 Claude 会话或 .claude 配置。确认删除？",
     successDelete: "Agent 记录已隐藏",
   },
   en: {
@@ -208,7 +209,8 @@ const copy = {
     runProfile: "Run profile",
     launchMode: "Launch window",
     monitor: "Runtime Monitor",
-    monitorHint: "Ports are allocated from 15722-15799 and forced to the selected provider.",
+    monitorHint:
+      "Ports are allocated from 15722-15799 and forced to the selected provider.",
     logs: "Logs",
     selected: "Selected Agent",
     launch: "Launch",
@@ -226,12 +228,16 @@ const copy = {
       "Before launch, the backend runs a real output test with this provider and upstream model. Claude Code will not launch if the test fails.",
     entryModelHint:
       "Only claude-* entry models are passed to claude --model. DeepSeek/MiniMax upstream IDs are routed by the proxy to avoid 400 parameter errors.",
-    safeDesc: "Default: run claude and keep Claude Code's official permission behavior.",
+    safeDesc:
+      "Default: run claude and keep Claude Code's official permission behavior.",
     planDesc: "Plan mode: plan first before execution.",
-    acceptEditsDesc: "Accept edits: automatically accept edit operations while keeping higher-risk prompts.",
+    acceptEditsDesc:
+      "Accept edits: automatically accept edit operations while keeping higher-risk prompts.",
     autoDesc: "Auto mode: run Claude Code's official auto permission mode.",
-    dontAskDesc: "Don't ask: run Claude Code's official dontAsk mode. Higher risk.",
-    dangerDesc: "Bypass permissions: uses the official dangerous flag. Select only for trusted tasks.",
+    dontAskDesc:
+      "Don't ask: run Claude Code's official dontAsk mode. Higher risk.",
+    dangerDesc:
+      "Bypass permissions: uses the official dangerous flag. Select only for trusted tasks.",
     launchAuto: "Auto (Recommended)",
     launchWt: "Windows Terminal tab",
     launchPs: "PowerShell window",
@@ -247,7 +253,8 @@ const copy = {
     currentProviderMode: "Use current CC Switch provider",
     snapshotTitle: "Provider Runtime Snapshot",
     sourceDb: "Source: CC Switch Provider DB",
-    nativeModeLine: "Claude Setting Mode: Native compatibility; CLAUDE_CONFIG_DIR: not set",
+    nativeModeLine:
+      "Claude Setting Mode: Native compatibility; CLAUDE_CONFIG_DIR: not set",
     snapshotHint:
       "Agent Gateway does not read local Claude settings to choose providers. It uses the selected provider from the CC Switch Provider DB and forces routing through the local listener.",
     apiKeyConfigured: "API key configured",
@@ -287,7 +294,8 @@ const copy = {
     lastError: "Last Error",
     startedAt: "Started At",
     stoppedAt: "Stopped At",
-    sessionHelp: "Use a Claude Code session_id here, not an Agent ID or CCSA ID.",
+    sessionHelp:
+      "Use a Claude Code session_id here, not an Agent ID or CCSA ID.",
     deleteConfirm:
       "This only hides the Agent Gateway record. It will not delete Claude sessions or .claude config. Delete it?",
     successDelete: "Agent record hidden",
@@ -302,9 +310,24 @@ const RUNTIME_OPTIONS: Array<{
 }> = [
   { value: "claude_code", zh: "Claude Code", en: "Claude Code" },
   { value: "codex", zh: "Codex（后续）", en: "Codex (later)", disabled: true },
-  { value: "opencode", zh: "OpenCode（后续）", en: "OpenCode (later)", disabled: true },
-  { value: "open_claw", zh: "OpenClaw（后续）", en: "OpenClaw (later)", disabled: true },
-  { value: "gemini", zh: "Gemini（后续）", en: "Gemini (later)", disabled: true },
+  {
+    value: "opencode",
+    zh: "OpenCode（后续）",
+    en: "OpenCode (later)",
+    disabled: true,
+  },
+  {
+    value: "open_claw",
+    zh: "OpenClaw（后续）",
+    en: "OpenClaw (later)",
+    disabled: true,
+  },
+  {
+    value: "gemini",
+    zh: "Gemini（后续）",
+    en: "Gemini (later)",
+    disabled: true,
+  },
 ];
 
 const permissionOptions: Array<{
@@ -313,16 +336,36 @@ const permissionOptions: Array<{
   en: string;
   commandArg: string;
 }> = [
-  { value: "default", zh: "默认权限（推荐）", en: "Default (Recommended)", commandArg: "" },
-  { value: "plan", zh: "计划模式", en: "Plan mode", commandArg: "--permission-mode plan" },
+  {
+    value: "default",
+    zh: "默认权限（推荐）",
+    en: "Default (Recommended)",
+    commandArg: "",
+  },
+  {
+    value: "plan",
+    zh: "计划模式",
+    en: "Plan mode",
+    commandArg: "--permission-mode plan",
+  },
   {
     value: "accept_edits",
     zh: "自动接受编辑",
     en: "Accept edits",
     commandArg: "--permission-mode acceptEdits",
   },
-  { value: "auto", zh: "自动模式", en: "Auto mode", commandArg: "--permission-mode auto" },
-  { value: "dont_ask", zh: "不询问模式", en: "Don't ask", commandArg: "--permission-mode dontAsk" },
+  {
+    value: "auto",
+    zh: "自动模式",
+    en: "Auto mode",
+    commandArg: "--permission-mode auto",
+  },
+  {
+    value: "dont_ask",
+    zh: "不询问模式",
+    en: "Don't ask",
+    commandArg: "--permission-mode dontAsk",
+  },
   {
     value: "bypass_permissions",
     zh: "跳过权限（危险）",
@@ -391,7 +434,10 @@ const extractProviderModels = (settingsConfig: unknown): string[] => {
 };
 
 const isClaudeCodeEntryModel = (model: string): boolean => {
-  const normalized = model.trim().replace(/\s*\[1m\]\s*$/i, "").toLowerCase();
+  const normalized = model
+    .trim()
+    .replace(/\s*\[1m\]\s*$/i, "")
+    .toLowerCase();
   return (
     normalized.startsWith("claude-") ||
     normalized.startsWith("anthropic/claude-")
@@ -402,7 +448,9 @@ const terminalStatuses = new Set(["stopped", "failed", "exited", "killed"]);
 
 const shortId = (value?: string | null): string => {
   if (!value) return "-";
-  return value.length > 18 ? `${value.slice(0, 8)}...${value.slice(-6)}` : value;
+  return value.length > 18
+    ? `${value.slice(0, 8)}...${value.slice(-6)}`
+    : value;
 };
 
 const formatTime = (value?: string | number | null): string => {
@@ -411,7 +459,10 @@ const formatTime = (value?: string | number | null): string => {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
 };
 
-const formatDuration = (started?: string | null, stopped?: string | null): string => {
+const formatDuration = (
+  started?: string | null,
+  stopped?: string | null,
+): string => {
   if (!started) return "-";
   const start = new Date(started).getTime();
   const end = stopped ? new Date(stopped).getTime() : Date.now();
@@ -446,18 +497,24 @@ export function AgentsPanel({}: AgentsPanelProps) {
   const [logs, setLogs] = useState<AgentLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [groupByFolder, setGroupByFolder] = useState(false);
-  const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set());
+  const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [diagnosticsReport, setDiagnosticsReport] =
     useState<DiagnosticReport | null>(null);
   const [actionId, setActionId] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
-  const [permissionMode, setPermissionMode] = useState<PermissionMode>("default");
+  const [permissionMode, setPermissionMode] =
+    useState<PermissionMode>("default");
   const [resumeMode, setResumeMode] = useState<ResumeMode>("new");
   const [modelMode, setModelMode] = useState<ModelMode>("provider_default");
   const [launchMode, setLaunchMode] = useState<LaunchMode>("auto");
-  const [providerMode, setProviderMode] = useState<ProviderMode>("selected_provider");
-  const [snapshot, setSnapshot] = useState<ProviderRuntimeSnapshot | null>(null);
+  const [providerMode, setProviderMode] =
+    useState<ProviderMode>("selected_provider");
+  const [snapshot, setSnapshot] = useState<ProviderRuntimeSnapshot | null>(
+    null,
+  );
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const [sessionPickerOpen, setSessionPickerOpen] = useState(false);
   const [sessionsLoading, setSessionsLoading] = useState(false);
@@ -497,7 +554,8 @@ export function AgentsPanel({}: AgentsPanelProps) {
     [tt.copy],
   );
 
-  const availableProfiles = runProfiles.length > 0 ? runProfiles : builtInProfiles(lang);
+  const availableProfiles =
+    runProfiles.length > 0 ? runProfiles : builtInProfiles(lang);
   const selectedPermission = permissionOptions.find(
     (item) => item.value === permissionMode,
   );
@@ -576,7 +634,9 @@ export function AgentsPanel({}: AgentsPanelProps) {
 
   const selectedUpstreamModel = providerModelOptions[0] ?? "";
   const snapshotUpstreamModel =
-    snapshot?.defaultUpstreamModel || snapshot?.upstreamModels?.[0] || selectedUpstreamModel;
+    snapshot?.defaultUpstreamModel ||
+    snapshot?.upstreamModels?.[0] ||
+    selectedUpstreamModel;
   const providerMissingReason = useMemo(() => {
     if (!snapshot) return snapshotError;
     if (!snapshot.redactedBaseUrl) return tt.baseUrlMissing;
@@ -672,7 +732,9 @@ export function AgentsPanel({}: AgentsPanelProps) {
     setLastError(null);
     try {
       const agent = await agentGatewayApi.launchAgent({
-        name: form.name.trim() || (lang === "zh" ? "Claude 智能体" : "Claude Agent"),
+        name:
+          form.name.trim() ||
+          (lang === "zh" ? "Claude 智能体" : "Claude Agent"),
         runtime: form.runtime,
         providerId:
           providerMode === "current_cc_switch_provider"
@@ -780,13 +842,19 @@ export function AgentsPanel({}: AgentsPanelProps) {
 
   const deleteSelectedAgents = async () => {
     const deletableAgents = agents.filter(
-      (agent) => selectedAgentIds.has(agent.id) && terminalStatuses.has(agent.status)
+      (agent) =>
+        selectedAgentIds.has(agent.id) && terminalStatuses.has(agent.status),
     );
     if (deletableAgents.length === 0) return;
-    if (!window.confirm(`${tt.deleteConfirm}\n\n${deletableAgents.length} agents`)) return;
+    if (
+      !window.confirm(`${tt.deleteConfirm}\n\n${deletableAgents.length} agents`)
+    )
+      return;
     setLastError(null);
     try {
-      await Promise.all(deletableAgents.map((agent) => agentGatewayApi.deleteAgent(agent.id)));
+      await Promise.all(
+        deletableAgents.map((agent) => agentGatewayApi.deleteAgent(agent.id)),
+      );
       toast.success(`${deletableAgents.length} ${tt.successDelete}`);
       setSelectedAgentIds(new Set());
       if (deletableAgents.some((a) => a.id === selectedAgentId)) {
@@ -812,7 +880,9 @@ export function AgentsPanel({}: AgentsPanelProps) {
   };
 
   const toggleSelectAll = () => {
-    const deletableAgents = agents.filter((agent) => terminalStatuses.has(agent.status));
+    const deletableAgents = agents.filter((agent) =>
+      terminalStatuses.has(agent.status),
+    );
     if (selectedAgentIds.size === deletableAgents.length) {
       setSelectedAgentIds(new Set());
     } else {
@@ -837,7 +907,8 @@ export function AgentsPanel({}: AgentsPanelProps) {
       const selected = await open({
         directory: true,
         multiple: false,
-        title: lang === "zh" ? "选择 Agent 项目目录" : "Choose Agent project folder",
+        title:
+          lang === "zh" ? "选择 Agent 项目目录" : "Choose Agent project folder",
       });
       if (typeof selected === "string") {
         setForm((current) => ({ ...current, cwd: selected }));
@@ -891,7 +962,10 @@ export function AgentsPanel({}: AgentsPanelProps) {
             </p>
           </div>
           <div className="flex gap-2">
-            <Select value={lang} onValueChange={(value) => void changeLanguage(value as UiLang)}>
+            <Select
+              value={lang}
+              onValueChange={(value) => void changeLanguage(value as UiLang)}
+            >
               <SelectTrigger className="w-[120px]">
                 <SelectValue />
               </SelectTrigger>
@@ -900,7 +974,12 @@ export function AgentsPanel({}: AgentsPanelProps) {
                 <SelectItem value="en">English</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={refresh}
+              disabled={loading}
+            >
               <RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} />
               {tt.refresh}
             </Button>
@@ -937,7 +1016,9 @@ export function AgentsPanel({}: AgentsPanelProps) {
                 </Badge>
               )}
             </div>
-            <p className="text-xs text-muted-foreground mt-1">{tt.doctorHint}</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {tt.doctorHint}
+            </p>
           </div>
           <div className="flex gap-2">
             <Button
@@ -978,7 +1059,10 @@ export function AgentsPanel({}: AgentsPanelProps) {
                 id="agent-name"
                 value={form.name}
                 onChange={(event) =>
-                  setForm((current) => ({ ...current, name: event.target.value }))
+                  setForm((current) => ({
+                    ...current,
+                    name: event.target.value,
+                  }))
                 }
               />
             </div>
@@ -1016,7 +1100,9 @@ export function AgentsPanel({}: AgentsPanelProps) {
                 <Label>{tt.permission}</Label>
                 <Select
                   value={permissionMode}
-                  onValueChange={(value) => setPermissionMode(value as PermissionMode)}
+                  onValueChange={(value) =>
+                    setPermissionMode(value as PermissionMode)
+                  }
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -1035,10 +1121,12 @@ export function AgentsPanel({}: AgentsPanelProps) {
             <div className="rounded-lg border border-border-default bg-white/[0.03] p-3 text-xs text-muted-foreground">
               {selectedPermission?.value === "default" && tt.safeDesc}
               {selectedPermission?.value === "plan" && tt.planDesc}
-              {selectedPermission?.value === "accept_edits" && tt.acceptEditsDesc}
+              {selectedPermission?.value === "accept_edits" &&
+                tt.acceptEditsDesc}
               {selectedPermission?.value === "auto" && tt.autoDesc}
               {selectedPermission?.value === "dont_ask" && tt.dontAskDesc}
-              {selectedPermission?.value === "bypass_permissions" && tt.dangerDesc}
+              {selectedPermission?.value === "bypass_permissions" &&
+                tt.dangerDesc}
             </div>
 
             <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-3 text-xs">
@@ -1053,12 +1141,20 @@ export function AgentsPanel({}: AgentsPanelProps) {
               </p>
               {selectedUpstreamModel ? (
                 <div className="mt-3 rounded-md bg-background/70 px-3 py-2">
-                  <div className="font-medium text-foreground">{tt.upstreamModel}</div>
-                  <code className="block font-mono break-all">{selectedUpstreamModel}</code>
-                  <p className="mt-1 text-muted-foreground">{tt.upstreamModelHint}</p>
+                  <div className="font-medium text-foreground">
+                    {tt.upstreamModel}
+                  </div>
+                  <code className="block font-mono break-all">
+                    {selectedUpstreamModel}
+                  </code>
+                  <p className="mt-1 text-muted-foreground">
+                    {tt.upstreamModelHint}
+                  </p>
                 </div>
               ) : null}
-              {modelMode === "custom" && form.model.trim() && !isClaudeCodeEntryModel(form.model) ? (
+              {modelMode === "custom" &&
+              form.model.trim() &&
+              !isClaudeCodeEntryModel(form.model) ? (
                 <p className="mt-2 text-amber-700">{tt.entryModelHint}</p>
               ) : null}
               <div className="mt-3 space-y-1 text-muted-foreground">
@@ -1070,10 +1166,12 @@ export function AgentsPanel({}: AgentsPanelProps) {
                   claude --dangerously-skip-permissions
                 </code>
                 <code className="block font-mono">
-                  claude --resume &lt;{lang === "zh" ? "会话ID" : "session_id"}&gt; --dangerously-skip-permissions
+                  claude --resume &lt;{lang === "zh" ? "会话ID" : "session_id"}
+                  &gt; --dangerously-skip-permissions
                 </code>
                 <code className="block font-mono">
-                  claude --permission-mode default|acceptEdits|plan|auto|dontAsk|bypassPermissions
+                  claude --permission-mode
+                  default|acceptEdits|plan|auto|dontAsk|bypassPermissions
                 </code>
               </div>
             </div>
@@ -1089,9 +1187,15 @@ export function AgentsPanel({}: AgentsPanelProps) {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="auto">{tt.launchAuto}</SelectItem>
-                  <SelectItem value="windows_terminal">{tt.launchWt}</SelectItem>
-                  <SelectItem value="power_shell_window">{tt.launchPs}</SelectItem>
-                  <SelectItem value="background_process">{tt.launchBg}</SelectItem>
+                  <SelectItem value="windows_terminal">
+                    {tt.launchWt}
+                  </SelectItem>
+                  <SelectItem value="power_shell_window">
+                    {tt.launchPs}
+                  </SelectItem>
+                  <SelectItem value="background_process">
+                    {tt.launchBg}
+                  </SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">{tt.launchHint}</p>
@@ -1101,14 +1205,20 @@ export function AgentsPanel({}: AgentsPanelProps) {
               <Label>{tt.providerMode}</Label>
               <Select
                 value={providerMode}
-                onValueChange={(value) => setProviderMode(value as ProviderMode)}
+                onValueChange={(value) =>
+                  setProviderMode(value as ProviderMode)
+                }
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="selected_provider">{tt.selectedProviderMode}</SelectItem>
-                  <SelectItem value="current_cc_switch_provider">{tt.currentProviderMode}</SelectItem>
+                  <SelectItem value="selected_provider">
+                    {tt.selectedProviderMode}
+                  </SelectItem>
+                  <SelectItem value="current_cc_switch_provider">
+                    {tt.currentProviderMode}
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1127,7 +1237,11 @@ export function AgentsPanel({}: AgentsPanelProps) {
                 }
               >
                 <SelectTrigger>
-                  <SelectValue placeholder={globalT("provider.select", { defaultValue: "选择供应商" })} />
+                  <SelectValue
+                    placeholder={globalT("provider.select", {
+                      defaultValue: "选择供应商",
+                    })}
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   {providers.map((provider) => (
@@ -1148,22 +1262,35 @@ export function AgentsPanel({}: AgentsPanelProps) {
               )}
             >
               <div className="flex items-center justify-between gap-2">
-                <div className="font-medium text-foreground">{tt.snapshotTitle}</div>
+                <div className="font-medium text-foreground">
+                  {tt.snapshotTitle}
+                </div>
                 <Badge variant="outline">
-                  {snapshot?.authTokenPresent ? tt.apiKeyConfigured : tt.apiKeyMissing}
+                  {snapshot?.authTokenPresent
+                    ? tt.apiKeyConfigured
+                    : tt.apiKeyMissing}
                 </Badge>
               </div>
               {snapshot ? (
                 <div className="grid grid-cols-1 gap-1 text-muted-foreground">
-                  <div>{snapshot.providerName} · {shortId(snapshot.providerId)}</div>
-                  <div>Type: {snapshot.providerType || "-"} · API: {snapshot.apiFormat || "-"}</div>
+                  <div>
+                    {snapshot.providerName} · {shortId(snapshot.providerId)}
+                  </div>
+                  <div>
+                    Type: {snapshot.providerType || "-"} · API:{" "}
+                    {snapshot.apiFormat || "-"}
+                  </div>
                   <div>Base URL: {snapshot.redactedBaseUrl || "-"}</div>
-                  <div>{tt.upstreamModel}: {snapshotUpstreamModel || "-"}</div>
+                  <div>
+                    {tt.upstreamModel}: {snapshotUpstreamModel || "-"}
+                  </div>
                   <div>{tt.sourceDb}</div>
                   <div>{tt.nativeModeLine}</div>
                 </div>
               ) : (
-                <div className="text-muted-foreground">{snapshotError || "-"}</div>
+                <div className="text-muted-foreground">
+                  {snapshotError || "-"}
+                </div>
               )}
               <p className="text-muted-foreground">{tt.snapshotHint}</p>
               {providerMissingReason ? (
@@ -1182,7 +1309,9 @@ export function AgentsPanel({}: AgentsPanelProps) {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="provider_default">{tt.providerDefault}</SelectItem>
+                    <SelectItem value="provider_default">
+                      {tt.providerDefault}
+                    </SelectItem>
                     <SelectItem value="custom">{tt.customModel}</SelectItem>
                   </SelectContent>
                 </Select>
@@ -1262,10 +1391,15 @@ export function AgentsPanel({}: AgentsPanelProps) {
               <Input
                 id="agent-session"
                 disabled={resumeMode !== "resume_id"}
-                placeholder={resumeMode === "resume_id" ? tt.resumeById : tt.optional}
+                placeholder={
+                  resumeMode === "resume_id" ? tt.resumeById : tt.optional
+                }
                 value={form.sessionId}
                 onChange={(event) =>
-                  setForm((current) => ({ ...current, sessionId: event.target.value }))
+                  setForm((current) => ({
+                    ...current,
+                    sessionId: event.target.value,
+                  }))
                 }
               />
               <div className="flex items-center gap-2">
@@ -1278,7 +1412,9 @@ export function AgentsPanel({}: AgentsPanelProps) {
                 >
                   {tt.chooseSession}
                 </Button>
-                <span className="text-xs text-muted-foreground">{tt.sessionHelp}</span>
+                <span className="text-xs text-muted-foreground">
+                  {tt.sessionHelp}
+                </span>
               </div>
             </div>
 
@@ -1290,7 +1426,10 @@ export function AgentsPanel({}: AgentsPanelProps) {
                   placeholder={tt.optional}
                   value={form.cwd}
                   onChange={(event) =>
-                    setForm((current) => ({ ...current, cwd: event.target.value }))
+                    setForm((current) => ({
+                      ...current,
+                      cwd: event.target.value,
+                    }))
                   }
                 />
                 <Button
@@ -1352,7 +1491,9 @@ export function AgentsPanel({}: AgentsPanelProps) {
                   onClick={() => void deleteSelectedAgents()}
                 >
                   <Trash2 className="w-3.5 h-3.5 mr-1" />
-                  {lang === "zh" ? `删除 ${selectedAgentIds.size} 个` : `Delete ${selectedAgentIds.size}`}
+                  {lang === "zh"
+                    ? `删除 ${selectedAgentIds.size} 个`
+                    : `Delete ${selectedAgentIds.size}`}
                 </Button>
               )}
               <Badge variant="outline">{agents.length} agents</Badge>
@@ -1371,212 +1512,253 @@ export function AgentsPanel({}: AgentsPanelProps) {
             <div className="min-h-[260px] flex-1 overflow-auto border border-border-default rounded-lg">
               {(() => {
                 const grouped = new Map<string, AgentInstance[]>();
-                agents.forEach(a => {
-                  const folder = a.cwd?.split(/[\/\\]/).filter(Boolean).pop() ?? "(no folder)";
+                agents.forEach((a) => {
+                  const folder =
+                    a.cwd
+                      ?.split(/[\/\\]/)
+                      .filter(Boolean)
+                      .pop() ?? "(no folder)";
                   if (!grouped.has(folder)) grouped.set(folder, []);
                   grouped.get(folder)!.push(a);
                 });
-                return Array.from(grouped.entries()).map(([folder, folderAgents]) => (
-                  <details key={folder} className="border-b border-border-default last:border-b-0" open>
-                    <summary className="sticky top-0 z-10 flex items-center gap-2 px-4 py-2 text-sm font-medium cursor-pointer bg-bgApp hover:bg-bgAppHover select-none">
-                      <span>📁 {folder}</span>
-                      <span className="text-xs text-muted-foreground">({folderAgents.length})</span>
-                    </summary>
-                    <div className="px-4 py-1 space-y-1">
-                      {folderAgents.map(agent => (
-                        <div
-                          key={agent.id}
-                          className={cn(
-                            "flex items-center justify-between rounded-md px-3 py-2 cursor-pointer text-sm",
-                            selectedAgentId === agent.id && "bg-white/[0.04]",
-                          )}
-                          onClick={() => setSelectedAgentId(agent.id)}
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <input
-                              type="checkbox"
-                              checked={selectedAgentIds.has(agent.id)}
-                              disabled={!terminalStatuses.has(agent.status)}
-                              onChange={() => toggleAgentSelection(agent.id)}
-                              className="cursor-pointer shrink-0"
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="font-medium truncate">{agent.name}</span>
-                                <Badge variant="outline" className="shrink-0">
-                                  {agent.launchMode === "resume" ? "↺" : "●"}
-                                </Badge>
-                              </div>
-                              <div className="text-xs text-muted-foreground truncate">
-                                {agent.windowTitle ?? agent.id.slice(0, 8)}
+                return Array.from(grouped.entries()).map(
+                  ([folder, folderAgents]) => (
+                    <details
+                      key={folder}
+                      className="border-b border-border-default last:border-b-0"
+                      open
+                    >
+                      <summary className="sticky top-0 z-10 flex items-center gap-2 px-4 py-2 text-sm font-medium cursor-pointer bg-bgApp hover:bg-bgAppHover select-none">
+                        <span>📁 {folder}</span>
+                        <span className="text-xs text-muted-foreground">
+                          ({folderAgents.length})
+                        </span>
+                      </summary>
+                      <div className="px-4 py-1 space-y-1">
+                        {folderAgents.map((agent) => (
+                          <div
+                            key={agent.id}
+                            className={cn(
+                              "flex items-center justify-between rounded-md px-3 py-2 cursor-pointer text-sm",
+                              selectedAgentId === agent.id && "bg-white/[0.04]",
+                            )}
+                            onClick={() => setSelectedAgentId(agent.id)}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <input
+                                type="checkbox"
+                                checked={selectedAgentIds.has(agent.id)}
+                                disabled={!terminalStatuses.has(agent.status)}
+                                onChange={() => toggleAgentSelection(agent.id)}
+                                className="cursor-pointer shrink-0"
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-medium truncate">
+                                    {agent.name}
+                                  </span>
+                                  <Badge variant="outline" className="shrink-0">
+                                    {agent.launchMode === "resume" ? "↺" : "●"}
+                                  </Badge>
+                                </div>
+                                <div className="text-xs text-muted-foreground truncate">
+                                  {agent.windowTitle ?? agent.id.slice(0, 8)}
+                                </div>
                               </div>
                             </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <Badge
+                                variant="outline"
+                                className={statusClassName[agent.status] ?? ""}
+                              >
+                                {agent.status}
+                              </Badge>
+                              <span className="text-xs text-muted-foreground">
+                                {agent.providerName}
+                              </span>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <Badge variant="outline" className={statusClassName[agent.status] ?? ""}>
-                              {agent.status}
-                            </Badge>
-                            <span className="text-xs text-muted-foreground">{agent.providerName}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </details>
-                ));
+                        ))}
+                      </div>
+                    </details>
+                  ),
+                );
               })()}
             </div>
           ) : (
-          <div className="min-h-[260px] flex-1 overflow-auto border border-border-default rounded-lg">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10">
-                    <input
-                      type="checkbox"
-                      checked={selectedAgentIds.size > 0 && selectedAgentIds.size === agents.filter((a) => terminalStatuses.has(a.status)).length}
-                      onChange={toggleSelectAll}
-                      className="cursor-pointer"
-                    />
-                  </TableHead>
-                  <TableHead>{tt.name}</TableHead>
-                  <TableHead>{tt.status}</TableHead>
-                  <TableHead>{tt.provider}</TableHead>
-                  <TableHead className="text-right">{tt.actions}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {agents.map((agent) => (
-                  <TableRow
-                    key={agent.id}
-                    className={cn(
-                      "cursor-pointer",
-                      selectedAgentId === agent.id && "bg-white/[0.04]",
-                    )}
-                    onClick={() => setSelectedAgentId(agent.id)}
-                  >
-                    <TableCell onClick={(e) => e.stopPropagation()}>
+            <div className="min-h-[260px] flex-1 overflow-auto border border-border-default rounded-lg">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-10">
                       <input
                         type="checkbox"
-                        checked={selectedAgentIds.has(agent.id)}
-                        disabled={!terminalStatuses.has(agent.status)}
-                        onChange={() => toggleAgentSelection(agent.id)}
+                        checked={
+                          selectedAgentIds.size > 0 &&
+                          selectedAgentIds.size ===
+                            agents.filter((a) => terminalStatuses.has(a.status))
+                              .length
+                        }
+                        onChange={toggleSelectAll}
                         className="cursor-pointer"
                       />
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{agent.name}</span>
-                        <Badge variant="outline">
-                          {agent.launchMode === "resume" ? tt.resumeModeTag : tt.newMode}
-                        </Badge>
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {agent.windowTitle ?? `CCSA:${agent.id}`}
-                      </div>
-                      {agent.launchMode === "resume" && agent.sessionId ? (
-                        <div className="text-xs text-muted-foreground">
-                          {tt.sessionId}: {shortId(agent.sessionId)}
-                        </div>
-                      ) : null}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="outline"
-                        className={statusClassName[agent.status] ?? ""}
-                      >
-                        {agent.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="text-sm">{getAgentProviderName(agent)}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {agent.model || "-"} · {tt.port}: {agent.port}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex justify-end gap-2 flex-nowrap">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          title={tt.logs}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setSelectedAgentId(agent.id);
-                            void refreshLogs(agent.id);
-                          }}
-                        >
-                          <FileText className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          title={tt.resume}
-                          disabled={actionId === agent.id}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void resumeAgent(agent);
-                          }}
-                        >
-                          <RotateCcw className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          title="Stop"
-                          disabled={actionId === agent.id}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void stopOrKill(agent, false);
-                          }}
-                        >
-                          <CircleStop className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          title="Kill process tree"
-                          disabled={actionId === agent.id}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void stopOrKill(agent, true);
-                          }}
-                        >
-                          <Skull className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant={terminalStatuses.has(agent.status) ? "destructive" : "outline"}
-                          size="sm"
-                          className={!terminalStatuses.has(agent.status) ? "opacity-60" : ""}
-                          disabled={
-                            actionId === agent.id || !terminalStatuses.has(agent.status)
-                          }
-                          title={!terminalStatuses.has(agent.status) ? tt.deleteDisabled : tt.delete}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void deleteAgent(agent);
-                          }}
-                        >
-                          <Trash2 className="w-3.5 h-3.5 mr-1" />
-                          {tt.delete}
-                        </Button>
-                      </div>
-                    </TableCell>
+                    </TableHead>
+                    <TableHead>{tt.name}</TableHead>
+                    <TableHead>{tt.status}</TableHead>
+                    <TableHead>{tt.provider}</TableHead>
+                    <TableHead className="text-right">{tt.actions}</TableHead>
                   </TableRow>
-                ))}
-                {agents.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={5}
-                      className="text-center text-muted-foreground py-12"
+                </TableHeader>
+                <TableBody>
+                  {agents.map((agent) => (
+                    <TableRow
+                      key={agent.id}
+                      className={cn(
+                        "cursor-pointer",
+                        selectedAgentId === agent.id && "bg-white/[0.04]",
+                      )}
+                      onClick={() => setSelectedAgentId(agent.id)}
                     >
-                      {tt.noAgents}
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedAgentIds.has(agent.id)}
+                          disabled={!terminalStatuses.has(agent.status)}
+                          onChange={() => toggleAgentSelection(agent.id)}
+                          className="cursor-pointer"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{agent.name}</span>
+                          <Badge variant="outline">
+                            {agent.launchMode === "resume"
+                              ? tt.resumeModeTag
+                              : tt.newMode}
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {agent.windowTitle ?? `CCSA:${agent.id}`}
+                        </div>
+                        {agent.launchMode === "resume" && agent.sessionId ? (
+                          <div className="text-xs text-muted-foreground">
+                            {tt.sessionId}: {shortId(agent.sessionId)}
+                          </div>
+                        ) : null}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="outline"
+                          className={statusClassName[agent.status] ?? ""}
+                        >
+                          {agent.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-sm">
+                          {getAgentProviderName(agent)}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {agent.model || "-"} · {tt.port}: {agent.port}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex justify-end gap-2 flex-nowrap">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title={tt.logs}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setSelectedAgentId(agent.id);
+                              void refreshLogs(agent.id);
+                            }}
+                          >
+                            <FileText className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title={tt.resume}
+                            disabled={actionId === agent.id}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void resumeAgent(agent);
+                            }}
+                          >
+                            <RotateCcw className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Stop"
+                            disabled={actionId === agent.id}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void stopOrKill(agent, false);
+                            }}
+                          >
+                            <CircleStop className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Kill process tree"
+                            disabled={actionId === agent.id}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void stopOrKill(agent, true);
+                            }}
+                          >
+                            <Skull className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant={
+                              terminalStatuses.has(agent.status)
+                                ? "destructive"
+                                : "outline"
+                            }
+                            size="sm"
+                            className={
+                              !terminalStatuses.has(agent.status)
+                                ? "opacity-60"
+                                : ""
+                            }
+                            disabled={
+                              actionId === agent.id ||
+                              !terminalStatuses.has(agent.status)
+                            }
+                            title={
+                              !terminalStatuses.has(agent.status)
+                                ? tt.deleteDisabled
+                                : tt.delete
+                            }
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void deleteAgent(agent);
+                            }}
+                          >
+                            <Trash2 className="w-3.5 h-3.5 mr-1" />
+                            {tt.delete}
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {agents.length === 0 && (
+                    <TableRow>
+                      <TableCell
+                        colSpan={5}
+                        className="text-center text-muted-foreground py-12"
+                      >
+                        {tt.noAgents}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
           )}
 
           <div className="mt-4 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-4 min-h-[180px]">
@@ -1605,143 +1787,201 @@ export function AgentsPanel({}: AgentsPanelProps) {
               <h4 className="font-medium mb-2">{tt.selected}</h4>
               {selectedAgent ? (
                 <>
-                <dl className="space-y-2 text-xs">
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">{tt.runtime}</dt>
-                    <dd>{selectedAgent.runtime}</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">{tt.launchModeTag}</dt>
-                    <dd>{selectedAgent.launchMode === "resume" ? tt.resumeModeTag : tt.newMode}</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">{tt.provider}</dt>
-                    <dd className="truncate text-right">{selectedAgentProviderName}</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">{tt.providerId}</dt>
-                    <dd className="flex items-center gap-1 min-w-0">
-                      <span className="truncate">{shortId(selectedAgent.providerId)}</span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 shrink-0"
-                        onClick={() => void copyText(tt.providerId, selectedAgent.providerId)}
-                      >
-                        <CopyIcon className="w-3 h-3" />
-                      </Button>
-                    </dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">{tt.model}</dt>
-                    <dd className="truncate text-right">{selectedAgent.model || "-"}</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">{tt.localProxyUrl}</dt>
-                    <dd className="flex items-center gap-1 min-w-0">
-                      <span className="truncate">http://127.0.0.1:{selectedAgent.port}</span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 shrink-0"
-                        onClick={() =>
-                          void copyText(
-                            tt.localProxyUrl,
-                            `http://127.0.0.1:${selectedAgent.port}`,
-                          )
-                        }
-                      >
-                        <CopyIcon className="w-3 h-3" />
-                      </Button>
-                    </dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">{tt.cwd}</dt>
-                    <dd className="truncate text-right">{selectedAgent.cwd || "-"}</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">{tt.agentId}</dt>
-                    <dd className="flex items-center gap-1 min-w-0">
-                      <span className="truncate">{shortId(selectedAgent.id)}</span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 shrink-0"
-                        onClick={() => void copyText(tt.agentId, selectedAgent.id)}
-                      >
-                        <CopyIcon className="w-3 h-3" />
-                      </Button>
-                    </dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">{tt.ccsaId}</dt>
-                    <dd className="flex items-center gap-1 min-w-0">
-                      <span className="truncate">
-                        {selectedAgent.windowTitle ?? `CCSA:${selectedAgent.id}`}
-                      </span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 shrink-0"
-                        onClick={() =>
-                          void copyText(
-                            tt.ccsaId,
-                            selectedAgent.windowTitle ?? `CCSA:${selectedAgent.id}`,
-                          )
-                        }
-                      >
-                        <CopyIcon className="w-3 h-3" />
-                      </Button>
-                    </dd>
-                  </div>
-                  {selectedAgent.sessionId ? (
+                  <dl className="space-y-2 text-xs">
                     <div className="flex justify-between gap-3">
-                      <dt className="text-muted-foreground">{tt.sessionId}</dt>
+                      <dt className="text-muted-foreground">{tt.runtime}</dt>
+                      <dd>{selectedAgent.runtime}</dd>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-muted-foreground">
+                        {tt.launchModeTag}
+                      </dt>
+                      <dd>
+                        {selectedAgent.launchMode === "resume"
+                          ? tt.resumeModeTag
+                          : tt.newMode}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-muted-foreground">{tt.provider}</dt>
+                      <dd className="truncate text-right">
+                        {selectedAgentProviderName}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-muted-foreground">{tt.providerId}</dt>
                       <dd className="flex items-center gap-1 min-w-0">
-                        <span className="truncate">{shortId(selectedAgent.sessionId)}</span>
+                        <span className="truncate">
+                          {shortId(selectedAgent.providerId)}
+                        </span>
                         <Button
                           variant="ghost"
                           size="icon"
                           className="h-6 w-6 shrink-0"
-                          onClick={() => void copyText(tt.sessionId, selectedAgent.sessionId)}
+                          onClick={() =>
+                            void copyText(
+                              tt.providerId,
+                              selectedAgent.providerId,
+                            )
+                          }
                         >
                           <CopyIcon className="w-3 h-3" />
                         </Button>
                       </dd>
                     </div>
-                  ) : null}
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">{tt.startedAt}</dt>
-                    <dd className="truncate text-right">{formatTime(selectedAgent.startedAt)}</dd>
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-muted-foreground">{tt.model}</dt>
+                      <dd className="truncate text-right">
+                        {selectedAgent.model || "-"}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-muted-foreground">
+                        {tt.localProxyUrl}
+                      </dt>
+                      <dd className="flex items-center gap-1 min-w-0">
+                        <span className="truncate">
+                          http://127.0.0.1:{selectedAgent.port}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 shrink-0"
+                          onClick={() =>
+                            void copyText(
+                              tt.localProxyUrl,
+                              `http://127.0.0.1:${selectedAgent.port}`,
+                            )
+                          }
+                        >
+                          <CopyIcon className="w-3 h-3" />
+                        </Button>
+                      </dd>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-muted-foreground">{tt.cwd}</dt>
+                      <dd className="truncate text-right">
+                        {selectedAgent.cwd || "-"}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-muted-foreground">{tt.agentId}</dt>
+                      <dd className="flex items-center gap-1 min-w-0">
+                        <span className="truncate">
+                          {shortId(selectedAgent.id)}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 shrink-0"
+                          onClick={() =>
+                            void copyText(tt.agentId, selectedAgent.id)
+                          }
+                        >
+                          <CopyIcon className="w-3 h-3" />
+                        </Button>
+                      </dd>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-muted-foreground">{tt.ccsaId}</dt>
+                      <dd className="flex items-center gap-1 min-w-0">
+                        <span className="truncate">
+                          {selectedAgent.windowTitle ??
+                            `CCSA:${selectedAgent.id}`}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 shrink-0"
+                          onClick={() =>
+                            void copyText(
+                              tt.ccsaId,
+                              selectedAgent.windowTitle ??
+                                `CCSA:${selectedAgent.id}`,
+                            )
+                          }
+                        >
+                          <CopyIcon className="w-3 h-3" />
+                        </Button>
+                      </dd>
+                    </div>
+                    {selectedAgent.sessionId ? (
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-muted-foreground">
+                          {tt.sessionId}
+                        </dt>
+                        <dd className="flex items-center gap-1 min-w-0">
+                          <span className="truncate">
+                            {shortId(selectedAgent.sessionId)}
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 shrink-0"
+                            onClick={() =>
+                              void copyText(
+                                tt.sessionId,
+                                selectedAgent.sessionId,
+                              )
+                            }
+                          >
+                            <CopyIcon className="w-3 h-3" />
+                          </Button>
+                        </dd>
+                      </div>
+                    ) : null}
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-muted-foreground">{tt.startedAt}</dt>
+                      <dd className="truncate text-right">
+                        {formatTime(selectedAgent.startedAt)}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-muted-foreground">{tt.stoppedAt}</dt>
+                      <dd className="truncate text-right">
+                        {formatTime(selectedAgent.stoppedAt)}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-muted-foreground">{tt.duration}</dt>
+                      <dd className="truncate text-right">
+                        {formatDuration(
+                          selectedAgent.startedAt,
+                          selectedAgent.stoppedAt,
+                        )}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-muted-foreground">{tt.lastError}</dt>
+                      <dd className="truncate text-right">
+                        {selectedAgent.lastError || "-"}
+                      </dd>
+                    </div>
+                  </dl>
+                  <div className="mt-3 pt-3 border-t border-border-default">
+                    <Button
+                      variant={
+                        terminalStatuses.has(selectedAgent.status)
+                          ? "destructive"
+                          : "outline"
+                      }
+                      size="sm"
+                      className="w-full"
+                      disabled={
+                        actionId === selectedAgent.id ||
+                        !terminalStatuses.has(selectedAgent.status)
+                      }
+                      title={
+                        !terminalStatuses.has(selectedAgent.status)
+                          ? tt.deleteDisabled
+                          : ""
+                      }
+                      onClick={() => void deleteAgent(selectedAgent)}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 mr-1" />
+                      {tt.delete}
+                    </Button>
                   </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">{tt.stoppedAt}</dt>
-                    <dd className="truncate text-right">{formatTime(selectedAgent.stoppedAt)}</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">{tt.duration}</dt>
-                    <dd className="truncate text-right">{formatDuration(selectedAgent.startedAt, selectedAgent.stoppedAt)}</dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">{tt.lastError}</dt>
-                    <dd className="truncate text-right">{selectedAgent.lastError || "-"}</dd>
-                  </div>
-                </dl>
-                <div className="mt-3 pt-3 border-t border-border-default">
-                  <Button
-                    variant={terminalStatuses.has(selectedAgent.status) ? "destructive" : "outline"}
-                    size="sm"
-                    className="w-full"
-                    disabled={
-                      actionId === selectedAgent.id || !terminalStatuses.has(selectedAgent.status)
-                    }
-                    title={!terminalStatuses.has(selectedAgent.status) ? tt.deleteDisabled : ""}
-                    onClick={() => void deleteAgent(selectedAgent)}
-                  >
-                    <Trash2 className="w-3.5 h-3.5 mr-1" />
-                    {tt.delete}
-                  </Button>
-                </div>
                 </>
               ) : (
                 <p className="text-xs text-muted-foreground">
@@ -1760,9 +2000,13 @@ export function AgentsPanel({}: AgentsPanelProps) {
             <DialogTitle>{tt.sessionPickerTitle}</DialogTitle>
           </DialogHeader>
           {sessionsLoading ? (
-            <div className="py-8 text-center text-muted-foreground">{tt.refresh}...</div>
+            <div className="py-8 text-center text-muted-foreground">
+              {tt.refresh}...
+            </div>
           ) : sessions.length === 0 ? (
-            <div className="py-8 text-center text-muted-foreground">{tt.noClaudeSessions}</div>
+            <div className="py-8 text-center text-muted-foreground">
+              {tt.noClaudeSessions}
+            </div>
           ) : (
             <div className="space-y-2">
               {sessions.map((session) => (
@@ -1777,15 +2021,23 @@ export function AgentsPanel({}: AgentsPanelProps) {
                     </div>
                     <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
                       <div>Session ID: {shortId(session.sessionId)}</div>
-                      {session.projectDir && <div>Project: {session.projectDir}</div>}
+                      {session.projectDir && (
+                        <div>Project: {session.projectDir}</div>
+                      )}
                       {session.lastActiveAt && (
-                        <div>{tt.lastActiveAt}: {formatTime(session.lastActiveAt)}</div>
+                        <div>
+                          {tt.lastActiveAt}: {formatTime(session.lastActiveAt)}
+                        </div>
                       )}
                       {session.createdAt && (
-                        <div>{tt.createdAt}: {formatTime(session.createdAt)}</div>
+                        <div>
+                          {tt.createdAt}: {formatTime(session.createdAt)}
+                        </div>
                       )}
                       {session.resumeCommand && (
-                        <code className="block font-mono text-[11px] mt-1">{session.resumeCommand}</code>
+                        <code className="block font-mono text-[11px] mt-1">
+                          {session.resumeCommand}
+                        </code>
                       )}
                     </div>
                   </div>

@@ -20,7 +20,7 @@ describe("AWS Bedrock OpenCode Provider Presets", () => {
     expect(variants.length).toBeGreaterThan(0);
 
     const opusModel = variants.find((v) =>
-      v.id.includes("anthropic.claude-opus-4-7"),
+      v.id.includes("anthropic.claude-opus-4-8"),
     );
     expect(opusModel).toBeDefined();
   });
@@ -34,9 +34,7 @@ describe("AWS Bedrock OpenCode Provider Presets", () => {
   });
 
   it("Bedrock preset should use @ai-sdk/amazon-bedrock npm package", () => {
-    expect(bedrockPreset!.settingsConfig.npm).toBe(
-      "@ai-sdk/amazon-bedrock",
-    );
+    expect(bedrockPreset!.settingsConfig.npm).toBe("@ai-sdk/amazon-bedrock");
   });
 
   it("Bedrock preset should have region in options", () => {
@@ -50,9 +48,7 @@ describe("AWS Bedrock OpenCode Provider Presets", () => {
   it("Bedrock preset should have template values for AWS credentials", () => {
     expect(bedrockPreset!.templateValues).toBeDefined();
     expect(bedrockPreset!.templateValues!.region).toBeDefined();
-    expect(bedrockPreset!.templateValues!.region.editorValue).toBe(
-      "us-west-2",
-    );
+    expect(bedrockPreset!.templateValues!.region.editorValue).toBe("us-west-2");
     expect(bedrockPreset!.templateValues!.accessKeyId).toBeDefined();
     expect(bedrockPreset!.templateValues!.secretAccessKey).toBeDefined();
   });
@@ -61,9 +57,7 @@ describe("AWS Bedrock OpenCode Provider Presets", () => {
     const models = bedrockPreset!.settingsConfig.models;
     expect(models).toBeDefined();
     const modelIds = Object.keys(models!);
-    expect(
-      modelIds.some((id) => id.includes("anthropic.claude")),
-    ).toBe(true);
+    expect(modelIds.some((id) => id.includes("anthropic.claude"))).toBe(true);
   });
 
   it("Kimi For Coding preset should use Anthropic with the coding endpoint", () => {
