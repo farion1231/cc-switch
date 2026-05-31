@@ -320,7 +320,7 @@ pub fn direct_gateway_credentials(
 }
 
 pub fn validate_direct_provider(provider: &Provider) -> Result<(), AppError> {
-    if is_official_provider(provider) || provider.category.as_deref() == Some("official") {
+    if is_official_provider(provider) {
         return Ok(());
     }
 
@@ -380,7 +380,7 @@ pub fn validate_direct_provider(provider: &Provider) -> Result<(), AppError> {
 }
 
 pub fn validate_proxy_provider(provider: &Provider) -> Result<(), AppError> {
-    if is_official_provider(provider) || provider.category.as_deref() == Some("official") {
+    if is_official_provider(provider) {
         return Ok(());
     }
 
@@ -465,7 +465,7 @@ fn is_managed_oauth_proxy_provider(provider: &Provider) -> bool {
 }
 
 pub fn validate_provider(provider: &Provider) -> Result<(), AppError> {
-    if is_official_provider(provider) || provider.category.as_deref() == Some("official") {
+    if is_official_provider(provider) {
         return Ok(());
     }
 
@@ -885,7 +885,7 @@ fn apply_provider_to_paths(
     provider: &Provider,
     paths: &ClaudeDesktopPaths,
 ) -> Result<(), AppError> {
-    if is_official_provider(provider) || provider.category.as_deref() == Some("official") {
+    if is_official_provider(provider) {
         return restore_official_at_paths(paths);
     }
 
@@ -1947,12 +1947,13 @@ mod tests {
         let direct = direct_provider("direct");
         assert!(is_compatible_direct_provider(&direct));
 
-        let claude_official = Provider::with_id(
+        let mut claude_official = Provider::with_id(
             "claude-official".to_string(),
             "Claude Official".to_string(),
             json!({"env": {}}),
             Some("https://www.anthropic.com/claude-code".to_string()),
         );
+        claude_official.category = Some("official".to_string());
         assert!(!is_compatible_direct_provider(&claude_official));
 
         let mut openai_format = direct_provider("openai");
