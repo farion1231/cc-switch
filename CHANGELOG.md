@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- [2026-05-31 20:33] FEAT: 前端设置与配置目录覆盖支持 Pi Agent，并将 Pi 会话读取接入可配置目录 (Files: src/App.tsx, src/hooks/useDirectorySettings.ts, src/hooks/useSettings.ts, src/hooks/useSettingsForm.ts, src/components/settings/DirectorySettings.tsx, src/components/settings/SettingsPage.tsx, src/lib/query/queries.ts, src/lib/schemas/settings.ts, src-tauri/src/settings.rs, src-tauri/src/pi_config.rs, src-tauri/src/commands/config.rs, src-tauri/src/session_manager/providers/pi.rs, src-tauri/src/lib.rs, src/i18n/locales/zh.json, src/i18n/locales/en.json, src/i18n/locales/ja.json, src/i18n/locales/zh-TW.json, tests/hooks/useDirectorySettings.test.tsx, tests/hooks/useSettings.test.tsx)
 - [2026-05-31 19:36] CHORE: 合并上游 main 最新版本并解决 Pi Agent 与 Hermes 会话适配冲突 (Files: CHANGELOG.md, src-tauri/src/session_manager/mod.rs, src-tauri/src/session_manager/providers/pi.rs, src/components/sessions/SessionManagerPage.tsx, src/i18n/locales/zh.json, src/i18n/locales/en.json, src/i18n/locales/ja.json, src/icons/extracted/metadata.ts)
 - [2026-05-30 12:36] FEAT: 适配 Pi Agent 会话扫描、消息读取、恢复命令与前端过滤展示 (Files: src-tauri/src/session_manager/providers/pi.rs, src-tauri/src/session_manager/providers/mod.rs, src-tauri/src/session_manager/mod.rs, src/components/sessions/SessionManagerPage.tsx, src/components/sessions/utils.ts, src/icons/extracted/index.ts, src/icons/extracted/metadata.ts, src/i18n/locales/zh.json, src/i18n/locales/en.json, src/i18n/locales/ja.json, CHANGELOG.md)
 

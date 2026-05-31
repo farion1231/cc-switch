@@ -571,7 +571,8 @@
       "claudeDesc": "Anthropic Claude Code CLI",
       "codexDesc": "OpenAI Codex CLI",
       "geminiDesc": "Google Gemini CLI",
-      "opencodeDesc": "OpenCode CLI"
+      "opencodeDesc": "OpenCode CLI",
+      "piDesc": "Pi Agent CLI"
     },
     "skillStorage": {
       "title": "Skill Storage Location",
@@ -623,7 +624,7 @@
       }
     },
     "configDirectoryOverride": "Configuration Directory Override (Advanced)",
-    "configDirectoryDescription": "When using Claude Code or Codex in environments like WSL, you can manually specify the configuration directory to the one in WSL to keep provider data consistent with the main environment.",
+    "configDirectoryDescription": "When using CLI tools in environments like WSL, you can manually point each app to its configuration directory so provider and session data are read from that location.",
     "appConfigDir": "CC Switch Configuration Directory",
     "appConfigDirDescription": "Customize the storage location for CC Switch configuration (point to cloud sync folder to enable config sync)",
     "browsePlaceholderApp": "e.g., C:\\Users\\Administrator\\.cc-switch",
@@ -639,12 +640,15 @@
     "openclawConfigDirDescription": "Override OpenClaw configuration directory (openclaw.json).",
     "hermesConfigDir": "Hermes Configuration Directory",
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
+    "piConfigDir": "Pi Agent Configuration Directory",
+    "piConfigDirDescription": "Override Pi Agent configuration directory (sessions).",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
     "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
+    "browsePlaceholderPi": "e.g., /home/<your-username>/.pi/agent",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
     "checkForUpdates": "Check for Updates",

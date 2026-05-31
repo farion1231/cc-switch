@@ -571,7 +571,8 @@
       "claudeDesc": "Anthropic Claude Code CLI",
       "codexDesc": "OpenAI Codex CLI",
       "geminiDesc": "Google Gemini CLI",
-      "opencodeDesc": "OpenCode CLI"
+      "opencodeDesc": "OpenCode CLI",
+      "piDesc": "Pi Agent CLI"
     },
     "skillStorage": {
       "title": "スキル保存場所",
@@ -623,7 +624,7 @@
       }
     },
     "configDirectoryOverride": "設定ディレクトリの上書き（詳細）",
-    "configDirectoryDescription": "WSL などで Claude Code や Codex を使う場合、ここで設定ディレクトリを WSL 側に合わせるとデータを揃えられます。",
+    "configDirectoryDescription": "WSL などで CLI ツールを使う場合、各アプリの設定ディレクトリを指定すると、その場所からプロバイダーやセッションデータを読み取ります。",
     "appConfigDir": "CC Switch 設定ディレクトリ",
     "appConfigDirDescription": "CC Switch の保存場所をカスタマイズします（クラウド同期フォルダを指定すると設定を同期できます）",
     "browsePlaceholderApp": "例: C:\\\\Users\\\\Administrator\\\\.cc-switch",
@@ -639,12 +640,15 @@
     "openclawConfigDirDescription": "OpenClaw の設定ディレクトリ（openclaw.json）を上書きします。",
     "hermesConfigDir": "Hermes 設定ディレクトリ",
     "hermesConfigDirDescription": "Hermes の設定ディレクトリ（config.yaml）を上書きします。",
+    "piConfigDir": "Pi Agent 設定ディレクトリ",
+    "piConfigDirDescription": "Pi Agent の設定ディレクトリ（sessions）を上書きします。",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
     "browsePlaceholderOpencode": "例: /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
+    "browsePlaceholderPi": "例: /home/<your-username>/.pi/agent",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
     "checkForUpdates": "アップデートを確認",

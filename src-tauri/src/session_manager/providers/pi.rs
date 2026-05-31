@@ -11,8 +11,6 @@ use super::utils::{
 };
 
 const PROVIDER_ID: &str = "pi";
-const DEFAULT_SESSION_RELATIVE_DIR: &str = ".pi/agent/sessions";
-
 struct PiMessageEntry {
     entry_id: String,
     parent_id: Option<String>,
@@ -87,7 +85,7 @@ pub fn session_root() -> PathBuf {
         }
     }
 
-    crate::config::get_home_dir().join(DEFAULT_SESSION_RELATIVE_DIR)
+    crate::pi_config::get_pi_sessions_dir()
 }
 
 pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {

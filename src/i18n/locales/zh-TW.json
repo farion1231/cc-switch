@@ -571,7 +571,8 @@
       "claudeDesc": "Anthropic Claude Code CLI",
       "codexDesc": "OpenAI Codex CLI",
       "geminiDesc": "Google Gemini CLI",
-      "opencodeDesc": "OpenCode CLI"
+      "opencodeDesc": "OpenCode CLI",
+      "piDesc": "Pi Agent CLI"
     },
     "skillStorage": {
       "title": "Skills 儲存位置",
@@ -623,7 +624,7 @@
       }
     },
     "configDirectoryOverride": "設定目錄覆寫（進階）",
-    "configDirectoryDescription": "在 WSL 等環境使用 Claude Code 或 Codex 的時候，可手動指定為 WSL 裡的設定目錄，供應商資料與主環境保持一致。",
+    "configDirectoryDescription": "在 WSL 等環境使用 CLI 工具時，可手動指定對應設定目錄，供應商資料與工作階段資料將按該目錄讀取。",
     "appConfigDir": "CC Switch 設定目錄",
     "appConfigDirDescription": "自訂 CC Switch 的設定儲存位置（指定至雲端同步資料夾即可雲端同步設定）",
     "browsePlaceholderApp": "例如：C:\\Users\\Administrator\\.cc-switch",
@@ -639,12 +640,15 @@
     "openclawConfigDirDescription": "覆寫 OpenClaw 設定目錄 (openclaw.json)。",
     "hermesConfigDir": "Hermes 設定目錄",
     "hermesConfigDirDescription": "覆寫 Hermes 設定目錄 (config.yaml)。",
+    "piConfigDir": "Pi Agent 設定目錄",
+    "piConfigDirDescription": "覆寫 Pi Agent 設定目錄 (sessions)。",
     "browsePlaceholderClaude": "例如：/home/<您的帳號>/.claude",
     "browsePlaceholderCodex": "例如：/home/<您的帳號>/.codex",
     "browsePlaceholderGemini": "例如：/home/<您的帳號>/.gemini",
     "browsePlaceholderOpencode": "例如：/home/<您的帳號>/.config/opencode",
     "browsePlaceholderOpenclaw": "例如：/home/<您的帳號>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<您的帳號>/.hermes",
+    "browsePlaceholderPi": "例如：/home/<您的帳號>/.pi/agent",
     "browseDirectory": "瀏覽目錄",
     "resetDefault": "還原預設目錄（需儲存後生效）",
     "checkForUpdates": "檢查更新",
@@ -725,7 +729,8 @@
     "gemini": "Gemini",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "pi": "Pi Agent"
   },
   "sessionManager": {
     "title": "工作階段管理",

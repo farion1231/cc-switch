@@ -125,6 +125,7 @@ const VALID_APPS: AppId[] = [
   "opencode",
   "openclaw",
   "hermes",
+  "pi",
 ];
 
 const getInitialApp = (): AppId => {
@@ -190,6 +191,7 @@ function App() {
     opencode: true,
     openclaw: true,
     hermes: true,
+    pi: true,
   };
 
   const getFirstVisibleApp = (): AppId => {
@@ -200,6 +202,7 @@ function App() {
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
     if (visibleApps.hermes) return "hermes";
+    if (visibleApps.pi) return "pi";
     return "claude"; // fallback
   };
 
@@ -218,9 +221,22 @@ function App() {
       sharedFeatureApp !== "opencode" &&
       sharedFeatureApp !== "openclaw" &&
       sharedFeatureApp !== "gemini" &&
-      sharedFeatureApp !== "hermes"
+      sharedFeatureApp !== "hermes" &&
+      sharedFeatureApp !== "pi"
     ) {
       setCurrentView("providers");
+    }
+  }, [sharedFeatureApp, currentView]);
+
+  useEffect(() => {
+    if (
+      sharedFeatureApp === "pi" &&
+      (currentView === "prompts" ||
+        currentView === "skills" ||
+        currentView === "skillsDiscovery" ||
+        currentView === "mcp")
+    ) {
+      setCurrentView("sessions");
     }
   }, [sharedFeatureApp, currentView]);
 
@@ -276,14 +292,18 @@ function App() {
       currentView === "openclawAgents");
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
-  const hasSkillsSupport = sharedFeatureApp !== "openclaw";
+  const hasSkillsSupport =
+    sharedFeatureApp !== "openclaw" && sharedFeatureApp !== "pi";
+  const hasPromptSupport = sharedFeatureApp !== "pi";
+  const hasMcpSupport = sharedFeatureApp !== "pi";
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
     sharedFeatureApp === "codex" ||
     sharedFeatureApp === "opencode" ||
     sharedFeatureApp === "openclaw" ||
     sharedFeatureApp === "gemini" ||
-    sharedFeatureApp === "hermes";
+    sharedFeatureApp === "hermes" ||
+    sharedFeatureApp === "pi";
 
   const {
     addProvider,
@@ -917,6 +937,10 @@ function App() {
         case "openclawAgents":
           return <AgentsDefaultsPanel />;
         default:
+          if (activeApp === "pi") {
+            return <SessionManagerPage key="pi" appId="pi" />;
+          }
+
           return (
             <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
               <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
@@ -1199,7 +1223,8 @@ function App() {
             {currentView === "providers" &&
               activeApp !== "opencode" &&
               activeApp !== "openclaw" &&
-              activeApp !== "hermes" && (
+              activeApp !== "hermes" &&
+              activeApp !== "pi" && (
                 <div
                   className="flex shrink-0 items-center gap-1.5"
                   style={{ WebkitAppRegion: "no-drag" } as any}
@@ -1343,7 +1368,9 @@ function App() {
                               ? "openclaw"
                               : activeApp === "hermes"
                                 ? "hermes"
-                                : "default"
+                                : activeApp === "pi"
+                                  ? "pi"
+                                  : "default"
                           }
                           className="flex items-center gap-1"
                           initial={{ opacity: 0 }}
@@ -1459,10 +1486,16 @@ function App() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("prompts")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                className={cn(
+                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  "transition-all duration-200 ease-in-out overflow-hidden",
+                                  hasPromptSupport
+                                    ? "opacity-100 w-8 scale-100 px-2"
+                                    : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
+                                )}
                                 title={t("prompts.manage")}
                               >
-                                <Book className="w-4 h-4" />
+                                <Book className="flex-shrink-0 w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"
@@ -1483,7 +1516,13 @@ function App() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("mcp")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                className={cn(
+                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  "transition-all duration-200 ease-in-out overflow-hidden",
+                                  hasMcpSupport
+                                    ? "opacity-100 w-8 scale-100 px-2"
+                                    : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
+                                )}
                                 title={t("mcp.title")}
                               >
                                 <McpIcon size={16} />
@@ -1494,13 +1533,15 @@ function App() {
                       </AnimatePresence>
                     </div>
 
-                    <Button
-                      onClick={() => setIsAddOpen(true)}
-                      size="icon"
-                      className={`ml-2 ${addActionButtonClass}`}
-                    >
-                      <Plus className="w-5 h-5" />
-                    </Button>
+                    {activeApp !== "pi" && (
+                      <Button
+                        onClick={() => setIsAddOpen(true)}
+                        size="icon"
+                        className={`ml-2 ${addActionButtonClass}`}
+                      >
+                        <Plus className="w-5 h-5" />
+                      </Button>
+                    )}
                   </>
                 )}
               </div>
@@ -1516,12 +1557,14 @@ function App() {
         {renderContent()}
       </main>
 
-      <AddProviderDialog
-        open={isAddOpen}
-        onOpenChange={setIsAddOpen}
-        appId={activeApp}
-        onSubmit={addProvider}
-      />
+      {activeApp !== "pi" && (
+        <AddProviderDialog
+          open={isAddOpen}
+          onOpenChange={setIsAddOpen}
+          appId={activeApp}
+          onSubmit={addProvider}
+        />
+      )}
 
       <EditProviderDialog
         open={Boolean(editingProvider)}

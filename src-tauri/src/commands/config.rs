@@ -67,6 +67,15 @@ pub async fn get_config_status(
     state: State<'_, AppState>,
     app: String,
 ) -> Result<ConfigStatus, String> {
+    if app.trim().eq_ignore_ascii_case("pi") {
+        let config_dir = crate::pi_config::get_pi_dir();
+        let sessions_dir = crate::pi_config::get_pi_sessions_dir();
+        return Ok(ConfigStatus {
+            exists: config_dir.exists() || sessions_dir.exists(),
+            path: config_dir.to_string_lossy().to_string(),
+        });
+    }
+
     match AppType::from_str(&app).map_err(|e| e.to_string())? {
         AppType::Claude => Ok(config::get_claude_config_status()),
         AppType::ClaudeDesktop => {
@@ -136,6 +145,12 @@ pub async fn get_claude_code_config_path() -> Result<String, String> {
 
 #[tauri::command]
 pub async fn get_config_dir(app: String) -> Result<String, String> {
+    if app.trim().eq_ignore_ascii_case("pi") {
+        return Ok(crate::pi_config::get_pi_dir()
+            .to_string_lossy()
+            .to_string());
+    }
+
     let dir = match AppType::from_str(&app).map_err(|e| e.to_string())? {
         AppType::Claude => config::get_claude_config_dir(),
         AppType::ClaudeDesktop => {
@@ -153,6 +168,20 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
 
 #[tauri::command]
 pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, String> {
+    if app.trim().eq_ignore_ascii_case("pi") {
+        let config_dir = crate::pi_config::get_pi_dir();
+        if !config_dir.exists() {
+            std::fs::create_dir_all(&config_dir).map_err(|e| format!("创建目录失败: {e}"))?;
+        }
+
+        handle
+            .opener()
+            .open_path(config_dir.to_string_lossy().to_string(), None::<String>)
+            .map_err(|e| format!("打开文件夹失败: {e}"))?;
+
+        return Ok(true);
+    }
+
     let config_dir = match AppType::from_str(&app).map_err(|e| e.to_string())? {
         AppType::Claude => config::get_claude_config_dir(),
         AppType::ClaudeDesktop => {
