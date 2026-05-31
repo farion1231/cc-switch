@@ -127,8 +127,9 @@ impl Database {
                 tx.execute(
                     "INSERT OR REPLACE INTO mcp_servers (
                         id, name, server_config, description, homepage, docs, tags,
-                        enabled_claude, enabled_codex, enabled_gemini
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                        enabled_claude, enabled_codex, enabled_gemini, enabled_opencode,
+                        enabled_hermes, enabled_pi
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                     params![
                         id,
                         server.name,
@@ -140,6 +141,9 @@ impl Database {
                         server.apps.claude,
                         server.apps.codex,
                         server.apps.gemini,
+                        server.apps.opencode,
+                        server.apps.hermes,
+                        server.apps.pi,
                     ],
                 )
                 .map_err(|e| AppError::Database(format!("Migrate mcp server failed: {e}")))?;
@@ -181,8 +185,13 @@ impl Database {
         };
 
         migrate_app_prompts(&config.prompts.claude.prompts, "claude")?;
+        migrate_app_prompts(&config.prompts.claude_desktop.prompts, "claude-desktop")?;
         migrate_app_prompts(&config.prompts.codex.prompts, "codex")?;
         migrate_app_prompts(&config.prompts.gemini.prompts, "gemini")?;
+        migrate_app_prompts(&config.prompts.opencode.prompts, "opencode")?;
+        migrate_app_prompts(&config.prompts.openclaw.prompts, "openclaw")?;
+        migrate_app_prompts(&config.prompts.hermes.prompts, "hermes")?;
+        migrate_app_prompts(&config.prompts.pi.prompts, "pi")?;
 
         Ok(())
     }

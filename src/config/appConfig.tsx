@@ -33,6 +33,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "gemini",
   "opencode",
   "hermes",
+  "pi",
 ];
 
 /** App IDs shown in MCP panels (excludes OpenClaw) */

@@ -168,6 +168,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
         gemini: false,
         opencode: false,
         hermes: false,
+        pi: false,
     };
 
     for app in apps_str.split(',') {
@@ -181,6 +182,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
                 log::debug!("OpenClaw doesn't support MCP, ignoring in apps parameter");
             }
             "hermes" => apps.hermes = true,
+            "pi" | "pi-agent" | "pi_agent" => apps.pi = true,
             other => {
                 return Err(AppError::InvalidInput(format!(
                     "Invalid app in 'apps': {other}"

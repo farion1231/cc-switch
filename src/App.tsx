@@ -228,18 +228,6 @@ function App() {
     }
   }, [sharedFeatureApp, currentView]);
 
-  useEffect(() => {
-    if (
-      sharedFeatureApp === "pi" &&
-      (currentView === "prompts" ||
-        currentView === "skills" ||
-        currentView === "skillsDiscovery" ||
-        currentView === "mcp")
-    ) {
-      setCurrentView("sessions");
-    }
-  }, [sharedFeatureApp, currentView]);
-
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
@@ -292,10 +280,9 @@ function App() {
       currentView === "openclawAgents");
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
-  const hasSkillsSupport =
-    sharedFeatureApp !== "openclaw" && sharedFeatureApp !== "pi";
-  const hasPromptSupport = sharedFeatureApp !== "pi";
-  const hasMcpSupport = sharedFeatureApp !== "pi";
+  const hasSkillsSupport = sharedFeatureApp !== "openclaw";
+  const hasPromptSupport = true;
+  const hasMcpSupport = true;
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
     sharedFeatureApp === "codex" ||

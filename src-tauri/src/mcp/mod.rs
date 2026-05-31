@@ -10,12 +10,14 @@
 //! - `gemini` - Gemini MCP 同步和导入
 //! - `opencode` - OpenCode MCP 同步和导入（含 local/remote 格式转换）
 //! - `hermes` - Hermes MCP 同步和导入
+//! - `pi` - Pi Agent MCP 同步和导入
 
 mod claude;
 mod codex;
 mod gemini;
 mod hermes;
 mod opencode;
+mod pi;
 mod validation;
 
 // 重新导出公共 API
@@ -34,3 +36,4 @@ pub use hermes::{import_from_hermes, remove_server_from_hermes, sync_single_serv
 pub use opencode::{
     import_from_opencode, remove_server_from_opencode, sync_single_server_to_opencode,
 };
+pub use pi::{import_from_pi, remove_server_from_pi, sync_single_server_to_pi};

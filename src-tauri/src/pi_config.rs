@@ -18,6 +18,18 @@ pub fn get_pi_models_path() -> PathBuf {
     get_pi_dir().join("models.json")
 }
 
+pub fn get_pi_mcp_path() -> PathBuf {
+    get_pi_dir().join("mcp.json")
+}
+
+pub fn get_pi_prompts_dir() -> PathBuf {
+    get_pi_dir().join("prompts")
+}
+
+pub fn get_pi_managed_prompt_path() -> PathBuf {
+    get_pi_prompts_dir().join("cc-switch.md")
+}
+
 fn pi_write_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
