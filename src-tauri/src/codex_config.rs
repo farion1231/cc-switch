@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::config::{
@@ -393,38 +394,192 @@ fn load_codex_model_template_from_cache() -> Result<Option<Value>, AppError> {
     Ok(find_codex_model_template(&catalog))
 }
 
-/// Platform-specific candidates for locating the `codex` CLI when it is not
-/// on the process PATH (common in macOS GUI apps launched outside a terminal).
-const CODEX_CLI_CANDIDATES: &[&str] = &[
+/// Fixed candidates for locating the `codex` CLI when it is not on the process
+/// PATH (common in GUI apps launched outside a terminal).
+const CODEX_CLI_FIXED_CANDIDATES: &[&str] = &[
     "codex",                                // PATH (all platforms)
     "/opt/homebrew/bin/codex",              // macOS Apple Silicon Homebrew
     "/usr/local/bin/codex",                 // macOS Intel Homebrew / Linux
     "/home/linuxbrew/.linuxbrew/bin/codex", // Linux Homebrew
 ];
 
+fn push_codex_cli_candidate(
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut HashSet<String>,
+    candidate: PathBuf,
+) {
+    let key = candidate.to_string_lossy().into_owned();
+    if seen.insert(key) {
+        candidates.push(candidate);
+    }
+}
+
+fn push_existing_codex_cli_candidate(
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut HashSet<String>,
+    candidate: PathBuf,
+) {
+    if candidate.exists() {
+        push_codex_cli_candidate(candidates, seen, candidate);
+    }
+}
+
+fn push_codex_cli_candidates_from_version_dirs(
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut HashSet<String>,
+    versions_dir: PathBuf,
+    suffix: &[&str],
+) {
+    let Ok(entries) = fs::read_dir(versions_dir) else {
+        return;
+    };
+
+    let mut discovered = entries
+        .filter_map(Result::ok)
+        .map(|entry| {
+            let mut candidate = entry.path();
+            for component in suffix {
+                candidate.push(component);
+            }
+            candidate
+        })
+        .filter(|candidate| candidate.exists())
+        .collect::<Vec<_>>();
+
+    // Prefer newer-looking version directories before older global installs.
+    discovered.sort_by(|a, b| b.cmp(a));
+    for candidate in discovered {
+        push_codex_cli_candidate(candidates, seen, candidate);
+    }
+}
+
+fn push_home_codex_cli_candidates(
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut HashSet<String>,
+    home: &Path,
+) {
+    for relative in [
+        ".nvm/current/bin/codex",
+        ".volta/bin/codex",
+        ".asdf/shims/codex",
+        ".local/share/mise/shims/codex",
+        ".config/mise/shims/codex",
+        ".local/bin/codex",
+        ".npm-global/bin/codex",
+        ".npm-packages/bin/codex",
+        ".local/share/pnpm/codex",
+        "Library/pnpm/codex",
+    ] {
+        push_existing_codex_cli_candidate(candidates, seen, home.join(relative));
+    }
+
+    push_codex_cli_candidates_from_version_dirs(
+        candidates,
+        seen,
+        home.join(".nvm/versions/node"),
+        &["bin", "codex"],
+    );
+    push_codex_cli_candidates_from_version_dirs(
+        candidates,
+        seen,
+        home.join(".local/share/fnm/node-versions"),
+        &["installation", "bin", "codex"],
+    );
+    push_codex_cli_candidates_from_version_dirs(
+        candidates,
+        seen,
+        home.join("Library/Application Support/fnm/node-versions"),
+        &["installation", "bin", "codex"],
+    );
+}
+
+fn push_env_codex_cli_candidates(candidates: &mut Vec<PathBuf>, seen: &mut HashSet<String>) {
+    for (env_key, suffix) in [
+        ("NPM_CONFIG_PREFIX", &["bin", "codex"][..]),
+        ("VOLTA_HOME", &["bin", "codex"][..]),
+        ("ASDF_DATA_DIR", &["shims", "codex"][..]),
+        ("MISE_DATA_DIR", &["shims", "codex"][..]),
+        ("PNPM_HOME", &["codex"][..]),
+    ] {
+        let Some(prefix) = std::env::var_os(env_key) else {
+            continue;
+        };
+        let mut candidate = PathBuf::from(prefix);
+        for component in suffix {
+            candidate.push(component);
+        }
+        push_existing_codex_cli_candidate(candidates, seen, candidate);
+    }
+
+    if let Some(nvm_dir) = std::env::var_os("NVM_DIR") {
+        push_codex_cli_candidates_from_version_dirs(
+            candidates,
+            seen,
+            PathBuf::from(nvm_dir).join("versions/node"),
+            &["bin", "codex"],
+        );
+    }
+
+    if let Some(fnm_dir) = std::env::var_os("FNM_DIR") {
+        push_codex_cli_candidates_from_version_dirs(
+            candidates,
+            seen,
+            PathBuf::from(fnm_dir).join("node-versions"),
+            &["installation", "bin", "codex"],
+        );
+    }
+
+    #[cfg(windows)]
+    {
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            let npm_dir = PathBuf::from(appdata).join("npm");
+            for name in ["codex.cmd", "codex.exe", "codex"] {
+                push_existing_codex_cli_candidate(candidates, seen, npm_dir.join(name));
+            }
+        }
+    }
+}
+
+fn codex_cli_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let mut seen = HashSet::new();
+
+    for candidate in CODEX_CLI_FIXED_CANDIDATES {
+        push_codex_cli_candidate(&mut candidates, &mut seen, PathBuf::from(candidate));
+    }
+
+    push_env_codex_cli_candidates(&mut candidates, &mut seen);
+    push_home_codex_cli_candidates(&mut candidates, &mut seen, &get_home_dir());
+
+    candidates
+}
+
 fn load_codex_model_template_from_bundled() -> Result<Option<Value>, AppError> {
-    for candidate in CODEX_CLI_CANDIDATES {
-        let output = match Command::new(candidate)
+    for candidate in codex_cli_candidates() {
+        let candidate_label = candidate.to_string_lossy();
+        let output = match Command::new(&candidate)
             .args(["debug", "models", "--bundled"])
             .output()
         {
             Ok(output) => output,
             Err(err) => {
-                log::debug!("failed to run `{candidate} debug models --bundled`: {err}");
+                log::debug!("failed to run `{candidate_label} debug models --bundled`: {err}");
                 continue;
             }
         };
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            log::debug!("`{candidate} debug models --bundled` failed: {stderr}");
+            log::debug!("`{candidate_label} debug models --bundled` failed: {stderr}");
             continue;
         }
 
         let catalog: Value = match serde_json::from_slice(&output.stdout) {
             Ok(catalog) => catalog,
             Err(e) => {
-                log::debug!("Failed to parse `{candidate} debug models --bundled` output: {e}");
+                log::debug!(
+                    "Failed to parse `{candidate_label} debug models --bundled` output: {e}"
+                );
                 continue;
             }
         };
@@ -1714,20 +1869,73 @@ name = "any"
 
     #[test]
     fn codex_cli_candidates_are_non_empty() {
+        let candidates = codex_cli_candidates();
         assert!(
-            !CODEX_CLI_CANDIDATES.is_empty(),
-            "CODEX_CLI_CANDIDATES must have at least the PATH entry"
+            candidates
+                .iter()
+                .any(|candidate| candidate == Path::new("codex")),
+            "codex CLI candidates must include the PATH entry"
+        );
+    }
+
+    #[test]
+    fn codex_cli_candidates_include_user_node_manager_bins() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let home = temp_home.path();
+        let expected = [
+            home.join(".nvm/versions/node/v22.14.0/bin/codex"),
+            home.join(".volta/bin/codex"),
+            home.join(".asdf/shims/codex"),
+            home.join(".local/share/mise/shims/codex"),
+            home.join(".local/share/fnm/node-versions/v22.14.0/installation/bin/codex"),
+        ];
+
+        for candidate in &expected {
+            std::fs::create_dir_all(candidate.parent().expect("candidate parent"))
+                .expect("create candidate parent");
+            std::fs::write(candidate, "").expect("create candidate");
+        }
+
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+        push_home_codex_cli_candidates(&mut candidates, &mut seen, home);
+
+        for candidate in expected {
+            assert!(
+                candidates.contains(&candidate),
+                "user-level Codex CLI candidate should be discovered: {}",
+                candidate.display()
+            );
+        }
+    }
+
+    #[test]
+    fn codex_cli_candidates_deduplicate_entries() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let home = temp_home.path();
+        let candidate = home.join(".volta/bin/codex");
+        std::fs::create_dir_all(candidate.parent().expect("candidate parent"))
+            .expect("create candidate parent");
+        std::fs::write(&candidate, "").expect("create candidate");
+
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+        push_existing_codex_cli_candidate(&mut candidates, &mut seen, candidate.clone());
+        push_home_codex_cli_candidates(&mut candidates, &mut seen, home);
+
+        assert_eq!(
+            candidates.iter().filter(|path| **path == candidate).count(),
+            1,
+            "duplicate candidates should be removed"
         );
     }
 
     #[test]
     fn static_template_is_valid_json_with_slug() {
-        let template = load_codex_model_template_static()
-            .expect("static template must parse as valid JSON");
+        let template =
+            load_codex_model_template_static().expect("static template must parse as valid JSON");
         assert_eq!(
-            template
-                .get("slug")
-                .and_then(|v| v.as_str()),
+            template.get("slug").and_then(|v| v.as_str()),
             Some("gpt-5.5"),
             "static template slug must be gpt-5.5"
         );
@@ -1735,9 +1943,14 @@ name = "any"
 
     #[test]
     fn static_template_has_required_keys() {
-        let template = load_codex_model_template_static()
-            .expect("static template must parse as valid JSON");
-        for key in &["model_messages", "base_instructions", "context_window", "display_name"] {
+        let template =
+            load_codex_model_template_static().expect("static template must parse as valid JSON");
+        for key in &[
+            "model_messages",
+            "base_instructions",
+            "context_window",
+            "display_name",
+        ] {
             assert!(
                 template.get(key).is_some(),
                 "static template must contain key '{key}'"
