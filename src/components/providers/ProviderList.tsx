@@ -47,12 +47,21 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi } from "@/lib/api/settings";
+import { useSetProxyTakeoverForApp } from "@/lib/query/proxy";
+import {
+  getProxyRequirement,
+  isOfficialProvider,
+} from "@/utils/providerRouting";
+import { decideSwitchAction } from "@/utils/switchDecision";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
   currentProviderId: string;
   appId: AppId;
-  onSwitch: (provider: Provider) => void;
+  onSwitch: (
+    provider: Provider,
+    opts?: { fromRoutingGuard?: boolean },
+  ) => void | Promise<boolean>;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onRemoveFromConfig?: (provider: Provider) => void;
@@ -195,6 +204,19 @@ export function ProviderList({
   const [showStreamCheckConfirm, setShowStreamCheckConfirm] = useState(false);
   const [pendingTestProvider, setPendingTestProvider] =
     useState<Provider | null>(null);
+
+  // 路由自动开关 guard 状态
+  const [showRoutingConfirm, setShowRoutingConfirm] = useState<
+    "enable" | "disable" | null
+  >(null);
+  const [pendingSwitchProvider, setPendingSwitchProvider] =
+    useState<Provider | null>(null);
+  const [rememberRouting, setRememberRouting] = useState(false);
+  // 覆盖整个 toggleTakeoverThenSwitch 流程（切换 + 接管开关）的「进行中」标记。
+  // 不能只依赖 setProxyTakeover.isPending——「先切后开」时切换在途、接管 mutation
+  // 还没开始的窗口里它仍是 false，按钮可点 + 守卫不拦 → 会重复触发。
+  const [routingSwitchInFlight, setRoutingSwitchInFlight] = useState(false);
+  const setProxyTakeover = useSetProxyTakeoverForApp();
   const { data: claudeDesktopStatus } = useQuery({
     queryKey: ["claudeDesktopStatus"],
     queryFn: () => providersApi.getClaudeDesktopStatus(),
@@ -235,6 +257,160 @@ export function ProviderList({
       checkProvider(pendingTestProvider.id, pendingTestProvider.name);
       setPendingTestProvider(null);
     }
+  };
+
+  // 写入「记住选择」到对应设置位（点确认即写，独立于后续 takeover 成败）。
+  const persistRoutingPreference = async (direction: "enable" | "disable") => {
+    if (!settings) return;
+    const { webdavSync: _webdavSync, ...rest } = settings;
+    await settingsApi.save({
+      ...rest,
+      ...(direction === "enable"
+        ? { autoEnableForNeedsRouting: true }
+        : { autoDisableForNoRouting: true }),
+    });
+    await queryClient.invalidateQueries({ queryKey: ["settings"] });
+  };
+
+  // 接管开关 + 切换。两个方向的顺序不同，都是为了「官方流量绝不在接管下」：
+  //
+  // - enable（切到需路由 provider）：**先切后开**。先 await onSwitch 把 live 切到
+  //   目标（非官方），**仅当切换成功**才开本 app 接管。这样开接管时「当前 provider」
+  //   已是非官方，后端不会发 proxy-official-warning，也不存在「官方被接管」窗口；
+  //   且切换失败时绝不开接管（否则可能让仍停留的官方 provider 走代理被封号）。
+  //   切换成功但开接管失败：provider 已切但未接管（不工作，非封号）→ 提示手动开路由。
+  // - disable（切到官方 provider）：**先关后切**。先关接管（后端恢复真实 Live
+  //   配置），再切到官方。任何时刻官方都不在接管下。开关失败 → 中止不切换。
+  //
+  // onSwitch(p, { fromRoutingGuard: true })：guard 已显式处理路由意图，让
+  // switchProvider 跳过基于闭包（可能滞后一帧）的「需路由提示」与「官方硬阻断」；
+  // 它返回是否切换成功（switchProvider 内部吞错误，靠返回值而非异常判定）。
+  const toggleTakeoverThenSwitch = async (
+    provider: Provider,
+    enabled: boolean,
+  ): Promise<void> => {
+    // 标记整个流程进行中（含切换在途窗口），防重复点击/重入；finally 必清。
+    setRoutingSwitchInFlight(true);
+    try {
+      if (enabled) {
+        // 先切；仅当切换成功（返回非 false）才开接管。失败则中止——switchProvider
+        // 的 mutation onError 已弹「切换失败」toast，且 live 仍停在原 provider。
+        const switched = await onSwitch(provider, { fromRoutingGuard: true });
+        if (switched === false) return;
+        try {
+          await setProxyTakeover.mutateAsync({ appType: appId, enabled: true });
+        } catch {
+          toast.error(
+            t("notifications.routingEnableFailed", {
+              defaultValue: "开启本地路由失败，请手动开启路由",
+            }),
+          );
+          return;
+        }
+        toast.success(
+          t("notifications.routingAutoEnabled", {
+            defaultValue: "当前应用本地路由已自动开启",
+          }),
+          { closeButton: true },
+        );
+        await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
+        return;
+      }
+
+      // disable：先关接管（失败则中止不切换），再切到官方。
+      try {
+        await setProxyTakeover.mutateAsync({ appType: appId, enabled: false });
+      } catch {
+        toast.error(
+          t("notifications.routingDisableFailed", {
+            defaultValue: "关闭本地路由失败，已取消切换",
+          }),
+        );
+        return;
+      }
+      toast.success(
+        t("notifications.routingAutoDisabled", {
+          defaultValue: "当前应用本地路由已自动关闭",
+        }),
+        { closeButton: true },
+      );
+      await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
+      onSwitch(provider, { fromRoutingGuard: true });
+    } finally {
+      setRoutingSwitchInFlight(false);
+    }
+  };
+
+  // 切换 guard：用 decideSwitchAction 分流为直接切 / 弹确认 / 静默切。
+  // claude-desktop 排除：其 proxy 模式需要代理服务运行（不是 per-app takeover，
+  // 后端仅支持 claude/codex/gemini）。ProviderCard 的「需要路由」徽章仍对 claude-
+  // desktop 显示（信息正确），switchProvider 的既有 proxyRequiredReason toast 会在
+  // 代理未运行时提醒用户——这两者不依赖 per-app takeover，故不受守卫排除影响。
+  const handleSwitchWithGuard = async (provider: Provider) => {
+    if (routingSwitchInFlight || setProxyTakeover.isPending) return;
+
+    if (appId === "claude-desktop") {
+      onSwitch(provider);
+      return;
+    }
+
+    const requirement = getProxyRequirement(provider, appId);
+    const action = decideSwitchAction({
+      needsRouting: requirement.required,
+      isProxyTakeover,
+      isOfficial: isOfficialProvider(provider, appId),
+      autoEnable: settings?.autoEnableForNeedsRouting ?? false,
+      autoDisable: settings?.autoDisableForNoRouting ?? false,
+    });
+
+    switch (action) {
+      case "confirmEnable":
+        setPendingSwitchProvider(provider);
+        setRememberRouting(false);
+        setShowRoutingConfirm("enable");
+        return;
+      case "confirmDisable":
+        setPendingSwitchProvider(provider);
+        setRememberRouting(false);
+        setShowRoutingConfirm("disable");
+        return;
+      case "directEnable":
+        await toggleTakeoverThenSwitch(provider, true);
+        return;
+      case "directDisable":
+        await toggleTakeoverThenSwitch(provider, false);
+        return;
+      case "direct":
+        onSwitch(provider);
+    }
+  };
+
+  const handleRoutingConfirm = async () => {
+    const direction = showRoutingConfirm;
+    const provider = pendingSwitchProvider;
+    setShowRoutingConfirm(null);
+    setPendingSwitchProvider(null);
+    if (!direction || !provider) {
+      setRememberRouting(false);
+      return;
+    }
+
+    if (rememberRouting) {
+      try {
+        await persistRoutingPreference(direction);
+      } catch (error) {
+        console.error("Failed to persist routing preference:", error);
+      }
+    }
+    setRememberRouting(false);
+
+    await toggleTakeoverThenSwitch(provider, direction === "enable");
+  };
+
+  const handleRoutingCancel = () => {
+    setShowRoutingConfirm(null);
+    setPendingSwitchProvider(null);
+    setRememberRouting(false);
   };
 
   // Import current live config as default provider
@@ -430,7 +606,7 @@ export function ProviderList({
                 isInConfig={isProviderInConfig(provider.id)}
                 isOmo={isOmo}
                 isOmoSlim={isOmoSlim}
-                onSwitch={onSwitch}
+                onSwitch={handleSwitchWithGuard}
                 onEdit={onEdit}
                 onDelete={onDelete}
                 onRemoveFromConfig={onRemoveFromConfig}
@@ -444,6 +620,9 @@ export function ProviderList({
                 isTesting={isChecking(provider.id)}
                 isProxyRunning={isProxyRunning}
                 isProxyTakeover={isProxyTakeover}
+                isRoutingSwitchPending={
+                  routingSwitchInFlight || setProxyTakeover.isPending
+                }
                 isAutoFailoverEnabled={isFailoverModeActive}
                 failoverPriority={getFailoverPriority(provider.id)}
                 isInFailoverQueue={isInFailoverQueue(provider.id)}
@@ -571,6 +750,54 @@ export function ProviderList({
           setPendingTestProvider(null);
         }}
       />
+
+      <ConfirmDialog
+        isOpen={showRoutingConfirm !== null}
+        variant={showRoutingConfirm === "disable" ? "destructive" : "info"}
+        title={
+          showRoutingConfirm === "disable"
+            ? t("confirm.routingDisable.title", {
+                defaultValue: "关闭本地路由并切换？",
+              })
+            : t("confirm.routingEnable.title", {
+                defaultValue: "开启本地路由并启用？",
+              })
+        }
+        message={
+          showRoutingConfirm === "disable"
+            ? t("confirm.routingDisable.message", {
+                defaultValue:
+                  "该供应商为官方直连，不能在本地路由接管下使用（可能导致账号被封禁）。\n将关闭当前应用的本地路由，然后切换到该供应商。",
+              })
+            : t("confirm.routingEnable.message", {
+                defaultValue:
+                  "该供应商需要本地路由才能正常工作。\n将开启当前应用的本地路由，然后启用该供应商。",
+              })
+        }
+        confirmText={
+          showRoutingConfirm === "disable"
+            ? t("confirm.routingDisable.confirm", {
+                defaultValue: "关闭路由并切换",
+              })
+            : t("confirm.routingEnable.confirm", {
+                defaultValue: "开启路由并启用",
+              })
+        }
+        checkbox={{
+          label:
+            showRoutingConfirm === "disable"
+              ? t("confirm.routing.rememberDisable", {
+                  defaultValue: "以后都自动关闭本地路由，不再询问",
+                })
+              : t("confirm.routing.rememberEnable", {
+                  defaultValue: "以后都自动开启本地路由，不再询问",
+                }),
+          checked: rememberRouting,
+          onChange: setRememberRouting,
+        }}
+        onConfirm={() => void handleRoutingConfirm()}
+        onCancel={handleRoutingCancel}
+      />
     </div>
   );
 }
@@ -596,6 +823,7 @@ interface SortableProviderCardProps {
   isTesting: boolean;
   isProxyRunning: boolean;
   isProxyTakeover: boolean;
+  isRoutingSwitchPending: boolean;
   isAutoFailoverEnabled: boolean;
   failoverPriority?: number;
   isInFailoverQueue: boolean;
@@ -627,6 +855,7 @@ function SortableProviderCard({
   isTesting,
   isProxyRunning,
   isProxyTakeover,
+  isRoutingSwitchPending,
   isAutoFailoverEnabled,
   failoverPriority,
   isInFailoverQueue,
@@ -674,6 +903,7 @@ function SortableProviderCard({
         isTesting={isTesting}
         isProxyRunning={isProxyRunning}
         isProxyTakeover={isProxyTakeover}
+        isRoutingSwitchPending={isRoutingSwitchPending}
         dragHandleProps={{
           attributes,
           listeners,

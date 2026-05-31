@@ -7,7 +7,6 @@ import {
   Minus,
   Play,
   Plus,
-  ShieldAlert,
   Terminal,
   TestTube2,
   Trash2,
@@ -37,7 +36,8 @@ interface ProviderActionsProps {
   isAutoFailoverEnabled?: boolean;
   isInFailoverQueue?: boolean;
   onToggleFailover?: (enabled: boolean) => void;
-  isOfficialBlockedByProxy?: boolean;
+  // 路由接管切换进行中：禁用主切换按钮，防止重复点击重复触发 takeover 切换。
+  isRoutingSwitchPending?: boolean;
   // Hermes v12+ providers: dict overlay — edit/delete must go through Web UI
   isReadOnly?: boolean;
   // OpenClaw: default model
@@ -64,7 +64,7 @@ export function ProviderActions({
   isAutoFailoverEnabled = false,
   isInFailoverQueue = false,
   onToggleFailover,
-  isOfficialBlockedByProxy = false,
+  isRoutingSwitchPending = false,
   isReadOnly = false,
   // OpenClaw: default model
   isDefaultModel = false,
@@ -174,16 +174,6 @@ export function ProviderActions({
       };
     }
 
-    if (isOfficialBlockedByProxy) {
-      return {
-        disabled: true,
-        variant: "secondary" as const,
-        className: "opacity-40 cursor-not-allowed",
-        icon: <ShieldAlert className="h-4 w-4" />,
-        text: t("provider.blockedByProxy", { defaultValue: "已拦截" }),
-      };
-    }
-
     if (isCurrent) {
       return {
         disabled: true,
@@ -251,7 +241,7 @@ export function ProviderActions({
         size="sm"
         variant={buttonState.variant}
         onClick={handleMainButtonClick}
-        disabled={buttonState.disabled}
+        disabled={buttonState.disabled || isRoutingSwitchPending}
         className={cn("w-[4.5rem] px-2.5", buttonState.className)}
       >
         {buttonState.icon}

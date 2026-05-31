@@ -147,9 +147,18 @@ export function useProviderActions(
     [updateProviderMutation],
   );
 
-  // 切换供应商
+  // 切换供应商。返回是否切换成功（供路由 guard 据此决定是否开接管——切换失败时
+  // 绝不能开接管，否则可能让仍停留的官方 provider 走代理被封号）。
+  // opts.fromRoutingGuard: 调用方（ProviderList 的路由 guard）已经显式处理过
+  // 路由意图（弹窗确认 + 已 await per-app set_takeover_for_app），因此跳过此处
+  // 基于闭包内 isProxyTakeover/isProxyRunning 的「需路由提示」与「官方硬阻断」——
+  // 这两者读的是可能滞后一帧的闭包值，guard 路径用它们会误触发。其它调用方不传
+  // 该参数，硬阻断兜底保持不变（返回值被忽略）。
   const switchProvider = useCallback(
-    async (provider: Provider) => {
+    async (
+      provider: Provider,
+      opts?: { fromRoutingGuard?: boolean },
+    ): Promise<boolean> => {
       const isCopilotProvider =
         activeApp === "claude" &&
         provider.meta?.providerType === "github_copilot";
@@ -166,7 +175,11 @@ export function useProviderActions(
 
       // Determine why this provider requires the proxy
       let proxyRequiredReason: string | null = null;
-      if (!isProxyRunning && provider.category !== "official") {
+      if (
+        !opts?.fromRoutingGuard &&
+        !isProxyRunning &&
+        provider.category !== "official"
+      ) {
         if (isCopilotProvider) {
           proxyRequiredReason = t("notifications.proxyReasonCopilot", {
             defaultValue: "使用 GitHub Copilot 作为 Claude 供应商",
@@ -216,8 +229,15 @@ export function useProviderActions(
         );
       }
 
-      // Block official providers when proxy takeover is active
-      if (isProxyTakeover && provider.category === "official") {
+      // Block official providers when proxy takeover is active.
+      // Skipped on the routing-guard path: it has already disabled takeover for
+      // this app and obtained explicit confirmation, so this backstop (reading a
+      // possibly-stale closure value) would otherwise false-trigger.
+      if (
+        !opts?.fromRoutingGuard &&
+        isProxyTakeover &&
+        provider.category === "official"
+      ) {
         toast.error(
           t("notifications.officialBlockedByProxy", {
             defaultValue:
@@ -225,7 +245,7 @@ export function useProviderActions(
           }),
           { duration: 6000 },
         );
-        return;
+        return false;
       }
 
       try {
@@ -267,8 +287,10 @@ export function useProviderActions(
             closeButton: true,
           });
         }
+        return true;
       } catch {
         // 错误提示由 mutation 处理
+        return false;
       }
     },
     [
