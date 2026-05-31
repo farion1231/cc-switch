@@ -455,13 +455,14 @@ describe("useSettings hook", () => {
     expect(settingsFormMock.syncLanguage).toHaveBeenCalledWith(
       settingsFormMock.initialLanguage,
     );
-    expect(directorySettingsMock.resetAllDirectories).toHaveBeenCalledWith(
-      "/server/claude",
-      undefined,
-      "/server/gemini",
-      "/server/opencode",
-      "/server/openclaw",
-    );
+    expect(directorySettingsMock.resetAllDirectories).toHaveBeenCalledWith({
+      claude: "/server/claude",
+      codex: undefined,
+      gemini: "/server/gemini",
+      opencode: "/server/opencode",
+      openclaw: "/server/openclaw",
+      hermes: undefined,
+    });
     expect(metadataMock.setRequiresRestart).toHaveBeenCalledWith(false);
   });
 

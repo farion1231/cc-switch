@@ -42,6 +42,8 @@ pub(crate) fn provider_exists_in_live_config(
             .map(|providers| providers.contains_key(provider_id)),
         AppType::OpenClaw => crate::openclaw_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::Hermes => crate::hermes_config::get_providers()
+            .map(|providers| providers.contains_key(provider_id)),
         _ => Ok(false),
     }
 }
@@ -345,7 +347,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
             }
             _ => false,
         },
-        AppType::OpenCode | AppType::OpenClaw => false,
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => false,
     }
 }
 
@@ -415,7 +417,9 @@ pub(crate) fn remove_common_config_from_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw => Ok(settings.clone()),
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
+            Ok(settings.clone())
+        }
     }
 }
 
@@ -470,7 +474,9 @@ fn apply_common_config_to_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw => Ok(settings.clone()),
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
+            Ok(settings.clone())
+        }
     }
 }
 
@@ -509,6 +515,16 @@ pub(crate) fn write_live_with_common_config(
     effective_provider.settings_config =
         build_effective_settings_with_common_config(db, app_type, provider)?;
 
+    if matches!(app_type, AppType::ClaudeDesktop) {
+        crate::claude_desktop_config::apply_provider(db, &effective_provider)?;
+        log::info!(
+            "Claude Desktop 3P profile '{}' written for provider '{}'",
+            crate::claude_desktop_config::PROFILE_ID,
+            effective_provider.id
+        );
+        return Ok(());
+    }
+
     write_live_snapshot(app_type, &effective_provider)
 }
 
@@ -526,29 +542,61 @@ pub(crate) fn strip_common_config_from_live_settings(
                 app_type.as_str(),
                 provider.id
             );
-            return live_settings;
+            return restore_live_settings_for_provider_backfill(app_type, provider, live_settings);
         }
     };
 
-    if !provider_uses_common_config(app_type, provider, snippet.as_deref()) {
-        return live_settings;
-    }
-
-    let Some(snippet_text) = snippet.as_deref() else {
-        return live_settings;
+    let backfill_settings = if provider_uses_common_config(app_type, provider, snippet.as_deref()) {
+        match snippet.as_deref() {
+            Some(snippet_text) => {
+                match remove_common_config_from_settings(app_type, &live_settings, snippet_text) {
+                    Ok(settings) => settings,
+                    Err(err) => {
+                        log::warn!(
+                            "Failed to strip common config for {} provider '{}': {err}",
+                            app_type.as_str(),
+                            provider.id
+                        );
+                        live_settings
+                    }
+                }
+            }
+            None => live_settings,
+        }
+    } else {
+        live_settings
     };
 
-    match remove_common_config_from_settings(app_type, &live_settings, snippet_text) {
-        Ok(settings) => settings,
-        Err(err) => {
-            log::warn!(
-                "Failed to strip common config for {} provider '{}': {err}",
-                app_type.as_str(),
-                provider.id
-            );
-            live_settings
-        }
+    restore_live_settings_for_provider_backfill(app_type, provider, backfill_settings)
+}
+
+fn restore_live_settings_for_provider_backfill(
+    app_type: &AppType,
+    provider: &Provider,
+    live_settings: Value,
+) -> Value {
+    if !matches!(app_type, AppType::Codex) {
+        return live_settings;
     }
+
+    let mut settings = live_settings;
+    let restore_provider_token =
+        crate::codex_config::should_restore_codex_provider_token_for_backfill(
+            provider.category.as_deref(),
+            &provider.settings_config,
+        );
+    if let Err(err) = crate::codex_config::restore_codex_settings_for_backfill(
+        &mut settings,
+        &provider.settings_config,
+        restore_provider_token,
+    ) {
+        log::warn!(
+            "Failed to restore Codex settings while backfilling '{}': {err}",
+            provider.id
+        );
+    }
+
+    settings
 }
 
 pub(crate) fn normalize_provider_common_config_for_storage(
@@ -669,6 +717,13 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             let settings = sanitize_claude_settings_for_live(&provider.settings_config);
             write_json_file(&path, &settings)?;
         }
+        AppType::ClaudeDesktop => {
+            return Err(AppError::localized(
+                "claude_desktop.live.requires_db_context",
+                "Claude Desktop 配置写入需要通过供应商切换流程执行",
+                "Claude Desktop configuration must be written through the provider switch flow",
+            ));
+        }
         AppType::Codex => {
             let obj = provider
                 .settings_config
@@ -677,14 +732,14 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             let auth = obj
                 .get("auth")
                 .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
-            let config_str = obj.get("config").and_then(|v| v.as_str()).ok_or_else(|| {
-                AppError::Config("Codex 供应商配置缺少 'config' 字段或不是字符串".to_string())
-            })?;
+            let config_str = obj.get("config").and_then(|v| v.as_str());
 
-            let auth_path = get_codex_auth_path();
-            write_json_file(&auth_path, auth)?;
-            let config_path = get_codex_config_path();
-            std::fs::write(&config_path, config_str).map_err(|e| AppError::io(&config_path, e))?;
+            crate::codex_config::write_codex_provider_live_with_catalog(
+                &provider.settings_config,
+                provider.category.as_deref(),
+                auth,
+                config_str,
+            )?;
         }
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly
@@ -789,6 +844,10 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                     }
                 }
             }
+        }
+        AppType::Hermes => {
+            crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
+            log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
     }
     Ok(())
@@ -899,17 +958,20 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
     match app_type {
         AppType::Codex => {
-            let auth_path = get_codex_auth_path();
-            if !auth_path.exists() {
-                return Err(AppError::localized(
-                    "codex.auth.missing",
-                    "Codex 配置文件不存在：缺少 auth.json",
-                    "Codex configuration missing: auth.json not found",
-                ));
+            let mut result = crate::codex_config::read_codex_live_settings()?;
+            // `modelCatalog` is a cc-switch private field that lives only in
+            // the DB SSOT plus the `cc-switch-model-catalog.json` projection
+            // file — it is never inlined into `auth.json` or `config.toml`.
+            // Reverse-parse the projection so the edit form for the active
+            // Codex provider doesn't see an empty mapping table.
+            if let Ok(Some(model_catalog)) =
+                crate::codex_config::read_codex_model_catalog_simplified_from_live()
+            {
+                if let Some(obj) = result.as_object_mut() {
+                    obj.insert("modelCatalog".to_string(), model_catalog);
+                }
             }
-            let auth: Value = read_json_file(&auth_path)?;
-            let cfg_text = crate::codex_config::read_and_validate_codex_config_text()?;
-            Ok(json!({ "auth": auth, "config": cfg_text }))
+            Ok(result)
         }
         AppType::Claude => {
             let path = get_claude_settings_path();
@@ -922,6 +984,11 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             }
             read_json_file(&path)
         }
+        AppType::ClaudeDesktop => Err(AppError::localized(
+            "claude_desktop.live.read_unsupported",
+            "Claude Desktop 3P 配置不支持作为通用 live 配置导入，请使用“从 Claude 导入兼容供应商”。",
+            "Claude Desktop 3P configuration cannot be imported as a generic live config. Use 'Import compatible providers from Claude' instead.",
+        )),
         AppType::Gemini => {
             use crate::gemini_config::{
                 env_to_json, get_gemini_env_path, get_gemini_settings_path, read_gemini_env,
@@ -985,6 +1052,19 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = read_openclaw_config()?;
             Ok(config)
         }
+        AppType::Hermes => {
+            let config_path = crate::hermes_config::get_hermes_config_path();
+            if !config_path.exists() {
+                return Err(AppError::localized(
+                    "hermes.config.missing",
+                    "Hermes 配置文件不存在",
+                    "Hermes configuration file not found",
+                ));
+            }
+            let yaml_config = crate::hermes_config::read_hermes_config()?;
+            let config = crate::hermes_config::yaml_to_json(&yaml_config)?;
+            Ok(config)
+        }
     }
 }
 
@@ -1008,19 +1088,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
     }
 
     let settings_config = match app_type {
-        AppType::Codex => {
-            let auth_path = get_codex_auth_path();
-            if !auth_path.exists() {
-                return Err(AppError::localized(
-                    "codex.live.missing",
-                    "Codex 配置文件不存在",
-                    "Codex configuration file is missing",
-                ));
-            }
-            let auth: Value = read_json_file(&auth_path)?;
-            let config_str = crate::codex_config::read_and_validate_codex_config_text()?;
-            json!({ "auth": auth, "config": config_str })
-        }
+        AppType::Codex => crate::codex_config::read_codex_live_settings()?,
         AppType::Claude => {
             let settings_path = get_claude_settings_path();
             if !settings_path.exists() {
@@ -1033,6 +1101,13 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             let mut v = read_json_file::<Value>(&settings_path)?;
             let _ = normalize_claude_models_in_value(&mut v);
             v
+        }
+        AppType::ClaudeDesktop => {
+            return Err(AppError::localized(
+                "claude_desktop.import_unsupported",
+                "Claude Desktop 3P 配置不能通过通用导入读取，请使用“从 Claude 导入兼容供应商”。",
+                "Claude Desktop 3P config cannot be imported through the generic import flow. Use 'Import compatible providers from Claude' instead.",
+            ));
         }
         AppType::Gemini => {
             use crate::gemini_config::{
@@ -1067,8 +1142,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
-        // OpenCode and OpenClaw use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw => {
+        // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -1079,14 +1154,56 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         settings_config,
         None,
     );
-    provider.category = Some("custom".to_string());
+    provider.category = Some(
+        if matches!(app_type, AppType::Codex) {
+            let config_text = provider
+                .settings_config
+                .get("config")
+                .and_then(Value::as_str);
+            let has_provider_key = crate::codex_config::extract_codex_api_key(
+                provider.settings_config.get("auth"),
+                config_text,
+            )
+            .is_some();
+            let has_login_material = provider
+                .settings_config
+                .get("auth")
+                .is_some_and(crate::codex_config::codex_auth_has_login_material);
+
+            if has_login_material && !has_provider_key {
+                "official"
+            } else {
+                "custom"
+            }
+        } else {
+            "custom"
+        }
+        .to_string(),
+    );
 
     state.db.save_provider(app_type.as_str(), &provider)?;
     state
         .db
         .set_current_provider(app_type.as_str(), &provider.id)?;
+    crate::settings::set_current_provider(&app_type, Some(provider.id.as_str()))?;
 
     Ok(true) // 真正导入了
+}
+
+/// Decide whether startup should auto-import the current live config as `default`.
+///
+/// This is intentionally stricter than the manual import path:
+/// if the app already has any provider row at all (including official seeds),
+/// startup must skip auto-import to avoid recreating `default` on each launch.
+pub fn should_import_default_config_on_startup(
+    state: &AppState,
+    app_type: &AppType,
+) -> Result<bool, AppError> {
+    if app_type.is_additive_mode() {
+        return Ok(false);
+    }
+
+    Ok(!state.db.has_any_provider_for_app(app_type.as_str())?)
 }
 
 /// Write Gemini live configuration with authentication handling
@@ -1314,6 +1431,74 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
     }
 
     Ok(imported)
+}
+
+/// Import all providers from Hermes live config to database
+///
+/// This imports existing providers from ~/.hermes/config.yaml
+/// into the CC Switch database. Each provider found will be added to the
+/// database with is_current set to false.
+pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    use crate::hermes_config;
+
+    let providers = hermes_config::get_providers()?;
+    if providers.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0;
+    let existing_ids = state.db.get_provider_ids("hermes")?;
+
+    for (name, config) in providers {
+        // Validate: skip entries with empty name
+        if name.trim().is_empty() {
+            log::warn!("Skipping Hermes provider with empty name");
+            continue;
+        }
+
+        // Skip if already exists in database
+        if existing_ids.contains(&name) {
+            log::debug!("Hermes provider '{name}' already exists in database, skipping");
+            continue;
+        }
+
+        // Create provider
+        let mut provider = Provider::with_id(name.clone(), name.clone(), config, None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+
+        // Save to database
+        if let Err(e) = state.db.save_provider("hermes", &provider) {
+            log::warn!("Failed to import Hermes provider '{name}': {e}");
+            continue;
+        }
+
+        imported += 1;
+        log::info!("Imported Hermes provider '{name}' from live config");
+    }
+
+    Ok(imported)
+}
+
+/// Remove a Hermes provider from live config
+///
+/// This removes a specific provider from ~/.hermes/config.yaml
+/// without affecting other providers in the file.
+pub fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+    use crate::hermes_config;
+
+    // Check if Hermes config directory exists
+    if !hermes_config::get_hermes_dir().exists() {
+        log::debug!("Hermes config directory doesn't exist, skipping removal of '{provider_id}'");
+        return Ok(());
+    }
+
+    hermes_config::remove_provider(provider_id)?;
+    log::info!("Hermes provider '{provider_id}' removed from live config");
+
+    Ok(())
 }
 
 /// Remove an OpenClaw provider from live config

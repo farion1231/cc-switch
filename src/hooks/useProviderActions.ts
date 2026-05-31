@@ -10,6 +10,7 @@ import type {
   OpenClawDefaultModel,
 } from "@/types";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
+import { injectCodingPlanUsageScript } from "@/config/codingPlanProviders";
 import {
   useAddProviderMutation,
   useUpdateProviderMutation,
@@ -18,6 +19,10 @@ import {
 } from "@/lib/query";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { openclawKeys } from "@/hooks/useOpenClaw";
+import {
+  extractCodexWireApi,
+  isCodexChatWireApi,
+} from "@/utils/providerConfigUtils";
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
@@ -72,7 +77,8 @@ export function useProviderActions(
         addToLive?: boolean;
       },
     ) => {
-      await addProviderMutation.mutateAsync(provider);
+      const enhanced = injectCodingPlanUsageScript(activeApp, provider);
+      await addProviderMutation.mutateAsync(enhanced);
 
       // OpenClaw: register models to allowlist after adding provider
       if (activeApp === "openclaw" && provider.suggestedDefaults) {
@@ -147,6 +153,16 @@ export function useProviderActions(
       const isCopilotProvider =
         activeApp === "claude" &&
         provider.meta?.providerType === "github_copilot";
+      const isCodexChatFormat =
+        activeApp === "codex" &&
+        (provider.meta?.apiFormat === "openai_chat" ||
+          (typeof (provider.settingsConfig as Record<string, any>)?.config ===
+            "string" &&
+            isCodexChatWireApi(
+              extractCodexWireApi(
+                (provider.settingsConfig as Record<string, any>).config,
+              ),
+            )));
 
       // Determine why this provider requires the proxy
       let proxyRequiredReason: string | null = null;
@@ -168,6 +184,17 @@ export function useProviderActions(
         ) {
           proxyRequiredReason = t("notifications.proxyReasonOpenAIResponses", {
             defaultValue: "使用 OpenAI Responses 接口格式",
+          });
+        } else if (isCodexChatFormat) {
+          proxyRequiredReason = t("notifications.proxyReasonOpenAIChat", {
+            defaultValue: "使用 OpenAI Chat 接口格式",
+          });
+        } else if (
+          activeApp === "claude-desktop" &&
+          provider.meta?.claudeDesktopMode === "proxy"
+        ) {
+          proxyRequiredReason = t("notifications.proxyReasonClaudeDesktop", {
+            defaultValue: "使用 Claude Desktop 本地路由模式",
           });
         } else if (
           provider.meta?.isFullUrl &&
@@ -218,16 +245,24 @@ export function useProviderActions(
 
         // 若已弹过 proxyRequired 警告则不再弹 success
         if (!proxyRequiredReason) {
-          // OpenCode/OpenClaw: show "added to config" message instead of "switched"
-          const isMultiProviderApp =
-            activeApp === "opencode" || activeApp === "openclaw";
-          const messageKey = isMultiProviderApp
-            ? "notifications.addToConfigSuccess"
-            : "notifications.switchSuccess";
-          const defaultMessage = isMultiProviderApp
-            ? "已添加到配置"
-            : "切换成功！";
-
+          let messageKey = "notifications.switchSuccess";
+          let defaultMessage = "切换成功！";
+          if (activeApp === "codex") {
+            messageKey = "notifications.codexRestartRequired";
+            defaultMessage = "切换成功，请重启客户端以生效";
+          } else if (activeApp === "claude-desktop") {
+            if (provider.meta?.claudeDesktopMode === "proxy") {
+              messageKey = "notifications.claudeDesktopProxyRestartRequired";
+              defaultMessage =
+                "切换成功，请保持 CC Switch 运行，并重启 Claude Desktop 后生效";
+            } else {
+              messageKey = "notifications.claudeDesktopRestartRequired";
+              defaultMessage = "切换成功，重启 Claude Desktop 后生效";
+            }
+          } else if (activeApp === "opencode" || activeApp === "openclaw") {
+            messageKey = "notifications.addToConfigSuccess";
+            defaultMessage = "已添加到配置";
+          }
           toast.success(t(messageKey, { defaultValue: defaultMessage }), {
             closeButton: true,
           });

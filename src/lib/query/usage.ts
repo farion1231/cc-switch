@@ -45,6 +45,18 @@ export const usageKeys = {
       customEndDate ?? 0,
       appType ?? "all",
     ] as const,
+  summaryByApp: (
+    preset: UsageRangeSelection["preset"],
+    customStartDate: number | undefined,
+    customEndDate: number | undefined,
+  ) =>
+    [
+      ...usageKeys.all,
+      "summary-by-app",
+      preset,
+      customStartDate ?? 0,
+      customEndDate ?? 0,
+    ] as const,
   trends: (
     preset: UsageRangeSelection["preset"],
     customStartDate: number | undefined,
@@ -106,6 +118,8 @@ export const usageKeys = {
   pricing: () => [...usageKeys.all, "pricing"] as const,
   limits: (providerId: string, appType: string) =>
     [...usageKeys.all, "limits", providerId, appType] as const,
+  script: (providerId: string, appType: string) =>
+    [...usageKeys.all, providerId, appType] as const,
 };
 
 // Hooks
@@ -125,6 +139,25 @@ export function useUsageSummary(
     queryFn: () => {
       const { startDate, endDate } = resolveUsageRange(range);
       return usageApi.getUsageSummary(startDate, endDate, effectiveAppType);
+    },
+    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+  });
+}
+
+export function useUsageSummaryByApp(
+  range: UsageRangeSelection,
+  options?: UsageQueryOptions,
+) {
+  return useQuery({
+    queryKey: usageKeys.summaryByApp(
+      range.preset,
+      range.customStartDate,
+      range.customEndDate,
+    ),
+    queryFn: () => {
+      const { startDate, endDate } = resolveUsageRange(range);
+      return usageApi.getUsageSummaryByApp(startDate, endDate);
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
@@ -269,7 +302,7 @@ export function useUpdateModelPricing() {
         params.cacheCreationCost,
       ),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: usageKeys.pricing() });
+      queryClient.invalidateQueries({ queryKey: usageKeys.all });
     },
   });
 }
@@ -280,7 +313,7 @@ export function useDeleteModelPricing() {
   return useMutation({
     mutationFn: (modelId: string) => usageApi.deleteModelPricing(modelId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: usageKeys.pricing() });
+      queryClient.invalidateQueries({ queryKey: usageKeys.all });
     },
   });
 }

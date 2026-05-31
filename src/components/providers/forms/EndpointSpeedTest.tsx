@@ -12,9 +12,11 @@ import type { CustomEndpoint, EndpointCandidate } from "@/types";
 const ENDPOINT_TIMEOUT_SECS: Record<AppId, number> = {
   codex: 12,
   claude: 8,
+  "claude-desktop": 8,
   gemini: 8,
   opencode: 8,
   openclaw: 8,
+  hermes: 8,
 };
 
 interface TestResult {

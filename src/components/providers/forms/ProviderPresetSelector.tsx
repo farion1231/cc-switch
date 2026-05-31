@@ -5,6 +5,10 @@ import { Zap, Star, Layers, Settings2 } from "lucide-react";
 import type { ProviderPreset } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
 import type { GeminiProviderPreset } from "@/config/geminiProviderPresets";
+import type { ClaudeDesktopProviderPreset } from "@/config/claudeDesktopProviderPresets";
+import type { OpenCodeProviderPreset } from "@/config/opencodeProviderPresets";
+import type { OpenClawProviderPreset } from "@/config/openclawProviderPresets";
+import type { HermesProviderPreset } from "@/config/hermesProviderPresets";
 import type { ProviderCategory } from "@/types";
 import {
   universalProviderPresets,
@@ -12,15 +16,23 @@ import {
 } from "@/config/universalProviderPresets";
 import { ProviderIcon } from "@/components/ProviderIcon";
 
+type AnyPreset =
+  | ProviderPreset
+  | CodexProviderPreset
+  | GeminiProviderPreset
+  | ClaudeDesktopProviderPreset
+  | OpenCodeProviderPreset
+  | OpenClawProviderPreset
+  | HermesProviderPreset;
+
 type PresetEntry = {
   id: string;
-  preset: ProviderPreset | CodexProviderPreset | GeminiProviderPreset;
+  preset: AnyPreset;
 };
 
 interface ProviderPresetSelectorProps {
   selectedPresetId: string | null;
-  groupedPresets: Record<string, PresetEntry[]>;
-  categoryKeys: string[];
+  presetEntries: PresetEntry[];
   presetCategoryLabels: Record<string, string>;
   onPresetChange: (value: string) => void;
   onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
@@ -30,8 +42,7 @@ interface ProviderPresetSelectorProps {
 
 export function ProviderPresetSelector({
   selectedPresetId,
-  groupedPresets,
-  categoryKeys,
+  presetEntries,
   presetCategoryLabels,
   onPresetChange,
   onUniversalPresetSelect,
@@ -74,9 +85,7 @@ export function ProviderPresetSelector({
     }
   };
 
-  const renderPresetIcon = (
-    preset: ProviderPreset | CodexProviderPreset | GeminiProviderPreset,
-  ) => {
+  const renderPresetIcon = (preset: AnyPreset) => {
     const iconType = preset.theme?.icon;
     if (!iconType) return null;
 
@@ -94,10 +103,7 @@ export function ProviderPresetSelector({
     }
   };
 
-  const getPresetButtonClass = (
-    isSelected: boolean,
-    preset: ProviderPreset | CodexProviderPreset | GeminiProviderPreset,
-  ) => {
+  const getPresetButtonClass = (isSelected: boolean, preset: AnyPreset) => {
     const baseClass =
       "inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors";
 
@@ -111,10 +117,7 @@ export function ProviderPresetSelector({
     return `${baseClass} bg-accent text-muted-foreground hover:bg-accent/80`;
   };
 
-  const getPresetButtonStyle = (
-    isSelected: boolean,
-    preset: ProviderPreset | CodexProviderPreset | GeminiProviderPreset,
-  ) => {
+  const getPresetButtonStyle = (isSelected: boolean, preset: AnyPreset) => {
     if (!isSelected || !preset.theme?.backgroundColor) {
       return undefined;
     }
@@ -141,35 +144,33 @@ export function ProviderPresetSelector({
           {t("providerPreset.custom")}
         </button>
 
-        {categoryKeys.map((category) => {
-          const entries = groupedPresets[category];
-          if (!entries || entries.length === 0) return null;
-          return entries.map((entry) => {
-            const isSelected = selectedPresetId === entry.id;
-            const isPartner = entry.preset.isPartner;
-            return (
-              <button
-                key={entry.id}
-                type="button"
-                onClick={() => onPresetChange(entry.id)}
-                className={`${getPresetButtonClass(isSelected, entry.preset)} relative`}
-                style={getPresetButtonStyle(isSelected, entry.preset)}
-                title={
-                  presetCategoryLabels[category] ?? t("providerPreset.other")
-                }
-              >
-                {renderPresetIcon(entry.preset)}
-                {entry.preset.nameKey
-                  ? t(entry.preset.nameKey)
-                  : entry.preset.name}
-                {isPartner && (
-                  <span className="absolute -top-1 -right-1 flex items-center gap-0.5 rounded-full bg-gradient-to-r from-amber-500 to-yellow-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-md">
-                    <Star className="h-2.5 w-2.5 fill-current" />
-                  </span>
-                )}
-              </button>
-            );
-          });
+        {presetEntries.map((entry) => {
+          const isSelected = selectedPresetId === entry.id;
+          const isPartner = entry.preset.isPartner;
+          const presetCategory = entry.preset.category ?? "others";
+          return (
+            <button
+              key={entry.id}
+              type="button"
+              onClick={() => onPresetChange(entry.id)}
+              className={`${getPresetButtonClass(isSelected, entry.preset)} relative`}
+              style={getPresetButtonStyle(isSelected, entry.preset)}
+              title={
+                presetCategoryLabels[presetCategory] ??
+                t("providerPreset.other")
+              }
+            >
+              {renderPresetIcon(entry.preset)}
+              {entry.preset.nameKey
+                ? t(entry.preset.nameKey)
+                : entry.preset.name}
+              {isPartner && (
+                <span className="absolute -top-1 -right-1 flex items-center gap-0.5 rounded-full bg-gradient-to-r from-amber-500 to-yellow-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-md">
+                  <Star className="h-2.5 w-2.5 fill-current" />
+                </span>
+              )}
+            </button>
+          );
         })}
       </div>
 

@@ -4,6 +4,16 @@ import type { PricingModelSourceOption } from "../ProviderAdvancedConfig";
 // ── Default configs ──────────────────────────────────────────────────
 
 export const CLAUDE_DEFAULT_CONFIG = JSON.stringify({ env: {} }, null, 2);
+export const CLAUDE_DESKTOP_DEFAULT_CONFIG = JSON.stringify(
+  {
+    env: {
+      ANTHROPIC_BASE_URL: "",
+      ANTHROPIC_AUTH_TOKEN: "",
+    },
+  },
+  null,
+  2,
+);
 export const CODEX_DEFAULT_CONFIG = JSON.stringify(
   { auth: {}, config: "" },
   null,
@@ -14,7 +24,7 @@ export const GEMINI_DEFAULT_CONFIG = JSON.stringify(
     env: {
       GOOGLE_GEMINI_BASE_URL: "",
       GEMINI_API_KEY: "",
-      GEMINI_MODEL: "gemini-3-pro-preview",
+      GEMINI_MODEL: "gemini-3.5-flash",
     },
   },
   null,

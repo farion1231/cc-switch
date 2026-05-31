@@ -74,6 +74,20 @@ export interface UsageScript {
   };
 }
 
+const DEFAULT_USAGE_SCRIPT: UsageScript = {
+  enabled: false,
+  language: "javascript",
+  code: "",
+  timeout: 10,
+  autoQueryInterval: 5,
+};
+
+export function createUsageScript(
+  overrides?: Partial<UsageScript>,
+): UsageScript {
+  return { ...DEFAULT_USAGE_SCRIPT, ...overrides };
+}
+
 // 单个套餐用量数据
 export interface UsageData {
   planName?: string; // 套餐名称（可选）
@@ -117,12 +131,58 @@ export interface AuthBinding {
   accountId?: string;
 }
 
+export interface ClaudeDesktopModelRoute {
+  model: string;
+  labelOverride?: string;
+  supports1m?: boolean;
+}
+
+export type CodexChatThinkingParam =
+  | "none"
+  | "thinking"
+  | "enable_thinking"
+  | "reasoning_split";
+
+export type CodexChatEffortParam =
+  | "none"
+  | "reasoning_effort"
+  // OpenRouter 原生归一化对象 reasoning:{effort}（区别于顶层 OpenAI 别名 reasoning_effort）
+  | "reasoning.effort";
+
+export type CodexChatEffortValueMode =
+  | "passthrough"
+  | "low_high"
+  | "deepseek"
+  // OpenRouter effort 枚举 xhigh|high|medium|low|minimal（无 max，max 钳到 xhigh）
+  | "openrouter";
+
+export type CodexChatReasoningOutputFormat =
+  | "auto"
+  | "reasoning_content"
+  | "reasoning"
+  | "reasoning_details"
+  | "think_tags";
+
+export interface CodexChatReasoning {
+  supportsThinking?: boolean;
+  supportsEffort?: boolean;
+  thinkingParam?: CodexChatThinkingParam;
+  effortParam?: CodexChatEffortParam;
+  effortValueMode?: CodexChatEffortValueMode;
+  // 声明性字段：标注上游 reasoning 回传位置。当前提取靠穷举字段，未读取此值（think_tags 尚未接线）。
+  outputFormat?: CodexChatReasoningOutputFormat;
+}
+
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
   custom_endpoints?: Record<string, CustomEndpoint>;
   // 是否在切换/同步到 live 时应用通用配置片段
   commonConfigEnabled?: boolean;
+  // Claude Desktop 3P 配置写入模式
+  claudeDesktopMode?: "direct" | "proxy";
+  // Claude Desktop 本地路由模式：Claude-safe route -> upstream model
+  claudeDesktopModelRoutes?: Record<string, ClaudeDesktopModelRoute>;
   // 用量查询脚本配置
   usage_script?: UsageScript;
   // 请求地址管理：测速后自动选择最佳端点
@@ -137,7 +197,7 @@ export interface ProviderMeta {
   costMultiplier?: string;
   // 供应商计费模式来源
   pricingModelSource?: string;
-  // Claude API 格式（仅 Claude 供应商使用）
+  // API 格式（Claude / Codex 供应商使用）
   // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
   // - "openai_responses": OpenAI Responses API 格式，需要格式转换
@@ -155,6 +215,10 @@ export interface ProviderMeta {
   isFullUrl?: boolean;
   // Prompt cache key for OpenAI Responses-compatible endpoints (improves cache hit rate)
   promptCacheKey?: string;
+  // Codex OAuth FAST mode: injects service_tier="priority" on ChatGPT Codex requests
+  codexFastMode?: boolean;
+  // Codex Responses -> Chat Completions reasoning capability metadata
+  codexChatReasoning?: CodexChatReasoning;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
@@ -178,16 +242,29 @@ export type ClaudeApiFormat =
   | "openai_responses"
   | "gemini_native";
 
+// Codex API 格式类型
+// - "openai_responses": OpenAI Responses API 格式，直接透传
+// - "openai_chat": OpenAI Chat Completions 格式，需要本地路由转换
+export type CodexApiFormat = "openai_responses" | "openai_chat";
+
+export interface CodexCatalogModel {
+  model: string;
+  displayName?: string;
+  contextWindow?: string | number;
+}
+
 // Claude 认证字段类型
 export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 
 // 主页面显示的应用配置
 export interface VisibleApps {
   claude: boolean;
+  "claude-desktop": boolean;
   codex: boolean;
   gemini: boolean;
   opencode: boolean;
   openclaw: boolean;
+  hermes: boolean;
 }
 
 // WebDAV 同步状态
@@ -256,6 +333,8 @@ export interface Settings {
   streamCheckConfirmed?: boolean;
   // Whether to show the failover toggle independently on the main page
   enableFailoverToggle?: boolean;
+  // Preserve Codex ChatGPT login in auth.json when switching third-party providers
+  preserveCodexOfficialAuthOnSwitch?: boolean;
   // User has confirmed the failover toggle first-run notice
   failoverConfirmed?: boolean;
   // User has confirmed the first-run welcome notice
@@ -265,7 +344,7 @@ export interface Settings {
   // User has confirmed the common config first-run notice
   commonConfigConfirmed?: boolean;
   // 首选语言（可选，默认中文）
-  language?: "en" | "zh" | "ja";
+  language?: "en" | "zh" | "zh-TW" | "ja";
 
   // 主页面显示的应用（默认全部显示）
   visibleApps?: VisibleApps;
@@ -281,10 +360,14 @@ export interface Settings {
   opencodeConfigDir?: string;
   // 覆盖 OpenClaw 配置目录（可选）
   openclawConfigDir?: string;
+  // 覆盖 Hermes 配置目录（可选）
+  hermesConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
   currentProviderClaude?: string;
+  // 当前 Claude Desktop 供应商 ID（优先于数据库 is_current）
+  currentProviderClaudeDesktop?: string;
   // 当前 Codex 供应商 ID（优先于数据库 is_current）
   currentProviderCodex?: string;
   // 当前 Gemini 供应商 ID（优先于数据库 is_current）
@@ -311,6 +394,17 @@ export interface Settings {
   // Windows: "cmd" | "powershell" | "wt"
   // Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
   preferredTerminal?: string;
+
+  // ===== 本机自动迁移状态 =====
+  localMigrations?: {
+    codexThirdPartyHistoryProviderBucketV1?: {
+      completedAt: string;
+      targetProviderId: string;
+      sourceProviderIds?: string[];
+      migratedJsonlFiles?: number;
+      migratedStateRows?: number;
+    };
+  };
 }
 
 export interface SessionMeta {
@@ -350,10 +444,12 @@ export interface McpServerSpec {
 // v3.7.0: MCP 服务器应用启用状态
 export interface McpApps {
   claude: boolean;
+  "claude-desktop"?: boolean;
   codex: boolean;
   gemini: boolean;
   opencode: boolean;
   openclaw: boolean;
+  hermes: boolean;
 }
 
 // MCP 服务器条目（v3.7.0 统一结构）
@@ -568,4 +664,26 @@ export interface OpenClawToolsConfig {
   allow?: string[];
   deny?: string[];
   [key: string]: unknown; // preserve unknown fields
+}
+
+// ============================================================================
+// Hermes Agent 专属配置
+// ============================================================================
+
+export interface HermesModelConfig {
+  default?: string;
+  provider?: string;
+  base_url?: string;
+  context_length?: number;
+  max_tokens?: number;
+  [key: string]: unknown;
+}
+
+export type HermesMemoryKind = "memory" | "user";
+
+export interface HermesMemoryLimits {
+  memory: number;
+  user: number;
+  memoryEnabled: boolean;
+  userEnabled: boolean;
 }

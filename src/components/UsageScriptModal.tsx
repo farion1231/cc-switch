@@ -3,12 +3,15 @@ import { Play, Wand2, Eye, EyeOff, Save } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
-import { Provider, UsageScript, UsageData } from "@/types";
+import { Provider, UsageScript, UsageData, createUsageScript } from "@/types";
 import { usageApi, settingsApi, type AppId } from "@/lib/api";
 import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
 import { useSettingsQuery } from "@/lib/query";
 import { resolveManagedAccountId } from "@/lib/authBinding";
-import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
+import {
+  extractCodexBaseUrl,
+  extractCodexExperimentalBearerToken,
+} from "@/utils/providerConfigUtils";
 import JsonEditor from "./JsonEditor";
 import * as prettier from "prettier/standalone";
 import * as parserBabel from "prettier/parser-babel";
@@ -21,6 +24,11 @@ import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { cn } from "@/lib/utils";
 import { TEMPLATE_TYPES, PROVIDER_TYPES } from "@/config/constants";
+import {
+  CODING_PLAN_PROVIDERS,
+  detectCodingPlanProvider,
+} from "@/config/codingPlanProviders";
+import { formatUsageDataSummary } from "@/utils/usageDisplay";
 
 interface UsageScriptModalProps {
   provider: Provider;
@@ -73,6 +81,7 @@ const generatePresetTemplates = (
     headers: {
       "Content-Type": "application/json",
       "Authorization": "Bearer {{accessToken}}",
+      "User-Agent": "cc-switch/1.0",
       "New-Api-User": "{{userId}}"
     },
   },
@@ -113,21 +122,6 @@ const TEMPLATE_NAME_KEYS: Record<string, string> = {
   [TEMPLATE_TYPES.BALANCE]: "usageScript.templateBalance",
 };
 
-/** Coding Plan 供应商选项 */
-const TOKEN_PLAN_PROVIDERS = [
-  { id: "kimi", label: "Kimi For Coding", pattern: /api\.kimi\.com\/coding/i },
-  {
-    id: "zhipu",
-    label: "Zhipu GLM (智谱)",
-    pattern: /bigmodel\.cn|api\.z\.ai/i,
-  },
-  {
-    id: "minimax",
-    label: "MiniMax",
-    pattern: /api\.minimaxi?\.com|api\.minimax\.io/i,
-  },
-] as const;
-
 /** 官方余额查询供应商检测 */
 const BALANCE_PROVIDERS = [
   { id: "deepseek", label: "DeepSeek", pattern: /api\.deepseek\.com/i },
@@ -145,15 +139,6 @@ const BALANCE_PROVIDERS = [
 function detectBalanceProvider(baseUrl: string | undefined): boolean {
   if (!baseUrl) return false;
   return BALANCE_PROVIDERS.some((bp) => bp.pattern.test(baseUrl));
-}
-
-/** 根据 Base URL 自动检测 Coding Plan 供应商 */
-function detectTokenPlanProvider(baseUrl: string | undefined): string | null {
-  if (!baseUrl) return null;
-  for (const cp of TOKEN_PLAN_PROVIDERS) {
-    if (cp.pattern.test(baseUrl)) return cp.id;
-  }
-  return null;
 }
 
 const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
@@ -192,8 +177,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         // Codex: { auth: { OPENAI_API_KEY }, config: TOML string with base_url }
         const auth = (config as any).auth || {};
         const configToml = (config as any).config || "";
+        const apiKey =
+          typeof auth.OPENAI_API_KEY === "string" && auth.OPENAI_API_KEY.trim()
+            ? auth.OPENAI_API_KEY
+            : extractCodexExperimentalBearerToken(configToml);
         return {
-          apiKey: auth.OPENAI_API_KEY,
+          apiKey,
           baseUrl: extractCodexBaseUrl(configToml),
         };
       } else if (appId === "gemini") {
@@ -202,6 +191,18 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         return {
           apiKey: env.GEMINI_API_KEY,
           baseUrl: env.GOOGLE_GEMINI_BASE_URL,
+        };
+      } else if (appId === "hermes") {
+        // Hermes: settingsConfig 顶层扁平（snake_case，对应 config.yaml）
+        return {
+          apiKey: (config as any).api_key,
+          baseUrl: (config as any).base_url,
+        };
+      } else if (appId === "openclaw") {
+        // OpenClaw: settingsConfig 顶层扁平（camelCase，对应 openclaw.json）
+        return {
+          apiKey: (config as any).apiKey,
+          baseUrl: (config as any).baseUrl,
         };
       }
       return { apiKey: undefined, baseUrl: undefined };
@@ -224,43 +225,24 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         return {
           ...savedScript,
           codingPlanProvider:
-            detectTokenPlanProvider(providerCredentials.baseUrl) || "kimi",
+            detectCodingPlanProvider(providerCredentials.baseUrl) || "kimi",
         };
       }
       return savedScript;
     }
 
-    // 新配置：如果 URL 匹配 Coding Plan，自动初始化
-    const autoDetected = detectTokenPlanProvider(providerCredentials.baseUrl);
+    const autoDetected = detectCodingPlanProvider(providerCredentials.baseUrl);
     if (autoDetected) {
-      return {
-        enabled: false,
-        language: "javascript" as const,
-        code: "",
-        timeout: 10,
-        autoQueryInterval: 5,
-        codingPlanProvider: autoDetected,
-      };
+      return createUsageScript({ codingPlanProvider: autoDetected });
     }
 
-    // 新配置：如果 URL 匹配官方余额查询供应商，自动初始化
     if (detectBalanceProvider(providerCredentials.baseUrl)) {
-      return {
-        enabled: false,
-        language: "javascript" as const,
-        code: "",
-        timeout: 10,
-        autoQueryInterval: 5,
-      };
+      return createUsageScript();
     }
 
-    return {
-      enabled: false,
-      language: "javascript" as const,
+    return createUsageScript({
       code: PRESET_TEMPLATES[TEMPLATE_TYPES.GENERAL],
-      timeout: 10,
-      autoQueryInterval: 5,
-    };
+    });
   });
 
   const [testing, setTesting] = useState(false);
@@ -333,7 +315,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         return TEMPLATE_TYPES.GENERAL;
       }
       // 新配置：如果 URL 匹配 Coding Plan 供应商，自动选择 Coding Plan 模板
-      if (detectTokenPlanProvider(providerCredentials.baseUrl)) {
+      if (detectCodingPlanProvider(providerCredentials.baseUrl)) {
         return TEMPLATE_TYPES.TOKEN_PLAN;
       }
       // 新配置：如果 URL 匹配官方余额查询供应商，自动选择 Balance 模板
@@ -407,20 +389,19 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     try {
       // 官方余额查询模板使用专用 API
       if (selectedTemplate === TEMPLATE_TYPES.BALANCE) {
-        const config = provider.settingsConfig as Record<string, any>;
-        const baseUrl: string = config?.env?.ANTHROPIC_BASE_URL ?? "";
-        const apiKey: string =
-          config?.env?.ANTHROPIC_AUTH_TOKEN ??
-          config?.env?.ANTHROPIC_API_KEY ??
-          "";
+        const baseUrl = providerCredentials.baseUrl ?? "";
+        const apiKey = providerCredentials.apiKey ?? "";
         const { subscriptionApi } = await import("@/lib/api/subscription");
         const result = await subscriptionApi.getBalance(baseUrl, apiKey);
         if (result.success && result.data && result.data.length > 0) {
           const summary = result.data
-            .map((d) => {
-              const name = d.planName ? `[${d.planName}] ` : "";
-              return `${name}${t("usage.remaining")} ${d.remaining?.toFixed(2)} ${d.unit || ""}`;
-            })
+            .map((d) =>
+              formatUsageDataSummary(d, {
+                invalid: t("usage.invalid"),
+                remaining: t("usage.remaining"),
+                used: t("usage.used"),
+              }),
+            )
             .join(", ");
           toast.success(`${t("usageScript.testSuccess")}${summary}`, {
             duration: 3000,
@@ -438,12 +419,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
       // Coding Plan 模板使用专用 API
       if (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN) {
-        const config = provider.settingsConfig as Record<string, any>;
-        const baseUrl: string = config?.env?.ANTHROPIC_BASE_URL ?? "";
-        const apiKey: string =
-          config?.env?.ANTHROPIC_AUTH_TOKEN ??
-          config?.env?.ANTHROPIC_API_KEY ??
-          "";
+        const baseUrl = providerCredentials.baseUrl ?? "";
+        const apiKey = providerCredentials.apiKey ?? "";
         const { subscriptionApi } = await import("@/lib/api/subscription");
         const quota = await subscriptionApi.getCodingPlanQuota(baseUrl, apiKey);
         if (quota.success && quota.tiers.length > 0) {
@@ -520,10 +497,13 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       );
       if (result.success && result.data && result.data.length > 0) {
         const summary = result.data
-          .map((plan: UsageData) => {
-            const planInfo = plan.planName ? `[${plan.planName}]` : "";
-            return `${planInfo} ${t("usage.remaining")} ${plan.remaining} ${plan.unit}`;
-          })
+          .map((plan: UsageData) =>
+            formatUsageDataSummary(plan, {
+              invalid: t("usage.invalid"),
+              remaining: t("usage.remaining"),
+              used: t("usage.used"),
+            }),
+          )
           .join(", ");
         toast.success(`${t("usageScript.testSuccess")}${summary}`, {
           duration: 3000,
@@ -618,7 +598,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         });
       } else if (presetName === TEMPLATE_TYPES.TOKEN_PLAN) {
         // Coding Plan 模板不需要脚本，使用 Rust 原生查询
-        const autoDetected = detectTokenPlanProvider(
+        const autoDetected = detectCodingPlanProvider(
           providerCredentials.baseUrl,
         );
         setScript({
@@ -857,7 +837,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                   {t("usageScript.tokenPlanHint")}
                 </p>
                 <div className="flex gap-2 flex-wrap">
-                  {TOKEN_PLAN_PROVIDERS.map((cp) => (
+                  {CODING_PLAN_PROVIDERS.map((cp) => (
                     <Button
                       key={cp.id}
                       type="button"

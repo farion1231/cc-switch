@@ -81,7 +81,7 @@ export function CommonConfigEditor({
         enableToolSearch:
           config?.env?.ENABLE_TOOL_SEARCH === "true" ||
           config?.env?.ENABLE_TOOL_SEARCH === "1",
-        effortHigh: config?.effortLevel === "high",
+        effortMax: config?.env?.CLAUDE_CODE_EFFORT_LEVEL === "max",
         disableAutoUpgrade:
           config?.env?.DISABLE_AUTOUPDATER === "1" ||
           config?.env?.DISABLE_AUTOUPDATER === 1,
@@ -91,7 +91,7 @@ export function CommonConfigEditor({
         hideAttribution: false,
         teammates: false,
         enableToolSearch: false,
-        effortHigh: false,
+        effortMax: false,
         disableAutoUpgrade: false,
       };
     }
@@ -128,11 +128,13 @@ export function CommonConfigEditor({
               if (Object.keys(config.env).length === 0) delete config.env;
             }
             break;
-          case "effortHigh":
+          case "effortMax":
+            if (!config.env) config.env = {};
             if (checked) {
-              config.effortLevel = "high";
+              config.env.CLAUDE_CODE_EFFORT_LEVEL = "max";
             } else {
-              delete config.effortLevel;
+              delete config.env.CLAUDE_CODE_EFFORT_LEVEL;
+              if (Object.keys(config.env).length === 0) delete config.env;
             }
             break;
           case "disableAutoUpgrade":
@@ -227,11 +229,11 @@ export function CommonConfigEditor({
           <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
             <input
               type="checkbox"
-              checked={toggleStates.effortHigh}
-              onChange={(e) => handleToggle("effortHigh", e.target.checked)}
+              checked={toggleStates.effortMax}
+              onChange={(e) => handleToggle("effortMax", e.target.checked)}
               className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
             />
-            <span>{t("claudeConfig.effortHigh")}</span>
+            <span>{t("claudeConfig.effortMax")}</span>
           </label>
           <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
             <input

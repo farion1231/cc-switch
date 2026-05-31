@@ -11,23 +11,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import {
-  ChevronDown,
-  Download,
-  Plus,
-  Trash2,
-  ChevronRight,
-  Loader2,
-} from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { ApiKeySection } from "./shared";
+import { Download, Plus, Trash2, ChevronRight, Loader2 } from "lucide-react";
+import { ApiKeySection, ModelDropdown } from "./shared";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -154,49 +139,6 @@ function ModelOptionKeyInput({
       placeholder={placeholder}
       className="flex-1"
     />
-  );
-}
-
-/** Dropdown button to select from fetched models */
-function ModelDropdown({
-  models,
-  onSelect,
-}: {
-  models: FetchedModel[];
-  onSelect: (id: string) => void;
-}) {
-  const grouped: Record<string, FetchedModel[]> = {};
-  for (const model of models) {
-    const vendor = model.ownedBy || "Other";
-    if (!grouped[vendor]) grouped[vendor] = [];
-    grouped[vendor].push(model);
-  }
-  const vendors = Object.keys(grouped).sort();
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="icon" className="shrink-0">
-          <ChevronDown className="h-4 w-4" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="end"
-        className="max-h-64 overflow-y-auto z-[200]"
-      >
-        {vendors.map((vendor, vi) => (
-          <div key={vendor}>
-            {vi > 0 && <DropdownMenuSeparator />}
-            <DropdownMenuLabel>{vendor}</DropdownMenuLabel>
-            {grouped[vendor].map((m) => (
-              <DropdownMenuItem key={m.id} onSelect={() => onSelect(m.id)}>
-                {m.id}
-              </DropdownMenuItem>
-            ))}
-          </div>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }
 

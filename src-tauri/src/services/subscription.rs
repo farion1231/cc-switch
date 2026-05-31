@@ -291,12 +291,26 @@ struct ApiExtraUsage {
     currency: Option<String>,
 }
 
-/// 已知的 Claude 用量窗口名称
+/// 已知的 Claude 用量窗口名称。`QuotaTier::name` 会是其中之一。
+pub const TIER_FIVE_HOUR: &str = "five_hour";
+pub const TIER_SEVEN_DAY: &str = "seven_day";
+pub const TIER_SEVEN_DAY_OPUS: &str = "seven_day_opus";
+pub const TIER_SEVEN_DAY_SONNET: &str = "seven_day_sonnet";
+
+/// Coding Plan（Kimi / MiniMax）的周窗口 tier 名。与 `coding_plan::query_*`
+/// 写入、tray 渲染、commands::provider 扁平化三处共用同一标识。
+pub const TIER_WEEKLY_LIMIT: &str = "weekly_limit";
+
+/// Gemini 用量分组名称（按模型而非时间窗口）。`classify_gemini_model` 输出。
+pub const TIER_GEMINI_PRO: &str = "gemini_pro";
+pub const TIER_GEMINI_FLASH: &str = "gemini_flash";
+pub const TIER_GEMINI_FLASH_LITE: &str = "gemini_flash_lite";
+
 const KNOWN_TIERS: &[&str] = &[
-    "five_hour",
-    "seven_day",
-    "seven_day_opus",
-    "seven_day_sonnet",
+    TIER_FIVE_HOUR,
+    TIER_SEVEN_DAY,
+    TIER_SEVEN_DAY_OPUS,
+    TIER_SEVEN_DAY_SONNET,
 ];
 
 /// 查询 Claude 官方订阅额度
@@ -993,11 +1007,11 @@ fn extract_project_id(value: &serde_json::Value) -> Option<String> {
 /// 将 Gemini 模型 ID 分类为 Pro / Flash / Flash Lite
 fn classify_gemini_model(model_id: &str) -> &str {
     if model_id.contains("flash-lite") {
-        "gemini_flash_lite"
+        TIER_GEMINI_FLASH_LITE
     } else if model_id.contains("flash") {
-        "gemini_flash"
+        TIER_GEMINI_FLASH
     } else if model_id.contains("pro") {
-        "gemini_pro"
+        TIER_GEMINI_PRO
     } else {
         model_id
     }
@@ -1152,9 +1166,9 @@ async fn query_gemini_quota(access_token: &str) -> SubscriptionQuota {
     // 转换为 tiers（remainingFraction → utilization: 已用百分比）
     let sort_order = |name: &str| -> usize {
         match name {
-            "gemini_pro" => 0,
-            "gemini_flash" => 1,
-            "gemini_flash_lite" => 2,
+            TIER_GEMINI_PRO => 0,
+            TIER_GEMINI_FLASH => 1,
+            TIER_GEMINI_FLASH_LITE => 2,
             _ => 3,
         }
     };
