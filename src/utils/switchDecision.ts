@@ -1,11 +1,7 @@
 /**
- * Pure decision logic for the routing auto-toggle feature.
- *
- * `decideSwitchAction` maps the current state (provider requirement, per-app
- * proxy takeover, the two opt-in settings) to one of the `SwitchAction`s below.
- * It is intentionally side-effect free so it can be unit tested exhaustively
- * against the full truth table (see `switchDecision.test.ts`) and reused from
- * UI code.
+ * Pure decision logic for the routing auto-toggle feature. Side-effect free so
+ * it can be exhaustively unit tested against the full truth table
+ * (`switchDecision.test.ts`) and reused from UI code.
  */
 
 /**
@@ -43,16 +39,9 @@ export interface SwitchDecisionInput {
 }
 
 /**
- * Decide which action to take for a provider switch.
- *
  * `isOfficial` always dominates `needsRouting`: an official-class provider is
- * never routed through the proxy (account-ban safety). Under takeover it goes
- * to the disable path; otherwise it just switches directly — it never reaches
- * the enable path, even if a contradictory config also looks "needs routing".
- *
- * The two confirm paths are symmetric: first encounter = confirm dialog (with a
- * "remember" checkbox that sets the corresponding auto-* setting); after
- * remember = silent direct switch.
+ * never routed through the proxy (account-ban safety), so it never reaches the
+ * enable path even if a contradictory config also looks "needs routing".
  */
 export function decideSwitchAction(input: SwitchDecisionInput): SwitchAction {
   const { needsRouting, isProxyTakeover, isOfficial, autoEnable, autoDisable } =

@@ -212,9 +212,9 @@ export function ProviderList({
   const [pendingSwitchProvider, setPendingSwitchProvider] =
     useState<Provider | null>(null);
   const [rememberRouting, setRememberRouting] = useState(false);
-  // 覆盖整个 toggleTakeoverThenSwitch 流程（切换 + 接管开关）的「进行中」标记。
-  // 不能只依赖 setProxyTakeover.isPending——「先切后开」时切换在途、接管 mutation
-  // 还没开始的窗口里它仍是 false，按钮可点 + 守卫不拦 → 会重复触发。
+  // 覆盖整个 toggleTakeoverThenSwitch 流程的「进行中」标记。不能只看
+  // setProxyTakeover.isPending——「先切后开」时切换在途、接管 mutation 还没开始的
+  // 窗口里它仍为 false，会被重复触发。
   const [routingSwitchInFlight, setRoutingSwitchInFlight] = useState(false);
   const setProxyTakeover = useSetProxyTakeoverForApp();
   const { data: claudeDesktopStatus } = useQuery({
@@ -272,24 +272,19 @@ export function ProviderList({
     await queryClient.invalidateQueries({ queryKey: ["settings"] });
   };
 
-  // 接管开关 + 切换。两个方向的顺序不同，都是为了「官方流量绝不在接管下」：
-  //
-  // - enable（切到需路由 provider）：**先切后开**。先 await onSwitch 把 live 切到
-  //   目标（非官方），**仅当切换成功**才开本 app 接管。这样开接管时「当前 provider」
-  //   已是非官方，后端不会发 proxy-official-warning，也不存在「官方被接管」窗口；
-  //   且切换失败时绝不开接管（否则可能让仍停留的官方 provider 走代理被封号）。
-  //   切换成功但开接管失败：provider 已切但未接管（不工作，非封号）→ 提示手动开路由。
-  // - disable（切到官方 provider）：**先关后切**。先关接管（后端恢复真实 Live
-  //   配置），再切到官方。任何时刻官方都不在接管下。开关失败 → 中止不切换。
-  //
-  // onSwitch(p, { fromRoutingGuard: true })：guard 已显式处理路由意图，让
-  // switchProvider 跳过基于闭包（可能滞后一帧）的「需路由提示」与「官方硬阻断」；
-  // 它返回是否切换成功（switchProvider 内部吞错误，靠返回值而非异常判定）。
+  // 接管开关 + 切换。两个方向顺序相反，都是为了「官方流量绝不在接管下」：
+  // - enable（切到需路由 provider）：先切后开——仅当切换成功才开接管，开接管时
+  //   current 已非官方，无「官方被接管」窗口；切换失败绝不开接管（防封号）。开接管
+  //   失败则 provider 已切但未接管（不工作，非封号）→ 提示手动开路由。
+  // - disable（切到官方 provider）：先关后切——先关接管再切，任何时刻官方都不在
+  //   接管下；关接管失败则中止不切。
+  // onSwitch(p, { fromRoutingGuard: true })：guard 已处理路由意图，让 switchProvider
+  // 跳过基于闭包（可能滞后一帧）的需路由提示与官方硬阻断；返回值表示切换是否成功。
   const toggleTakeoverThenSwitch = async (
     provider: Provider,
     enabled: boolean,
   ): Promise<void> => {
-    // 标记整个流程进行中（含切换在途窗口），防重复点击/重入；finally 必清。
+    // 标记整个流程进行中（含切换在途窗口），防重入；finally 必清。
     setRoutingSwitchInFlight(true);
     try {
       if (enabled) {
@@ -344,11 +339,9 @@ export function ProviderList({
     }
   };
 
-  // 切换 guard：用 decideSwitchAction 分流为直接切 / 弹确认 / 静默切。
-  // claude-desktop 排除：其 proxy 模式需要代理服务运行（不是 per-app takeover，
-  // 后端仅支持 claude/codex/gemini）。ProviderCard 的「需要路由」徽章仍对 claude-
-  // desktop 显示（信息正确），switchProvider 的既有 proxyRequiredReason toast 会在
-  // 代理未运行时提醒用户——这两者不依赖 per-app takeover，故不受守卫排除影响。
+  // 切换 guard：decideSwitchAction 分流为直接切 / 弹确认 / 静默切。claude-desktop
+  // 排除：其 proxy 模式依赖代理服务运行，非 per-app takeover（后端仅 claude/codex/
+  // gemini）；其徽章与 switchProvider 既有 toast 不依赖 takeover，不受此排除影响。
   const handleSwitchWithGuard = async (provider: Provider) => {
     if (routingSwitchInFlight || setProxyTakeover.isPending) return;
 

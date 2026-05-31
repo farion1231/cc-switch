@@ -1,18 +1,9 @@
 // Pure helpers for deciding whether a provider inherently requires the local
-// proxy (a.k.a. "routing") to function correctly.
+// proxy ("routing") to function — independent of whether the proxy is currently
+// running. Callers combine the result with live takeover state.
 //
-// This logic is extracted from `useProviderActions.switchProvider`'s
-// `proxyRequiredReason` decision set, with two intentional differences:
-//  1. The `!isProxyRunning` precondition is REMOVED — this function only
-//     answers whether a provider *inherently* needs routing, independent of
-//     whether the proxy happens to be running right now. Callers combine the
-//     result with live takeover state to decide what to do.
-//  2. The `provider.category !== "official"` guard is kept — official
-//     providers never "need routing".
-//
-// `reason` is a STABLE i18n key string (e.g. "notifications.proxyReasonOpenAIChat")
-// rather than a translated message. This keeps the function pure (no `t()`
-// dependency) and lets each caller (badge / dialog) translate it.
+// `reason` is a STABLE i18n key (not a translated message) so the function stays
+// pure (no `t()` dependency); each caller (badge / dialog) translates it.
 
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
@@ -32,10 +23,10 @@ export interface ProxyRequirement {
  * no custom base URL / API key). Official providers must never be routed through
  * the local proxy — doing so risks account bans.
  *
- * This is the single source of truth shared by the card badge, the switch guard,
- * and the action button's disable logic, so they can never disagree about which
- * providers count as official (which would let one path bypass confirmDisable).
- * Uses the broad detection (empty/absent base url counts as official).
+ * Single source of truth shared by the card badge, the switch guard, and the
+ * action button's disable logic, so they can never disagree (which would let one
+ * path bypass confirmDisable). Broad detection: empty/absent base url counts as
+ * official.
  */
 export function isOfficialProvider(provider: Provider, appId: AppId): boolean {
   if (provider.category === "official") {
@@ -72,9 +63,8 @@ export function isOfficialProvider(provider: Provider, appId: AppId): boolean {
 }
 
 // Stable i18n keys used as the `reason` payload. Callers translate these.
-// NOTE: `reason` is forward-looking API surface — current consumers (the
-// ProviderCard badge, the ProviderList guard) read only `.required`; the
-// confirm dialogs use fixed messages, so `reason` is not yet shown in the UI.
+// NOTE: `reason` is forward-looking — current consumers read only `.required`
+// (the confirm dialogs use fixed messages), so it is not yet shown in the UI.
 export const PROXY_REASON_KEYS = {
   copilot: "notifications.proxyReasonCopilot",
   openAIChat: "notifications.proxyReasonOpenAIChat",
@@ -109,24 +99,21 @@ export const getProxyRequirement = (
   provider: Provider,
   appId: AppId,
 ): ProxyRequirement => {
-  // Category-official providers never need routing. This is intentionally the
-  // NARROW check (only the literal "official" category) — it answers "does this
-  // provider's wire protocol need the proxy to transform it", which depends on
-  // apiFormat, not on whether credentials happen to be empty. The BROAD
-  // account-ban safety ("never route an official-looking provider") is enforced
-  // separately by the switch guard via `isOfficialProvider` + `decideSwitchAction`
-  // (where `isOfficial` dominates `needsRouting`), so the two never disagree in a
-  // way that could route official traffic.
+  // Intentionally the NARROW check (literal "official" category only): this
+  // answers "does the wire protocol need the proxy to transform it", which
+  // depends on apiFormat, not on empty credentials. The BROAD account-ban safety
+  // ("never route an official-looking provider") is enforced separately by the
+  // switch guard via `isOfficialProvider` + `decideSwitchAction`, so the two
+  // never disagree in a way that could route official traffic.
   if (provider.category === "official") {
     return { required: false, reason: null };
   }
 
   const meta = provider.meta;
 
-  // Copilot-as-Claude. Mirror ProviderCard's broader detection (providerType OR
-  // usage_script template) so this stays a superset once the badge unifies onto
-  // this function — otherwise a templateType-only Copilot provider would lose
-  // the badge and escape the routing guard.
+  // Copilot-as-Claude. Mirror ProviderCard's detection (providerType OR
+  // usage_script template) so a templateType-only Copilot provider can't escape
+  // the routing guard.
   if (
     appId === "claude" &&
     (meta?.providerType === "github_copilot" ||
@@ -135,13 +122,9 @@ export const getProxyRequirement = (
     return { required: true, reason: PROXY_REASON_KEYS.copilot };
   }
 
-  // Claude using any non-anthropic API format requires the local proxy to
-  // transform the wire protocol. The closed apiFormat enum is
-  // {anthropic, openai_chat, openai_responses, gemini_native}; every
-  // non-anthropic value maps to a backend transform (the Rust adapter's
-  // claude_api_format_needs_transform enumerates the same three), so we treat
-  // "non-anthropic" as the single source of truth instead of enumerating a
-  // subset — which previously dropped gemini_native from the badge + guard.
+  // Any non-anthropic Claude apiFormat needs the proxy to transform the wire
+  // protocol. Treat "non-anthropic" as the source of truth rather than
+  // enumerating a subset — enumerating previously dropped gemini_native.
   if (appId === "claude" && meta?.apiFormat && meta.apiFormat !== "anthropic") {
     const reason =
       meta.apiFormat === "openai_chat"

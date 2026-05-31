@@ -147,13 +147,12 @@ export function useProviderActions(
     [updateProviderMutation],
   );
 
-  // 切换供应商。返回是否切换成功（供路由 guard 据此决定是否开接管——切换失败时
-  // 绝不能开接管，否则可能让仍停留的官方 provider 走代理被封号）。
-  // opts.fromRoutingGuard: 调用方（ProviderList 的路由 guard）已经显式处理过
-  // 路由意图（弹窗确认 + 已 await per-app set_takeover_for_app），因此跳过此处
-  // 基于闭包内 isProxyTakeover/isProxyRunning 的「需路由提示」与「官方硬阻断」——
-  // 这两者读的是可能滞后一帧的闭包值，guard 路径用它们会误触发。其它调用方不传
-  // 该参数，硬阻断兜底保持不变（返回值被忽略）。
+  // 切换供应商。返回是否切换成功，供路由 guard 决定是否开接管（切换失败绝不开，
+  // 否则仍停留的官方 provider 走代理会被封号）。
+  // opts.fromRoutingGuard: guard 已显式处理路由意图（弹窗确认 + await per-app
+  // set_takeover_for_app），故跳过此处基于闭包内 isProxyTakeover/isProxyRunning 的
+  // 需路由提示与官方硬阻断——闭包值可能滞后一帧，guard 路径用它们会误触发。其它
+  // 调用方不传该参数，硬阻断兜底不变。
   const switchProvider = useCallback(
     async (
       provider: Provider,
