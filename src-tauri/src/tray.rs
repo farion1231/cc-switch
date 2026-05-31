@@ -744,6 +744,40 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
 static LAST_TRAY_USAGE_REFRESH: std::sync::Mutex<Option<std::time::Instant>> =
     std::sync::Mutex::new(None);
 const MIN_TRAY_USAGE_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+#[cfg(target_os = "linux")]
+static LAST_LINUX_TRAY_MENU_OPEN_REQUEST: std::sync::Mutex<Option<std::time::Instant>> =
+    std::sync::Mutex::new(None);
+#[cfg(target_os = "linux")]
+const LINUX_TRAY_MENU_REBUILD_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+#[cfg(target_os = "linux")]
+pub(crate) fn note_linux_tray_menu_open_request() {
+    let mut guard = LAST_LINUX_TRAY_MENU_OPEN_REQUEST
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *guard = Some(std::time::Instant::now());
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn note_linux_tray_menu_open_request() {}
+
+fn linux_tray_menu_rebuild_delay() -> Option<std::time::Duration> {
+    #[cfg(target_os = "linux")]
+    {
+        let guard = LAST_LINUX_TRAY_MENU_OPEN_REQUEST
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let elapsed = guard
+            .as_ref()
+            .map(std::time::Instant::elapsed)
+            .unwrap_or(LINUX_TRAY_MENU_REBUILD_GRACE);
+        if elapsed < LINUX_TRAY_MENU_REBUILD_GRACE {
+            return Some(LINUX_TRAY_MENU_REBUILD_GRACE - elapsed);
+        }
+    }
+
+    None
+}
 
 /// 合并多次快速触发的"usage 标题软更新"：批量刷新期间多个 usage 命令
 /// 同时成功时，只会产生一次就地 `set_text` 批量调用。走软更新而不是
@@ -765,8 +799,12 @@ pub fn schedule_tray_refresh(app: &tauri::AppHandle) {
         if supports_in_place_tray_submenu_text_updates() {
             update_tray_usage_labels(&app);
         } else {
-            // Linux / AppIndicator 后端上 Submenu::set_text 会导致 Fedora 44 等环境
-            // 的托盘子菜单标题丢失；退回整菜单重建，避免出现“空白但可点击”的条目。
+            // Linux / AppIndicator 后端不能安全地热更新 submenu 文本；同时用户点击
+            // tray icon 打开菜单时立即 set_menu 也会让 Fedora 44 菜单文字变空。
+            // usage cache 仍会刷新，这里只把可见菜单重建延后到打开动作之后。
+            if let Some(delay) = linux_tray_menu_rebuild_delay() {
+                std::thread::sleep(delay);
+            }
             refresh_tray_menu(&app);
         }
     });
