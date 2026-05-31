@@ -219,6 +219,17 @@ pub fn import_claude_desktop_providers_from_claude(
     Ok(imported)
 }
 
+#[tauri::command]
+pub fn ensure_claude_desktop_official_provider(state: State<'_, AppState>) -> Result<bool, String> {
+    state
+        .db
+        .ensure_official_seed_by_id(
+            crate::database::CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID,
+            AppType::ClaudeDesktop,
+        )
+        .map_err(|e| e.to_string())
+}
+
 fn claude_provider_models_are_claude_safe(provider: &Provider) -> bool {
     let Some(env) = provider
         .settings_config
