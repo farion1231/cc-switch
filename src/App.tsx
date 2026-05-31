@@ -59,6 +59,7 @@ import {
 } from "@/lib/platform";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
+import { CodexQuotaPanel } from "@/components/CodexQuotaPanel";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -971,6 +972,9 @@ function App() {
                           </Button>
                         </div>
                       </div>
+                    )}
+                    {activeApp === "codex" && settingsData?.usageShowAllAccounts !== false && (
+                      <CodexQuotaPanel />
                     )}
                     <ProviderList
                       providers={providers}

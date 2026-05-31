@@ -751,6 +751,7 @@ dependencies = [
  "json-five",
  "json5",
  "log",
+ "objc2",
  "once_cell",
  "regex",
  "reqwest 0.12.28",

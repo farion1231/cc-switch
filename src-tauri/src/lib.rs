@@ -166,6 +166,205 @@ fn handle_deeplink_url(
     true
 }
 
+/// 唤起主窗口
+#[tauri::command]
+fn show_main_window(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        #[cfg(target_os = "macos")]
+        {
+            crate::tray::apply_tray_policy(&app, true);
+        }
+    }
+}
+
+/// 显示刘海用量窗口（macOS）
+/// 策略：窗口铺满整个屏幕顶部宽度，内容用 CSS 在窗口内居中。
+/// 通过原生 API 把 NSWindow level 提升到 NSScreenSaverWindowLevel（1000），
+/// 确保窗口覆盖在刘海和菜单栏之上。
+#[tauri::command]
+fn show_notch_window(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let window = match app.get_webview_window("notch") {
+            Some(w) => w,
+            None => return Err("Notch window not found".to_string()),
+        };
+
+        // 优先找内置显示器（有刘海），fallback 到 primary
+        let monitors = app
+            .available_monitors()
+            .map_err(|e| format!("Failed to get monitors: {e}"))?;
+        let monitor = monitors
+            .into_iter()
+            .find(|m| m.name().map(|n| n.contains("Built-in")).unwrap_or(false))
+            .or_else(|| app.primary_monitor().ok().flatten())
+            .ok_or_else(|| "No suitable monitor found".to_string())?;
+
+        let size = monitor.size(); // 物理像素
+        let pos = monitor.position(); // 物理像素偏移
+        let scale = monitor.scale_factor();
+
+        let monitor_logical_x = pos.x as f64 / scale;
+        let monitor_logical_y = pos.y as f64 / scale;
+        let monitor_logical_w = size.width as f64 / scale;
+
+        let window_width = monitor_logical_w;
+        let window_height = 32.0;
+        let x = monitor_logical_x;
+        let y = monitor_logical_y;
+
+        window
+            .set_size(tauri::Size::Logical(tauri::LogicalSize {
+                width: window_width,
+                height: window_height,
+            }))
+            .map_err(|e| format!("Failed to set size: {e}"))?;
+
+        window
+            .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }))
+            .map_err(|e| format!("Failed to set position: {e}"))?;
+
+        let _ = window.show();
+        let _ = window.set_always_on_top(true);
+
+        // 提升窗口层级到刘海/菜单栏之上
+        unsafe {
+            set_macos_notch_level(&window);
+        }
+
+        let _ = crate::settings::mutate_settings(|s| s.notch_visible = true);
+        tray::refresh_tray_menu(&app);
+
+        log::info!(
+            "刘海窗口显示: monitor=({monitor_logical_w:.0}x{}), scale={scale}, pos=({x:.1},{y:.1})",
+            size.height
+        );
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Notch window is only supported on macOS".to_string())
+    }
+}
+
+/// 通过原生 objc 强制把 NSWindow 放到屏幕物理顶部并提升层级，
+/// 绕过 macOS 自动 clamp 到 visibleFrame 的行为，让窗口覆盖刘海/菜单栏。
+#[cfg(target_os = "macos")]
+unsafe fn set_macos_notch_level(window: &tauri::WebviewWindow) {
+    use objc2::encode::{Encode, Encoding};
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    #[repr(C)]
+    #[derive(Copy, Clone, Debug)]
+    struct CGPoint {
+        x: f64,
+        y: f64,
+    }
+    #[repr(C)]
+    #[derive(Copy, Clone, Debug)]
+    struct CGSize {
+        width: f64,
+        height: f64,
+    }
+    #[repr(C)]
+    #[derive(Copy, Clone, Debug)]
+    struct NSRect {
+        origin: CGPoint,
+        size: CGSize,
+    }
+
+    unsafe impl Encode for CGPoint {
+        const ENCODING: Encoding = Encoding::Struct(
+            "CGPoint",
+            &[<f64 as Encode>::ENCODING, <f64 as Encode>::ENCODING],
+        );
+    }
+    unsafe impl Encode for CGSize {
+        const ENCODING: Encoding = Encoding::Struct(
+            "CGSize",
+            &[<f64 as Encode>::ENCODING, <f64 as Encode>::ENCODING],
+        );
+    }
+    unsafe impl Encode for NSRect {
+        const ENCODING: Encoding =
+            Encoding::Struct("CGRect", &[CGPoint::ENCODING, CGSize::ENCODING]);
+    }
+
+    let ns_window_ptr = match window.ns_window() {
+        Ok(ptr) => ptr,
+        Err(e) => {
+            log::warn!("获取 NSWindow 失败: {e}");
+            return;
+        }
+    };
+    if ns_window_ptr.is_null() {
+        log::warn!("NSWindow 指针为空");
+        return;
+    }
+    let ns_window: *mut AnyObject = ns_window_ptr.cast::<AnyObject>();
+    let ns_window_ref: &AnyObject = &*ns_window;
+
+    // 1. 提升窗口层级到 NSStatusWindowLevel + 1 = 26（高于菜单栏 24）。
+    //    用太高（如 1000=ScreenSaver）会被系统隐藏在通知中心、Mission Control 等覆盖层下。
+    let level: i64 = 25;
+    let _: () = msg_send![ns_window_ref, setLevel: level];
+
+    // 2. 设置 collectionBehavior：跨 Space 可见 + 全屏辅助 + 不在 Mission Control 中显示
+    //    CanJoinAllSpaces=1<<0, Stationary=1<<4, IgnoresCycle=1<<6, FullScreenAuxiliary=1<<8
+    let behavior: u64 = (1 << 0) | (1 << 4) | (1 << 6) | (1 << 8);
+    let _: () = msg_send![ns_window_ref, setCollectionBehavior: behavior];
+
+    // 3. 关键：取 NSScreen.frame（含刘海区域），用 NSWindow.setFrame 强制定位到屏幕物理顶部。
+    //    这绕过 set_position 被 clamp 到 visibleFrame（菜单栏下方）的限制。
+    let screen: *mut AnyObject = msg_send![ns_window_ref, screen];
+    if screen.is_null() {
+        log::warn!("NSWindow.screen 为空，跳过 frame 强制定位");
+        return;
+    }
+    let screen_ref: &AnyObject = &*screen;
+    let screen_frame: NSRect = msg_send![screen_ref, frame];
+
+    let window_frame: NSRect = msg_send![ns_window_ref, frame];
+    let target_height = window_frame.size.height;
+    // macOS 坐标系：y 从下往上，所以"屏幕顶部"是 frame.origin.y + frame.height - window_height
+    let new_frame = NSRect {
+        origin: CGPoint {
+            x: screen_frame.origin.x,
+            y: screen_frame.origin.y + screen_frame.size.height - target_height,
+        },
+        size: CGSize {
+            width: screen_frame.size.width,
+            height: target_height,
+        },
+    };
+    let _: () = msg_send![ns_window_ref, setFrame: new_frame, display: true, animate: false];
+
+    log::info!(
+        "刘海窗口已强制定位: level={level}, screen=({:.0}x{:.0}), frame_y={:.1}, frame_w={:.1}, frame_h={:.1}",
+        screen_frame.size.width,
+        screen_frame.size.height,
+        new_frame.origin.y,
+        new_frame.size.width,
+        new_frame.size.height,
+    );
+}
+
+/// 隐藏刘海用量窗口
+#[tauri::command]
+fn hide_notch_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("notch") {
+        window.hide().map_err(|e| format!("Failed to hide: {e}"))?;
+    }
+    // 持久化设置
+    let _ = crate::settings::mutate_settings(|s| s.notch_visible = false);
+    tray::refresh_tray_menu(&app);
+    Ok(())
+}
+
 /// 更新托盘菜单的Tauri命令
 #[tauri::command]
 async fn update_tray_menu(
@@ -869,6 +1068,46 @@ pub fn run() {
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
+            // 启动 Codex 多账号用量自动刷新任务
+            {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let settings = crate::settings::get_settings();
+                    if !settings.usage_auto_refresh {
+                        log::info!("用量自动刷新已禁用");
+                        return;
+                    }
+                    let interval_secs = settings.usage_refresh_interval_secs.max(30);
+                    let mut interval = tokio::time::interval(
+                        std::time::Duration::from_secs(interval_secs),
+                    );
+                    // 首次延迟 10 秒，避免启动时与大量初始化任务竞争
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    loop {
+                        interval.tick().await;
+                        let results =
+                            crate::services::subscription::get_all_codex_quotas().await;
+                        if let Some(state) = app_handle.try_state::<AppState>() {
+                            for (account_key, quota) in &results {
+                                state
+                                    .usage_cache
+                                    .put_codex_account(account_key.clone(), quota.clone());
+                            }
+                        }
+                        let payload = serde_json::json!({
+                            "kind": "codex-all",
+                            "accounts": results.iter().map(|(k, q)| {
+                                serde_json::json!({"accountKey": k, "quota": q})
+                            }).collect::<Vec<_>>(),
+                        });
+                        if let Err(e) = app_handle.emit("codex-account-quotas-updated", payload) {
+                            log::warn!("emit codex-account-quotas-updated (定时任务) 失败: {e}");
+                        }
+                        crate::tray::schedule_tray_refresh(&app_handle);
+                    }
+                });
+            }
+
             // 从数据库加载日志配置并应用
             {
                 let db = &app.state::<AppState>().db;
@@ -1091,6 +1330,23 @@ pub fn run() {
                 }
             }
 
+            // macOS: 启动时根据设置自动显示刘海用量窗口
+            #[cfg(target_os = "macos")]
+            {
+                let settings = crate::settings::get_settings();
+                if settings.notch_visible {
+                    // 延迟一点显示，等窗口完全初始化
+                    let app_handle = app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        if let Err(e) = show_notch_window(app_handle) {
+                            log::warn!("启动时自动显示刘海窗口失败: {e}");
+                        } else {
+                            log::info!("启动时刘海用量窗口已自动显示");
+                        }
+                    });
+                }
+            }
 
             Ok(())
         })
@@ -1219,6 +1475,9 @@ pub fn run() {
             commands::import_from_deeplink,
             commands::import_from_deeplink_unified,
             update_tray_menu,
+            show_main_window,
+            show_notch_window,
+            hide_notch_window,
             // Environment variable management
             commands::check_env_conflicts,
             commands::delete_env_vars,

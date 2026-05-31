@@ -1,5 +1,6 @@
 import { http, HttpResponse } from "msw";
 import type { AppId } from "@/lib/api/types";
+import type { SubscriptionQuota } from "@/types/subscription";
 import type { McpServer, Provider, Settings } from "@/types";
 import {
   addProvider,
@@ -39,10 +40,37 @@ const withJson = async <T>(request: Request): Promise<T> => {
 
 const success = <T>(payload: T) => HttpResponse.json(payload as any);
 
+const mockCodexQuota = (tool: string): SubscriptionQuota => ({
+  tool,
+  credentialStatus: "valid",
+  credentialMessage: null,
+  success: true,
+  tiers: [
+    {
+      name: "5h",
+      utilization: 25,
+      resetsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    },
+    {
+      name: "7d",
+      utilization: 40,
+      resetsAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    },
+  ],
+  extraUsage: null,
+  error: null,
+  queriedAt: Date.now(),
+});
+
 export const handlers = [
   http.post(`${TAURI_ENDPOINT}/get_migration_result`, () => success(false)),
   http.post(`${TAURI_ENDPOINT}/get_skills_migration_result`, () =>
     success(null),
+  ),
+  http.post(`${TAURI_ENDPOINT}/get_all_codex_quotas`, () =>
+    success({
+      default: mockCodexQuota("codex"),
+    }),
   ),
   http.post(`${TAURI_ENDPOINT}/get_providers`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);

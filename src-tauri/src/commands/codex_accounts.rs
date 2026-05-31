@@ -4,6 +4,8 @@ use std::collections::HashMap;
 
 use crate::codex_accounts::{CodexAccountSummary, CodexAccountSwitchResult, CodexAppRestartResult};
 use crate::services::subscription::SubscriptionQuota;
+use crate::store::AppState;
+use tauri::{Emitter, State};
 
 #[tauri::command]
 pub fn codex_list_account_snapshots() -> Result<Vec<CodexAccountSummary>, String> {
@@ -11,10 +13,33 @@ pub fn codex_list_account_snapshots() -> Result<Vec<CodexAccountSummary>, String
 }
 
 #[tauri::command]
-pub async fn get_all_codex_quotas() -> Result<HashMap<String, SubscriptionQuota>, String> {
-    crate::codex_accounts::get_all_account_quotas()
-        .await
-        .map_err(Into::into)
+pub async fn get_all_codex_quotas(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<HashMap<String, SubscriptionQuota>, String> {
+    let quotas: HashMap<String, SubscriptionQuota> =
+        crate::codex_accounts::get_all_account_quotas()
+            .await
+            .map_err(Into::<String>::into)?;
+
+    for (account_key, quota) in &quotas {
+        state
+            .usage_cache
+            .put_codex_account(account_key.clone(), quota.clone());
+    }
+
+    let payload = serde_json::json!({
+        "kind": "codex-all",
+        "accounts": quotas.iter().map(|(account_key, quota)| {
+            serde_json::json!({ "accountKey": account_key, "quota": quota })
+        }).collect::<Vec<_>>(),
+    });
+    if let Err(e) = app.emit("codex-account-quotas-updated", payload) {
+        log::error!("emit codex-account-quotas-updated 失败: {e}");
+    }
+    crate::tray::schedule_tray_refresh(&app);
+
+    Ok(quotas)
 }
 
 #[tauri::command]

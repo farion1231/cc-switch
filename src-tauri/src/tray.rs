@@ -24,6 +24,7 @@ pub struct TrayTexts {
     pub open_website: &'static str,
     pub no_providers_label: &'static str,
     pub lightweight_mode: &'static str,
+    pub notch_window: &'static str,
     pub quit: &'static str,
     pub _auto_label: &'static str,
 }
@@ -36,6 +37,7 @@ impl TrayTexts {
                 open_website: "Open Official Website",
                 no_providers_label: "(no providers)",
                 lightweight_mode: "Lightweight Mode",
+                notch_window: "Notch Usage",
                 quit: "Quit",
                 _auto_label: "Auto (Failover)",
             },
@@ -44,6 +46,7 @@ impl TrayTexts {
                 open_website: "公式サイトを開く",
                 no_providers_label: "(プロバイダーなし)",
                 lightweight_mode: "軽量モード",
+                notch_window: "ノッチ使用量",
                 quit: "終了",
                 _auto_label: "自動 (フェイルオーバー)",
             },
@@ -52,6 +55,7 @@ impl TrayTexts {
                 open_website: "開啟官方網站",
                 no_providers_label: "(無供應商)",
                 lightweight_mode: "輕量模式",
+                notch_window: "瀏海用量",
                 quit: "退出",
                 _auto_label: "自動 (故障轉移)",
             },
@@ -60,6 +64,7 @@ impl TrayTexts {
                 open_website: "打开官方网站",
                 no_providers_label: "(无供应商)",
                 lightweight_mode: "轻量模式",
+                notch_window: "刘海用量",
                 quit: "退出",
                 _auto_label: "自动 (故障转移)",
             },
@@ -594,7 +599,25 @@ pub fn create_tray_menu(
     )
     .map_err(|e| AppError::Message(format!("创建轻量模式菜单失败: {e}")))?;
 
-    menu_builder = menu_builder.item(&lightweight_item).separator();
+    menu_builder = menu_builder.item(&lightweight_item);
+
+    // macOS 刘海用量窗口开关
+    #[cfg(target_os = "macos")]
+    {
+        let settings = crate::settings::get_settings();
+        let notch_item = CheckMenuItem::with_id(
+            app,
+            "toggle_notch",
+            tray_texts.notch_window,
+            true,
+            settings.notch_visible,
+            None::<&str>,
+        )
+        .map_err(|e| AppError::Message(format!("创建刘海用量菜单失败: {e}")))?;
+        menu_builder = menu_builder.item(&notch_item);
+    }
+
+    menu_builder = menu_builder.separator();
 
     // 退出菜单（分隔符已在上面的 section 循环中添加）
     let quit_item = MenuItem::with_id(app, "quit", tray_texts.quit, true, None::<&str>)
@@ -722,6 +745,14 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                 }
             } else if let Err(e) = crate::lightweight::enter_lightweight_mode(app) {
                 log::error!("进入轻量模式失败: {e}");
+            }
+        }
+        "toggle_notch" => {
+            let settings = crate::settings::get_settings();
+            if settings.notch_visible {
+                let _ = crate::hide_notch_window(app.clone());
+            } else {
+                let _ = crate::show_notch_window(app.clone());
             }
         }
         "quit" => {

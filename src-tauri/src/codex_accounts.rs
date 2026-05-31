@@ -155,6 +155,16 @@ pub fn list_accounts() -> Result<Vec<CodexAccountSummary>, AppError> {
         .collect())
 }
 
+/// 获取所有 Codex 账号的 snapshot 路径（用于多账号用量查询）
+pub fn list_account_snapshot_paths() -> Result<Vec<(String, String)>, AppError> {
+    let registry = read_registry_with_snapshot_scan()?;
+    Ok(registry
+        .items
+        .iter()
+        .map(|item| (item.account_key.clone(), item.snapshot_path.clone()))
+        .collect())
+}
+
 pub fn capture_current(label: Option<String>) -> Result<CodexAccountSummary, AppError> {
     let auth_path = get_codex_auth_path();
     validate_auth_file(&auth_path)?;

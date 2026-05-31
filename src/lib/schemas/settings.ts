@@ -38,6 +38,15 @@ export const settingsSchema = z.object({
   // Codex 用量刷新间隔（秒，默认 300）
   codexQuotaRefreshInterval: z.number().min(60).optional(),
 
+  // 用量查询设置
+  usageRefreshIntervalSecs: z.number().min(30).optional(),
+  usageAutoRefresh: z.boolean().optional(),
+  usageShowAllAccounts: z.boolean().optional(),
+
+  // 刘海窗口设置
+  notchVisible: z.boolean().optional(),
+  notchShowCodex: z.boolean().optional(),
+
   // WebDAV v2 同步设置（通过专用命令保存，schema 仅用于读取）
   webdavSync: z
     .object({

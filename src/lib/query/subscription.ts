@@ -12,6 +12,7 @@ export const subscriptionKeys = {
   quota: (appId: AppId) => [...subscriptionKeys.all, "quota", appId] as const,
   allCodexQuotas: () =>
     [...subscriptionKeys.all, "codex", "all-quotas"] as const,
+  codexAll: () => subscriptionKeys.allCodexQuotas(),
 };
 
 export function useSubscriptionQuota(
@@ -48,6 +49,35 @@ export function useAllCodexQuotas(
     refetchInterval: intervalMs > 0 ? intervalMs : false,
     refetchIntervalInBackground: intervalMs > 0,
     refetchOnWindowFocus: intervalMs > 0,
+    staleTime: intervalMs,
+    retry: 1,
+  });
+}
+
+export interface UseCodexAllQuotasOptions {
+  enabled?: boolean;
+  /** 是否启用自动轮询（与 settings 中的 usage_refresh_interval_secs 同步） */
+  autoQuery?: boolean;
+  /** 刷新间隔（毫秒，默认 60 秒） */
+  intervalMs?: number;
+}
+
+/**
+ * 查询所有 Codex 账号的用量
+ *
+ * 同时监听后端 emit 的 `codex-account-quotas-updated` 事件，
+ * 让托盘触发的刷新也能立刻反映到主界面。
+ */
+export function useCodexAllQuotas(options: UseCodexAllQuotasOptions = {}) {
+  const { enabled = true, autoQuery = false, intervalMs = 60_000 } = options;
+
+  return useQuery({
+    queryKey: subscriptionKeys.codexAll(),
+    queryFn: () => subscriptionApi.getAllCodexQuotas(),
+    enabled,
+    refetchInterval: autoQuery ? intervalMs : false,
+    refetchIntervalInBackground: autoQuery,
+    refetchOnWindowFocus: autoQuery,
     staleTime: intervalMs,
     retry: 1,
   });

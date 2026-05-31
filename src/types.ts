@@ -407,6 +407,15 @@ export interface Settings {
       migratedStateRows?: number;
     };
   };
+
+  // ===== 用量查询设置 =====
+  usageRefreshIntervalSecs?: number;
+  usageAutoRefresh?: boolean;
+  usageShowAllAccounts?: boolean;
+
+  // ===== 刘海窗口设置 =====
+  notchVisible?: boolean;
+  notchShowCodex?: boolean;
 }
 
 export interface SessionMeta {
