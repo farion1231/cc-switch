@@ -320,7 +320,7 @@ pub fn direct_gateway_credentials(
 }
 
 pub fn validate_direct_provider(provider: &Provider) -> Result<(), AppError> {
-    if is_official_provider(provider) {
+    if is_official_provider(provider) || provider.category.as_deref() == Some("official") {
         return Ok(());
     }
 
@@ -380,7 +380,7 @@ pub fn validate_direct_provider(provider: &Provider) -> Result<(), AppError> {
 }
 
 pub fn validate_proxy_provider(provider: &Provider) -> Result<(), AppError> {
-    if is_official_provider(provider) {
+    if is_official_provider(provider) || provider.category.as_deref() == Some("official") {
         return Ok(());
     }
 
@@ -465,7 +465,7 @@ fn is_managed_oauth_proxy_provider(provider: &Provider) -> bool {
 }
 
 pub fn validate_provider(provider: &Provider) -> Result<(), AppError> {
-    if is_official_provider(provider) {
+    if is_official_provider(provider) || provider.category.as_deref() == Some("official") {
         return Ok(());
     }
 
@@ -885,7 +885,7 @@ fn apply_provider_to_paths(
     provider: &Provider,
     paths: &ClaudeDesktopPaths,
 ) -> Result<(), AppError> {
-    if is_official_provider(provider) {
+    if is_official_provider(provider) || provider.category.as_deref() == Some("official") {
         return restore_official_at_paths(paths);
     }
 

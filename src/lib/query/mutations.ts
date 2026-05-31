@@ -36,6 +36,12 @@ export const useAddProviderMutation = (appId: AppId) => {
           }
           id = providerInput.providerKey;
         }
+      } else if (
+        appId === "claude-desktop" &&
+        providerInput.category === "official"
+      ) {
+        // 官方供应商使用固定 id，与后端 seed 和 is_official_provider 校验一致
+        id = "claude-desktop-official";
       } else {
         id = generateUUID();
       }
