@@ -3,7 +3,9 @@
 //! 提供 SQL 导出/导入和二进制快照备份功能。
 
 use super::{lock_conn, Database};
-use crate::config::{create_private_dir_all, ensure_app_config_dir, get_app_config_dir};
+use crate::config::{
+    create_private_dir_all, ensure_app_config_dir, get_app_config_dir, set_private_file_permissions,
+};
 use crate::error::AppError;
 use chrono::{Local, Utc};
 use rusqlite::backup::Backup;
@@ -328,6 +330,7 @@ impl Database {
                 .step(-1)
                 .map_err(|e| AppError::Database(e.to_string()))?;
         }
+        set_private_file_permissions(&backup_path)?;
 
         Self::cleanup_db_backups(&backup_dir)?;
         Ok(Some(backup_path))
@@ -777,6 +780,44 @@ mod tests {
             stream_logs, 1,
             "local stream check logs should be preserved"
         );
+
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial]
+    fn backup_database_file_sets_private_permissions() -> Result<(), AppError> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+
+        let db = Database::init()?;
+        let backup_path = db
+            .backup_database_file()?
+            .expect("backup path should exist");
+
+        let backup_dir = backup_path.parent().expect("backup parent");
+        let dir_mode = std::fs::metadata(backup_dir)
+            .expect("backup dir metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(dir_mode, 0o700);
+
+        let file_mode = std::fs::metadata(&backup_path)
+            .expect("backup file metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(file_mode, 0o600);
+
+        match old_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
 
         Ok(())
     }
