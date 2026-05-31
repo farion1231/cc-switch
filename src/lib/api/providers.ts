@@ -192,6 +192,37 @@ export const providersApi = {
   async importHermesFromLive(): Promise<number> {
     return await invoke("import_hermes_providers_from_live");
   },
+
+  /**
+   * 从 Pi Agent live 配置导入供应商到数据库
+   * Pi Agent 使用 ~/.pi/agent/models.json 的累加式供应商配置
+   */
+  async importPiFromLive(): Promise<number> {
+    return await invoke("import_pi_providers_from_live");
+  },
+
+  /**
+   * 获取 Pi Agent live 配置中的供应商 ID 列表
+   */
+  async getPiLiveProviderIds(): Promise<string[]> {
+    return await invoke("get_pi_live_provider_ids");
+  },
+
+  /**
+   * 获取 Pi Agent 当前默认供应商
+   */
+  async getPiDefaultProvider(): Promise<string | null> {
+    return await invoke("get_pi_default_provider");
+  },
+
+  /**
+   * 获取 Pi Agent live 配置中的单个供应商片段
+   */
+  async getPiLiveProvider(
+    providerId: string,
+  ): Promise<Record<string, unknown> | null> {
+    return await invoke("get_pi_live_provider", { providerId });
+  },
 };
 
 // ============================================================================

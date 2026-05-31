@@ -23,7 +23,12 @@ export const useAddProviderMutation = (appId: AppId) => {
     ) => {
       let id: string;
 
-      if (appId === "opencode" || appId === "openclaw" || appId === "hermes") {
+      if (
+        appId === "opencode" ||
+        appId === "openclaw" ||
+        appId === "hermes" ||
+        appId === "pi"
+      ) {
         if (
           providerInput.category === "omo" ||
           providerInput.category === "omo-slim"
@@ -78,6 +83,11 @@ export const useAddProviderMutation = (appId: AppId) => {
 
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
+      }
+
+      if (appId === "pi") {
+        await queryClient.invalidateQueries({ queryKey: ["piLiveProviderIds"] });
+        await queryClient.invalidateQueries({ queryKey: ["piDefaultProvider"] });
       }
 
       try {
@@ -135,6 +145,10 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
+      if (appId === "pi") {
+        await queryClient.invalidateQueries({ queryKey: ["piLiveProviderIds"] });
+        await queryClient.invalidateQueries({ queryKey: ["piDefaultProvider"] });
+      }
       toast.success(
         t("notifications.updateSuccess", {
           defaultValue: "供应商更新成功",
@@ -190,6 +204,10 @@ export const useDeleteProviderMutation = (appId: AppId) => {
 
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
+      }
+      if (appId === "pi") {
+        await queryClient.invalidateQueries({ queryKey: ["piLiveProviderIds"] });
+        await queryClient.invalidateQueries({ queryKey: ["piDefaultProvider"] });
       }
 
       try {
@@ -264,6 +282,10 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       }
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
+      }
+      if (appId === "pi") {
+        await queryClient.invalidateQueries({ queryKey: ["piLiveProviderIds"] });
+        await queryClient.invalidateQueries({ queryKey: ["piDefaultProvider"] });
       }
 
       try {

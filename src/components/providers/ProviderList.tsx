@@ -116,6 +116,18 @@ export function ProviderList({
   const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
   const hermesCurrentProviderId = hermesModelConfig?.provider;
 
+  const { data: piLiveIds } = useQuery({
+    queryKey: ["piLiveProviderIds"],
+    queryFn: () => providersApi.getPiLiveProviderIds(),
+    enabled: appId === "pi",
+  });
+
+  const { data: piDefaultProviderId } = useQuery({
+    queryKey: ["piDefaultProvider"],
+    queryFn: () => providersApi.getPiDefaultProvider(),
+    enabled: appId === "pi",
+  });
+
   // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes）
   const isProviderInConfig = useCallback(
     (providerId: string): boolean => {
@@ -128,9 +140,12 @@ export function ProviderList({
       if (appId === "hermes") {
         return hermesLiveIds?.includes(providerId) ?? false;
       }
+      if (appId === "pi") {
+        return piLiveIds?.includes(providerId) ?? false;
+      }
       return true; // 其他应用始终返回 true
     },
-    [appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds],
+    [appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds, piLiveIds],
   );
 
   // OpenClaw: query default model to determine which provider is default
@@ -251,6 +266,10 @@ export function ProviderList({
       }
       if (appId === "hermes") {
         const count = await providersApi.importHermesFromLive();
+        return count > 0;
+      }
+      if (appId === "pi") {
+        const count = await providersApi.importPiFromLive();
         return count > 0;
       }
       if (appId === "claude-desktop") {
@@ -413,6 +432,8 @@ export function ProviderList({
               isOmoSlim && provider.id === (currentOmoSlimId || "");
             const isHermesCurrent =
               appId === "hermes" && hermesCurrentProviderId === provider.id;
+            const isPiCurrent =
+              appId === "pi" && piDefaultProviderId === provider.id;
             return (
               <SortableProviderCard
                 key={provider.id}
@@ -424,6 +445,8 @@ export function ProviderList({
                       ? isOmoSlimCurrent
                       : appId === "hermes"
                         ? isHermesCurrent
+                        : appId === "pi"
+                          ? isPiCurrent
                         : provider.id === currentProviderId
                 }
                 appId={appId}
@@ -451,10 +474,10 @@ export function ProviderList({
                   handleToggleFailover(provider.id, enabled)
                 }
                 activeProviderId={activeProviderId}
-                // OpenClaw: default model / Hermes: model.provider === provider.id
+                // OpenClaw: default model / Hermes/Pi: default provider === provider.id
                 isDefaultModel={
-                  appId === "hermes"
-                    ? isHermesCurrent
+                  appId === "hermes" || appId === "pi"
+                    ? isHermesCurrent || isPiCurrent
                     : isProviderDefaultModel(provider.id)
                 }
                 onSetAsDefault={

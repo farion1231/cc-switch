@@ -536,6 +536,11 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
+            AppType::Pi => {
+                return Err(anyhow::anyhow!(
+                    "Pi Agent does not support CC Switch skill sync"
+                ));
+            }
         }
 
         // 默认路径：回退到用户主目录下的标准位置
@@ -553,6 +558,7 @@ impl SkillService {
             AppType::OpenCode => home.join(".config").join("opencode").join("skills"),
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
+            AppType::Pi => unreachable!("handled above"),
         })
     }
 

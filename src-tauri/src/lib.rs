@@ -622,6 +622,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No new Hermes providers to import"),
                 Err(e) => log::warn!("✗ Failed to import Hermes providers: {e}"),
             }
+            match crate::services::provider::import_pi_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Imported {count} Pi Agent provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No new Pi Agent providers to import"),
+                Err(e) => log::warn!("✗ Failed to import Pi Agent providers: {e}"),
+            }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
@@ -1346,6 +1353,11 @@ pub fn run() {
             commands::set_hermes_memory,
             commands::get_hermes_memory_limits,
             commands::set_hermes_memory_enabled,
+            // Pi Agent specific
+            commands::import_pi_providers_from_live,
+            commands::get_pi_live_provider_ids,
+            commands::get_pi_live_provider,
+            commands::get_pi_default_provider,
             // Global upstream proxy
             commands::get_global_proxy_url,
             commands::set_global_proxy_url,
