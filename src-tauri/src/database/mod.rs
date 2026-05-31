@@ -39,7 +39,7 @@ pub(crate) use dao::proxy::{
 };
 pub use dao::FailoverQueueItem;
 
-use crate::config::ensure_app_config_dir;
+use crate::config::{create_private_dir_all, ensure_app_config_dir, set_private_file_permissions};
 use crate::error::AppError;
 use rusqlite::{hooks::Action, Connection};
 use serde::Serialize;
@@ -96,7 +96,12 @@ impl Database {
         let db_path = ensure_app_config_dir()?.join("cc-switch.db");
         let db_exists = db_path.exists();
 
+        if let Some(parent) = db_path.parent() {
+            create_private_dir_all(parent)?;
+        }
+
         let conn = Connection::open(&db_path).map_err(|e| AppError::Database(e.to_string()))?;
+        set_private_file_permissions(&db_path)?;
 
         // 启用外键约束
         conn.execute("PRAGMA foreign_keys = ON;", [])
