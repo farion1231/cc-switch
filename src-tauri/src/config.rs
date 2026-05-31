@@ -130,7 +130,7 @@ pub fn create_private_dir_all(path: &Path) -> Result<(), AppError> {
 
         fs::DirBuilder::new()
             .recursive(true)
-            .mode(0o700) // 420 000 000 仅当前用户可访问
+            .mode(0o700) // 421 000 000 仅当前用户可访问
             .create(path)
             .map_err(|e| AppError::io(path, e))?;
         fs::set_permissions(path, fs::Permissions::from_mode(0o700))
@@ -140,6 +140,24 @@ pub fn create_private_dir_all(path: &Path) -> Result<(), AppError> {
     #[cfg(not(unix))]
     {
         fs::create_dir_all(path).map_err(|e| AppError::io(path, e))?;
+    }
+
+    Ok(())
+}
+
+/// 将应用私有文件权限收紧为仅当前用户可读写。
+pub fn set_private_file_permissions(path: &Path) -> Result<(), AppError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .map_err(|e| AppError::io(path, e))?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = path;
     }
 
     Ok(())
