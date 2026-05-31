@@ -7,6 +7,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { AlertTriangle, Info } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -18,6 +19,11 @@ interface ConfirmDialogProps {
   cancelText?: string;
   variant?: "destructive" | "info";
   zIndex?: "base" | "nested" | "alert" | "top";
+  checkbox?: {
+    label: string;
+    checked: boolean;
+    onChange: (checked: boolean) => void;
+  };
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -30,6 +36,7 @@ export function ConfirmDialog({
   cancelText,
   variant = "destructive",
   zIndex = "alert",
+  checkbox,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -58,6 +65,15 @@ export function ConfirmDialog({
             {message}
           </DialogDescription>
         </DialogHeader>
+        {checkbox && (
+          <label className="flex cursor-pointer select-none items-center gap-2 px-6 pt-3 text-sm">
+            <Checkbox
+              checked={checkbox.checked}
+              onCheckedChange={(v) => checkbox.onChange(v === true)}
+            />
+            {checkbox.label}
+          </label>
+        )}
         <DialogFooter className="flex gap-2 border-t-0 bg-transparent pt-2 sm:justify-end">
           <Button variant="outline" onClick={onCancel}>
             {cancelText || t("common.cancel")}
