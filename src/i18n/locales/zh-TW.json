@@ -2015,7 +2015,15 @@
       "groupedView": "分組視圖",
       "doubleClickToEdit": "雙擊重新命名",
       "moveSuccess": "技能已移動到新分組",
-      "renameSuccess": "標籤已重新命名"
+      "renameSuccess": "標籤已重新命名",
+      "createSuccess": "標籤建立成功",
+      "createFailed": "標籤建立失敗",
+      "renameFailed": "標籤重新命名失敗",
+      "deleteSuccess": "標籤刪除成功",
+      "deleteFailed": "標籤刪除失敗",
+      "reorderSuccess": "排序已更新",
+      "reorderFailed": "排序更新失敗",
+      "count": "{{count}} 個標籤"
     },
     "openDirectory": "在檔案管理員中開啟"
   },

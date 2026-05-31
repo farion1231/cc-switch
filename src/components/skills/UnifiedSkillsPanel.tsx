@@ -28,6 +28,7 @@ import {
   DragOverlay,
   closestCenter,
   PointerSensor,
+  useDroppable,
   useSensor,
   useSensors,
   type DragStartEvent,
@@ -199,16 +200,25 @@ const UnifiedSkillsPanel = React.forwardRef<
     }[] = [];
     const assignedSkillIds = new Set<string>();
 
-    // 按 tag 分组
-    for (const tag of tags) {
-      const skillIds = tagAssignments
-        .filter(([, tid]) => tid === tag.id)
-        .map(([sid]) => sid);
-      const groupSkills = skills.filter((s) => skillIds.includes(s.id));
-      if (groupSkills.length > 0) {
-        groups.push({ tag, tagId: tag.id, skills: groupSkills });
-        groupSkills.forEach((s) => assignedSkillIds.add(s.id));
+    // 预构建 tagId -> Set<skillId> 映射，避免 O(n*m) 查找
+    const tagSkillMap = new Map<number, Set<string>>();
+    for (const [sid, tid] of tagAssignments) {
+      let set = tagSkillMap.get(tid);
+      if (!set) {
+        set = new Set();
+        tagSkillMap.set(tid, set);
       }
+      set.add(sid);
+    }
+
+    // 按 tag 分组（保留空 tag 作为 drop target）
+    for (const tag of tags) {
+      const skillIdSet = tagSkillMap.get(tag.id);
+      const groupSkills = skillIdSet
+        ? skills.filter((s) => skillIdSet.has(s.id))
+        : [];
+      groups.push({ tag, tagId: tag.id, skills: groupSkills });
+      groupSkills.forEach((s) => assignedSkillIds.add(s.id));
     }
 
     // 未分组
@@ -321,7 +331,9 @@ const UnifiedSkillsPanel = React.forwardRef<
         const skillId = activeId.replace("skill:", "");
         let targetTagId: number | null = null;
 
-        if (overId.startsWith("group:")) {
+        if (overId.startsWith("drop-group:")) {
+          targetTagId = parseInt(overId.replace("drop-group:", ""), 10);
+        } else if (overId.startsWith("group:")) {
           targetTagId = parseInt(overId.replace("group:", ""), 10);
         } else if (overId.startsWith("skill:")) {
           // 拖到另一个 skill 上，找到该 skill 所在的分组
@@ -704,28 +716,41 @@ const UnifiedSkillsPanel = React.forwardRef<
                           tagId={tagKey}
                           isUntagged={group.tagId === null}
                         >
-                          <SortableGroupHeader
-                            tag={group.tag}
-                            tagId={group.tagId}
-                            skillCount={group.skills.length}
-                            isCollapsed={isCollapsed}
-                            isEditing={
-                              editingTagId !== null &&
-                              editingTagId === group.tagId
-                            }
-                            editingName={editingTagName}
-                            editInputRef={editInputRef}
-                            onToggleCollapse={() =>
-                              group.tagId !== null &&
-                              toggleTagCollapse(group.tagId)
-                            }
-                            onStartEdit={() =>
-                              group.tag && handleStartEditTag(group.tag)
-                            }
-                            onEditingNameChange={setEditingTagName}
-                            onSaveEdit={handleSaveEditTag}
-                            onCancelEdit={handleCancelEditTag}
-                          />
+                          {group.tagId !== null ? (
+                            <SortableGroupHeader
+                              tag={group.tag}
+                              tagId={group.tagId}
+                              skillCount={group.skills.length}
+                              isCollapsed={isCollapsed}
+                              isEditing={editingTagId === group.tagId}
+                              editingName={editingTagName}
+                              editInputRef={editInputRef}
+                              onToggleCollapse={() =>
+                                toggleTagCollapse(group.tagId!)
+                              }
+                              onStartEdit={() =>
+                                group.tag && handleStartEditTag(group.tag)
+                              }
+                              onEditingNameChange={setEditingTagName}
+                              onSaveEdit={handleSaveEditTag}
+                              onCancelEdit={handleCancelEditTag}
+                            />
+                          ) : (
+                            <StaticGroupHeader
+                              tag={group.tag}
+                              tagId={group.tagId}
+                              skillCount={group.skills.length}
+                              isCollapsed={isCollapsed}
+                              isEditing={false}
+                              editingName={editingTagName}
+                              editInputRef={editInputRef}
+                              onToggleCollapse={() => {}}
+                              onStartEdit={() => {}}
+                              onEditingNameChange={setEditingTagName}
+                              onSaveEdit={handleSaveEditTag}
+                              onCancelEdit={handleCancelEditTag}
+                            />
+                          )}
                           {!isCollapsed && (
                             <div>
                               {group.skills.map((skill, index) => (
@@ -900,7 +925,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
           >
             <FolderOpen size={12} />
           </button>
-          <TagAssignPopover skillId={skill.id} skillName={skill.name} />
+          <TagAssignPopover skillId={skill.id} />
           <span className="text-xs text-muted-foreground/50 flex-shrink-0">
             {sourceLabel}
           </span>
@@ -1259,26 +1284,21 @@ const DroppableGroup: React.FC<{
   );
 };
 
-/** 可排序 + 可放置的分组容器 */
+/** 可放置的分组容器 */
 const SortableDroppableGroup: React.FC<{
   tagId: number;
   children: React.ReactNode;
 }> = ({ tagId, children }) => {
-  const { setNodeRef, transform, transition, isDragging } = useSortable({
-    id: `group:${tagId}`,
+  const { setNodeRef, isOver } = useDroppable({
+    id: `drop-group:${tagId}`,
   });
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-  };
 
   return (
     <div
       ref={setNodeRef}
-      style={style}
-      className="rounded-xl border border-border-default overflow-hidden"
+      className={`rounded-xl border overflow-hidden transition-colors ${
+        isOver ? "border-primary/60 bg-primary/5" : "border-border-default"
+      }`}
       data-group-id={tagId}
     >
       {children}
@@ -1286,8 +1306,8 @@ const SortableDroppableGroup: React.FC<{
   );
 };
 
-/** 可排序的分组头部（支持内联编辑名称） */
-const SortableGroupHeader: React.FC<{
+/** 分组头部 Props */
+interface GroupHeaderProps {
   tag: SkillTag | null;
   tagId: number | null;
   skillCount: number;
@@ -1300,7 +1320,10 @@ const SortableGroupHeader: React.FC<{
   onEditingNameChange: (name: string) => void;
   onSaveEdit: () => void;
   onCancelEdit: () => void;
-}> = ({
+}
+
+/** 分组头部内容（编辑/显示逻辑） */
+const GroupHeaderContent: React.FC<GroupHeaderProps> = ({
   tag,
   tagId,
   skillCount,
@@ -1315,42 +1338,37 @@ const SortableGroupHeader: React.FC<{
   onCancelEdit,
 }) => {
   const { t } = useTranslation();
-
-  // 可排序 hook（仅对有 tagId 的分组生效）
-  const sortable =
-    tagId !== null ? useSortable({ id: `group:${tagId}` }) : null;
+  const isCancellingRef = useRef(false);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
       e.preventDefault();
       onSaveEdit();
     } else if (e.key === "Escape") {
+      isCancellingRef.current = true;
       onCancelEdit();
     }
   };
 
-  return (
-    <div
-      className="flex items-center gap-2 px-4 py-2 bg-muted/50 hover:bg-muted/70 transition-colors"
-      ref={sortable?.setNodeRef}
-      style={{
-        transform: CSS.Transform.toString(sortable?.transform ?? null),
-        transition: sortable?.transition,
-        opacity: sortable?.isDragging ? 0.5 : 1,
-      }}
-    >
-      {/* 拖拽手柄（仅自定义分组） */}
-      {tagId !== null && (
-        <button
-          type="button"
-          className="cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground flex-shrink-0"
-          {...sortable?.attributes}
-          {...sortable?.listeners}
-        >
-          <GripVertical size={14} />
-        </button>
-      )}
+  const handleBlur = () => {
+    // 延迟检查，让 mousedown 事件先触发
+    requestAnimationFrame(() => {
+      if (!isCancellingRef.current) {
+        onSaveEdit();
+      }
+      isCancellingRef.current = false;
+    });
+  };
 
+  const handleCancelMouseDown = (e: React.MouseEvent) => {
+    // 阻止 Input 失焦
+    e.preventDefault();
+    isCancellingRef.current = true;
+    onCancelEdit();
+  };
+
+  return (
+    <>
       {/* 展开/折叠 */}
       <button
         type="button"
@@ -1378,7 +1396,7 @@ const SortableGroupHeader: React.FC<{
             value={editingName}
             onChange={(e) => onEditingNameChange(e.target.value)}
             onKeyDown={handleKeyDown}
-            onBlur={onSaveEdit}
+            onBlur={handleBlur}
             className="h-6 text-sm py-0 px-1"
           />
           <button
@@ -1390,7 +1408,7 @@ const SortableGroupHeader: React.FC<{
           </button>
           <button
             type="button"
-            onClick={onCancelEdit}
+            onMouseDown={handleCancelMouseDown}
             className="text-muted-foreground hover:text-foreground flex-shrink-0"
           >
             <X size={14} />
@@ -1412,6 +1430,53 @@ const SortableGroupHeader: React.FC<{
       >
         {skillCount}
       </Badge>
+    </>
+  );
+};
+
+/** 可排序的分组头部（有 tagId，支持拖拽排序） */
+const SortableGroupHeader: React.FC<GroupHeaderProps> = ({
+  tagId,
+  ...props
+}) => {
+  const {
+    setNodeRef,
+    attributes,
+    listeners,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: `group:${tagId}` });
+
+  return (
+    <div
+      ref={setNodeRef}
+      className="flex items-center gap-2 px-4 py-2 bg-muted/50 hover:bg-muted/70 transition-colors"
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : 1,
+      }}
+    >
+      {/* 拖拽手柄 */}
+      <button
+        type="button"
+        className="cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground flex-shrink-0"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical size={14} />
+      </button>
+      <GroupHeaderContent tagId={tagId} {...props} />
+    </div>
+  );
+};
+
+/** 不可排序的分组头部（未分组区域） */
+const StaticGroupHeader: React.FC<GroupHeaderProps> = ({ tagId, ...props }) => {
+  return (
+    <div className="flex items-center gap-2 px-4 py-2 bg-muted/50 hover:bg-muted/70 transition-colors">
+      <GroupHeaderContent tagId={tagId} {...props} />
     </div>
   );
 };

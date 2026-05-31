@@ -2069,7 +2069,15 @@
       "groupedView": "グループ表示",
       "doubleClickToEdit": "ダブルクリックで名前変更",
       "moveSuccess": "スキルをグループに移動しました",
-      "renameSuccess": "タグ名を変更しました"
+      "renameSuccess": "タグ名を変更しました",
+      "createSuccess": "タグを作成しました",
+      "createFailed": "タグの作成に失敗しました",
+      "renameFailed": "タグ名の変更に失敗しました",
+      "deleteSuccess": "タグを削除しました",
+      "deleteFailed": "タグの削除に失敗しました",
+      "reorderSuccess": "並び順を更新しました",
+      "reorderFailed": "並び順の更新に失敗しました",
+      "count": "{{count}} 個のタグ"
     },
     "openDirectory": "ファイルマネージャーで開く"
   },

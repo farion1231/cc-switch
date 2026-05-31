@@ -66,7 +66,7 @@ impl Database {
         )
         .map_err(|e| {
             if e.to_string().contains("UNIQUE") {
-                AppError::Database(format!("标签 \"{name}\" 已存在"))
+                AppError::Database(format!("Tag \"{name}\" already exists"))
             } else {
                 AppError::Database(e.to_string())
             }
@@ -91,7 +91,7 @@ impl Database {
             )
             .map_err(|e| {
                 if e.to_string().contains("UNIQUE") {
-                    AppError::Database(format!("标签 \"{name}\" 已存在"))
+                    AppError::Database(format!("Tag \"{name}\" already exists"))
                 } else {
                     AppError::Database(e.to_string())
                 }
@@ -124,26 +124,34 @@ impl Database {
 
     // ========== Tag Assignments ==========
 
-    /// 为 skill 分配标签（替换现有分配）
+    /// 为 skill 分配标签（替换现有分配，事务保证原子性）
     pub fn set_skill_tags(&self, skill_id: &str, tag_ids: &[i64]) -> Result<(), AppError> {
-        let conn = lock_conn!(self.conn);
+        let mut conn = lock_conn!(self.conn);
+
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
 
         // 先删除该 skill 的所有现有分配
-        conn.execute(
+        tx.execute(
             "DELETE FROM skill_tag_assignments WHERE skill_id = ?1",
             params![skill_id],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
         // 插入新分配
-        let mut stmt = conn
-            .prepare("INSERT INTO skill_tag_assignments (skill_id, tag_id) VALUES (?1, ?2)")
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        for tag_id in tag_ids {
-            stmt.execute(params![skill_id, tag_id])
+        {
+            let mut stmt = tx
+                .prepare("INSERT INTO skill_tag_assignments (skill_id, tag_id) VALUES (?1, ?2)")
                 .map_err(|e| AppError::Database(e.to_string()))?;
+
+            for tag_id in tag_ids {
+                stmt.execute(params![skill_id, tag_id])
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+            }
         }
+
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
 
         Ok(())
     }

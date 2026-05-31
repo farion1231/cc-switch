@@ -17,13 +17,9 @@ import { toast } from "sonner";
 
 interface TagAssignPopoverProps {
   skillId: string;
-  skillName: string;
 }
 
-export function TagAssignPopover({
-  skillId,
-  skillName,
-}: TagAssignPopoverProps) {
+export function TagAssignPopover({ skillId }: TagAssignPopoverProps) {
   const { t } = useTranslation();
   const [newTagName, setNewTagName] = useState("");
 
@@ -90,19 +86,20 @@ export function TagAssignPopover({
         <button
           type="button"
           className="relative text-muted-foreground/60 hover:text-foreground flex-shrink-0"
-          title={t("skills.assignTags")}
+          title={t("skills.tags.assignTag")}
         >
           <Tag size={12} />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-56">
-        <div className="space-y-2">
+      <PopoverContent align="end" className="w-60 overflow-hidden p-0">
+        <div className="border-b border-border-default px-3 py-2">
           <p className="text-xs font-medium text-muted-foreground">
-            {t("skills.tagsFor", { name: skillName })}
+            {t("skills.tags.assignTag")}
           </p>
+        </div>
 
-          {/* 标签列表 */}
-          <div className="max-h-48 overflow-y-auto space-y-1">
+        <div className="max-h-52 overflow-y-auto p-1.5 [scrollbar-width:thin]">
+          <div className="space-y-0.5">
             {allTags.map((tag) => {
               const isChecked = assignedTagIds.has(tag.id);
               return (
@@ -110,12 +107,16 @@ export function TagAssignPopover({
                   key={tag.id}
                   type="button"
                   onClick={() => handleToggleTag(tag.id)}
-                  className="flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-sm hover:bg-accent transition-colors text-left"
+                  className={`flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm transition-colors ${
+                    isChecked
+                      ? "bg-blue-500/10 text-foreground"
+                      : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                  }`}
                 >
                   <div
-                    className={`flex h-4 w-4 items-center justify-center rounded-sm border ${
+                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors ${
                       isChecked
-                        ? "bg-primary border-primary text-primary-foreground"
+                        ? "border-blue-500 bg-blue-500 text-white"
                         : "border-muted-foreground/30"
                     }`}
                   >
@@ -125,39 +126,40 @@ export function TagAssignPopover({
                 </button>
               );
             })}
-
-            {allTags.length === 0 && (
-              <p className="text-xs text-muted-foreground py-2 text-center">
-                {t("skills.noTags")}
-              </p>
-            )}
           </div>
 
-          {/* 快速创建标签 */}
-          <div className="flex gap-1 pt-1 border-t">
-            <input
-              type="text"
-              value={newTagName}
-              onChange={(e) => setNewTagName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  handleCreateAndAssign();
-                }
-              }}
-              placeholder={t("skills.newTagPlaceholder")}
-              className="flex-1 h-7 text-xs px-2 rounded-sm border bg-transparent outline-none focus:ring-1 focus:ring-ring"
-            />
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0"
-              onClick={handleCreateAndAssign}
-              disabled={!newTagName.trim()}
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </Button>
-          </div>
+          {allTags.length === 0 && (
+            <p className="py-6 text-center text-xs text-muted-foreground">
+              {t("skills.tags.noTags")}
+            </p>
+          )}
+        </div>
+
+        {/* 快速创建标签 */}
+        <div className="flex gap-1.5 border-t border-border-default bg-muted/10 p-2">
+          <input
+            type="text"
+            value={newTagName}
+            onChange={(e) => setNewTagName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleCreateAndAssign();
+              }
+            }}
+            placeholder={t("skills.tags.tagNamePlaceholder")}
+            className="h-8 min-w-0 flex-1 rounded-md border border-border-default bg-background px-2.5 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+          />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0 cursor-pointer"
+            onClick={handleCreateAndAssign}
+            disabled={!newTagName.trim()}
+            title={t("skills.tags.create")}
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </Button>
         </div>
       </PopoverContent>
     </Popover>

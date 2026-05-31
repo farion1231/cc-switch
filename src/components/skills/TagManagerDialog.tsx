@@ -24,9 +24,9 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogClose,
 } from "@/components/ui/dialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
@@ -85,15 +85,15 @@ function SortableTagRow({
     <div
       ref={setNodeRef}
       style={style}
-      className="flex items-center gap-2 rounded-md border border-border/40 bg-background px-3 py-2"
+      className="group flex min-h-12 items-center gap-3 rounded-md border border-transparent px-3 py-2 transition-colors hover:border-border-default hover:bg-muted/35"
     >
       {/* 拖拽手柄 */}
       <button
-        className="cursor-grab touch-none text-muted-foreground hover:text-foreground"
+        className="cursor-grab touch-none text-muted-foreground/70 transition-colors hover:text-foreground active:cursor-grabbing"
         {...attributes}
         {...listeners}
       >
-        <GripVertical className="h-4 w-4" />
+        <GripVertical className="h-4 w-4" aria-hidden="true" />
       </button>
 
       {/* 标签名 / 编辑输入框 */}
@@ -106,11 +106,11 @@ function SortableTagRow({
               if (e.key === "Enter") onSaveEdit();
               if (e.key === "Escape") onCancelEdit();
             }}
-            className="h-7 text-sm"
+            className="h-8 text-sm"
             autoFocus
           />
         ) : (
-          <span className="text-sm truncate block">{tag.name}</span>
+          <span className="block truncate text-sm font-medium">{tag.name}</span>
         )}
       </div>
 
@@ -121,7 +121,7 @@ function SortableTagRow({
             <Button
               variant="ghost"
               size="icon"
-              className="h-7 w-7"
+              className="h-8 w-8 cursor-pointer"
               onClick={onSaveEdit}
               title={t("common.save")}
             >
@@ -130,7 +130,7 @@ function SortableTagRow({
             <Button
               variant="ghost"
               size="icon"
-              className="h-7 w-7"
+              className="h-8 w-8 cursor-pointer"
               onClick={onCancelEdit}
               title={t("common.cancel")}
             >
@@ -142,7 +142,7 @@ function SortableTagRow({
             <Button
               variant="ghost"
               size="icon"
-              className="h-7 w-7"
+              className="h-8 w-8 cursor-pointer opacity-70 transition-opacity group-hover:opacity-100"
               onClick={() => onStartEdit(tag)}
               title={t("skills.tags.rename")}
             >
@@ -151,7 +151,7 @@ function SortableTagRow({
             <Button
               variant="ghost"
               size="icon"
-              className="h-7 w-7 text-destructive hover:text-destructive"
+              className="h-8 w-8 cursor-pointer opacity-70 transition-opacity hover:bg-red-500/10 hover:text-red-500 group-hover:opacity-100"
               onClick={() => onDelete(tag)}
               title={t("skills.tags.delete")}
             >
@@ -200,19 +200,10 @@ export function TagManagerDialog({ open, onClose }: TagManagerDialogProps) {
     try {
       await createTag.mutateAsync(name);
       setNewTagName("");
-      toast.success(
-        t("skills.tags.createSuccess", {
-          defaultValue: "标签创建成功",
-        }),
-        { closeButton: true },
-      );
+      toast.success(t("skills.tags.createSuccess"), { closeButton: true });
     } catch (error) {
       console.error("[TagManagerDialog] 创建标签失败", error);
-      toast.error(
-        t("skills.tags.createFailed", {
-          defaultValue: "标签创建失败",
-        }),
-      );
+      toast.error(t("skills.tags.createFailed"));
     }
   }, [newTagName, createTag, t]);
 
@@ -238,19 +229,10 @@ export function TagManagerDialog({ open, onClose }: TagManagerDialogProps) {
       await updateTag.mutateAsync({ id: editingId, name });
       setEditingId(null);
       setEditingName("");
-      toast.success(
-        t("skills.tags.renameSuccess", {
-          defaultValue: "标签重命名成功",
-        }),
-        { closeButton: true },
-      );
+      toast.success(t("skills.tags.renameSuccess"), { closeButton: true });
     } catch (error) {
       console.error("[TagManagerDialog] 重命名标签失败", error);
-      toast.error(
-        t("skills.tags.renameFailed", {
-          defaultValue: "标签重命名失败",
-        }),
-      );
+      toast.error(t("skills.tags.renameFailed"));
     }
   }, [editingId, editingName, updateTag, t]);
 
@@ -260,19 +242,10 @@ export function TagManagerDialog({ open, onClose }: TagManagerDialogProps) {
       try {
         await deleteTag.mutateAsync(tag.id);
         setDeleteTarget(null);
-        toast.success(
-          t("skills.tags.deleteSuccess", {
-            defaultValue: "标签删除成功",
-          }),
-          { closeButton: true },
-        );
+        toast.success(t("skills.tags.deleteSuccess"), { closeButton: true });
       } catch (error) {
         console.error("[TagManagerDialog] 删除标签失败", error);
-        toast.error(
-          t("skills.tags.deleteFailed", {
-            defaultValue: "标签删除失败",
-          }),
-        );
+        toast.error(t("skills.tags.deleteFailed"));
       }
     },
     [deleteTag, t],
@@ -293,19 +266,10 @@ export function TagManagerDialog({ open, onClose }: TagManagerDialogProps) {
 
       try {
         await reorderTags.mutateAsync(orderedIds);
-        toast.success(
-          t("skills.tags.reorderSuccess", {
-            defaultValue: "排序已更新",
-          }),
-          { closeButton: true },
-        );
+        toast.success(t("skills.tags.reorderSuccess"), { closeButton: true });
       } catch (error) {
         console.error("[TagManagerDialog] 标签排序失败", error);
-        toast.error(
-          t("skills.tags.reorderFailed", {
-            defaultValue: "排序更新失败",
-          }),
-        );
+        toast.error(t("skills.tags.reorderFailed"));
       }
     },
     [tags, reorderTags, t],
@@ -326,16 +290,57 @@ export function TagManagerDialog({ open, onClose }: TagManagerDialogProps) {
   return (
     <>
       <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-        <DialogContent className="sm:max-w-md" zIndex="alert">
-          <DialogHeader>
-            <DialogTitle>{t("skills.tags.manage")}</DialogTitle>
+        <DialogContent
+          className="gap-0 overflow-hidden p-0 sm:max-w-[520px]"
+          zIndex="alert"
+        >
+          <DialogHeader className="border-b border-border-default bg-background px-6 py-4">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <DialogTitle>{t("skills.tags.manage")}</DialogTitle>
+                <span className="rounded-full border border-border-default bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground">
+                  {t("skills.tags.count", { count: sortedTags.length })}
+                </span>
+              </div>
+              <DialogClose asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0 cursor-pointer"
+                  title={t("common.close")}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </DialogClose>
+            </div>
             <DialogDescription className="sr-only">
               {t("skills.tags.manage")}
             </DialogDescription>
           </DialogHeader>
 
+          {/* 新建标签 */}
+          <div className="border-b border-border-default bg-muted/10 px-6 py-4">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+              <Input
+                value={newTagName}
+                onChange={(e) => setNewTagName(e.target.value)}
+                onKeyDown={handleNewTagKeyDown}
+                placeholder={t("skills.tags.tagNamePlaceholder")}
+                className="h-10"
+              />
+              <Button
+                onClick={handleCreate}
+                disabled={!newTagName.trim() || createTag.isPending}
+                className="h-10 px-4"
+              >
+                <Plus className="h-4 w-4" />
+                {t("skills.tags.create")}
+              </Button>
+            </div>
+          </div>
+
           {/* 标签列表 */}
-          <div className="max-h-[50vh] overflow-y-auto [scrollbar-width:thin] space-y-2 py-2">
+          <div className="max-h-[52vh] overflow-y-auto p-3 [scrollbar-width:thin]">
             {sortedTags.length === 0 ? (
               <div className="py-8 text-center text-sm text-muted-foreground">
                 {t("skills.tags.noTags")}
@@ -350,7 +355,7 @@ export function TagManagerDialog({ open, onClose }: TagManagerDialogProps) {
                   items={sortedTags.map((tag) => tag.id)}
                   strategy={verticalListSortingStrategy}
                 >
-                  <div className="space-y-2">
+                  <div className="space-y-1">
                     {sortedTags.map((tag) => (
                       <SortableTagRow
                         key={tag.id}
@@ -369,31 +374,6 @@ export function TagManagerDialog({ open, onClose }: TagManagerDialogProps) {
               </DndContext>
             )}
           </div>
-
-          {/* 新建标签 */}
-          <div className="flex items-center gap-2 pt-2 border-t">
-            <Input
-              value={newTagName}
-              onChange={(e) => setNewTagName(e.target.value)}
-              onKeyDown={handleNewTagKeyDown}
-              placeholder={t("skills.tags.tagNamePlaceholder")}
-              className="flex-1"
-            />
-            <Button
-              onClick={handleCreate}
-              disabled={!newTagName.trim() || createTag.isPending}
-              size="sm"
-            >
-              <Plus className="h-4 w-4 mr-1" />
-              {t("skills.tags.create")}
-            </Button>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={onClose}>
-              {t("common.close")}
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 

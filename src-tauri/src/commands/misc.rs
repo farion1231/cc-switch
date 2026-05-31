@@ -2897,6 +2897,7 @@ del \"%~f0\" >nul 2>&1
     result
 }
 
+#[cfg(not(target_os = "windows"))]
 fn build_shell_cd_command(cwd: Option<&Path>) -> String {
     cwd.map(|dir| {
         format!(
@@ -2907,6 +2908,7 @@ fn build_shell_cd_command(cwd: Option<&Path>) -> String {
     .unwrap_or_default()
 }
 
+#[cfg(not(target_os = "windows"))]
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
@@ -4551,6 +4553,7 @@ mod tests {
         assert!(error.contains("目录不存在"));
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn build_shell_cd_command_quotes_spaces_and_single_quotes() {
         let command = build_shell_cd_command(Some(Path::new("/tmp/project O'Brien")));

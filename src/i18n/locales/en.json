@@ -2069,7 +2069,15 @@
       "groupedView": "Grouped View",
       "doubleClickToEdit": "Double-click to rename",
       "moveSuccess": "Skill moved to group",
-      "renameSuccess": "Tag renamed"
+      "renameSuccess": "Tag renamed",
+      "createSuccess": "Tag created",
+      "createFailed": "Failed to create tag",
+      "renameFailed": "Failed to rename tag",
+      "deleteSuccess": "Tag deleted",
+      "deleteFailed": "Failed to delete tag",
+      "reorderSuccess": "Order updated",
+      "reorderFailed": "Failed to update order",
+      "count": "{{count}} tags"
     },
     "openDirectory": "Open in file manager"
   },

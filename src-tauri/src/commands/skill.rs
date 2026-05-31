@@ -12,6 +12,7 @@ use crate::services::skill::{
     SkillsShSearchResult,
 };
 use crate::store::AppState;
+use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use tauri::AppHandle;
@@ -418,12 +419,71 @@ pub fn get_all_skill_tag_assignments(
 #[tauri::command]
 pub async fn open_skill_directory(handle: AppHandle, directory: String) -> Result<(), String> {
     let ssot_dir = SkillService::get_ssot_dir().map_err(|e| e.to_string())?;
-    let dir = ssot_dir.join(&directory);
-    if !dir.exists() {
-        return Err(format!("目录不存在: {}", dir.display()));
-    }
+    let dir = resolve_skill_directory(&ssot_dir, &directory)?;
+
     handle
         .opener()
         .open_path(dir.to_string_lossy().to_string(), None::<String>)
-        .map_err(|e| format!("打开目录失败: {e}"))
+        .map_err(|e| format!("Failed to open directory: {e}"))
+}
+
+fn resolve_skill_directory(ssot_dir: &Path, directory: &str) -> Result<PathBuf, String> {
+    let requested = Path::new(&directory);
+    if directory.trim().is_empty()
+        || requested.is_absolute()
+        || requested.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err("Invalid skill directory".to_string());
+    }
+
+    let ssot_dir = ssot_dir
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve skills directory: {e}"))?;
+    let dir = ssot_dir.join(requested);
+    let dir = dir
+        .canonicalize()
+        .map_err(|_| format!("Directory not found: {}", dir.display()))?;
+
+    if !dir.starts_with(&ssot_dir) || !dir.is_dir() {
+        return Err("Invalid skill directory".to_string());
+    }
+
+    Ok(dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_skill_directory;
+
+    #[test]
+    fn resolve_skill_directory_rejects_escape_paths() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let ssot = temp.path().join("skills");
+        std::fs::create_dir(&ssot).expect("create ssot");
+        std::fs::create_dir(temp.path().join("outside")).expect("create outside");
+
+        assert!(resolve_skill_directory(&ssot, "").is_err());
+        assert!(resolve_skill_directory(&ssot, "../outside").is_err());
+        assert!(resolve_skill_directory(&ssot, temp.path().to_string_lossy().as_ref()).is_err());
+
+        #[cfg(windows)]
+        assert!(resolve_skill_directory(&ssot, r"C:\Users").is_err());
+    }
+
+    #[test]
+    fn resolve_skill_directory_accepts_existing_relative_directory() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let ssot = temp.path().join("skills");
+        let skill = ssot.join("my-skill");
+        std::fs::create_dir(&ssot).expect("create ssot");
+        std::fs::create_dir(&skill).expect("create skill");
+
+        let resolved = resolve_skill_directory(&ssot, "my-skill").expect("resolve skill");
+        assert_eq!(resolved, skill.canonicalize().expect("canonical skill"));
+    }
 }

@@ -2069,7 +2069,15 @@
       "groupedView": "分组视图",
       "doubleClickToEdit": "双击重命名",
       "moveSuccess": "技能已移动到新分组",
-      "renameSuccess": "标签已重命名"
+      "renameSuccess": "标签已重命名",
+      "createSuccess": "标签创建成功",
+      "createFailed": "标签创建失败",
+      "renameFailed": "标签重命名失败",
+      "deleteSuccess": "标签删除成功",
+      "deleteFailed": "标签删除失败",
+      "reorderSuccess": "排序已更新",
+      "reorderFailed": "排序更新失败",
+      "count": "{{count}} 个标签"
     },
     "openDirectory": "在文件管理器中打开"
   },
