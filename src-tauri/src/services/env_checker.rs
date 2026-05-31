@@ -37,6 +37,7 @@ fn get_keywords_for_app(app: &str) -> Vec<&str> {
         "claude" => vec!["ANTHROPIC"],
         "codex" => vec!["OPENAI"],
         "gemini" => vec!["GEMINI", "GOOGLE_GEMINI"],
+        "pi" => vec!["PI_AGENT", "PI_CONFIG", "PI_MODEL", "PI_PROVIDER"],
         _ => vec![],
     }
 }
@@ -162,6 +163,10 @@ mod tests {
         assert_eq!(
             get_keywords_for_app("gemini"),
             vec!["GEMINI", "GOOGLE_GEMINI"]
+        );
+        assert_eq!(
+            get_keywords_for_app("pi"),
+            vec!["PI_AGENT", "PI_CONFIG", "PI_MODEL", "PI_PROVIDER"]
         );
         assert_eq!(get_keywords_for_app("unknown"), Vec::<&str>::new());
     }
