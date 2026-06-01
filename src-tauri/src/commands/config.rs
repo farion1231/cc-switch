@@ -244,7 +244,7 @@ pub async fn get_claude_common_config_snippet(
 pub async fn set_claude_common_config_snippet(
     snippet: String,
     state: tauri::State<'_, crate::store::AppState>,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let is_cleared = snippet.trim().is_empty();
 
     let value = if is_cleared {
@@ -259,13 +259,13 @@ pub async fn set_claude_common_config_snippet(
 
     state
         .db
-        .set_config_snippet("claude", value)
+        .set_config_snippet("claude", value.clone())
         .map_err(|e| e.to_string())?;
     state
         .db
         .set_config_snippet_cleared("claude", is_cleared)
         .map_err(|e| e.to_string())?;
-    Ok(())
+    Ok(value)
 }
 
 #[tauri::command]
@@ -284,7 +284,7 @@ pub async fn set_common_config_snippet(
     app_type: String,
     snippet: String,
     state: tauri::State<'_, crate::store::AppState>,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let is_cleared = snippet.trim().is_empty();
     let old_snippet = state
         .db
@@ -323,7 +323,7 @@ pub async fn set_common_config_snippet(
 
     state
         .db
-        .set_config_snippet(&app_type, value)
+        .set_config_snippet(&app_type, value.clone())
         .map_err(|e| e.to_string())?;
     state
         .db
@@ -365,7 +365,7 @@ pub async fn set_common_config_snippet(
         )
         .map_err(|e| e.to_string())?;
     }
-    Ok(())
+    Ok(value)
 }
 
 #[cfg(test)]
