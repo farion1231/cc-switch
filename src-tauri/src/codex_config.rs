@@ -675,6 +675,115 @@ fn codex_model_catalog_from_settings(
     Ok(Some(codex_model_catalog_from_specs(&specs, &template)))
 }
 
+/// Read the `models` array from the cc-switch–generated Codex catalog file
+/// (`~/.codex/cc-switch-model-catalog.json`). Best-effort: any failure (missing
+/// file, parse error, unexpected shape) yields an empty list.
+fn read_codex_catalog_file_models() -> Vec<Value> {
+    let path = get_codex_model_catalog_path();
+    let Ok(catalog) = read_json_file::<Value>(&path) else {
+        return Vec::new();
+    };
+    catalog
+        .get("models")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Build an OpenAI-style `/v1/models` list response so the Codex **desktop**
+/// app can list and switch the configured models.
+///
+/// The desktop refreshes its model picker via an online `GET {base_url}/models`
+/// request, unlike the CLI which reads `model_catalog_json` from disk. Without a
+/// proxy answer the desktop picker can only show the active model as "Custom"
+/// and cannot switch models.
+///
+/// Source priority (most authoritative first):
+///   1. the cc-switch–generated catalog file (`cc-switch-model-catalog.json`,
+///      the exact file the CLI consumes) — the durable source of truth;
+///   2. the provider's `modelCatalog` in `settings` (present only right after a
+///      form save; the field is stripped when persisted);
+///   3. the single active `model` from the provider config text, so the picker
+///      always lists at least the current model.
+///
+/// The response carries the entries under both `data` (OpenAI list shape) and
+/// `models` (Codex catalog shape), and each entry exposes both `id` and `slug`,
+/// so it parses regardless of which form the Codex client expects.
+pub fn codex_models_list_response(settings: &Value) -> Result<Value, AppError> {
+    let config_text = settings
+        .get("config")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+
+    // 1. The generated catalog file (rich entries: reasoning levels, context
+    //    window, …) — what cc-switch writes and the Codex CLI reads.
+    let mut entries: Vec<Value> = read_codex_catalog_file_models();
+
+    // 2. Regenerate from the provider's settings `modelCatalog` if the file is
+    //    unavailable/empty.
+    if entries.is_empty() {
+        entries = match codex_model_catalog_from_settings(settings, config_text) {
+            Ok(Some(catalog)) => catalog
+                .get("models")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+            Ok(None) => Vec::new(),
+            Err(_) => codex_catalog_model_specs(settings, config_text)
+                .into_iter()
+                .map(|spec| {
+                    json!({
+                        "slug": spec.model,
+                        "display_name": spec.display_name,
+                        "context_window": spec.context_window,
+                    })
+                })
+                .collect(),
+        };
+    }
+
+    // 3. Last resort: the single active `model` from the config text, so the
+    //    picker always lists at least the currently selected model.
+    if entries.is_empty() {
+        if let Some(model) = config_text
+            .parse::<toml::Value>()
+            .ok()
+            .and_then(|doc| {
+                doc.get("model")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string)
+            })
+            .filter(|model| !model.is_empty())
+        {
+            entries.push(json!({ "slug": model.clone(), "display_name": model }));
+        }
+    }
+
+    let data: Vec<Value> = entries
+        .into_iter()
+        .map(|mut entry| {
+            if let Some(obj) = entry.as_object_mut() {
+                let slug = obj
+                    .get("slug")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                obj.entry("id".to_string()).or_insert_with(|| json!(slug));
+                obj.insert("object".to_string(), json!("model"));
+                obj.entry("owned_by".to_string())
+                    .or_insert_with(|| json!("cc-switch"));
+            }
+            entry
+        })
+        .collect();
+
+    Ok(json!({
+        "object": "list",
+        "data": data.clone(),
+        "models": data,
+    }))
+}
+
 fn set_codex_model_catalog_json_field(
     config_text: &str,
     catalog_path: Option<&Path>,
