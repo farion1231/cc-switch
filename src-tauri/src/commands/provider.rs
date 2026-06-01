@@ -219,6 +219,17 @@ pub fn import_claude_desktop_providers_from_claude(
     Ok(imported)
 }
 
+#[tauri::command]
+pub fn ensure_claude_desktop_official_provider(state: State<'_, AppState>) -> Result<bool, String> {
+    state
+        .db
+        .ensure_official_seed_by_id(
+            crate::database::CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID,
+            AppType::ClaudeDesktop,
+        )
+        .map_err(|e| e.to_string())
+}
+
 fn claude_provider_models_are_claude_safe(provider: &Provider) -> bool {
     let Some(env) = provider
         .settings_config
@@ -398,6 +409,14 @@ pub async fn queryProviderUsage(
     inner
 }
 
+/// Resolve `(base_url, api_key)` for native usage queries, delegating to the
+/// per-app resolver on `Provider`. Missing provider → empty credentials.
+fn resolve_native_credentials(app_type: &AppType, provider: Option<&Provider>) -> (String, String) {
+    provider
+        .map(|p| p.resolve_usage_credentials(app_type))
+        .unwrap_or_default()
+}
+
 async fn query_provider_usage_inner(
     state: &AppState,
     copilot_state: &CopilotAuthState,
@@ -455,25 +474,10 @@ async fn query_provider_usage_inner(
 
     // ── Coding Plan 专用路径 ──
     if template_type == TEMPLATE_TYPE_TOKEN_PLAN {
-        // 从供应商配置中提取 API Key 和 Base URL
-        let settings_config = provider
-            .map(|p| &p.settings_config)
-            .cloned()
-            .unwrap_or_default();
-        let env = settings_config.get("env");
-        let base_url = env
-            .and_then(|e| e.get("ANTHROPIC_BASE_URL"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let api_key = env
-            .and_then(|e| {
-                e.get("ANTHROPIC_AUTH_TOKEN")
-                    .or_else(|| e.get("ANTHROPIC_API_KEY"))
-            })
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        // 从供应商配置中提取 API Key 和 Base URL（按 app 区分存储格式）
+        let (base_url, api_key) = resolve_native_credentials(&app_type, provider);
 
-        let quota = crate::services::coding_plan::get_coding_plan_quota(base_url, api_key)
+        let quota = crate::services::coding_plan::get_coding_plan_quota(&base_url, &api_key)
             .await
             .map_err(|e| format!("Failed to query coding plan: {e}"))?;
 
@@ -515,24 +519,10 @@ async fn query_provider_usage_inner(
 
     // ── 官方余额查询路径 ──
     if template_type == TEMPLATE_TYPE_BALANCE {
-        let settings_config = provider
-            .map(|p| &p.settings_config)
-            .cloned()
-            .unwrap_or_default();
-        let env = settings_config.get("env");
-        let base_url = env
-            .and_then(|e| e.get("ANTHROPIC_BASE_URL"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let api_key = env
-            .and_then(|e| {
-                e.get("ANTHROPIC_AUTH_TOKEN")
-                    .or_else(|| e.get("ANTHROPIC_API_KEY"))
-            })
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        // 按 app 区分的凭据存储格式提取 Base URL 与 API Key
+        let (base_url, api_key) = resolve_native_credentials(&app_type, provider);
 
-        return crate::services::balance::get_balance(base_url, api_key)
+        return crate::services::balance::get_balance(&base_url, &api_key)
             .await
             .map_err(|e| format!("Failed to query balance: {e}"));
     }
@@ -955,5 +945,38 @@ mod import_claude_desktop_tests {
                 .label_override,
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod native_query_credentials_tests {
+    use super::resolve_native_credentials;
+    use crate::app_config::AppType;
+    use crate::provider::Provider;
+    use serde_json::json;
+
+    #[test]
+    fn delegates_to_provider_for_codex() {
+        let provider = Provider::with_id(
+            "test".to_string(),
+            "Test".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-codex" },
+                "config": "model_provider = \"deepseek\"\n\
+                           [model_providers.deepseek]\n\
+                           base_url = \"https://api.deepseek.com\"\n",
+            }),
+            None,
+        );
+        let (base_url, api_key) = resolve_native_credentials(&AppType::Codex, Some(&provider));
+        assert_eq!(base_url, "https://api.deepseek.com");
+        assert_eq!(api_key, "sk-codex");
+    }
+
+    #[test]
+    fn missing_provider_yields_empty() {
+        let (base_url, api_key) = resolve_native_credentials(&AppType::Codex, None);
+        assert!(base_url.is_empty());
+        assert!(api_key.is_empty());
     }
 }
