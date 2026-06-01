@@ -197,7 +197,7 @@ Modern AI-powered coding relies on tools like Claude Code, Claude Desktop, Codex
 
 ### Session Manager & Workspace
 
-- Browse, search, and restore conversation history across all apps
+- Browse, search, and restore conversation history across supported session sources
 - **Workspace editor** (OpenClaw) — Edit agent files (AGENTS.md, SOUL.md, etc.) with Markdown preview
 
 ### System & Platform
@@ -209,7 +209,7 @@ Modern AI-powered coding relies on tools like Claude Code, Claude Desktop, Codex
 ## FAQ
 
 <details>
-<summary><strong>Which AI CLI tools does CC Switch support?</strong></summary>
+<summary><strong>Which AI tools does CC Switch support?</strong></summary>
 
 CC Switch supports seven tools: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **OpenCode**, **OpenClaw**, and **Hermes**. Each tool has dedicated provider presets and configuration management.
 
@@ -280,8 +280,8 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 
 - **MCP**: Click the "MCP" button → Add servers via templates or custom config → Toggle per-app sync
 - **Prompts**: Click "Prompts" → Create presets with Markdown editor → Activate to sync to live files
-- **Skills**: Click "Skills" → Browse GitHub repos → One-click install to all apps
-- **Sessions**: Click "Sessions" → Browse, search, and restore conversation history across all apps
+- **Skills**: Click "Skills" → Browse GitHub repos → One-click install to supported apps
+- **Sessions**: Click "Sessions" → Browse, search, and restore conversation history across supported session sources
 
 > **Note**: On first launch, you can manually import existing CLI tool configs as the default provider.
 
@@ -372,7 +372,7 @@ Download the latest Linux build from the [Releases](../../releases) page:
 - **ProviderService**: Provider CRUD, switching, backfill, sorting
 - **McpService**: MCP server management, import/export, live file sync
 - **ProxyService**: Local proxy mode with hot-switching and format conversion
-- **SessionManager**: Conversation history browsing across all supported apps
+- **SessionManager**: Conversation history browsing across supported session sources
 - **ConfigService**: Config import/export, backup rotation
 - **SpeedtestService**: API endpoint latency measurement
 
