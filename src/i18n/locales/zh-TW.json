@@ -573,6 +573,18 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI"
     },
+    "featureVisibility": {
+      "title": "功能入口",
+      "description": "選擇在首頁工具列顯示哪些管理功能",
+      "mcp": "MCP 管理",
+      "mcpDescription": "顯示 MCP 伺服器管理入口",
+      "prompts": "提示詞管理",
+      "promptsDescription": "顯示提示詞編輯與啟用入口",
+      "sessions": "會話管理",
+      "sessionsDescription": "顯示會話瀏覽與管理入口",
+      "skills": "Skills 管理",
+      "skillsDescription": "顯示 Skills 管理、匯入與探索入口"
+    },
     "skillStorage": {
       "title": "Skills 儲存位置",
       "description": "選擇 CC Switch 存放 Skills 主副本的目錄",

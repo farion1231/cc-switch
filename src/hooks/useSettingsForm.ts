@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettingsQuery } from "@/lib/query";
 import type { Settings } from "@/types";
+import { normalizeFeatureVisibility } from "@/config/featureVisibility";
 
 type Language = "zh" | "zh-TW" | "en" | "ja";
 
@@ -118,6 +119,7 @@ export function useSettingsForm(): UseSettingsFormResult {
       skipClaudeOnboarding: data.skipClaudeOnboarding ?? false,
       preserveCodexOfficialAuthOnSwitch:
         data.preserveCodexOfficialAuthOnSwitch ?? false,
+      featureVisibility: normalizeFeatureVisibility(data.featureVisibility),
       claudeConfigDir: sanitizeDir(data.claudeConfigDir),
       codexConfigDir: sanitizeDir(data.codexConfigDir),
       geminiConfigDir: sanitizeDir(data.geminiConfigDir),
@@ -143,6 +145,7 @@ export function useSettingsForm(): UseSettingsFormResult {
             enableClaudePluginIntegration: false,
             skipClaudeOnboarding: false,
             preserveCodexOfficialAuthOnSwitch: false,
+            featureVisibility: normalizeFeatureVisibility(),
             language: readPersistedLanguage(),
           } as SettingsFormState);
 
@@ -182,6 +185,9 @@ export function useSettingsForm(): UseSettingsFormResult {
         skipClaudeOnboarding: serverData.skipClaudeOnboarding ?? false,
         preserveCodexOfficialAuthOnSwitch:
           serverData.preserveCodexOfficialAuthOnSwitch ?? false,
+        featureVisibility: normalizeFeatureVisibility(
+          serverData.featureVisibility,
+        ),
         claudeConfigDir: sanitizeDir(serverData.claudeConfigDir),
         codexConfigDir: sanitizeDir(serverData.codexConfigDir),
         geminiConfigDir: sanitizeDir(serverData.geminiConfigDir),

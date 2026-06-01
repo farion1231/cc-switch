@@ -573,6 +573,18 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI"
     },
+    "featureVisibility": {
+      "title": "機能エントリ",
+      "description": "ホームツールバーに表示する管理機能を選択します",
+      "mcp": "MCP 管理",
+      "mcpDescription": "MCP サーバー管理の入口を表示します",
+      "prompts": "プロンプト管理",
+      "promptsDescription": "プロンプト編集と有効化の入口を表示します",
+      "sessions": "セッション管理",
+      "sessionsDescription": "セッション閲覧と管理の入口を表示します",
+      "skills": "Skills 管理",
+      "skillsDescription": "Skills の管理、インポート、探索の入口を表示します"
+    },
     "skillStorage": {
       "title": "スキル保存場所",
       "description": "CC Switch がスキルのマスターコピーを保存するディレクトリを選択します",

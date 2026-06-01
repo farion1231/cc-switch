@@ -267,6 +267,14 @@ export interface VisibleApps {
   hermes: boolean;
 }
 
+// 主页面功能入口显示配置
+export interface FeatureVisibility {
+  mcp: boolean;
+  prompts: boolean;
+  sessions: boolean;
+  skills: boolean;
+}
+
 // WebDAV 同步状态
 export interface WebDavSyncStatus {
   lastSyncAt?: number | null;
@@ -348,6 +356,8 @@ export interface Settings {
 
   // 主页面显示的应用（默认全部显示）
   visibleApps?: VisibleApps;
+  // 主页面显示的功能入口（默认全部显示）
+  featureVisibility?: FeatureVisibility;
 
   // ===== 设备级目录覆盖 =====
   // 覆盖 Claude Code 配置目录（可选）
