@@ -57,11 +57,17 @@ pub fn anthropic_to_gemini_with_shadow(
         .map(|snapshot| snapshot.turns)
         .unwrap_or_default();
 
-    if let Some(system) = build_system_instruction(body.get("system"))? {
+    let messages = body.get("messages").and_then(|value| value.as_array());
+
+    let system_instruction = build_system_instruction(
+        body.get("system"),
+        messages.map(|messages| messages.as_slice()),
+    )?;
+    if let Some(system) = system_instruction {
         result["systemInstruction"] = system;
     }
 
-    if let Some(messages) = body.get("messages").and_then(|value| value.as_array()) {
+    if let Some(messages) = messages {
         result["contents"] = json!(convert_messages_to_contents(messages, &shadow_turns)?);
     }
 
@@ -269,31 +275,26 @@ pub fn extract_gemini_model(body: &Value) -> Option<&str> {
     body.get("model").and_then(|value| value.as_str())
 }
 
-fn build_system_instruction(system: Option<&Value>) -> Result<Option<Value>, ProxyError> {
-    let Some(system) = system else {
-        return Ok(None);
-    };
+fn build_system_instruction(
+    system: Option<&Value>,
+    messages: Option<&[Value]>,
+) -> Result<Option<Value>, ProxyError> {
+    let mut texts = Vec::new();
 
-    if let Some(text) = system.as_str() {
-        if text.is_empty() {
-            return Ok(None);
-        }
-        return Ok(Some(json!({
-            "parts": [{ "text": text }]
-        })));
+    if let Some(system) = system {
+        collect_system_texts(system, &mut texts)?;
     }
 
-    let Some(blocks) = system.as_array() else {
-        return Err(ProxyError::TransformError(
-            "Anthropic system must be a string or an array".to_string(),
-        ));
-    };
-
-    let texts: Vec<&str> = blocks
-        .iter()
-        .filter_map(|block| block.get("text").and_then(|value| value.as_str()))
-        .filter(|text| !text.is_empty())
-        .collect();
+    if let Some(messages) = messages {
+        for message in messages {
+            if message.get("role").and_then(|value| value.as_str()) != Some("system") {
+                continue;
+            }
+            if let Some(content) = message.get("content") {
+                collect_system_texts(content, &mut texts)?;
+            }
+        }
+    }
 
     if texts.is_empty() {
         return Ok(None);
@@ -302,6 +303,31 @@ fn build_system_instruction(system: Option<&Value>) -> Result<Option<Value>, Pro
     Ok(Some(json!({
         "parts": [{ "text": texts.join("\n\n") }]
     })))
+}
+
+fn collect_system_texts(value: &Value, texts: &mut Vec<String>) -> Result<(), ProxyError> {
+    if let Some(text) = value.as_str() {
+        if !text.is_empty() {
+            texts.push(text.to_string());
+        }
+        return Ok(());
+    }
+
+    let Some(blocks) = value.as_array() else {
+        return Err(ProxyError::TransformError(
+            "Anthropic system must be a string or an array".to_string(),
+        ));
+    };
+
+    texts.extend(
+        blocks
+            .iter()
+            .filter_map(|block| block.get("text").and_then(|value| value.as_str()))
+            .filter(|text| !text.is_empty())
+            .map(ToString::to_string),
+    );
+
+    Ok(())
 }
 
 fn build_generation_config(body: &Value) -> Option<Value> {
@@ -342,7 +368,39 @@ fn convert_messages_to_contents(
     } else {
         shadow_turns
     };
+
+    // Build tool name and thought_signature maps from shadow store.
+    // These are used to resolve tool_result→functionResponse names and to
+    // attach thought signatures when replaying tool_use→functionCall.
     let mut tool_name_by_id = build_tool_name_map_from_shadow_turns(shadow_turns);
+    let mut thought_signature_by_id = build_thought_signature_map_from_shadow_turns(shadow_turns);
+
+    // Pre-scan all assistant messages in the request body to seed
+    // tool_name_by_id with every tool_use id mentioned in the conversation
+    // history.  This ensures tool_result blocks can always resolve their
+    // function name even when the shadow store has aged out the relevant
+    // turn (e.g. long conversations, session restarts, or concurrent
+    // session churn).
+    for message in messages {
+        if message.get("role").and_then(|v| v.as_str()) != Some("assistant") {
+            continue;
+        }
+        if let Some(blocks) = message.get("content").and_then(|c| c.as_array()) {
+            for block in blocks {
+                if block.get("type").and_then(|v| v.as_str()) != Some("tool_use") {
+                    continue;
+                }
+                let id = block.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                if !id.is_empty() && !name.is_empty() {
+                    tool_name_by_id
+                        .entry(id.to_string())
+                        .or_insert_with(|| name.to_string());
+                }
+            }
+        }
+    }
+
     let shadow_start_index = total_assistant_messages.saturating_sub(effective_shadow_turns.len());
     let mut assistant_seen_index = 0usize;
 
@@ -351,6 +409,9 @@ fn convert_messages_to_contents(
             .get("role")
             .and_then(|value| value.as_str())
             .unwrap_or("user");
+        if role == "system" {
+            continue;
+        }
 
         let gemini_role = if role == "assistant" { "model" } else { "user" };
 
@@ -371,6 +432,7 @@ fn convert_messages_to_contents(
                 used_shadow_indices.insert(index);
                 let shadow_turn = &effective_shadow_turns[index];
                 merge_tool_names_from_shadow(shadow_turn, &mut tool_name_by_id);
+                merge_thought_signatures_from_shadow(shadow_turn, &mut thought_signature_by_id);
                 if let Some(parts) = shadow_parts(&shadow_turn.assistant_content) {
                     parts
                 } else {
@@ -378,6 +440,7 @@ fn convert_messages_to_contents(
                         message.get("content"),
                         role,
                         &mut tool_name_by_id,
+                        &thought_signature_by_id,
                     )?
                 }
             } else {
@@ -385,10 +448,16 @@ fn convert_messages_to_contents(
                     message.get("content"),
                     role,
                     &mut tool_name_by_id,
+                    &thought_signature_by_id,
                 )?
             }
         } else {
-            convert_message_content_to_parts(message.get("content"), role, &mut tool_name_by_id)?
+            convert_message_content_to_parts(
+                message.get("content"),
+                role,
+                &mut tool_name_by_id,
+                &thought_signature_by_id,
+            )?
         };
 
         if role == "assistant" {
@@ -485,6 +554,7 @@ fn convert_message_content_to_parts(
     content: Option<&Value>,
     role: &str,
     tool_name_by_id: &mut std::collections::HashMap<String, String>,
+    thought_signature_by_id: &std::collections::HashMap<String, String>,
 ) -> Result<Vec<Value>, ProxyError> {
     let Some(content) = content else {
         return Ok(Vec::new());
@@ -590,6 +660,16 @@ fn convert_message_content_to_parts(
                     function_call["id"] = json!(id);
                 }
 
+                // Re-attach the thought_signature that Gemini originally
+                // associated with this functionCall.  The Anthropic format
+                // strips it from the tool_use block, but Gemini requires it
+                // on every functionCall in a multi-turn tool-use exchange.
+                // Without replaying the stored signature the upstream may
+                // reject with "missing a `thought_signature`".
+                if let Some(sig) = thought_signature_by_id.get(id) {
+                    function_call["thoughtSignature"] = json!(sig);
+                }
+
                 parts.push(json!({ "functionCall": function_call }));
             }
             "tool_result" => {
@@ -600,6 +680,20 @@ fn convert_message_content_to_parts(
                 let name = tool_name_by_id
                     .get(tool_use_id)
                     .cloned()
+                    .or_else(|| {
+                        // Last-resort fallback: scan every block in this content
+                        // array for a tool_use whose id matches.  This catches
+                        // edge cases where the tool_use lives in a different
+                        // content block of the same message (non-standard client
+                        // behaviour) or in a re-ordered message array.
+                        blocks.iter().find_map(|b| {
+                            let t = b.get("type").and_then(|v| v.as_str())?;
+                            if t != "tool_use" { return None; }
+                            let id = b.get("id").and_then(|v| v.as_str())?;
+                            if id != tool_use_id { return None; }
+                            b.get("name").and_then(|v| v.as_str()).map(|n| n.to_string())
+                        })
+                    })
                     .ok_or_else(|| {
                         ProxyError::TransformError(format!(
                             "Unable to resolve Gemini functionResponse.name for tool_use_id `{tool_use_id}`"
@@ -874,6 +968,27 @@ fn build_tool_name_map_from_shadow_turns(
     tool_name_by_id
 }
 
+fn build_thought_signature_map_from_shadow_turns(
+    shadow_turns: &[GeminiAssistantTurn],
+) -> HashMap<String, String> {
+    let mut thought_signature_by_id = HashMap::new();
+    for turn in shadow_turns {
+        merge_thought_signatures_from_shadow(turn, &mut thought_signature_by_id);
+    }
+    thought_signature_by_id
+}
+
+fn merge_thought_signatures_from_shadow(
+    turn: &GeminiAssistantTurn,
+    thought_signature_by_id: &mut HashMap<String, String>,
+) {
+    for tool_call in &turn.tool_calls {
+        if let (Some(id), Some(sig)) = (&tool_call.id, &tool_call.thought_signature) {
+            thought_signature_by_id.insert(id.clone(), sig.clone());
+        }
+    }
+}
+
 fn merge_tool_names_from_parts(parts: &[Value], tool_name_by_id: &mut HashMap<String, String>) {
     for part in parts {
         let Some(function_call) = part.get("functionCall") else {
@@ -1061,6 +1176,32 @@ mod tests {
         assert_eq!(result["contents"][0]["role"], "user");
         assert_eq!(result["contents"][0]["parts"][0]["text"], "Hello");
         assert_eq!(result["generationConfig"]["maxOutputTokens"], 128);
+    }
+
+    #[test]
+    fn anthropic_to_gemini_merges_system_messages_into_system_instruction() {
+        let input = json!({
+            "model": "gemini-3-pro",
+            "system": [{ "type": "text", "text": "Top level system." }],
+            "messages": [
+                { "role": "system", "content": "Message system." },
+                {
+                    "role": "system",
+                    "content": [{ "type": "text", "text": "Block system." }]
+                },
+                { "role": "user", "content": "Hello" }
+            ]
+        });
+
+        let result = anthropic_to_gemini(input).unwrap();
+
+        assert_eq!(
+            result["systemInstruction"]["parts"][0]["text"],
+            "Top level system.\n\nMessage system.\n\nBlock system."
+        );
+        assert_eq!(result["contents"].as_array().unwrap().len(), 1);
+        assert_eq!(result["contents"][0]["role"], "user");
+        assert_eq!(result["contents"][0]["parts"][0]["text"], "Hello");
     }
 
     #[test]

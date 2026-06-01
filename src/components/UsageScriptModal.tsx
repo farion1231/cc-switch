@@ -8,7 +8,10 @@ import { usageApi, settingsApi, type AppId } from "@/lib/api";
 import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
 import { useSettingsQuery } from "@/lib/query";
 import { resolveManagedAccountId } from "@/lib/authBinding";
-import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
+import {
+  extractCodexBaseUrl,
+  extractCodexExperimentalBearerToken,
+} from "@/utils/providerConfigUtils";
 import JsonEditor from "./JsonEditor";
 import * as prettier from "prettier/standalone";
 import * as parserBabel from "prettier/parser-babel";
@@ -25,6 +28,7 @@ import {
   CODING_PLAN_PROVIDERS,
   detectCodingPlanProvider,
 } from "@/config/codingPlanProviders";
+import { formatUsageDataSummary } from "@/utils/usageDisplay";
 
 interface UsageScriptModalProps {
   provider: Provider;
@@ -157,51 +161,80 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     apiKey: string | undefined;
     baseUrl: string | undefined;
   } => {
-    try {
-      const config = provider.settingsConfig;
-      if (!config) return { apiKey: undefined, baseUrl: undefined };
+    const trimTrailingSlash = (url: string | undefined) =>
+      typeof url === "string" ? url.replace(/\/+$/, "") : url;
+    const raw = ((): {
+      apiKey: string | undefined;
+      baseUrl: string | undefined;
+    } => {
+      try {
+        const config = provider.settingsConfig;
+        if (!config) return { apiKey: undefined, baseUrl: undefined };
 
-      // 处理不同应用的配置格式
-      if (appId === "claude") {
-        // Claude: { env: { ANTHROPIC_AUTH_TOKEN | ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL } }
-        const env = (config as any).env || {};
-        return {
-          apiKey: env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY,
-          baseUrl: env.ANTHROPIC_BASE_URL,
-        };
-      } else if (appId === "codex") {
-        // Codex: { auth: { OPENAI_API_KEY }, config: TOML string with base_url }
-        const auth = (config as any).auth || {};
-        const configToml = (config as any).config || "";
-        return {
-          apiKey: auth.OPENAI_API_KEY,
-          baseUrl: extractCodexBaseUrl(configToml),
-        };
-      } else if (appId === "gemini") {
-        // Gemini: { env: { GEMINI_API_KEY, GOOGLE_GEMINI_BASE_URL } }
-        const env = (config as any).env || {};
-        return {
-          apiKey: env.GEMINI_API_KEY,
-          baseUrl: env.GOOGLE_GEMINI_BASE_URL,
-        };
-      } else if (appId === "hermes") {
-        // Hermes: settingsConfig 顶层扁平（snake_case，对应 config.yaml）
-        return {
-          apiKey: (config as any).api_key,
-          baseUrl: (config as any).base_url,
-        };
-      } else if (appId === "openclaw") {
-        // OpenClaw: settingsConfig 顶层扁平（camelCase，对应 openclaw.json）
-        return {
-          apiKey: (config as any).apiKey,
-          baseUrl: (config as any).baseUrl,
-        };
+        // 处理不同应用的配置格式
+        if (appId === "claude" || appId === "claude-desktop") {
+          // Claude / Claude Desktop: { env: { ANTHROPIC_AUTH_TOKEN | ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL } }
+          // Key fallbacks mirror the backend resolver (Provider::resolve_usage_credentials).
+          const env = (config as any).env || {};
+          return {
+            apiKey:
+              env.ANTHROPIC_AUTH_TOKEN ||
+              env.ANTHROPIC_API_KEY ||
+              env.OPENROUTER_API_KEY ||
+              env.GOOGLE_API_KEY,
+            baseUrl: env.ANTHROPIC_BASE_URL,
+          };
+        } else if (appId === "codex") {
+          // Codex: { auth: { OPENAI_API_KEY }, config: TOML string with base_url }
+          const auth = (config as any).auth || {};
+          const configToml = (config as any).config || "";
+          const apiKey =
+            typeof auth.OPENAI_API_KEY === "string" &&
+            auth.OPENAI_API_KEY.trim()
+              ? auth.OPENAI_API_KEY
+              : extractCodexExperimentalBearerToken(configToml);
+          return {
+            apiKey,
+            baseUrl: extractCodexBaseUrl(configToml),
+          };
+        } else if (appId === "gemini") {
+          // Gemini: { env: { GEMINI_API_KEY, GOOGLE_GEMINI_BASE_URL } }
+          // Key fallback mirrors the backend resolver (Provider::resolve_usage_credentials).
+          const env = (config as any).env || {};
+          return {
+            apiKey: env.GEMINI_API_KEY || env.GOOGLE_API_KEY,
+            baseUrl: env.GOOGLE_GEMINI_BASE_URL,
+          };
+        } else if (appId === "hermes") {
+          // Hermes: settingsConfig 顶层扁平（snake_case，对应 config.yaml）
+          return {
+            apiKey: (config as any).api_key,
+            baseUrl: (config as any).base_url,
+          };
+        } else if (appId === "openclaw") {
+          // OpenClaw: settingsConfig 顶层扁平（camelCase，对应 openclaw.json）
+          return {
+            apiKey: (config as any).apiKey,
+            baseUrl: (config as any).baseUrl,
+          };
+        } else if (appId === "opencode") {
+          // OpenCode (OMO): 凭据嵌在 options.{baseURL, apiKey}（SDK options 对象）
+          const options = (config as any).options || {};
+          return {
+            apiKey: options.apiKey,
+            baseUrl: options.baseURL,
+          };
+        }
+        return { apiKey: undefined, baseUrl: undefined };
+      } catch (error) {
+        console.error("Failed to extract provider credentials:", error);
+        return { apiKey: undefined, baseUrl: undefined };
       }
-      return { apiKey: undefined, baseUrl: undefined };
-    } catch (error) {
-      console.error("Failed to extract provider credentials:", error);
-      return { apiKey: undefined, baseUrl: undefined };
-    }
+    })();
+    // Trim the trailing slash to mirror the backend resolver
+    // (Provider::resolve_usage_credentials), so `{{baseUrl}}/path` never
+    // produces a double slash regardless of which path runs the query.
+    return { apiKey: raw.apiKey, baseUrl: trimTrailingSlash(raw.baseUrl) };
   };
 
   const providerCredentials = getProviderCredentials();
@@ -387,10 +420,13 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         const result = await subscriptionApi.getBalance(baseUrl, apiKey);
         if (result.success && result.data && result.data.length > 0) {
           const summary = result.data
-            .map((d) => {
-              const name = d.planName ? `[${d.planName}] ` : "";
-              return `${name}${t("usage.remaining")} ${d.remaining?.toFixed(2)} ${d.unit || ""}`;
-            })
+            .map((d) =>
+              formatUsageDataSummary(d, {
+                invalid: t("usage.invalid"),
+                remaining: t("usage.remaining"),
+                used: t("usage.used"),
+              }),
+            )
             .join(", ");
           toast.success(`${t("usageScript.testSuccess")}${summary}`, {
             duration: 3000,
@@ -486,10 +522,13 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       );
       if (result.success && result.data && result.data.length > 0) {
         const summary = result.data
-          .map((plan: UsageData) => {
-            const planInfo = plan.planName ? `[${plan.planName}]` : "";
-            return `${planInfo} ${t("usage.remaining")} ${plan.remaining} ${plan.unit}`;
-          })
+          .map((plan: UsageData) =>
+            formatUsageDataSummary(plan, {
+              invalid: t("usage.invalid"),
+              remaining: t("usage.remaining"),
+              used: t("usage.used"),
+            }),
+          )
           .join(", ");
         toast.success(`${t("usageScript.testSuccess")}${summary}`, {
           duration: 3000,

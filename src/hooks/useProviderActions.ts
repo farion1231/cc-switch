@@ -19,6 +19,10 @@ import {
 } from "@/lib/query";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { openclawKeys } from "@/hooks/useOpenClaw";
+import {
+  extractCodexWireApi,
+  isCodexChatWireApi,
+} from "@/utils/providerConfigUtils";
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
@@ -71,6 +75,7 @@ export function useProviderActions(
         providerKey?: string;
         suggestedDefaults?: OpenClawSuggestedDefaults;
         addToLive?: boolean;
+        ensureClaudeDesktopOfficialSeed?: boolean;
       },
     ) => {
       const enhanced = injectCodingPlanUsageScript(activeApp, provider);
@@ -149,6 +154,16 @@ export function useProviderActions(
       const isCopilotProvider =
         activeApp === "claude" &&
         provider.meta?.providerType === "github_copilot";
+      const isCodexChatFormat =
+        activeApp === "codex" &&
+        (provider.meta?.apiFormat === "openai_chat" ||
+          (typeof (provider.settingsConfig as Record<string, any>)?.config ===
+            "string" &&
+            isCodexChatWireApi(
+              extractCodexWireApi(
+                (provider.settingsConfig as Record<string, any>).config,
+              ),
+            )));
 
       // Determine why this provider requires the proxy
       let proxyRequiredReason: string | null = null;
@@ -170,6 +185,10 @@ export function useProviderActions(
         ) {
           proxyRequiredReason = t("notifications.proxyReasonOpenAIResponses", {
             defaultValue: "使用 OpenAI Responses 接口格式",
+          });
+        } else if (isCodexChatFormat) {
+          proxyRequiredReason = t("notifications.proxyReasonOpenAIChat", {
+            defaultValue: "使用 OpenAI Chat 接口格式",
           });
         } else if (
           activeApp === "claude-desktop" &&
@@ -229,7 +248,10 @@ export function useProviderActions(
         if (!proxyRequiredReason) {
           let messageKey = "notifications.switchSuccess";
           let defaultMessage = "切换成功！";
-          if (activeApp === "claude-desktop") {
+          if (activeApp === "codex") {
+            messageKey = "notifications.codexRestartRequired";
+            defaultMessage = "切换成功，请重启客户端以生效";
+          } else if (activeApp === "claude-desktop") {
             if (provider.meta?.claudeDesktopMode === "proxy") {
               messageKey = "notifications.claudeDesktopProxyRestartRequired";
               defaultMessage =

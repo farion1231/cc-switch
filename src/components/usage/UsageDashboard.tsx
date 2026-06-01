@@ -1,11 +1,15 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { UsageSummaryCards } from "./UsageSummaryCards";
+import { UsageHero } from "./UsageHero";
 import { UsageTrendChart } from "./UsageTrendChart";
 import { RequestLogTable } from "./RequestLogTable";
 import { ProviderStatsTable } from "./ProviderStatsTable";
 import { ModelStatsTable } from "./ModelStatsTable";
-import type { AppTypeFilter, UsageRangeSelection } from "@/types/usage";
+import {
+  KNOWN_APP_TYPES,
+  type AppTypeFilter,
+  type UsageRangeSelection,
+} from "@/types/usage";
 import { motion } from "framer-motion";
 import {
   BarChart3,
@@ -17,6 +21,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useQueryClient } from "@tanstack/react-query";
 import { usageKeys } from "@/lib/query/usage";
+import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
 import {
   Accordion,
   AccordionContent,
@@ -30,12 +35,7 @@ import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-const APP_FILTER_OPTIONS: AppTypeFilter[] = [
-  "all",
-  "claude",
-  "codex",
-  "gemini",
-];
+const APP_FILTER_OPTIONS: AppTypeFilter[] = ["all", ...KNOWN_APP_TYPES];
 
 export function UsageDashboard() {
   const { t, i18n } = useTranslation();
@@ -43,6 +43,10 @@ export function UsageDashboard() {
   const [range, setRange] = useState<UsageRangeSelection>({ preset: "today" });
   const [appType, setAppType] = useState<AppTypeFilter>("all");
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(30000);
+
+  // 后端写入新日志时 emit `usage-log-recorded`，本 hook 立刻 invalidate 所有
+  // usage 查询，实现实时刷新（仅在 Dashboard 挂载时生效，离开页面自动取消监听）
+  useUsageEventBridge();
 
   const refreshIntervalOptionsMs = [0, 5000, 10000, 30000, 60000] as const;
   const changeRefreshInterval = () => {
@@ -127,9 +131,9 @@ export function UsageDashboard() {
         </div>
       </div>
 
-      <UsageSummaryCards
+      <UsageHero
         range={range}
-        appType={appType}
+        appType={appType === "all" ? undefined : appType}
         refreshIntervalMs={refreshIntervalMs}
       />
 

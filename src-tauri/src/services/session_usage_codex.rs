@@ -18,8 +18,10 @@ use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
-use crate::services::session_usage::{get_sync_state, update_sync_state, SessionSyncResult};
-use crate::services::usage_stats::{should_skip_session_insert, DedupKey};
+use crate::services::session_usage::{
+    get_sync_state, metadata_modified_nanos, update_sync_state, SessionSyncResult,
+};
+use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
 use rust_decimal::Decimal;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -73,9 +75,10 @@ fn normalize_codex_model(raw: &str) -> String {
     }
 
     // Step 3: 剥离 ISO 日期后缀 -YYYY-MM-DD（正好 11 字符）
-    if name.len() > 11 {
+    if name.len() > 11 && name.is_char_boundary(name.len() - 11) {
         let suffix = &name[name.len() - 11..];
-        if suffix.as_bytes()[0] == b'-'
+        if suffix.is_ascii()
+            && suffix.as_bytes()[0] == b'-'
             && suffix[1..5].chars().all(|c| c.is_ascii_digit())
             && suffix.as_bytes()[5] == b'-'
             && suffix[6..8].chars().all(|c| c.is_ascii_digit())
@@ -232,12 +235,7 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
     // 获取文件元数据
     let metadata = fs::metadata(file_path)
         .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
-    let file_modified = metadata
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let file_modified = metadata_modified_nanos(&metadata);
 
     // 检查同步状态
     let (last_modified, last_offset) = get_sync_state(db, &file_path_str)?;
@@ -480,7 +478,7 @@ fn insert_codex_session_entry(
     let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) = match pricing
     {
         Some(p) => {
-            let cost = CostCalculator::calculate(&usage, &p, multiplier);
+            let cost = CostCalculator::calculate_for_app("codex", &usage, &p, multiplier);
             (
                 cost.input_cost.to_string(),
                 cost.output_cost.to_string(),
@@ -498,93 +496,54 @@ fn insert_codex_session_entry(
         ),
     };
 
-    conn.execute(
-        "INSERT OR IGNORE INTO proxy_request_logs (
+    let inserted_rows = conn
+        .execute(
+            "INSERT OR IGNORE INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
-        rusqlite::params![
-            request_id,
-            "_codex_session",    // provider_id
-            "codex",             // app_type
-            model,
-            model,               // request_model = model
-            delta.input,
-            delta.output,
-            delta.cached_input,
-            0i64,                // cache_creation_tokens: Codex 日志无此数据
-            input_cost,
-            output_cost,
-            cache_read_cost,
-            cache_creation_cost,
-            total_cost,
-            0i64,                // latency_ms
-            Option::<i64>::None, // first_token_ms
-            200i64,              // status_code
-            Option::<String>::None, // error_message
-            session_id.map(|s| s.to_string()),
-            Some("codex_session"), // provider_type
-            1i64,                // is_streaming
-            "1.0",               // cost_multiplier
-            created_at,
-            "codex_session",     // data_source
-        ],
-    )
-    .map_err(|e| AppError::Database(format!("插入 Codex 会话日志失败: {e}")))?;
+            rusqlite::params![
+                request_id,
+                "_codex_session",    // provider_id
+                "codex",             // app_type
+                model,
+                model,               // request_model = model
+                delta.input,
+                delta.output,
+                delta.cached_input,
+                0i64,                // cache_creation_tokens: Codex 日志无此数据
+                input_cost,
+                output_cost,
+                cache_read_cost,
+                cache_creation_cost,
+                total_cost,
+                0i64,                // latency_ms
+                Option::<i64>::None, // first_token_ms
+                200i64,              // status_code
+                Option::<String>::None, // error_message
+                session_id.map(|s| s.to_string()),
+                Some("codex_session"), // provider_type
+                1i64,                // is_streaming
+                "1.0",               // cost_multiplier
+                created_at,
+                "codex_session",     // data_source
+            ],
+        )
+        .map_err(|e| AppError::Database(format!("插入 Codex 会话日志失败: {e}")))?;
+
+    if inserted_rows > 0 {
+        crate::usage_events::notify_log_recorded();
+    }
 
     Ok(true)
 }
 
 /// 查找 Codex 模型定价（带归一化）
 fn find_codex_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<ModelPricing> {
-    let normalized = normalize_codex_model(model_id);
-
-    // 1. 精确匹配（归一化后的名称）
-    if let Some(pricing) = try_find_pricing(conn, &normalized) {
-        return Some(pricing);
-    }
-
-    // 2. LIKE 模糊匹配（兜底）
-    let pattern = format!("{normalized}%");
-    conn.query_row(
-        "SELECT input_cost_per_million, output_cost_per_million,
-                cache_read_cost_per_million, cache_creation_cost_per_million
-         FROM model_pricing WHERE model_id LIKE ?1 LIMIT 1",
-        rusqlite::params![pattern],
-        |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-            ))
-        },
-    )
-    .ok()
-    .and_then(|(i, o, cr, cc)| ModelPricing::from_strings(&i, &o, &cr, &cc).ok())
-}
-
-/// 精确匹配定价查询
-fn try_find_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<ModelPricing> {
-    conn.query_row(
-        "SELECT input_cost_per_million, output_cost_per_million,
-                cache_read_cost_per_million, cache_creation_cost_per_million
-         FROM model_pricing WHERE model_id = ?1",
-        rusqlite::params![model_id],
-        |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-            ))
-        },
-    )
-    .ok()
-    .and_then(|(i, o, cr, cc)| ModelPricing::from_strings(&i, &o, &cr, &cc).ok())
+    find_model_pricing(conn, &normalize_codex_model(model_id))
 }
 
 #[cfg(test)]

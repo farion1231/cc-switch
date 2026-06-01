@@ -17,6 +17,12 @@
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
+use serde_json::{json, Value};
+
+const ANTHROPIC_THINKING_PLACEHOLDER: &str = "tool call";
+const ANTHROPIC_REDACTED_THINKING_PLACEHOLDER: &str = "[redacted thinking]";
+// Keep hints lowercase; matching lowercases only the input value.
+const REASONING_VENDOR_HINTS: &[&str] = &["moonshot", "kimi", "deepseek", "mimo", "xiaomimimo"];
 
 /// 获取 Claude 供应商的 API 格式
 ///
@@ -82,19 +88,138 @@ pub fn claude_api_format_needs_transform(api_format: &str) -> bool {
     )
 }
 
-fn is_reasoning_content_compatible_identifier(value: &str) -> bool {
+fn is_reasoning_vendor_identifier(value: &str) -> bool {
     let value = value.to_ascii_lowercase();
-    value.contains("moonshot") || value.contains("kimi") || value.contains("deepseek")
+    REASONING_VENDOR_HINTS
+        .iter()
+        .any(|hint| value.contains(hint))
 }
 
-fn should_preserve_reasoning_content_for_openai_chat(
+fn should_normalize_anthropic_tool_thinking_history(
     provider: &Provider,
-    body: &serde_json::Value,
+    body: &Value,
+    api_format: &str,
 ) -> bool {
+    if api_format.trim() != "anthropic" {
+        return false;
+    }
+
     if body
         .get("model")
         .and_then(|m| m.as_str())
-        .is_some_and(is_reasoning_content_compatible_identifier)
+        .is_some_and(is_reasoning_vendor_identifier)
+    {
+        return true;
+    }
+
+    let settings = &provider.settings_config;
+    [
+        settings
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+            .and_then(|v| v.as_str()),
+        settings.get("base_url").and_then(|v| v.as_str()),
+        settings.get("baseURL").and_then(|v| v.as_str()),
+        settings.get("apiEndpoint").and_then(|v| v.as_str()),
+    ]
+    .into_iter()
+    .flatten()
+    .any(is_reasoning_vendor_identifier)
+}
+
+/// DeepSeek's Anthropic-compatible endpoint requires thinking history to be
+/// replayed on every assistant turn that contains tool_use. Some Anthropic SDK
+/// clients keep the tool history but drop or redact the thinking block, which
+/// makes DeepSeek reject the next request with `content[].thinking ... must be
+/// passed back`. Normalize only the narrow tool-call history shape for
+/// providers known to require plain `thinking` blocks.
+pub fn normalize_anthropic_tool_thinking_history_for_provider(
+    body: &mut Value,
+    provider: &Provider,
+    api_format: &str,
+) -> bool {
+    if !should_normalize_anthropic_tool_thinking_history(provider, body, api_format) {
+        return false;
+    }
+
+    normalize_anthropic_tool_thinking_history(body)
+}
+
+fn normalize_anthropic_tool_thinking_history(body: &mut Value) -> bool {
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return false;
+    };
+
+    let mut changed = false;
+    for message in messages {
+        if message.get("role").and_then(Value::as_str) != Some("assistant") {
+            continue;
+        }
+
+        let Some(content) = message.get_mut("content").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        if !content
+            .iter()
+            .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"))
+        {
+            continue;
+        }
+
+        let mut has_thinking = false;
+        for block in content.iter_mut() {
+            match block.get("type").and_then(Value::as_str) {
+                Some("thinking") => {
+                    let has_non_empty_thinking = block
+                        .get("thinking")
+                        .and_then(Value::as_str)
+                        .is_some_and(|text| !text.trim().is_empty());
+                    if let Some(obj) = block.as_object_mut() {
+                        if obj.remove("signature").is_some() {
+                            changed = true;
+                        }
+                        if !has_non_empty_thinking {
+                            obj.insert(
+                                "thinking".to_string(),
+                                json!(ANTHROPIC_THINKING_PLACEHOLDER),
+                            );
+                            changed = true;
+                        }
+                    }
+                    has_thinking = true;
+                }
+                Some("redacted_thinking") => {
+                    *block = json!({
+                        "type": "thinking",
+                        "thinking": ANTHROPIC_REDACTED_THINKING_PLACEHOLDER
+                    });
+                    has_thinking = true;
+                    changed = true;
+                }
+                _ => {}
+            }
+        }
+
+        if !has_thinking {
+            content.insert(
+                0,
+                json!({
+                    "type": "thinking",
+                    "thinking": ANTHROPIC_THINKING_PLACEHOLDER
+                }),
+            );
+            changed = true;
+        }
+    }
+
+    changed
+}
+
+fn should_preserve_reasoning_content_for_openai_chat(provider: &Provider, body: &Value) -> bool {
+    if body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .is_some_and(is_reasoning_vendor_identifier)
     {
         return true;
     }
@@ -113,7 +238,7 @@ fn should_preserve_reasoning_content_for_openai_chat(
     base_urls
         .into_iter()
         .flatten()
-        .any(is_reasoning_content_compatible_identifier)
+        .any(is_reasoning_vendor_identifier)
 }
 
 pub fn transform_claude_request_for_api_format(
@@ -589,33 +714,31 @@ impl ProviderAdapter for ClaudeAdapter {
         base
     }
 
-    fn get_auth_headers(&self, auth: &AuthInfo) -> Vec<(http::HeaderName, http::HeaderValue)> {
+    fn get_auth_headers(
+        &self,
+        auth: &AuthInfo,
+    ) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, ProxyError> {
+        use super::adapter::auth_header_value as hv;
         use http::{HeaderName, HeaderValue};
         // 注意：anthropic-version 由 forwarder.rs 统一处理（透传客户端值或设置默认值）
         let bearer = format!("Bearer {}", auth.api_key);
-        match auth.strategy {
+        Ok(match auth.strategy {
             AuthStrategy::Anthropic => {
-                vec![(
-                    HeaderName::from_static("x-api-key"),
-                    HeaderValue::from_str(&auth.api_key).unwrap(),
-                )]
+                vec![(HeaderName::from_static("x-api-key"), hv(&auth.api_key)?)]
             }
             AuthStrategy::ClaudeAuth | AuthStrategy::Bearer => {
-                vec![(
-                    HeaderName::from_static("authorization"),
-                    HeaderValue::from_str(&bearer).unwrap(),
-                )]
+                vec![(HeaderName::from_static("authorization"), hv(&bearer)?)]
             }
             AuthStrategy::Google => vec![(
                 HeaderName::from_static("x-goog-api-key"),
-                HeaderValue::from_str(&auth.api_key).unwrap(),
+                hv(&auth.api_key)?,
             )],
             AuthStrategy::GoogleOAuth => {
                 let token = auth.access_token.as_ref().unwrap_or(&auth.api_key);
                 vec![
                     (
                         HeaderName::from_static("authorization"),
-                        HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+                        hv(&format!("Bearer {token}"))?,
                     ),
                     (
                         HeaderName::from_static("x-goog-api-client"),
@@ -627,10 +750,7 @@ impl ProviderAdapter for ClaudeAdapter {
                 // 注意：bearer token 由 forwarder 动态注入到 auth.api_key
                 // ChatGPT-Account-Id 由 forwarder 注入额外 header
                 vec![
-                    (
-                        HeaderName::from_static("authorization"),
-                        HeaderValue::from_str(&bearer).unwrap(),
-                    ),
+                    (HeaderName::from_static("authorization"), hv(&bearer)?),
                     (
                         HeaderName::from_static("originator"),
                         HeaderValue::from_static("cc-switch"),
@@ -641,10 +761,7 @@ impl ProviderAdapter for ClaudeAdapter {
                 // 生成请求追踪 ID
                 let request_id = uuid::Uuid::new_v4().to_string();
                 vec![
-                    (
-                        HeaderName::from_static("authorization"),
-                        HeaderValue::from_str(&bearer).unwrap(),
-                    ),
+                    (HeaderName::from_static("authorization"), hv(&bearer)?),
                     (
                         HeaderName::from_static("editor-version"),
                         HeaderValue::from_static(super::copilot_auth::COPILOT_EDITOR_VERSION),
@@ -683,17 +800,11 @@ impl ProviderAdapter for ClaudeAdapter {
                         HeaderName::from_static("x-vscode-user-agent-library-version"),
                         HeaderValue::from_static("electron-fetch"),
                     ),
-                    (
-                        HeaderName::from_static("x-request-id"),
-                        HeaderValue::from_str(&request_id).unwrap(),
-                    ),
-                    (
-                        HeaderName::from_static("x-agent-task-id"),
-                        HeaderValue::from_str(&request_id).unwrap(),
-                    ),
+                    (HeaderName::from_static("x-request-id"), hv(&request_id)?),
+                    (HeaderName::from_static("x-agent-task-id"), hv(&request_id)?),
                 ]
             }
-        }
+        })
     }
 
     fn needs_transform(&self, provider: &Provider) -> bool {
@@ -871,7 +982,7 @@ mod tests {
         let adapter = ClaudeAdapter::new();
         let auth = AuthInfo::new("sk-ant-test".to_string(), AuthStrategy::Anthropic);
 
-        let headers = adapter.get_auth_headers(&auth);
+        let headers = adapter.get_auth_headers(&auth).unwrap();
         assert_eq!(headers.len(), 1);
         assert_eq!(headers[0].0.as_str(), "x-api-key");
         assert_eq!(headers[0].1.to_str().unwrap(), "sk-ant-test");
@@ -882,7 +993,7 @@ mod tests {
         let adapter = ClaudeAdapter::new();
         let auth = AuthInfo::new("sk-relay-test".to_string(), AuthStrategy::ClaudeAuth);
 
-        let headers = adapter.get_auth_headers(&auth);
+        let headers = adapter.get_auth_headers(&auth).unwrap();
         assert_eq!(headers.len(), 1);
         assert_eq!(headers[0].0.as_str(), "authorization");
         assert_eq!(headers[0].1.to_str().unwrap(), "Bearer sk-relay-test");
@@ -893,10 +1004,24 @@ mod tests {
         let adapter = ClaudeAdapter::new();
         let auth = AuthInfo::new("sk-or-test".to_string(), AuthStrategy::Bearer);
 
-        let headers = adapter.get_auth_headers(&auth);
+        let headers = adapter.get_auth_headers(&auth).unwrap();
         assert_eq!(headers.len(), 1);
         assert_eq!(headers[0].0.as_str(), "authorization");
         assert_eq!(headers[0].1.to_str().unwrap(), "Bearer sk-or-test");
+    }
+
+    #[test]
+    fn test_get_auth_headers_rejects_illegal_header_chars() {
+        // 用户粘贴含 \r\n 的"脏"key 不能让进程 panic
+        let adapter = ClaudeAdapter::new();
+        let auth = AuthInfo::new(
+            "sk-ant-bad\r\nX-Inject: 1".to_string(),
+            AuthStrategy::Anthropic,
+        );
+
+        let result = adapter.get_auth_headers(&auth);
+        assert!(result.is_err(), "expected AuthError, got Ok");
+        assert!(matches!(result, Err(ProxyError::AuthError(_))));
     }
 
     #[test]
@@ -1800,5 +1925,200 @@ mod tests {
         let msg = &transformed["messages"][0];
         assert_eq!(msg["reasoning_content"], "I should call the tool.");
         assert!(msg.get("tool_calls").is_some());
+    }
+
+    #[test]
+    fn test_transform_openai_chat_preserves_reasoning_content_for_mimo_provider() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.xiaomimimo.com/v1",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "mimo-v2.5-pro",
+            "max_tokens": 64,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I should call the tool."},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        let msg = &transformed["messages"][0];
+        assert_eq!(msg["reasoning_content"], "I should call the tool.");
+        assert!(msg.get("tool_calls").is_some());
+    }
+
+    #[test]
+    fn test_deepseek_anthropic_tool_history_injects_missing_thinking() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "I will inspect the repo."},
+                    {"type": "tool_use", "id": "call_123", "name": "read_file", "input": {"path": "README.md"}}
+                ]
+            }]
+        });
+
+        let changed = normalize_anthropic_tool_thinking_history_for_provider(
+            &mut body,
+            &provider,
+            "anthropic",
+        );
+
+        assert!(changed);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(content[0]["thinking"], ANTHROPIC_THINKING_PLACEHOLDER);
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[2]["type"], "tool_use");
+    }
+
+    #[test]
+    fn test_kimi_anthropic_tool_history_injects_missing_thinking() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "model": "kimi-for-coding",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "call_123", "name": "read_file", "input": {"path": "README.md"}}
+                ]
+            }]
+        });
+
+        let changed = normalize_anthropic_tool_thinking_history_for_provider(
+            &mut body,
+            &provider,
+            "anthropic",
+        );
+
+        assert!(changed);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(content[0]["thinking"], ANTHROPIC_THINKING_PLACEHOLDER);
+        assert_eq!(content[1]["type"], "tool_use");
+    }
+
+    #[test]
+    fn test_deepseek_anthropic_tool_history_rewrites_redacted_thinking() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "redacted_thinking", "data": "opaque"},
+                    {"type": "tool_use", "id": "call_123", "name": "read_file", "input": {"path": "README.md"}}
+                ]
+            }]
+        });
+
+        let changed = normalize_anthropic_tool_thinking_history_for_provider(
+            &mut body,
+            &provider,
+            "anthropic",
+        );
+
+        assert!(changed);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(
+            content[0]["thinking"],
+            ANTHROPIC_REDACTED_THINKING_PLACEHOLDER
+        );
+        assert!(content[0].get("data").is_none());
+    }
+
+    #[test]
+    fn test_deepseek_anthropic_tool_history_keeps_thinking_text_but_drops_signature() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "Need to inspect the file.", "signature": "anthropic-signature"},
+                    {"type": "tool_use", "id": "call_123", "name": "read_file", "input": {"path": "README.md"}}
+                ]
+            }]
+        });
+
+        let changed = normalize_anthropic_tool_thinking_history_for_provider(
+            &mut body,
+            &provider,
+            "anthropic",
+        );
+
+        assert!(changed);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(content[0]["thinking"], "Need to inspect the file.");
+        assert!(content[0].get("signature").is_none());
+    }
+
+    #[test]
+    fn test_generic_anthropic_tool_history_is_not_modified() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.example.com/anthropic",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "model": "claude-sonnet-4.6",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "call_123", "name": "read_file", "input": {"path": "README.md"}}
+                ]
+            }]
+        });
+        let original = body.clone();
+
+        let changed = normalize_anthropic_tool_thinking_history_for_provider(
+            &mut body,
+            &provider,
+            "anthropic",
+        );
+
+        assert!(!changed);
+        assert_eq!(body, original);
     }
 }
