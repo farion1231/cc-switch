@@ -280,16 +280,31 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
 
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
-        let mut f = fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .mode(0o600)
-            .open(&tmp)
-            .map_err(|e| AppError::io(&tmp, e))?;
+        let existing_mode = match fs::metadata(path) {
+            Ok(metadata) => Some(metadata.permissions().mode() & 0o777),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(AppError::io(path, error)),
+        };
+        let is_new_private_app_file =
+            existing_mode.is_none() && path.starts_with(get_app_config_dir());
+
+        let mut options = fs::OpenOptions::new();
+        options.create_new(true).write(true);
+        if existing_mode.is_some() || is_new_private_app_file {
+            options.mode(0o600);
+        }
+
+        let mut f = options.open(&tmp).map_err(|e| AppError::io(&tmp, e))?;
         f.write_all(data).map_err(|e| AppError::io(&tmp, e))?;
         f.flush().map_err(|e| AppError::io(&tmp, e))?;
+        drop(f);
+
+        if let Some(mode) = existing_mode {
+            fs::set_permissions(&tmp, fs::Permissions::from_mode(mode))
+                .map_err(|e| AppError::io(&tmp, e))?;
+        }
     }
 
     #[cfg(not(unix))]
@@ -324,6 +339,7 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn derive_mcp_path_from_override_preserves_folder_name() {
@@ -396,13 +412,21 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn atomic_write_creates_private_file_permissions() {
+    #[serial]
+    fn atomic_write_creates_private_app_file_permissions() {
         use std::os::unix::fs::PermissionsExt;
 
         let temp = tempfile::tempdir().expect("tempdir");
-        let path = temp.path().join("config.json");
+        let previous_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        let path = temp.path().join(".cc-switch").join("config.json");
 
         atomic_write(&path, b"{}").expect("atomic write");
+
+        match previous_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
 
         let mode = fs::metadata(&path)
             .expect("file metadata")
@@ -414,7 +438,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn atomic_write_repairs_existing_file_permissions() {
+    fn atomic_write_preserves_existing_file_permissions() {
         use std::os::unix::fs::PermissionsExt;
 
         let temp = tempfile::tempdir().expect("tempdir");
@@ -430,7 +454,7 @@ mod tests {
             .permissions()
             .mode()
             & 0o777;
-        assert_eq!(mode, 0o600);
+        assert_eq!(mode, 0o644);
     }
 
     #[test]
