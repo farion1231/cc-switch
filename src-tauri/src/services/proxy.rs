@@ -58,6 +58,7 @@ pub struct ProxyService {
     /// AppHandle，用于传递给 ProxyServer 以支持故障转移时的 UI 更新
     app_handle: Arc<RwLock<Option<tauri::AppHandle>>>,
     switch_locks: SwitchLockManager,
+    orchestration: RwLock<Option<Arc<crate::orchestration::OrchestrationEngine>>>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -72,7 +73,16 @@ impl ProxyService {
             server: Arc::new(RwLock::new(None)),
             app_handle: Arc::new(RwLock::new(None)),
             switch_locks: SwitchLockManager::new(),
+            orchestration: RwLock::new(None),
         }
+    }
+
+    pub async fn set_orchestration(&self, engine: Arc<crate::orchestration::OrchestrationEngine>) {
+        *self.orchestration.write().await = Some(engine);
+    }
+
+    async fn get_orchestration_engine(&self) -> Option<Arc<crate::orchestration::OrchestrationEngine>> {
+        self.orchestration.read().await.clone()
     }
 
     #[cfg(test)]
@@ -422,7 +432,13 @@ impl ProxyService {
 
         // 4. 创建并启动服务器
         let app_handle = self.app_handle.read().await.clone();
-        let server = ProxyServer::new(config.clone(), self.db.clone(), app_handle);
+        let orchestration = self.get_orchestration_engine().await.unwrap_or_else(|| {
+            log::warn!("[Orchestration] No engine set — starting proxy without orchestration (all requests will passthrough)");
+            Arc::new(crate::orchestration::OrchestrationEngine::new(
+                crate::orchestration::loader::StrategyLoader::default_strategies_path(),
+            ))
+        });
+        let server = ProxyServer::new(config.clone(), self.db.clone(), app_handle, orchestration);
         let info = server
             .start()
             .await
@@ -2187,7 +2203,13 @@ impl ProxyService {
             }
 
             let app_handle = self.app_handle.read().await.clone();
-            let new_server = ProxyServer::new(new_config, self.db.clone(), app_handle);
+            let orchestration = self.get_orchestration_engine().await.unwrap_or_else(|| {
+                log::warn!("[Orchestration] No engine set during config update — restarting without orchestration");
+                Arc::new(crate::orchestration::OrchestrationEngine::new(
+                    crate::orchestration::loader::StrategyLoader::default_strategies_path(),
+                ))
+            });
+            let new_server = ProxyServer::new(new_config, self.db.clone(), app_handle, orchestration);
             new_server
                 .start()
                 .await

@@ -1,0 +1,1511 @@
+多应用的时候，尤其在本地智能体设计的时候，不是只用了的模型，对于个人工作台，我们需要的是多agent多模型相互配合。我的设想。如果我的本地独立独立agent，可以 link同时使用多款大模型又复杂的有便宜，有的大模型可以支持图像，有大模型可以支持语音。有的大模型能力强，有大模型能力弱，这样我方面组合，是否理论依据，如何做才能实现，几个不同类型的组合这种低端模型，甚至逻辑搭配，通过什么方的组合能够达到顶级Claude 4.7，甚至突破更好的negligible？有没有理论的算法和依据？如果有本地应该如何组织和框架。详细给我调查一下，给出完整的方案
+
+我会把这个问题拆成三层：理论依据、可落地架构、实际本地工作台方案。重点不会只讲“多 Agent 很酷”，而是讲怎么路由、验证、降成本、减少幻觉，以及哪些任务能接近顶级模型、哪些不能。
+
+已经确认到几个关键依据：FrugalGPT/LLM cascade、RouteLLM、Mixture-of-Agents、Self-Consistency、Tree-of-Thoughts、ReAct/Reflexion 都能支撑你的设想。但结论不是“弱模型堆起来一定变强”，而是“用路由、验证、工具和任务分解，让强模型只做关键决策”。
+
+已思考 1m 19s
+
+可以，这个方向有明确理论依据，也有工程实现路径。但关键结论先说清楚：
+
+多模型、多 Agent 组合，不是把一堆低端模型堆起来就自动超过 Claude Opus 4.7。真正有效的方案是：强模型做“总规划、关键判断、最终审查”，低成本模型做“批量执行、检索、分类、摘要、格式化、局部代码、局部文档”，再用工具、测试、RAG、评审模型把结果验证闭环。
+Claude Opus 4.7 目前被 Anthropic 官方定位为适合最复杂任务的最强通用模型之一，尤其强调复杂任务、agentic coding 和高分辨率视觉能力，所以你的系统要“接近或局部超过它”，必须靠系统工程优势，而不是单个弱模型能力。
+
+一、你的想法的理论依据
+
+你的设想本质上叫：
+
+LLM Ensemble + Model Routing + Agentic Workflow + Tool-verified Reasoning
+
+也就是“多个模型协作 + 动态路由 + 多 Agent 编排 + 工具验证”。
+
+目前主要有 6 条理论和算法路线支撑：
+
+1. Model Cascade / FrugalGPT：便宜模型先处理，难题再升级
+
+FrugalGPT 提出通过 prompt adaptation、LLM approximation、LLM cascade 来降低成本。它的实验显示，在某些任务上可以在匹配强模型效果的同时显著降低成本，或者在相同成本下提高准确率。这个思路和你的“低端模型先跑，高端模型只处理复杂问题”完全一致。
+
+你的本地工作台应该默认采用这种结构：
+
+简单任务 → 本地小模型
+中等任务 → 中等 API / 本地大模型
+复杂任务 → 顶级模型
+高风险任务 → 顶级模型 + 独立验证模型 + 工具测试
+2. RouteLLM：训练一个“路由器”决定用哪个模型
+
+RouteLLM 的核心是：不要每次都调用最贵模型，而是根据 query 难度动态选择“强模型”或“弱模型”。相关论文和项目明确把问题形式化为“成本—质量权衡”，通过偏好数据训练路由器，在多个 benchmark 上获得成本节省且尽量保持质量。
+
+你本地系统里必须有一个 Router Agent，它不是聊天 Agent，而是调度器，负责判断：
+
+这个任务是摘要？翻译？代码？图片？PCB？法律？财务？复杂推理？
+需要联网吗？
+需要视觉模型吗？
+需要语音模型吗？
+需要工具执行吗？
+失败代价高不高？
+是否必须调用 Claude / GPT / Gemini / GLM / DeepSeek？
+3. Ensemble / Voting / Self-Consistency：多个答案投票可以减少随机错误
+
+Self-Consistency 证明，在复杂推理任务上，让模型生成多条不同推理路径，再选择一致性最高的答案，可以明显提升数学和常识推理 benchmark 的表现。
+
+这对应你的系统里的：
+
+低成本模型 A 给方案
+低成本模型 B 给方案
+中等模型 C 找漏洞
+强模型 D 做最终裁决
+
+但是注意：投票不是万能的。如果多个模型训练数据相似、错误模式相似，它们会一起幻觉。所以投票必须配合工具、检索、测试和审查。
+
+4. Tree of Thoughts：复杂问题要搜索多条路径，而不是一次生成
+
+Tree of Thoughts 把推理过程变成“搜索树”：生成多个中间思路，评估、剪枝、回溯，再继续。它在需要规划和搜索的任务上比普通 Chain-of-Thought 更强。
+
+这对你的“产品开发、PCB、CAD、规格书、商业方案”很重要，因为这些任务不是一次回答能完成的，而是：
+
+需求拆解 → 多方案生成 → 方案评估 → 选型 → 执行 → 审查 → 修正
+5. ReAct / Reflexion：Agent 必须会调用工具、读取反馈、修正自己
+
+ReAct 的核心是把“推理”和“行动”交替进行，让模型可以调用外部工具、搜索知识库或操作环境，从而减少幻觉。Reflexion 则让 Agent 从失败反馈中写出反思，并在下一轮改进。
+
+这意味着你的本地 Agent 不应该只会“聊天”，而要能：
+
+查资料
+读 PDF
+运行代码
+执行单元测试
+打开 KiCad / OpenSCAD / CAD 工具
+生成文档
+检查格式
+调用 OCR / 视觉模型
+保存中间结果
+失败后重试
+6. Mixture-of-Agents：多模型分层协作，有机会超过单一模型
+
+Mixture-of-Agents 研究提出，把多个 LLM Agent 分层组织，后一层读取前一层所有 Agent 输出，再生成更强答案。在一些 benchmark 上，开放模型组合曾达到或超过 GPT-4o 的结果。
+
+但后续研究也提醒：混合不同模型不一定总是更好。如果混入低质量模型，反而会污染上下文；有时“同一个强模型多次采样 + 聚合”比“多个质量参差不齐的模型混合”更强。
+
+所以你的策略应该是：
+
+不是模型越多越好
+而是模型角色越清楚越好
+不是所有模型都有发言权
+而是让每个模型只做它最擅长的事情
+二、能否达到 Claude Opus 4.7，甚至局部超过？
+
+答案分三种情况。
+
+情况 A：开放式深度推理，难以验证
+
+比如：
+
+复杂商业战略
+新产品方向判断
+抽象科学问题
+没有标准答案的创意规划
+复杂系统架构第一性原理设计
+
+这种场景下，多低端模型组合很难稳定超过 Claude Opus 4.7。因为顶级模型的优势不只是知识量，而是长上下文、隐含规划能力、错误抑制、抽象推理、指令遵循和上下文整合。
+
+你的系统可以降低成本，但不应完全替代强模型。正确用法是：
+
+低成本模型：资料搜集、竞品整理、初稿生成
+高端模型：战略判断、冲突消解、最终架构、风险审查
+情况 B：有工具验证的任务
+
+比如：
+
+代码开发：可以跑测试
+PCB：可以跑 DRC / ERC / BOM / DFM
+CAD：可以导出 STL / STEP / 体积 / 干涉检查
+规格书：可以按模板检查格式
+市场研究：可以要求引用来源
+财务测算：可以用表格公式验证
+
+这种场景下，你的多模型系统有机会接近甚至局部超过单一顶级模型，因为最终质量来自：
+
+模型推理 + 外部工具 + 自动测试 + 多轮审查 + 模板规范
+
+而不是只靠模型“脑补”。
+
+情况 C：高频、标准化、流程化任务
+
+比如：
+
+摘要
+翻译
+邮件改写
+文档排版
+参数表抽取
+资料归类
+代码局部重构
+客服问答
+内部知识库问答
+
+这种场景下，低成本模型 + RAG + 路由器通常足够，强模型只需要偶尔介入。FrugalGPT、RouteLLM 和相关 LLM Ensemble 研究都说明，动态路由和级联可以显著改善成本—质量比。
+
+三、推荐你的本地工作台总架构
+
+我建议你做一个：
+
+M³ Workbench：Multi-Model Multi-Agent 本地智能工作台
+
+核心结构如下：
+
+用户输入
+  ↓
+任务理解 Agent
+  ↓
+Router / Cost Controller
+  ↓
+┌──────────────────────────────────────┐
+│  模型层                               │
+│  - 本地小模型：分类、摘要、格式化       │
+│  - 本地中模型：代码、长文档、初步推理   │
+│  - 云端便宜模型：批量任务              │
+│  - 云端顶级模型：规划、审查、复杂推理   │
+│  - 视觉模型：图片、截图、图纸、PDF      │
+│  - 语音模型：ASR、TTS、语音交互         │
+└──────────────────────────────────────┘
+  ↓
+多 Agent 编排层
+  ↓
+工具执行层：浏览器 / 文件 / CAD / PCB / Office / Shell / 数据库
+  ↓
+验证层：测试、规则、审查、引用、格式检查
+  ↓
+最终输出
+推荐技术栈
+层级	推荐工具	作用
+多模型统一入口	LiteLLM	用 OpenAI-compatible 接口统一调用 OpenAI、Anthropic、Gemini、DeepSeek、GLM、本地模型等。LiteLLM 官方说明其 Proxy / SDK 可统一访问 100+ LLM provider。
+本地模型运行	Ollama	适合个人工作台快速运行本地模型。Ollama 官方定位是“Start local, scale with cloud”。
+高并发本地服务	vLLM	适合 GPU 服务器，提供高吞吐、OpenAI-compatible API、流式输出、结构化输出、工具调用等能力。
+Agent 编排	LangGraph / Microsoft Agent Framework / CrewAI	LangGraph 强在状态图和可控流程；Microsoft Agent Framework 是 Semantic Kernel 和 AutoGen 的继任框架；CrewAI 适合快速搭建角色型多 Agent。
+RAG / 文档知识库	LlamaIndex / Haystack / LangChain	处理企业文档、PDF、规格书、产品资料、历史项目。LlamaIndex 官方文档也提供 multi-agent patterns。
+Prompt / Pipeline 优化	DSPy	把提示词工程变成可优化的 AI 程序，适合长期迭代你的工作流。DSPy 官方定位是“Programming—not prompting—LMs”。
+四、本地系统应该有哪些 Agent
+
+你不能只做“一个万能 Agent”。应该做成“岗位制”。
+
+1. Supervisor Agent，总控
+
+职责：
+
+理解用户目标
+拆解任务
+决定调用哪些 Agent
+控制预算
+判断是否需要升级到顶级模型
+负责最终交付质量
+
+推荐模型：高端模型或强中端模型。复杂任务时用 Claude Opus 4.7 / GPT 高端 / Gemini Pro / GLM-5.1 / DeepSeek V4-Pro 等。
+
+DeepSeek V4 官方说明其 V4-Pro / V4-Flash 是 MoE 模型，并支持 1M context；GLM-5.1 官方定位偏向 agentic engineering 和更强 coding；MiniMax 官方强调多模态、代码、Agent、超长上下文、文本/音频/图像/视频/音乐能力。
+
+2. Router Agent，模型调度器
+
+职责：
+
+判断任务类型
+判断难度
+判断风险
+判断是否需要联网
+判断是否需要视觉 / 语音
+选择模型
+设置 token 上限
+设置是否需要多模型投票
+
+Router 可以先用规则，后期再训练。
+
+简单规则示例：
+
+摘要 / 改写 / 翻译 → 本地小模型
+长文档整理 → 本地中模型 + RAG
+复杂方案 → 顶级模型先规划，中低模型执行
+代码生成 → 中强代码模型 + 测试工具
+关键代码审查 → 顶级模型 + 静态分析 + 单元测试
+图片 / 图纸 / 截图 → 视觉模型
+语音输入 → ASR → 文本 Agent
+3. Planner Agent，规划者
+
+职责：
+
+把复杂目标拆成任务树
+定义验收标准
+确定每一步用什么工具
+输出执行计划
+
+这个 Agent 应该用强模型，因为拆解错了，后面所有低端模型都会跑偏。
+
+4. Worker Agents，执行者
+
+按专业拆分：
+
+Research Agent：联网搜索、资料整理
+Document Agent：Word / PDF / 规格书 / 模板排版
+Code Agent：写代码、修 bug、运行测试
+CAD Agent：OpenSCAD / FreeCAD / STEP / STL
+PCB Agent：KiCad / DRC / BOM / DFM
+Market Agent：竞品、价格、众筹、渠道
+Image Agent：图片理解、广告图提示词、视觉风格
+Audio Agent：语音识别、TTS、音色处理
+
+这些执行 Agent 可以大量使用便宜模型。
+
+5. Critic / Verifier Agent，审查者
+
+职责：
+
+找错误
+找幻觉
+检查是否满足验收标准
+要求引用来源
+检查参数是否一致
+检查文件是否真的生成
+检查代码是否真的运行
+检查格式是否符合模板
+
+这个 Agent 至少要用“不同于生成模型”的模型，避免同源错误。
+
+6. Tool Executor，工具执行器
+
+这不是 LLM，而是工具层：
+
+Python
+Shell
+Git
+浏览器
+Office 文档生成
+PDF 渲染
+KiCad
+OpenSCAD / FreeCAD
+图像生成
+OCR
+数据库
+向量检索
+
+你的系统想减少幻觉，必须把“模型说了什么”变成“工具验证了什么”。
+
+五、最重要的调度算法
+算法 1：三段式 Cascade
+Step 1：小模型尝试
+Step 2：Verifier 检查置信度
+Step 3：失败或高风险时升级大模型
+
+适合：
+
+摘要、翻译、资料提取、格式转换、表格生成、客服问答
+
+伪代码：
+
+result = cheap_model(task)
+score = verifier(result, task)
+
+if score >= 0.85 and risk == "low":
+    return result
+
+result2 = mid_model(task, previous=result)
+score2 = verifier(result2, task)
+
+if score2 >= 0.9:
+    return result2
+
+return frontier_model(task, previous=[result, result2], verifier_notes=notes)
+算法 2：Planner-Worker-Reviewer
+高端模型规划
+低成本模型并行执行
+中高端模型审查
+高端模型最终整合
+
+适合你的核心场景：
+
+产品规格书
+PCB 自动化
+CAD 结构方案
+Kickstarter 文案
+市场研究
+商业计划书
+复杂代码项目
+
+工作流：
+
+1. Supervisor 明确目标
+2. Planner 输出任务树和验收标准
+3. Router 把子任务分给不同模型
+4. Worker 并行生成结果
+5. Verifier 检查事实、格式、代码、图片、表格
+6. Supervisor 合成最终交付
+算法 3：Mixture-of-Agents 分层融合
+第 1 层：多个模型各自生成方案
+第 2 层：多个模型互相读取上一层结果并改进
+第 3 层：强模型聚合与裁决
+
+适合：
+
+战略方案
+产品定义
+设计风格
+复杂提示词
+创意方案
+多语言文档
+
+但要限制数量。一般 3～5 个 Agent 足够，超过 8 个很容易 token 爆炸、互相污染。
+
+算法 4：Self-Consistency 投票
+同一个任务生成 N 个答案
+抽取关键结论
+计算一致性
+不一致部分交给强模型裁决
+
+适合：
+
+数学推理
+逻辑判断
+参数计算
+方案排序
+代码 bug 定位
+算法 5：ReAct + 工具验证
+思考 → 调用工具 → 观察结果 → 再思考 → 再行动
+
+适合：
+
+代码开发
+网页调研
+文件生成
+CAD / PCB 自动化
+表格计算
+PDF 生成
+
+这是你做“本地独立 Agent”的关键。没有工具执行，只是多模型聊天；有工具执行，才是真正 Agent。
+
+六、你应该如何分配模型角色
+
+不要按“贵/便宜”粗暴分，而要按能力分。
+
+模型类型	适合任务	不适合任务
+本地 7B/8B/14B 小模型	分类、摘要、改写、简单问答、路由、关键词抽取	复杂推理、最终决策
+本地 32B/70B 或高性价比 API	代码初稿、文档初稿、长文本整理、RAG 回答	高风险最终判断
+顶级闭源模型	复杂规划、最终审查、模糊需求澄清、架构设计、难代码、复杂视觉	大量重复低价值任务
+视觉模型	图片、图纸、截图、产品外观、PDF 页面理解	纯文本批量处理
+语音模型	ASR、TTS、会议转写、语音交互	复杂逻辑决策
+Embedding 模型	检索、去重、知识库召回	生成最终答案
+Reranker 模型	检索结果排序、过滤无关资料	独立回答
+
+你的目标是：
+
+强模型使用次数减少 70%～90%
+整体质量接近强模型
+工具可验证任务局部超过单强模型
+
+但不要追求“完全不用强模型”。那会导致复杂任务失控。
+
+七、本地部署推荐架构
+轻量版：个人工作台 MVP
+
+适合你现在先做出来验证。
+
+Windows / Mac / Linux
+  ├─ Ollama：本地小模型
+  ├─ LiteLLM Proxy：统一模型入口
+  ├─ LangGraph：流程编排
+  ├─ SQLite / Postgres：任务记录
+  ├─ Chroma / Qdrant / pgvector：向量库
+  ├─ Python Tool Server：文件、PDF、Office、代码执行
+  └─ Web UI：Open WebUI / 自研前端
+专业版：产品工程工作台
+
+适合你做 PCB、CAD、规格书、众筹资料。
+
+M³ Workbench
+  ├─ Model Gateway
+  │   ├─ Ollama local models
+  │   ├─ vLLM local GPU server
+  │   ├─ Claude / GPT / Gemini / DeepSeek / GLM / MiniMax APIs
+  │   └─ LiteLLM unified endpoint
+  │
+  ├─ Orchestration
+  │   ├─ LangGraph state machine
+  │   ├─ Router Agent
+  │   ├─ Supervisor Agent
+  │   └─ Worker Agents
+  │
+  ├─ Tool Layer
+  │   ├─ Python sandbox
+  │   ├─ Browser/search
+  │   ├─ PDF/DOCX/PPTX generator
+  │   ├─ KiCad toolchain
+  │   ├─ OpenSCAD/FreeCAD
+  │   ├─ Git/GitHub
+  │   └─ Image/audio tools
+  │
+  ├─ Knowledge Layer
+  │   ├─ Company templates
+  │   ├─ Product datasheets
+  │   ├─ Past projects
+  │   ├─ Supplier BOM
+  │   └─ Compliance rules
+  │
+  └─ Evaluation Layer
+      ├─ Golden test set
+      ├─ Unit tests
+      ├─ DRC/ERC checks
+      ├─ PDF visual diff
+      ├─ Citation checker
+      └─ Human approval queue
+八、你最需要的不是“更多 Agent”，而是“验收标准”
+
+多 Agent 系统最常见失败是：
+
+Agent 很多
+聊天很多
+token 花很多
+结果还是不可用
+
+原因通常不是模型不够，而是没有验收标准。
+
+每个任务都要定义：
+
+输入是什么？
+输出文件是什么？
+格式模板是什么？
+必须包含哪些字段？
+哪些错误不能出现？
+如何自动检查？
+失败后谁来修？
+什么时候升级强模型？
+什么时候必须人工确认？
+
+例如你之前做产品规格书，正确工作流应该是：
+
+1. 读取公司历史 PDF / Word 模板
+2. 抽取版式规则：字体、页眉页脚、Logo、表格样式、图片位置
+3. 读取新产品参数
+4. 生成内容草稿
+5. 插入真实产品图片
+6. 生成 DOCX
+7. 渲染为 PDF
+8. 截图检查每页排版
+9. 和模板做 visual diff
+10. 发现错误自动修复
+11. 最终输出 Word + PDF + 检查报告
+
+这比“让一个模型直接写规格书”可靠得多。
+
+九、针对你业务的三套典型工作流
+1. 产品规格书 / Datasheet 工作流
+Supervisor：确认产品类型、目标市场、输出语言
+Template Agent：读取历史规格书模板
+Parameter Agent：抽取产品参数
+Image Agent：检查产品图、Logo、结构图
+Writer Agent：生成正文
+Table Agent：生成参数表
+Compliance Agent：检查标准术语
+Layout Agent：生成 Word / PDF
+Visual QA Agent：逐页截图检查排版
+Final Reviewer：强模型最终审查
+
+模型分配：
+
+模板抽取：中模型 + 视觉模型
+参数整理：小模型
+正文初稿：中模型
+最终审查：强模型
+PDF 视觉检查：视觉强模型
+2. PCB / EDA 工作流
+Requirement Agent：整理需求
+Schematic Agent：生成原理图建议
+BOM Agent：器件选型和替代料
+Layout Rule Agent：板框、层数、线宽、间距规则
+KiCad Agent：生成 / 修改 KiCad 文件
+DRC/ERC Tool：自动检查
+EMC Agent：审查高频、地、回流路径
+Manufacturing Agent：JLCPCB / 工厂约束检查
+Reviewer：强模型最终审查
+
+这里“工具检查”比模型回答更重要。模型可以提出方案，但必须用 KiCad DRC/ERC、BOM、制造规则验证。
+
+3. 代码 / Agent Skill 开发工作流
+Planner：强模型拆解需求
+Architect：输出模块结构
+Coder A/B：低成本代码模型并行实现
+Test Agent：写测试
+Runner：运行测试
+Bug Fix Agent：根据报错修复
+Security Agent：检查权限、依赖、注入风险
+Reviewer：强模型最终 code review
+
+这个流程里，低成本模型可以承担 60%～80% 的代码生成，强模型主要用在架构和最终 review。
+
+十、落地开发路线
+第 1 阶段：先做模型网关
+
+目标：所有模型都变成一个统一接口。
+
+LiteLLM Proxy
+  ├─ local/ollama-small
+  ├─ local/vllm-code
+  ├─ deepseek
+  ├─ glm
+  ├─ minimax
+  ├─ claude
+  ├─ openai
+  └─ gemini
+
+输出一个 models.yaml：
+
+models:
+  cheap_text:
+    provider: ollama
+    model: local-small
+    use_for: [classification, summary, rewrite, routing]
+
+  mid_code:
+    provider: api_or_vllm
+    model: code-mid
+    use_for: [coding, refactor, test_generation]
+
+  frontier_reasoning:
+    provider: anthropic_or_openai
+    model: frontier
+    use_for: [planning, final_review, high_risk_reasoning]
+
+  vision:
+    provider: multimodal
+    model: vision-strong
+    use_for: [image, pdf_screenshot, diagram]
+第 2 阶段：做 Router
+
+先不用训练，先用规则。
+
+def route(task):
+    if task.has_image or task.has_pdf_screenshot:
+        return "vision"
+
+    if task.risk in ["legal", "medical", "financial", "safety"]:
+        return "frontier_reasoning"
+
+    if task.type in ["summary", "rewrite", "translation"]:
+        return "cheap_text"
+
+    if task.type in ["coding", "debugging"]:
+        return "mid_code"
+
+    if task.complexity >= 8:
+        return "frontier_reasoning"
+
+    return "mid_text"
+
+后期再收集日志训练路由器：
+
+输入：任务文本、长度、类型、是否成功、人工评分、成本、延迟
+输出：最佳模型选择
+第 3 阶段：做 LangGraph 状态机
+
+最小可用图：
+
+Input
+  ↓
+Classify
+  ↓
+Plan
+  ↓
+Execute
+  ↓
+Verify
+  ↓
+Need Fix?
+  ├─ Yes → Execute
+  └─ No → Final
+
+LangGraph 官方强调它适合构建可靠处理复杂任务的 agent runtime，并以 graph/state 方式建模 agent workflow。
+
+第 4 阶段：加入评估系统
+
+你需要建立自己的 benchmark，不要相信模型自评。
+
+评估集包括：
+
+20 个产品规格书任务
+20 个代码修复任务
+20 个 PCB/EDA 检查任务
+20 个市场研究任务
+20 个多语言翻译排版任务
+
+每个任务记录：
+
+是否完成
+人工评分
+错误数量
+返工次数
+使用 token
+调用强模型次数
+总成本
+总耗时
+是否产生幻觉
+是否格式合格
+
+最后才能知道：
+
+强模型单跑成本是多少
+多模型系统成本是多少
+质量下降多少
+哪些任务可以交给低成本模型
+哪些必须强模型
+十一、关键设计原则
+原则 1：强模型必须放在“前后两端”
+
+错误做法：
+
+低端模型随便拆解 → 低端模型执行 → 强模型最后润色
+
+这样强模型只能修表面，不能修根本方向。
+
+正确做法：
+
+强模型先规划 → 低成本模型执行 → 工具验证 → 强模型最终审查
+原则 2：低成本模型负责“可验证任务”
+
+低成本模型最适合：
+
+有模板
+有标准答案
+有外部工具验证
+有格式规则
+有测试用例
+可以批量重试
+失败代价低
+
+不适合：
+
+战略判断
+关键架构
+复杂推理
+高风险合规
+最终客户交付审查
+原则 3：多模型要“异构”，不要同质化
+
+理想组合：
+
+一个强推理模型
+一个强代码模型
+一个强中文模型
+一个强视觉模型
+一个本地快速模型
+一个审查模型
+一个 embedding / reranker
+
+不理想组合：
+
+5 个差不多的便宜聊天模型互相投票
+原则 4：每个 Agent 必须有工具权限边界
+
+例如：
+
+Research Agent：只能联网和读资料
+Code Agent：只能在 sandbox 写代码
+PCB Agent：只能操作项目目录
+Reviewer：不能改文件，只能提问题
+Final Agent：只能整合已验证内容
+
+这能减少误操作和 prompt injection 风险。
+
+原则 5：必须保存完整轨迹
+
+每次任务保存：
+
+输入
+路由结果
+调用了哪些模型
+每次输出
+工具日志
+验证结果
+失败原因
+最终结果
+人工评分
+
+这些日志以后就是你训练 Router 和改进 Skill 的数据资产。
+
+十二、你要避免的 7 个坑
+Agent 太多：超过 5～8 个核心 Agent，系统复杂度会急剧上升。
+没有评估集：没有 benchmark，就不知道是否真的比单模型好。
+让低端模型做规划：复杂任务第一步错，后面全错。
+只靠模型互评：模型互评会互相迁就，必须有工具验证。
+上下文污染：把所有 Agent 输出都塞给最终模型，会让低质量内容污染答案。
+没有成本阈值：多 Agent 可能比单强模型更贵。
+没有安全沙箱：本地 Agent 能操作文件、Shell、浏览器时，必须权限隔离。
+十三、最终推荐方案
+
+你的最佳路线不是“做一个万能超级 Agent”，而是做一个：
+
+强模型做大脑，低成本模型做员工，工具做事实验证，Router 做调度，评估系统做进化。
+
+最小可行版本如下：
+
+LiteLLM + Ollama + LangGraph + 本地知识库 + 工具执行器 + Verifier
+
+第一版只做 4 个 Agent：
+
+1. Supervisor / Planner：强模型
+2. Router：小模型 + 规则
+3. Worker：低成本模型
+4. Verifier：中强模型 + 工具检查
+
+等跑通后，再扩展：
+
+Document Agent
+Code Agent
+PCB Agent
+CAD Agent
+Image Agent
+Research Agent
+Market Agent
+
+最后你真正能形成竞争力的不是“模型组合”，而是：
+
+你的企业知识库
+你的产品模板
+你的验收标准
+你的自动化工具链
+你的任务日志
+你的 Router 数据
+你的行业 Skill
+
+这才是长期壁垒。
+
+一句话总结：你的设想是对的，而且有理论和工程依据；但目标应设为“用多模型系统在可验证、流程化、工程化任务上以低成本接近或局部超过顶级模型”，而不是幻想一堆弱模型在所有开放问题上稳定超过 Claude Opus 4.7。
+
+如果在编程的问题上，因为大多数时间是编程问题和应用，对于长上下文、隐含规划能力、错误抑制、抽象推理、指令遵循和上下文整合，这些能力，如何通过多个低端模型，低版本的模型按照以上的办法组合实现。
+
+我会聚焦到“编程 Agent”这个场景，因为它和通用问答不一样：代码可以被编译、测试、静态分析、运行验证，所以低端模型组合最有机会逼近高端模型。下面会按能力逐项拆解：长上下文、规划、错误抑制、抽象推理、指令遵循、上下文整合。
+
+已思考 21s
+
+在编程场景里，你的想法最容易成功。原因是：编程不是纯聊天，代码可以被编译、运行、测试、静态分析、类型检查、diff 审查、回归验证。所以很多原本属于 Claude Opus 这类高端模型的能力，可以通过“外部系统 + 多低端模型 + 工具闭环”部分替代。
+
+核心思想是：
+
+不要让低端模型变成 Claude，而是把 Claude 的能力拆开，用流程、工具、记忆、检索、测试和多个专用 Agent 来模拟。
+
+一、先给结论：低端模型组合能补哪些能力？
+高端模型能力	低端模型组合如何补偿	可替代程度
+长上下文	代码库索引、RAG、AST、调用图、分层摘要、Context Pack	高
+隐含规划能力	显式任务树、Planner-Critic、状态机、工作流图	中高
+错误抑制	编译器、测试、linter、类型检查、静态分析、多模型审查	高
+抽象推理	架构图、接口契约、模块边界、设计文档、ADR	中
+指令遵循	结构化任务单、JSON Schema、验收清单、规则检查器	高
+上下文整合	Blackboard 共享记忆、决策日志、版本化状态、LangGraph 状态流	中高
+
+所以在编程里，你可以做到：
+
+低端模型负责局部实现
+系统负责上下文管理
+测试工具负责真假验证
+审查模型负责找漏洞
+强模型只在架构级、疑难 bug、最终 review 时介入
+
+SWE-agent 的研究也证明，软件工程 Agent 的能力不只取决于底层模型，Agent-Computer Interface，也就是模型操作代码库、编辑文件、运行测试的接口设计，会显著影响效果。它在 SWE-bench 和 HumanEvalFix 上的结果说明，给模型合适的软件工程操作环境后，能力会明显提升。
+
+二、长上下文能力：不要塞完整代码库，要做“上下文压缩器”
+
+高端模型的长上下文优势是：能同时看很多文件、需求、历史决策、报错、测试结果。
+
+低端模型上下文短，所以不能让它“读完整项目”。你要做的是：
+
+1. 建立代码库索引层
+
+每个项目启动后，先自动生成这些索引：
+
+repo_index/
+  ├─ file_tree.json              # 文件树
+  ├─ symbols.json                # 类、函数、变量、接口
+  ├─ imports_graph.json          # 依赖关系
+  ├─ call_graph.json             # 调用关系
+  ├─ test_map.json               # 测试文件对应源码
+  ├─ api_contracts.md            # 重要接口契约
+  ├─ architecture_summary.md     # 架构摘要
+  └─ known_errors.md             # 历史错误和修复记录
+
+工具可以用：
+
+ripgrep
+tree-sitter
+ctags
+LSP
+AST parser
+dependency graph
+embedding search
+reranker
+
+这样低端模型不是“自己理解整个项目”，而是由系统提前把项目变成结构化知识。
+
+2. 使用 Context Pack，而不是原始全文
+
+每次给低端模型的不是全部代码，而是一个压缩后的任务包：
+
+Context Pack:
+1. 当前任务目标
+2. 用户原始要求
+3. 必须遵守的限制
+4. 涉及文件列表
+5. 每个文件的相关片段
+6. 相关函数签名
+7. 调用链
+8. 相关测试
+9. 过去失败记录
+10. 验收标准
+
+示例：
+
+task: 修复登录后 token 过期无法刷新
+relevant_files:
+  - src/auth/session.ts
+  - src/api/client.ts
+  - tests/auth/session.test.ts
+
+symbols:
+  - refreshToken()
+  - getSession()
+  - ApiClient.request()
+
+constraints:
+  - 不改变 public API
+  - 不引入新依赖
+  - 必须通过现有测试
+  - 新增一个 refresh token 回归测试
+
+known_context:
+  - token 过期时当前逻辑只抛 401，没有自动刷新
+  - refreshToken 已存在，但没有在 request interceptor 中调用
+
+acceptance:
+  - npm test tests/auth/session.test.ts 通过
+  - npm run lint 通过
+  - 不修改无关文件
+
+这一步就是用系统工程替代长上下文。
+
+3. 分层摘要，解决大型项目问题
+
+对于大项目，不要只做一次摘要。要做三层：
+
+项目级摘要：这个项目整体是什么
+模块级摘要：auth/payment/ui/db 各自做什么
+文件级摘要：每个文件的职责、核心函数、风险点
+
+每次编程任务只取相关模块和文件摘要。
+
+用户任务
+  ↓
+Retriever 找相关文件
+  ↓
+Reranker 排序
+  ↓
+Context Builder 生成 Context Pack
+  ↓
+低端模型只看必要上下文
+
+这可以显著减少低端模型“看不全、瞎改、改错文件”的问题。
+
+三、隐含规划能力：把“隐含思考”变成显式任务树
+
+高端模型擅长隐含规划：它能在脑中把复杂需求拆成步骤。低端模型不行，所以你要强制它输出显式计划。
+
+推荐结构：Planner → Critic → Executor
+用户需求
+  ↓
+Planner A：生成实现计划
+Planner B：生成备选计划
+Planner C：从测试角度生成风险清单
+  ↓
+Plan Critic：比较计划，找漏洞
+  ↓
+Plan Compiler：合并为任务树
+  ↓
+Worker 按任务树执行
+
+任务树格式必须固定：
+
+goal: 实现用户登录后自动刷新 token
+
+steps:
+  - id: S1
+    name: 阅读 auth/session.ts
+    output: 找出 token 过期判断逻辑
+    risk: low
+
+  - id: S2
+    name: 修改 ApiClient.request
+    output: 401 时调用 refreshToken 并重试一次
+    risk: medium
+
+  - id: S3
+    name: 增加回归测试
+    output: session.test.ts 新增 token refresh case
+    risk: medium
+
+  - id: S4
+    name: 运行测试和 lint
+    output: 测试通过
+    risk: high
+
+Planner 不直接写代码，它只负责：
+
+拆任务
+定边界
+定验收
+定风险
+定测试
+
+这就是用“工作流”替代高端模型的隐含规划。
+
+LangGraph 这类状态图框架适合做这种流程，因为它强调把复杂 Agent 工作流建成可控、可调试、可持久化的图状态系统。
+
+四、错误抑制：不要相信模型，要相信验证链
+
+编程里最重要的一点：
+
+模型生成代码只是候选答案，测试通过才是事实。
+
+低端模型容易犯错，所以必须做多层验证。
+
+1. 基础验证链
+
+每次改代码后必须自动运行：
+
+格式化检查
+  ↓
+lint
+  ↓
+类型检查
+  ↓
+单元测试
+  ↓
+相关集成测试
+  ↓
+构建
+  ↓
+diff review
+
+例如：
+
+npm run format:check
+npm run lint
+npm run typecheck
+npm test
+npm run build
+
+或者 Python：
+
+ruff check .
+mypy .
+pytest
+
+或者 Go：
+
+gofmt -w .
+go test ./...
+go vet ./...
+2. 多候选 Patch 机制
+
+低端模型不要只生成一个修复方案，而是生成多个候选 patch：
+
+Patch Agent A：保守修复
+Patch Agent B：重构式修复
+Patch Agent C：测试优先修复
+
+然后系统运行测试：
+
+候选 A → 测试失败
+候选 B → 测试通过，但改动太大
+候选 C → 测试通过，改动最小
+
+选择标准：
+
+测试通过
+改动最小
+符合用户要求
+没有引入新依赖
+没有破坏 public API
+可读性更好
+
+这就是“用搜索替代理解深度”。
+
+3. 失败反馈循环
+
+低端模型最怕看到巨大报错后乱改。你需要一个 Error Summarizer，把报错压缩成结构化信息：
+
+failed_command: npm test
+failed_test: should refresh token when expired
+error_type: assertion_error
+expected: request retried with new token
+actual: request failed with 401
+likely_file: src/api/client.ts
+suggested_focus:
+  - request interceptor
+  - refreshToken return value
+  - retry guard to avoid infinite loop
+
+然后把这个反馈给 Fix Agent，而不是把几千行报错直接塞进去。
+
+五、抽象推理：用“接口契约”和“架构模型”补低端模型短板
+
+高端模型可以理解抽象架构，比如：
+
+这个模块边界在哪里？
+这个设计是否破坏分层？
+这个接口是否稳定？
+这个改动是否有长期维护风险？
+
+低端模型通常只会局部改代码，所以你需要提前生成几个“抽象约束文件”。
+
+1. architecture.md
+# 项目架构
+
+## 分层
+- UI 层：只负责展示，不直接访问数据库
+- Service 层：处理业务逻辑
+- Repository 层：封装数据库访问
+- API 层：处理 HTTP 请求和响应
+
+## 禁止规则
+- UI 不得直接 import db
+- Service 不得依赖 React
+- Repository 不得包含业务判断
+2. contracts.yaml
+AuthService:
+  responsibility: 用户认证、session 管理、token 刷新
+  public_methods:
+    - login(email, password)
+    - logout()
+    - refreshToken()
+  forbidden:
+    - 不直接操作 UI
+    - 不存储明文密码
+3. invariants.md
+# 系统不变量
+
+- refresh token 失败时必须清空 session
+- 401 重试最多一次，避免无限循环
+- public API 不得破坏兼容性
+- 数据库 migration 必须向后兼容
+
+低端模型执行前必须读这些约束。
+
+这等于把“抽象推理”变成“显式规则”。
+
+六、指令遵循：把自然语言需求变成机器可检查任务单
+
+低端模型指令遵循差，尤其容易遗漏要求。解决方法是：先让一个小模型或中模型把用户需求转成结构化任务单。
+
+用户原始需求
+帮我修复登录 token 过期的问题，别大改，顺便补测试。
+转换成任务单
+intent: bug_fix
+scope: auth/session
+must_do:
+  - 修复 token 过期后无法刷新
+  - 补充测试
+  - 保持改动最小
+
+must_not_do:
+  - 不重构整个 auth 模块
+  - 不修改 UI
+  - 不引入新依赖
+  - 不改变 public API
+
+definition_of_done:
+  - 相关测试通过
+  - lint 通过
+  - build 通过
+  - diff 不超过 3 个主要文件
+
+然后所有 Agent 都围绕这个任务单工作。
+
+最后 Verifier 检查：
+
+是否补测试？
+是否没引入新依赖？
+是否没有改 UI？
+是否相关测试通过？
+是否 diff 太大？
+
+这就是用“结构化约束”替代高端模型的强指令遵循。
+
+DSPy 这类框架的价值也在这里：它主张用模块化、可优化的 AI 程序，而不是脆弱的字符串提示词来组织模型调用。
+
+七、上下文整合：用 Blackboard + 状态机，不靠模型记忆
+
+高端模型能把多轮上下文整合起来。低端模型容易忘，所以你要设计一个“项目黑板”。
+
+Blackboard 结构
+.blackboard/
+  ├─ user_goal.md
+  ├─ task_spec.yaml
+  ├─ plan.yaml
+  ├─ context_pack.yaml
+  ├─ decisions.md
+  ├─ attempts/
+  │   ├─ attempt_001.patch
+  │   ├─ attempt_001_test.log
+  │   ├─ attempt_002.patch
+  │   └─ attempt_002_test.log
+  ├─ current_status.yaml
+  └─ final_report.md
+
+每个 Agent 不需要记住全部历史，它只读取：
+
+当前任务
+当前状态
+上一次失败原因
+相关代码片段
+验收标准
+
+每次执行后写入：
+
+我改了什么
+为什么这样改
+测试结果如何
+还有什么风险
+
+这可以避免多 Agent 互相污染上下文。
+
+八、完整编程 Agent 架构
+
+我建议你做成这个结构：
+
+用户需求
+  ↓
+1. Intake Agent
+   - 解析需求
+   - 生成 task_spec.yaml
+
+  ↓
+2. Router Agent
+   - 判断任务类型
+   - 判断复杂度
+   - 判断是否需要强模型
+
+  ↓
+3. Repo Indexer
+   - 文件树
+   - 符号表
+   - 依赖图
+   - 测试映射
+
+  ↓
+4. Context Builder
+   - 检索相关文件
+   - 生成 Context Pack
+
+  ↓
+5. Planner Pool
+   - 多个低/中模型生成计划
+   - Critic 合并计划
+
+  ↓
+6. Patch Workers
+   - 多个模型在不同分支生成 patch
+
+  ↓
+7. Test Runner
+   - lint
+   - typecheck
+   - unit test
+   - build
+
+  ↓
+8. Reviewer
+   - diff review
+   - 安全检查
+   - 指令遵循检查
+
+  ↓
+9. Fix Loop
+   - 如果失败，把结构化错误反馈给 Patch Worker
+
+  ↓
+10. Final Integrator
+   - 选择最佳 patch
+   - 输出修改说明
+   - 输出测试结果
+
+这个架构的关键不是“模型聪明”，而是“流程聪明”。
+
+九、按编程任务类型分配模型
+1. 简单任务
+
+例如：
+
+改变量名
+补注释
+生成 README
+小函数重构
+格式调整
+
+用：
+
+本地小模型 + lint
+
+不需要强模型。
+
+2. 中等任务
+
+例如：
+
+修 bug
+补测试
+改 API
+新增一个页面
+新增一个接口
+
+用：
+
+中端代码模型 + Context Pack + 测试循环 + Reviewer
+
+强模型只在两次失败后介入。
+
+3. 复杂任务
+
+例如：
+
+重构架构
+迁移数据库
+多模块联动
+性能优化
+安全相关代码
+并发 bug
+支付系统
+权限系统
+
+用：
+
+强模型规划
+低端模型执行
+工具验证
+强模型 final review
+
+不要让低端模型独立决定架构。
+
+4. 超复杂任务
+
+例如：
+
+从 0 开发一个完整 SaaS
+大型遗留系统迁移
+跨语言重构
+复杂 Agent 框架开发
+高安全要求系统
+
+用：
+
+强模型做架构师
+中模型做模块负责人
+低模型做代码工人
+测试系统做裁判
+人类做最终产品经理
+十、核心算法：Coding Cascade
+
+可以这样设计：
+
+def solve_coding_task(task, repo):
+    spec = intake_agent.to_structured_spec(task)
+
+    complexity = router.estimate_complexity(spec, repo)
+
+    index = repo_indexer.load_or_build(repo)
+
+    context_pack = context_builder.build(
+        spec=spec,
+        repo_index=index,
+        budget="small_context"
+    )
+
+    if complexity <= 3:
+        patch = cheap_model.generate_patch(context_pack)
+        return verify_or_retry(patch)
+
+    if complexity <= 7:
+        plans = [
+            mid_model_a.plan(context_pack),
+            mid_model_b.plan(context_pack),
+            cheap_model.plan(context_pack),
+        ]
+        plan = critic.merge_and_check(plans, spec)
+
+        candidates = [
+            worker_a.implement(plan, context_pack),
+            worker_b.implement(plan, context_pack),
+        ]
+
+        return select_by_tests(candidates)
+
+    # 高复杂度
+    plan = frontier_model.make_architecture_plan(context_pack)
+
+    candidates = [
+        mid_model_a.implement(plan, context_pack),
+        mid_model_b.implement(plan, context_pack),
+    ]
+
+    best = select_by_tests(candidates)
+
+    return frontier_model.final_review(best, spec, test_logs=True)
+
+重点是：
+
+低复杂度：便宜模型
+中复杂度：多模型候选 + 测试选择
+高复杂度：强模型规划 + 低模型执行 + 强模型审查
+十一、为什么这在编程上特别有效？
+
+因为软件工程天然有“外部裁判”。
+
+SWE-bench 就是用真实 GitHub issue 测试模型是否能解决真实软件问题；OpenAI 发布的 SWE-bench Verified 是经过人工验证的 500 个任务子集，用来更可靠地评估模型解决真实软件 issue 的能力。
+
+这说明编程 Agent 的评价标准不是“说得像不像”，而是：
+
+patch 是否解决 issue？
+测试是否通过？
+是否没有破坏已有功能？
+
+所以低端模型只要能提出足够多的候选解，再由测试和审查筛选，就能大幅弥补单模型能力不足。
+
+十二、你要做的关键模块
+模块 1：Repo Intelligence
+
+负责理解代码库。
+
+输入：Git 项目
+输出：
+- 文件树
+- 依赖图
+- 符号表
+- 测试映射
+- 架构摘要
+- 风险文件列表
+模块 2：Context Builder
+
+负责把大项目压缩成小上下文。
+
+输入：任务 + repo index
+输出：Context Pack
+模块 3：Plan Compiler
+
+负责把多个模型的计划合并成可执行任务树。
+
+输入：多个计划
+输出：唯一 plan.yaml
+模块 4：Patch Sandbox
+
+每个模型在独立分支里改代码。
+
+branches/
+  agent_a_patch
+  agent_b_patch
+  agent_c_patch
+模块 5：Test Gate
+
+自动运行：
+
+lint
+typecheck
+unit test
+integration test
+build
+security scan
+模块 6：Diff Reviewer
+
+检查：
+
+是否改了不该改的文件
+是否引入新依赖
+是否删除测试
+是否 hardcode
+是否吞异常
+是否破坏 API
+是否违反架构边界
+模块 7：Escalation Controller
+
+决定什么时候升级强模型。
+
+升级条件：
+
+连续 2 次测试失败
+涉及安全 / 支付 / 权限 / 数据库
+修改超过 5 个核心文件
+出现架构冲突
+上下文检索不确定
+用户要求高可靠
+十三、你可以使用的本地框架组合
+
+推荐：
+
+模型网关：LiteLLM
+本地模型：Ollama / vLLM
+流程编排：LangGraph
+代码索引：tree-sitter + ripgrep + LSP
+向量库：Qdrant / Chroma / pgvector
+测试执行：Docker sandbox
+Prompt 优化：DSPy
+任务记录：PostgreSQL / SQLite
+前端：Open WebUI / 自研 Electron / Next.js
+
+SWE-agent 的研究重点说明了 Agent 与电脑之间的接口很关键，尤其是代码导航、文件编辑、测试运行能力。 所以你不要只做聊天框，要做一个“软件工程工作台”。
+
+十四、一个真实执行例子
+
+用户输入：
+
+帮我给这个 Next.js 项目增加 Stripe 支付订阅功能，要求支持月付、年付、Webhook、用户权限升级。
+
+错误做法：
+
+让一个低端模型直接写全部代码。
+
+正确做法：
+
+1. Intake Agent 转成任务单
+2. Repo Indexer 分析项目结构
+3. Context Builder 找 auth、user、billing、api、db 相关文件
+4. Planner 拆任务：
+   - 数据库字段
+   - Stripe customer
+   - checkout session
+   - webhook
+   - subscription 状态同步
+   - 权限中间件
+   - 测试
+5. 强模型审查计划，因为支付属于高风险
+6. Worker A 写数据库 migration
+7. Worker B 写 API route
+8. Worker C 写 webhook
+9. Worker D 写测试
+10. Test Runner 运行
+11. Security Reviewer 检查 webhook signature、权限绕过、重复事件
+12. Final Reviewer 输出最终报告
+
+这里低端模型做了大量代码，但关键计划和安全审查必须强模型介入。
+
+十五、最终答案：如何用低端模型组合实现高端编程能力？
+
+你要把能力拆成 6 个外部系统：
+
+长上下文 → 代码索引 + RAG + Context Pack
+隐含规划 → 显式任务树 + Planner-Critic
+错误抑制 → 测试 + 编译 + 静态分析 + 多候选 patch
+抽象推理 → 架构文档 + 接口契约 + 不变量
+指令遵循 → 结构化任务单 + 验收清单 + 规则检查
+上下文整合 → Blackboard + 状态机 + 决策日志
+
+最推荐你的编程 Agent 架构是：
+
+强模型：架构师 / 疑难问题 / 最终审查
+中端模型：模块实现 / bug 修复 / 测试生成
+低端模型：检索、摘要、分类、局部代码、文档
+工具：编译器、测试框架、linter、类型系统、Git diff
+状态机：保证流程不乱
+
+一句话：
+
+在编程问题上，低端模型组合不是靠“更聪明”超过高端模型，而是靠“更工程化”接近高端模型；在有测试、有约束、有工具验证的任务里，它可以做到成本更低、稳定性更高，甚至在某些工程流水线任务上局部超过单一高端模型。

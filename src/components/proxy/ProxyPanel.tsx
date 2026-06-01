@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Activity,
   Clock,
@@ -27,6 +27,7 @@ import {
   useUpdateGlobalProxyConfig,
 } from "@/lib/query/proxy";
 import type { ProxyStatus } from "@/types/proxy";
+import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
 import { AnimatePresence, motion } from "framer-motion";
 
@@ -57,6 +58,40 @@ export function ProxyPanel({
   // 监听地址/端口的本地状态（端口用字符串以支持完全清空）
   const [listenAddress, setListenAddress] = useState("127.0.0.1");
   const [listenPort, setListenPort] = useState("15721");
+
+  // 编排引擎状态
+  const [orchestrationEnabled, setOrchestrationEnabled] = useState(false);
+  const [orchestrationLoading, setOrchestrationLoading] = useState(false);
+
+  useEffect(() => {
+    invoke<{ enabled: boolean }>("orchestration_status")
+      .then((result) => setOrchestrationEnabled(result.enabled))
+      .catch(() => {});
+  }, []);
+
+  const handleOrchestrationToggle = useCallback(
+    async (checked: boolean) => {
+      setOrchestrationLoading(true);
+      try {
+        await invoke<boolean>("orchestration_toggle", { enable: checked });
+        setOrchestrationEnabled(checked);
+        toast.success(
+          t("proxy.orchestration.toggled", {
+            defaultValue: checked ? "编排引擎已启用" : "编排引擎已关闭",
+          }),
+        );
+      } catch (err) {
+        toast.error(
+          t("proxy.orchestration.toggleFailed", {
+            defaultValue: "编排引擎切换失败",
+          }),
+        );
+      } finally {
+        setOrchestrationLoading(false);
+      }
+    },
+    [t],
+  );
 
   // 同步全局配置到本地状态
   useEffect(() => {
@@ -248,6 +283,44 @@ export function ProxyPanel({
             disabled={isProxyPending}
           />
         </div>
+
+        {/* [2.5] Orchestration engine toggle — visible when proxy is running */}
+        <AnimatePresence>
+          {isRunning && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.2, ease: "easeInOut" }}
+              className="overflow-hidden"
+            >
+              <div className="flex items-center justify-between rounded-xl border border-violet-500/30 bg-violet-500/5 p-4 transition-colors hover:bg-violet-500/10">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-background ring-1 ring-violet-500/30">
+                    <Server className="h-4 w-4 text-violet-500" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium leading-none">
+                      {t("proxy.orchestration.title", {
+                        defaultValue: "编排引擎",
+                      })}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {t("proxy.orchestration.description", {
+                        defaultValue: "多模型策略路由与质量验证",
+                      })}
+                    </p>
+                  </div>
+                </div>
+                <Switch
+                  checked={orchestrationEnabled}
+                  onCheckedChange={handleOrchestrationToggle}
+                  disabled={orchestrationLoading}
+                />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* [3] App takeover switches — animated, visible only when proxy is running */}
         <AnimatePresence>

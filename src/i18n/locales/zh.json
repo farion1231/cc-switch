@@ -2361,7 +2361,12 @@
       "startFailed": "启动路由服务失败: {{detail}}"
     },
     "stoppedWithRestore": "路由服务已关闭，已恢复所有路由配置",
-    "stopWithRestoreFailed": "停止失败: {{detail}}"
+    "stopWithRestoreFailed": "停止失败: {{detail}}",
+    "orchestration": {
+      "title": "编排引擎",
+      "description": "多模型策略路由与质量验证",
+      "comingSoon": "编排引擎将在重启后生效"
+    }
   },
   "streamCheck": {
     "configSaved": "健康检查配置已保存",
@@ -2692,5 +2697,42 @@
     "expiredHint": "请运行 {{tool}} 命令刷新登录",
     "queryFailed": "查询失败",
     "refresh": "刷新"
+  },
+  "orchestration": {
+    "title": "编排引擎",
+    "enable": "启用多模型编排",
+    "enabled": "已启用",
+    "disabled": "已禁用",
+    "reload": "重新加载配置",
+    "reloadSuccess": "配置已重新加载",
+    "reloadFailed": "重新加载失败：{{error}}",
+    "status": {
+      "active": "运行中",
+      "inactive": "未启用"
+    },
+    "strategyEditor": "策略编辑器",
+    "flowCanvas": "执行流程",
+    "lastRun": "上次运行: 演示",
+    "auditLog": "审计日志",
+    "events": "{{count}} 条事件",
+    "humanGate": "人工审批",
+    "pending": "{{count}} 待审批",
+    "modelLeaderboard": "模型排行榜",
+    "calls": "{{count}} 次调用",
+    "predictiveInsights": "预测洞察",
+    "insights": "{{count}} 条洞察",
+    "confidence": "{{value}}% 置信度",
+    "quality": "质量",
+    "passRate": "通过率",
+    "approve": "批准",
+    "reject": "拒绝",
+    "noStrategies": "未配置策略",
+    "addStrategy": "添加策略",
+    "type": "类型",
+    "complexity": "复杂度",
+    "risk": "风险",
+    "models": "模型",
+    "enabledTooltip": "编排引擎已启用",
+    "disabledTooltip": "启用编排引擎"
   }
 }

@@ -1,0 +1,61 @@
+# OmniAgent Workbench — Orchestration Strategies
+# Edit this file to customize strategy behavior. Changes are hot-reloaded.
+
+enabled: false  # Set to true to enable orchestration
+
+strategies:
+  route:
+    description: "Direct route to best model, no verification"
+    when:
+      complexity: [0, 0.4]
+      risk: ["low"]
+    action:
+      type: route
+      use_model: cheap_coder
+      verify: false
+
+  cascade:
+    description: "Cheap first → quality check → escalate"
+    when:
+      complexity: [0.4, 0.7]
+      risk: ["medium", "high"]
+    action:
+      type: cascade
+      models:
+        - cheap_coder
+        - mid_coder
+        - frontier
+      verify_each: true
+      escalate_on_fail: true
+      quality_threshold: 0.65
+
+  debate:
+    description: "Multi-model debate with independent judge"
+    when:
+      complexity: [0.7, 1.0]
+      risk: ["high", "critical"]
+    action:
+      type: cascade
+      models:
+        - mid_executor_code
+        - cheap_executor_code
+        - frontier_planner
+      verify_each: true
+      escalate_on_fail: true
+      quality_threshold: 0.75
+
+  moa:
+    description: "Mixture of Agents — multiple proposers + aggregator"
+    when:
+      complexity: [0.8, 1.0]
+      risk: ["critical"]
+      task_type: ["coding", "architecture"]
+    action:
+      type: cascade
+      models:
+        - mid_executor_code
+        - cheap_executor_code
+        - frontier_planner
+      verify_each: true
+      escalate_on_fail: true
+      quality_threshold: 0.80

@@ -131,6 +131,15 @@ async fn handle_messages_for_app(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
+    // Orchestration: skip for streaming requests or tool-use requests (can't wrap SSE)
+    let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let has_tools = body.get("tools").and_then(|t| t.as_array()).is_some_and(|a| !a.is_empty());
+    if !is_streaming && !has_tools {
+        if let Some(resp) = try_orchestrate_claude(&state, &body).await {
+            return resp;
+        }
+    }
+
     let mut ctx =
         RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;
 
@@ -494,6 +503,15 @@ pub async fn handle_chat_completions(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
+    // Orchestration: skip for streaming requests or tool-use requests
+    let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let has_tools = body.get("tools").and_then(|t| t.as_array()).is_some_and(|a| !a.is_empty());
+    if !is_streaming && !has_tools {
+        if let Some(resp) = try_orchestrate_openai(&state, &body).await {
+            return resp;
+        }
+    }
+
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
     let endpoint = endpoint_with_query(&uri, "/chat/completions");
@@ -557,6 +575,15 @@ pub async fn handle_responses(
         .to_bytes();
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+
+    // Orchestration: skip for streaming requests or tool-use requests
+    let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let has_tools = body.get("tools").and_then(|t| t.as_array()).is_some_and(|a| !a.is_empty());
+    if !is_streaming && !has_tools {
+        if let Some(resp) = try_orchestrate_openai(&state, &body).await {
+            return resp;
+        }
+    }
 
     let mut ctx =
         RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
@@ -1171,6 +1198,174 @@ async fn log_usage(
         is_streaming,
     ) {
         log::warn!("[USG-001] 记录使用量失败: {e}");
+    }
+}
+
+// ============================================================================
+// Orchestration helpers
+// ============================================================================
+
+use crate::orchestration::engine::OrchestrationDecision;
+
+fn log_orchestration_usage(state: &ProxyState, result: &crate::orchestration::executor::ExecutionResult) {
+    use super::usage::logger::UsageLogger;
+    use super::usage::parser::TokenUsage;
+
+    if !usage_logging_enabled(state) {
+        return;
+    }
+
+    let logger = UsageLogger::new(&state.db);
+    let usage = TokenUsage {
+        input_tokens: result.total_input_tokens as u32,
+        output_tokens: result.total_output_tokens as u32,
+        model: Some(result.model_used.clone()),
+        ..Default::default()
+    };
+    let request_id = usage.dedup_request_id();
+
+    if let Err(e) = logger.log_with_calculation(
+        request_id,
+        "orchestration".to_string(),
+        "orchestration".to_string(),
+        result.model_used.clone(),
+        result.model_used.clone(),
+        result.model_used.clone(),
+        usage,
+        1.0,
+        result.total_latency_ms,
+        None,
+        200,
+        None,
+        None,
+        false,
+    ) {
+        log::warn!("[Orchestration] Usage log failed: {e}");
+    }
+}
+
+/// Try orchestration for Claude/Anthropic format requests.
+/// Returns `Some(Ok(response))` if orchestration handled the request,
+/// `Some(Err(..))` on fatal error, or `None` to fall through to normal forwarding.
+async fn try_orchestrate_claude(
+    state: &ProxyState,
+    body: &Value,
+) -> Option<Result<axum::response::Response, ProxyError>> {
+    let decision = state.orchestration.decide(body).await;
+
+    if matches!(decision, OrchestrationDecision::Passthrough) {
+        return None;
+    }
+
+    let messages = body
+        .get("messages")
+        .and_then(|m| m.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let tools = body.get("tools").and_then(|t| t.as_array()).cloned();
+
+    // Use execute() directly to avoid double-decide (C3 fix)
+    match state.orchestration.execute(&decision, messages, tools).await {
+        Ok(result) => {
+            log::info!(
+                "[Orchestration] Strategy executed: model={}, strategy={}, verified={}, latency={}ms",
+                result.model_used,
+                result.strategy,
+                result.verified,
+                result.total_latency_ms,
+            );
+
+            log_orchestration_usage(state, &result);
+
+            let response_body = serde_json::json!({
+                "id": format!("msg_{}", uuid::Uuid::new_v4().simple()),
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": result.content}],
+                "model": result.model_used,
+                "stop_reason": "end_turn",
+                "stop_sequence": None::<String>,
+                "usage": {
+                    "input_tokens": result.total_input_tokens,
+                    "output_tokens": result.total_output_tokens,
+                }
+            });
+            Some(Ok((
+                StatusCode::OK,
+                [(
+                    http::header::CONTENT_TYPE,
+                    http::HeaderValue::from_static("application/json"),
+                )],
+                Json(response_body),
+            ).into_response()))
+        }
+        Err(e) => {
+            log::warn!("[Orchestration] Execution failed (decision={:?}), falling back to passthrough: {}", decision, e);
+            None
+        }
+    }
+}
+
+/// Try orchestration for OpenAI Chat Completions format requests.
+async fn try_orchestrate_openai(
+    state: &ProxyState,
+    body: &Value,
+) -> Option<Result<axum::response::Response, ProxyError>> {
+    let decision = state.orchestration.decide(body).await;
+
+    if matches!(decision, OrchestrationDecision::Passthrough) {
+        return None;
+    }
+
+    let messages = body
+        .get("messages")
+        .and_then(|m| m.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let tools = body.get("tools").and_then(|t| t.as_array()).cloned();
+
+    match state.orchestration.execute(&decision, messages, tools).await {
+        Ok(result) => {
+            log::info!(
+                "[Orchestration] OpenAI strategy executed: model={}, strategy={}",
+                result.model_used,
+                result.strategy,
+            );
+
+            log_orchestration_usage(state, &result);
+
+            let response_body = serde_json::json!({
+                "id": format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()),
+                "object": "chat.completion",
+                "created": chrono::Utc::now().timestamp(),
+                "model": result.model_used,
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": result.content,
+                    },
+                    "finish_reason": "stop",
+                }],
+                "usage": {
+                    "prompt_tokens": result.total_input_tokens,
+                    "completion_tokens": result.total_output_tokens,
+                    "total_tokens": result.total_input_tokens + result.total_output_tokens,
+                }
+            });
+            Some(Ok((
+                StatusCode::OK,
+                [(
+                    http::header::CONTENT_TYPE,
+                    http::HeaderValue::from_static("application/json"),
+                )],
+                Json(response_body),
+            ).into_response()))
+        }
+        Err(e) => {
+            log::warn!("[Orchestration] OpenAI execution failed (decision={:?}), falling back to passthrough: {}", decision, e);
+            None
+        }
     }
 }
 

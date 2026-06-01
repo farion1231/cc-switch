@@ -1,10 +1,10 @@
 [package]
-name = "cc-switch"
-version = "3.15.0"
-description = "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
-authors = ["Jason Young"]
+name = "omniagent-workbench"
+version = "0.1.0"
+description = "Local multi-model orchestration gateway with quality verification"
+authors = ["OmniAgent Contributors"]
 license = "MIT"
-repository = "https://github.com/farion1231/cc-switch"
+repository = ""
 edition = "2021"
 rust-version = "1.85.0"
 
@@ -61,6 +61,7 @@ tokio-rustls = "0.26"
 rustls = "0.23"
 webpki-roots = "0.26"
 rustls-native-certs = "0.8"
+rand = "0.8"
 regex = "1.10"
 rquickjs = { version = "0.8", features = ["array-buffer", "classes"] }
 thiserror = "2.0"

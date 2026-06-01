@@ -90,6 +90,15 @@ import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
+import {
+  OrchestrationPanel,
+  StrategyEditor,
+  FlowCanvas,
+  AuditLog,
+  HumanGatePanel,
+  ModelLeaderboard,
+  PredictiveInsights,
+} from "@/components/orchestration";
 
 type View =
   | "providers"
@@ -105,7 +114,8 @@ type View =
   | "openclawEnv"
   | "openclawTools"
   | "openclawAgents"
-  | "hermesMemory";
+  | "hermesMemory"
+  | "orchestration";
 
 interface WebDavSyncStatusUpdatedPayload {
   source?: string;
@@ -151,6 +161,7 @@ const VALID_VIEWS: View[] = [
   "openclawTools",
   "openclawAgents",
   "hermesMemory",
+  "orchestration",
 ];
 
 const getInitialView = (): View => {
@@ -864,6 +875,24 @@ function App() {
           );
         case "hermesMemory":
           return <HermesMemoryPanel />;
+        case "orchestration":
+          return (
+            <div className="px-6 pt-4 space-y-4">
+              <OrchestrationPanel />
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <StrategyEditor />
+                <FlowCanvas />
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <AuditLog />
+                <HumanGatePanel />
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <ModelLeaderboard />
+                <PredictiveInsights />
+              </div>
+            </div>
+          );
         case "skills":
           return (
             <UnifiedSkillsPanel
@@ -1138,6 +1167,7 @@ function App() {
                   {currentView === "openclawAgents" &&
                     t("openclaw.agents.title")}
                   {currentView === "hermesMemory" && t("hermes.memory.title")}
+                  {currentView === "orchestration" && t("orchestration.title")}
                 </h1>
               </div>
             ) : (
@@ -1487,6 +1517,15 @@ function App() {
                                 title={t("mcp.title")}
                               >
                                 <McpIcon size={16} />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("orchestration")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("orchestration.title")}
+                              >
+                                <LayoutDashboard className="w-4 h-4" />
                               </Button>
                             </>
                           )}

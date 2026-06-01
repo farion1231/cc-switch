@@ -1,0 +1,2540 @@
+的本地独立独立agent，可以 link同时使用多款大模型又复杂的有便宜，有的大模型可以支持图像，有大模型可以支持语音。有的大模型能力强，有大模型能力弱，这样我方面组合，是否理论依据，如何做才能实现，几个不同类型的组合这种低端模型，甚至逻辑搭配，通过什么方的组合能够达到顶级Claude 4.7，甚至突破更好的negligible？有没有理论的算法和依据？如果有本地应该如何组织和框架。详细给我调查一下，给出完整的方案。
+
+
+我会把这个问题拆成三层：理论依据、可落地架构、以及本地个人工作台的执行方案。重点会判断“低成本模型组合”在哪些任务上能接近顶级模型，哪些场景不可能稳定超越。
+
+我已经确认有一批直接相关的研究路线：FrugalGPT/级联、RouteLLM/路由、Mixture-of-Agents/多模型融合、LLM-Blender/排序融合、Tree-of-Thought/ReAct/搜索式执行。结论会偏工程落地，不会只讲概念。
+
+已思考 1m 14s
+
+可以做，而且有明确理论依据。但正确目标不是“用几个低端模型魔法叠加，稳定全面超过 Claude Opus 4.7 / GPT-5.5”，而是：
+
+用高端模型做少量关键决策，用低成本模型做大量可验证执行，用工具和评测把错误拦住。
+在“可拆解、可测试、可回滚”的任务上，整体系统可以接近甚至超过单个顶级模型；在“开放式、强创造、强长程抽象、缺少客观验证”的任务上，很难稳定超过顶级模型。
+
+Anthropic 官方把 Claude Opus 4.7 定位为其最适合复杂任务、agentic coding 的最强通用模型之一；OpenAI 也把 GPT-5.5 定位为面向复杂专业工作的 frontier model。所以你的系统要赢，不能靠“低端模型变聪明”，而要靠系统工程：路由、级联、验证、工具执行、记忆、评测和人工闸门。
+
+1. 理论依据：你的想法不是空想
+A. FrugalGPT：低成本模型级联可以大幅降成本
+
+FrugalGPT 提出三类降本策略：prompt adaptation、LLM approximation、LLM cascade。它的实验显示，模型级联可以在部分任务上接近最佳单模型表现，同时最高可报告到约 98% 成本降低，或者在相同成本下提升准确率。关键思想是：不是每个问题都需要最贵模型。
+
+这正好对应你的设想：
+简单任务 → 本地/便宜模型；
+中等任务 → GLM / DeepSeek / MiniMax；
+复杂任务 → GPT-5.5 / Claude Opus 4.7；
+失败或不确定 → 再升级。
+
+B. RouteLLM / Hybrid LLM：用路由器决定“该让哪个模型做”
+
+RouteLLM 研究的是在强模型和弱模型之间学习路由，根据问题难度和偏好数据决定调用哪个模型，以优化成本和质量平衡。Hybrid LLM 也采用“根据问题难度分配给小模型或大模型”的方法。
+
+你的系统里应该有一个独立模块，叫：
+
+Model Router / Cost Router / check-model-skills
+
+它不负责回答问题，只判断：
+
+“这个任务是否已经拆到低成本模型可稳定执行？”
+
+C. Cascade Routing：路由 + 级联可以合并成更优策略
+
+2024 年的 Cascade Routing 研究把 routing 和 cascading 统一起来，指出成功的关键是质量估计器：系统必须能判断当前答案是否足够好，什么时候该升级模型。
+
+这对你非常重要。你不能只设计“多个 agent 聊天”，而要设计：
+
+任务 → 执行 → 质量估计 → 通过/重做/升级 → 最终交付
+
+D. Mixture-of-Agents：多个模型多轮融合可以提升结果
+
+Mixture-of-Agents 论文提出分层 MoA 架构，让多个模型的输出在下一层被其他模型吸收、改进；论文报告其 MoA 在 AlpacaEval 2.0、MT-Bench、FLASK 等基准上超过 GPT-4 Omni。
+
+但要注意：2025 年也有研究提出 Self-MoA，有时“同一个强模型多次采样再融合”比混合多个不同模型更好，因为混入低质量模型会拉低平均质量。
+
+所以结论是：
+
+多模型融合有效，但不是模型越多越好。必须有筛选、排序、融合和早停。
+
+E. LLM-Blender：先排序，再融合
+
+LLM-Blender 的思路是先用 PairRanker 对多个候选答案排序，再用 GenFuser 融合 top-K 答案。
+
+你的本地系统也应采用类似结构：
+
+多个模型生成候选方案；
+Judge / PairRanker 进行比较；
+只保留 top 2–3；
+再由强模型或融合模型生成最终答案。
+F. Self-Consistency / Tree-of-Thought / ReAct：不是一次回答，而是搜索
+
+Self-Consistency 通过采样多条推理路径再取一致答案，在多个推理基准上显著提升效果。Tree-of-Thought 进一步把推理变成树搜索，允许回溯、选择和前瞻。ReAct 把“推理”和“调用工具”结合起来，能减少幻觉和错误传播。
+
+这说明：
+你的系统不要让模型“一次性生成最终结果”，而要让它：
+
+计划 → 执行 → 工具验证 → 反思 → 修改 → 再验证
+
+2. 关键判断：低端模型组合能否达到顶级模型？
+可以接近甚至超过的场景
+
+这些任务最适合你的方案：
+
+任务类型	为什么适合多模型低成本组合
+代码开发	有单元测试、lint、编译、CI，可以客观验证
+文档生成	有模板、schema、格式检查、图片资产检查
+PCB / CAD / OpenSCAD	有 DRC、尺寸检查、渲染图、BOM、规则文件
+数据整理	有表格校验、重复检查、字段 schema
+产品规格书	有固定结构、参数表、图片清单、认证字段
+多语言翻译	可用术语表、格式一致性检查
+RAG 问答	可引用原文，减少幻觉
+批量执行任务	低端模型可分段完成，高端模型抽查
+不适合稳定超过顶级模型的场景
+任务类型	原因
+极复杂战略判断	没有客观验证标准
+高难数学 / 科研推导	低端模型容易错，高端模型也需验证
+法律、医疗、金融最终意见	风险高，必须人工或专业工具审查
+深层原创设计	多模型容易平均化，反而降低灵感
+长上下文复杂推理	低端模型上下文和稳定性不足
+安全敏感操作	多 agent 可能放大错误
+
+所以你的商业目标应该是：
+
+不是打造“一个更聪明的模型”，而是打造“一个更可靠、更便宜、更可控的工作系统”。
+
+3. 推荐总架构：本地多模型个人工作台
+
+我建议你的系统叫：
+
+Local Multi-Model Agent Workbench
+
+核心不是“agent 群聊”，而是“任务图 + 模型路由 + 工具验证 + 成本账本”。
+
+总体结构
+用户输入
+  ↓
+Intent Parser / 任务识别器
+  ↓
+Task Planner / 高端模型拆解
+  ↓
+check-model-skills / 可执行性闸门
+  ↓
+Model Router / 成本-质量路由
+  ↓
+Specialist Agents / 专业执行 agent
+  ↓
+Tool Executor / 本地工具执行
+  ↓
+Verifier / 规则 + 测试 + 模型审查
+  ↓
+Aggregator / 融合最终结果
+  ↓
+交付物 + 日志 + 成本报告
+4. 模型分工方案
+
+你的模型池应该分成 6 类，不要所有模型都平级。
+
+1）Frontier Planner：顶级规划模型
+
+用途：
+复杂拆解、架构设计、风险判断、最终审查。
+
+推荐放：
+
+GPT-5.5
+Claude Opus 4.7
+Gemini Pro 类模型
+你最信任的高端模型
+
+调用原则：
+少量调用，只做关键节点。
+
+适用节点：
+
+初始任务拆解
+复杂方案设计
+高风险错误审查
+最终发布前 QA
+低端模型连续失败后的升级
+2）Cheap Executor：低成本执行模型
+
+用途：
+写代码、填表格、生成局部文案、批量处理、格式转换、提取信息。
+
+可放：
+
+DeepSeek V4
+GLM 5.1
+MiniMax / Kimi / Qwen / Yi 等便宜模型
+本地 7B / 14B / 32B 模型
+
+原则：
+
+只给它明确、短、可验证的任务。
+
+例如不要给：
+
+“帮我做一个完整产品规格书。”
+
+而要给：
+
+“根据 schema，只生成第 3 节 Electrical Characteristics 表格，字段不得新增，缺失字段填 TBD，输出 JSON。”
+
+3）Code Agent：代码模型
+
+用途：
+Python、TypeScript、OpenSCAD、KiCad 脚本、SolidWorks API、PDF/DOCX 生成脚本。
+
+特点：
+必须接入工具验证：
+
+pytest
+mypy
+eslint
+build
+DRC/ERC
+FreeCAD/OpenSCAD render
+PDF visual check
+4）Vision Agent：图像/视觉模型
+
+用途：
+
+分析产品图
+检查规格书排版
+检查 PDF 是否缺图
+对比参考 datasheet 风格
+识别 CAD 渲染是否符合外观
+分析 PCB 截图
+
+你的产品设计、规格书、Kickstarter 图、CAD 图，都需要这个角色。
+
+5）Audio / Voice Agent：语音模型
+
+用途：
+
+会议录音转写
+产品语音交互
+AI 玩具 / 桌面陪伴硬件
+客服语音场景
+
+它不应该参与复杂规划，只负责语音输入输出和情绪/语气识别。
+
+6）Judge / Verifier：审查模型
+
+用途：
+
+比较多个答案
+检查是否满足约束
+发现幻觉
+判断是否需要升级模型
+
+但要注意，LLM-as-a-Judge 有位置偏差等问题，不能完全信任单一 judge。研究已经系统指出 LLM judge 会出现 position bias，影响可靠性。
+
+所以 judge 要配合：
+
+规则检查
+schema 校验
+自动测试
+工具输出
+多 judge 交叉
+随机打乱候选顺序
+强模型抽检
+5. 核心算法：成本-质量路由
+
+你的系统要有一个统一评分函数：
+
+Score(model, task)
+= ExpectedQuality
+- λ * Cost
+- μ * Latency
+- ρ * Risk
++ τ * ToolVerifiability
+
+实际工程上可以这样做：
+
+def route_task(task):
+    features = extract_features(task)
+
+    if task.risk in ["legal", "medical", "finance", "safety-critical"]:
+        return "frontier_model_with_human_review"
+
+    if task.requires_vision:
+        return "vision_model"
+
+    if task.is_simple_extraction and task.has_schema:
+        return "cheap_local_model"
+
+    if task.is_code and task.has_tests:
+        return "cheap_code_model_then_test"
+
+    if task.complexity_score > 0.75:
+        return "frontier_planner"
+
+    if task.uncertainty > 0.6:
+        return "medium_model_or_ensemble"
+
+    return "cheap_model"
+质量估计器要检查什么？
+
+每个任务执行后，必须产出：
+
+{
+  "answer": "...",
+  "confidence": 0.72,
+  "missing_fields": [],
+  "assumptions": [],
+  "tool_results": {},
+  "risk_flags": [],
+  "needs_escalation": false
+}
+
+然后 Verifier 判断：
+
+def verify(result, task):
+    if schema_invalid(result):
+        return "retry_same_model"
+
+    if tool_tests_failed(result):
+        return "retry_or_escalate"
+
+    if missing_required_fields(result):
+        return "ask_or_mark_TBD"
+
+    if confidence_low(result):
+        return "escalate"
+
+    if high_risk_claim_without_source(result):
+        return "escalate"
+
+    return "accept"
+6. 最适合你的 5 种组合模式
+模式一：便宜模型优先，失败再升级
+
+适合：代码、表格、文档、格式化、信息抽取。
+
+Cheap Model
+  ↓
+规则检查 / 测试
+  ↓ 不通过
+Medium Model
+  ↓
+测试
+  ↓ 不通过
+Frontier Model
+
+这是成本最低的主流程。
+
+模式二：高端模型拆解，低端模型执行
+
+适合你现在的工作流：产品、CAD、PCB、规格书、Skill 开发。
+
+Claude Opus 4.7 / GPT-5.5：拆解任务
+  ↓
+check-model-skills：检查是否足够明确
+  ↓
+DeepSeek / GLM / MiniMax：执行子任务
+  ↓
+工具验证
+  ↓
+高端模型抽检
+
+这是你最应该优先实现的架构。
+
+模式三：多模型并行生成，Judge 排序融合
+
+适合：方案设计、文案、产品策略、Prompt、规格书章节。
+
+Model A 生成候选
+Model B 生成候选
+Model C 生成候选
+  ↓
+Pairwise Judge 排序
+  ↓
+保留 Top 2
+  ↓
+Fusion Model 融合
+  ↓
+Verifier 审查
+
+注意：不要让 6 个低端模型全部参与，容易增加噪声。一般 2–3 个足够。
+
+模式四：同模型多采样 Self-Consistency
+
+适合：数学、逻辑、分类、判断题、结构化推理。
+
+同一个模型生成 5 个候选
+  ↓
+提取最终答案
+  ↓
+多数一致 / 规则验证
+  ↓
+不一致则升级
+
+如果是低成本模型，这个模式很划算。
+
+模式五：工具优先，模型只做解释
+
+适合：工程类任务，尤其是你做的 PCB、CAD、DOCX/PDF、数据表。
+
+模型生成结构化输入
+  ↓
+Python / CAD / KiCad / OpenSCAD / LibreOffice / 测试工具执行
+  ↓
+工具结果返回
+  ↓
+模型解释和修正
+
+你的规格书生成失败，根本原因大概率不是模型不够聪明，而是让模型直接“自由排版”。正确方法是：
+
+模型只生成结构化数据，排版由模板和脚本完成。
+
+7. 推荐本地技术栈
+模型网关层：LiteLLM
+
+LiteLLM 官方定位是统一接口，可用 OpenAI 格式调用 100+ LLM provider。它适合做你系统的“模型交换机”，统一管理 OpenAI、Anthropic、Gemini、DeepSeek、本地模型等。
+
+用途：
+
+统一 API
+记录成本
+设置 fallback
+设置预算
+统一日志
+不同 agent 调不同模型
+本地模型运行：Ollama + vLLM
+
+Ollama 适合个人电脑快速跑本地模型，也能连接到 Codex、Claude Code、OpenCode 等工具链。
+
+vLLM 更适合服务器化、本地高吞吐推理，支持 OpenAI-compatible API、流式输出、结构化输出、工具调用和多种并行机制。
+
+建议：
+
+场景	工具
+个人 Windows 工作站	Ollama
+多人团队 / 内网服务	vLLM
+多云 API 统一调用	LiteLLM
+供应商 fallback	OpenRouter / LiteLLM fallback
+高可控 agent 流程	LangGraph
+Agent 编排：优先 LangGraph
+
+LangGraph 官方强调 durable execution、streaming、human-in-the-loop 等能力，适合你这种复杂、多阶段、可暂停、可恢复的工程工作流。
+
+我建议你把 LangGraph 作为底座，而不是一开始用 CrewAI 做主系统。
+
+原因：
+
+你不是做简单“角色扮演 agent”
+你要做产品工程、规格书、CAD、PCB、Skill 自动开发
+这些任务需要状态机、节点、失败重试、人工确认
+LangGraph 比“群聊式 agent”更适合工程闭环
+
+CrewAI 适合快速定义 role-based agents，官方也强调 crews、flows、guardrails、memory、observability。
+AutoGen 适合研究和多 agent 对话原型，微软研究院仍把它描述为多 agent 协作框架；但其 GitHub 页面显示旧 AutoGen 进入 maintenance mode，所以新项目不建议完全绑定旧 AutoGen。
+
+8. 你的本地工作台目录结构
+
+建议这样组织：
+
+local-agent-workbench/
+  apps/
+    desktop-ui/                 # Tauri / Electron / Web UI
+    api-server/                 # FastAPI / Node API
+  core/
+    orchestrator/               # LangGraph 工作流
+    router/                     # 模型路由器
+    evaluator/                  # 质量评估器
+    memory/                     # 向量库 + 项目记忆
+    tool_executor/              # 本地工具执行
+    cost_ledger/                # 成本账本
+  agents/
+    planner_agent/
+    coding_agent/
+    doc_agent/
+    cad_agent/
+    pcb_agent/
+    vision_agent/
+    voice_agent/
+    verifier_agent/
+    fusion_agent/
+  skills/
+    product_datasheet_skill/
+    text_to_cad_skill/
+    kicad_pcb_skill/
+    kickstarter_copy_skill/
+    check_model_skills/
+  configs/
+    models.yaml
+    routing_rules.yaml
+    risk_policy.yaml
+    budget_policy.yaml
+  tools/
+    python/
+    libreoffice/
+    pandoc/
+    openscad/
+    freecad/
+    kicad/
+    solidworks_api/
+    image_compare/
+  storage/
+    sqlite/
+    vector_db/
+    artifacts/
+    logs/
+  evals/
+    golden_tasks/
+    benchmark_sets/
+    regression_tests/
+9. models.yaml 示例
+models:
+  frontier_planner:
+    provider: anthropic
+    model: claude-opus-4-7
+    use_for:
+      - complex_planning
+      - final_review
+      - agentic_coding_architecture
+    max_daily_calls: 50
+
+  frontier_research:
+    provider: openai
+    model: gpt-5.5
+    use_for:
+      - research
+      - data_analysis
+      - complex_reasoning
+      - code_review
+    max_daily_calls: 50
+
+  cheap_executor_1:
+    provider: deepseek
+    model: deepseek-v4
+    use_for:
+      - code_generation
+      - json_generation
+      - document_sections
+      - batch_processing
+
+  cheap_executor_2:
+    provider: glm
+    model: glm-5.1
+    use_for:
+      - chinese_writing
+      - structured_generation
+      - summarization
+
+  local_coder:
+    provider: ollama
+    model: qwen-coder-local
+    endpoint: http://localhost:11434
+    use_for:
+      - simple_code
+      - refactor
+      - comments
+      - tests
+
+  local_judge:
+    provider: vllm
+    model: local-reranker-or-judge
+    endpoint: http://localhost:8000
+    use_for:
+      - candidate_ranking
+      - schema_check
+      - cheap_eval
+10. routing_rules.yaml 示例
+routing:
+  default_strategy: cheap_first
+
+  complexity_thresholds:
+    simple: 0.25
+    medium: 0.55
+    complex: 0.80
+
+  escalation:
+    max_retries_same_model: 2
+    escalate_on:
+      - schema_failure
+      - test_failure_twice
+      - low_confidence
+      - hallucination_risk
+      - missing_required_fields
+      - unsafe_tool_call
+      - user_final_delivery
+
+  tasks:
+    product_datasheet:
+      planner: frontier_planner
+      executor: cheap_executor_1
+      verifier:
+        - rule_checker
+        - vision_agent
+        - frontier_planner
+      must_use_template: true
+
+    coding:
+      planner: frontier_planner
+      executor: cheap_executor_1
+      verifier:
+        - pytest
+        - lint
+        - medium_code_review
+      escalate_if_tests_fail: true
+
+    cad:
+      planner: frontier_planner
+      executor: local_coder
+      verifier:
+        - openscad_render
+        - dimension_check
+        - vision_compare
+      require_human_before_release: true
+
+    pcb:
+      planner: frontier_planner
+      executor: cheap_executor_1
+      verifier:
+        - kicad_erc
+        - kicad_drc
+        - bom_check
+        - human_review
+      require_human_before_fabrication: true
+11. 你最需要的 check-model-skills
+
+这个 skill 是你的系统核心，作用是判断任务能不能交给低成本模型。
+
+输入
+{
+  "task": "生成产品规格书第3节参数表",
+  "context": "...",
+  "expected_output": "JSON",
+  "constraints": [
+    "不能编造参数",
+    "缺失字段填 TBD",
+    "必须符合 schema"
+  ],
+  "available_tools": [
+    "schema_validator",
+    "docx_template_renderer"
+  ],
+  "candidate_model": "deepseek-v4"
+}
+输出
+{
+  "ready_for_cheap_model": true,
+  "risk_level": "medium",
+  "missing_constraints": [],
+  "required_schema": "schemas/electrical_characteristics.json",
+  "recommended_model": "deepseek-v4",
+  "fallback_model": "claude-opus-4-7",
+  "verification_steps": [
+    "validate_json_schema",
+    "check_units",
+    "detect_TBD_fields",
+    "human_review_required_for_certification"
+  ]
+}
+判断标准
+
+低成本模型可执行的任务必须满足：
+
+输入边界清楚；
+输出格式固定；
+成功标准可验证；
+不要求自由发挥；
+不涉及高风险最终判断；
+上下文长度可控；
+失败可以重试；
+有工具能检查结果。
+
+不满足这些条件，就不能直接交给低成本模型。
+
+12. 适合你业务的 4 条工作流
+工作流 A：产品规格书生成
+用户输入产品简介 / 旧 PDF / 图片 / 参数
+  ↓
+高端模型提取规格书结构
+  ↓
+低成本模型补全文案草稿
+  ↓
+schema 校验
+  ↓
+模板引擎生成 DOCX
+  ↓
+转换 PDF
+  ↓
+视觉模型检查缺图、错位、Logo、表格
+  ↓
+高端模型最终审查
+
+关键原则：
+
+DOCX/PDF 不能让模型自由排版，必须模板化。
+
+工作流 B：CAD / 结构设计
+Image2 产品图 + 尺寸约束
+  ↓
+高端模型拆成结构件
+  ↓
+低成本代码模型生成 OpenSCAD / FreeCAD 脚本
+  ↓
+本地渲染 STL / PNG
+  ↓
+视觉模型对比原图
+  ↓
+尺寸检查 / 打印可行性检查
+  ↓
+失败则自动修改
+  ↓
+最终人工确认
+工作流 C：PCB / KiCad
+产品需求 + datasheet + 接口定义
+  ↓
+高端模型生成系统框图和电源树
+  ↓
+低成本模型生成 KiCad 脚本 / BOM / 原理图草案
+  ↓
+ERC / DRC / BOM 校验
+  ↓
+规则失败自动修复
+  ↓
+高端模型审查风险
+  ↓
+人工工程师最终确认
+
+PCB 不建议完全无人审核，尤其涉及电源、安规、EMC、射频、认证。
+
+工作流 D：Skill / Agent 开发
+用户需求
+  ↓
+高端模型生成 Skill 规格
+  ↓
+check-model-skills 拆分任务
+  ↓
+低成本模型写脚本
+  ↓
+Codex / Claude Code 执行修改
+  ↓
+测试用例运行
+  ↓
+失败自动定位
+  ↓
+高端模型最终 review
+13. 成本控制策略
+
+你应该设置 5 层预算：
+
+budget_policy:
+  daily_total_usd: 20
+  frontier_daily_usd: 8
+  cheap_model_daily_usd: 5
+  local_model_daily_usd: 0
+  max_frontier_calls_per_task: 3
+
+  force_local_when:
+    - summarization
+    - formatting
+    - batch_json
+    - low_risk_translation
+
+  require_approval_when:
+    - estimated_cost_usd_over: 2
+    - context_tokens_over: 100000
+    - final_release_document
+    - pcb_fabrication_output
+
+最实用原则：
+
+80% 任务走便宜模型或本地模型；
+15% 走中端模型；
+5% 走 Claude Opus 4.7 / GPT-5.5；
+高端模型只做“规划、审查、升级”。
+14. 不能忽视的风险
+风险一：多 agent 会放大错误
+
+多个低端模型互相引用错误，可能形成“群体幻觉”。所以必须有外部工具验证。
+
+风险二：Judge 不可靠
+
+LLM judge 有偏差，不能单独决定最终质量。要用 schema、测试、编译、渲染、引用、人工审核。
+
+风险三：上下文污染
+
+一个 agent 的错误会传给下一个 agent。每个阶段都要输出结构化 artifact，而不是长对话。
+
+风险四：低端模型不能处理模糊目标
+
+低端模型适合“明确任务”，不适合“帮我想一个伟大产品”。
+
+风险五：本地模型不是免费午餐
+
+本地模型省 API 成本，但会消耗显卡、时间、维护精力。Ollama 适合快速个人使用，vLLM 更适合服务化部署。
+
+15. 最终推荐方案
+
+你的最佳路线是：
+
+第一阶段：先做“多模型路由器 + check-model-skills”
+
+不要先做复杂 UI。先做命令行 MVP：
+
+输入任务
+  ↓
+自动判断复杂度
+  ↓
+选择模型
+  ↓
+执行
+  ↓
+验证
+  ↓
+失败升级
+  ↓
+输出成本和质量报告
+第二阶段：接入 3 个核心工作流
+
+优先做：
+
+产品规格书生成；
+Skill 自动开发；
+CAD / PCB 工程辅助。
+
+这三个最符合你的业务，也最容易商业化。
+
+第三阶段：做桌面工作台
+
+UI 功能包括：
+
+当前任务图；
+每个 agent 状态；
+当前调用模型；
+花费金额；
+失败原因；
+是否升级；
+最终交付物；
+人工审批按钮。
+第四阶段：积累你的私有评测集
+
+这一步最关键。你要建立自己的 golden tasks：
+
+evals/
+  datasheet/
+  cad/
+  pcb/
+  coding/
+  product_strategy/
+  kickstarter/
+
+每次换模型，都跑一次评测。
+不要相信排行榜，要相信你自己的业务评测。
+
+16. 一句话结论
+
+你的设想有理论基础，而且非常适合你现在做的 产品设计、规格书、CAD、PCB、Skill、Agent 工作流。
+
+但正确实现方式不是“多个模型互相聊天”，而是：
+
+高端模型做架构和审查，低成本模型做可验证执行，本地工具做事实验证，路由器控制成本，check-model-skills 控制任务边界。
+
+这样做，在大量工程型任务上可以达到接近顶级模型的效果，部分可验证任务甚至能超过单一顶级模型的稳定性和性价比；但在完全开放、不可验证、强抽象的任务上，仍然需要 Claude Opus 4.7 / GPT-5.5 这类高端模型作为核心判断层。
+
+你没有回答我
+
+你说得对，我上一个回答更像“方向概览”，没有真正把“理论边界、算法组合、工程框架、本地落地、能否超过顶级模型”彻底讲透。下面我会重新做一版，重点给你可执行的系统设计，而不是泛泛介绍。
+
+我已经补查了最新资料：这不是单纯“多 agent 协作”的问题，而是“模型级联 + 路由 + 多候选融合 + 工具验证 + 人工闸门”的系统工程。核心边界是：能被测试/验证的任务，组合系统最容易超过单模型；不能验证的任务，组合系统只能降成本，不一定提质量。
+
+已思考 48s
+
+你说得对。你真正问的不是“多 agent 能不能做”，而是：
+
+能不能用本地独立 agent，同时调用多个高低端模型，通过算法组合、任务拆解、路由、验证，让整体效果接近 Claude Opus 4.7 / GPT-5.5，甚至在部分任务上超过它们，并且成本接近 negligible？
+
+答案是：
+
+可以，但有边界。
+在可拆解、可测试、可验证的任务上，可以做到接近甚至超过单个顶级模型；在不可验证、强抽象、强原创、强长程推理的任务上，低端模型组合很难稳定超过 Claude Opus 4.7 / GPT-5.5。Claude Opus 4.7 官方强调它适合 long-horizon agentic work、知识工作、视觉任务和记忆任务；GPT-5.5 官方也定位为面向复杂专业工作、编码、研究和数据分析的 frontier model，所以不能假设几个低端模型简单投票就能全面超过它们。
+
+下面给你真正完整的方案。
+
+一、核心结论
+
+你的想法有理论依据，正确名称不是简单的“多 agent”，而是：
+
+Multi-Model Agent System = 模型级联 + 动态路由 + 多候选融合 + 工具验证 + 记忆反馈 + 人工闸门
+
+它的目标不是让低端模型“变成”Claude Opus 4.7，而是把工作变成流水线：
+
+高端模型：拆解、规划、审查、关键判断
+中端模型：复杂执行、长文写作、结构化生成
+低端模型：批量执行、格式转换、局部代码、信息提取
+本地工具：测试、编译、渲染、校验、引用、查错
+Judge 模型：比较候选、发现问题、决定是否升级
+
+真正能省钱的地方是：不要让顶级模型做所有 token 工作，只让它做最值钱的 5% 到 15% 的决策。
+
+二、理论依据：为什么这种系统可行
+1. FrugalGPT：模型级联可以显著降低成本
+
+FrugalGPT 的核心是 LLM cascade：先用便宜模型回答，只有当结果不确定或不合格时才升级到更强模型。论文报告，在部分任务上可以接近最佳单模型表现，同时最多降低约 98% 推理成本；在相同成本下，也可能超过单一 GPT-4 的准确率。
+
+这就是你的“低端模型先做，高端模型兜底”的理论基础。
+
+2. RouteLLM：让路由器决定该用强模型还是弱模型
+
+RouteLLM 研究的是用偏好数据训练路由器，动态选择强模型或弱模型，在尽量不损失质量的前提下降低成本；论文结果显示，在一些基准上可实现超过 2 倍成本节省。
+
+你的系统必须有一个核心模块：
+
+Model Router / check-model-skills：判断这个任务能不能交给低成本模型。
+
+不是所有任务都交给便宜模型，而是先判断任务难度、风险、输出格式、可验证性。
+
+3. Mixture-of-Agents：多个模型分层融合可以增强能力
+
+Mixture-of-Agents 不是简单投票，而是多层结构：第一层多个模型生成答案，下一层模型读取上一层所有输出并改进。论文报告 MoA 在 AlpacaEval 2.0、MT-Bench、FLASK 等基准上取得很强结果，甚至在部分评测中超过 GPT-4 Omni。
+
+但这也说明一个关键点：
+
+多模型融合要有结构，不是群聊。
+
+错误做法：
+
+让 5 个 agent 自由聊天，最后自动总结
+
+正确做法：
+
+候选生成 → 排序 → 选择 top-K → 融合 → 验证 → 升级
+4. LLM-Blender：先排序，再融合
+
+LLM-Blender 提出 PairRanker 和 GenFuser：先比较多个模型输出，选出更好的候选，再融合优点生成最终答案。
+
+这对你特别重要，因为低端模型输出很多时候是“部分对、部分错”。系统不能直接平均，而应该：
+
+先判断哪个候选更可靠；
+删除明显错误；
+只融合 top 2 或 top 3；
+最后再验证。
+5. Tree-of-Thought：复杂问题不能一次生成，要搜索
+
+Tree-of-Thought 把推理变成搜索过程：生成多个中间思路，自我评估，必要时回溯。论文显示，在需要规划和搜索的任务上，ToT 能显著提升表现，例如 Game of 24 任务中从普通 CoT 的低成功率提升到更高水平。
+
+你的系统面对复杂问题时，不能让模型“一次回答完”，而应该：
+
+生成多个方案 → 评估每个方案 → 选择路线 → 继续展开 → 回溯修正
+6. ReAct：模型必须能调用工具，否则会幻觉
+
+ReAct 的核心是 Reasoning + Acting：模型一边推理，一边调用外部工具，例如搜索、数据库、代码执行、环境反馈。论文指出 ReAct 在问答和事实验证任务中可以通过外部 API 降低幻觉和错误传播。
+
+这正是你做本地工作台的关键：
+
+模型不能只聊天，它必须能操作工具。
+
+例如：
+
+写代码后运行 pytest；
+写 DOCX 后检查排版；
+写 OpenSCAD 后渲染 PNG；
+写 PCB 后跑 ERC / DRC；
+写规格书后检查图片是否存在；
+做市场研究后检查引用来源。
+7. Reflexion：让 agent 从失败中改进
+
+Reflexion 不是重新训练模型，而是把失败原因写入 episodic memory，下次尝试时参考。论文在 coding、语言推理、顺序决策任务上报告了显著提升。
+
+这对你的工作台非常有用。比如你之前做规格书失败，系统应该记录：
+
+失败经验：
+- 不能让模型自由排版 PDF
+- 必须先生成结构化 JSON
+- 图片必须先做 asset manifest
+- DOCX 必须基于模板渲染
+- PDF 必须视觉检查缺图和错位
+
+下一次执行时，系统自动避免同类错误。
+
+8. SWE-agent：agent 成功不只靠模型，还靠“操作界面”
+
+SWE-agent 研究发现，agent 与计算机交互的接口设计会显著影响软件工程任务表现；它通过专门的 agent-computer interface 帮助模型浏览仓库、编辑文件、运行测试。
+
+这说明你的本地 agent 工作台不能只设计 prompt，还要设计：
+
+文件系统接口；
+工具执行接口；
+日志接口；
+测试接口；
+回滚接口；
+人工确认接口。
+三、能否达到 Claude Opus 4.7 / GPT-5.5？
+结论分三种情况
+情况 A：可验证工程任务，可以接近甚至超过单模型
+
+例如：
+
+任务	为什么多模型系统可能超过单模型
+代码开发	有测试、编译、lint，可以自动验证
+产品规格书	有模板、schema、图片清单、版式检查
+CAD / OpenSCAD	有渲染图、尺寸检查、STL 导出
+PCB / KiCad	有 ERC、DRC、BOM、规则约束
+数据清洗	有字段规则、重复检查、统计验证
+翻译排版	有术语表、格式对齐、双语校对
+RAG 问答	有引用来源，可查证
+
+在这些任务中，系统不是靠“模型更聪明”，而是靠：
+
+低端模型生成 → 工具发现错误 → 自动修正 → 强模型抽查
+
+这种闭环可能比单次调用 Claude Opus 4.7 更稳定。
+
+情况 B：开放式战略判断，只能辅助，不能稳定超过
+
+例如：
+
+公司战略；
+产品方向；
+投资判断；
+商业模式创新；
+高层决策；
+没有明确答案的研究问题。
+
+这些任务没有客观测试集。低端模型组合很容易出现：
+
+多个模型都说得很像，但都没有真正抓住核心
+
+这类任务仍然需要 GPT-5.5 / Claude Opus 4.7 做主判断。
+
+情况 C：高风险任务，必须人类最终确认
+
+例如：
+
+法律合同；
+医疗判断；
+安规认证；
+电源设计；
+高压电路；
+射频；
+量产 PCB；
+出海合规；
+财务税务。
+
+多模型系统可以做准备工作，但不能替代专业审核。
+
+四、为什么多个低端模型有时能超过一个高端模型？
+
+核心条件有 5 个。
+
+条件 1：错误要相对独立
+
+如果 3 个低端模型犯的是不同错误，融合有价值。
+如果它们都来自相似训练数据、相同幻觉模式，那么融合没有意义。
+
+所以你的模型池要有多样性：
+
+DeepSeek：代码、推理、工程执行
+GLM：中文理解、结构化表达
+Qwen / Yi / Kimi：中文长文、信息处理
+MiniMax：多模态、语音/对话应用
+Claude / GPT：规划、审查、复杂推理
+本地模型：隐私、批处理、低成本
+条件 2：任务必须可拆解
+
+不能把大任务直接丢给便宜模型：
+
+错误：
+
+帮我做完整产品规格书
+
+正确：
+
+只生成 Electrical Characteristics 表格，输出 JSON，不允许编造参数，缺失写 TBD
+条件 3：每一步必须可验证
+
+没有验证，就只是多个模型互相吹捧。
+必须接入工具：
+
+JSON Schema
+pytest
+mypy
+eslint
+KiCad ERC/DRC
+OpenSCAD render
+LibreOffice/PDF render
+图片存在性检查
+引用检查
+重复率检查
+条件 4：必须有升级机制
+
+便宜模型失败后不能继续硬跑。
+应该有规则：
+
+失败 1 次：同模型重试
+失败 2 次：换中端模型
+失败 3 次：升级 Claude / GPT
+高风险：直接强模型 + 人工确认
+条件 5：强模型只做关键节点
+
+你的成本要低，就不能让高端模型承担全部 token。
+理想比例：
+
+70% 本地/便宜模型
+20% 中端模型
+10% 顶级模型
+
+如果设计得好，成本会接近你说的 negligible；但不是零成本，因为高端模型仍然要用于规划和最终审查。
+
+五、推荐总架构：本地独立 Agent 工作台
+
+你的本地系统应该分 9 层。
+
+用户输入
+  ↓
+1. Intent Parser 意图识别
+  ↓
+2. Task Decomposer 任务拆解
+  ↓
+3. check-model-skills 任务可执行性检查
+  ↓
+4. Model Router 模型路由器
+  ↓
+5. Specialist Agents 专家执行层
+  ↓
+6. Tool Runtime 本地工具执行层
+  ↓
+7. Verifier / Judge 质量验证层
+  ↓
+8. Fusion / Publisher 融合交付层
+  ↓
+9. Memory / Eval / Cost Ledger 记忆、评测、成本账本
+六、每一层具体怎么做
+1. Intent Parser：判断用户到底要什么
+
+输出结构：
+
+{
+  "task_type": "product_datasheet",
+  "domain": "hardware_product",
+  "requires_web": true,
+  "requires_vision": true,
+  "requires_code": false,
+  "risk_level": "medium",
+  "expected_artifact": "docx_pdf",
+  "language": "zh-CN"
+}
+2. Task Decomposer：高端模型拆任务
+
+这里建议用 Claude Opus 4.7 或 GPT-5.5。
+原因是它们适合长程、多步骤、复杂任务。Anthropic 官方称 Opus 4.7 适合 highly autonomous、long-horizon agentic work；OpenAI 官方也把 GPT-5.5 定位为复杂专业工作的 frontier model。
+
+输出任务图：
+
+{
+  "goal": "生成商业级产品规格书",
+  "subtasks": [
+    {
+      "id": "S1",
+      "name": "提取产品参数",
+      "model_tier": "cheap",
+      "output": "json",
+      "verifier": "schema"
+    },
+    {
+      "id": "S2",
+      "name": "生成产品介绍",
+      "model_tier": "medium",
+      "output": "markdown"
+    },
+    {
+      "id": "S3",
+      "name": "生成 DOCX",
+      "model_tier": "tool",
+      "output": "docx"
+    },
+    {
+      "id": "S4",
+      "name": "视觉检查 PDF",
+      "model_tier": "vision",
+      "output": "qa_report"
+    },
+    {
+      "id": "S5",
+      "name": "最终审查",
+      "model_tier": "frontier",
+      "output": "approval_report"
+    }
+  ]
+}
+3. check-model-skills：你最需要开发的核心模块
+
+这个模块回答一个问题：
+
+当前任务是否已经拆到低成本模型可以稳定执行？
+
+它不是普通 prompt，而是一个质量闸门。
+
+输入
+{
+  "task": "根据产品参数生成 Electrical Characteristics 表格",
+  "context_length": 3200,
+  "output_format": "json",
+  "schema_available": true,
+  "tool_verification_available": true,
+  "risk_level": "low",
+  "ambiguity_level": "low",
+  "candidate_model": "deepseek-v4"
+}
+输出
+{
+  "can_use_cheap_model": true,
+  "recommended_model_tier": "cheap_executor",
+  "why": [
+    "输出格式固定",
+    "有 JSON Schema 校验",
+    "风险低",
+    "上下文长度可控"
+  ],
+  "must_not_do": [
+    "不得编造缺失参数",
+    "不得自由添加字段"
+  ],
+  "verification_steps": [
+    "json_schema_validate",
+    "unit_check",
+    "missing_value_check"
+  ],
+  "fallback": {
+    "after_failures": 2,
+    "next_model_tier": "medium"
+  }
+}
+判断公式
+
+你可以用这个评分：
+
+CheapReadyScore =
+0.25 * OutputClarity
++ 0.25 * Verifiability
++ 0.20 * ContextBoundedness
++ 0.15 * LowRisk
++ 0.15 * ToolSupport
+- 0.30 * Ambiguity
+
+规则：
+
+Score >= 0.75：低端模型可执行
+0.50 <= Score < 0.75：中端模型执行，强模型抽查
+Score < 0.50：高端模型处理
+高风险任务：无论分数多少，都要高端模型 + 人工确认
+4. Model Router：模型路由器
+
+路由器不能只看价格，要看：
+
+特征	说明
+complexity	任务复杂度
+ambiguity	需求模糊度
+risk	风险等级
+verifiability	是否可自动验证
+modality	文本、图像、语音、代码
+context_length	上下文长度
+required_format	是否需要 JSON / XML / DOCX
+failure_history	此类任务过去失败率
+budget	当前预算
+
+伪代码：
+
+def route(task):
+    if task.risk in ["legal", "medical", "safety", "pcb_fabrication"]:
+        return "frontier_model_plus_human_review"
+
+    if task.requires_vision:
+        return "vision_model"
+
+    if task.requires_voice:
+        return "voice_model"
+
+    if task.output_format in ["json", "yaml", "csv"] and task.schema_available:
+        if task.verifiability > 0.8 and task.ambiguity < 0.3:
+            return "cheap_model"
+
+    if task.type == "coding" and task.tests_available:
+        return "cheap_or_medium_code_model_then_test"
+
+    if task.complexity > 0.75 or task.ambiguity > 0.65:
+        return "frontier_planner"
+
+    return "medium_model"
+七、推荐模型角色分工
+
+不要按“模型品牌”组织，而要按“角色”组织。
+
+角色	用途	推荐模型等级
+Chief Planner	复杂拆解、架构、路线选择	Claude Opus 4.7 / GPT-5.5
+Router	判断任务该给谁	中端模型 + 规则
+Cheap Executor	批量执行、结构化输出	DeepSeek / GLM / Qwen / 本地模型
+Code Agent	代码、脚本、测试修复	专用代码模型
+Vision Agent	图片、PDF、CAD、截图检查	多模态强模型
+Voice Agent	语音输入输出	语音模型
+Judge Agent	比较候选、打分	中端或强模型
+Tool Agent	调用本地程序	非 LLM，确定性工具
+Human Gate	最终批准	你或工程师
+八、5 种真正有效的组合方式
+组合 1：Cheap-first Cascade
+
+适合低风险、可验证任务。
+
+便宜模型
+  ↓
+Schema / Test / Rule Check
+  ↓ 失败
+中端模型
+  ↓
+再次验证
+  ↓ 失败
+Claude / GPT
+
+对应理论：FrugalGPT、RouteLLM。
+
+适合：
+
+JSON 生成；
+表格整理；
+参数提取；
+代码小修改；
+文档局部段落；
+翻译；
+批量分类。
+组合 2：Frontier Planner + Cheap Executors
+
+这是最适合你的主流程。
+
+Claude / GPT 负责拆解
+  ↓
+check-model-skills 检查任务是否足够明确
+  ↓
+低端模型执行子任务
+  ↓
+工具验证
+  ↓
+强模型最终审查
+
+适合：
+
+产品规格书；
+CAD；
+PCB；
+Kickstarter 文案；
+Skill 开发；
+企业自动化工作流。
+
+这是你应该优先开发的模式。
+
+组合 3：Multi-Candidate + PairRank + Fusion
+模型 A 输出方案
+模型 B 输出方案
+模型 C 输出方案
+  ↓
+Pairwise Judge 排序
+  ↓
+保留 top 2
+  ↓
+Fusion Agent 融合
+  ↓
+Verifier 检查
+
+对应理论：LLM-Blender。
+
+适合：
+
+产品战略；
+文案；
+方案设计；
+Prompt 设计；
+规格书章节；
+市场分析。
+
+注意：候选模型不要太多。一般 3 个足够。
+模型越多，噪声越多，成本越高。
+
+组合 4：Layered Mixture-of-Agents
+Layer 1：多个模型提出初稿
+Layer 2：多个模型读取初稿并改进
+Layer 3：强模型综合
+Layer 4：工具验证
+
+对应理论：Mixture-of-Agents。
+
+适合：
+
+高价值方案；
+复杂商业计划；
+产品路线；
+大型软件架构；
+多语言文档。
+
+不适合：
+
+简单任务；
+低预算任务；
+实时对话；
+严格格式输出。
+组合 5：Tool-verified Agent Loop
+模型生成动作
+  ↓
+工具执行
+  ↓
+读取反馈
+  ↓
+模型修复
+  ↓
+再次执行
+  ↓
+直到通过
+
+对应理论：ReAct、Reflexion、SWE-agent。
+
+适合：
+
+编程；
+文档生成；
+CAD；
+PCB；
+数据分析；
+网页自动化；
+文件处理。
+
+这是最重要的工程模式。
+
+九、本地框架怎么选
+推荐总组合
+LiteLLM：模型网关、成本控制、fallback
+LangGraph：工作流编排、状态机、人工确认
+Ollama：个人电脑本地模型
+vLLM：服务器/工作站本地推理
+Open WebUI：本地模型界面
+PostgreSQL / SQLite：任务状态
+Qdrant / Chroma：向量记忆
+Docker：工具隔离
+
+LiteLLM 官方支持统一网关、重试、fallback、负载均衡、成本跟踪等能力，很适合作为多模型调用层。
+LangGraph 官方强调 durable execution、checkpoint、human-in-the-loop、streaming，适合你这种长流程、本地工具、多阶段验证的 agent 系统。
+Ollama 适合个人电脑快速运行本地模型，也支持接入 Claude Code、Codex、OpenCode 等工具链；vLLM 适合更生产化的本地推理服务，并提供 OpenAI-compatible server 和 structured outputs。
+
+不建议一开始就重度绑定 AutoGen
+
+AutoGen 本身是经典多 agent 框架，但它的 GitHub 页面显示 AutoGen 进入 maintenance mode；微软新的方向是 Microsoft Agent Framework，它结合了 AutoGen 与 Semantic Kernel 的能力。
+
+CrewAI 可以用，但更适合“角色协作”和快速原型；它的 Flows 更适合精确流程控制，Crews 更适合动态协作。
+
+我的建议：
+
+主框架：LangGraph
+模型网关：LiteLLM
+本地模型：Ollama / vLLM
+可选角色协作：CrewAI
+不建议主系统依赖旧 AutoGen
+十、你的本地工作台目录结构
+local-multi-model-workbench/
+  apps/
+    desktop-ui/                 # Tauri / Electron / Web UI
+    api-server/                 # FastAPI
+  core/
+    orchestrator/               # LangGraph 工作流
+    router/                     # 模型路由器
+    skill_checker/              # check-model-skills
+    verifier/                   # 质量验证
+    memory/                     # 项目记忆
+    cost_ledger/                # 成本记录
+    artifact_manager/           # 交付物管理
+  agents/
+    chief_planner/
+    research_agent/
+    coding_agent/
+    doc_agent/
+    cad_agent/
+    pcb_agent/
+    vision_agent/
+    voice_agent/
+    judge_agent/
+    fusion_agent/
+  skills/
+    product_datasheet/
+    text_to_cad/
+    kicad_pcb/
+    kickstarter_copy/
+    document_translation/
+    model_skill_check/
+  tools/
+    python_runner/
+    browser/
+    docx_renderer/
+    pdf_renderer/
+    image_checker/
+    openscad/
+    freecad/
+    kicad/
+    solidworks_api/
+  configs/
+    models.yaml
+    routing_rules.yaml
+    budget_policy.yaml
+    risk_policy.yaml
+  evals/
+    golden_tasks/
+    datasheet/
+    cad/
+    pcb/
+    coding/
+    writing/
+  storage/
+    sqlite/
+    vector_db/
+    artifacts/
+    logs/
+十一、models.yaml 示例
+models:
+  frontier_planner:
+    provider: anthropic
+    model: claude-opus-4-7
+    roles:
+      - complex_planning
+      - final_review
+      - long_horizon_agentic_work
+      - vision_heavy_review
+    max_calls_per_task: 3
+
+  frontier_reasoner:
+    provider: openai
+    model: gpt-5.5
+    roles:
+      - research
+      - coding_architecture
+      - data_analysis
+      - document_heavy_reasoning
+    max_calls_per_task: 3
+
+  medium_executor:
+    provider: deepseek
+    model: deepseek-v4
+    roles:
+      - code_generation
+      - structured_generation
+      - engineering_draft
+
+  chinese_executor:
+    provider: glm
+    model: glm-5.1
+    roles:
+      - chinese_writing
+      - summarization
+      - table_generation
+
+  local_fast:
+    provider: ollama
+    model: qwen-local
+    endpoint: http://localhost:11434
+    roles:
+      - simple_extraction
+      - batch_formatting
+      - local_private_tasks
+
+  local_structured:
+    provider: vllm
+    model: local-instruct-model
+    endpoint: http://localhost:8000/v1
+    roles:
+      - json_output
+      - schema_bound_tasks
+十二、routing_rules.yaml 示例
+routing:
+  default: cheap_first
+
+  hard_rules:
+    - if: risk_level in ["legal", "medical", "finance", "safety", "pcb_fabrication"]
+      then: frontier_plus_human_review
+
+    - if: requires_vision == true
+      then: vision_agent
+
+    - if: requires_voice == true
+      then: voice_agent
+
+    - if: output_schema_available == true and risk_level == "low"
+      then: cheap_executor
+
+  escalation:
+    max_retries_same_model: 2
+    max_total_retries: 4
+    escalate_when:
+      - schema_invalid
+      - tests_failed_twice
+      - hallucination_detected
+      - missing_required_assets
+      - confidence_below_0_65
+      - verifier_disagreement
+
+  final_review:
+    require_frontier_review_for:
+      - public_document
+      - product_datasheet
+      - pcb_output
+      - cad_output
+      - customer_delivery
+十三、核心工作流 1：产品规格书生成
+
+你之前文档生成失败，根本原因大概率是：
+
+让模型直接生成最终 DOCX/PDF，而不是让模型生成结构化数据，再由模板引擎排版。
+
+正确流程：
+
+输入：产品简介、参数、图片、参考 PDF、公司 Logo
+  ↓
+Claude/GPT：分析参考规格书结构
+  ↓
+低端模型：提取参数为 JSON
+  ↓
+Schema 校验：字段、单位、范围
+  ↓
+Asset Manifest：检查图片、Logo、图号
+  ↓
+模板引擎：生成 DOCX
+  ↓
+LibreOffice / Word：转 PDF
+  ↓
+视觉模型：检查缺图、表格错位、Logo、页眉页脚
+  ↓
+强模型：最终审查文字、参数、风险
+文档任务不要交给模型自由发挥
+
+低端模型只负责：
+
+{
+  "product_name": "xxx",
+  "input_voltage": "xxx",
+  "output_current": "xxx",
+  "certifications": ["TBD"],
+  "features": ["..."]
+}
+
+排版必须由：
+
+docx template + style map + image manifest + PDF visual QA
+
+完成。
+
+十四、核心工作流 2：CAD / 结构设计
+输入：image2 产品效果图 + 尺寸约束 + 使用场景
+  ↓
+高端模型：拆成结构件、装配关系、制造约束
+  ↓
+低端代码模型：生成 OpenSCAD / FreeCAD 脚本
+  ↓
+本地工具：渲染 STL / PNG
+  ↓
+视觉模型：对比效果图
+  ↓
+尺寸检查：壁厚、孔位、公差、可打印性
+  ↓
+失败则自动修正
+  ↓
+最终人工确认
+
+这里低端模型可以写脚本，但不能决定关键结构强度。
+
+十五、核心工作流 3：PCB / KiCad
+输入：产品需求、datasheet、板框、接口、电源要求
+  ↓
+强模型：系统框图、电源树、风险点
+  ↓
+中端模型：生成原理图草案、BOM、连接表
+  ↓
+工具：KiCad ERC
+  ↓
+工具：DRC / Netlist Check
+  ↓
+工具：BOM 可采购性检查
+  ↓
+强模型：审查电源、EMC、接口保护
+  ↓
+人工工程师：最终确认后才能打样
+
+PCB 绝对不能完全自动化交付，尤其是电源、安规、EMC、射频和量产设计。
+
+十六、核心工作流 4：Skill 自动开发
+用户需求
+  ↓
+强模型：生成 Skill 规格书
+  ↓
+check-model-skills：拆成低端模型可做的小任务
+  ↓
+低端模型：写代码、写配置、写测试
+  ↓
+Codex / Claude Code：执行文件修改
+  ↓
+本地测试：pytest / node test / build
+  ↓
+失败：Reflexion 记录失败原因
+  ↓
+强模型：最终 code review
+
+这正好适合你现在的开发方式：
+GPT-5.5 / Claude 做规划，DeepSeek / GLM 做执行，Codex / Claude Code 做落地。
+
+十七、Agent 设计模板
+1. Chief Planner Agent
+
+职责：
+
+- 只做任务拆解
+- 不直接写大段最终内容
+- 输出任务图
+- 标记风险
+- 指定验证方式
+
+系统提示词：
+
+你是 Chief Planner。你的任务不是直接完成用户任务，而是把任务拆解成可验证、可委托、可回滚的子任务。
+
+必须输出：
+1. 任务目标
+2. 子任务列表
+3. 每个子任务的输入、输出、成功标准
+4. 推荐模型等级：local / cheap / medium / frontier
+5. 验证工具
+6. 风险等级
+7. 是否需要人工确认
+
+禁止：
+- 不允许把模糊任务直接交给低成本模型
+- 不允许省略验证步骤
+- 不允许让模型自由生成最终工程交付物
+2. check-model-skills Agent
+你是 check-model-skills。你的唯一职责是判断某个子任务是否可以交给低成本模型执行。
+
+判断维度：
+- 任务是否清晰
+- 输入是否完整
+- 输出是否有固定格式
+- 是否有 schema / 测试 / 工具验证
+- 是否有安全或商业风险
+- 上下文长度是否适合低端模型
+- 失败后是否可重试
+- 是否需要视觉、语音、代码、文件操作
+
+输出 JSON：
+{
+  "can_use_cheap_model": true/false,
+  "recommended_model_tier": "...",
+  "risk_level": "...",
+  "missing_information": [],
+  "required_constraints": [],
+  "verification_steps": [],
+  "fallback_plan": {}
+}
+3. Cheap Executor Agent
+你是执行模型。你只完成指定子任务，不扩展范围，不做未经要求的推断。
+
+规则：
+- 只输出指定格式
+- 不编造缺失信息
+- 缺失字段写 TBD
+- 不改变字段名
+- 不解释过程
+- 不添加多余内容
+4. Verifier Agent
+你是质量审查模型。你的任务是找错，不是润色。
+
+检查：
+- 是否满足用户要求
+- 是否违反 schema
+- 是否有缺失字段
+- 是否有编造
+- 是否有单位错误
+- 是否有格式错误
+- 是否需要升级模型
+- 是否需要人工确认
+
+输出：
+{
+  "pass": true/false,
+  "issues": [],
+  "severity": "low/medium/high",
+  "repair_instruction": "...",
+  "should_escalate": true/false
+}
+十八、成本控制策略
+
+你应该设置四个预算层。
+
+budget:
+  daily_total_usd: 20
+  frontier_model_usd: 8
+  medium_model_usd: 5
+  cheap_model_usd: 5
+  local_model_usd: 0
+
+rules:
+  use_frontier_only_for:
+    - task_decomposition
+    - final_review
+    - high_risk_reasoning
+    - repeated_failure
+    - customer_delivery
+
+  force_local_or_cheap_for:
+    - format_conversion
+    - json_generation
+    - table_cleanup
+    - translation_draft
+    - simple_summarization
+    - batch_classification
+
+真正省钱的关键是：
+
+高端模型不要参与每个子任务。
+它只负责：
+1. 开头拆解
+2. 中间失败升级
+3. 最终审查
+十九、你要建立自己的评测集
+
+这点非常关键。不要相信模型排行榜，要相信你自己的业务评测。
+
+你需要建立：
+
+evals/
+  product_datasheet/
+    case_001_input/
+    expected_docx/
+    expected_pdf/
+    qa_rules.yaml
+
+  cad/
+    case_001_image/
+    constraints.yaml
+    expected_dimensions.yaml
+
+  pcb/
+    case_001_requirement/
+    expected_netlist_rules.yaml
+
+  skill_dev/
+    case_001_prompt/
+    tests/
+
+每个模型都跑同一批任务，记录：
+
+指标	含义
+pass_rate	最终通过率
+retry_count	平均重试次数
+frontier_calls	高端模型调用次数
+cost_per_success	每个成功任务成本
+hallucination_rate	编造率
+format_error_rate	格式错误率
+tool_failure_rate	工具失败率
+human_fix_minutes	人工修复时间
+
+你的目标不是“哪个模型最强”，而是：
+
+哪个模型在我的任务上 cost_per_success 最低。
+
+二十、推荐开发路线
+第 1 阶段：MVP，不做 UI
+
+先做命令行：
+
+输入任务
+  ↓
+拆解
+  ↓
+路由
+  ↓
+调用模型
+  ↓
+验证
+  ↓
+失败升级
+  ↓
+输出结果 + 成本报告
+
+必须先实现：
+
+models.yaml
+routing_rules.yaml
+check-model-skills
+cost_ledger
+verifier
+第 2 阶段：接入 LiteLLM
+
+LiteLLM 做统一模型网关：
+
+OpenAI
+Anthropic
+Gemini
+DeepSeek
+GLM
+Qwen
+Ollama
+vLLM
+
+统一成一个调用接口，并记录：
+
+模型
+输入 token
+输出 token
+成本
+延迟
+失败率
+任务类型
+第 3 阶段：接入 LangGraph
+
+LangGraph 做状态机：
+
+plan_node
+skill_check_node
+route_node
+execute_node
+verify_node
+repair_node
+escalate_node
+final_review_node
+publish_node
+
+LangGraph 的 checkpoint 和 human-in-the-loop 适合长流程 agent，失败后可以恢复，也可以在关键节点等待人工批准。
+
+第 4 阶段：做三个商业 workflow
+
+优先顺序：
+
+产品规格书生成
+Skill / Agent 自动开发
+CAD / PCB 工程辅助
+
+这三个最符合你现在的业务，也最容易收客户钱。
+
+第 5 阶段：做桌面 UI
+
+UI 不要一开始做复杂，先显示：
+
+当前任务
+当前模型
+当前成本
+当前步骤
+失败原因
+是否升级
+最终交付物
+人工批准按钮
+二十一、最终答案：你应该怎么做
+
+你这个想法完全有价值，而且方向是对的。
+但不要做成“多 agent 聊天群”，要做成：
+
+可验证的多模型工作流操作系统。
+
+最推荐架构：
+
+LiteLLM 作为模型网关
+LangGraph 作为流程编排
+Ollama / vLLM 作为本地模型运行
+Claude Opus 4.7 / GPT-5.5 作为规划与最终审查
+DeepSeek / GLM / Qwen / MiniMax 作为执行模型
+本地工具作为验证层
+check-model-skills 作为任务分配闸门
+评测集作为长期优化依据
+
+你能达到的效果：
+
+目标	能否实现
+大幅降低高端模型成本	可以
+多模型协作完成复杂任务	可以
+在文档、代码、CAD、PCB 等可验证任务上超过单模型稳定性	可以
+完全用低端模型全面超过 Claude Opus 4.7 / GPT-5.5	不现实
+用系统工程在部分任务上超过单个顶级模型	可以
+成本接近 negligible	在批处理和本地任务上可以，在复杂审查上仍需高端模型
+
+最关键的一句话：
+
+低端模型不能直接替代顶级模型，但低端模型 + 路由 + 工具验证 + 强模型审查，可以替代大量顶级模型 token。
+
+这才是你这个本地独立 agent 系统真正可行、可商业化、可长期扩展的方向。
+
+如果我要自己开发和测试一套本地的测试的app，现在github上是否有最好的开发底座，或者其他的开源的代码，在以上提到的方案和论文测试中提到的项目，给出最合适的项目底座，以及代码下载地址。我的目标是使用这个方案做成一个类似cc switch的本地网关，然后使用claude code 或者 codex 调用使用，评估效果。给出这个目标
+
+已思考 49s
+
+是的，现在 GitHub 上已经有非常接近你目标的开源底座。你的目标可以明确为：
+
+做一个本地 AI Coding Gateway，像 CC Switch 一样，把 Claude Code、Codex、Gemini CLI、OpenCode 等客户端统一接到本地网关，再由本地网关按规则路由到 GPT、Claude、DeepSeek、GLM、Qwen、Ollama、vLLM、OpenRouter、LiteLLM 等模型，并记录成本、成功率、失败率，用来测试“多模型组合是否更划算”。
+
+我建议你不要从零开始，直接选下面这个组合。
+
+结论：最适合你的开发底座
+第一选择：直接 Fork cc-switch
+
+这是最接近你目标的项目。它本身就是一个跨平台桌面 App，用来管理 Claude Code、Codex、Gemini CLI、OpenCode、OpenClaw、Hermes Agent 等工具。项目是 MIT license，技术栈是 Tauri 2.8 + Rust 后端、React + TypeScript 前端，并且已有本地 proxy、provider 管理、MCP 管理、使用统计、会话管理等模块。
+
+下载：
+
+git clone https://github.com/farion1231/cc-switch.git
+cd cc-switch
+pnpm install
+pnpm dev
+
+它的本地路由机制已经非常接近你的目标：开启 routing 后，它会把 Claude Code 的 ANTHROPIC_BASE_URL 改成本地地址，把 Codex 的 base_url 改成 http://127.0.0.1:15721/v1，然后本地 routing service 负责识别请求来源、选择 provider、转发请求、记录日志，并支持 failover。
+
+所以如果你要做“类似 CC Switch 的本地网关”，最优路线不是重新造 UI，而是：
+
+Fork cc-switch，然后重点增强它的 Router / ProxyService / Usage Statistics / Evaluation Harness。
+
+你要加的不是普通模型切换，而是：
+
+智能路由：
+- background → 本地 Qwen / Ollama
+- simple edit → DeepSeek / GLM / Qwen
+- long context → Gemini / Claude / GPT
+- thinking → GPT-5.5 / Claude Opus
+- failed twice → 自动升级
+- high-risk change → 强模型审查
+第二选择：claude-code-router 作为 Claude Code 路由核心
+
+如果你暂时不想做桌面 App，只想先测试 Claude Code 多模型路由，musistudio/claude-code-router 是最合适的底座。它明确支持 Claude Code 请求路由、多 provider、请求/响应转换、/model 动态切换、CLI 管理和插件系统。
+
+下载：
+
+git clone https://github.com/musistudio/claude-code-router.git
+cd claude-code-router
+npm install
+npm run build
+
+也可以直接全局安装：
+
+npm install -g @musistudio/claude-code-router
+
+它已经支持 OpenRouter、DeepSeek、Ollama、Gemini、Volcengine、SiliconFlow 等 provider，并且配置里可以把 background、think、longContext 路由到不同模型。项目示例里就有 DeepSeek、Ollama、Gemini、Qwen、GLM、Claude 等配置方式。
+
+它适合做：
+
+Claude Code → 本地 Claude-compatible Router → 不同模型
+
+但它不是完整的“Claude Code + Codex + Gemini CLI 全统一桌面网关”。所以它更适合作为你的 Claude Code 路由模块参考。
+
+第三选择：LiteLLM 作为底层统一模型网关
+
+LiteLLM 是最适合作为你网关底层的模型访问层。它是开源 AI Gateway，提供统一接口调用 100+ LLM provider，包括 OpenAI、Anthropic、Gemini、Bedrock、Azure 等，并使用 OpenAI format。
+
+下载：
+
+git clone https://github.com/BerriAI/litellm.git
+cd litellm
+
+快速启动 proxy：
+
+pip install -U "litellm[proxy]"
+litellm --config litellm_config.yaml --port 4000
+
+它适合负责：
+
+- provider 统一
+- API key 管理
+- fallback
+- budget
+- logging
+- rate limit
+- cost tracking
+- OpenAI-compatible endpoint
+
+但是 LiteLLM 本身不是专门为 Claude Code / Codex 做桌面配置切换的。所以最佳组合是：
+
+CC Switch / 你的本地 App
+  ↓
+本地统一 Gateway
+  ↓
+LiteLLM Proxy
+  ↓
+OpenAI / Anthropic / Gemini / DeepSeek / GLM / Ollama / vLLM
+第四选择：claude-code-proxy 作为 Anthropic ↔ OpenAI 协议转换参考
+
+1rgs/claude-code-proxy 是一个更小的项目，目标很明确：让 Anthropic clients，例如 Claude Code，可以用 Gemini、OpenAI 或 Anthropic 后端，并且通过 LiteLLM 做转换。
+
+下载：
+
+git clone https://github.com/1rgs/claude-code-proxy.git
+cd claude-code-proxy
+cp .env.example .env
+
+它适合你学习这件事：
+
+Claude Code 的 Anthropic /v1/messages 请求
+  ↓
+转换成 OpenAI / Gemini / LiteLLM 请求
+  ↓
+再把响应转换回 Claude Code 能理解的格式
+
+如果你要写自己的 gateway，这个项目可以作为 协议适配器参考，但不适合作为最终 App 底座。
+
+第五选择：官方 openai/codex
+
+Codex 本身已经开源，Apache-2.0 license，是本地运行的 coding agent。官方 README 明确说 Codex CLI runs locally on your computer，并支持 npm、Homebrew、脚本安装。
+
+下载：
+
+git clone https://github.com/openai/codex.git
+cd codex
+
+安装使用：
+
+npm install -g @openai/codex
+codex
+
+Codex 官方配置已经支持 custom model providers。你可以在 ~/.codex/config.toml 定义自定义 provider，设置 base_url、env_key、wire_api，再把 Codex 指向你的本地 gateway。
+
+示例：
+
+model = "gpt-5.5"
+model_provider = "local_gateway"
+
+[model_providers.local_gateway]
+name = "My Local AI Gateway"
+base_url = "http://127.0.0.1:15721/v1"
+env_key = "LOCAL_GATEWAY_API_KEY"
+wire_api = "responses"
+
+或者如果你的本地网关只实现 Chat Completions：
+
+model = "qwen-coder-local"
+model_provider = "local_gateway_chat"
+
+[model_providers.local_gateway_chat]
+name = "My Local Chat Gateway"
+base_url = "http://127.0.0.1:15721/v1"
+env_key = "LOCAL_GATEWAY_API_KEY"
+wire_api = "chat"
+
+注意：Codex 的 custom provider 不能复用内置 provider ID，例如 openai、ollama、lmstudio；你要用自己的名字，例如 local_gateway。
+
+最推荐组合架构
+
+你的目标不是只做一个模型代理，而是做“评估型本地网关”。我建议这样组合：
+
+Claude Code / Codex / Gemini CLI / OpenCode
+        ↓
+本地 App：Fork cc-switch
+        ↓
+Local Gateway Core
+        ↓
+协议入口：
+  - Anthropic /v1/messages
+  - OpenAI /v1/chat/completions
+  - OpenAI /v1/responses
+  - /v1/models
+        ↓
+Router Engine
+        ↓
+Provider Adapter：
+  - LiteLLM
+  - OpenAI
+  - Anthropic
+  - Gemini
+  - DeepSeek
+  - GLM
+  - OpenRouter
+  - Ollama
+  - vLLM
+        ↓
+日志 / 成本 / 成功率 / 失败率 / 自动评测
+项目选择表
+项目	最适合做什么	是否建议作为主底座
+farion1231/cc-switch	桌面 App、本地路由、多工具配置切换、统计、provider 管理	最推荐
+musistudio/claude-code-router	Claude Code 多模型路由、协议转换、动态模型切换	推荐作为 Claude 路由参考
+BerriAI/litellm	统一调用 100+ provider、fallback、成本、网关	推荐作为底层模型网关
+1rgs/claude-code-proxy	Anthropic API 到 OpenAI/Gemini/LiteLLM 的转换	推荐作为小型参考
+openai/codex	Codex 客户端和测试对象	必须接入
+0xSero/codex-local	Codex fork，多 agent、local LLM 方向	可研究，不建议第一阶段主用
+openclaw/openclaw	更大的个人 AI assistant gateway	后期参考，不适合第一阶段
+你的开发目标应该这样定义
+项目名称建议
+Local Coding Gateway Lab
+
+或者：
+
+Multi-Model Coding Router
+第一版目标
+做一个本地 127.0.0.1 网关，让 Claude Code 和 Codex 都能通过它调用不同模型，并记录每次请求的：
+- 来源工具：Claude Code / Codex
+- 请求模型
+- 实际路由模型
+- 输入 token
+- 输出 token
+- 成本
+- 延迟
+- 是否失败
+- 是否重试
+- 是否升级模型
+- 最终任务是否通过测试
+你应该 Fork 哪个？
+如果你要最快做出产品形态
+
+选：
+
+git clone https://github.com/farion1231/cc-switch.git
+
+理由：
+
+已有桌面 UI；
+已支持 Claude Code、Codex、Gemini CLI 等；
+已有本地 routing；
+已有 provider 管理；
+已有 SQLite 数据存储；
+已有使用统计；
+已有 proxy module；
+MIT license；
+技术栈适合做商业桌面 App。
+
+你需要新增：
+
+1. Smart Router
+2. Eval Harness
+3. Cost-per-success 统计
+4. 自动升级策略
+5. A/B 测试模式
+6. 同任务多模型并行比较
+7. Claude Code 与 Codex 同任务对比
+如果你要最快验证 Claude Code 多模型路由
+
+选：
+
+git clone https://github.com/musistudio/claude-code-router.git
+
+理由：
+
+安装简单；
+专门为 Claude Code 路由；
+支持 DeepSeek、Ollama、Gemini、OpenRouter 等；
+支持 transformers；
+支持 /model 动态切换。
+
+但它不够像完整 CC Switch。
+
+如果你要做稳定企业级 Gateway
+
+选：
+
+git clone https://github.com/BerriAI/litellm.git
+
+理由：
+
+provider 支持最广；
+更接近生产网关；
+适合做统一模型接入层；
+适合后期部署到服务器；
+可以被 cc-switch 或你的自研 app 调用。
+
+但你还需要自己补 Claude Code / Codex 的本地配置管理和桌面 UI。
+
+我建议你的最终组合
+
+最实际、最快、最符合你目标的组合是：
+
+主 App：Fork cc-switch
+Claude Code 路由参考：claude-code-router
+底层 provider 网关：LiteLLM
+协议转换参考：claude-code-proxy
+测试客户端：Claude Code + Codex CLI
+评测框架：SWE-bench + Aider benchmark + 自己的真实项目测试集
+第一阶段开发路线：7 天 MVP
+Day 1：跑通 cc-switch
+git clone https://github.com/farion1231/cc-switch.git
+cd cc-switch
+pnpm install
+pnpm dev
+
+确认能看到：
+
+- Provider 管理
+- Proxy / Routing 面板
+- Claude Code routing
+- Codex routing
+- 使用统计
+Day 2：跑通 LiteLLM
+
+新建 litellm_config.yaml：
+
+general_settings:
+  master_key: sk-local-gateway
+
+litellm_settings:
+  drop_params: true
+
+model_list:
+  - model_name: deepseek-chat
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_key: ${DEEPSEEK_API_KEY}
+
+  - model_name: qwen-local
+    litellm_params:
+      model: openai/qwen-local
+      api_base: http://127.0.0.1:11434/v1
+      api_key: ollama
+
+  - model_name: gpt-5.5
+    litellm_params:
+      model: openai/gpt-5.5
+      api_key: ${OPENAI_API_KEY}
+
+  - model_name: claude-opus-4.7
+    litellm_params:
+      model: anthropic/claude-opus-4.7
+      api_key: ${ANTHROPIC_API_KEY}
+
+启动：
+
+litellm --config litellm_config.yaml --port 4000
+Day 3：让 Codex 走你的本地网关
+
+编辑：
+
+mkdir -p ~/.codex
+nano ~/.codex/config.toml
+
+写入：
+
+model = "deepseek-chat"
+model_provider = "local_gateway"
+
+[model_providers.local_gateway]
+name = "Local Gateway"
+base_url = "http://127.0.0.1:15721/v1"
+env_key = "LOCAL_GATEWAY_API_KEY"
+wire_api = "chat"
+
+设置环境变量：
+
+export LOCAL_GATEWAY_API_KEY="sk-local-gateway"
+codex
+
+Codex 官方支持 custom model providers，包括 base_url、env_key、wire_api 等配置，所以这条路是正路。
+
+Day 4：让 Claude Code 走你的本地网关
+
+Claude Code 的核心是 Anthropic API 风格，所以你需要支持：
+
+/v1/messages
+
+cc-switch 已经通过修改 ANTHROPIC_BASE_URL 把 Claude Code 请求导向本地 routing service；文档明确写了启用 routing 后会把 ANTHROPIC_BASE_URL 改到 http://127.0.0.1:15721。
+
+你需要在 proxy 里实现：
+
+Anthropic /v1/messages
+  ↓
+内部统一 request
+  ↓
+LiteLLM / OpenAI / Gemini / DeepSeek
+  ↓
+转换回 Anthropic response / SSE
+
+可以参考：
+
+git clone https://github.com/1rgs/claude-code-proxy.git
+第二阶段：加智能路由
+
+你要在 cc-switch 的 ProxyService 或单独新建 SmartRouterService。
+
+路由策略建议：
+
+routes:
+  default:
+    provider: litellm
+    model: deepseek-chat
+
+  background:
+    provider: ollama
+    model: qwen2.5-coder:latest
+
+  simple_edit:
+    provider: litellm
+    model: deepseek-chat
+
+  test_generation:
+    provider: litellm
+    model: qwen-coder
+
+  thinking:
+    provider: litellm
+    model: claude-opus-4.7
+
+  long_context:
+    provider: litellm
+    model: gemini-pro-long-context
+
+  final_review:
+    provider: litellm
+    model: gpt-5.5
+
+rules:
+  - if: input_tokens > 60000
+    route: long_context
+
+  - if: request_contains in ["think", "plan", "architecture", "review"]
+    route: thinking
+
+  - if: tool_call_count > 20
+    route: final_review
+
+  - if: previous_failures >= 2
+    route: final_review
+
+  - if: app == "codex" and task_type == "small_edit"
+    route: simple_edit
+
+  - if: app == "claude-code" and task_type == "background"
+    route: background
+第三阶段：加评估系统
+
+你要评估的不是“哪个模型回答好”，而是：
+
+哪个模型 / 路由策略在真实 coding 任务上：
+- 成功率最高
+- 成本最低
+- 延迟可接受
+- 人工修复最少
+
+建议指标：
+
+指标	含义
+task_success	是否通过测试
+cost_per_success	每个成功任务成本
+retry_count	平均重试次数
+latency	延迟
+tokens	输入/输出 token
+escalation_rate	升级到强模型比例
+human_fix_minutes	人工修复时间
+regression_rate	改坏旧功能比例
+
+测试集可以用：
+
+git clone https://github.com/swe-bench/SWE-bench.git
+git clone https://github.com/Aider-AI/aider.git
+
+SWE-bench 是真实 GitHub issue 级别的 coding agent benchmark；Aider 有自己的代码编辑 benchmark 和 leaderboard，适合测试模型是否能按自然语言修改真实代码。
+
+但你最终一定要做自己的业务评测集，例如：
+
+evals/
+  skill_dev/
+  product_datasheet/
+  cad_script/
+  kicad_script/
+  web_app_fix/
+  python_refactor/
+你真正要改 cc-switch 的哪些地方
+
+cc-switch 现有结构里，最关键的是这些模块：
+
+src-tauri/src/proxy/
+src-tauri/src/services/
+src-tauri/src/database/
+src/components/proxy/
+src/components/providers/
+src/components/usage/
+
+项目文档显示它的核心组件包括 ProviderService、McpService、ProxyService、SessionManager、ConfigService、SpeedtestService；数据存在 ~/.cc-switch/cc-switch.db，采用 SQLite + JSON 双层存储，并有本地 proxy mode 和 hot-switching。
+
+你应该新增：
+
+src-tauri/src/router/
+  smart_router.rs
+  route_rules.rs
+  model_score.rs
+  eval_logger.rs
+  escalation.rs
+
+src-tauri/src/eval/
+  task_runner.rs
+  result_parser.rs
+  benchmark_runner.rs
+
+src/components/eval/
+  EvalDashboard.tsx
+  ModelCompareTable.tsx
+  CostPerSuccessChart.tsx
+推荐最终技术栈
+桌面 App：
+- cc-switch / Tauri / Rust / React / TypeScript
+
+网关：
+- Rust ProxyService
+- LiteLLM as upstream gateway
+
+模型：
+- OpenAI GPT-5.5
+- Claude Opus / Sonnet
+- DeepSeek
+- GLM
+- Qwen
+- Gemini
+- Ollama
+- vLLM
+
+评估：
+- SWE-bench
+- Aider benchmark
+- 自建 coding tasks
+
+存储：
+- SQLite
+- JSON config
+- 日志文件
+最小可行版本的目标定义
+
+你的 MVP 不要一上来做复杂多 agent。第一版只做 5 件事：
+
+1. Claude Code 能走本地 gateway
+2. Codex 能走本地 gateway
+3. 本地 gateway 能路由到 LiteLLM / Ollama / DeepSeek / GPT / Claude
+4. 每次请求能记录 app、model、tokens、cost、latency
+5. 同一个任务能用不同模型跑，输出对比结果
+
+做到这一步，你就可以开始验证：
+
+Codex + DeepSeek
+Codex + GPT-5.5
+Claude Code + DeepSeek
+Claude Code + Claude Opus
+Claude Code + Qwen Local
+Claude Code + Smart Router
+
+然后用同一批任务比较：
+
+成本
+通过率
+速度
+失败率
+人工修复时间
+最终推荐
+
+你现在最应该这样做：
+
+# 1. Fork 主 App
+git clone https://github.com/farion1231/cc-switch.git
+
+# 2. Clone Claude Code 路由参考
+git clone https://github.com/musistudio/claude-code-router.git
+
+# 3. Clone LiteLLM
+git clone https://github.com/BerriAI/litellm.git
+
+# 4. Clone Claude Code proxy 参考
+git clone https://github.com/1rgs/claude-code-proxy.git
+
+# 5. Clone Codex 官方客户端
+git clone https://github.com/openai/codex.git
+
+# 6. Clone 评测集
+git clone https://github.com/swe-bench/SWE-bench.git
+git clone https://github.com/Aider-AI/aider.git
+
+我的最终判断：
+
+主底座选 cc-switch，模型网关选 LiteLLM，Claude Code 协议参考 claude-code-router / claude-code-proxy，Codex 用官方 openai/codex 作为测试客户端。
+
+这样你不是做一个普通 API 转发器，而是在做一个真正有商业价值的：
+
+本地多模型 AI Coding Gateway + 成本质量评估系统

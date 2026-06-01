@@ -21,6 +21,7 @@ mod linux_fix;
 mod mcp;
 mod openclaw_config;
 mod opencode_config;
+mod orchestration;
 mod panic_hook;
 mod prompt;
 mod prompt_files;
@@ -424,6 +425,30 @@ pub fn run() {
 
             // 设置 AppHandle 用于代理故障转移时的 UI 更新
             app_state.proxy_service.set_app_handle(app.handle().clone());
+
+            // Create shared orchestration engine (used by both ProxyState and Tauri commands)
+            {
+                use crate::commands::OrchestrationState;
+                use crate::orchestration::executor::StrategyExecutor;
+                use crate::orchestration::loader::StrategyLoader;
+                use crate::orchestration::OrchestrationEngine;
+
+                let strategies_path = StrategyLoader::default_strategies_path();
+                let config = match StrategyLoader::load_from_file(&strategies_path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        log::warn!("[Orchestration] Failed to load strategies from {}: {}, using defaults", strategies_path.display(), e);
+                        Default::default()
+                    }
+                };
+                let executor = StrategyExecutor::new(config.models.clone());
+                let engine = Arc::new(OrchestrationEngine::with_executor(strategies_path, executor));
+
+                // Share the same Arc with ProxyService
+                app_state.proxy_service.set_orchestration(engine.clone()).await;
+
+                app.manage(OrchestrationState(engine));
+            }
 
             // ============================================================
             // 按表独立判断的导入逻辑（各类数据独立检查，互不影响）
@@ -1293,6 +1318,10 @@ pub fn run() {
             commands::stream_check_all_providers,
             commands::get_stream_check_config,
             commands::save_stream_check_config,
+            // Orchestration
+            commands::orchestration_status,
+            commands::orchestration_reload,
+            commands::orchestration_toggle,
             // Session manager
             commands::list_sessions,
             commands::get_session_messages,

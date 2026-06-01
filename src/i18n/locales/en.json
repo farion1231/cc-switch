@@ -2361,7 +2361,12 @@
       "startFailed": "Failed to start routing service: {{detail}}"
     },
     "stoppedWithRestore": "Routing service stopped, all routing configs restored",
-    "stopWithRestoreFailed": "Stop failed: {{detail}}"
+    "stopWithRestoreFailed": "Stop failed: {{detail}}",
+    "orchestration": {
+      "title": "Orchestration Engine",
+      "description": "Multi-model strategy routing & quality verification",
+      "comingSoon": "Orchestration will take effect after restart"
+    }
   },
   "streamCheck": {
     "configSaved": "Health check config saved",
@@ -2692,5 +2697,42 @@
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
     "refresh": "Refresh"
+  },
+  "orchestration": {
+    "title": "Orchestration",
+    "enable": "Enable multi-model orchestration",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "reload": "Reload Config",
+    "reloadSuccess": "Config reloaded",
+    "reloadFailed": "Reload failed: {{error}}",
+    "status": {
+      "active": "Active",
+      "inactive": "Inactive"
+    },
+    "strategyEditor": "Strategy Editor",
+    "flowCanvas": "Execution Flow",
+    "lastRun": "Last run: demo",
+    "auditLog": "Audit Log",
+    "events": "{{count}} events",
+    "humanGate": "Human Gate",
+    "pending": "{{count}} pending",
+    "modelLeaderboard": "Model Leaderboard",
+    "calls": "{{count}} calls",
+    "predictiveInsights": "Predictive Insights",
+    "insights": "{{count}} insights",
+    "confidence": "{{value}}% confidence",
+    "quality": "Quality",
+    "passRate": "Pass Rate",
+    "approve": "Approve",
+    "reject": "Reject",
+    "noStrategies": "No strategies configured",
+    "addStrategy": "Add Strategy",
+    "type": "Type",
+    "complexity": "Complexity",
+    "risk": "Risk",
+    "models": "Models",
+    "enabledTooltip": "Orchestration is active",
+    "disabledTooltip": "Enable orchestration"
   }
 }

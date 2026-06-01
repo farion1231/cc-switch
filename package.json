@@ -1,7 +1,7 @@
 {
-  "name": "cc-switch",
-  "version": "3.15.0",
-  "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI",
+  "name": "omniagent-workbench",
+  "version": "0.1.0",
+  "description": "Local multi-model orchestration gateway with quality verification",
   "type": "module",
   "scripts": {
     "dev": "pnpm tauri dev",
