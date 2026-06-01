@@ -917,6 +917,393 @@ mod tests {
         });
     }
 
+    /// Seed threads with DB provider and rollout provider set independently.
+    fn seed_codex_thread_rows_db_rollout(
+        home: &Path,
+        rows: &[(&str, &str, &str)], // (id, db_provider, rollout_provider)
+    ) {
+        let codex_dir = home.join(".codex");
+        let rollout_dir = codex_dir
+            .join("sessions")
+            .join("2026")
+            .join("04")
+            .join("24");
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+        fs::create_dir_all(&rollout_dir).expect("create rollout dir");
+        let conn = rusqlite::Connection::open(codex_dir.join("state_5.sqlite"))
+            .expect("open codex state db");
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL, rollout_path TEXT NOT NULL)",
+            [],
+        )
+        .expect("create threads table");
+        for (id, db_provider, rollout_provider) in rows {
+            let path = rollout_dir.join(format!("rollout-{id}.jsonl"));
+            fs::write(
+                &path,
+                format!(
+                    "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"model_provider\":\"{rollout_provider}\"}}}}\n{{\"type\":\"event_msg\",\"payload\":{{}}}}\n"
+                ),
+            )
+            .expect("write rollout metadata");
+            conn.execute(
+                "INSERT INTO threads (id, model_provider, rollout_path) VALUES (?1, ?2, ?3)",
+                rusqlite::params![id, db_provider, path.to_string_lossy()],
+            )
+            .expect("seed thread");
+        }
+    }
+
+    /// Seed threads with missing model_provider in rollout payload, DB set to target.
+    fn seed_codex_thread_rows_missing_rollout_provider(
+        home: &Path,
+        rows: &[(&str, &str)], // (id, db_provider)
+    ) {
+        let codex_dir = home.join(".codex");
+        let rollout_dir = codex_dir
+            .join("sessions")
+            .join("2026")
+            .join("04")
+            .join("24");
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+        fs::create_dir_all(&rollout_dir).expect("create rollout dir");
+        let conn = rusqlite::Connection::open(codex_dir.join("state_5.sqlite"))
+            .expect("open codex state db");
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL, rollout_path TEXT NOT NULL)",
+            [],
+        )
+        .expect("create threads table");
+        for (id, db_provider) in rows {
+            let path = rollout_dir.join(format!("rollout-{id}.jsonl"));
+            fs::write(
+                &path,
+                format!(
+                    "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\"}}}}\n{{\"type\":\"event_msg\",\"payload\":{{}}}}\n"
+                ),
+            )
+            .expect("write rollout metadata");
+            conn.execute(
+                "INSERT INTO threads (id, model_provider, rollout_path) VALUES (?1, ?2, ?3)",
+                rusqlite::params![id, db_provider, path.to_string_lossy()],
+            )
+            .expect("seed thread");
+        }
+    }
+
+    // --- Audit/compensation pass tests ---
+
+    #[test]
+    #[serial]
+    fn switch_codex_audit_fixes_stale_rollout_when_db_already_target() {
+        // Scenario 1: Auth target openai, DB=openai, rollout=custom -> rollout must become openai
+        with_test_home(|state, home| {
+            let api_provider = codex_provider(
+                "codex-api",
+                "Codex API",
+                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n",
+            );
+            let official_provider = codex_provider("codex-official", "OpenAI Official", "");
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &official_provider)
+                .expect("save official provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), "codex-api")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some("codex-api"))
+                .expect("set local current provider");
+            // DB already openai (from previous partial sync), rollout still says "custom"
+            seed_codex_thread_rows_db_rollout(
+                home,
+                &[
+                    ("thread-1", "openai", "custom"),
+                    ("thread-2", "openai", "custom"),
+                ],
+            );
+
+            ProviderService::switch(state, AppType::Codex, "codex-official")
+                .expect("switch to official provider");
+
+            assert_eq!(
+                codex_rollout_providers(home),
+                vec![
+                    ("thread-1".to_string(), Some("openai".to_string())),
+                    ("thread-2".to_string(), Some("openai".to_string())),
+                ],
+                "audit pass should fix stale rollout metadata when DB already equals target"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_codex_audit_repairs_db_custom_and_stale_rollout() {
+        // Scenario 2: Auth target openai, DB=custom, rollout=openai -> DB becomes openai, rollout stays/updates
+        with_test_home(|state, home| {
+            let api_provider = codex_provider(
+                "codex-api",
+                "Codex API",
+                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n",
+            );
+            let official_provider = codex_provider("codex-official", "OpenAI Official", "");
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &official_provider)
+                .expect("save official provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), "codex-api")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some("codex-api"))
+                .expect("set local current provider");
+            seed_codex_thread_rows_db_rollout(
+                home,
+                &[
+                    ("thread-1", "custom", "openai"),
+                    ("thread-2", "custom", "openai"),
+                ],
+            );
+
+            ProviderService::switch(state, AppType::Codex, "codex-official")
+                .expect("switch to official provider");
+
+            assert_eq!(
+                codex_thread_providers(home),
+                vec![("openai".to_string(), 2)],
+                "DB rows with legacy alias 'custom' should be repaired to openai"
+            );
+            assert_eq!(
+                codex_rollout_providers(home),
+                vec![
+                    ("thread-1".to_string(), Some("openai".to_string())),
+                    ("thread-2".to_string(), Some("openai".to_string())),
+                ],
+                "rollout metadata should be consistent after DB repair"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_codex_audit_repairs_OpenAI_alias_to_openai() {
+        // Scenario 3: Auth target openai, DB=OpenAI, rollout=custom -> DB and rollout both become openai
+        with_test_home(|state, home| {
+            let api_provider = codex_provider(
+                "codex-api",
+                "Codex API",
+                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n",
+            );
+            let official_provider = codex_provider("codex-official", "OpenAI Official", "");
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &official_provider)
+                .expect("save official provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), "codex-api")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some("codex-api"))
+                .expect("set local current provider");
+            seed_codex_thread_rows_db_rollout(
+                home,
+                &[
+                    ("thread-1", "OpenAI", "custom"),
+                    ("thread-2", "OpenAI", "custom"),
+                ],
+            );
+
+            ProviderService::switch(state, AppType::Codex, "codex-official")
+                .expect("switch to official provider");
+
+            assert_eq!(
+                codex_thread_providers(home),
+                vec![("openai".to_string(), 2)],
+                "DB 'OpenAI' alias should become 'openai'"
+            );
+            assert_eq!(
+                codex_rollout_providers(home),
+                vec![
+                    ("thread-1".to_string(), Some("openai".to_string())),
+                    ("thread-2".to_string(), Some("openai".to_string())),
+                ],
+                "rollout 'custom' should become 'openai' when DB was already repaired"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_codex_audit_fixes_stale_rollout_for_api_target_ccswitch() {
+        // Scenario 4: API target ccswitch, DB=ccswitch, rollout=openai -> rollout must become ccswitch
+        with_test_home(|state, home| {
+            let official_provider = codex_provider("codex-official", "OpenAI Official", "");
+            let api_provider = codex_provider(
+                "codex-api",
+                "Codex API",
+                "model_provider = \"ccswitch\"\nmodel = \"gpt-5.4\"\n[model_providers.ccswitch]\nname = \"ccswitch\"\nbase_url = \"http://127.0.0.1:12345/v1\"\n",
+            );
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &official_provider)
+                .expect("save official provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), "codex-official")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some("codex-official"))
+                .expect("set local current provider");
+            seed_codex_thread_rows_db_rollout(
+                home,
+                &[
+                    ("thread-1", "ccswitch", "openai"),
+                    ("thread-2", "ccswitch", "custom"),
+                ],
+            );
+
+            ProviderService::switch(state, AppType::Codex, "codex-api")
+                .expect("switch to api provider");
+
+            assert_eq!(
+                codex_rollout_providers(home),
+                vec![
+                    (
+                        "thread-1".to_string(),
+                        Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string()),
+                    ),
+                    (
+                        "thread-2".to_string(),
+                        Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string()),
+                    ),
+                ],
+                "audit pass should fix stale rollout metadata for ccswitch target"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_codex_audit_supplies_missing_rollout_provider() {
+        // Scenario 5: rollout first line has no model_provider in payload -> must be added
+        with_test_home(|state, home| {
+            let api_provider = codex_provider(
+                "codex-api",
+                "Codex API",
+                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n",
+            );
+            let official_provider = codex_provider("codex-official", "OpenAI Official", "");
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &official_provider)
+                .expect("save official provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), "codex-api")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some("codex-api"))
+                .expect("set local current provider");
+            // DB=openai, rollout has no model_provider field
+            seed_codex_thread_rows_missing_rollout_provider(
+                home,
+                &[("thread-1", "openai"), ("thread-2", "openai")],
+            );
+
+            ProviderService::switch(state, AppType::Codex, "codex-official")
+                .expect("switch to official provider");
+
+            assert_eq!(
+                codex_rollout_providers(home),
+                vec![
+                    ("thread-1".to_string(), Some("openai".to_string())),
+                    ("thread-2".to_string(), Some("openai".to_string())),
+                ],
+                "missing rollout model_provider should be supplied as target provider"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_codex_audit_handles_missing_rollout_file_gracefully() {
+        // Scenario 6: rollout_path points to non-existent file -> no panic, DB updated, function returns
+        with_test_home(|state, home| {
+            let api_provider = codex_provider(
+                "codex-api",
+                "Codex API",
+                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n",
+            );
+            let official_provider = codex_provider("codex-official", "OpenAI Official", "");
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &official_provider)
+                .expect("save official provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), "codex-api")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some("codex-api"))
+                .expect("set local current provider");
+
+            // Seed DB with a rollout_path pointing to a non-existent file
+            let codex_dir = home.join(".codex");
+            fs::create_dir_all(&codex_dir).expect("create codex dir");
+            let conn = rusqlite::Connection::open(codex_dir.join("state_5.sqlite"))
+                .expect("open codex state db");
+            conn.execute(
+                "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL, rollout_path TEXT NOT NULL)",
+                [],
+            )
+            .expect("create threads table");
+            let missing_path = codex_dir.join("sessions").join("nonexistent.jsonl");
+            conn.execute(
+                "INSERT INTO threads (id, model_provider, rollout_path) VALUES (?1, ?2, ?3)",
+                rusqlite::params!["thread-1", "openai", missing_path.to_string_lossy()],
+            )
+            .expect("seed thread");
+
+            // Should not panic; DB rows should still be updated
+            ProviderService::switch(state, AppType::Codex, "codex-official")
+                .expect("switch to official provider with missing rollout file");
+
+            assert_eq!(
+                codex_thread_providers(home),
+                vec![("openai".to_string(), 1)],
+                "DB should be updated even when rollout file is missing"
+            );
+        });
+    }
+
     #[tokio::test]
     #[serial]
     async fn hot_switch_codex_only_relabels_threads_from_previous_provider() {
@@ -4163,9 +4550,12 @@ impl ProviderService {
 
     fn codex_provider_switch_where_clause(column: &str) -> String {
         format!(
-            "({} OR (?2 = 'openai' AND lower({column}) IN ('{}', 'ccswitch')))",
+            "({} OR (?2 = 'openai' AND lower({column}) IN ('{}', 'ccswitch')) \
+             OR (lower(?2) IN ('{}', 'ccswitch') AND lower({column}) IN ('openai', 'ccswitch', '{}')))",
             Self::codex_provider_where_clause(column),
-            CC_SWITCH_CODEX_MODEL_PROVIDER_ID
+            CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+            CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+            CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
         )
     }
 
@@ -4178,6 +4568,34 @@ impl ProviderService {
             || (source_provider == "openai" && current_provider.eq_ignore_ascii_case("openai"))
             || (target_provider == "openai"
                 && is_cc_switch_codex_model_provider_id(current_provider))
+            || (is_cc_switch_codex_model_provider_id(target_provider)
+                && current_provider.eq_ignore_ascii_case("openai"))
+    }
+
+    /// Returns true when a provider value in DB or rollout is a known repair candidate:
+    /// it is either the current source, the target, NULL/empty, or a historical alias
+    /// that should be normalized to the target.
+    fn codex_history_provider_is_repair_candidate(
+        provider: Option<&str>,
+        source_provider: Option<&str>,
+        target_provider: &str,
+    ) -> bool {
+        let Some(provider) = provider else {
+            return true; // NULL/empty is always a repair candidate
+        };
+        if provider.is_empty() {
+            return true;
+        }
+        if provider == target_provider {
+            return true;
+        }
+        if let Some(source) = source_provider {
+            if Self::codex_rollout_provider_matches_source(provider, source, target_provider) {
+                return true;
+            }
+        }
+        // Known historical aliases that Codex Desktop has left behind
+        matches!(provider, "openai" | "OpenAI" | "ccswitch" | "custom")
     }
 
     fn codex_threads_have_model_provider(conn: &rusqlite::Connection) -> Result<bool, AppError> {
@@ -4219,6 +4637,7 @@ impl ProviderService {
         rollout_path: &Path,
         source_provider: Option<&str>,
         target_provider: &str,
+        force_audit: bool,
     ) -> Result<bool, AppError> {
         let text = match std::fs::read_to_string(rollout_path) {
             Ok(text) => text,
@@ -4244,13 +4663,23 @@ impl ProviderService {
             return Ok(false);
         };
         let current_provider = payload.get("model_provider").and_then(Value::as_str);
-        if current_provider == Some(target_provider)
-            || source_provider.is_some_and(|source| {
+        let should_skip = if force_audit && source_provider.is_none() {
+            // Audit pass: only skip if rollout already matches target AND is not a stale alias
+            !Self::codex_history_provider_is_repair_candidate(
+                current_provider,
+                source_provider,
+                target_provider,
+            )
+        } else if current_provider == Some(target_provider) {
+            true
+        } else {
+            source_provider.is_some_and(|source| {
                 current_provider.is_some_and(|current| {
                     !Self::codex_rollout_provider_matches_source(current, source, target_provider)
                 })
             })
-        {
+        };
+        if should_skip {
             return Ok(false);
         }
 
@@ -4317,6 +4746,19 @@ impl ProviderService {
             Vec::new()
         };
 
+        // Collect rollout paths for DB rows already at target provider (audit pass).
+        // These rows had DB updated in a previous partial sync but rollout may be stale.
+        let audit_rollout_paths = if Self::codex_threads_have_rollout_path(&conn)? {
+            let mut stmt =
+                conn.prepare("SELECT rollout_path FROM threads WHERE model_provider = ?1")?;
+            let rows = stmt.query_map(rusqlite::params![target_provider.as_str()], |row| {
+                row.get(0)
+            })?;
+            rows.collect::<Result<Vec<String>, _>>()?
+        } else {
+            Vec::new()
+        };
+
         let updated = if let Some(source_provider) = source_provider {
             let sql = format!(
                 "UPDATE threads SET model_provider = ?2 WHERE model_provider IS NULL OR {}",
@@ -4339,6 +4781,7 @@ impl ProviderService {
                 Path::new(&rollout_path),
                 source_provider,
                 &target_provider,
+                false,
             ) {
                 Ok(true) => rollout_updated += 1,
                 Ok(false) => {}
@@ -4348,6 +4791,26 @@ impl ProviderService {
                 ),
             }
         }
+
+        // Audit pass: fix rollout metadata for rows already at target provider.
+        // source_provider=None, force_audit=true so codex_history_provider_is_repair_candidate
+        // decides whether the rollout needs updating.
+        for rollout_path in &audit_rollout_paths {
+            match Self::sync_codex_rollout_session_meta(
+                Path::new(rollout_path),
+                None,
+                &target_provider,
+                true,
+            ) {
+                Ok(true) => rollout_updated += 1,
+                Ok(false) => {}
+                Err(err) => log::warn!(
+                    "Codex rollout audit sync failed for {}: {err}",
+                    rollout_path
+                ),
+            }
+        }
+
         if rollout_updated > 0 {
             log::info!("Codex rollout session metadata sync updated {rollout_updated} files");
         }
