@@ -1393,15 +1393,11 @@ impl StreamCheckService {
         config: &StreamCheckConfig,
     ) -> String {
         match app_type {
-            AppType::Claude => {
-                Self::extract_env_model(provider, "ANTHROPIC_MODEL")
-                    .unwrap_or_else(|| config.claude_model.clone())
-            }
-            AppType::ClaudeDesktop => {
-                Self::extract_env_model(provider, "ANTHROPIC_MODEL")
-                    .or_else(|| Self::extract_desktop_model_from_routes(provider))
-                    .unwrap_or_else(|| config.claude_model.clone())
-            }
+            AppType::Claude => Self::extract_env_model(provider, "ANTHROPIC_MODEL")
+                .unwrap_or_else(|| config.claude_model.clone()),
+            AppType::ClaudeDesktop => Self::extract_env_model(provider, "ANTHROPIC_MODEL")
+                .or_else(|| Self::extract_desktop_model_from_routes(provider))
+                .unwrap_or_else(|| config.claude_model.clone()),
             AppType::Codex => {
                 Self::extract_codex_model(provider).unwrap_or_else(|| config.codex_model.clone())
             }

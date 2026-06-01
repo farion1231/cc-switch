@@ -280,7 +280,8 @@ export function ProviderActions({
           title={t("provider.duplicate")}
           className={cn(
             iconButtonClass,
-            !onDuplicate && "opacity-40 cursor-not-allowed text-muted-foreground",
+            !onDuplicate &&
+              "opacity-40 cursor-not-allowed text-muted-foreground",
           )}
         >
           <Copy className="h-4 w-4" />
