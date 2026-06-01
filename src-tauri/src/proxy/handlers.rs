@@ -1210,6 +1210,7 @@ use crate::orchestration::engine::OrchestrationDecision;
 fn log_orchestration_usage(state: &ProxyState, result: &crate::orchestration::executor::ExecutionResult) {
     use super::usage::logger::UsageLogger;
     use super::usage::parser::TokenUsage;
+    use rust_decimal::Decimal;
 
     if !usage_logging_enabled(state) {
         return;
@@ -1217,8 +1218,8 @@ fn log_orchestration_usage(state: &ProxyState, result: &crate::orchestration::ex
 
     let logger = UsageLogger::new(&state.db);
     let usage = TokenUsage {
-        input_tokens: result.total_input_tokens as u32,
-        output_tokens: result.total_output_tokens as u32,
+        input_tokens: result.total_input_tokens.try_into().unwrap_or(u32::MAX),
+        output_tokens: result.total_output_tokens.try_into().unwrap_or(u32::MAX),
         model: Some(result.model_used.clone()),
         ..Default::default()
     };
@@ -1232,7 +1233,7 @@ fn log_orchestration_usage(state: &ProxyState, result: &crate::orchestration::ex
         result.model_used.clone(),
         result.model_used.clone(),
         usage,
-        1.0,
+        Decimal::ONE,
         result.total_latency_ms,
         None,
         200,

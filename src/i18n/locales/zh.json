@@ -2365,7 +2365,11 @@
     "orchestration": {
       "title": "编排引擎",
       "description": "多模型策略路由与质量验证",
-      "comingSoon": "编排引擎将在重启后生效"
+      "comingSoon": "编排引擎将在重启后生效",
+      "enabled": "已启用",
+      "disabled": "已关闭",
+      "toggled": "编排引擎已{{status}}",
+      "toggleFailed": "编排引擎切换失败"
     }
   },
   "streamCheck": {

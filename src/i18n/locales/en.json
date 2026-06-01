@@ -2365,7 +2365,11 @@
     "orchestration": {
       "title": "Orchestration Engine",
       "description": "Multi-model strategy routing & quality verification",
-      "comingSoon": "Orchestration will take effect after restart"
+      "comingSoon": "Orchestration will take effect after restart",
+      "enabled": "enabled",
+      "disabled": "disabled",
+      "toggled": "Orchestration engine {{status}}",
+      "toggleFailed": "Failed to toggle orchestration engine"
     }
   },
   "streamCheck": {

@@ -1,5 +1,9 @@
 # OmniAgent Workbench — Orchestration Strategies
 # Edit this file to customize strategy behavior. Changes are hot-reloaded.
+#
+# Note: Model keys must match the keys defined in the models section (or Rust defaults).
+# Default model keys: cheap_coder (deepseek), frontier (anthropic)
+# Debate and MoA strategies use type: cascade since no dedicated debate action exists yet.
 
 enabled: false  # Set to true to enable orchestration
 
@@ -23,29 +27,27 @@ strategies:
       type: cascade
       models:
         - cheap_coder
-        - mid_coder
         - frontier
       verify_each: true
       escalate_on_fail: true
       quality_threshold: 0.65
 
   debate:
-    description: "Multi-model debate with independent judge"
+    description: "Multi-model debate with independent judge (uses cascade)"
     when:
       complexity: [0.7, 1.0]
       risk: ["high", "critical"]
     action:
       type: cascade
       models:
-        - mid_executor_code
-        - cheap_executor_code
-        - frontier_planner
+        - cheap_coder
+        - frontier
       verify_each: true
       escalate_on_fail: true
       quality_threshold: 0.75
 
   moa:
-    description: "Mixture of Agents — multiple proposers + aggregator"
+    description: "Mixture of Agents — multiple proposers + aggregator (uses cascade)"
     when:
       complexity: [0.8, 1.0]
       risk: ["critical"]
@@ -53,9 +55,8 @@ strategies:
     action:
       type: cascade
       models:
-        - mid_executor_code
-        - cheap_executor_code
-        - frontier_planner
+        - cheap_coder
+        - frontier
       verify_each: true
       escalate_on_fail: true
       quality_threshold: 0.80

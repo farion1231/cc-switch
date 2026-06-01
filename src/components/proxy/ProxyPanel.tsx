@@ -66,7 +66,9 @@ export function ProxyPanel({
   useEffect(() => {
     invoke<{ enabled: boolean }>("orchestration_status")
       .then((result) => setOrchestrationEnabled(result.enabled))
-      .catch(() => {});
+      .catch((err) => {
+        console.error("[ProxyPanel] Failed to fetch orchestration status:", err);
+      });
   }, []);
 
   const handleOrchestrationToggle = useCallback(
@@ -77,7 +79,9 @@ export function ProxyPanel({
         setOrchestrationEnabled(checked);
         toast.success(
           t("proxy.orchestration.toggled", {
-            defaultValue: checked ? "编排引擎已启用" : "编排引擎已关闭",
+            status: checked
+              ? t("proxy.orchestration.enabled", { defaultValue: "已启用" })
+              : t("proxy.orchestration.disabled", { defaultValue: "已关闭" }),
           }),
         );
       } catch (err) {
