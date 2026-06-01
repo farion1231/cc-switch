@@ -332,6 +332,32 @@ requires_openai_auth = true`,
     iconColor: "#0F62FE",
   },
   {
+    name: "Zhipu GLM Coding Plan",
+    websiteUrl: "https://open.bigmodel.cn",
+    apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "zhipu_glm_coding_plan",
+      "https://open.bigmodel.cn/api/coding/paas/v4",
+      "glm-5.1",
+    ),
+    endpointCandidates: ["https://open.bigmodel.cn/api/coding/paas/v4"],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      { model: "glm-5.1", displayName: "GLM-5.1", contextWindow: 200000 },
+    ]),
+    codexChatReasoning: {
+      supportsThinking: true,
+      supportsEffort: false,
+      thinkingParam: "thinking",
+      effortParam: "none",
+      outputFormat: "reasoning_content",
+    },
+    category: "cn_official",
+    icon: "zhipu",
+    iconColor: "#0F62FE",
+  },
+  {
     name: "Baidu Qianfan Coding Plan",
     websiteUrl: "https://cloud.baidu.com/product/qianfan_modelbuilder",
     apiKeyUrl:

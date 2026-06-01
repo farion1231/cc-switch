@@ -175,6 +175,22 @@ pub fn build_models_url_candidates(
         }
     }
 
+    // 对于智谱 coding plan 端点（如 bigmodel.cn/api/coding/paas/v4），
+    // 额外生成去掉 "coding/" 的候选，使其能回退到默认端点获取模型列表（如 /api/paas/v4/v1/models）。
+    if trimmed.contains("bigmodel.cn") || trimmed.contains("api.z.ai") {
+        if let Some(idx) = trimmed.find("/api/coding/") {
+            let after_coding = idx + "/api/coding".len();
+            let fallback = format!("{}{}", &trimmed[..idx + "/api".len()], &trimmed[after_coding..]);
+            let fallback_primary = if fallback.ends_with("/v1") {
+                format!("{fallback}/models")
+            } else {
+                format!("{fallback}/v1/models")
+            };
+            candidates.push(fallback_primary);
+            candidates.push(format!("{}/models", fallback.trim_end_matches('/')));
+        }
+    }
+
     // 候选最多 3 条，线性去重即可，不值得上 HashSet。
     let mut unique: Vec<String> = Vec::with_capacity(candidates.len());
     for url in candidates {
@@ -410,5 +426,24 @@ mod tests {
         let json = r#"{"object":"list","data":[]}"#;
         let resp: ModelsResponse = serde_json::from_str(json).unwrap();
         assert!(resp.data.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_candidates_zhipu_coding_plan_fallback() {
+        // Coding plan 端点 /api/coding/paas/v4 应额外生成 /api/paas/v4 的候选
+        let c = build_models_url_candidates(
+            "https://open.bigmodel.cn/api/coding/paas/v4",
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            c,
+            vec![
+                "https://open.bigmodel.cn/api/coding/paas/v4/v1/models",
+                "https://open.bigmodel.cn/api/paas/v4/v1/models",
+                "https://open.bigmodel.cn/api/paas/v4/models",
+            ]
+        );
     }
 }

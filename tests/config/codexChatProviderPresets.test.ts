@@ -56,6 +56,13 @@ const expectedChatPresets = new Map<
     },
   ],
   [
+    "Zhipu GLM Coding Plan",
+    {
+      baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
+      contextWindows: { "glm-5.1": 200000 },
+    },
+  ],
+  [
     "Baidu Qianfan Coding Plan",
     {
       baseUrl: "https://qianfan.baidubce.com/v2/coding",
