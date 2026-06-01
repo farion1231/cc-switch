@@ -15,18 +15,6 @@ pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
 const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
 
-/// Reserved built-in provider IDs from OpenAI Codex's config/model-provider
-/// catalog. Keep in sync with Codex `RESERVED_MODEL_PROVIDER_IDS` and legacy
-/// removed provider aliases.
-const CODEX_RESERVED_MODEL_PROVIDER_IDS: &[&str] = &[
-    "amazon-bedrock",
-    "openai",
-    "ollama",
-    "lmstudio",
-    "oss",
-    "ollama-chat",
-];
-
 /// 获取 Codex 配置目录路径
 pub fn get_codex_config_dir() -> PathBuf {
     if let Some(custom) = crate::settings::get_codex_override_dir() {
@@ -163,14 +151,6 @@ fn active_codex_model_provider_id(doc: &DocumentMut) -> Option<String> {
         .map(str::trim)
         .filter(|id| !id.is_empty())
         .map(str::to_string)
-}
-
-pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
-    let id = id.trim();
-    !id.is_empty()
-        && !CODEX_RESERVED_MODEL_PROVIDER_IDS
-            .iter()
-            .any(|reserved| reserved.eq_ignore_ascii_case(id))
 }
 
 /// Write only Codex `config.toml` for provider switching.
@@ -875,10 +855,9 @@ pub fn write_codex_provider_live_with_catalog(
 
 /// Extract a provider-scoped `experimental_bearer_token` from Codex `config.toml`.
 ///
-/// Mobile compat: third-party providers may store the API key inside
-/// `[model_providers.<id>].experimental_bearer_token` while keeping the
-/// user's ChatGPT login cache intact in `auth.json`. Falls back to the
-/// top-level `experimental_bearer_token` when no active model provider is set.
+/// Current Codex schema expects the token at
+/// `[model_providers.<id>].experimental_bearer_token`. The top-level field is
+/// still read for legacy config import and cleanup.
 pub fn extract_codex_experimental_bearer_token(config_text: &str) -> Option<String> {
     if !config_text.contains("experimental_bearer_token") {
         return None;
@@ -890,18 +869,16 @@ pub fn extract_codex_experimental_bearer_token(config_text: &str) -> Option<Stri
         doc.get("experimental_bearer_token")
             .and_then(|item| item.as_str())
     };
-    let token = match provider_id.as_deref() {
-        Some(id) if is_custom_codex_model_provider_id(id) => doc
-            .get("model_providers")
+
+    let provider_token = provider_id.as_deref().and_then(|id| {
+        doc.get("model_providers")
             .and_then(|item| item.as_table())
             .and_then(|table| table.get(id))
             .and_then(|item| item.as_table())
             .and_then(|table| table.get("experimental_bearer_token"))
             .and_then(|item| item.as_str())
-            .or_else(top_level_token),
-        Some(_) => top_level_token(),
-        None => top_level_token(),
-    };
+    });
+    let token = provider_token.or_else(top_level_token);
 
     token
         .map(str::trim)
@@ -922,32 +899,52 @@ fn set_codex_experimental_bearer_token(config_text: &str, token: &str) -> Result
         .parse::<DocumentMut>()
         .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
 
-    let Some(provider_id) = active_codex_model_provider_id(&doc) else {
-        doc["experimental_bearer_token"] = toml_edit::value(token);
-        return Ok(doc.to_string());
+    let provider_id = match active_codex_model_provider_id(&doc) {
+        Some(id) => id,
+        None => {
+            // 兼容旧式顶层 base_url 配置：缺少 model_provider 时迁移到 custom。
+            doc["model_provider"] = toml_edit::value(CC_SWITCH_CODEX_MODEL_PROVIDER_ID);
+            CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string()
+        }
     };
 
-    if !is_custom_codex_model_provider_id(&provider_id) {
-        // Reserved Codex provider IDs are owned by the CLI. Keep third-party
-        // bearer tokens at the top level so we do not shadow built-in tables.
-        doc["experimental_bearer_token"] = toml_edit::value(token);
-        return Ok(doc.to_string());
+    if doc.get("model_providers").is_none() {
+        doc["model_providers"] = toml_edit::table();
     }
 
-    if let Some(model_providers) = doc
-        .get_mut("model_providers")
+    // 清理旧版顶层字段，避免继续生成不符合当前 Codex schema 的配置。
+    let mut legacy_provider_fields = Vec::new();
+    for field in ["base_url", "wire_api", "requires_openai_auth"] {
+        if let Some(item) = doc.as_table_mut().remove(field) {
+            legacy_provider_fields.push((field, item));
+        }
+    }
+    doc.as_table_mut().remove("experimental_bearer_token");
+
+    let model_providers = doc["model_providers"].as_table_mut().ok_or_else(|| {
+        AppError::Message("Invalid Codex config.toml: model_providers must be a table".into())
+    })?;
+
+    if !model_providers.contains_key(provider_id.as_str()) {
+        model_providers[provider_id.as_str()] = toml_edit::table();
+    }
+
+    let provider_table = model_providers
+        .get_mut(provider_id.as_str())
         .and_then(|item| item.as_table_mut())
-    {
-        if let Some(provider_table) = model_providers
-            .get_mut(provider_id.as_str())
-            .and_then(|item| item.as_table_mut())
-        {
-            provider_table["experimental_bearer_token"] = toml_edit::value(token);
-            return Ok(doc.to_string());
+        .ok_or_else(|| {
+            AppError::Message(format!(
+                "Invalid Codex config.toml: model_providers.{provider_id} must be a table"
+            ))
+        })?;
+
+    for (field, item) in legacy_provider_fields {
+        if !provider_table.contains_key(field) {
+            provider_table[field] = item;
         }
     }
 
-    doc["experimental_bearer_token"] = toml_edit::value(token);
+    provider_table["experimental_bearer_token"] = toml_edit::value(token);
     Ok(doc.to_string())
 }
 
@@ -1044,7 +1041,7 @@ pub fn write_codex_live_for_provider(
 /// Build the live Codex config for provider switching.
 ///
 /// The stored provider keeps its API key in `auth.OPENAI_API_KEY`. Live Codex
-/// requests can use a provider-scoped `experimental_bearer_token`, so switching
+/// requests use a provider-scoped `experimental_bearer_token`, so switching
 /// providers only needs to update `config.toml`; `auth.json` stays as the user's
 /// long-lived ChatGPT login cache.
 pub fn prepare_codex_provider_live_config(
@@ -1245,7 +1242,7 @@ mod tests {
     }
 
     #[test]
-    fn prepare_provider_live_config_uses_top_level_token_for_reserved_provider() {
+    fn prepare_provider_live_config_writes_provider_token_for_reserved_provider() {
         let input = r#"model_provider = "openai"
 model = "gpt-5"
 "#;
@@ -1257,28 +1254,30 @@ model = "gpt-5"
 
         assert_eq!(
             parsed
-                .get("experimental_bearer_token")
+                .get("model_providers")
+                .and_then(|v| v.get("openai"))
+                .and_then(|v| v.get("experimental_bearer_token"))
                 .and_then(|v| v.as_str()),
             Some("sk-test")
         );
         assert!(
-            parsed.get("model_providers").is_none(),
-            "reserved provider tables should not be synthesized"
+            parsed.get("experimental_bearer_token").is_none(),
+            "token should not be written at the top level"
         );
     }
 
     #[test]
-    fn extract_bearer_uses_top_level_token_for_reserved_provider() {
+    fn extract_bearer_prefers_active_provider_token() {
         let input = r#"model_provider = "openai"
 experimental_bearer_token = "top-level-key"
 
 [model_providers.openai]
-experimental_bearer_token = "stale-table-key"
+experimental_bearer_token = "provider-key"
 "#;
 
         assert_eq!(
             extract_codex_experimental_bearer_token(input).as_deref(),
-            Some("top-level-key")
+            Some("provider-key")
         );
     }
 
@@ -1313,7 +1312,7 @@ experimental_bearer_token = "stale-table-key"
     }
 
     #[test]
-    fn prepare_provider_live_config_does_not_create_incomplete_provider_table() {
+    fn prepare_provider_live_config_creates_missing_provider_table() {
         let input = r#"model_provider = "vendor_x"
 model = "gpt-5"
 "#;
@@ -1325,13 +1324,51 @@ model = "gpt-5"
 
         assert_eq!(
             parsed
+                .get("model_providers")
+                .and_then(|v| v.get("vendor_x"))
+                .and_then(|v| v.get("experimental_bearer_token"))
+                .and_then(|v| v.as_str()),
+            Some("sk-test")
+        );
+        assert!(
+            parsed.get("experimental_bearer_token").is_none(),
+            "token should not be written at the top level"
+        );
+    }
+
+    #[test]
+    fn prepare_provider_live_config_migrates_legacy_top_level_routing() {
+        let input = r#"base_url = "https://legacy.example/v1"
+wire_api = "responses"
+model = "gpt-5"
+"#;
+
+        let output =
+            prepare_codex_provider_live_config(&json!({"OPENAI_API_KEY": "sk-test"}), input)
+                .expect("prepare live config");
+        let parsed: toml::Value = toml::from_str(&output).expect("parse output");
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+        );
+        let provider = parsed
+            .get("model_providers")
+            .and_then(|v| v.get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID))
+            .expect("custom provider should be created");
+        assert_eq!(
+            provider.get("base_url").and_then(|v| v.as_str()),
+            Some("https://legacy.example/v1")
+        );
+        assert_eq!(
+            provider
                 .get("experimental_bearer_token")
                 .and_then(|v| v.as_str()),
             Some("sk-test")
         );
         assert!(
-            parsed.get("model_providers").is_none(),
-            "missing provider tables should not be synthesized without endpoint fields"
+            parsed.get("base_url").is_none() && parsed.get("experimental_bearer_token").is_none(),
+            "legacy top-level provider fields should be removed"
         );
     }
 

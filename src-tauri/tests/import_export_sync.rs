@@ -118,13 +118,26 @@ fn sync_codex_provider_writes_config_without_touching_auth() {
     );
 
     let toml_text = fs::read_to_string(&config_path).expect("read config.toml");
-    assert!(
-        toml_text.contains("base_url"),
+    let parsed_live: toml::Value = toml::from_str(&toml_text).expect("parse live config");
+    let custom_provider = parsed_live
+        .get("model_providers")
+        .and_then(|v| v.get("custom"))
+        .expect("legacy top-level config should be migrated to model_providers.custom");
+    assert_eq!(
+        custom_provider.get("base_url").and_then(|v| v.as_str()),
+        Some("https://codex.test"),
         "config.toml should contain base_url from provider config"
     );
-    assert!(
-        toml_text.contains("experimental_bearer_token"),
+    assert_eq!(
+        custom_provider
+            .get("experimental_bearer_token")
+            .and_then(|v| v.as_str()),
+        Some("codex-key"),
         "config.toml should contain provider-scoped bearer token"
+    );
+    assert!(
+        parsed_live.get("experimental_bearer_token").is_none(),
+        "live config should not write bearer token at the top level"
     );
 
     let manager = config.get_manager(&AppType::Codex).expect("codex manager");
@@ -331,6 +344,10 @@ fn sync_enabled_to_codex_writes_enabled_servers() {
         text.contains("mcp_servers") && text.contains("stdio-enabled"),
         "enabled servers should be serialized"
     );
+    assert!(
+        !text.contains("type ="),
+        "Codex MCP export should not write a type field"
+    );
 }
 
 #[test]
@@ -389,6 +406,10 @@ mode = "dev"
     assert!(
         text.contains("echo") && text.contains("command = \"echo\""),
         "echo server should be serialized"
+    );
+    assert!(
+        !text.contains("type ="),
+        "Codex MCP export should omit type according to current schema"
     );
 }
 
@@ -631,12 +652,10 @@ fn import_from_codex_adds_servers_from_mcp_servers_table() {
     fs::write(
         &path,
         r#"[mcp_servers.echo_server]
-type = "stdio"
 command = "echo"
 args = ["hello"]
 
 [mcp_servers.http_server]
-type = "http"
 url = "https://example.com"
 "#,
     )
@@ -660,6 +679,10 @@ url = "https://example.com"
     );
     let server_spec = echo.server.as_object().expect("server spec");
     assert_eq!(
+        server_spec.get("type").and_then(|v| v.as_str()),
+        Some("stdio")
+    );
+    assert_eq!(
         server_spec
             .get("command")
             .and_then(|v| v.as_str())
@@ -673,6 +696,11 @@ url = "https://example.com"
         "Codex app should be enabled for http_server"
     );
     let http_spec = http.server.as_object().expect("http spec");
+    assert_eq!(
+        http_spec.get("type").and_then(|v| v.as_str()),
+        Some("http"),
+        "url-only Codex MCP entries should import as HTTP servers"
+    );
     assert_eq!(
         http_spec.get("url").and_then(|v| v.as_str()).unwrap_or(""),
         "https://example.com"

@@ -377,17 +377,32 @@ describe("Codex TOML utils", () => {
     expect(extractCodexExperimentalBearerToken(updated)).toBe("new-key");
   });
 
-  it("extractCodexExperimentalBearerToken ignores reserved provider tables", () => {
+  it("extractCodexExperimentalBearerToken prefers the active provider table", () => {
     const input = [
       'model_provider = "openai"',
       'experimental_bearer_token = "top-level-key"',
       "",
       "[model_providers.openai]",
-      'experimental_bearer_token = "stale-table-key"',
+      'experimental_bearer_token = "provider-key"',
       "",
     ].join("\n");
 
-    expect(extractCodexExperimentalBearerToken(input)).toBe("top-level-key");
+    expect(extractCodexExperimentalBearerToken(input)).toBe("provider-key");
+  });
+
+  it("updateCodexExperimentalBearerToken can replace tokens in reserved provider tables", () => {
+    const input = [
+      'model_provider = "openai"',
+      "",
+      "[model_providers.openai]",
+      'experimental_bearer_token = "old-key"',
+      "",
+    ].join("\n");
+
+    const updated = updateCodexExperimentalBearerToken(input, "new-key");
+
+    expect(extractCodexExperimentalBearerToken(updated)).toBe("new-key");
+    expect(updated).not.toMatch(/old-key/);
   });
 
   it("extractCodexExperimentalBearerToken reads only top-level model_provider", () => {

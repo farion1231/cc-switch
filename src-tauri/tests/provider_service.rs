@@ -478,6 +478,10 @@ requires_openai_auth = true
         Some("bridge-key"),
         "third-party key should be injected into the selected live provider table"
     );
+    assert!(
+        parsed_live.get("experimental_bearer_token").is_none(),
+        "third-party key should not be written at the top level"
+    );
     assert_eq!(
         parsed_live
             .get("model_providers")

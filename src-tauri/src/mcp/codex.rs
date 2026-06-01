@@ -71,11 +71,17 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                 continue;
             };
 
-            // type 缺省为 stdio
+            // Codex 当前 schema 不写 type：有 url 时按远程 HTTP 服务导入，否则按 stdio。
             let typ = entry_tbl
                 .get("type")
                 .and_then(|v| v.as_str())
-                .unwrap_or("stdio");
+                .unwrap_or_else(|| {
+                    if entry_tbl.get("url").is_some() {
+                        "http"
+                    } else {
+                        "stdio"
+                    }
+                });
 
             // 构建 JSON 规范
             let mut spec = serde_json::Map::new();
@@ -84,7 +90,7 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
             // 核心字段（需要手动处理的字段）
             let core_fields = match typ {
                 "stdio" => vec!["type", "command", "args", "env", "cwd"],
-                "http" | "sse" => vec!["type", "url", "http_headers"],
+                "http" | "sse" => vec!["type", "url", "headers", "http_headers"],
                 _ => vec!["type"],
             };
 
@@ -557,6 +563,7 @@ fn json_value_to_toml_item(value: &Value, field_name: &str) -> Option<toml_edit:
 ///
 /// 策略：
 /// 1. 核心字段（type, command, args, url, headers, env, cwd）使用强类型处理
+///    其中 type 只作为内部统一结构的类型标记，不写入 Codex TOML
 /// 2. 扩展字段（timeout、retry 等）通过白名单列表自动转换
 /// 3. 其他未知字段使用通用转换器尝试转换
 fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError> {
@@ -564,12 +571,11 @@ fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError>
 
     let mut t = Table::new();
     let typ = spec.get("type").and_then(|v| v.as_str()).unwrap_or("stdio");
-    t["type"] = toml_edit::value(typ);
 
     // 定义核心字段（已在下方处理，跳过通用转换）
     let core_fields = match typ {
         "stdio" => vec!["type", "command", "args", "env", "cwd"],
-        "http" | "sse" => vec!["type", "url", "http_headers"],
+        "http" | "sse" => vec!["type", "url", "headers", "http_headers"],
         _ => vec!["type"],
     };
 
@@ -639,7 +645,12 @@ fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError>
             let url = spec.get("url").and_then(|v| v.as_str()).unwrap_or("");
             t["url"] = toml_edit::value(url);
 
-            if let Some(headers) = spec.get("headers").and_then(|v| v.as_object()) {
+            let headers = spec
+                .get("http_headers")
+                .or_else(|| spec.get("headers"))
+                .and_then(|v| v.as_object());
+
+            if let Some(headers) = headers {
                 let mut h_tbl = Table::new();
                 for (k, v) in headers.iter() {
                     if let Some(s) = v.as_str() {

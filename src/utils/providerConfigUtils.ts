@@ -1082,7 +1082,6 @@ export const extractCodexExperimentalBearerToken = (
           : undefined;
       const providerToken =
         providerName &&
-        isCustomCodexModelProviderId(providerName) &&
         parsed.model_providers &&
         typeof parsed.model_providers === "object" &&
         typeof parsed.model_providers[providerName]
@@ -1102,7 +1101,7 @@ export const extractCodexExperimentalBearerToken = (
     }
 
     const lines = text.split("\n");
-    const targetSectionName = getCodexCustomProviderSectionName(text);
+    const targetSectionName = getCodexProviderSectionName(text);
 
     if (targetSectionName) {
       const sectionRange = getTomlSectionRange(lines, targetSectionName);
@@ -1148,7 +1147,7 @@ export const updateCodexExperimentalBearerToken = (
   }
 
   const lines = normalizedText.split("\n");
-  const targetSectionName = getCodexCustomProviderSectionName(normalizedText);
+  const targetSectionName = getCodexProviderSectionName(normalizedText);
 
   let tokenLineIndex = -1;
   if (targetSectionName) {
