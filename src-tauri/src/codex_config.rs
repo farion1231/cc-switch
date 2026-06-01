@@ -408,12 +408,48 @@ fn find_codex_model_template(catalog: &Value) -> Option<Value> {
 
 fn load_codex_model_template_from_cache() -> Result<Option<Value>, AppError> {
     let path = get_codex_config_dir().join("models_cache.json");
+    load_codex_model_template_from_cache_file(&path)
+}
+
+fn load_codex_model_template_from_cache_file(path: &Path) -> Result<Option<Value>, AppError> {
+    load_codex_model_template_from_cache_file_with_reader(path, fs::read_to_string::<&Path>)
+}
+
+fn load_codex_model_template_from_cache_file_with_reader(
+    path: &Path,
+    read_to_string: impl FnOnce(&Path) -> std::io::Result<String>,
+) -> Result<Option<Value>, AppError> {
     if !path.exists() {
         return Ok(None);
     }
+    if !path.is_file() {
+        log::warn!(
+            "Codex model cache path exists but is not a file, ignoring: {}",
+            path.display()
+        );
+        return Ok(None);
+    }
 
-    let text = fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?;
-    let catalog: Value = serde_json::from_str(&text).map_err(|e| AppError::json(&path, e))?;
+    let text = match read_to_string(path) {
+        Ok(text) => text,
+        Err(err) => {
+            log::warn!(
+                "Failed to read Codex model cache, ignoring: {}: {err}",
+                path.display()
+            );
+            return Ok(None);
+        }
+    };
+    let catalog: Value = match serde_json::from_str(&text) {
+        Ok(catalog) => catalog,
+        Err(err) => {
+            log::warn!(
+                "Failed to parse Codex model cache, ignoring: {}: {err}",
+                path.display()
+            );
+            return Ok(None);
+        }
+    };
     Ok(find_codex_model_template(&catalog))
 }
 
@@ -1912,6 +1948,69 @@ name = "any"
             )
             .is_none(),
             "entries lacking slug are skipped; a fully-skipped catalog yields None"
+        );
+    }
+
+    #[test]
+    fn codex_model_cache_returns_template_from_valid_cache() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let cache_path = temp_home.path().join("models_cache.json");
+        std::fs::write(
+            &cache_path,
+            r#"{"models":[{"slug":"gpt-5.5","display_name":"GPT-5.5"}]}"#,
+        )
+        .expect("write cache");
+
+        let template = load_codex_model_template_from_cache_file(&cache_path)
+            .expect("load cache")
+            .expect("template found");
+        assert_eq!(
+            template.get("display_name").and_then(|value| value.as_str()),
+            Some("GPT-5.5")
+        );
+    }
+
+    #[test]
+    fn codex_model_cache_treats_directory_as_miss() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let cache_path = temp_home.path().join("models_cache.json");
+        std::fs::create_dir(&cache_path).expect("create directory-shaped cache");
+
+        assert!(
+            load_codex_model_template_from_cache_file(&cache_path)
+                .expect("directory cache should not error")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn codex_model_cache_treats_malformed_json_as_miss() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let cache_path = temp_home.path().join("models_cache.json");
+        std::fs::write(&cache_path, "not json").expect("write malformed cache");
+
+        assert!(
+            load_codex_model_template_from_cache_file(&cache_path)
+                .expect("malformed cache should not error")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn codex_model_cache_treats_read_error_as_miss() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let cache_path = temp_home.path().join("models_cache.json");
+        std::fs::write(&cache_path, "{}").expect("write cache");
+
+        assert!(
+            load_codex_model_template_from_cache_file_with_reader(&cache_path, |_| {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "denied",
+                ))
+            })
+            .expect("read error should not hard fail")
+            .is_none()
         );
     }
 
