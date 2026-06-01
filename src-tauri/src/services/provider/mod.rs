@@ -80,6 +80,7 @@ pub struct SwitchResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_config::{McpApps, McpServer};
     #[cfg(any(target_os = "macos", windows))]
     use crate::claude_desktop_config::PROFILE_ID;
     use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
@@ -2726,6 +2727,105 @@ mod tests {
                 launch_profile_dir.as_deref(),
                 Some(normalized_dir.as_str()),
                 "terminal launches should export the trimmed profile directory validated by the switch plan"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_claude_profile_only_preserves_profile_mcp_file() {
+        let _env_guard = UserEnvVarGuard::new("CLAUDE_CONFIG_DIR");
+        with_test_home(|state, home| {
+            let default_dir = home.join(".claude");
+            fs::create_dir_all(&default_dir).expect("create default claude dir");
+            write_json_file(
+                &default_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "default-live-token",
+                        "ANTHROPIC_BASE_URL": "https://default-live.example"
+                    }
+                }),
+            )
+            .expect("seed default live settings");
+
+            let profile_dir = home.join(".claude-profiles").join("api");
+            fs::create_dir_all(&profile_dir).expect("create api profile dir");
+            let profile_mcp_path = profile_dir.with_extension("json");
+            let existing_profile_mcp = json!({
+                "mcpServers": {
+                    "external": {
+                        "type": "stdio",
+                        "command": "external-tool"
+                    }
+                },
+                "profileOwned": true
+            });
+            write_json_file(&profile_mcp_path, &existing_profile_mcp)
+                .expect("seed profile-owned mcp file");
+
+            let default_provider = claude_provider(
+                "default",
+                "Default",
+                "default-provider-token",
+                "https://default-provider.example",
+                None,
+            );
+            let profile_provider = claude_provider(
+                "profile-only",
+                "Profile Only",
+                "profile-token-should-not-write",
+                "https://profile-should-not-write.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(profile_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &default_provider)
+                .expect("save default provider");
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &profile_provider)
+                .expect("save profile provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "default")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("default"))
+                .expect("set local current provider");
+            state
+                .db
+                .save_mcp_server(&McpServer {
+                    id: "managed-mcp".to_string(),
+                    name: "Managed MCP".to_string(),
+                    server: json!({
+                        "type": "stdio",
+                        "command": "python",
+                        "args": ["-m", "managed_mcp"]
+                    }),
+                    apps: McpApps {
+                        claude: true,
+                        ..Default::default()
+                    },
+                    description: None,
+                    homepage: None,
+                    docs: None,
+                    tags: Vec::new(),
+                })
+                .expect("save managed mcp server");
+
+            ProviderService::switch(state, AppType::Claude, "profile-only")
+                .expect("switch to profile-only provider");
+
+            let profile_mcp: Value =
+                read_json_file(&profile_mcp_path).expect("read profile mcp file");
+            assert_eq!(
+                profile_mcp, existing_profile_mcp,
+                "profile-only switching must not rewrite the selected profile's MCP file"
             );
         });
     }
@@ -5987,8 +6087,10 @@ impl ProviderService {
                 }
             }
 
-            // Sync MCP
-            McpService::sync_all_enabled(state)?;
+            if should_write_live {
+                // Sync MCP
+                McpService::sync_all_enabled(state)?;
+            }
 
             Ok(())
         })();
