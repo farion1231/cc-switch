@@ -2408,8 +2408,14 @@ pub async fn open_provider_terminal(
     let env_vars = extract_env_vars_from_config(config, &app_type);
 
     // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
-    launch_terminal_with_env(env_vars, &providerId, launch_cwd.as_deref())
-        .map_err(|e| format!("启动终端失败: {e}"))?;
+    launch_terminal_with_env(
+        env_vars,
+        &providerId,
+        &provider.name,
+        &app,
+        launch_cwd.as_deref(),
+    )
+    .map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
 }
@@ -2501,43 +2507,163 @@ fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
     Ok(Some(resolved))
 }
 
+/// 创建 provider 临时 settings 文件（`tempfile`，与 Warp 启动脚本同一模式）。
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn create_provider_config_tempfile(
+    provider_id: &str,
+    env_vars: &[(String, String)],
+) -> Result<tempfile::NamedTempFile, String> {
+    let file = tempfile::Builder::new()
+        .prefix(&format!("claude_{provider_id}_"))
+        .suffix(".json")
+        .disable_cleanup(true)
+        .tempfile()
+        .map_err(|e| format!("写入配置文件失败: {e}"))?;
+    write_claude_config(file.path(), env_vars)?;
+    Ok(file)
+}
+
+/// 创建 provider 启动脚本；`cd_in_script=false` 时 cwd 由 cmux `--cwd` 承担。
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn create_provider_launcher_script(
+    config_file: &std::path::Path,
+    cwd: Option<&std::path::Path>,
+    cd_in_script: bool,
+) -> Result<tempfile::NamedTempFile, String> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    let cd_command = if cd_in_script {
+        build_shell_cd_command(cwd)
+    } else {
+        String::new()
+    };
+    let config_path = config_file.to_string_lossy();
+
+    let mut script = tempfile::Builder::new()
+        .prefix("cc_switch_launcher_")
+        .suffix(".sh")
+        .disable_cleanup(true)
+        .permissions(std::fs::Permissions::from_mode(0o755))
+        .tempfile()
+        .map_err(|e| format!("写入启动脚本失败: {e}"))?;
+
+    let script_path = script.path().display().to_string();
+    write!(
+        script,
+        r#"#!/bin/bash
+trap 'rm -f "{config_path}" "{script_path}"' EXIT
+{cd_command}echo "Using provider-specific claude config:"
+echo "{config_path}"
+claude --settings "{config_path}"
+exec bash --norc --noprofile
+"#,
+        config_path = config_path,
+        script_path = script_path,
+        cd_command = cd_command,
+    )
+    .map_err(|e| format!("写入启动脚本失败: {e}"))?;
+
+    Ok(script)
+}
+
+/// cmux 专用 launcher：显式 `--model` + 新 `--session-id`，避免 autoResume 复用已有 Claude session。
+#[cfg(target_os = "macos")]
+fn create_provider_cmux_launcher_script(
+    config_file: &std::path::Path,
+    anthropic_model: Option<&str>,
+) -> Result<tempfile::NamedTempFile, String> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    let config_path = config_file.to_string_lossy();
+    let model_flag = anthropic_model
+        .filter(|m| !m.is_empty())
+        .map(|m| format!(" --model {}", shell_single_quote(m)))
+        .unwrap_or_default();
+
+    let mut script = tempfile::Builder::new()
+        .prefix("cc_switch_launcher_")
+        .suffix(".sh")
+        .disable_cleanup(true)
+        .permissions(std::fs::Permissions::from_mode(0o755))
+        .tempfile()
+        .map_err(|e| format!("写入启动脚本失败: {e}"))?;
+
+    let script_path = script.path().display().to_string();
+    // `--session-id` 强制新会话，避免 cmux 在同 cwd 下 autoResume 旧 Claude session
+    write!(
+        script,
+        r#"#!/bin/bash
+trap 'rm -f "{config_path}" "{script_path}"' EXIT
+echo "Using provider-specific claude config:"
+echo "{config_path}"
+claude --settings "{config_path}"{model_flag} --session-id "$(uuidgen)"
+exec bash --norc --noprofile
+"#,
+        config_path = config_path,
+        script_path = script_path,
+        model_flag = model_flag,
+    )
+    .map_err(|e| format!("写入启动脚本失败: {e}"))?;
+
+    Ok(script)
+}
+
 /// 创建临时配置文件并启动 claude 终端
 /// 使用 --settings 参数传入提供商特定的 API 配置
 fn launch_terminal_with_env(
     env_vars: Vec<(String, String)>,
     provider_id: &str,
+    provider_name: &str,
+    app: &str,
     cwd: Option<&Path>,
 ) -> Result<(), String> {
-    let temp_dir = std::env::temp_dir();
-    let config_file = temp_dir.join(format!(
-        "claude_{}_{}.json",
-        provider_id,
-        std::process::id()
-    ));
-
-    // 创建并写入配置文件
-    write_claude_config(&config_file, &env_vars)?;
-
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
-        launch_macos_terminal(&config_file, cwd)?;
-        Ok(())
-    }
+        let _config_temp = create_provider_config_tempfile(provider_id, &env_vars)?;
+        let config_file = _config_temp.path();
 
-    #[cfg(target_os = "linux")]
-    {
-        launch_linux_terminal(&config_file, cwd)?;
+        #[cfg(target_os = "macos")]
+        {
+            // cmux launcher 需要显式 `--model`，从 env 里取 ANTHROPIC_MODEL
+            let anthropic_model = env_vars
+                .iter()
+                .find(|(key, _)| key == "ANTHROPIC_MODEL")
+                .map(|(_, value)| value.as_str());
+            launch_macos_terminal(
+                config_file,
+                provider_name,
+                app,
+                cwd,
+                anthropic_model,
+            )?;
+        }
+
+        #[cfg(target_os = "linux")]
+        launch_linux_terminal(config_file, cwd)?;
+
         Ok(())
     }
 
     #[cfg(target_os = "windows")]
     {
+        let temp_dir = std::env::temp_dir();
+        let config_file = temp_dir.join(format!(
+            "claude_{}_{}.json",
+            provider_id,
+            std::process::id()
+        ));
+        write_claude_config(&config_file, &env_vars)?;
         launch_windows_terminal(&temp_dir, &config_file, cwd)?;
         return Ok(());
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    Err("不支持的操作系统".to_string())
+    {
+        let _ = (env_vars, provider_id, provider_name, app, cwd);
+        Err("不支持的操作系统".to_string())
+    }
 }
 
 /// 写入 claude 配置文件
@@ -2562,62 +2688,86 @@ fn write_claude_config(
 
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-
+fn launch_macos_terminal(
+    config_file: &std::path::Path,
+    provider_name: &str,
+    app: &str,
+    cwd: Option<&Path>,
+    anthropic_model: Option<&str>,
+) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("terminal");
+    let use_cmux = terminal == "cmux";
 
-    let temp_dir = std::env::temp_dir();
-    let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
-    let cd_command = build_shell_cd_command(cwd);
+    // cmux 用专用脚本（含 --model / --session-id），且 cwd 交给 cmux `--cwd` 而非脚本内 cd
+    let _script_temp = if use_cmux {
+        create_provider_cmux_launcher_script(config_file, anthropic_model)?
+    } else {
+        create_provider_launcher_script(config_file, cwd, true)?
+    };
+    let script_file = _script_temp.path();
 
-    // Write the shell script to a temp file
-    let script_content = format!(
-        r#"#!/bin/bash
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-{cd_command}
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-claude --settings "{config_path}"
-exec bash --norc --noprofile
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
-        cd_command = cd_command,
-    );
-
-    std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
-
-    // Make script executable
-    std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("设置脚本权限失败: {e}"))?;
-
-    // Try the preferred terminal first, fall back to Terminal.app if it fails
-    // Note: Kitty doesn't need the -e flag, others do
     let result = match terminal {
-        "iterm2" => launch_macos_iterm2(&script_file),
-        "warp" => launch_macos_warp(&script_file),
-        "alacritty" => launch_macos_open_app("Alacritty", &script_file, true),
-        "kitty" => launch_macos_open_app("kitty", &script_file, false),
-        "ghostty" => launch_macos_ghostty(&script_file),
-        "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
-        "kaku" => launch_macos_open_app("Kaku", &script_file, true),
-        _ => launch_macos_terminal_app(&script_file), // "terminal" or default
+        "iterm2" => launch_macos_iterm2(script_file),
+        "warp" => launch_macos_warp(script_file),
+        "alacritty" => launch_macos_open_app("Alacritty", script_file, true),
+        "kitty" => launch_macos_open_app("kitty", script_file, false),
+        "ghostty" => launch_macos_ghostty(script_file),
+        "wezterm" => launch_macos_open_app("WezTerm", script_file, true),
+        "kaku" => launch_macos_open_app("Kaku", script_file, true),
+        "cmux" => {
+            // 标题格式：供应商名 · Claude，显示在 cmux 侧边栏
+            let title =
+                crate::session_manager::terminal::cmux::format_cmux_workspace_title(
+                    provider_name, app,
+                );
+            launch_macos_cmux(config_file, script_file, cwd, &title)
+        }
+        _ => launch_macos_terminal_app(script_file),
     };
 
-    // If preferred terminal fails and it's not the default, try Terminal.app as fallback
-    if result.is_err() && terminal != "terminal" {
+    // cmux 失败时不回退 Terminal.app（与 Warp 行为一致，避免悄悄换终端）
+    if result.is_err() && terminal != "terminal" && terminal != "cmux" {
         log::warn!(
             "首选终端 {} 启动失败，回退到 Terminal.app: {:?}",
             terminal,
             result.as_ref().err()
         );
-        return launch_macos_terminal_app(&script_file);
+        return launch_macos_terminal_app(script_file);
     }
 
     result
+}
+
+#[cfg(target_os = "macos")]
+fn cleanup_launch_artifacts(config_file: &std::path::Path, script_file: &std::path::Path) {
+    let _ = std::fs::remove_file(config_file);
+    let _ = std::fs::remove_file(script_file);
+}
+
+/// macOS: cmux — 新建 workspace（标题 + cwd），再 send provider 启动脚本
+#[cfg(target_os = "macos")]
+fn launch_macos_cmux(
+    config_file: &std::path::Path,
+    script_file: &std::path::Path,
+    cwd: Option<&Path>,
+    workspace_title: &str,
+) -> Result<(), String> {
+    let command = format!(
+        "bash {}",
+        shell_single_quote(&script_file.to_string_lossy())
+    );
+    let launch = crate::session_manager::terminal::cmux::CmuxWorkspaceLaunch {
+        title: workspace_title.to_string(),
+        cwd: cwd.map(|p| p.to_path_buf()),
+        command,
+    };
+    if let Err(e) = crate::session_manager::terminal::cmux::run_cmux_workspace(&launch) {
+        // 启动失败时清理临时 settings / 脚本，避免 /tmp 堆积
+        cleanup_launch_artifacts(config_file, script_file);
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// macOS: Terminal.app
@@ -2847,30 +2997,8 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
         ("ghostty", vec!["-e"]),
     ];
 
-    // Create temp script file
-    let temp_dir = std::env::temp_dir();
-    let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
-    let cd_command = build_shell_cd_command(cwd);
-
-    let script_content = format!(
-        r#"#!/bin/bash
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-{cd_command}
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-claude --settings "{config_path}"
-exec bash --norc --noprofile
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
-        cd_command = cd_command,
-    );
-
-    std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
-
-    std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("设置脚本权限失败: {e}"))?;
+    let _script_temp = create_provider_launcher_script(config_file, cwd, true)?;
+    let script_file = _script_temp.path();
 
     // Build terminal list: preferred terminal first (if specified), then defaults
     let terminals_to_try: Vec<(&str, Vec<&str>)> = if let Some(ref pref) = preferred {
@@ -3121,10 +3249,27 @@ read -n 1 -s
             "ghostty" => launch_macos_ghostty(&script_file),
             "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
             "kaku" => launch_macos_open_app("Kaku", &script_file, true),
+            "cmux" => {
+                // 工具栏「在终端中运行」路径：无 provider 名，用 label 拼 workspace 标题
+                let title = crate::session_manager::terminal::cmux::format_cmux_workspace_title(
+                    label, "claude",
+                );
+                let command = format!(
+                    "bash {}",
+                    shell_single_quote(&script_file.to_string_lossy())
+                );
+                crate::session_manager::terminal::cmux::run_cmux_workspace(
+                    &crate::session_manager::terminal::cmux::CmuxWorkspaceLaunch {
+                        title,
+                        cwd: None,
+                        command,
+                    },
+                )
+            }
             _ => launch_macos_terminal_app(&script_file),
         };
 
-        if result.is_err() && terminal != "terminal" {
+        if result.is_err() && terminal != "terminal" && terminal != "cmux" {
             log::warn!(
                 "首选终端 {} 启动失败，回退到 Terminal.app: {:?}",
                 terminal,
@@ -4654,6 +4799,52 @@ mod tests {
         let command = build_shell_cd_command(Some(Path::new("/tmp/project O'Brien")));
 
         assert_eq!(command, "cd '/tmp/project O'\"'\"'Brien' || exit 1\n");
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn provider_launcher_script_embeds_config_path_and_claude_settings() {
+        let config = create_provider_config_tempfile(
+            "demo",
+            &[("ANTHROPIC_BASE_URL".into(), "https://a.example".into())],
+        )
+        .expect("config tempfile");
+        let config_path = config.path().to_string_lossy().to_string();
+        let script = create_provider_launcher_script(config.path(), None, true)
+            .expect("launcher script tempfile");
+        let contents =
+            std::fs::read_to_string(script.path()).expect("read launcher script contents");
+        assert!(contents.contains(&config_path));
+        assert!(contents.contains("claude --settings"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn provider_cmux_launcher_script_uses_model_and_fresh_session() {
+        let config = create_provider_config_tempfile(
+            "demo",
+            &[("ANTHROPIC_MODEL".into(), "deepseek-v4-pro".into())],
+        )
+        .expect("config tempfile");
+        let script =
+            create_provider_cmux_launcher_script(config.path(), Some("deepseek-v4-pro"))
+                .expect("cmux launcher script");
+        let contents =
+            std::fs::read_to_string(script.path()).expect("read cmux launcher script contents");
+        assert!(contents.contains("--model 'deepseek-v4-pro'"));
+        assert!(contents.contains("--session-id \"$(uuidgen)\""));
+        assert!(!contents.contains("cd '"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn provider_launcher_script_omits_cd_when_cmux_uses_workspace_cwd() {
+        let config = create_provider_config_tempfile("demo", &[]).expect("config tempfile");
+        let script = create_provider_cmux_launcher_script(config.path(), None)
+            .expect("cmux launcher script");
+        let contents =
+            std::fs::read_to_string(script.path()).expect("read launcher script contents");
+        assert!(!contents.contains("cd '/tmp/project'"));
     }
 
     #[cfg(target_os = "macos")]

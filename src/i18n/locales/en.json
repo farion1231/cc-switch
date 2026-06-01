@@ -605,7 +605,8 @@
           "ghostty": "Ghostty",
           "wezterm": "WezTerm",
           "kaku": "Kaku",
-          "warp": "Warp"
+          "warp": "Warp",
+          "cmux": "cmux"
         },
         "windows": {
           "cmd": "Command Prompt",
