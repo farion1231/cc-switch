@@ -27,7 +27,7 @@ interface ProviderActionsProps {
   isOmo?: boolean;
   onSwitch: () => void;
   onEdit: () => void;
-  onDuplicate: () => void;
+  onDuplicate?: () => void;
   onTest?: () => void;
   onConfigureUsage?: () => void;
   onDelete: () => void;
@@ -278,7 +278,10 @@ export function ProviderActions({
           variant="ghost"
           onClick={onDuplicate}
           title={t("provider.duplicate")}
-          className={iconButtonClass}
+          className={cn(
+            iconButtonClass,
+            !onDuplicate && "opacity-40 cursor-not-allowed text-muted-foreground",
+          )}
         >
           <Copy className="h-4 w-4" />
         </Button>
