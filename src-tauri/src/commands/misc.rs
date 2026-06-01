@@ -330,6 +330,11 @@ fn decode_windows_command_output(bytes: &[u8]) -> String {
             Some(String::from_utf16_lossy(&wide[..written as usize]))
         }
     }
+    
+    // 尝试简体中文 GBK (936) 解码
+    if let Some(decoded) = decode_codepage(bytes, 936) {
+        return decoded;
+    }
 
     let oem_cp = unsafe { GetOEMCP() };
     if let Some(decoded) = decode_codepage(bytes, oem_cp) {
