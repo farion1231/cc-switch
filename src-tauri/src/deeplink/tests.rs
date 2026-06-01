@@ -357,6 +357,122 @@ fn test_parse_and_merge_config_url_override() {
     );
 }
 
+#[test]
+fn test_build_claude_provider_preserves_custom_env_fields() {
+    // Regression test for: deeplink import dropped non-standard env fields
+    // such as ANTHROPIC_CUSTOM_HEADERS, even though the preview dialog
+    // showed them. The preview and the actual persisted provider must
+    // contain the same env keys.
+    use super::provider::build_provider_from_request;
+
+    let config_json = r#"{"env":{
+        "ANTHROPIC_AUTH_TOKEN":"sk-ant-xxx",
+        "ANTHROPIC_BASE_URL":"https://api.example.com",
+        "ANTHROPIC_CUSTOM_HEADERS":"Cookie: session=abc",
+        "API_TIMEOUT_MS":"3000000",
+        "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS":"1",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL":"haiku-from-config"
+    }}"#;
+    let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
+
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("claude".to_string()),
+        name: Some("My Provider".to_string()),
+        homepage: Some("https://example.com".to_string()),
+        endpoint: Some("https://api.example.com".to_string()),
+        api_key: Some("sk-ant-xxx".to_string()),
+        icon: None,
+        // URL param: must win over the same key in config (haiku-from-config)
+        model: Some("main-model".to_string()),
+        notes: None,
+        haiku_model: Some("haiku-from-url".to_string()),
+        sonnet_model: None,
+        opus_model: None,
+        config: Some(config_b64),
+        config_format: Some("json".to_string()),
+        config_url: None,
+        apps: None,
+        repo: None,
+        directory: None,
+        branch: None,
+        content: None,
+        description: None,
+        enabled: None,
+        usage_enabled: None,
+        usage_script: None,
+        usage_api_key: None,
+        usage_base_url: None,
+        usage_access_token: None,
+        usage_user_id: None,
+        usage_auto_interval: None,
+    };
+
+    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
+    let env = provider.settings_config["env"].as_object().unwrap();
+
+    // Custom env fields from `config` must survive import
+    assert_eq!(env["ANTHROPIC_CUSTOM_HEADERS"], "Cookie: session=abc");
+    assert_eq!(env["API_TIMEOUT_MS"], "3000000");
+    assert_eq!(env["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"], "1");
+
+    // Standard fields from URL params win over config
+    assert_eq!(env["ANTHROPIC_AUTH_TOKEN"], "sk-ant-xxx");
+    assert_eq!(env["ANTHROPIC_BASE_URL"], "https://api.example.com");
+    assert_eq!(env["ANTHROPIC_MODEL"], "main-model");
+    assert_eq!(env["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "haiku-from-url");
+}
+
+#[test]
+fn test_build_claude_provider_without_config_unchanged() {
+    // Backward compatibility: deeplinks without a `config` field still
+    // produce exactly the same env shape as before — only the standard
+    // ANTHROPIC_* keys, nothing else.
+    use super::provider::build_provider_from_request;
+
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("claude".to_string()),
+        name: Some("Plain".to_string()),
+        homepage: Some("https://example.com".to_string()),
+        endpoint: Some("https://api.example.com".to_string()),
+        api_key: Some("sk".to_string()),
+        icon: None,
+        model: None,
+        notes: None,
+        haiku_model: None,
+        sonnet_model: None,
+        opus_model: None,
+        config: None,
+        config_format: None,
+        config_url: None,
+        apps: None,
+        repo: None,
+        directory: None,
+        branch: None,
+        content: None,
+        description: None,
+        enabled: None,
+        usage_enabled: None,
+        usage_script: None,
+        usage_api_key: None,
+        usage_base_url: None,
+        usage_access_token: None,
+        usage_user_id: None,
+        usage_auto_interval: None,
+    };
+
+    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
+    let env = provider.settings_config["env"].as_object().unwrap();
+
+    assert_eq!(env["ANTHROPIC_AUTH_TOKEN"], "sk");
+    assert_eq!(env["ANTHROPIC_BASE_URL"], "https://api.example.com");
+    // No extras leaked in
+    assert_eq!(env.len(), 2);
+}
+
 // =============================================================================
 // Prompt Tests
 // =============================================================================

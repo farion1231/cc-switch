@@ -1107,6 +1107,15 @@ impl RequestForwarder {
         } else {
             None
         };
+        if adapter.name() == "Claude" {
+            if let Some(api_format) = resolved_claude_api_format.as_deref() {
+                super::providers::normalize_anthropic_tool_thinking_history_for_provider(
+                    &mut mapped_body,
+                    provider,
+                    api_format,
+                );
+            }
+        }
         let needs_transform = match resolved_claude_api_format.as_deref() {
             Some(api_format) => super::providers::claude_api_format_needs_transform(api_format),
             None => adapter.needs_transform(provider),

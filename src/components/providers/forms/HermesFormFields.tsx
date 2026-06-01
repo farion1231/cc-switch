@@ -415,7 +415,7 @@ export function HermesFormFields({
                           handleModelChange(index, "id", e.target.value)
                         }
                         placeholder={t("hermes.form.modelIdPlaceholder", {
-                          defaultValue: "anthropic/claude-opus-4-7",
+                          defaultValue: "anthropic/claude-opus-4-8",
                         })}
                         className="flex-1"
                       />
@@ -471,7 +471,7 @@ export function HermesFormFields({
                         handleModelChange(index, "name", e.target.value)
                       }
                       placeholder={t("hermes.form.modelNamePlaceholder", {
-                        defaultValue: "Claude Opus 4.7",
+                        defaultValue: "Claude Opus 4.8",
                       })}
                     />
                   </div>

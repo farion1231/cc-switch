@@ -8,7 +8,8 @@ use cc_switch_lib::{
 #[path = "support.rs"]
 mod support;
 use support::{
-    create_test_state, create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex,
+    create_test_state, create_test_state_with_config, enable_codex_official_auth_preservation,
+    ensure_test_home, reset_test_fs, test_mutex,
 };
 
 fn sanitize_provider_name(name: &str) -> String {
@@ -99,6 +100,7 @@ fn migrate_legacy_common_config_usage_marks_historical_provider_enabled() {
 fn provider_service_switch_codex_updates_live_and_config() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
+    enable_codex_official_auth_preservation();
     let _home = ensure_test_home();
 
     let legacy_auth = json!({ "OPENAI_API_KEY": "legacy-key" });
@@ -244,7 +246,7 @@ command = "say"
 }
 
 #[test]
-fn provider_service_switch_codex_preserves_live_model_provider_id_for_history() {
+fn provider_service_switch_codex_preserves_user_model_provider_id_after_migration() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
     let _home = ensure_test_home();
@@ -313,8 +315,8 @@ requires_openai_auth = true
 
     assert_eq!(
         parsed.get("model_provider").and_then(|v| v.as_str()),
-        Some("custom"),
-        "live Codex third-party model_provider should use the CC Switch history bucket"
+        Some("aihubmix"),
+        "provider switching should preserve user-editable model_provider after the one-time migration"
     );
 
     let model_providers = parsed
@@ -322,16 +324,16 @@ requires_openai_auth = true
         .and_then(|v| v.as_table())
         .expect("model_providers table exists");
     assert!(
-        model_providers.get("aihubmix").is_none(),
-        "target provider-specific id should be rewritten in live config"
+        model_providers.get("custom").is_none(),
+        "provider switching should not force user-edited provider ids back to custom"
     );
     assert_eq!(
         model_providers
-            .get("custom")
+            .get("aihubmix")
             .and_then(|v| v.get("base_url"))
             .and_then(|v| v.as_str()),
         Some("https://aihubmix.example/v1"),
-        "stable provider id should point at the newly selected supplier endpoint"
+        "selected provider id should point at the newly selected supplier endpoint"
     );
 
     let providers = state
@@ -355,6 +357,7 @@ requires_openai_auth = true
 fn provider_service_switch_codex_preserves_oauth_and_backfills_api_key_from_live_token() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
+    enable_codex_official_auth_preservation();
     let _home = ensure_test_home();
 
     let live_auth = json!({
@@ -469,16 +472,16 @@ requires_openai_auth = true
     assert_eq!(
         parsed_live
             .get("model_providers")
-            .and_then(|v| v.get("custom"))
+            .and_then(|v| v.get("aihubmix"))
             .and_then(|v| v.get("experimental_bearer_token"))
             .and_then(|v| v.as_str()),
         Some("bridge-key"),
-        "third-party key should be injected into the stable live provider table"
+        "third-party key should be injected into the selected live provider table"
     );
     assert_eq!(
         parsed_live
             .get("model_providers")
-            .and_then(|v| v.get("custom"))
+            .and_then(|v| v.get("aihubmix"))
             .and_then(|v| v.get("requires_openai_auth"))
             .and_then(|v| v.as_bool()),
         Some(true)
@@ -517,6 +520,94 @@ requires_openai_auth = true
             .unwrap_or_default()
             .contains("experimental_bearer_token"),
         "stored provider config should stay clean; bridge token is generated only for live config"
+    );
+}
+
+#[test]
+fn provider_service_switch_codex_default_overwrites_official_auth_when_preservation_off() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    // Intentionally do NOT enable preservation: this locks the default opt-out
+    // behavior where switching to a third-party provider rewrites auth.json,
+    // discarding the user's ChatGPT OAuth login. It is the dual of
+    // `provider_service_switch_codex_preserves_oauth_and_backfills_api_key_from_live_token`.
+    let _home = ensure_test_home();
+
+    let live_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": {
+            "access_token": "official-oauth-token",
+            "account_id": "acct-1"
+        }
+    });
+    let legacy_config = r#"model_provider = "rightcode"
+model = "gpt-5.4"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+    write_codex_live_atomic(&live_auth, Some(legacy_config))
+        .expect("seed existing Codex OAuth live config");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "legacy-provider".to_string();
+        manager.providers.insert(
+            "legacy-provider".to_string(),
+            Provider::with_id(
+                "legacy-provider".to_string(),
+                "RightCode".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "rightcode-key"},
+                    "config": legacy_config
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "third-party".to_string(),
+            Provider::with_id(
+                "third-party".to_string(),
+                "AiHubMix".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "third-party-key"},
+                    "config": r#"model_provider = "aihubmix"
+model = "gpt-5.4"
+
+[model_providers.aihubmix]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "third-party")
+        .expect("switch to third-party provider should succeed");
+
+    let auth_value: serde_json::Value =
+        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
+    assert_eq!(
+        auth_value.get("OPENAI_API_KEY").and_then(|v| v.as_str()),
+        Some("third-party-key"),
+        "default (preservation off) should overwrite auth.json with the third-party API key"
+    );
+    assert!(
+        auth_value.pointer("/tokens/access_token").is_none(),
+        "default switch must clear the official ChatGPT OAuth token from live auth.json"
     );
 }
 
@@ -561,18 +652,19 @@ requires_openai_auth = true
                 None,
             ),
         );
-        manager.providers.insert(
+        let mut official_provider = Provider::with_id(
             "official-provider".to_string(),
-            Provider::with_id(
-                "official-provider".to_string(),
-                "OpenAI Official".to_string(),
-                json!({
-                    "auth": {},
-                    "config": ""
-                }),
-                None,
-            ),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": {},
+                "config": ""
+            }),
+            None,
         );
+        official_provider.category = Some("official".to_string());
+        manager
+            .providers
+            .insert("official-provider".to_string(), official_provider);
     }
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");

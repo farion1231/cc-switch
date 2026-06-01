@@ -1,6 +1,6 @@
 [package]
 name = "cc-switch"
-version = "3.15.0"
+version = "3.16.0"
 description = "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
 authors = ["Jason Young"]
 license = "MIT"
@@ -88,6 +88,7 @@ webkit2gtk = { version = "2.0.1", features = ["v2_16"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.52"
+windows-sys = { version = "0.61", features = ["Win32_Globalization"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"

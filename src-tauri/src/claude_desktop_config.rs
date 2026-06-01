@@ -32,44 +32,8 @@ pub const ANTHROPIC_CLAUDE_ROUTE_PREFIX: &str = "anthropic/claude-";
 /// Claude Desktop schema 不接受此后缀，import 边界翻译为 `supports1m` 字段。
 pub const ONE_M_CONTEXT_MARKER: &str = "[1m]";
 
-const NON_ANTHROPIC_ROUTE_MARKERS: &[&str] = &[
-    "ark-code",
-    "astron",
-    "command-r",
-    "deepseek",
-    "doubao",
-    "gemini",
-    "gemma",
-    "glm",
-    "gpt",
-    "grok",
-    "hermes",
-    "hy3",
-    "kimi",
-    "lfm",
-    "llama",
-    "longcat",
-    "mimo",
-    "minimax",
-    "mistral",
-    "mixtral",
-    "moonshot",
-    "nemotron",
-    "openai",
-    "qianfan",
-    "qwen",
-    "stepfun",
-    "seed-",
-    "hunyuan",
-    "nova-",
-    "ernie",
-    "codex",
-    "abab",
-    "jamba",
-    "arctic",
-    "solar",
-    "mercury",
-];
+const CURRENT_OPUS_ROUTE_ID: &str = "claude-opus-4-8";
+const LEGACY_OPUS_ROUTE_ID: &str = "claude-opus-4-7";
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -87,7 +51,7 @@ pub const DEFAULT_PROXY_ROUTES: &[ClaudeDesktopDefaultRoute] = &[
         supports_1m: true,
     },
     ClaudeDesktopDefaultRoute {
-        route_id: "claude-opus-4-7",
+        route_id: CURRENT_OPUS_ROUTE_ID,
         env_key: "ANTHROPIC_DEFAULT_OPUS_MODEL",
         supports_1m: true,
     },
@@ -261,19 +225,24 @@ pub fn provider_mode(provider: &Provider) -> ClaudeDesktopMode {
 
 pub fn is_claude_safe_model_id(model: &str) -> bool {
     let normalized = model.trim().to_ascii_lowercase();
-    let has_allowed_shape = (normalized.starts_with(CLAUDE_ROUTE_PREFIX)
-        && normalized.len() > CLAUDE_ROUTE_PREFIX.len())
-        || (normalized.starts_with(ANTHROPIC_CLAUDE_ROUTE_PREFIX)
-            && normalized.len() > ANTHROPIC_CLAUDE_ROUTE_PREFIX.len())
-        || matches!(normalized.as_str(), "sonnet" | "opus" | "haiku")
-        || (normalized.starts_with("sonnet-") && normalized.len() > "sonnet-".len())
-        || (normalized.starts_with("opus-") && normalized.len() > "opus-".len())
-        || (normalized.starts_with("haiku-") && normalized.len() > "haiku-".len());
-    has_allowed_shape
-        && !normalized.contains(ONE_M_CONTEXT_MARKER)
-        && !NON_ANTHROPIC_ROUTE_MARKERS
-            .iter()
-            .any(|marker| normalized.contains(marker))
+    if normalized.contains(ONE_M_CONTEXT_MARKER) {
+        return false;
+    }
+
+    let Some(route_tail) = normalized
+        .strip_prefix(ANTHROPIC_CLAUDE_ROUTE_PREFIX)
+        .or_else(|| normalized.strip_prefix(CLAUDE_ROUTE_PREFIX))
+    else {
+        return false;
+    };
+
+    // 角色前缀后必须还有实际模型标识，拒绝 claude-sonnet- 这类退化值
+    // （否则会写入 profile 并触发 Claude Desktop fail-all 拒收整组）。
+    ["sonnet-", "opus-", "haiku-"].iter().any(|prefix| {
+        route_tail
+            .strip_prefix(prefix)
+            .is_some_and(|rest| !rest.is_empty())
+    })
 }
 
 fn inference_model_json(spec: &InferenceModelSpec) -> Value {
@@ -710,20 +679,81 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
         })?;
 
     let routes = proxy_model_routes(provider)?;
-    let route = routes.iter().find(|r| r.route_id == requested);
-    let Some(route) = route else {
-        return Err(AppError::localized(
-            "claude_desktop.provider.route_unknown",
-            format!("Claude Desktop 模型路由未配置: {requested}"),
-            format!("Claude Desktop model route is not configured: {requested}"),
-        ));
-    };
+    let upstream_model = routes
+        .iter()
+        .find(|r| r.route_id == requested)
+        .or_else(|| {
+            routes
+                .iter()
+                .find(|r| is_compatible_opus_route_alias(&r.route_id, &requested))
+        })
+        .map(|route| route.upstream_model.clone())
+        .or_else(|| legacy_raw_route_upstream_model(provider, &requested))
+        .or_else(|| {
+            // 角色关键词回落:Claude Desktop 的部分调用(如子 agent)会请求带发布
+            // 日期后缀的完整官方名(claude-haiku-4-5-20251001),与 manifest 暴露的
+            // 简短 route_id(claude-haiku-4-5)不精确相等。按 opus/haiku/sonnet 归类
+            // 到同档已配置路由,对齐 Claude Code model_mapper 的宽松匹配。
+            // 仅对 Claude Desktop 认可的安全模型名回落(排除 [1m] 标记等非法形式)。
+            if !is_claude_safe_model_id(&requested) {
+                return None;
+            }
+            let role = claude_role_keyword(&requested)?;
+            routes
+                .iter()
+                .find(|route| claude_role_keyword(&route.route_id) == Some(role))
+                .map(|route| route.upstream_model.clone())
+        })
+        .ok_or_else(|| {
+            AppError::localized(
+                "claude_desktop.provider.route_unknown",
+                format!("Claude Desktop 模型路由未配置: {requested}"),
+                format!("Claude Desktop model route is not configured: {requested}"),
+            )
+        })?;
 
-    body["model"] = json!(route.upstream_model);
-    if should_normalize_mimo_anthropic_thinking_history(provider, &route.upstream_model) {
+    body["model"] = json!(upstream_model);
+    if should_normalize_mimo_anthropic_thinking_history(provider, &upstream_model) {
         normalize_mimo_anthropic_thinking_history(&mut body);
     }
     Ok(body)
+}
+
+fn legacy_raw_route_upstream_model(provider: &Provider, requested: &str) -> Option<String> {
+    provider
+        .meta
+        .as_ref()?
+        .claude_desktop_model_routes
+        .iter()
+        .find(|(route_id, _)| route_id.trim() == requested)
+        .and_then(|(_, route)| {
+            let upstream_model = route.model.trim();
+            (!upstream_model.is_empty()).then(|| upstream_model.to_string())
+        })
+}
+
+fn is_compatible_opus_route_alias(route_id: &str, requested: &str) -> bool {
+    matches!(
+        (route_id, requested),
+        (CURRENT_OPUS_ROUTE_ID, LEGACY_OPUS_ROUTE_ID)
+            | (LEGACY_OPUS_ROUTE_ID, CURRENT_OPUS_ROUTE_ID)
+    )
+}
+
+/// 按角色关键词(opus / haiku / sonnet)归类一个 Claude 模型名/route_id。
+/// 仅在命中明确角色词时返回 Some,未知模型返回 None(不回落,保持精确报错语义)。
+/// 与前端 `routeRoleFromId` 同序(opus → haiku → sonnet)。
+fn claude_role_keyword(model: &str) -> Option<&'static str> {
+    let normalized = model.to_ascii_lowercase();
+    if normalized.contains("opus") {
+        Some("opus")
+    } else if normalized.contains("haiku") {
+        Some("haiku")
+    } else if normalized.contains("sonnet") {
+        Some("sonnet")
+    } else {
+        None
+    }
 }
 
 fn should_normalize_mimo_anthropic_thinking_history(
@@ -1520,9 +1550,112 @@ mod tests {
         assert_eq!(models["data"][0]["id"], json!("claude-sonnet-4-6"));
         assert_eq!(models["data"][0]["supports1m"], json!(true));
 
-        let err = map_proxy_request_model(json!({"model": "claude-opus-4-7"}), &provider)
+        let err = map_proxy_request_model(json!({"model": "claude-opus-4-8"}), &provider)
             .expect_err("unknown route should fail");
-        assert!(err.to_string().contains("claude-opus-4-7"));
+        assert!(err.to_string().contains("claude-opus-4-8"));
+    }
+
+    #[test]
+    fn claude_desktop_proxy_maps_dated_role_alias_via_keyword() {
+        // 复现反馈：Claude Desktop 子 agent 请求带发布日期后缀的完整官方名
+        // （claude-haiku-4-5-20251001），与 manifest 的简短 route_id（claude-haiku-4-5）
+        // 不精确相等，旧逻辑会报 route_unknown。角色关键词回落应将其映射到 Haiku 档。
+        let mut provider = proxy_provider("proxy");
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes = std::collections::HashMap::from([
+            (
+                "claude-sonnet-4-6".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "deepseek-v4-pro".to_string(),
+                    label_override: None,
+                    supports_1m: Some(true),
+                },
+            ),
+            (
+                "claude-opus-4-8".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "deepseek-v4-pro".to_string(),
+                    label_override: None,
+                    supports_1m: Some(true),
+                },
+            ),
+            (
+                "claude-haiku-4-5".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "deepseek-v4-flash".to_string(),
+                    label_override: None,
+                    supports_1m: Some(true),
+                },
+            ),
+        ]);
+
+        let mapped = map_proxy_request_model(
+            json!({"model": "claude-haiku-4-5-20251001", "messages": []}),
+            &provider,
+        )
+        .expect("dated Haiku alias should map via role keyword");
+        assert_eq!(mapped["model"], json!("deepseek-v4-flash"));
+
+        let mapped_sonnet = map_proxy_request_model(
+            json!({"model": "claude-sonnet-4-5-20250101", "messages": []}),
+            &provider,
+        )
+        .expect("dated Sonnet alias should map via role keyword");
+        assert_eq!(mapped_sonnet["model"], json!("deepseek-v4-pro"));
+
+        // 不含任何角色关键词的模型仍然报错，避免被误映射。
+        let err = map_proxy_request_model(json!({"model": "gpt-5"}), &provider)
+            .expect_err("model without a role keyword should still fail");
+        assert!(err.to_string().contains("gpt-5"));
+    }
+
+    #[test]
+    fn claude_desktop_proxy_accepts_opus_4_7_4_8_alias_during_rollout() {
+        let mut provider = proxy_provider("proxy");
+        let current_routes = std::collections::HashMap::from([(
+            "claude-opus-4-8".to_string(),
+            ClaudeDesktopModelRoute {
+                model: "upstream-opus-new".to_string(),
+                label_override: None,
+                supports_1m: Some(true),
+            },
+        )]);
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes = current_routes;
+
+        let mapped = map_proxy_request_model(
+            json!({"model": "claude-opus-4-7", "messages": []}),
+            &provider,
+        )
+        .expect("legacy Opus route should map to current route");
+        assert_eq!(mapped["model"], json!("upstream-opus-new"));
+
+        let legacy_routes = std::collections::HashMap::from([(
+            "claude-opus-4-7".to_string(),
+            ClaudeDesktopModelRoute {
+                model: "upstream-opus-legacy".to_string(),
+                label_override: None,
+                supports_1m: Some(true),
+            },
+        )]);
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes = legacy_routes;
+
+        let mapped = map_proxy_request_model(
+            json!({"model": "claude-opus-4-8", "messages": []}),
+            &provider,
+        )
+        .expect("current Opus route should map to legacy saved route");
+        assert_eq!(mapped["model"], json!("upstream-opus-legacy"));
     }
 
     #[test]
@@ -1635,6 +1768,14 @@ mod tests {
                     },
                 ),
                 (
+                    "claude-old".to_string(),
+                    ClaudeDesktopModelRoute {
+                        model: "legacy-upstream".to_string(),
+                        label_override: None,
+                        supports_1m: Some(false),
+                    },
+                ),
+                (
                     "claude-sonnet-4-6".to_string(),
                     ClaudeDesktopModelRoute {
                         model: "claude-sonnet-4-6".to_string(),
@@ -1647,21 +1788,35 @@ mod tests {
         });
 
         let routes = proxy_model_routes(&provider).expect("routes");
-        assert_eq!(routes.len(), 2);
+        assert_eq!(routes.len(), 3);
         let repaired = routes
             .iter()
             .find(|route| route.upstream_model == "deepseek-v4-pro")
             .expect("repaired route");
-        assert_eq!(repaired.route_id, "claude-opus-4-7");
+        assert_eq!(repaired.route_id, "claude-opus-4-8");
         assert_eq!(repaired.label_override.as_deref(), Some("deepseek-v4-pro"));
         assert!(repaired.supports_1m);
+        let repaired_old = routes
+            .iter()
+            .find(|route| route.upstream_model == "legacy-upstream")
+            .expect("legacy route should be repaired");
+        assert_eq!(repaired_old.route_id, "claude-haiku-4-5");
+        assert_eq!(
+            repaired_old.label_override.as_deref(),
+            Some("legacy-upstream")
+        );
 
         let mapped = map_proxy_request_model(
-            json!({"model": "claude-opus-4-7", "messages": []}),
+            json!({"model": "claude-opus-4-8", "messages": []}),
             &provider,
         )
         .expect("map repaired route");
         assert_eq!(mapped["model"], json!("deepseek-v4-pro"));
+
+        let legacy_mapped =
+            map_proxy_request_model(json!({"model": "claude-old", "messages": []}), &provider)
+                .expect("map stale profile route");
+        assert_eq!(legacy_mapped["model"], json!("legacy-upstream"));
     }
 
     #[test]
@@ -1680,12 +1835,20 @@ mod tests {
     fn claude_desktop_rejects_1m_suffix_as_model_id() {
         assert!(!is_claude_safe_model_id("claude-sonnet-4-6 [1m]"));
         assert!(!is_claude_safe_model_id("  claude-sonnet-4-6  [1M]  "));
+        assert!(!is_claude_safe_model_id("claude-old"));
+        assert!(!is_claude_safe_model_id("claude-3-5-sonnet-20241022"));
         assert!(!is_claude_safe_model_id("claude-deepseek-v4-pro"));
         assert!(!is_claude_safe_model_id("claude-gpt-5-4"));
         assert!(!is_claude_safe_model_id("claude-"));
         assert!(!is_claude_safe_model_id("anthropic/claude-"));
+        assert!(!is_claude_safe_model_id("sonnet"));
         assert!(!is_claude_safe_model_id("sonnet-"));
+        // 角色前缀后无实际标识的退化值必须拒绝
+        assert!(!is_claude_safe_model_id("claude-sonnet-"));
+        assert!(!is_claude_safe_model_id("claude-opus-"));
+        assert!(!is_claude_safe_model_id("anthropic/claude-haiku-"));
         assert!(is_claude_safe_model_id("  claude-sonnet-4-6  "));
+        assert!(is_claude_safe_model_id("anthropic/claude-opus-4-8"));
     }
 
     #[test]
@@ -1784,12 +1947,13 @@ mod tests {
         let direct = direct_provider("direct");
         assert!(is_compatible_direct_provider(&direct));
 
-        let claude_official = Provider::with_id(
+        let mut claude_official = Provider::with_id(
             "claude-official".to_string(),
             "Claude Official".to_string(),
             json!({"env": {}}),
             Some("https://www.anthropic.com/claude-code".to_string()),
         );
+        claude_official.category = Some("official".to_string());
         assert!(!is_compatible_direct_provider(&claude_official));
 
         let mut openai_format = direct_provider("openai");

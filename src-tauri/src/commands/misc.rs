@@ -249,8 +249,8 @@ fn finish_lifecycle_output(output: &std::process::Output) -> Result<(), String> 
     if output.status.success() {
         return Ok(());
     }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = decode_command_output(&output.stderr);
+    let stdout = decode_command_output(&output.stdout);
     let raw = if stderr.trim().is_empty() {
         stdout.trim()
     } else {
@@ -269,6 +269,81 @@ fn last_lines(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
     let start = lines.len().saturating_sub(n);
     lines[start..].join("\n")
+}
+
+fn decode_command_output(bytes: &[u8]) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        decode_windows_command_output(bytes)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        String::from_utf8_lossy(bytes).into_owned()
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn decode_windows_command_output(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return text.to_string();
+    }
+
+    use windows_sys::Win32::Globalization::{GetACP, GetOEMCP, MultiByteToWideChar};
+
+    fn decode_codepage(bytes: &[u8], codepage: u32) -> Option<String> {
+        if codepage == 0 {
+            return None;
+        }
+
+        let input_len = i32::try_from(bytes.len()).ok()?;
+        unsafe {
+            let wide_len = MultiByteToWideChar(
+                codepage,
+                0,
+                bytes.as_ptr(),
+                input_len,
+                std::ptr::null_mut(),
+                0,
+            );
+            if wide_len <= 0 {
+                return None;
+            }
+
+            let mut wide = vec![0u16; wide_len as usize];
+            let written = MultiByteToWideChar(
+                codepage,
+                0,
+                bytes.as_ptr(),
+                input_len,
+                wide.as_mut_ptr(),
+                wide_len,
+            );
+            if written <= 0 {
+                return None;
+            }
+
+            Some(String::from_utf16_lossy(&wide[..written as usize]))
+        }
+    }
+
+    let oem_cp = unsafe { GetOEMCP() };
+    if let Some(decoded) = decode_codepage(bytes, oem_cp) {
+        return decoded;
+    }
+
+    let ansi_cp = unsafe { GetACP() };
+    if ansi_cp != oem_cp {
+        if let Some(decoded) = decode_codepage(bytes, ansi_cp) {
+            return decoded;
+        }
+    }
+
+    String::from_utf8_lossy(bytes).into_owned()
 }
 
 fn normalize_requested_tools(tools: &[String]) -> Vec<&'static str> {
@@ -678,19 +753,25 @@ async fn get_single_tool_version_impl(
         ShellProbe::NotFound(e) => (None, Some(e), false),
     };
 
-    // 2. 获取远程最新版本
+    // 2. 获取远程最新版本（npm 工具在本地领先 latest 时会按预发布通道补查，见
+    //    fetch_npm_latest_for_tool / npm_prerelease_tags）
+    let local = local_version.as_deref();
     let latest_version = match tool {
-        "claude" => fetch_npm_latest_version(&client, "@anthropic-ai/claude-code").await,
-        "codex" => fetch_npm_latest_version(&client, "@openai/codex").await,
-        "gemini" => fetch_npm_latest_version(&client, "@google/gemini-cli").await,
+        "claude" => {
+            fetch_npm_latest_for_tool(&client, "@anthropic-ai/claude-code", tool, local).await
+        }
+        "codex" => fetch_npm_latest_for_tool(&client, "@openai/codex", tool, local).await,
+        "gemini" => fetch_npm_latest_for_tool(&client, "@google/gemini-cli", tool, local).await,
         "opencode" => {
-            if let Some(version) = fetch_npm_latest_version(&client, "opencode-ai").await {
+            if let Some(version) =
+                fetch_npm_latest_for_tool(&client, "opencode-ai", tool, local).await
+            {
                 Some(version)
             } else {
                 fetch_github_latest_version(&client, "anomalyco/opencode").await
             }
         }
-        "openclaw" => fetch_npm_latest_version(&client, "openclaw").await,
+        "openclaw" => fetch_npm_latest_for_tool(&client, "openclaw", tool, local).await,
         "hermes" => fetch_pypi_latest_version(&client, "hermes-agent").await,
         _ => None,
     };
@@ -706,22 +787,133 @@ async fn get_single_tool_version_impl(
     }
 }
 
-/// Helper function to fetch latest version from npm registry
-async fn fetch_npm_latest_version(client: &reqwest::Client, package: &str) -> Option<String> {
-    let url = format!("https://registry.npmjs.org/{package}");
-    match client.get(&url).send().await {
-        Ok(resp) => {
-            if let Ok(json) = resp.json::<serde_json::Value>().await {
-                json.get("dist-tags")
-                    .and_then(|tags| tags.get("latest"))
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            } else {
-                None
+/// 该工具在 npm 上的预发布通道 tag(靠前者优先)。仅当本地版本已**严格领先**
+/// `latest` 时才会被补查 —— 让主动在抢先通道的用户(如走 Claude Code 的 `next`)
+/// 看到与所在通道对齐的"最新版本",同时绝不把稳定通道用户暴露给预发布版。
+/// 返回空切片表示该工具只看 `latest`、不补查。
+///
+/// 为何不通用覆盖所有工具:各家预发布 tag 命名互不统一(codex=alpha/beta/native、
+/// gemini=nightly/preview、openclaw=alpha/beta),且 codex 的 beta/native 是
+/// `0.1.x` 时间戳式版本、gemini 有误发的 `false` tag —— 这些脏值虽会被
+/// `pick_latest_version` 的版本比较挡掉,但维护成本与误报风险不值当,故暂只为
+/// Claude Code 启用。
+fn npm_prerelease_tags(tool: &str) -> &'static [&'static str] {
+    match tool {
+        "claude" => &["next"],
+        _ => &[],
+    }
+}
+
+/// 解析 "2.1.156" / "2.1.156-beta.1" → (主版本三段, 预发布段)。无法解析返回 None。
+/// 与前端 `src/lib/version.ts` 的 parseVersion 语义对称(跨语言各实现一份)。
+/// patch 用 u64 以容纳 codex 的 `0.1.2505172116` 时间戳式版本而不溢出。
+fn parse_semver(v: &str) -> Option<([u64; 3], Vec<String>)> {
+    // 忽略 `+build` 元数据,再以首个 `-` 切出预发布段。
+    let core_and_pre = v.trim().split('+').next().unwrap_or("");
+    let (core, pre) = match core_and_pre.split_once('-') {
+        Some((c, p)) => (c, Some(p)),
+        None => (core_and_pre, None),
+    };
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse::<u64>().ok()?;
+    let minor = parts.next()?.parse::<u64>().ok()?;
+    let patch = parts.next()?.parse::<u64>().ok()?;
+    if parts.next().is_some() {
+        return None; // 多于三段,非法
+    }
+    let pre_segments = pre
+        .map(|p| p.split('.').map(|s| s.to_string()).collect())
+        .unwrap_or_default();
+    Some(([major, minor, patch], pre_segments))
+}
+
+/// 比较两个版本号(遵循 semver:主版本三段优先;core 相等时有预发布 < 无预发布;
+/// 预发布段逐段比 —— 数字段按数值、数字段 < 非数字段、非数字段按 ASCII、前缀相同
+/// 则段更多者更大)。任一无法解析返回 None,调用方据此保守处理。
+fn compare_semver(a: &str, b: &str) -> Option<std::cmp::Ordering> {
+    use std::cmp::Ordering;
+    let (ac, ap) = parse_semver(a)?;
+    let (bc, bp) = parse_semver(b)?;
+    for i in 0..3 {
+        match ac[i].cmp(&bc[i]) {
+            Ordering::Equal => continue,
+            other => return Some(other),
+        }
+    }
+    match (ap.is_empty(), bp.is_empty()) {
+        (true, true) => return Some(Ordering::Equal),
+        (true, false) => return Some(Ordering::Greater),
+        (false, true) => return Some(Ordering::Less),
+        (false, false) => {}
+    }
+    for (x, y) in ap.iter().zip(bp.iter()) {
+        let ord = match (x.parse::<u64>(), y.parse::<u64>()) {
+            (Ok(xv), Ok(yv)) => xv.cmp(&yv),
+            (Ok(_), Err(_)) => Ordering::Less, // 数字段 < 非数字段
+            (Err(_), Ok(_)) => Ordering::Greater,
+            (Err(_), Err(_)) => x.as_str().cmp(y.as_str()),
+        };
+        if ord != Ordering::Equal {
+            return Some(ord);
+        }
+    }
+    Some(ap.len().cmp(&bp.len()))
+}
+
+/// 从一次 registry 请求得到的完整 dist-tags 出发,挑选要展示的"最新版本"。
+///
+/// 规则:默认就是 `latest`;仅当本地版本已**严格领先** `latest`(说明用户主动在
+/// 抢先通道)时,才把 `prerelease_tags` 指向的版本纳入比较,取其中能被解析、且
+/// 高于 `latest` 的最高者。无法解析或不高于 latest 的脏 tag 一律落选。
+fn pick_latest_version(
+    dist_tags: &serde_json::Map<String, serde_json::Value>,
+    prerelease_tags: &[&str],
+    local_version: Option<&str>,
+) -> Option<String> {
+    use std::cmp::Ordering;
+    let latest = dist_tags.get("latest").and_then(|v| v.as_str())?;
+
+    // 本地是否严格领先 latest;任一无法解析则按"未领先"保守处理(只看 latest)。
+    let local_ahead = local_version
+        .and_then(|local| compare_semver(local, latest))
+        .map(|ord| ord == Ordering::Greater)
+        .unwrap_or(false);
+    if prerelease_tags.is_empty() || !local_ahead {
+        return Some(latest.to_string());
+    }
+
+    let mut best = latest.to_string();
+    for tag in prerelease_tags {
+        if let Some(candidate) = dist_tags.get(*tag).and_then(|v| v.as_str()) {
+            if compare_semver(candidate, &best) == Some(Ordering::Greater) {
+                best = candidate.to_string();
             }
         }
-        Err(_) => None,
     }
+    Some(best)
+}
+
+/// 拉取 npm 包的完整 dist-tags(单次请求即含 latest/next/beta/...)。
+async fn fetch_npm_dist_tags(
+    client: &reqwest::Client,
+    package: &str,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let url = format!("https://registry.npmjs.org/{package}");
+    let resp = client.get(&url).send().await.ok()?;
+    let json = resp.json::<serde_json::Value>().await.ok()?;
+    json.get("dist-tags")?.as_object().cloned()
+}
+
+/// 查询某 npm 工具要展示的"最新版本":取 `latest`,并在本地版本领先时按工具的
+/// 预发布通道(见 `npm_prerelease_tags`)补查 —— 复用同一次 registry 响应,无额外请求。
+async fn fetch_npm_latest_for_tool(
+    client: &reqwest::Client,
+    package: &str,
+    tool: &str,
+    local_version: Option<&str>,
+) -> Option<String> {
+    let dist_tags = fetch_npm_dist_tags(client, package).await?;
+    pick_latest_version(&dist_tags, npm_prerelease_tags(tool), local_version)
 }
 
 /// Helper function to fetch latest version from GitHub releases
@@ -819,8 +1011,8 @@ fn try_get_version(tool: &str) -> ShellProbe {
 
     match output {
         Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            let stdout = decode_command_output(&out.stdout).trim().to_string();
+            let stderr = decode_command_output(&out.stderr).trim().to_string();
             if out.status.success() {
                 let raw = if stdout.is_empty() { &stderr } else { &stdout };
                 if raw.is_empty() {
@@ -934,8 +1126,8 @@ fn try_get_version_wsl(
 
     match output {
         Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            let stdout = decode_command_output(&out.stdout).trim().to_string();
+            let stderr = decode_command_output(&out.stderr).trim().to_string();
             if out.status.success() {
                 let raw = if stdout.is_empty() { &stderr } else { &stdout };
                 if raw.is_empty() {
@@ -1314,8 +1506,43 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
     search_paths
 }
 
+#[cfg(target_os = "windows")]
+fn is_windows_command_script(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_tool_version_command(
+    tool_path: &Path,
+    new_path: &str,
+) -> std::io::Result<std::process::Output> {
+    use std::process::Command;
+
+    if is_windows_command_script(tool_path) {
+        let path = tool_path.to_string_lossy();
+        let command = format!("call {} --version", win_quote_path_for_batch(&path));
+        let mut cmd = Command::new("cmd");
+        return cmd
+            .args(["/D", "/S", "/C"])
+            .raw_arg(&command)
+            .env("PATH", new_path)
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+    }
+
+    Command::new(tool_path)
+        .arg("--version")
+        .env("PATH", new_path)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+}
+
 /// 扫描常见路径查找 CLI（PATH 主命令未命中时的兜底单探）。
 fn scan_cli_version(tool: &str) -> ShellProbe {
+    #[cfg(not(target_os = "windows"))]
     use std::process::Command;
 
     let search_paths = build_tool_search_paths(tool);
@@ -1341,13 +1568,7 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
             }
 
             #[cfg(target_os = "windows")]
-            let output = {
-                Command::new("cmd")
-                    .args(["/C", &format!("\"{}\" --version", tool_path.display())])
-                    .env("PATH", &new_path)
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .output()
-            };
+            let output = run_windows_tool_version_command(&tool_path, &new_path);
 
             #[cfg(not(target_os = "windows"))]
             let output = {
@@ -1358,8 +1579,8 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
             };
 
             if let Ok(out) = output {
-                let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                let stdout = decode_command_output(&out.stdout).trim().to_string();
+                let stderr = decode_command_output(&out.stderr).trim().to_string();
                 if out.status.success() {
                     let raw = if stdout.is_empty() { &stderr } else { &stdout };
                     if !raw.is_empty() {
@@ -1471,7 +1692,7 @@ fn resolve_path_default(tool: &str) -> Option<std::path::PathBuf> {
     if !out.status.success() {
         return None;
     }
-    let raw = String::from_utf8_lossy(&out.stdout);
+    let raw = decode_command_output(&out.stdout);
     // 不能死取第一行：交互式 .zshrc 可能先打印欢迎语（如 "🚀 Welcome back"），
     // command -v 的真实路径在其后；取第一个 `/` 开头的行才稳。
     let first = first_abs_path_line(&raw)?;
@@ -1490,7 +1711,7 @@ fn resolve_path_default(tool: &str) -> Option<std::path::PathBuf> {
     if !out.status.success() {
         return None;
     }
-    let raw = String::from_utf8_lossy(&out.stdout);
+    let raw = decode_command_output(&out.stdout);
     let first = raw.lines().next()?.trim();
     if first.is_empty() {
         return None;
@@ -1502,6 +1723,7 @@ fn resolve_path_default(tool: &str) -> Option<std::path::PathBuf> {
 /// `build_tool_search_paths`，但不在首个命中处停止——而是对每个去重后的真实
 /// 可执行文件都跑一次 `--version`，从而能发现"升级写入 A 处、PATH 实际用 B 处"。
 fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
+    #[cfg(not(target_os = "windows"))]
     use std::process::Command;
 
     let search_paths = build_tool_search_paths(tool);
@@ -1531,14 +1753,7 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
             }
 
             #[cfg(target_os = "windows")]
-            let output = {
-                use std::os::windows::process::CommandExt;
-                Command::new("cmd")
-                    .args(["/C", &format!("\"{}\" --version", tool_path.display())])
-                    .env("PATH", &new_path)
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .output()
-            };
+            let output = run_windows_tool_version_command(&tool_path, &new_path);
             #[cfg(not(target_os = "windows"))]
             let output = Command::new(&tool_path)
                 .arg("--version")
@@ -1547,14 +1762,14 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
 
             let (version, runnable, error) = match output {
                 Ok(out) if out.status.success() => {
-                    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                    let stdout = decode_command_output(&out.stdout).trim().to_string();
+                    let stderr = decode_command_output(&out.stderr).trim().to_string();
                     let raw = if stdout.is_empty() { stderr } else { stdout };
                     (Some(extract_version(&raw)), true, None)
                 }
                 Ok(out) => {
-                    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    let stderr = decode_command_output(&out.stderr).trim().to_string();
+                    let stdout = decode_command_output(&out.stdout).trim().to_string();
                     let detail = if stderr.is_empty() { stdout } else { stderr };
                     let detail = detail.trim();
                     let error = if detail.is_empty() {
@@ -2425,7 +2640,7 @@ end tell"#,
         .map_err(|e| format!("执行 osascript 失败: {e}"))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = decode_command_output(&output.stderr);
         return Err(format!(
             "Terminal.app 执行失败 (exit code: {:?}): {}",
             output.status.code(),
@@ -2486,7 +2701,7 @@ fn launch_macos_iterm2(script_file: &std::path::Path) -> Result<(), String> {
         .map_err(|e| format!("执行 osascript 失败: {e}"))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = decode_command_output(&output.stderr);
         return Err(format!(
             "iTerm2 执行失败 (exit code: {:?}): {}",
             output.status.code(),
@@ -2516,7 +2731,7 @@ fn launch_macos_ghostty(script_file: &std::path::Path) -> Result<(), String> {
         .map_err(|e| format!("启动 Ghostty 失败: {e}"))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = decode_command_output(&output.stderr);
         return Err(format!(
             "Ghostty 启动失败 (exit code: {:?}): {}",
             output.status.code(),
@@ -2549,7 +2764,7 @@ fn launch_macos_open_app(
         .map_err(|e| format!("启动 {app_name} 失败: {e}"))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = decode_command_output(&output.stderr);
         return Err(format!(
             "{} 启动失败 (exit code: {:?}): {}",
             app_name,
@@ -2601,7 +2816,7 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 
     let output = cmd.output().map_err(|e| format!("启动 Warp 失败: {e}"))?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = decode_command_output(&output.stderr);
         return Err(format!(
             "Warp 启动失败 (exit code: {:?}): {}",
             output.status.code(),
@@ -2844,7 +3059,7 @@ fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), S
         .map_err(|e| format!("启动 {} 失败: {e}", terminal_name))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = decode_command_output(&output.stderr);
         return Err(format!(
             "{} 启动失败 (exit code: {:?}): {}",
             terminal_name,
@@ -3066,6 +3281,87 @@ mod tests {
         assert_eq!(extract_version("claude 1.0.20"), "1.0.20");
         assert_eq!(extract_version("v2.3.4-beta.1"), "2.3.4-beta.1");
         assert_eq!(extract_version("no version here"), "no version here");
+    }
+
+    #[test]
+    fn test_compare_semver() {
+        use std::cmp::Ordering;
+        assert_eq!(
+            compare_semver("2.1.156", "2.1.154"),
+            Some(Ordering::Greater)
+        );
+        assert_eq!(compare_semver("2.1.154", "2.1.156"), Some(Ordering::Less));
+        assert_eq!(compare_semver("2.1.156", "2.1.156"), Some(Ordering::Equal));
+        // 预发布 < 同核心正式版
+        assert_eq!(
+            compare_semver("2.1.156-beta.1", "2.1.156"),
+            Some(Ordering::Less)
+        );
+        // core 更高的预发布仍高于较低的正式版（gemini nightly 场景）
+        assert_eq!(
+            compare_semver("0.45.0-nightly.1", "0.44.1"),
+            Some(Ordering::Greater)
+        );
+        // 大 patch（codex 时间戳式）不溢出
+        assert_eq!(
+            compare_semver("0.1.2505172116", "0.135.0"),
+            Some(Ordering::Less)
+        );
+        // 无法解析返回 None（gemini 的 `false` 脏 tag）
+        assert_eq!(compare_semver("false", "1.0.0"), None);
+    }
+
+    #[test]
+    fn test_pick_latest_version() {
+        use serde_json::json;
+        let tags = json!({
+            "latest": "2.1.154",
+            "next": "2.1.156",
+            "stable": "2.1.145"
+        });
+        let map = tags.as_object().unwrap();
+
+        // 本地领先 latest（在 next 通道）→ 补查到 next，数字对齐
+        assert_eq!(
+            pick_latest_version(map, &["next"], Some("2.1.156")),
+            Some("2.1.156".to_string())
+        );
+        // 本地等于 latest → 不补查，仍显示 latest
+        assert_eq!(
+            pick_latest_version(map, &["next"], Some("2.1.154")),
+            Some("2.1.154".to_string())
+        );
+        // 本地落后 latest（稳定通道用户）→ 不补查，不被推向预发布版
+        assert_eq!(
+            pick_latest_version(map, &["next"], Some("2.1.145")),
+            Some("2.1.154".to_string())
+        );
+        // 无预发布白名单 → 永远只看 latest（不解析 local，避免脏 local 触发）
+        assert_eq!(
+            pick_latest_version(map, &[], Some("2.1.156")),
+            Some("2.1.154".to_string())
+        );
+        // 本地版本未知 → 保守只看 latest
+        assert_eq!(
+            pick_latest_version(map, &["next"], None),
+            Some("2.1.154".to_string())
+        );
+    }
+
+    #[test]
+    fn test_pick_latest_version_filters_dirty_prerelease() {
+        use serde_json::json;
+        // 模拟 codex：beta 是低于 latest 的时间戳式脏版本
+        let tags = json!({
+            "latest": "0.135.0",
+            "beta": "0.1.2505172116"
+        });
+        let map = tags.as_object().unwrap();
+        // 即便本地领先 latest，低于 latest 的脏 beta 也不会被选
+        assert_eq!(
+            pick_latest_version(map, &["beta"], Some("0.200.0")),
+            Some("0.135.0".to_string())
+        );
     }
 
     /// `parent_dir` 是锚定层"由 bin 路径推导同目录绝对路径"的基石,跨平台共用——

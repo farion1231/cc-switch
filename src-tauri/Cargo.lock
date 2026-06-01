@@ -735,7 +735,7 @@ dependencies = [
 
 [[package]]
 name = "cc-switch"
-version = "3.15.0"
+version = "3.16.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -798,6 +798,7 @@ dependencies = [
  "uuid",
  "webkit2gtk",
  "webpki-roots 0.26.11",
+ "windows-sys 0.61.2",
  "winreg 0.52.0",
  "zip 2.4.2",
 ]

@@ -244,8 +244,23 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
 }
 
 /// Build Claude settings configuration
+///
+/// Merges env from the inline config (if any) with the standard fields from URL params.
+/// URL params take priority — they overwrite same-named fields from the config.
+/// Non-standard env fields (e.g. `ANTHROPIC_CUSTOM_HEADERS`, `API_TIMEOUT_MS`,
+/// `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`, ...) are preserved as-is so that
+/// providers requiring extra environment variables work after deeplink import.
 fn build_claude_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
-    let mut env = serde_json::Map::new();
+    // Start from the full env block in the inline config (if present), so any
+    // custom env vars the user passed via `config=<base64-json>` survive the
+    // import. Falling back to an empty map keeps the previous behavior for
+    // deeplinks that don't carry a config field.
+    let mut env = extract_claude_config_env(request).unwrap_or_default();
+
+    // Now overwrite / fill in the standard fields from URL params. URL params
+    // are authoritative because they're what the deeplink builder put on the
+    // wire — for Claude these are: ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL,
+    // ANTHROPIC_MODEL, and the haiku/sonnet/opus model aliases.
     env.insert(
         "ANTHROPIC_AUTH_TOKEN".to_string(),
         json!(request.api_key.clone().unwrap_or_default()),
@@ -283,39 +298,59 @@ fn build_claude_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     json!({ "env": env })
 }
 
+/// Decode and extract the `env` object from the deeplink's inline config payload.
+///
+/// Returns `None` when no config is attached, when the payload can't be
+/// decoded/parsed, or when it doesn't contain a Claude-style `env` object.
+/// This is a best-effort accessor — we deliberately don't surface parse
+/// errors here because `parse_and_merge_config` will have already validated
+/// the payload during the merge phase; any failure at this point just means
+/// "fall back to URL-param-only behavior".
+fn extract_claude_config_env(
+    request: &DeepLinkImportRequest,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    // Only the inline base64 config carries an env block. Remote config_url
+    // is not implemented yet (see parse_and_merge_config), so nothing else to
+    // try here.
+    let config_b64 = request.config.as_ref()?;
+
+    // Honor the declared format; default to JSON like parse_and_merge_config does.
+    let format = request.config_format.as_deref().unwrap_or("json");
+    if format != "json" {
+        // Claude config is always JSON in practice. TOML/other formats aren't
+        // expected on this app path, so don't try to handle them — safer to
+        // fall back than to risk silently producing the wrong shape.
+        return None;
+    }
+
+    // Decode the base64 payload. We re-decode here rather than threading the
+    // already-decoded value through every build_* function, because the call
+    // graph (parse_and_merge_config is pub and called separately for preview)
+    // makes signature changes invasive. Decode cost is negligible on this
+    // one-shot import path.
+    let decoded = decode_base64_param("config", config_b64).ok()?;
+    let json_str = std::str::from_utf8(&decoded).ok()?;
+    let value: serde_json::Value = serde_json::from_str(json_str).ok()?;
+
+    // Pull out the env object — same shape as Claude's own settings.json.
+    value.get("env").and_then(|v| v.as_object()).cloned()
+}
+
 /// Build Codex settings configuration
 fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
-    // Generate a safe provider name identifier
-    let clean_provider_name = {
-        let raw: String = request
-            .name
-            .clone()
-            .unwrap_or_else(|| "custom".to_string())
-            .chars()
-            .filter(|c| !c.is_control())
-            .collect();
-        let lower = raw.to_lowercase();
-        let mut key: String = lower
-            .chars()
-            .map(|c| match c {
-                'a'..='z' | '0'..='9' | '_' => c,
-                _ => '_',
-            })
-            .collect();
-
-        // Remove leading/trailing underscores
-        while key.starts_with('_') {
-            key.remove(0);
-        }
-        while key.ends_with('_') {
-            key.pop();
-        }
-
-        if key.is_empty() {
-            "custom".to_string()
-        } else {
-            key
-        }
+    let provider_display_name = request
+        .name
+        .as_deref()
+        .unwrap_or("custom")
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect::<String>()
+        .trim()
+        .to_string();
+    let provider_display_name = if provider_display_name.is_empty() {
+        "custom".to_string()
+    } else {
+        provider_display_name
     };
 
     // Model name: use deeplink model or default
@@ -331,16 +366,20 @@ fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
         .trim_end_matches('/')
         .to_string();
 
+    let provider_display_name = toml_edit::Value::from(provider_display_name.as_str()).to_string();
+    let model_name = toml_edit::Value::from(model_name.as_str()).to_string();
+    let endpoint = toml_edit::Value::from(endpoint.as_str()).to_string();
+
     // Build config.toml content
     let config_toml = format!(
-        r#"model_provider = "{clean_provider_name}"
-model = "{model_name}"
+        r#"model_provider = "custom"
+model = {model_name}
 model_reasoning_effort = "high"
 disable_response_storage = true
 
-[model_providers.{clean_provider_name}]
-name = "{clean_provider_name}"
-base_url = "{endpoint}"
+[model_providers.custom]
+name = {provider_display_name}
+base_url = {endpoint}
 wire_api = "responses"
 requires_openai_auth = true
 "#
@@ -766,7 +805,7 @@ mod tests {
             name: Some("MyHermes".to_string()),
             endpoint: Some("https://api.example.com/v1".to_string()),
             api_key: Some("sk-test".to_string()),
-            model: Some("anthropic/claude-opus-4-7".to_string()),
+            model: Some("anthropic/claude-opus-4-8".to_string()),
             ..Default::default()
         }
     }
@@ -788,7 +827,7 @@ mod tests {
         // models array with the deeplink model id
         let models = obj.get("models").unwrap().as_array().unwrap();
         assert_eq!(models.len(), 1);
-        assert_eq!(models[0]["id"], "anthropic/claude-opus-4-7");
+        assert_eq!(models[0]["id"], "anthropic/claude-opus-4-8");
     }
 
     #[test]
@@ -820,6 +859,47 @@ mod tests {
         assert!(obj.get("api_key").is_none());
         assert!(obj.get("models").is_none());
         assert_eq!(obj.get("api_mode").unwrap(), "chat_completions");
+    }
+
+    #[test]
+    fn build_codex_settings_uses_custom_key_and_preserves_display_name() {
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("codex".to_string()),
+            name: Some("My \"Relay\"".to_string()),
+            endpoint: Some("https://api.example.com/v1/".to_string()),
+            api_key: Some("sk-test".to_string()),
+            model: Some("gpt-5-codex".to_string()),
+            ..Default::default()
+        };
+
+        let settings = build_codex_settings(&request);
+        let config_text = settings
+            .get("config")
+            .and_then(|value| value.as_str())
+            .expect("config text");
+        let parsed: toml::Value = toml::from_str(config_text).expect("valid Codex config");
+
+        assert_eq!(
+            parsed
+                .get("model_provider")
+                .and_then(|value| value.as_str()),
+            Some("custom")
+        );
+        let custom_provider = parsed
+            .get("model_providers")
+            .and_then(|value| value.get("custom"))
+            .expect("custom model provider");
+        assert_eq!(
+            custom_provider.get("name").and_then(|value| value.as_str()),
+            Some("My \"Relay\"")
+        );
+        assert_eq!(
+            custom_provider
+                .get("base_url")
+                .and_then(|value| value.as_str()),
+            Some("https://api.example.com/v1")
+        );
     }
 
     #[test]
