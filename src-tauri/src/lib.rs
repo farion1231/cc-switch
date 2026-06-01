@@ -69,6 +69,22 @@ use tauri::RunEvent;
 use tauri::{Emitter, Manager};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
+#[cfg(target_os = "windows")]
+fn set_windows_app_user_model_id(app: &tauri::AppHandle) {
+    let app_id = app.config().identifier.clone();
+    let wide_app_id: Vec<u16> = app_id.encode_utf16().chain(std::iter::once(0)).collect();
+
+    let result = unsafe {
+        windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(wide_app_id.as_ptr())
+    };
+
+    if result < 0 {
+        log::warn!("设置 Windows AppUserModelID 失败: 0x{result:08X}");
+    } else {
+        log::debug!("Windows AppUserModelID 已设置为 {app_id}");
+    }
+}
+
 fn redact_url_for_log(url_str: &str) -> String {
     match url::Url::parse(url_str) {
         Ok(url) => {
@@ -288,6 +304,8 @@ pub fn run() {
             // 预先刷新 Store 覆盖配置，确保后续路径读取正确（日志/数据库等）
             app_store::refresh_app_config_dir_override(app.handle());
             panic_hook::init_app_config_dir(crate::config::get_app_config_dir());
+            #[cfg(target_os = "windows")]
+            set_windows_app_user_model_id(app.handle());
 
             // 注册 Updater 插件（桌面端）
             #[cfg(desktop)]
