@@ -442,7 +442,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       npm: "@ai-sdk/openai-compatible",
       name: "Zhipu GLM",
       options: {
-        baseURL: "https://open.bigmodel.cn/api/paas/v4",
+        baseURL: "https://open.bigmodel.cn/api/coding/paas/v4",
         apiKey: "",
         setCacheKey: true,
       },
@@ -456,8 +456,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     templateValues: {
       baseURL: {
         label: "Base URL",
-        placeholder: "https://open.bigmodel.cn/api/paas/v4",
-        defaultValue: "https://open.bigmodel.cn/api/paas/v4",
+        placeholder: "https://open.bigmodel.cn/api/coding/paas/v4",
+        defaultValue: "https://open.bigmodel.cn/api/coding/paas/v4",
         editorValue: "",
       },
       apiKey: {
@@ -475,7 +475,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       npm: "@ai-sdk/openai-compatible",
       name: "Zhipu GLM en",
       options: {
-        baseURL: "https://api.z.ai/v1",
+        baseURL: "https://api.z.ai/api/coding/paas/v4",
         apiKey: "",
         setCacheKey: true,
       },
@@ -489,8 +489,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     templateValues: {
       baseURL: {
         label: "Base URL",
-        placeholder: "https://api.z.ai/v1",
-        defaultValue: "https://api.z.ai/v1",
+        placeholder: "https://api.z.ai/api/coding/paas/v4",
+        defaultValue: "https://api.z.ai/api/coding/paas/v4",
         editorValue: "",
       },
       apiKey: {
