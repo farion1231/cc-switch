@@ -96,6 +96,11 @@ fn parse_provider_deeplink(
             "Invalid app type: must be 'claude', 'claude-desktop', 'codex', 'gemini', 'opencode', 'openclaw', or 'hermes', got '{app}'"
         )));
     }
+    let app = if matches!(app.as_str(), "claude_desktop" | "claudedesktop") {
+        "claude-desktop".to_string()
+    } else {
+        app
+    };
 
     let name = params
         .get("name")

@@ -526,6 +526,12 @@ pub fn parse_and_merge_config(
     match request.app.as_deref().unwrap_or("") {
         "claude" | "claude-desktop" | "claude_desktop" | "claudedesktop" => {
             merge_claude_config(&mut merged, &config_value)?;
+            if matches!(
+                merged.app.as_deref(),
+                Some("claude_desktop" | "claudedesktop")
+            ) {
+                merged.app = Some("claude-desktop".to_string());
+            }
         }
         "codex" => merge_codex_config(&mut merged, &config_value)?,
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,

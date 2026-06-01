@@ -88,7 +88,7 @@ fn test_parse_provider_accepts_claude_desktop_aliases() {
         );
         let request = parse_deeplink_url(&url)
             .unwrap_or_else(|e| panic!("alias '{alias}' should be accepted, got: {e}"));
-        assert_eq!(request.app, Some(alias.to_string()));
+        assert_eq!(request.app, Some("claude-desktop".to_string()));
     }
 }
 
@@ -318,6 +318,7 @@ fn test_parse_and_merge_config_claude_desktop_aliases() {
             Some("https://api.anthropic.com/v1".to_string())
         );
         assert_eq!(merged.model, Some("claude-sonnet-4.5".to_string()));
+        assert_eq!(merged.app, Some("claude-desktop".to_string()));
     }
 }
 
