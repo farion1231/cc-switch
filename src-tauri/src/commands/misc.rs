@@ -2,7 +2,6 @@
 
 use crate::app_config::AppType;
 use crate::init_status::{InitErrorPayload, SkillsMigrationPayload};
-use crate::provider::ClaudeActivationMode;
 use crate::services::ProviderService;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -2403,22 +2402,9 @@ pub async fn open_provider_terminal(
     let provider = providers
         .get(&providerId)
         .ok_or_else(|| format!("provider {providerId} not found"))?;
-    if matches!(app_type, AppType::Claude) {
-        ProviderService::prepare_claude_profile_terminal_launch(state.inner(), provider)
-            .map_err(|e| format!("准备 Claude profile 终端配置失败: {e}"))?;
-    }
-
     let claude_profile_dir = if matches!(app_type, AppType::Claude) {
-        provider
-            .meta
-            .as_ref()
-            .and_then(|meta| match meta.claude_activation_mode {
-                Some(ClaudeActivationMode::ProfileOnly)
-                | Some(ClaudeActivationMode::ProfileAndConfig) => {
-                    meta.claude_profile_dir.as_ref().cloned()
-                }
-                _ => None,
-            })
+        ProviderService::prepare_claude_profile_terminal_launch(state.inner(), provider)
+            .map_err(|e| format!("准备 Claude profile 终端配置失败: {e}"))?
     } else {
         None
     };

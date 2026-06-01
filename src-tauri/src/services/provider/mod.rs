@@ -748,6 +748,67 @@ mod tests {
 
     #[test]
     #[serial]
+    fn switch_codex_to_custom_from_third_party_preserves_openai_history() {
+        with_test_home(|state, home| {
+            let source_provider = codex_provider(
+                "codex-rightcode",
+                "RightCode",
+                "model_provider = \"rightcode\"\nmodel = \"gpt-5.4\"\n",
+            );
+            let target_provider = codex_provider(
+                "codex-api",
+                "Codex API",
+                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n[model_providers.OpenAI]\nname = \"OpenAI\"\nbase_url = \"http://127.0.0.1:12345/v1\"\n",
+            );
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &source_provider)
+                .expect("save source provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &target_provider)
+                .expect("save target provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), "codex-rightcode")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some("codex-rightcode"))
+                .expect("set local current provider");
+            seed_codex_thread_rows(
+                home,
+                &[
+                    ("official-thread", "openai"),
+                    ("source-thread", "rightcode"),
+                    ("legacy-custom-thread", "ccswitch"),
+                ],
+            );
+
+            ProviderService::switch(state, AppType::Codex, "codex-api")
+                .expect("switch to custom codex provider");
+
+            assert_eq!(
+                codex_thread_providers(home),
+                vec![("custom".to_string(), 2), ("openai".to_string(), 1)],
+                "switching a third-party provider to custom must not relabel official OpenAI history"
+            );
+            assert_eq!(
+                codex_rollout_providers(home),
+                vec![
+                    (
+                        "legacy-custom-thread".to_string(),
+                        Some("custom".to_string())
+                    ),
+                    ("official-thread".to_string(), Some("openai".to_string())),
+                    ("source-thread".to_string(), Some("custom".to_string())),
+                ],
+                "rollout metadata should leave OpenAI sessions under openai"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn switch_codex_settles_previous_provider_rewrite_race() {
         with_test_home(|state, home| {
             let official_provider = codex_provider("codex-official", "OpenAI Official", "");
@@ -2557,6 +2618,37 @@ mod tests {
             assert!(
                 crate::settings::get_claude_override_dir().is_none(),
                 "preparing a terminal launch must not persist a global Claude override"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn terminal_launch_returns_normalized_claude_profile_dir() {
+        with_test_home(|state, home| {
+            let profile_dir = home.join(".claude-profiles").join("api");
+            fs::create_dir_all(&profile_dir).expect("create api profile dir");
+            let normalized_dir = profile_dir.to_string_lossy().to_string();
+            let api_provider = claude_provider(
+                "claude-api",
+                "Claude API",
+                "api-provider-token",
+                "https://api-provider.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(format!("  {normalized_dir}  ")),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+
+            let launch_profile_dir =
+                ProviderService::prepare_claude_profile_terminal_launch(state, &api_provider)
+                    .expect("prepare profile launch");
+
+            assert_eq!(
+                launch_profile_dir.as_deref(),
+                Some(normalized_dir.as_str()),
+                "terminal launches should export the trimmed profile directory validated by the switch plan"
             );
         });
     }
@@ -4566,21 +4658,33 @@ impl ProviderService {
     pub(crate) fn prepare_claude_profile_terminal_launch(
         state: &AppState,
         provider: &Provider,
-    ) -> Result<(), AppError> {
+    ) -> Result<Option<String>, AppError> {
         Self::validate_claude_switch_plan(provider)?;
 
         let plan = Self::claude_switch_plan(provider);
         Self::validate_claude_runtime_switch_plan(&plan)?;
+        let normalized_profile_dir = match plan.activation_mode {
+            ClaudeActivationMode::Legacy => None,
+            ClaudeActivationMode::ProfileOnly | ClaudeActivationMode::ProfileAndConfig => {
+                plan.override_dir.clone()
+            }
+        };
 
         if !matches!(plan.activation_mode, ClaudeActivationMode::ProfileAndConfig) {
-            return Ok(());
+            return Ok(normalized_profile_dir);
         }
 
         let profile_dir = plan.override_dir.as_deref().ok_or_else(|| {
             AppError::Message("Claude profile switching requires a profile directory".to_string())
         })?;
 
-        write_claude_profile_with_common_config(state.db.as_ref(), provider, Path::new(profile_dir))
+        write_claude_profile_with_common_config(
+            state.db.as_ref(),
+            provider,
+            Path::new(profile_dir),
+        )?;
+
+        Ok(Some(profile_dir.to_string()))
     }
 
     fn rollback_claude_switch(
@@ -4663,7 +4767,7 @@ impl ProviderService {
     fn codex_provider_switch_where_clause(column: &str) -> String {
         format!(
             "({} OR (?2 = 'openai' AND lower({column}) IN ('{}', 'ccswitch')) \
-             OR (lower(?2) IN ('{}', 'ccswitch') AND lower({column}) IN ('openai', 'ccswitch', '{}')))",
+             OR (lower(?2) IN ('{}', 'ccswitch') AND lower({column}) IN ('ccswitch', '{}')))",
             Self::codex_provider_where_clause(column),
             CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
             CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
