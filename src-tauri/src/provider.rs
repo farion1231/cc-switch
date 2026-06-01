@@ -172,8 +172,9 @@ impl Provider {
                 str_at(settings.get("base_url")),
                 str_at(settings.get("api_key")),
             ),
-            // OpenClaw (openclaw.json) flattens credentials at the top level, camelCase.
-            AppType::OpenClaw => (
+            // OpenClaw (openclaw.json) and Pi Agent (models.json) flatten credentials
+            // at the top level, camelCase.
+            AppType::OpenClaw | AppType::Pi => (
                 str_at(settings.get("baseUrl")),
                 str_at(settings.get("apiKey")),
             ),
@@ -1379,6 +1380,22 @@ mod tests {
             (
                 "https://api.deepseek.com".to_string(),
                 "sk-openclaw".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_credentials_pi_camel_case() {
+        let p = provider_with(json!({
+            "baseUrl": "https://api.deepseek.com",
+            "apiKey": "sk-pi",
+            "api": "openai-completions",
+        }));
+        assert_eq!(
+            p.resolve_usage_credentials(&AppType::Pi),
+            (
+                "https://api.deepseek.com".to_string(),
+                "sk-pi".to_string()
             )
         );
     }
