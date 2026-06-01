@@ -1002,7 +1002,7 @@ fn try_get_version(tool: &str) -> ShellProbe {
             .ok()
             .filter(|s| is_valid_shell(s))
             .unwrap_or_else(|| "sh".to_string());
-        let flag = default_flag_for_shell(&shell);
+        let flag = shell_flag_for_version_probe(&shell);
         Command::new(shell)
             .arg(flag)
             .arg(format!("{tool} --version"))
@@ -1067,6 +1067,45 @@ fn default_flag_for_shell(shell: &str) -> &'static str {
         "fish" => "-lc",
         _ => "-lic",
     }
+}
+
+/// Return the shell flag used by non-Windows CLI version/path probes.
+///
+/// Keep the existing interactive login shell behavior for ordinary desktop
+/// sessions, but avoid `-i` inside WSL. A GUI app launched from a WSL terminal
+/// can otherwise hit shell job-control paths and get stopped by SIGTTIN.
+#[cfg(not(target_os = "windows"))]
+fn shell_flag_for_version_probe(shell: &str) -> &'static str {
+    shell_flag_for_version_probe_with_env(shell, is_wsl_environment())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn shell_flag_for_version_probe_with_env(shell: &str, is_wsl: bool) -> &'static str {
+    if !is_wsl {
+        return default_flag_for_shell(shell);
+    }
+
+    match shell.rsplit('/').next().unwrap_or(shell) {
+        "dash" | "sh" => "-c",
+        _ => "-lc",
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn is_wsl_environment() -> bool {
+    std::env::var_os("WSL_INTEROP").is_some()
+        || std::env::var_os("WSL_DISTRO_NAME").is_some()
+        || std::fs::read_to_string("/proc/sys/kernel/osrelease")
+            .map(|s| {
+                let s = s.to_ascii_lowercase();
+                s.contains("microsoft") || s.contains("wsl")
+            })
+            .unwrap_or(false)
+}
+
+#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
+fn is_wsl_environment() -> bool {
+    false
 }
 
 #[cfg(target_os = "windows")]
@@ -1667,14 +1706,14 @@ fn infer_install_source(path: &Path) -> &'static str {
     }
 }
 
-/// 从 shell 输出里挑出第一个绝对路径行（trim 后以 `/` 开头），跳过交互式登录 shell
-/// （`-lic`）里 .zshrc 打印的欢迎语/提示符等噪音。canonicalize 由调用方做（碰 FS）。
+/// 从 shell 输出里挑出第一个绝对路径行（trim 后以 `/` 开头），跳过登录/交互式 shell
+/// 里 .zshrc 打印的欢迎语/提示符等噪音。canonicalize 由调用方做（碰 FS）。
 #[cfg(not(target_os = "windows"))]
 fn first_abs_path_line(raw: &str) -> Option<&str> {
     raw.lines().map(str::trim).find(|l| l.starts_with('/'))
 }
 
-/// 用与 `try_get_version` 相同的登录 shell 解析 PATH 默认命中的可执行文件路径，
+/// 用与 `try_get_version` 相同的 shell 探测方式解析 PATH 默认命中的可执行文件路径，
 /// canonicalize 后作为"命令行默认 / 升级目标"的锚点（与升级会作用的那处对齐）。
 #[cfg(not(target_os = "windows"))]
 fn resolve_path_default(tool: &str) -> Option<std::path::PathBuf> {
@@ -1683,7 +1722,7 @@ fn resolve_path_default(tool: &str) -> Option<std::path::PathBuf> {
         .ok()
         .filter(|s| is_valid_shell(s))
         .unwrap_or_else(|| "sh".to_string());
-    let flag = default_flag_for_shell(&shell);
+    let flag = shell_flag_for_version_probe(&shell);
     let out = Command::new(shell)
         .arg(flag)
         .arg(format!("command -v {tool}"))
@@ -4433,6 +4472,42 @@ mod tests {
                 "should not depend on pipefail or system Python/pip: {cmd}"
             );
         }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn version_probe_shell_flag_keeps_default_behavior_outside_wsl() {
+        assert_eq!(shell_flag_for_version_probe_with_env("sh", false), "-c");
+        assert_eq!(shell_flag_for_version_probe_with_env("dash", false), "-c");
+        assert_eq!(
+            shell_flag_for_version_probe_with_env("/bin/dash", false),
+            "-c"
+        );
+        assert_eq!(shell_flag_for_version_probe_with_env("fish", false), "-lc");
+        assert_eq!(shell_flag_for_version_probe_with_env("bash", false), "-lic");
+        assert_eq!(shell_flag_for_version_probe_with_env("zsh", false), "-lic");
+        assert_eq!(
+            shell_flag_for_version_probe_with_env("/usr/bin/zsh", false),
+            "-lic"
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn version_probe_shell_flag_avoids_interactive_shell_in_wsl() {
+        assert_eq!(shell_flag_for_version_probe_with_env("sh", true), "-c");
+        assert_eq!(shell_flag_for_version_probe_with_env("dash", true), "-c");
+        assert_eq!(
+            shell_flag_for_version_probe_with_env("/bin/dash", true),
+            "-c"
+        );
+        assert_eq!(shell_flag_for_version_probe_with_env("fish", true), "-lc");
+        assert_eq!(shell_flag_for_version_probe_with_env("bash", true), "-lc");
+        assert_eq!(shell_flag_for_version_probe_with_env("zsh", true), "-lc");
+        assert_eq!(
+            shell_flag_for_version_probe_with_env("/usr/bin/zsh", true),
+            "-lc"
+        );
     }
 
     #[cfg(target_os = "windows")]
