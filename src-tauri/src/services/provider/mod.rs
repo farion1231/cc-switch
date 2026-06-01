@@ -1250,6 +1250,116 @@ mod tests {
 
     #[test]
     #[serial]
+    fn switch_codex_audit_repairs_empty_db_provider() {
+        with_test_home(|state, home| {
+            let api_provider = codex_provider(
+                "codex-api",
+                "Codex API",
+                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n",
+            );
+            let official_provider = codex_provider("codex-official", "OpenAI Official", "");
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &official_provider)
+                .expect("save official provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), "codex-api")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some("codex-api"))
+                .expect("set local current provider");
+            seed_codex_thread_rows_db_rollout(
+                home,
+                &[("thread-1", "", "custom"), ("thread-2", "", "openai")],
+            );
+
+            ProviderService::switch(state, AppType::Codex, "codex-official")
+                .expect("switch to official provider");
+
+            assert_eq!(
+                codex_thread_providers(home),
+                vec![("openai".to_string(), 2)],
+                "empty DB provider values should be repaired to the target provider"
+            );
+            assert_eq!(
+                codex_rollout_providers(home),
+                vec![
+                    ("thread-1".to_string(), Some("openai".to_string())),
+                    ("thread-2".to_string(), Some("openai".to_string())),
+                ],
+                "rollout metadata should be consistent after repairing empty DB providers"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_codex_audit_does_not_rewrite_matching_rollout() {
+        with_test_home(|state, home| {
+            let api_provider = codex_provider(
+                "codex-api",
+                "Codex API",
+                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n",
+            );
+            let official_provider = codex_provider("codex-official", "OpenAI Official", "");
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &official_provider)
+                .expect("save official provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), "codex-api")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some("codex-api"))
+                .expect("set local current provider");
+
+            let codex_dir = home.join(".codex");
+            let rollout_dir = codex_dir
+                .join("sessions")
+                .join("2026")
+                .join("04")
+                .join("24");
+            fs::create_dir_all(&codex_dir).expect("create codex dir");
+            fs::create_dir_all(&rollout_dir).expect("create rollout dir");
+            let conn = rusqlite::Connection::open(codex_dir.join("state_5.sqlite"))
+                .expect("open codex state db");
+            conn.execute(
+                "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL, rollout_path TEXT NOT NULL)",
+                [],
+            )
+            .expect("create threads table");
+            let rollout_path = rollout_dir.join("rollout-thread-1.jsonl");
+            let original_text = "{ \"type\": \"session_meta\", \"payload\": { \"id\": \"thread-1\", \"model_provider\": \"openai\" } }\n{\"type\":\"event_msg\",\"payload\":{}}\n";
+            fs::write(&rollout_path, original_text).expect("write rollout metadata");
+            conn.execute(
+                "INSERT INTO threads (id, model_provider, rollout_path) VALUES (?1, ?2, ?3)",
+                rusqlite::params!["thread-1", "openai", rollout_path.to_string_lossy()],
+            )
+            .expect("seed thread");
+
+            ProviderService::switch(state, AppType::Codex, "codex-official")
+                .expect("switch to official provider");
+
+            assert_eq!(
+                fs::read_to_string(&rollout_path).expect("read rollout metadata"),
+                original_text,
+                "audit pass should not rewrite rollout files that already match the target provider"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn switch_codex_audit_handles_missing_rollout_file_gracefully() {
         // Scenario 6: rollout_path points to non-existent file -> no panic, DB updated, function returns
         with_test_home(|state, home| {
@@ -4545,7 +4655,9 @@ impl ProviderService {
     }
 
     fn codex_provider_where_clause(column: &str) -> String {
-        format!("({column} = ?1 OR (?1 = 'openai' AND lower({column}) = 'openai'))")
+        format!(
+            "({column} = ?1 OR {column} = '' OR (?1 = 'openai' AND lower({column}) = 'openai'))"
+        )
     }
 
     fn codex_provider_switch_where_clause(column: &str) -> String {
@@ -4664,12 +4776,12 @@ impl ProviderService {
         };
         let current_provider = payload.get("model_provider").and_then(Value::as_str);
         let should_skip = if force_audit && source_provider.is_none() {
-            // Audit pass: only skip if rollout already matches target AND is not a stale alias
-            !Self::codex_history_provider_is_repair_candidate(
-                current_provider,
-                source_provider,
-                target_provider,
-            )
+            current_provider == Some(target_provider)
+                || !Self::codex_history_provider_is_repair_candidate(
+                    current_provider,
+                    source_provider,
+                    target_provider,
+                )
         } else if current_provider == Some(target_provider) {
             true
         } else {
@@ -4737,8 +4849,9 @@ impl ProviderService {
                 )?;
                 rows.collect::<Result<Vec<String>, _>>()?
             } else {
-                let mut stmt =
-                    conn.prepare("SELECT rollout_path FROM threads WHERE model_provider IS NULL")?;
+                let mut stmt = conn.prepare(
+                    "SELECT rollout_path FROM threads WHERE model_provider IS NULL OR model_provider = ''",
+                )?;
                 let rows = stmt.query_map([], |row| row.get(0))?;
                 rows.collect::<Result<Vec<String>, _>>()?
             }
@@ -4770,7 +4883,7 @@ impl ProviderService {
             )?
         } else {
             conn.execute(
-                "UPDATE threads SET model_provider = ?1 WHERE model_provider IS NULL",
+                "UPDATE threads SET model_provider = ?1 WHERE model_provider IS NULL OR model_provider = ''",
                 rusqlite::params![target_provider.as_str()],
             )?
         };
