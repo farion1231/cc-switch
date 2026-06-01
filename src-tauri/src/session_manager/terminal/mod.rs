@@ -1,5 +1,9 @@
 use std::process::Command;
 
+// cmux 集成逻辑较长，单独成模块；
+#[cfg(target_os = "macos")]
+pub mod cmux;
+
 pub fn launch_terminal(
     target: &str,
     command: &str,
@@ -22,6 +26,8 @@ pub fn launch_terminal(
         "wezterm" => launch_wezterm(command, cwd),
         "kaku" => launch_kaku(command, cwd),
         "alacritty" => launch_alacritty(command, cwd),
+        #[cfg(target_os = "macos")]
+        "cmux" => launch_cmux(command, cwd),
         #[cfg(unix)]
         "warp" => launch_warp(command, cwd),
         "custom" => launch_custom(command, cwd, custom_config),
@@ -243,6 +249,18 @@ fn launch_warp(command: &str, cwd: Option<&str>) -> Result<(), String> {
     } else {
         Err("Failed to launch Warp.".to_string())
     }
+}
+
+#[cfg(target_os = "macos")]
+fn launch_cmux(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    // Session 恢复：每次新建 workspace；cwd 由 cmux `--cwd` 承担（与 Provider 路径一致）
+    let full_command = build_shell_command(command, cwd);
+    let launch = cmux::CmuxWorkspaceLaunch {
+        title: "Claude Session · Claude".to_string(),
+        cwd: cwd.map(std::path::PathBuf::from),
+        command: format!("{full_command}\n"),
+    };
+    cmux::run_cmux_workspace(&launch)
 }
 
 fn launch_alacritty(command: &str, cwd: Option<&str>) -> Result<(), String> {

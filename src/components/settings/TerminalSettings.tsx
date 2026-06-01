@@ -18,6 +18,7 @@ const MACOS_TERMINALS = [
   { value: "wezterm", labelKey: "settings.terminal.options.macos.wezterm" },
   { value: "kaku", labelKey: "settings.terminal.options.macos.kaku" },
   { value: "warp", labelKey: "settings.terminal.options.macos.warp" },
+  { value: "cmux", labelKey: "settings.terminal.options.macos.cmux" },
 ] as const;
 
 const WINDOWS_TERMINALS = [
