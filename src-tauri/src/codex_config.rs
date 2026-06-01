@@ -846,18 +846,39 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
     Some(json!({ "models": entries }))
 }
 
-/// Unified helper: write Codex live config with model catalog preparation.
-/// Replaces scattered `prepare_codex_config_text_with_model_catalog` calls.
-pub fn write_codex_live_with_catalog(
+/// Decide the `config.toml` text to write during a takeover-off restore,
+/// projecting the model catalog **only when `settings` carries an inline
+/// `modelCatalog`**.
+///
+/// Restore feeds back a stored backup, and Codex backups come in two shapes that
+/// need opposite handling:
+///
+/// - **Snapshot backup** (`read_codex_live_settings`): `{ auth, config }` with no
+///   inline `modelCatalog`. Its `config.toml` text already carries whatever
+///   `model_catalog_json` pointer existed at backup time, and the generated
+///   catalog file on disk is untouched. Here we must keep the config **raw** —
+///   running catalog projection would see "no specs" and strip the live pointer.
+/// - **Provider-rebuilt backup** (`update_live_backup_from_provider`): the DB
+///   provider's settings, i.e. `{ auth, config (no pointer), modelCatalog
+///   (inline DB SSOT) }`. Here the pointer/catalog file must be (re)generated
+///   from the inline `modelCatalog`, or the mapping is lost on restore.
+///
+/// Gating on the presence of the inline `modelCatalog` key routes each shape
+/// correctly; an empty inline catalog still projects (and so correctly drops a
+/// now-stale pointer), while an absent key leaves the text untouched. This is
+/// **orthogonal to auth** — a provider-rebuilt backup can pair an inline
+/// `modelCatalog` with empty `auth.json` (the API key living in the config's
+/// `experimental_bearer_token`), so the caller must decide config projection
+/// independently of whether it writes or deletes `auth.json`.
+pub fn prepare_codex_live_config_text_with_optional_catalog(
     settings: &Value,
-    auth: &Value,
-    config_text: Option<&str>,
-) -> Result<(), AppError> {
-    let prepared_config = config_text
-        .map(|text| prepare_codex_config_text_with_model_catalog(settings, text))
-        .transpose()?;
-
-    write_codex_live_atomic(auth, prepared_config.as_deref())
+    config_text: &str,
+) -> Result<String, AppError> {
+    if settings.get("modelCatalog").is_some() {
+        prepare_codex_config_text_with_model_catalog(settings, config_text)
+    } else {
+        Ok(config_text.to_string())
+    }
 }
 
 pub fn write_codex_provider_live_with_catalog(
