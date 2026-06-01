@@ -1787,6 +1787,13 @@ impl ProxyService {
                     existing_value,
                 )?;
             }
+
+            effective_settings =
+                crate::codex_config::prepare_codex_provider_settings_for_live_snapshot(
+                    provider.category.as_deref(),
+                    &effective_settings,
+                )
+                .map_err(|e| format!("构建 Codex Live 备份失败: {e}"))?;
         }
 
         let backup_json = match app_type_enum {
@@ -2865,7 +2872,7 @@ experimental_bearer_token = "PROXY_MANAGED"
 
     #[test]
     #[serial]
-    fn codex_custom_provider_live_write_can_overwrite_auth_when_preserve_disabled() {
+    fn codex_custom_provider_live_write_clears_auth_when_preserve_disabled() {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
         crate::settings::update_settings(crate::settings::AppSettings {
@@ -2931,22 +2938,20 @@ wire_api = "responses"
             .write_codex_live_for_provider(&takeover_settings, Some(&provider))
             .expect("write provider-driven Codex live config");
 
-        let live_auth: Value =
-            crate::config::read_json_file(&crate::codex_config::get_codex_auth_path())
-                .expect("read live auth");
-        assert_eq!(
-            live_auth,
-            json!({
-                "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER
-            }),
-            "disabled preservation should let third-party switches overwrite auth.json"
+        assert!(
+            !crate::codex_config::get_codex_auth_path().exists(),
+            "关闭保留官方登录后，第三方 Codex 写入应清理 live auth.json"
         );
 
         let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
             .expect("read live config");
         assert!(
-            !live_config.contains("experimental_bearer_token"),
-            "provider token should stay in auth.json when preservation is disabled"
+            live_config.contains("experimental_bearer_token"),
+            "第三方服务商 API Key 应写入 config.toml 的 provider-scoped bearer token"
+        );
+        assert!(
+            live_config.contains(PROXY_TOKEN_PLACEHOLDER),
+            "代理占位 token 应写入 config.toml"
         );
 
         crate::settings::update_settings(crate::settings::AppSettings::default())
@@ -4008,11 +4013,19 @@ requires_openai_auth = true
             "restored Codex live config should preserve the provider's model_provider"
         );
         assert_eq!(
-            live.get("auth")
-                .and_then(|auth| auth.get("OPENAI_API_KEY"))
+            parsed_live
+                .get("model_providers")
+                .and_then(|v| v.get("aihubmix"))
+                .and_then(|v| v.get("experimental_bearer_token"))
                 .and_then(|v| v.as_str()),
             Some("aihubmix-key"),
-            "restore should still use the hot-switched provider auth"
+            "恢复时应从 config.toml 使用热切换服务商的 API Key"
+        );
+        assert!(
+            live.get("auth")
+                .and_then(|auth| auth.get("OPENAI_API_KEY"))
+                .is_none(),
+            "恢复时不应把服务商 API Key 写入 auth.json"
         );
     }
 

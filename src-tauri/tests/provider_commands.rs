@@ -315,15 +315,9 @@ command = "say"
     switch_provider_test_hook(&app_state, AppType::Codex, "new-provider")
         .expect("switch provider should succeed");
 
-    let auth_value: serde_json::Value =
-        read_json_file(&get_codex_auth_path()).expect("read auth.json");
-    assert_eq!(
-        auth_value
-            .get("OPENAI_API_KEY")
-            .and_then(|v| v.as_str())
-            .unwrap_or(""),
-        "legacy-key",
-        "Codex provider switching should preserve the existing live auth.json"
+    assert!(
+        !get_codex_auth_path().exists(),
+        "After switching third-party Codex providers, the provider's API key should not be retained in the live `auth.json` file"
     );
 
     let config_text = std::fs::read_to_string(get_codex_config_path()).expect("read config.toml");

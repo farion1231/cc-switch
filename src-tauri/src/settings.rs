@@ -253,8 +253,8 @@ pub struct AppSettings {
     /// Whether to show the failover toggle independently on the main page
     #[serde(default)]
     pub enable_failover_toggle: bool,
-    /// Keep Codex ChatGPT login material in auth.json when switching to third-party providers.
-    /// Opt-in: defaults to false so third-party switches cleanly overwrite auth.json.
+    /// Whether to retain the official login credentials in `auth.json` when switching to a third-party Codex service provider.
+    /// Disabled by default: switching to a third-party provider will clear `auth.json`, and the service provider's API Key will be written solely to `config.toml`.
     #[serde(default)]
     pub preserve_codex_official_auth_on_switch: bool,
     /// User has confirmed the failover toggle first-run notice
