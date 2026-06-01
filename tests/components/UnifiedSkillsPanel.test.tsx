@@ -3,6 +3,7 @@ import { render, screen, waitFor, act } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import UnifiedSkillsPanel, {
+  getSkillDropTargetTagIds,
   type UnifiedSkillsPanelHandle,
 } from "@/components/skills/UnifiedSkillsPanel";
 import type { InstalledSkill, SkillTag } from "@/hooks/useSkills";
@@ -183,5 +184,19 @@ describe("UnifiedSkillsPanel", () => {
     expect(screen.getByText("空标签")).toBeInTheDocument();
     expect(screen.getByText("Grouped Skill")).toBeInTheDocument();
     expect(screen.getByText("Ungrouped Skill")).toBeInTheDocument();
+  });
+
+  it("resolves ungrouped drop targets to an empty tag assignment", () => {
+    const assignments: [string, number][] = [["grouped-skill", 1]];
+
+    expect(getSkillDropTargetTagIds("drop-untagged", assignments)).toEqual([]);
+    expect(getSkillDropTargetTagIds("drop-group:-1", assignments)).toEqual([]);
+    expect(
+      getSkillDropTargetTagIds("skill:ungrouped-skill", assignments),
+    ).toEqual([]);
+    expect(getSkillDropTargetTagIds("drop-group:2", assignments)).toEqual([2]);
+    expect(
+      getSkillDropTargetTagIds("skill:grouped-skill", assignments),
+    ).toEqual([1]);
   });
 });

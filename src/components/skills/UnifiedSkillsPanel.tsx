@@ -87,6 +87,45 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+const UNTAGGED_GROUP_KEY = -1;
+const UNTAGGED_DROP_ID = "drop-untagged";
+
+export function getSkillDropTargetTagIds(
+  overId: string,
+  tagAssignments: [string, number][],
+): number[] | null {
+  if (overId === UNTAGGED_DROP_ID) {
+    return [];
+  }
+
+  if (overId.startsWith("drop-group:")) {
+    const tagId = parseInt(overId.replace("drop-group:", ""), 10);
+    if (isNaN(tagId)) return null;
+    return tagId === UNTAGGED_GROUP_KEY ? [] : [tagId];
+  }
+
+  if (overId.startsWith("group:")) {
+    const tagId = parseInt(overId.replace("group:", ""), 10);
+    if (isNaN(tagId)) return null;
+    return tagId === UNTAGGED_GROUP_KEY ? [] : [tagId];
+  }
+
+  if (overId.startsWith("skill:")) {
+    const overSkillId = overId.replace("skill:", "");
+    const assignment = tagAssignments.find(([sid]) => sid === overSkillId);
+    return assignment ? [assignment[1]] : [];
+  }
+
+  return null;
+}
+
+function hasSameTagAssignment(currentTagIds: number[], targetTagIds: number[]) {
+  return (
+    currentTagIds.length === targetTagIds.length &&
+    targetTagIds.every((tagId) => currentTagIds.includes(tagId))
+  );
+}
+
 interface UnifiedSkillsPanelProps {
   onOpenDiscovery: () => void;
   currentApp: AppId;
@@ -329,24 +368,8 @@ const UnifiedSkillsPanel = React.forwardRef<
       // 技能拖拽到不同分组
       if (activeId.startsWith("skill:")) {
         const skillId = activeId.replace("skill:", "");
-        let targetTagId: number | null = null;
-
-        if (overId.startsWith("drop-group:")) {
-          targetTagId = parseInt(overId.replace("drop-group:", ""), 10);
-        } else if (overId.startsWith("group:")) {
-          targetTagId = parseInt(overId.replace("group:", ""), 10);
-        } else if (overId.startsWith("skill:")) {
-          // 拖到另一个 skill 上，找到该 skill 所在的分组
-          const overSkillId = overId.replace("skill:", "");
-          for (const [sid, tid] of tagAssignments) {
-            if (sid === overSkillId) {
-              targetTagId = tid;
-              break;
-            }
-          }
-        }
-
-        if (targetTagId === null || isNaN(targetTagId)) return;
+        const targetTagIds = getSkillDropTargetTagIds(overId, tagAssignments);
+        if (targetTagIds === null) return;
 
         // 获取该 skill 当前的标签
         const currentTagIds = tagAssignments
@@ -354,13 +377,13 @@ const UnifiedSkillsPanel = React.forwardRef<
           .map(([, tid]) => tid);
 
         // 如果已经在目标分组中，不处理
-        if (currentTagIds.includes(targetTagId)) return;
+        if (hasSameTagAssignment(currentTagIds, targetTagIds)) return;
 
         // 分配新标签（替换现有分配）
         try {
           await setSkillTagsMutation.mutateAsync({
             skillId,
-            tagIds: [targetTagId],
+            tagIds: targetTagIds,
           });
           toast.success(t("skills.tags.moveSuccess"), { closeButton: true });
         } catch (error) {
@@ -708,12 +731,12 @@ const UnifiedSkillsPanel = React.forwardRef<
                 >
                   <div className="space-y-3">
                     {groupedSkills.map((group) => {
-                      const tagKey = group.tagId ?? -1;
+                      const tagKey = group.tagId ?? UNTAGGED_GROUP_KEY;
                       const isCollapsed = collapsedTags.has(tagKey);
                       return (
                         <DroppableGroup
                           key={tagKey}
-                          tagId={tagKey}
+                          tagId={group.tagId}
                           isUntagged={group.tagId === null}
                         >
                           {group.tagId !== null ? (
@@ -1266,21 +1289,37 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
 
 /** 可放置技能的分组容器 */
 const DroppableGroup: React.FC<{
-  tagId: number;
+  tagId: number | null;
   isUntagged: boolean;
   children: React.ReactNode;
 }> = ({ tagId, isUntagged, children }) => {
-  // 未分组区域不参与拖拽
   if (isUntagged) {
-    return (
-      <div className="rounded-xl border border-border-default overflow-hidden">
-        {children}
-      </div>
-    );
+    return <UntaggedDroppableGroup>{children}</UntaggedDroppableGroup>;
   }
 
   return (
-    <SortableDroppableGroup tagId={tagId}>{children}</SortableDroppableGroup>
+    <SortableDroppableGroup tagId={tagId!}>{children}</SortableDroppableGroup>
+  );
+};
+
+/** 可放置的未分组容器 */
+const UntaggedDroppableGroup: React.FC<{
+  children: React.ReactNode;
+}> = ({ children }) => {
+  const { setNodeRef, isOver } = useDroppable({
+    id: UNTAGGED_DROP_ID,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={`rounded-xl border overflow-hidden transition-colors ${
+        isOver ? "border-primary/60 bg-primary/5" : "border-border-default"
+      }`}
+      data-group-id="untagged"
+    >
+      {children}
+    </div>
   );
 };
 

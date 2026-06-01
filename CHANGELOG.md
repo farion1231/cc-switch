@@ -19,7 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **技能标签数据库操作原子性**: `set_skill_tags` 方法使用事务包裹 delete+insert，防止外键约束失败导致标签丢失
+- **技能标签分配保留**: 更新或重装已安装技能时不再因 SQLite `REPLACE` 语义清空已有标签分配
 - **技能标签 i18n key 修正**: TagAssignPopover 中的 i18n key 从 `skills.assignTags`/`skills.tagsFor`/`skills.noTags`/`skills.newTagPlaceholder` 修正为 `skills.tags.*` 命名空间下的正确 key
+- **未分组拖拽处理**: 将技能拖回未分组区域时正确清空标签分配，避免提交无效标签 ID
 - **分组视图空标签可见性**: 移除 `groupSkills.length > 0` 过滤条件，空标签现在作为有效的 drop target 显示在分组视图中
 - **Rust 编译警告修复**: 修复 3 个编译警告（`unused import`、`dead_code`），通过条件编译和移动 import 解决跨平台兼容性问题
 
