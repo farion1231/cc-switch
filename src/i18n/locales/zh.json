@@ -260,11 +260,14 @@
     "windowControlFailed": "窗口控制失败：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切换到官方供应商，使用路由访问官方 API 可能导致账号被封禁",
     "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由",
-    "routingEnableFailed": "开启本地路由失败，请手动开启路由",
+    "routingEnableFailed": "已切换到 {{name}}，但开启本地路由失败，请在代理面板手动开启",
     "routingDisableFailed": "关闭本地路由失败，已取消切换",
     "proxyReasonGeminiNative": "使用 Gemini Native 接口格式",
-    "routingAutoEnabled": "当前应用本地路由已自动开启",
-    "routingAutoDisabled": "当前应用本地路由已自动关闭"
+    "routingAutoEnabled": "已切换到 {{name}} 并自动开启本地路由",
+    "routingAutoEnabledRestart": "已切换到 {{name}} 并自动开启本地路由，请重启客户端以生效",
+    "routingAutoDisabled": "当前应用本地路由已自动关闭",
+    "routingAutoDisabledRestart": "当前应用本地路由已自动关闭，请重启客户端以生效",
+    "routingDisabledButSwitchFailed": "本地路由已关闭，但切换失败。当前供应商需要本地路由才能使用，请手动开启路由或重试切换"
   },
   "confirm": {
     "deleteProvider": "删除供应商",

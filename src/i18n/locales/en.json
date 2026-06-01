@@ -260,11 +260,14 @@
     "windowControlFailed": "Window control failed: {{error}}",
     "officialBlockedByProxy": "Cannot switch to official provider while local routing is active. Using routing with official APIs may cause account bans.",
     "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing.",
-    "routingEnableFailed": "Failed to enable local routing — please enable it manually",
+    "routingEnableFailed": "Switched to {{name}}, but failed to enable local routing — please enable it manually in the proxy panel",
     "routingDisableFailed": "Failed to disable local routing; switch canceled",
     "proxyReasonGeminiNative": "Uses the Gemini Native API format",
-    "routingAutoEnabled": "Local routing has been automatically enabled for this app",
-    "routingAutoDisabled": "Local routing has been automatically disabled for this app"
+    "routingAutoEnabled": "Switched to {{name}} with local routing automatically enabled",
+    "routingAutoEnabledRestart": "Switched to {{name}} with local routing automatically enabled — please restart the client to take effect",
+    "routingAutoDisabled": "Local routing has been automatically disabled for this app",
+    "routingAutoDisabledRestart": "Local routing has been automatically disabled — please restart the client to take effect",
+    "routingDisabledButSwitchFailed": "Local routing has been disabled, but the switch failed. The current provider requires local routing — please re-enable routing manually or retry the switch"
   },
   "confirm": {
     "deleteProvider": "Delete Provider",

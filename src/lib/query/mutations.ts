@@ -281,6 +281,7 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       toast.error(
         t("notifications.switchFailedTitle", { defaultValue: "切换失败" }),
         {
+          id: "switch-provider-error",
           description: t("notifications.switchFailed", {
             defaultValue: "切换失败：{{error}}",
             error: detail,

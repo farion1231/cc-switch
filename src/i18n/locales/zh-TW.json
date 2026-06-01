@@ -260,11 +260,14 @@
     "windowControlFailed": "視窗控制失敗：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切換至官方供應商，使用路由存取官方 API 可能導致帳號被封鎖",
     "proxyOfficialWarning": "目前供應商 {{name}} 是官方供應商，建議切換至第三方供應商後再使用本地路由",
-    "routingEnableFailed": "開啟本機路由失敗，請手動開啟路由",
+    "routingEnableFailed": "已切換至 {{name}}，但開啟本機路由失敗，請在代理面板手動開啟",
     "routingDisableFailed": "關閉本機路由失敗，已取消切換",
     "proxyReasonGeminiNative": "使用 Gemini Native 介面格式",
-    "routingAutoEnabled": "目前應用程式的本機路由已自動開啟",
-    "routingAutoDisabled": "目前應用程式的本機路由已自動關閉"
+    "routingAutoEnabled": "已切換至 {{name}} 並自動開啟本機路由",
+    "routingAutoEnabledRestart": "已切換至 {{name}} 並自動開啟本機路由，請重啟用戶端以生效",
+    "routingAutoDisabled": "目前應用程式的本機路由已自動關閉",
+    "routingAutoDisabledRestart": "目前應用程式的本機路由已自動關閉，請重啟用戶端以生效",
+    "routingDisabledButSwitchFailed": "本機路由已關閉，但切換失敗。目前供應商需要本機路由才能使用，請手動開啟路由或重試切換"
   },
   "confirm": {
     "deleteProvider": "刪除供應商",

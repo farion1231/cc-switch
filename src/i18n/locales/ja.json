@@ -260,11 +260,14 @@
     "windowControlFailed": "ウィンドウ操作に失敗しました: {{error}}",
     "officialBlockedByProxy": "ローカルルーティングモード中は公式プロバイダーに切り替えできません。ルーティング経由で公式 API にアクセスするとアカウントが停止される可能性があります。",
     "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。",
-    "routingEnableFailed": "ローカルルーティングの有効化に失敗しました。手動で有効にしてください",
+    "routingEnableFailed": "{{name}} に切り替えましたが、ローカルルーティングの有効化に失敗しました。プロキシパネルから手動で有効にしてください",
     "routingDisableFailed": "ローカルルーティングの無効化に失敗しました。切り替えをキャンセルしました",
     "proxyReasonGeminiNative": "Gemini Native インターフェース形式を使用",
-    "routingAutoEnabled": "現在のアプリのローカルルーティングが自動で有効になりました",
-    "routingAutoDisabled": "現在のアプリのローカルルーティングが自動で無効になりました"
+    "routingAutoEnabled": "{{name}} に切り替え、ローカルルーティングを自動で有効にしました",
+    "routingAutoEnabledRestart": "{{name}} に切り替え、ローカルルーティングを自動で有効にしました。クライアントを再起動してください",
+    "routingAutoDisabled": "現在のアプリのローカルルーティングが自動で無効になりました",
+    "routingAutoDisabledRestart": "現在のアプリのローカルルーティングが自動で無効になりました。クライアントを再起動してください",
+    "routingDisabledButSwitchFailed": "ローカルルーティングは無効になりましたが、切り替えに失敗しました。現在のプロバイダーはローカルルーティングが必要です。手動でルーティングを有効にするか、切り替えを再試行してください"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",

@@ -262,8 +262,8 @@ export function useProviderActions(
           );
         }
 
-        // 若已弹过 proxyRequired 警告则不再弹 success
-        if (!proxyRequiredReason) {
+        // guard 路径由调用方统一弹合并 toast；proxyRequired 警告已弹过也不再重复
+        if (!opts?.fromRoutingGuard && !proxyRequiredReason) {
           let messageKey = "notifications.switchSuccess";
           let defaultMessage = "切换成功！";
           if (activeApp === "codex") {
@@ -288,7 +288,6 @@ export function useProviderActions(
         }
         return true;
       } catch {
-        // 错误提示由 mutation 处理
         return false;
       }
     },

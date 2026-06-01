@@ -298,16 +298,25 @@ export function ProviderList({
         } catch {
           toast.error(
             t("notifications.routingEnableFailed", {
-              defaultValue: "开启本地路由失败，请手动开启路由",
+              name: provider.name,
+              defaultValue:
+                "已切换到 {{name}}，但开启本地路由失败，请在代理面板手动开启",
             }),
           );
           return;
         }
         toast.success(
-          t("notifications.routingAutoEnabled", {
-            defaultValue: "当前应用本地路由已自动开启",
-          }),
-          { closeButton: true },
+          appId === "codex"
+            ? t("notifications.routingAutoEnabledRestart", {
+                name: provider.name,
+                defaultValue:
+                  "已切换到 {{name}} 并自动开启本地路由，请重启客户端以生效",
+              })
+            : t("notifications.routingAutoEnabled", {
+                name: provider.name,
+                defaultValue: "已切换到 {{name}} 并自动开启本地路由",
+              }),
+          { closeButton: true, duration: 5000 },
         );
         await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
         return;
@@ -324,16 +333,31 @@ export function ProviderList({
         );
         return;
       }
-      toast.success(
-        t("notifications.routingAutoDisabled", {
-          defaultValue: "当前应用本地路由已自动关闭",
-        }),
-        { closeButton: true },
-      );
       await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
       // await：保持 in-flight 直到切换完成，否则 finally 会在切换在途时提前清标记 →
       // 按钮重新可点，用户可重复触发。
-      await onSwitch(provider, { fromRoutingGuard: true });
+      const switched = await onSwitch(provider, { fromRoutingGuard: true });
+      if (switched !== true) {
+        // 路由已关但切换失败 — 当前 provider 需要路由却已失去路由，告知用户恢复
+        toast.error(
+          t("notifications.routingDisabledButSwitchFailed", {
+            defaultValue:
+              "本地路由已关闭，但切换失败。当前供应商需要本地路由才能使用，请手动开启路由或重试切换",
+          }),
+          { id: "switch-provider-error", duration: 6000 },
+        );
+        return;
+      }
+      toast.success(
+        appId === "codex"
+          ? t("notifications.routingAutoDisabledRestart", {
+              defaultValue: "当前应用本地路由已自动关闭，请重启客户端以生效",
+            })
+          : t("notifications.routingAutoDisabled", {
+              defaultValue: "当前应用本地路由已自动关闭",
+            }),
+        { closeButton: true, duration: 5000 },
+      );
     } finally {
       setRoutingSwitchInFlight(false);
     }
