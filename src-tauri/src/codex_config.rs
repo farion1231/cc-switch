@@ -13,6 +13,8 @@ use toml_edit::DocumentMut;
 
 pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub const CODEX_KEYCHAIN_SERVICE: &str = "Codex Auth";
 const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
 
 /// Reserved built-in provider IDs from OpenAI Codex's config/model-provider
@@ -50,6 +52,219 @@ pub fn get_codex_model_catalog_path() -> PathBuf {
     get_codex_config_dir().join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
 }
 
+#[cfg(target_os = "macos")]
+fn codex_keychain_account_for_dir(codex_home: &Path) -> String {
+    use sha2::{Digest, Sha256};
+
+    let canonical = codex_home
+        .canonicalize()
+        .unwrap_or_else(|_| codex_home.to_path_buf());
+    let path_str = canonical.to_string_lossy();
+    let mut hasher = Sha256::new();
+    hasher.update(path_str.as_bytes());
+    let digest = hasher.finalize();
+    let hex = format!("{digest:x}");
+    let truncated = hex.get(..16).unwrap_or(&hex);
+    format!("cli|{truncated}")
+}
+
+#[cfg(target_os = "macos")]
+pub fn codex_keychain_account() -> String {
+    codex_keychain_account_for_dir(&get_codex_config_dir())
+}
+
+#[cfg(target_os = "macos")]
+fn is_keychain_not_found(stderr: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(stderr).to_ascii_lowercase();
+    text.contains("could not be found") || text.contains("no such keychain item")
+}
+
+#[cfg(target_os = "macos")]
+pub fn write_codex_keychain_auth(auth: &Value) -> Result<(), AppError> {
+    let account = codex_keychain_account();
+    let serialized =
+        serde_json::to_string(auth).map_err(|e| AppError::JsonSerialize { source: e })?;
+    let output = Command::new("security")
+        .args([
+            "add-generic-password",
+            "-s",
+            CODEX_KEYCHAIN_SERVICE,
+            "-a",
+            &account,
+            "-w",
+            &serialized,
+            "-U",
+        ])
+        .output()
+        .map_err(|e| AppError::IoContext {
+            context: "运行 security 写入 Codex Keychain 失败".to_string(),
+            source: e,
+        })?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(AppError::Message(format!(
+        "写入 Codex Keychain 失败: {stderr}"
+    )))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn write_codex_keychain_auth(_auth: &Value) -> Result<(), AppError> {
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+pub fn read_codex_keychain_auth() -> Result<Option<Value>, AppError> {
+    let account = codex_keychain_account();
+    let output = match Command::new("security")
+        .args([
+            "find-generic-password",
+            "-s",
+            CODEX_KEYCHAIN_SERVICE,
+            "-a",
+            &account,
+            "-w",
+        ])
+        .output()
+    {
+        Ok(output) => output,
+        Err(err) => {
+            log::debug!("failed to run security for Codex Keychain auth read: {err}");
+            return Ok(None);
+        }
+    };
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let json_str = String::from_utf8_lossy(&output.stdout);
+    let json_str = json_str.trim();
+    if json_str.is_empty() {
+        return Ok(None);
+    }
+
+    match serde_json::from_str::<Value>(json_str) {
+        Ok(auth) => Ok(Some(auth)),
+        Err(err) => {
+            log::warn!(
+                "failed to parse Codex Keychain auth JSON, falling back to auth.json: {err}"
+            );
+            Ok(None)
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn read_codex_keychain_auth() -> Result<Option<Value>, AppError> {
+    Ok(None)
+}
+
+#[cfg(target_os = "macos")]
+pub fn delete_codex_keychain_auth() -> Result<(), AppError> {
+    let account = codex_keychain_account();
+    let output = Command::new("security")
+        .args([
+            "delete-generic-password",
+            "-s",
+            CODEX_KEYCHAIN_SERVICE,
+            "-a",
+            &account,
+        ])
+        .output()
+        .map_err(|e| AppError::IoContext {
+            context: "运行 security 删除 Codex Keychain 失败".to_string(),
+            source: e,
+        })?;
+
+    if output.status.success() || is_keychain_not_found(&output.stderr) {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(AppError::Message(format!(
+        "删除 Codex Keychain 失败: {stderr}"
+    )))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn delete_codex_keychain_auth() -> Result<(), AppError> {
+    Ok(())
+}
+
+pub fn clear_codex_live_auth() -> Result<(), AppError> {
+    delete_codex_keychain_auth()?;
+    delete_file(&get_codex_auth_path())
+}
+
+type CodexKeychainSnapshot = Option<Value>;
+
+#[cfg(target_os = "macos")]
+fn read_codex_keychain_snapshot() -> Result<CodexKeychainSnapshot, AppError> {
+    read_codex_keychain_auth()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn read_codex_keychain_snapshot() -> Result<CodexKeychainSnapshot, AppError> {
+    Ok(None)
+}
+
+#[cfg(target_os = "macos")]
+fn restore_codex_keychain_snapshot(snapshot: CodexKeychainSnapshot) {
+    match snapshot {
+        Some(auth) => {
+            let _ = write_codex_keychain_auth(&auth);
+        }
+        None => {
+            let _ = delete_codex_keychain_auth();
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn restore_codex_keychain_snapshot(_snapshot: CodexKeychainSnapshot) {
+    // Non-macOS Codex auth only lives in auth.json.
+}
+
+fn read_file_snapshot(path: &Path) -> Result<Option<Vec<u8>>, AppError> {
+    if path.exists() {
+        Some(fs::read(path).map_err(|e| AppError::io(path, e))).transpose()
+    } else {
+        Ok(None)
+    }
+}
+
+fn restore_file_snapshot(path: &Path, snapshot: Option<Vec<u8>>) {
+    if let Some(bytes) = snapshot {
+        let _ = atomic_write(path, &bytes);
+    } else {
+        let _ = delete_file(path);
+    }
+}
+
+fn restore_codex_live_auth_state(
+    auth_path: &Path,
+    old_auth: Option<Vec<u8>>,
+    old_keychain: CodexKeychainSnapshot,
+) {
+    restore_file_snapshot(auth_path, old_auth);
+    restore_codex_keychain_snapshot(old_keychain);
+}
+
+fn restore_codex_live_state(
+    auth_path: &Path,
+    old_auth: Option<Vec<u8>>,
+    config_path: &Path,
+    old_config: Option<Vec<u8>>,
+    old_keychain: CodexKeychainSnapshot,
+) {
+    restore_codex_live_auth_state(auth_path, old_auth, old_keychain);
+    restore_file_snapshot(config_path, old_config);
+}
+
 /// 获取 Codex 供应商配置文件路径
 #[allow(dead_code)]
 pub fn get_codex_provider_paths(
@@ -80,7 +295,7 @@ pub fn delete_codex_provider_config(
     Ok(())
 }
 
-/// 原子写 Codex 的 `auth.json` 与 `config.toml`，在第二步失败时回滚第一步
+/// 原子写 Codex 的 live auth 与 `config.toml`，失败时尽量回滚文件与 macOS Keychain
 pub fn write_codex_live_atomic(
     auth: &Value,
     config_text_opt: Option<&str>,
@@ -93,16 +308,9 @@ pub fn write_codex_live_atomic(
     }
 
     // 读取旧内容用于回滚
-    let old_auth = if auth_path.exists() {
-        Some(fs::read(&auth_path).map_err(|e| AppError::io(&auth_path, e))?)
-    } else {
-        None
-    };
-    let _old_config = if config_path.exists() {
-        Some(fs::read(&config_path).map_err(|e| AppError::io(&config_path, e))?)
-    } else {
-        None
-    };
+    let old_auth = read_file_snapshot(&auth_path)?;
+    let old_config = read_file_snapshot(&config_path)?;
+    let old_keychain = read_codex_keychain_snapshot()?;
 
     // 准备写入内容
     let cfg_text = match config_text_opt {
@@ -114,17 +322,40 @@ pub fn write_codex_live_atomic(
     }
 
     // 第一步：写 auth.json
-    write_json_file(&auth_path, auth)?;
+    if let Err(err) = write_json_file(&auth_path, auth) {
+        restore_codex_live_state(&auth_path, old_auth, &config_path, old_config, old_keychain);
+        return Err(err);
+    }
 
-    // 第二步：写 config.toml（失败则回滚 auth.json）
-    if let Err(e) = write_text_file(&config_path, &cfg_text) {
-        // 回滚 auth.json
-        if let Some(bytes) = old_auth {
-            let _ = atomic_write(&auth_path, &bytes);
-        } else {
-            let _ = delete_file(&auth_path);
-        }
-        return Err(e);
+    // 第二步：同步 macOS Keychain（失败则回滚 auth.json）
+    if let Err(err) = sync_codex_keychain_auth(auth) {
+        restore_codex_live_state(&auth_path, old_auth, &config_path, old_config, old_keychain);
+        return Err(err);
+    }
+
+    // 第三步：写 config.toml（失败则回滚 auth.json 与 Keychain）
+    if let Err(err) = write_text_file(&config_path, &cfg_text) {
+        restore_codex_live_state(&auth_path, old_auth, &config_path, old_config, old_keychain);
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+/// 原子写 Codex live auth，不修改 `config.toml`
+pub fn write_codex_live_auth_atomic(auth: &Value) -> Result<(), AppError> {
+    let auth_path = get_codex_auth_path();
+    let old_auth = read_file_snapshot(&auth_path)?;
+    let old_keychain = read_codex_keychain_snapshot()?;
+
+    if let Err(err) = write_json_file(&auth_path, auth) {
+        restore_codex_live_auth_state(&auth_path, old_auth, old_keychain);
+        return Err(err);
+    }
+
+    if let Err(err) = sync_codex_keychain_auth(auth) {
+        restore_codex_live_auth_state(&auth_path, old_auth, old_keychain);
+        return Err(err);
     }
 
     Ok(())
@@ -192,6 +423,37 @@ pub fn write_codex_live_config_atomic(config_text_opt: Option<&str>) -> Result<(
     write_text_file(&config_path, &cfg_text)
 }
 
+pub fn clear_codex_live_auth_and_write_config(
+    config_text_opt: Option<&str>,
+) -> Result<(), AppError> {
+    let auth_path = get_codex_auth_path();
+    let config_path = get_codex_config_path();
+    let cfg_text = match config_text_opt {
+        Some(config_text) => config_text.to_string(),
+        None => String::new(),
+    };
+
+    if !cfg_text.trim().is_empty() {
+        toml::from_str::<toml::Table>(&cfg_text).map_err(|e| AppError::toml(&config_path, e))?;
+    }
+
+    let old_auth = read_file_snapshot(&auth_path)?;
+    let old_config = read_file_snapshot(&config_path)?;
+    let old_keychain = read_codex_keychain_snapshot()?;
+
+    if let Err(err) = clear_codex_live_auth() {
+        restore_codex_live_state(&auth_path, old_auth, &config_path, old_config, old_keychain);
+        return Err(err);
+    }
+
+    if let Err(err) = write_text_file(&config_path, &cfg_text) {
+        restore_codex_live_state(&auth_path, old_auth, &config_path, old_config, old_keychain);
+        return Err(err);
+    }
+
+    Ok(())
+}
+
 pub fn extract_codex_auth_api_key(auth: &Value) -> Option<String> {
     auth.get("OPENAI_API_KEY")
         .and_then(|value| value.as_str())
@@ -253,6 +515,14 @@ pub fn codex_auth_has_login_material(auth: &Value) -> bool {
             _ => true,
         }
     })
+}
+
+fn sync_codex_keychain_auth(auth: &Value) -> Result<(), AppError> {
+    if codex_auth_has_login_material(auth) {
+        write_codex_keychain_auth(auth)
+    } else {
+        delete_codex_keychain_auth()
+    }
 }
 
 pub fn codex_auth_has_oauth_login_material(auth: &Value) -> bool {
@@ -1002,8 +1272,11 @@ fn remove_codex_experimental_bearer_token(config_text: &str) -> Result<String, A
 /// is still importable; both files empty is treated as "no live install".
 pub fn read_codex_live_settings() -> Result<Value, AppError> {
     let auth_path = get_codex_auth_path();
-    let auth_present = auth_path.exists();
-    let auth: Value = if auth_present {
+    let keychain_auth = read_codex_keychain_auth()?;
+    let auth_present = keychain_auth.is_some() || auth_path.exists();
+    let auth: Value = if let Some(auth) = keychain_auth {
+        auth
+    } else if auth_path.exists() {
         read_json_file(&auth_path)?
     } else {
         json!({})
@@ -1021,24 +1294,30 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
 
 /// Route a Codex live write between full auth+config or config-only.
 ///
-/// Official providers with usable login material own `auth.json`. Third-party
-/// providers only touch `config.toml` when the compatibility setting is enabled
-/// so the user's ChatGPT login cache survives provider switches.
+/// Official providers own the live Codex login state. A stored empty official
+/// auth means "logged out", so stale `auth.json`/Keychain state must be cleared
+/// before Codex is opened again. Third-party providers only touch `config.toml`
+/// when the compatibility setting is enabled so the user's ChatGPT login cache
+/// survives provider switches.
 pub fn write_codex_live_for_provider(
     category: Option<&str>,
     auth: &Value,
     config_text: Option<&str>,
 ) -> Result<(), AppError> {
-    let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
-        || (category != Some("official")
-            && !crate::settings::preserve_codex_official_auth_on_switch());
-
-    if should_write_auth {
-        write_codex_live_atomic(auth, config_text)
-    } else {
-        let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
-        write_codex_live_config_atomic(Some(&live_config))
+    if category == Some("official") {
+        return if codex_auth_has_login_material(auth) {
+            write_codex_live_atomic(auth, config_text)
+        } else {
+            clear_codex_live_auth_and_write_config(config_text)
+        };
     }
+
+    if !crate::settings::preserve_codex_official_auth_on_switch() {
+        return write_codex_live_atomic(auth, config_text);
+    }
+
+    let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
+    write_codex_live_config_atomic(Some(&live_config))
 }
 
 /// Build the live Codex config for provider switching.

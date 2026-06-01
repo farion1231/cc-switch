@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
 
 use crate::app_config::AppType;
-use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
+use crate::codex_config::get_codex_config_path;
 use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
 use crate::database::Database;
 use crate::error::AppError;
@@ -666,18 +666,28 @@ impl LiveSnapshot {
                 }
             }
             LiveSnapshot::Codex { auth, config } => {
-                let auth_path = get_codex_auth_path();
                 let config_path = get_codex_config_path();
-                if let Some(value) = auth {
-                    write_json_file(&auth_path, value)?;
-                } else if auth_path.exists() {
-                    delete_file(&auth_path)?;
-                }
-
-                if let Some(text) = config {
-                    crate::config::write_text_file(&config_path, text)?;
-                } else if config_path.exists() {
-                    delete_file(&config_path)?;
+                match (auth, config) {
+                    (Some(value), Some(text)) => {
+                        crate::codex_config::write_codex_live_atomic(value, Some(text.as_str()))?;
+                    }
+                    (Some(value), None) => {
+                        crate::codex_config::write_codex_live_auth_atomic(value)?;
+                        if config_path.exists() {
+                            delete_file(&config_path)?;
+                        }
+                    }
+                    (None, Some(text)) => {
+                        crate::codex_config::clear_codex_live_auth_and_write_config(Some(
+                            text.as_str(),
+                        ))?;
+                    }
+                    (None, None) => {
+                        crate::codex_config::clear_codex_live_auth()?;
+                        if config_path.exists() {
+                            delete_file(&config_path)?;
+                        }
+                    }
                 }
             }
             LiveSnapshot::Gemini { env, .. } => {
