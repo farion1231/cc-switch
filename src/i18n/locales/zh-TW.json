@@ -1334,7 +1334,7 @@
     "balanceHint": "自動使用供應商的 API Key 查詢帳號餘額",
     "openCodeGoHint": "使用工作區 ID 與瀏覽器 Cookie 查詢 OpenCode Go 配額。Cookie 儲存後不會再次顯示，留空可保留既有值。",
     "openCodeGoWorkspaceId": "工作區 ID",
-    "openCodeGoWorkspaceIdPlaceholder": "例如：workspace_abc123",
+    "openCodeGoWorkspaceIdPlaceholder": "例如：wrk_abc123",
     "openCodeGoAuthCookie": "Auth Cookie",
     "openCodeGoAuthCookiePlaceholder": "貼上瀏覽器 Cookie",
     "openCodeGoAuthCookieSaved": "已儲存，留空則不變更",

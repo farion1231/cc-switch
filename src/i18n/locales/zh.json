@@ -1388,7 +1388,7 @@
     "balanceHint": "自动使用供应商的 API Key 查询账户余额",
     "openCodeGoHint": "使用工作区 ID 与浏览器 Cookie 查询 OpenCode Go 配额。Cookie 保存后不会再次显示，留空可保留既有值。",
     "openCodeGoWorkspaceId": "工作区 ID",
-    "openCodeGoWorkspaceIdPlaceholder": "例如：workspace_abc123",
+    "openCodeGoWorkspaceIdPlaceholder": "例如：wrk_abc123",
     "openCodeGoAuthCookie": "Auth Cookie",
     "openCodeGoAuthCookiePlaceholder": "粘贴浏览器 Cookie",
     "openCodeGoAuthCookieSaved": "已保存，留空则不变更",
