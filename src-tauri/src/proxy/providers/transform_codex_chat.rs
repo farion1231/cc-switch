@@ -1008,7 +1008,8 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
         return json!({
             "input_tokens": 0,
             "output_tokens": 0,
-            "total_tokens": 0
+            "total_tokens": 0,
+            "output_tokens_details": { "reasoning_tokens": 0 }
         });
     };
 
@@ -1042,7 +1043,13 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
     }
 
     if let Some(details) = usage.get("completion_tokens_details") {
-        result["output_tokens_details"] = details.clone();
+        let mut details = details.clone();
+        if details.get("reasoning_tokens").is_none() {
+            details["reasoning_tokens"] = json!(0);
+        }
+        result["output_tokens_details"] = details;
+    } else {
+        result["output_tokens_details"] = json!({ "reasoning_tokens": 0 });
     }
 
     if let Some(cache_read) = usage.get("cache_read_input_tokens") {
