@@ -476,6 +476,12 @@ pub struct ProviderMeta {
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
+    /// OpenCode Go 工作區 ID（用於用量查詢）
+    #[serde(rename = "opencodeGoWorkspaceId", skip_serializing_if = "Option::is_none")]
+    pub opencode_go_workspace_id: Option<String>,
+    /// OpenCode Go 認證 Cookie（用於用量查詢，僅在 Rust 端使用）
+    #[serde(rename = "opencodeGoAuthCookie", skip_serializing_if = "Option::is_none")]
+    pub opencode_go_auth_cookie: Option<String>,
 }
 
 impl ProviderMeta {
@@ -930,6 +936,41 @@ mod tests {
         let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
 
         assert!(value.get("pricingModelSource").is_none());
+    }
+
+    #[test]
+    fn provider_meta_serializes_opencode_go_credentials() {
+        let meta = ProviderMeta {
+            opencode_go_workspace_id: Some("ws_123".to_string()),
+            opencode_go_auth_cookie: Some("session=secret".to_string()),
+            ..ProviderMeta::default()
+        };
+
+        let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
+
+        assert_eq!(
+            value
+                .get("opencodeGoWorkspaceId")
+                .and_then(|item| item.as_str()),
+            Some("ws_123")
+        );
+        assert_eq!(
+            value
+                .get("opencodeGoAuthCookie")
+                .and_then(|item| item.as_str()),
+            Some("session=secret")
+        );
+        assert!(value.get("opencode_go_workspace_id").is_none());
+        assert!(value.get("opencode_go_auth_cookie").is_none());
+    }
+
+    #[test]
+    fn provider_meta_omits_opencode_go_credentials_when_none() {
+        let meta = ProviderMeta::default();
+        let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
+
+        assert!(value.get("opencodeGoWorkspaceId").is_none());
+        assert!(value.get("opencodeGoAuthCookie").is_none());
     }
 
     #[test]

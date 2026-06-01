@@ -35,7 +35,10 @@ interface UsageScriptModalProps {
   appId: AppId;
   isOpen: boolean;
   onClose: () => void;
-  onSave: (script: UsageScript) => void;
+  onSave: (
+    script: UsageScript,
+    opencodeGoMeta?: { workspaceId?: string; authCookie?: string },
+  ) => void;
 }
 
 // 生成预设模板的函数（支持国际化）
@@ -110,6 +113,9 @@ const generatePresetTemplates = (
 
   // 官方余额查询模板不需要脚本，使用专用 Rust 查询
   [TEMPLATE_TYPES.BALANCE]: "",
+
+  // OpenCode Go 模板不需要脚本，使用专用 Rust 查询
+  [TEMPLATE_TYPES.OPENCODE_GO]: "",
 });
 
 // 模板名称国际化键映射
@@ -120,6 +126,7 @@ const TEMPLATE_NAME_KEYS: Record<string, string> = {
   [TEMPLATE_TYPES.GITHUB_COPILOT]: "usageScript.templateCopilot",
   [TEMPLATE_TYPES.TOKEN_PLAN]: "usageScript.templateTokenPlan",
   [TEMPLATE_TYPES.BALANCE]: "usageScript.templateBalance",
+  [TEMPLATE_TYPES.OPENCODE_GO]: "usageScript.templateOpenCodeGo",
 };
 
 /** 官方余额查询供应商检测 */
@@ -272,6 +279,13 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
   const [testing, setTesting] = useState(false);
 
+  // OpenCode Go credential state
+  const [opencodeGoWorkspaceId, setOpenCodeGoWorkspaceId] = useState(
+    () => provider.meta?.opencodeGoWorkspaceId || "",
+  );
+  const [opencodeGoAuthCookie, setOpenCodeGoAuthCookie] = useState("");
+  const [showOpenCodeGoCookie, setShowOpenCodeGoCookie] = useState(false);
+
   // 🔧 失焦时的验证（严格）- 仅确保有效整数
   const validateTimeout = (value: string): number => {
     const num = Number(value);
@@ -378,11 +392,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   };
 
   const handleSave = () => {
-    // Copilot、Coding Plan、Balance 模板不需要脚本验证
+    // Copilot、Coding Plan、Balance、OpenCode Go 模板不需要脚本验证
     if (
       selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT &&
       selectedTemplate !== TEMPLATE_TYPES.TOKEN_PLAN &&
-      selectedTemplate !== TEMPLATE_TYPES.BALANCE
+      selectedTemplate !== TEMPLATE_TYPES.BALANCE &&
+      selectedTemplate !== TEMPLATE_TYPES.OPENCODE_GO
     ) {
       if (script.enabled && !script.code.trim()) {
         toast.error(t("usageScript.scriptEmpty"));
@@ -403,9 +418,19 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         | "github_copilot"
         | "token_plan"
         | "balance"
+        | "opencode_go"
         | undefined,
     };
-    onSave(scriptWithTemplate);
+
+    const opencodeGoMeta =
+      selectedTemplate === TEMPLATE_TYPES.OPENCODE_GO
+        ? {
+            workspaceId: opencodeGoWorkspaceId.trim(),
+            authCookie: opencodeGoAuthCookie.trim(),
+          }
+        : undefined;
+
+    onSave(scriptWithTemplate, opencodeGoMeta);
     onClose();
   };
 
@@ -471,6 +496,43 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         } else {
           toast.error(
             `${t("usageScript.testFailed")}: ${quota.error || t("endpointTest.noResult")}`,
+            { duration: 5000 },
+          );
+        }
+        return;
+      }
+
+      // OpenCode Go 模板使用 queryProviderUsage；测试前需要先保存 ProviderMeta 凭据
+      if (selectedTemplate === TEMPLATE_TYPES.OPENCODE_GO) {
+        const hasSavedCredentials = Boolean(
+          provider.meta?.opencodeGoWorkspaceId && provider.meta?.opencodeGoAuthCookie,
+        );
+        if (!hasSavedCredentials) {
+          toast.error(t("usageScript.openCodeGoSaveBeforeTest"), {
+            duration: 5000,
+          });
+          return;
+        }
+
+        const result = await usageApi.query(provider.id, appId);
+        if (result.success && result.data && result.data.length > 0) {
+          const summary = result.data
+            .map((plan: UsageData) =>
+              formatUsageDataSummary(plan, {
+                invalid: t("usage.invalid"),
+                remaining: t("usage.remaining"),
+                used: t("usage.used"),
+              }),
+            )
+            .join(", ");
+          toast.success(`${t("usageScript.testSuccess")}${summary}`, {
+            duration: 3000,
+            closeButton: true,
+          });
+          queryClient.setQueryData(["usage", provider.id, appId], result);
+        } else {
+          toast.error(
+            `${t("usageScript.testFailed")}: ${result.error || t("endpointTest.noResult")}`,
             { duration: 5000 },
           );
         }
@@ -646,6 +708,16 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           accessToken: undefined,
           userId: undefined,
         });
+      } else if (presetName === TEMPLATE_TYPES.OPENCODE_GO) {
+        // OpenCode Go 模板不需要脚本，使用 Rust 原生查询
+        setScript({
+          ...script,
+          code: "",
+          apiKey: undefined,
+          baseUrl: undefined,
+          accessToken: undefined,
+          userId: undefined,
+        });
       }
       setSelectedTemplate(presetName);
     }
@@ -654,6 +726,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const shouldShowCredentialsConfig =
     selectedTemplate === TEMPLATE_TYPES.GENERAL ||
     selectedTemplate === TEMPLATE_TYPES.NEW_API;
+
+  const usesNativeTemplate =
+    selectedTemplate === TEMPLATE_TYPES.GITHUB_COPILOT ||
+    selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN ||
+    selectedTemplate === TEMPLATE_TYPES.BALANCE ||
+    selectedTemplate === TEMPLATE_TYPES.OPENCODE_GO;
 
   const footer = (
     <>
@@ -892,6 +970,74 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               </div>
             )}
 
+            {/* OpenCode Go 模式：工作区凭证 */}
+            {selectedTemplate === TEMPLATE_TYPES.OPENCODE_GO && (
+              <div className="space-y-4 border-t border-white/10 pt-3">
+                <p className="text-sm text-muted-foreground">
+                  {t("usageScript.openCodeGoHint")}
+                </p>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="opencode-go-workspace-id">
+                      {t("usageScript.openCodeGoWorkspaceId")}
+                    </Label>
+                    <Input
+                      id="opencode-go-workspace-id"
+                      type="text"
+                      value={opencodeGoWorkspaceId}
+                      onChange={(e) => setOpenCodeGoWorkspaceId(e.target.value)}
+                      placeholder={t(
+                        "usageScript.openCodeGoWorkspaceIdPlaceholder",
+                      )}
+                      autoComplete="off"
+                      className="border-white/10"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="opencode-go-auth-cookie">
+                      {t("usageScript.openCodeGoAuthCookie")}
+                    </Label>
+                    <div className="relative">
+                      <Input
+                        id="opencode-go-auth-cookie"
+                        type={showOpenCodeGoCookie ? "text" : "password"}
+                        value={opencodeGoAuthCookie}
+                        onChange={(e) => setOpenCodeGoAuthCookie(e.target.value)}
+                        placeholder={
+                          provider.meta?.opencodeGoAuthCookie
+                            ? t("usageScript.openCodeGoAuthCookieSaved")
+                            : t("usageScript.openCodeGoAuthCookiePlaceholder")
+                        }
+                        autoComplete="off"
+                        className="border-white/10"
+                      />
+                      {opencodeGoAuthCookie && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setShowOpenCodeGoCookie(!showOpenCodeGoCookie)
+                          }
+                          className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
+                          aria-label={
+                            showOpenCodeGoCookie
+                              ? t("apiKeyInput.hide")
+                              : t("apiKeyInput.show")
+                          }
+                        >
+                          {showOpenCodeGoCookie ? (
+                            <EyeOff size={16} />
+                          ) : (
+                            <Eye size={16} />
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* 凭证配置 */}
             {shouldShowCredentialsConfig && (
               <div className="space-y-4">
@@ -1121,9 +1267,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             </div>
           </div>
 
-          {/* 提取器代码 - Copilot 模板不需要 */}
-          {selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT &&
-            selectedTemplate !== TEMPLATE_TYPES.TOKEN_PLAN && (
+          {/* 提取器代码 - 原生模板不需要 */}
+          {!usesNativeTemplate && (
               <div className="space-y-4 glass rounded-xl border border-white/10 p-6">
                 <div className="flex items-center justify-between">
                   <Label className="text-base font-medium">
@@ -1146,9 +1291,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               </div>
             )}
 
-          {/* 帮助信息 - Copilot 模板不需要 */}
-          {selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT &&
-            selectedTemplate !== TEMPLATE_TYPES.TOKEN_PLAN && (
+          {/* 帮助信息 - 原生模板不需要 */}
+          {!usesNativeTemplate && (
               <div className="glass rounded-xl border border-white/10 p-6 text-sm text-foreground/90">
                 <h4 className="font-medium mb-2">
                   {t("usageScript.scriptHelp")}

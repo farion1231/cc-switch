@@ -15,6 +15,7 @@ use std::str::FromStr;
 const TEMPLATE_TYPE_GITHUB_COPILOT: &str = "github_copilot";
 const TEMPLATE_TYPE_TOKEN_PLAN: &str = "token_plan";
 const TEMPLATE_TYPE_BALANCE: &str = "balance";
+const TEMPLATE_TYPE_OPENCODE_GO: &str = "opencode_go";
 const COPILOT_UNIT_PREMIUM: &str = "requests";
 
 /// 获取所有供应商
@@ -525,6 +526,19 @@ async fn query_provider_usage_inner(
         return crate::services::balance::get_balance(&base_url, &api_key)
             .await
             .map_err(|e| format!("Failed to query balance: {e}"));
+    }
+
+    // ── OpenCode Go 配额路径 ──
+    if template_type == TEMPLATE_TYPE_OPENCODE_GO {
+        let meta = provider.and_then(|p| p.meta.as_ref());
+        let workspace_id = meta
+            .and_then(|m| m.opencode_go_workspace_id.as_deref())
+            .unwrap_or("");
+        let auth_cookie = meta
+            .and_then(|m| m.opencode_go_auth_cookie.as_deref())
+            .unwrap_or("");
+
+        return crate::opencode_go_quota::get_quota(workspace_id, auth_cookie).await;
     }
 
     // ── 通用 JS 脚本路径 ──

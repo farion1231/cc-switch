@@ -1543,9 +1543,9 @@ function App() {
           appId={activeApp}
           isOpen={Boolean(usageProvider)}
           onClose={() => setUsageProvider(null)}
-          onSave={(script) => {
+          onSave={(script, opencodeGoMeta) => {
             if (usageProvider) {
-              void saveUsageScript(usageProvider, script);
+              void saveUsageScript(usageProvider, script, opencodeGoMeta);
             }
           }}
         />

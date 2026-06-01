@@ -223,6 +223,10 @@ export interface ProviderMeta {
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
   githubAccountId?: string;
+  // OpenCode Go workspace ID (for quota scraping)
+  opencodeGoWorkspaceId?: string;
+  // OpenCode Go auth cookie (for quota scraping, only used in Rust backend)
+  opencodeGoAuthCookie?: string;
 }
 
 // Skill 同步方式

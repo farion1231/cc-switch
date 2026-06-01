@@ -42,6 +42,8 @@ use live::{
 };
 use usage::validate_usage_script;
 
+const OPENCODE_GO_AUTH_COOKIE_REDACTED: &str = "__cc_switch_saved_opencode_go_auth_cookie__";
+
 /// Provider business logic service
 pub struct ProviderService;
 
@@ -282,6 +284,78 @@ mod tests {
             "omo-slim" => crate::services::omo::SLIM.preferred_filename,
             other => panic!("unexpected OMO category in test: {other}"),
         })
+    }
+
+    #[test]
+    fn list_redacts_opencode_go_auth_cookie() -> Result<(), AppError> {
+        let db = Arc::new(Database::memory()?);
+        let state = AppState::new(db.clone());
+        let mut provider = opencode_provider("opencode-go");
+        provider.meta = Some(ProviderMeta {
+            opencode_go_workspace_id: Some("workspace_123".to_string()),
+            opencode_go_auth_cookie: Some("session=secret".to_string()),
+            ..ProviderMeta::default()
+        });
+        db.save_provider(AppType::OpenCode.as_str(), &provider)?;
+
+        let providers = ProviderService::list(&state, AppType::OpenCode)?;
+        let listed = providers.get("opencode-go").expect("listed provider");
+        assert_eq!(
+            listed
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.opencode_go_auth_cookie.as_deref()),
+            Some(OPENCODE_GO_AUTH_COOKIE_REDACTED)
+        );
+
+        let stored = db
+            .get_provider_by_id("opencode-go", AppType::OpenCode.as_str())?
+            .expect("stored provider");
+        assert_eq!(
+            stored
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.opencode_go_auth_cookie.as_deref()),
+            Some("session=secret")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn update_preserves_redacted_opencode_go_auth_cookie() -> Result<(), AppError> {
+        let db = Arc::new(Database::memory()?);
+        let state = AppState::new(db.clone());
+        let mut provider = opencode_provider("opencode-go");
+        provider.meta = Some(ProviderMeta {
+            live_config_managed: Some(false),
+            opencode_go_workspace_id: Some("workspace_123".to_string()),
+            opencode_go_auth_cookie: Some("session=secret".to_string()),
+            ..ProviderMeta::default()
+        });
+        db.save_provider(AppType::OpenCode.as_str(), &provider)?;
+
+        let mut update = provider.clone();
+        update.name = "Updated OpenCode Go".to_string();
+        update
+            .meta
+            .as_mut()
+            .expect("meta")
+            .opencode_go_auth_cookie = Some(OPENCODE_GO_AUTH_COOKIE_REDACTED.to_string());
+
+        ProviderService::update(&state, AppType::OpenCode, None, update)?;
+
+        let stored = db
+            .get_provider_by_id("opencode-go", AppType::OpenCode.as_str())?
+            .expect("stored provider");
+        assert_eq!(stored.name, "Updated OpenCode Go");
+        assert_eq!(
+            stored
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.opencode_go_auth_cookie.as_deref()),
+            Some("session=secret")
+        );
+        Ok(())
     }
 
     #[test]
@@ -1153,12 +1227,42 @@ impl ProviderService {
             .live_config_managed = Some(managed);
     }
 
+    fn redact_opencode_go_auth_cookie(provider: &mut Provider) {
+        if let Some(meta) = provider.meta.as_mut() {
+            if meta.opencode_go_auth_cookie.as_deref().is_some_and(|cookie| !cookie.is_empty()) {
+                meta.opencode_go_auth_cookie = Some(OPENCODE_GO_AUTH_COOKIE_REDACTED.to_string());
+            }
+        }
+    }
+
+    fn preserve_redacted_opencode_go_auth_cookie(
+        provider: &mut Provider,
+        existing_provider: Option<&Provider>,
+    ) {
+        let Some(meta) = provider.meta.as_mut() else {
+            return;
+        };
+
+        let incoming_cookie = meta.opencode_go_auth_cookie.as_deref().unwrap_or("");
+        if !incoming_cookie.is_empty() && incoming_cookie != OPENCODE_GO_AUTH_COOKIE_REDACTED {
+            return;
+        }
+
+        meta.opencode_go_auth_cookie = existing_provider
+            .and_then(|existing| existing.meta.as_ref())
+            .and_then(|existing_meta| existing_meta.opencode_go_auth_cookie.clone());
+    }
+
     /// List all providers for an app type
     pub fn list(
         state: &AppState,
         app_type: AppType,
     ) -> Result<IndexMap<String, Provider>, AppError> {
-        state.db.get_all_providers(app_type.as_str())
+        let mut providers = state.db.get_all_providers(app_type.as_str())?;
+        for provider in providers.values_mut() {
+            Self::redact_opencode_go_auth_cookie(provider);
+        }
+        Ok(providers)
     }
 
     /// Get current provider ID
@@ -1241,6 +1345,7 @@ impl ProviderService {
             .get_provider_by_id(&original_id, app_type.as_str())?;
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
+        Self::preserve_redacted_opencode_go_auth_cookie(&mut provider, existing_provider.as_ref());
         Self::validate_provider_settings(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
 
