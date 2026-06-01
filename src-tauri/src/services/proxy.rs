@@ -58,7 +58,7 @@ pub struct ProxyService {
     /// AppHandle，用于传递给 ProxyServer 以支持故障转移时的 UI 更新
     app_handle: Arc<RwLock<Option<tauri::AppHandle>>>,
     switch_locks: SwitchLockManager,
-    orchestration: RwLock<Option<Arc<crate::orchestration::OrchestrationEngine>>>,
+    orchestration: Arc<RwLock<Option<Arc<crate::orchestration::OrchestrationEngine>>>>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -73,12 +73,12 @@ impl ProxyService {
             server: Arc::new(RwLock::new(None)),
             app_handle: Arc::new(RwLock::new(None)),
             switch_locks: SwitchLockManager::new(),
-            orchestration: RwLock::new(None),
+            orchestration: Arc::new(RwLock::new(None)),
         }
     }
 
-    pub async fn set_orchestration(&self, engine: Arc<crate::orchestration::OrchestrationEngine>) {
-        *self.orchestration.write().await = Some(engine);
+    pub fn set_orchestration(&self, engine: Arc<crate::orchestration::OrchestrationEngine>) {
+        *self.orchestration.blocking_write() = Some(engine);
     }
 
     async fn get_orchestration_engine(&self) -> Option<Arc<crate::orchestration::OrchestrationEngine>> {

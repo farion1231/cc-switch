@@ -290,7 +290,7 @@ fn check_bracket_balance(text: &str) -> f64 {
     if brace != 0 {
         penalty += 0.34;
     }
-    (1.0 - penalty).max(0.0)
+    (1.0_f64 - penalty).max(0.0_f64)
 }
 
 /// Rust-specific: check that every `fn` declaration has a body `{ ... }`.
@@ -308,7 +308,7 @@ fn check_rust_fn_body(code: &str) -> f64 {
             let mut found_body = false;
             let mut j = i;
             let mut buffer = String::new();
-            while j < lines.len().min(&(i + 5)) {
+            while j < lines.len().min(i + 5) {
                 buffer.push_str(lines[j]);
                 if buffer.contains('{') {
                     found_body = true;

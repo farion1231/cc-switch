@@ -192,7 +192,7 @@ impl WorkflowAssembler {
                         inspector_model: inspector,
                         probability: 0.1,
                     }),
-                    human_gate,
+                        human_gate: human_gate.clone(),
                 },
                 estimated_cost,
                 estimated_latency_ms: estimated_latency,

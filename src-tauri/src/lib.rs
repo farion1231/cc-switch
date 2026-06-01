@@ -445,7 +445,7 @@ pub fn run() {
                 let engine = Arc::new(OrchestrationEngine::with_executor(strategies_path, executor));
 
                 // Share the same Arc with ProxyService
-                app_state.proxy_service.set_orchestration(engine.clone()).await;
+                app_state.proxy_service.set_orchestration(engine.clone());
 
                 app.manage(OrchestrationState(engine));
             }
