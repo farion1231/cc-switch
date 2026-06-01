@@ -301,11 +301,11 @@ mod tests {
             "Should have 7 lines (request=2 + 5 convenience)"
         );
 
-        let types: Vec<&str> = lines
+        let types: Vec<String> = lines
             .iter()
             .map(|l| {
                 let v: serde_json::Value = serde_json::from_str(l).unwrap();
-                v["event_type"].as_str().unwrap()
+                v["event_type"].as_str().unwrap().to_string()
             })
             .collect();
 

@@ -12,6 +12,7 @@ use super::{
     usage::parser::TokenUsage,
     ProxyError,
 };
+use crate::orchestration::OrchestrationEngine;
 use crate::database::PRICING_SOURCE_REQUEST;
 use axum::http::{header::HeaderMap, HeaderName};
 use axum::response::{IntoResponse, Response};
@@ -945,6 +946,9 @@ mod tests {
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             app_handle: None,
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
+            orchestration: Arc::new(OrchestrationEngine::new(
+                std::path::PathBuf::from("nonexistent"),
+            )),
         }
     }
 
