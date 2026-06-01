@@ -93,6 +93,8 @@ windows-sys = { version = "0.61", features = ["Win32_Globalization"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"
 objc2-app-kit = { version = "0.2", features = ["NSColor"] }
+security-framework = "3.7"
+security-framework-sys = "2.17"
 
 # Optimize release binary size to help reduce AppImage footprint
 [profile.release]

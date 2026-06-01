@@ -74,41 +74,14 @@ pub fn codex_keychain_account() -> String {
 }
 
 #[cfg(target_os = "macos")]
-fn is_keychain_not_found(stderr: &[u8]) -> bool {
-    let text = String::from_utf8_lossy(stderr).to_ascii_lowercase();
-    text.contains("could not be found") || text.contains("no such keychain item")
-}
-
-#[cfg(target_os = "macos")]
 pub fn write_codex_keychain_auth(auth: &Value) -> Result<(), AppError> {
+    use security_framework::passwords::set_generic_password;
+
     let account = codex_keychain_account();
     let serialized =
         serde_json::to_string(auth).map_err(|e| AppError::JsonSerialize { source: e })?;
-    let output = Command::new("security")
-        .args([
-            "add-generic-password",
-            "-s",
-            CODEX_KEYCHAIN_SERVICE,
-            "-a",
-            &account,
-            "-w",
-            &serialized,
-            "-U",
-        ])
-        .output()
-        .map_err(|e| AppError::IoContext {
-            context: "运行 security 写入 Codex Keychain 失败".to_string(),
-            source: e,
-        })?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    Err(AppError::Message(format!(
-        "写入 Codex Keychain 失败: {stderr}"
-    )))
+    set_generic_password(CODEX_KEYCHAIN_SERVICE, &account, serialized.as_bytes())
+        .map_err(|e| AppError::Message(format!("写入 Codex Keychain 失败: {e}")))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -118,30 +91,22 @@ pub fn write_codex_keychain_auth(_auth: &Value) -> Result<(), AppError> {
 
 #[cfg(target_os = "macos")]
 pub fn read_codex_keychain_auth() -> Result<Option<Value>, AppError> {
+    use security_framework::passwords::get_generic_password;
+    use security_framework_sys::base::errSecItemNotFound;
+
     let account = codex_keychain_account();
-    let output = match Command::new("security")
-        .args([
-            "find-generic-password",
-            "-s",
-            CODEX_KEYCHAIN_SERVICE,
-            "-a",
-            &account,
-            "-w",
-        ])
-        .output()
-    {
-        Ok(output) => output,
+    let password = match get_generic_password(CODEX_KEYCHAIN_SERVICE, &account) {
+        Ok(password) => password,
         Err(err) => {
-            log::debug!("failed to run security for Codex Keychain auth read: {err}");
+            if err.code() == errSecItemNotFound {
+                return Ok(None);
+            }
+            log::debug!("failed to read Codex Keychain auth: {err}");
             return Ok(None);
         }
     };
 
-    if !output.status.success() {
-        return Ok(None);
-    }
-
-    let json_str = String::from_utf8_lossy(&output.stdout);
+    let json_str = String::from_utf8_lossy(&password);
     let json_str = json_str.trim();
     if json_str.is_empty() {
         return Ok(None);
@@ -165,29 +130,17 @@ pub fn read_codex_keychain_auth() -> Result<Option<Value>, AppError> {
 
 #[cfg(target_os = "macos")]
 pub fn delete_codex_keychain_auth() -> Result<(), AppError> {
+    use security_framework::passwords::delete_generic_password;
+    use security_framework_sys::base::errSecItemNotFound;
+
     let account = codex_keychain_account();
-    let output = Command::new("security")
-        .args([
-            "delete-generic-password",
-            "-s",
-            CODEX_KEYCHAIN_SERVICE,
-            "-a",
-            &account,
-        ])
-        .output()
-        .map_err(|e| AppError::IoContext {
-            context: "运行 security 删除 Codex Keychain 失败".to_string(),
-            source: e,
-        })?;
-
-    if output.status.success() || is_keychain_not_found(&output.stderr) {
-        return Ok(());
+    match delete_generic_password(CODEX_KEYCHAIN_SERVICE, &account) {
+        Ok(()) => Ok(()),
+        Err(err) if err.code() == errSecItemNotFound => Ok(()),
+        Err(err) => Err(AppError::Message(format!(
+            "删除 Codex Keychain 失败: {err}"
+        ))),
     }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    Err(AppError::Message(format!(
-        "删除 Codex Keychain 失败: {stderr}"
-    )))
 }
 
 #[cfg(not(target_os = "macos"))]
