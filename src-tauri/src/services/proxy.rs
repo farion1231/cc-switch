@@ -1873,6 +1873,27 @@ impl ProxyService {
             }
         }
 
+        if has_backup && !live_taken_over && matches!(app_type_enum, AppType::Codex) {
+            let effective_settings = build_effective_settings_with_common_config(
+                self.db.as_ref(),
+                &AppType::Codex,
+                &provider,
+            )
+            .map_err(|e| format!("构建 Codex 有效配置失败: {e}"))?;
+            let auth = effective_settings
+                .get("auth")
+                .ok_or_else(|| "Codex 供应商缺少 auth 配置".to_string())?;
+            let config_str = effective_settings.get("config").and_then(|v| v.as_str());
+
+            crate::codex_config::write_codex_provider_live_with_catalog(
+                &effective_settings,
+                provider.category.as_deref(),
+                auth,
+                config_str,
+            )
+            .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
+        }
+
         if let Some(server) = self.server.read().await.as_ref() {
             server
                 .set_active_target(app_type_enum.as_str(), &provider.id, &provider.name)
@@ -2376,6 +2397,25 @@ mod tests {
 
     fn assert_env_str(env: &Map<String, Value>, key: &str, expected: Option<&str>) {
         assert_eq!(env.get(key).and_then(|value| value.as_str()), expected);
+    }
+
+    fn seed_codex_model_template() {
+        let codex_dir = crate::codex_config::get_codex_config_dir();
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_string(&serde_json::json!({
+                "models": [{
+                    "slug": "gpt-5.5",
+                    "display_name": "GPT-5.5",
+                    "model_messages": { "instructions_template": "t" },
+                    "additional_speed_tiers": [],
+                    "context_window": 128000
+                }]
+            }))
+            .expect("serialize models_cache"),
+        )
+        .expect("write models_cache.json");
     }
 
     #[test]
@@ -4175,6 +4215,260 @@ command = "latest-command"
                 .and_then(|v| v.as_str()),
             Some("latest-command"),
             "new MCP entries should remain in the restore backup"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn provider_switch_with_restored_codex_backup_refreshes_catalog_and_common_config() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        seed_codex_model_template();
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = crate::store::AppState::new(db.clone());
+
+        db.set_config_snippet(
+            "codex",
+            Some(
+                r#"[mcp_servers.shared]
+command = "shared-command"
+"#
+                .to_string(),
+            ),
+        )
+        .expect("set common config snippet");
+
+        let mut proxy_config = ProxyConfig::default();
+        proxy_config.listen_port = 0;
+        db.update_proxy_config(proxy_config)
+            .await
+            .expect("set test proxy config");
+        state
+            .proxy_service
+            .start()
+            .await
+            .expect("start proxy server");
+
+        let config_a = r#"model_provider = "provider-a"
+model = "model-a"
+
+[model_providers.provider-a]
+name = "ProviderA"
+base_url = "https://provider-a.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+        let config_b = r#"model_provider = "provider-b"
+model = "model-b"
+
+[model_providers.provider-b]
+name = "ProviderB"
+base_url = "https://provider-b.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "ProviderA".to_string(),
+            serde_json::json!({
+                "auth": { "OPENAI_API_KEY": "key-a" },
+                "config": config_a,
+                "modelCatalog": { "models": [{ "model": "model-a" }] }
+            }),
+            None,
+        );
+        let mut provider_b = Provider::with_id(
+            "b".to_string(),
+            "ProviderB".to_string(),
+            serde_json::json!({
+                "auth": { "OPENAI_API_KEY": "key-b" },
+                "config": config_b,
+                "modelCatalog": { "models": [{ "model": "model-b" }] }
+            }),
+            None,
+        );
+        provider_b.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+
+        db.save_provider("codex", &provider_a)
+            .expect("save provider a");
+        db.save_provider("codex", &provider_b)
+            .expect("save provider b");
+        db.set_current_provider("codex", "a")
+            .expect("set current provider a");
+        crate::settings::set_current_provider(&AppType::Codex, Some("a"))
+            .expect("set local current provider a");
+
+        state
+            .proxy_service
+            .write_codex_live_for_provider(&provider_a.settings_config, Some(&provider_a))
+            .expect("seed live codex config");
+        assert!(
+            !state
+                .proxy_service
+                .detect_takeover_in_live_config_for_app(&AppType::Codex),
+            "seeded live config should not be proxy-taken-over"
+        );
+
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&provider_a.settings_config).expect("serialize backup"),
+        )
+        .await
+        .expect("seed restored backup");
+
+        crate::services::provider::ProviderService::switch(&state, AppType::Codex, "b")
+            .expect("provider switch to provider b");
+        state.proxy_service.stop().await.expect("stop proxy server");
+
+        let catalog_path = crate::codex_config::get_codex_model_catalog_path();
+        assert!(
+            catalog_path.exists(),
+            "cc-switch-model-catalog.json must be created on provider switch"
+        );
+        let catalog_text = std::fs::read_to_string(&catalog_path).expect("read catalog json");
+        let catalog: serde_json::Value =
+            serde_json::from_str(&catalog_text).expect("parse catalog json");
+        let slugs: Vec<&str> = catalog
+            .get("models")
+            .and_then(|m| m.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|e| e.get("slug").and_then(|s| s.as_str()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            slugs.contains(&"model-b"),
+            "catalog must contain provider B's model after switch; got: {slugs:?}"
+        );
+        assert!(
+            !slugs.contains(&"model-a"),
+            "catalog must not contain stale provider A model after switch; got: {slugs:?}"
+        );
+
+        let config_path = crate::codex_config::get_codex_config_path();
+        let config_text = std::fs::read_to_string(&config_path).expect("read config.toml");
+        assert!(
+            config_text.contains("model_catalog_json"),
+            "config.toml must reference model_catalog_json after switch"
+        );
+        assert!(
+            config_text.contains("[mcp_servers.shared]"),
+            "config.toml must keep common config after switch"
+        );
+        assert!(
+            config_text.contains(r#"command = "shared-command""#),
+            "config.toml must include common config content after switch"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn provider_switch_with_restored_codex_backup_propagates_catalog_write_errors() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        seed_codex_model_template();
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = crate::store::AppState::new(db.clone());
+
+        let mut proxy_config = ProxyConfig::default();
+        proxy_config.listen_port = 0;
+        db.update_proxy_config(proxy_config)
+            .await
+            .expect("set test proxy config");
+        state
+            .proxy_service
+            .start()
+            .await
+            .expect("start proxy server");
+
+        let config_a = r#"model_provider = "provider-a"
+model = "model-a"
+
+[model_providers.provider-a]
+name = "ProviderA"
+base_url = "https://provider-a.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+        let config_b = r#"model_provider = "provider-b"
+model = "model-b"
+
+[model_providers.provider-b]
+name = "ProviderB"
+base_url = "https://provider-b.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "ProviderA".to_string(),
+            serde_json::json!({
+                "auth": { "OPENAI_API_KEY": "key-a" },
+                "config": config_a,
+                "modelCatalog": { "models": [{ "model": "model-a" }] }
+            }),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "b".to_string(),
+            "ProviderB".to_string(),
+            serde_json::json!({
+                "auth": { "OPENAI_API_KEY": "key-b" },
+                "config": config_b,
+                "modelCatalog": { "models": [{ "model": "model-b" }] }
+            }),
+            None,
+        );
+
+        db.save_provider("codex", &provider_a)
+            .expect("save provider a");
+        db.save_provider("codex", &provider_b)
+            .expect("save provider b");
+        db.set_current_provider("codex", "a")
+            .expect("set current provider a");
+        crate::settings::set_current_provider(&AppType::Codex, Some("a"))
+            .expect("set local current provider a");
+
+        state
+            .proxy_service
+            .write_codex_live_for_provider(&provider_a.settings_config, Some(&provider_a))
+            .expect("seed live codex config");
+        assert!(
+            !state
+                .proxy_service
+                .detect_takeover_in_live_config_for_app(&AppType::Codex),
+            "seeded live config should not be proxy-taken-over"
+        );
+
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&provider_a.settings_config).expect("serialize backup"),
+        )
+        .await
+        .expect("seed restored backup");
+
+        let catalog_path = crate::codex_config::get_codex_model_catalog_path();
+        if catalog_path.exists() {
+            std::fs::remove_file(&catalog_path).expect("remove catalog file");
+        }
+        std::fs::create_dir_all(&catalog_path).expect("turn catalog path into directory");
+
+        let err = crate::services::provider::ProviderService::switch(&state, AppType::Codex, "b")
+            .expect_err("provider switch should fail when catalog cannot be written");
+        state.proxy_service.stop().await.expect("stop proxy server");
+
+        let message = err.to_string();
+        assert!(
+            message.contains("写入 Codex 配置失败") || message.contains("原子替换失败"),
+            "switch should surface catalog write failure, got: {message}"
         );
     }
 }

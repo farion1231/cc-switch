@@ -99,6 +99,10 @@ export const providersApi = {
     return await invoke("import_claude_desktop_providers_from_claude");
   },
 
+  async ensureClaudeDesktopOfficialProvider(): Promise<boolean> {
+    return await invoke("ensure_claude_desktop_official_provider");
+  },
+
   async getClaudeDesktopStatus(): Promise<ClaudeDesktopStatus> {
     return await invoke("get_claude_desktop_status");
   },
