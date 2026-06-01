@@ -11,7 +11,8 @@ use cc_switch_lib::{
 mod support;
 use std::collections::HashMap;
 use support::{
-    create_test_state, create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex,
+    create_test_state, create_test_state_with_config, enable_codex_official_auth_preservation,
+    ensure_test_home, reset_test_fs, test_mutex,
 };
 
 fn settings_path(home: &Path) -> PathBuf {
@@ -238,6 +239,7 @@ fn codex_startup_import_skips_when_only_official_seed_exists() {
 fn switch_provider_updates_codex_live_and_state() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
+    enable_codex_official_auth_preservation();
     let _home = ensure_test_home();
 
     let legacy_auth = json!({"OPENAI_API_KEY": "legacy-key"});

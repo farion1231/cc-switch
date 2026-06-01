@@ -225,6 +225,7 @@
     "providerSaved": "供应商配置已保存",
     "providerDeleted": "供应商删除成功",
     "switchSuccess": "切换成功！",
+    "codexRestartRequired": "切换成功，请重启客户端以生效",
     "claudeDesktopRestartRequired": "切换成功，重启 Claude Desktop 后生效",
     "claudeDesktopProxyRestartRequired": "切换成功，请保持 CC Switch 运行，并重启 Claude Desktop 后生效",
     "addToConfigSuccess": "已添加到配置",
@@ -561,6 +562,9 @@
     "enableClaudePluginIntegrationDescription": "开启后 Vscode Claude Code 插件的供应商将随本软件切换",
     "skipClaudeOnboarding": "跳过 Claude Code 初次安装确认",
     "skipClaudeOnboardingDescription": "开启后跳过 Claude Code 初次安装确认",
+    "codexAuth": "Codex 应用增强",
+    "preserveCodexOfficialAuthOnSwitch": "切换第三方时保留官方登录",
+    "preserveCodexOfficialAuthOnSwitchDescription": "开启后可以在使用第三方 API 的时候使用 Codex 应用的官方插件、手机远程操作等功能",
     "appVisibility": {
       "title": "主页面显示",
       "description": "选择在主页面显示的应用",
