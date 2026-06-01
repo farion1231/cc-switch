@@ -523,6 +523,31 @@ mod tests {
         fs::write(path, format!("{first_line}{rest}")).expect("rewrite rollout");
     }
 
+    fn rewrite_codex_rollout_provider(home: &Path, id: &str, provider: &str) {
+        let conn = rusqlite::Connection::open(home.join(".codex").join("state_5.sqlite"))
+            .expect("open codex state db");
+        let rollout_path: String = conn
+            .query_row(
+                "SELECT rollout_path FROM threads WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .expect("query rollout path");
+
+        let path = PathBuf::from(rollout_path);
+        let text = fs::read_to_string(&path).expect("read rollout");
+        let Some(first_newline) = text.find('\n') else {
+            panic!("rollout should contain a first line");
+        };
+        let first_line = &text[..first_newline];
+        let rest = &text[first_newline..];
+        let mut value: serde_json::Value =
+            serde_json::from_str(first_line).expect("parse rollout metadata");
+        value["payload"]["model_provider"] = serde_json::Value::String(provider.to_string());
+        let first_line = serde_json::to_string(&value).expect("serialize rollout metadata");
+        fs::write(path, format!("{first_line}{rest}")).expect("rewrite rollout");
+    }
+
     #[test]
     fn codex_desktop_provider_key_ignores_dangling_ccswitch_provider() {
         let provider = codex_provider(
@@ -803,6 +828,58 @@ mod tests {
                     ("source-thread".to_string(), Some("custom".to_string())),
                 ],
                 "rollout metadata should leave OpenAI sessions under openai"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_codex_to_custom_preserves_openai_rollout_for_null_db_rows() {
+        with_test_home(|state, home| {
+            let source_provider = codex_provider(
+                "codex-rightcode",
+                "RightCode",
+                "model_provider = \"rightcode\"\nmodel = \"gpt-5.4\"\n",
+            );
+            let target_provider = codex_provider(
+                "codex-api",
+                "Codex API",
+                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n[model_providers.OpenAI]\nname = \"OpenAI\"\nbase_url = \"http://127.0.0.1:12345/v1\"\n",
+            );
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &source_provider)
+                .expect("save source provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &target_provider)
+                .expect("save target provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), "codex-rightcode")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some("codex-rightcode"))
+                .expect("set local current provider");
+            seed_codex_thread_rows_nullable(
+                home,
+                &[
+                    ("official-null-thread", None),
+                    ("source-thread", Some("rightcode")),
+                ],
+            );
+            rewrite_codex_rollout_provider(home, "official-null-thread", "openai");
+
+            ProviderService::switch(state, AppType::Codex, "codex-api")
+                .expect("switch to custom codex provider");
+
+            assert_eq!(
+                codex_rollout_providers(home),
+                vec![
+                    ("official-null-thread".to_string(), Some("openai".to_string())),
+                    ("source-thread".to_string(), Some("custom".to_string())),
+                ],
+                "null DB rows with OpenAI rollout metadata should not be relabeled during a third-party to custom switch"
             );
         });
     }
@@ -4785,7 +4862,7 @@ impl ProviderService {
             || (target_provider == "openai"
                 && is_cc_switch_codex_model_provider_id(current_provider))
             || (is_cc_switch_codex_model_provider_id(target_provider)
-                && current_provider.eq_ignore_ascii_case("openai"))
+                && is_cc_switch_codex_model_provider_id(current_provider))
     }
 
     /// Returns true when a provider value in DB or rollout is a known repair candidate:
@@ -4889,11 +4966,14 @@ impl ProviderService {
         } else if current_provider == Some(target_provider) {
             true
         } else {
-            source_provider.is_some_and(|source| {
-                current_provider.is_some_and(|current| {
+            match (source_provider, current_provider) {
+                (Some(source), Some(current)) => {
                     !Self::codex_rollout_provider_matches_source(current, source, target_provider)
-                })
-            })
+                }
+                (Some(_), None) => false,
+                (None, Some(_)) => true,
+                (None, None) => false,
+            }
         };
         if should_skip {
             return Ok(false);
@@ -4918,6 +4998,7 @@ impl ProviderService {
     fn sync_codex_desktop_threads(
         provider: &Provider,
         source_provider: Option<&str>,
+        run_audit: bool,
     ) -> Result<usize, AppError> {
         let target_provider = Self::codex_desktop_provider_key(provider)?;
         let db_path = crate::codex_config::get_codex_config_dir().join("state_5.sqlite");
@@ -4965,7 +5046,7 @@ impl ProviderService {
 
         // Collect rollout paths for DB rows already at target provider (audit pass).
         // These rows had DB updated in a previous partial sync but rollout may be stale.
-        let audit_rollout_paths = if Self::codex_threads_have_rollout_path(&conn)? {
+        let audit_rollout_paths = if run_audit && Self::codex_threads_have_rollout_path(&conn)? {
             let mut stmt =
                 conn.prepare("SELECT rollout_path FROM threads WHERE model_provider = ?1")?;
             let rows = stmt.query_map(rusqlite::params![target_provider.as_str()], |row| {
@@ -5040,11 +5121,11 @@ impl ProviderService {
         source_provider: Option<&str>,
         result: &mut SwitchResult,
     ) {
-        match Self::sync_codex_desktop_threads(provider, source_provider) {
+        match Self::sync_codex_desktop_threads(provider, source_provider, true) {
             Ok(mut updated) => {
                 if source_provider.is_some() {
                     std::thread::sleep(std::time::Duration::from_millis(100));
-                    match Self::sync_codex_desktop_threads(provider, source_provider) {
+                    match Self::sync_codex_desktop_threads(provider, source_provider, false) {
                         Ok(settled) => updated += settled,
                         Err(err) => log::warn!(
                             "Codex desktop thread model_provider settle sync failed: {err}"
