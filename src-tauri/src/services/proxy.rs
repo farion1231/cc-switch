@@ -2241,6 +2241,7 @@ impl ProxyService {
         self.write_codex_live_verbatim(config)
     }
 
+    #[cfg(test)]
     fn write_codex_live_for_provider(
         &self,
         config: &Value,
