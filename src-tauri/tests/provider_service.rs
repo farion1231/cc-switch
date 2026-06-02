@@ -872,6 +872,71 @@ fn provider_service_switch_codex_empty_official_profile_clears_live_auth() {
 }
 
 #[test]
+fn provider_service_add_codex_empty_official_profile_does_not_backfill_stale_live_auth() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let stale_live_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": {
+            "access_token": "stale-existing-account-token",
+            "account_id": "acct-existing"
+        }
+    });
+    write_codex_live_atomic(&stale_live_auth, Some(""))
+        .expect("seed existing Codex account live auth");
+
+    let state = create_test_state().expect("create test state");
+    let mut new_official = Provider::with_id(
+        "openai-official-empty".to_string(),
+        "OpenAI Official".to_string(),
+        json!({
+            "auth": {},
+            "config": ""
+        }),
+        None,
+    );
+    new_official.category = Some("official".to_string());
+
+    ProviderService::add(&state, AppType::Codex, new_official, true)
+        .expect("adding first empty official profile should sync to live");
+
+    assert!(!cc_switch_lib::get_codex_auth_path().exists());
+
+    let err = ProviderService::read_live_settings(AppType::Codex)
+        .expect_err("empty official live state should not expose stale auth");
+    assert!(
+        matches!(
+            err,
+            AppError::Localized {
+                key: "codex.live.missing",
+                ..
+            }
+        ),
+        "cleared empty official live state should be treated as missing, got {err:?}"
+    );
+
+    let current_id =
+        ProviderService::current(&state, AppType::Codex).expect("read current provider");
+    assert_eq!(current_id, "openai-official-empty");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
+        .expect("read providers after add");
+    let stored = providers
+        .get("openai-official-empty")
+        .expect("stored empty official provider");
+    assert_eq!(
+        stored.settings_config.get("auth"),
+        Some(&json!({})),
+        "edit fallback to stored config must keep the new official profile auth empty"
+    );
+}
+
+#[test]
 fn provider_service_switch_codex_official_accounts_write_auth_json() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
