@@ -588,7 +588,10 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       base_url: "https://api.minimaxi.com/v1",
       api_key: "",
       api_mode: "chat_completions",
-      models: [{ id: "MiniMax-M2.7", name: "MiniMax M2.7" }],
+      models: [
+        { id: "MiniMax-M3", name: "MiniMax M3" },
+        { id: "MiniMax-M2.7", name: "MiniMax M2.7" },
+      ],
     },
     category: "cn_official",
     isPartner: true,
@@ -597,7 +600,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "minimax",
     iconColor: "#FF6B6B",
     suggestedDefaults: {
-      model: { default: "MiniMax-M2.7", provider: "minimax" },
+      model: { default: "MiniMax-M3", provider: "minimax" },
     },
   },
   {
@@ -609,7 +612,10 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       base_url: "https://api.minimax.io/v1",
       api_key: "",
       api_mode: "chat_completions",
-      models: [{ id: "MiniMax-M2.7", name: "MiniMax M2.7" }],
+      models: [
+        { id: "MiniMax-M3", name: "MiniMax M3" },
+        { id: "MiniMax-M2.7", name: "MiniMax M2.7" },
+      ],
     },
     category: "cn_official",
     isPartner: true,
@@ -618,7 +624,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "minimax",
     iconColor: "#FF6B6B",
     suggestedDefaults: {
-      model: { default: "MiniMax-M2.7", provider: "minimax_en" },
+      model: { default: "MiniMax-M3", provider: "minimax_en" },
     },
   },
   {
@@ -665,6 +671,10 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         {
+          id: "Pro/MiniMaxAI/MiniMax-M3",
+          name: "Pro / MiniMax M3",
+        },
+        {
           id: "Pro/MiniMaxAI/MiniMax-M2.7",
           name: "Pro / MiniMax M2.7",
         },
@@ -677,7 +687,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#6E29F6",
     suggestedDefaults: {
       model: {
-        default: "Pro/MiniMaxAI/MiniMax-M2.7",
+        default: "Pro/MiniMaxAI/MiniMax-M3",
         provider: "siliconflow",
       },
     },
@@ -691,7 +701,10 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       base_url: "https://api.siliconflow.com/v1",
       api_key: "",
       api_mode: "chat_completions",
-      models: [{ id: "MiniMaxAI/MiniMax-M2.7", name: "MiniMax M2.7" }],
+      models: [
+        { id: "MiniMaxAI/MiniMax-M3", name: "MiniMax M3" },
+        { id: "MiniMaxAI/MiniMax-M2.7", name: "MiniMax M2.7" },
+      ],
     },
     category: "aggregator",
     isPartner: true,
@@ -700,7 +713,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#000000",
     suggestedDefaults: {
       model: {
-        default: "MiniMaxAI/MiniMax-M2.7",
+        default: "MiniMaxAI/MiniMax-M3",
         provider: "siliconflow_en",
       },
     },
