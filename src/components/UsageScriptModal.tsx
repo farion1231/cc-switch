@@ -293,6 +293,17 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const [opencodeGoAuthCookie, setOpenCodeGoAuthCookie] = useState("");
   const [showOpenCodeGoCookie, setShowOpenCodeGoCookie] = useState(false);
 
+  // 關閉 modal 時清除敏感 state，避免 reopen 時殘留上次輸入的 cookie
+  // （因為 effectiveUsageProvider + useLastValidValue 導致元件不會 unmount）
+  React.useEffect(() => {
+    if (!isOpen) {
+      setOpenCodeGoAuthCookie("");
+      setShowOpenCodeGoCookie(false);
+      setShowApiKey(false);
+      setShowAccessToken(false);
+    }
+  }, [isOpen]);
+
   // OpenCode Go window visibility toggles (default all shown)
   const [showRolling, setShowRolling] = useState(
     () => provider.meta?.opencodeGoShowRolling !== false,
