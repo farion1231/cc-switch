@@ -81,7 +81,9 @@ impl ProxyService {
         *self.orchestration.blocking_write() = Some(engine);
     }
 
-    async fn get_orchestration_engine(&self) -> Option<Arc<crate::orchestration::OrchestrationEngine>> {
+    async fn get_orchestration_engine(
+        &self,
+    ) -> Option<Arc<crate::orchestration::OrchestrationEngine>> {
         self.orchestration.read().await.clone()
     }
 
@@ -2209,7 +2211,8 @@ impl ProxyService {
                     crate::orchestration::loader::StrategyLoader::default_strategies_path(),
                 ))
             });
-            let new_server = ProxyServer::new(new_config, self.db.clone(), app_handle, orchestration);
+            let new_server =
+                ProxyServer::new(new_config, self.db.clone(), app_handle, orchestration);
             new_server
                 .start()
                 .await

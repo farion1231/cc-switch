@@ -1,4 +1,4 @@
-# OmniAgent Workbench — Architecture Overview
+# CC Switch — Architecture Overview
 
 ---
 
@@ -16,7 +16,7 @@
 │        └───────────────┼───────────────┘                         │
 │                        │ localhost:15721                          │
 │  ┌─────────────────────▼──────────────────────┐                 │
-│  │         OmniAgent Workbench                 │                 │
+│  │              CC Switch                      │                 │
 │  │         (Tauri 2.x Desktop App)             │                 │
 │  └─────────────────────┬──────────────────────┘                 │
 │                        │                                         │

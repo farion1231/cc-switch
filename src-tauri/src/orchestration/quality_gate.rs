@@ -88,15 +88,9 @@ impl QualityGate {
 
         for tool in &self.tools {
             let score = match tool {
-                VerificationTool::StructuralCheck => {
-                    run_structural_check(content)
-                }
-                VerificationTool::PatternMatch => {
-                    run_pattern_match(content)
-                }
-                VerificationTool::SchemaValidator => {
-                    run_schema_validator(content, json_schema)
-                }
+                VerificationTool::StructuralCheck => run_structural_check(content),
+                VerificationTool::PatternMatch => run_pattern_match(content),
+                VerificationTool::SchemaValidator => run_schema_validator(content, json_schema),
                 VerificationTool::LLMJudge => {
                     run_llm_judge(content, model_caller, judge_model_key).await
                 }
@@ -438,7 +432,11 @@ fn run_structural_check(content: &str) -> f64 {
         count += 1.0;
     }
 
-    (total / count).min(1.0).max(0.0)
+    let mut final_score = (total / count).min(1.0).max(0.0);
+    if bracket_score < 1.0 {
+        final_score = final_score.min(bracket_score);
+    }
+    final_score
 }
 
 // ---------------------------------------------------------------------------
@@ -569,10 +567,7 @@ fn strip_json_fences(content: &str) -> String {
             .trim_start_matches("json")
             .trim_start_matches("JSON");
         if without_start.ends_with("```") {
-            return without_start
-                .trim_end_matches("```")
-                .trim()
-                .to_string();
+            return without_start.trim_end_matches("```").trim().to_string();
         }
     }
     trimmed.to_string()
@@ -818,7 +813,8 @@ fn main() {
 
     #[test]
     fn structural_check_fails_unbalanced_brackets() {
-        let code = "```javascript\nfunction broken() {\n  if (true {\n    return [1, 2, 3;\n  }\n}\n```";
+        let code =
+            "```javascript\nfunction broken() {\n  if (true {\n    return [1, 2, 3;\n  }\n}\n```";
         let score = run_structural_check(code);
         assert!(
             score < 0.7,
@@ -834,6 +830,18 @@ fn main() {
         assert!(
             score < 0.7,
             "Unclosed brace should score < 0.7, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn structural_check_caps_score_when_any_bracket_type_is_unbalanced() {
+        let code = "```rust\nfn open() {\n    let x = 1;\n```";
+        let score = run_structural_check(code);
+
+        assert!(
+            score <= 0.66,
+            "Bracket imbalance must cap structural score, got {}",
             score
         );
     }
@@ -949,11 +957,7 @@ fn add(a: i32, b: i32) -> i32 {
 }
 "#;
         let score = run_pattern_match(code);
-        assert_eq!(
-            score, 1.0,
-            "Clean code should score 1.0, got {}",
-            score
-        );
+        assert_eq!(score, 1.0, "Clean code should score 1.0, got {}", score);
     }
 
     // ---- QualityGate: empty tools vacuously pass ----
@@ -1227,10 +1231,7 @@ path = "/usr/local/bad"
 
     #[tokio::test]
     async fn quality_gate_with_schema_validation() {
-        let gate = QualityGate::new(
-            vec![VerificationTool::SchemaValidator],
-            0.65,
-        );
+        let gate = QualityGate::new(vec![VerificationTool::SchemaValidator], 0.65);
         let schema = serde_json::json!({
             "type": "object",
             "required": ["result"],
@@ -1241,11 +1242,19 @@ path = "/usr/local/bad"
 
         let valid_json = r#"{"result": "success"}"#;
         let result = gate.verify(valid_json, Some(&schema), None, None).await;
-        assert!(result.passed, "Valid JSON should pass schema validation, score = {}", result.score);
+        assert!(
+            result.passed,
+            "Valid JSON should pass schema validation, score = {}",
+            result.score
+        );
 
         let invalid_json = r#"{"other": "field"}"#;
         let result2 = gate.verify(invalid_json, Some(&schema), None, None).await;
-        assert!(!result2.passed, "Missing required field should fail, score = {}", result2.score);
+        assert!(
+            !result2.passed,
+            "Missing required field should fail, score = {}",
+            result2.score
+        );
     }
 
     // ---- Unclosed strings ----
@@ -1254,7 +1263,11 @@ path = "/usr/local/bad"
     fn unclosed_strings_detects_problem() {
         let code = "let s = \"hello";
         let score = check_unclosed_strings(code);
-        assert!(score < 1.0, "Unclosed string should reduce score, got {}", score);
+        assert!(
+            score < 1.0,
+            "Unclosed string should reduce score, got {}",
+            score
+        );
     }
 
     #[test]

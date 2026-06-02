@@ -99,9 +99,7 @@ export function ModelLeaderboard() {
                     {idx + 1}
                   </span>
                   <div>
-                    <span className="text-sm font-medium">
-                      {stat.modelKey}
-                    </span>
+                    <span className="text-sm font-medium">{stat.modelKey}</span>
                     <span className="text-xs text-muted-foreground ml-1">
                       ({stat.provider})
                     </span>

@@ -80,7 +80,10 @@ pub struct CrossJudge {
 impl CrossJudge {
     /// Create a new cross-judge evaluator.
     pub fn new(judges: Vec<JudgeModel>, aggregation: JudgeAggregation) -> Self {
-        Self { judges, aggregation }
+        Self {
+            judges,
+            aggregation,
+        }
     }
 
     /// Evaluate candidates using all configured judges and aggregate results.
@@ -138,10 +141,7 @@ impl CrossJudge {
     }
 
     /// Aggregate individual judge scores into a final result.
-    pub fn aggregate(
-        &self,
-        scores: Vec<IndividualJudgeScore>,
-    ) -> Result<CrossJudgeResult, String> {
+    pub fn aggregate(&self, scores: Vec<IndividualJudgeScore>) -> Result<CrossJudgeResult, String> {
         if scores.is_empty() {
             return Err("No judge scores to aggregate".into());
         }
@@ -328,7 +328,11 @@ impl CrossJudge {
     fn aggregate_weighted(scores: &[IndividualJudgeScore], judges: &[JudgeModel]) -> Vec<f64> {
         let n = scores[0].scores.len();
         let total_weight: f64 = judges.iter().map(|j| j.weight).sum();
-        let total_weight = if total_weight == 0.0 { 1.0 } else { total_weight };
+        let total_weight = if total_weight == 0.0 {
+            1.0
+        } else {
+            total_weight
+        };
 
         let mut result = Vec::with_capacity(n);
         for c in 0..n {

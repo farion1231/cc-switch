@@ -13,8 +13,13 @@ pub struct OrchestrationEngine {
 #[derive(Debug)]
 pub enum OrchestrationDecision {
     Passthrough,
-    Route { model: String },
-    Cascade { models: Vec<String>, quality_threshold: f64 },
+    Route {
+        model: String,
+    },
+    Cascade {
+        models: Vec<String>,
+        quality_threshold: f64,
+    },
 }
 
 impl OrchestrationEngine {
@@ -43,7 +48,9 @@ impl OrchestrationEngine {
 
         let profile = TaskClassifier::classify(body);
 
-        let Some((strategy_name, action)) = crate::orchestration::selector::StrategySelector::select(&profile, &config) else {
+        let Some((strategy_name, action)) =
+            crate::orchestration::selector::StrategySelector::select(&profile, &config)
+        else {
             log::info!(
                 "[Orchestration] No strategy matched for task_type={:?} complexity={:.2} risk={:?}, passthrough",
                 profile.task_type,
@@ -109,10 +116,7 @@ impl OrchestrationEngine {
         }
 
         match self.execute(&decision, messages, tools).await {
-            Ok(result) => OrchestrationOutcome::Executed {
-                decision,
-                result,
-            },
+            Ok(result) => OrchestrationOutcome::Executed { decision, result },
             Err(e) => OrchestrationOutcome::Fallback {
                 reason: e,
                 decision,
@@ -171,6 +175,11 @@ mod tests {
     async fn route_simple_task() {
         let yaml = r#"
 enabled: true
+models:
+  cheap_coder:
+    provider: deepseek
+    model: deepseek-chat
+    api_key_env: DEEPSEEK_API_KEY
 strategies:
   route:
     description: "Direct route"

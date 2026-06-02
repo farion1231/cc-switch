@@ -1,7 +1,7 @@
 {
-  "name": "omniagent-workbench",
-  "version": "0.1.0",
-  "description": "Local multi-model orchestration gateway with quality verification",
+  "name": "cc-switch",
+  "version": "3.15.0",
+  "description": "Desktop manager for Claude Code, Codex, Gemini CLI, OpenCode, OpenClaw, Hermes, providers, proxy, MCP, prompts, skills, and sessions",
   "type": "module",
   "scripts": {
     "dev": "pnpm tauri dev",
@@ -37,7 +37,8 @@
     "tailwindcss": "^3.4.17",
     "typescript": "^5.3.0",
     "vite": "^7.3.0",
-    "vitest": "^2.0.5"
+    "vitest": "^2.0.5",
+    "ws": "^8.21.0"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.4",

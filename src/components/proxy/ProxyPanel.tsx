@@ -67,7 +67,10 @@ export function ProxyPanel({
     invoke<{ enabled: boolean }>("orchestration_status")
       .then((result) => setOrchestrationEnabled(result.enabled))
       .catch((err) => {
-        console.error("[ProxyPanel] Failed to fetch orchestration status:", err);
+        console.error(
+          "[ProxyPanel] Failed to fetch orchestration status:",
+          err,
+        );
       });
   }, []);
 

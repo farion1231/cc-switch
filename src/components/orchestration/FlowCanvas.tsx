@@ -6,7 +6,14 @@ import { useTranslation } from "react-i18next";
 interface FlowStep {
   id: string;
   label: string;
-  type: "input" | "classify" | "route" | "cascade" | "debate" | "moa" | "output";
+  type:
+    | "input"
+    | "classify"
+    | "route"
+    | "cascade"
+    | "debate"
+    | "moa"
+    | "output";
 }
 
 const DEMO_FLOW: FlowStep[] = [

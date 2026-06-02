@@ -232,7 +232,11 @@ mod tests {
         for _ in 0..20 {
             let cands = make_candidates(5);
             let result = CandidateShuffler::shuffle(cands);
-            let keys: Vec<&str> = result.candidates.iter().map(|c| c.model_key.as_str()).collect();
+            let keys: Vec<&str> = result
+                .candidates
+                .iter()
+                .map(|c| c.model_key.as_str())
+                .collect();
             let orig_refs: Vec<&str> = original_keys.iter().map(|s| s.as_str()).collect();
             if keys != orig_refs {
                 found_change = true;
@@ -299,7 +303,11 @@ mod tests {
         assert_eq!(result.candidates.len(), 2);
         assert_eq!(result.order_map.len(), 2);
 
-        let keys: Vec<&str> = result.candidates.iter().map(|c| c.model_key.as_str()).collect();
+        let keys: Vec<&str> = result
+            .candidates
+            .iter()
+            .map(|c| c.model_key.as_str())
+            .collect();
         let mut sorted = keys.clone();
         sorted.sort();
         assert_eq!(sorted, vec!["model_0", "model_1"]);

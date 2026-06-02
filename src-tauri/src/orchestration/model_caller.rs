@@ -41,12 +41,16 @@ impl ModelCaller {
         tools: Option<Vec<Value>>,
         temperature: Option<f64>,
     ) -> Result<ModelResponse, String> {
-        let config = self.models.get(model_key).ok_or_else(|| {
-            format!("Model '{}' not found in configuration", model_key)
-        })?;
+        let config = self
+            .models
+            .get(model_key)
+            .ok_or_else(|| format!("Model '{}' not found in configuration", model_key))?;
 
         let api_key = std::env::var(&config.api_key_env).map_err(|_| {
-            format!("API key env '{}' not set for model '{}'", config.api_key_env, model_key)
+            format!(
+                "API key env '{}' not set for model '{}'",
+                config.api_key_env, model_key
+            )
         })?;
 
         // Anthropic requires system messages as a top-level field, not in the messages array.
@@ -57,9 +61,20 @@ impl ModelCaller {
                 .partition(|m| m.get("role").and_then(|r| r.as_str()) != Some("system"));
             let system_text: Vec<String> = system_parts
                 .iter()
-                .filter_map(|m| m.get("content").and_then(|c| c.as_str()).map(|s| s.to_string()))
+                .filter_map(|m| {
+                    m.get("content")
+                        .and_then(|c| c.as_str())
+                        .map(|s| s.to_string())
+                })
                 .collect();
-            (non_system, if system_text.is_empty() { None } else { Some(system_text.join("\n")) })
+            (
+                non_system,
+                if system_text.is_empty() {
+                    None
+                } else {
+                    Some(system_text.join("\n"))
+                },
+            )
         } else {
             (messages, None)
         };
@@ -162,9 +177,20 @@ impl ModelCaller {
             "anthropic" => "https://api.anthropic.com/v1/messages".to_string(),
             "openai" => "https://api.openai.com/v1/chat/completions".to_string(),
             "deepseek" => "https://api.deepseek.com/v1/chat/completions".to_string(),
-            "qwen" => "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions".to_string(),
+            "qwen" => {
+                "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions".to_string()
+            }
+            "glm" => "https://open.bigmodel.cn/api/paas/v4/chat/completions".to_string(),
+            "kimi" => "https://api.moonshot.cn/v1/chat/completions".to_string(),
+            "doubao" => "https://ark.cn-beijing.volces.com/api/v3/chat/completions".to_string(),
+            "yi" => "https://api.lingyiwanwu.com/v1/chat/completions".to_string(),
+            "baichuan" => "https://api.baichuan-ai.com/v1/chat/completions".to_string(),
+            "spark" => "https://spark-api-open.xf-yun.com/v1/chat/completions".to_string(),
             _ => config.base_url.clone().unwrap_or_else(|| {
-                log::error!("[ModelCaller] Unknown provider '{}' with no base_url set", config.provider);
+                log::error!(
+                    "[ModelCaller] Unknown provider '{}' with no base_url set",
+                    config.provider
+                );
                 format!("https://api.example.com/v1/chat/completions")
             }),
         }
@@ -177,7 +203,10 @@ impl ModelCaller {
                 .iter()
                 .filter_map(|block| {
                     if block.get("type").and_then(|t| t.as_str()) == Some("text") {
-                        block.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+                        block
+                            .get("text")
+                            .and_then(|t| t.as_str())
+                            .map(|s| s.to_string())
                     } else {
                         None
                     }
@@ -266,5 +295,21 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0]["role"], "user");
         assert_eq!(messages[0]["content"], "Hello");
+    }
+
+    #[test]
+    fn unknown_provider_uses_explicit_base_url() {
+        let config = ModelConfig {
+            provider: "minimax".to_string(),
+            model: "MiniMax-Text-01".to_string(),
+            api_key_env: "MINIMAX_API_KEY".to_string(),
+            base_url: Some("https://example.com/v1/chat/completions".to_string()),
+            max_tokens: 1024,
+        };
+
+        assert_eq!(
+            ModelCaller::build_url(&config),
+            "https://example.com/v1/chat/completions"
+        );
     }
 }

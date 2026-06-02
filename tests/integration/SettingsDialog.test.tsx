@@ -144,6 +144,16 @@ afterEach(() => {
 });
 
 describe("SettingsPage integration", () => {
+  it("loads default settings with installed skills mocked", async () => {
+    renderDialog();
+
+    await waitFor(() =>
+      expect(screen.getByText("language:zh")).toBeInTheDocument(),
+    );
+
+    expect(screen.queryByTestId("loading")).not.toBeInTheDocument();
+  });
+
   it("loads default settings from MSW", async () => {
     renderDialog();
 

@@ -47,13 +47,14 @@ pub fn heal_json(raw: &str) -> Result<Value, String> {
         }
     }
 
-    // Level 4 — remove control characters + re-normalise whitespace
+    // Level 4 — remove control characters outside strings and escape raw
+    // control characters that appear inside JSON strings.
     let level4 = clean_control_chars(raw);
-    // Try both the cleaned raw and the cleaned + bracket-closed version
-    if let Ok(val) = serde_json::from_str::<Value>(&level4) {
+    let level4_escaped = escape_raw_control_chars_in_strings(&level4);
+    if let Ok(val) = serde_json::from_str::<Value>(&level4_escaped) {
         return Ok(val);
     }
-    let level4_fixed = close_unclosed_brackets(&level4);
+    let level4_fixed = close_unclosed_brackets(&level4_escaped);
     if let Ok(val) = serde_json::from_str::<Value>(&level4_fixed) {
         return Ok(val);
     }
@@ -69,12 +70,9 @@ pub fn heal_json(raw: &str) -> Result<Value, String> {
 // Private helpers
 // ---------------------------------------------------------------------------
 
-/// Count net unclosed `{` and `[` and append the missing closers.
-///
-/// Mirrors MiroFish `_fix_truncated_json`.
+/// Append missing closers for any still-open objects/arrays.
 fn close_unclosed_brackets(raw: &str) -> String {
-    let mut open_braces: i32 = 0; // {
-    let mut open_brackets: i32 = 0; // [
+    let mut stack: Vec<char> = Vec::new();
     let mut in_string = false;
     let mut escape_next = false;
 
@@ -94,31 +92,26 @@ fn close_unclosed_brackets(raw: &str) -> String {
         if in_string {
             continue;
         }
+
         match ch {
-            '{' => open_braces += 1,
-            '}' => open_braces -= 1,
-            '[' => open_brackets += 1,
-            ']' => open_brackets -= 1,
+            '{' => stack.push('}'),
+            '[' => stack.push(']'),
+            '}' | ']' => {
+                if stack.last() == Some(&ch) {
+                    stack.pop();
+                }
+            }
             _ => {}
         }
     }
 
     let mut result = raw.to_string();
-
-    // If the string ends mid-value, try to close it
-    if !result.is_empty() {
-        let last = result.chars().last().unwrap();
-        if last != '"' && last != '}' && last != ']' && last != ',' && last != ':' {
-            result.push('"');
-        }
+    if in_string {
+        result.push('"');
     }
 
-    // Close brackets in reverse order (brackets first, then braces)
-    for _ in 0..open_brackets.max(0) {
-        result.push(']');
-    }
-    for _ in 0..open_braces.max(0) {
-        result.push('}');
+    while let Some(closer) = stack.pop() {
+        result.push(closer);
     }
 
     result
@@ -275,6 +268,46 @@ fn clean_control_chars(raw: &str) -> String {
     result.trim().to_string()
 }
 
+fn escape_raw_control_chars_in_strings(raw: &str) -> String {
+    let mut result = String::with_capacity(raw.len());
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    for ch in raw.chars() {
+        if escape_next {
+            escape_next = false;
+            result.push(ch);
+            continue;
+        }
+
+        if ch == '\\' && in_string {
+            escape_next = true;
+            result.push(ch);
+            continue;
+        }
+
+        if ch == '"' {
+            in_string = !in_string;
+            result.push(ch);
+            continue;
+        }
+
+        if in_string {
+            match ch {
+                '\n' => result.push_str("\\n"),
+                '\r' => result.push_str("\\r"),
+                '\t' => result.push_str("\\t"),
+                c if (c as u32) < 0x20 => result.push(' '),
+                c => result.push(c),
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+
+    result
+}
+
 // ===========================================================================
 // Tests
 // ===========================================================================
@@ -409,6 +442,23 @@ That's it."#;
         assert_eq!(close_unclosed_brackets("{"), "{}");
         assert_eq!(close_unclosed_brackets("["), "[]");
         assert_eq!(close_unclosed_brackets("{["), "{[]}");
+    }
+
+    #[test]
+    fn close_unclosed_string_before_container() {
+        assert_eq!(
+            close_unclosed_brackets(r#"{"name": "abc"#),
+            r#"{"name": "abc"}"#
+        );
+    }
+
+    #[test]
+    fn escape_raw_newlines_inside_strings() {
+        let input = "{\"name\": \"line1\nline2\"}";
+        assert_eq!(
+            escape_raw_control_chars_in_strings(input),
+            "{\"name\": \"line1\\nline2\"}"
+        );
     }
 
     #[test]

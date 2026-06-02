@@ -68,16 +68,19 @@ impl ModelHealthChecker {
             return;
         };
 
-        let alpha = 0.3; // EMA smoothing factor
+        let alpha = 0.3; // EMA smoothing factor after the first observation.
 
         // Update error rate (EMA).
         let error_val = if success { 0.0 } else { 1.0 };
         entry.error_rate = alpha * error_val + (1.0 - alpha) * entry.error_rate;
 
         // Update latency (EMA).
-        entry.avg_latency_ms = ((alpha * latency_ms as f64
-            + (1.0 - alpha) * entry.avg_latency_ms as f64) as u64)
-            .max(1);
+        entry.avg_latency_ms = if entry.avg_latency_ms == 0 {
+            latency_ms.max(1)
+        } else {
+            ((alpha * latency_ms as f64 + (1.0 - alpha) * entry.avg_latency_ms as f64) as u64)
+                .max(1)
+        };
 
         // Update consecutive errors.
         if success {
@@ -87,12 +90,12 @@ impl ModelHealthChecker {
         }
 
         // Auto-disable after sustained errors.
-        if entry.consecutive_errors >= 3 || entry.error_rate >= 0.3 {
+        if entry.consecutive_errors >= 3 {
             entry.is_available = false;
         }
 
         // Auto-re-enable after recovery.
-        if !entry.is_available && entry.consecutive_errors == 0 && entry.error_rate < 0.1 {
+        if success && !entry.is_available && entry.error_rate < 0.1 {
             entry.is_available = true;
         }
 
@@ -101,11 +104,10 @@ impl ModelHealthChecker {
 
     /// Check whether a model is available.
     ///
-    /// A model is available if `is_available` is true AND `error_rate < 0.3`.
     pub fn is_available(&self, model_key: &str) -> bool {
         self.health
             .get(model_key)
-            .map(|h| h.is_available && h.error_rate < 0.3)
+            .map(|h| h.is_available)
             .unwrap_or(false)
     }
 
@@ -113,7 +115,7 @@ impl ModelHealthChecker {
     pub fn available_models(&self) -> Vec<String> {
         self.health
             .values()
-            .filter(|h| h.is_available && h.error_rate < 0.3)
+            .filter(|h| h.is_available)
             .map(|h| h.model_key.clone())
             .collect()
     }
@@ -204,6 +206,27 @@ mod tests {
         checker.update_health("model-a", false, 1000);
         assert!(checker.is_available("model-a"));
         assert_eq!(checker.get_health("model-a").unwrap().consecutive_errors, 1);
+    }
+
+    #[test]
+    fn first_latency_uses_observed_value_without_ema_dampening() {
+        let mut checker = ModelHealthChecker::new(&make_keys());
+        checker.update_health("model-a", true, 500);
+
+        let health = checker.get_health("model-a").unwrap();
+        assert_eq!(health.avg_latency_ms, 500);
+        assert!(checker.is_available("model-a"));
+    }
+
+    #[test]
+    fn single_error_records_error_without_disabling_model() {
+        let mut checker = ModelHealthChecker::new(&make_keys());
+        checker.update_health("model-a", false, 1000);
+
+        let health = checker.get_health("model-a").unwrap();
+        assert_eq!(health.consecutive_errors, 1);
+        assert!(health.error_rate > 0.0);
+        assert!(checker.is_available("model-a"));
     }
 
     // --- Three consecutive errors disables model ---

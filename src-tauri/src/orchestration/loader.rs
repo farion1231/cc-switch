@@ -1,7 +1,7 @@
 use crate::orchestration::config::OrchestrationConfig;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub struct StrategyLoader {
@@ -35,7 +35,10 @@ impl StrategyLoader {
         // Sync the override with the file's enabled state
         let file_enabled = self.config.read().await.enabled;
         self.override_enabled.store(file_enabled, Ordering::Relaxed);
-        log::info!("[Orchestration] Strategy config reloaded from {:?}", self.path);
+        log::info!(
+            "[Orchestration] Strategy config reloaded from {:?}",
+            self.path
+        );
         Ok(())
     }
 
@@ -46,7 +49,10 @@ impl StrategyLoader {
 
     pub fn load_from_file(path: &PathBuf) -> Result<OrchestrationConfig, anyhow::Error> {
         if !path.exists() {
-            log::info!("[Orchestration] Config file not found, using defaults: {:?}", path);
+            log::info!(
+                "[Orchestration] Config file not found, using defaults: {:?}",
+                path
+            );
             return Ok(OrchestrationConfig::default());
         }
         let content = std::fs::read_to_string(path)?;
@@ -55,7 +61,11 @@ impl StrategyLoader {
             log::error!("[Orchestration] Config validation failed: {}", e);
             anyhow::anyhow!("Config validation failed: {}", e)
         })?;
-        log::info!("[Orchestration] Loaded {} strategies from {:?}", config.strategies.len(), path);
+        log::info!(
+            "[Orchestration] Loaded {} strategies from {:?}",
+            config.strategies.len(),
+            path
+        );
         Ok(config)
     }
 

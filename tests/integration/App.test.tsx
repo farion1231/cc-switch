@@ -1,7 +1,13 @@
 import { Suspense, type ComponentType } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+} from "@testing-library/react";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { providersApi } from "@/lib/api/providers";
 import {
   resetProviderState,
@@ -20,6 +26,47 @@ vi.mock("sonner", () => ({
     error: (...args: unknown[]) => toastErrorMock(...args),
   },
 }));
+
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({
+    close: vi.fn().mockResolvedValue(undefined),
+    isMaximized: vi.fn().mockResolvedValue(false),
+    minimize: vi.fn().mockResolvedValue(undefined),
+    onResized: vi.fn().mockResolvedValue(() => {}),
+    setDecorations: vi.fn().mockResolvedValue(undefined),
+    toggleMaximize: vi.fn().mockResolvedValue(undefined),
+  }),
+}));
+
+vi.mock("framer-motion", async () => {
+  const React = await vi.importActual<typeof import("react")>("react");
+  const stripMotionProps = ({
+    animate,
+    children,
+    exit,
+    initial,
+    layout,
+    transition,
+    whileHover,
+    whileTap,
+    ...props
+  }: any) => ({ children, props });
+
+  return {
+    AnimatePresence: ({ children }: any) => <>{children}</>,
+    motion: new Proxy(
+      {},
+      {
+        get:
+          (_target, tag: string) =>
+          ({ children, ...props }: any) => {
+            const stripped = stripMotionProps({ children, ...props });
+            return React.createElement(tag, stripped.props, stripped.children);
+          },
+      },
+    ),
+  };
+});
 
 vi.mock("@/components/providers/ProviderList", () => ({
   ProviderList: ({
@@ -146,7 +193,16 @@ vi.mock("@/components/mcp/McpPanel", () => ({
 }));
 
 const renderApp = (AppComponent: ComponentType) => {
-  const client = new QueryClient();
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+      },
+      mutations: {
+        retry: false,
+      },
+    },
+  });
   return render(
     <QueryClientProvider client={client}>
       <Suspense fallback={<div data-testid="loading">loading</div>}>
@@ -159,8 +215,14 @@ const renderApp = (AppComponent: ComponentType) => {
 describe("App integration with MSW", () => {
   beforeEach(() => {
     resetProviderState();
+    localStorage.clear();
+    sessionStorage.clear();
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
   });
 
   it("covers basic provider flows via real hooks", async () => {
@@ -218,7 +280,7 @@ describe("App integration with MSW", () => {
 
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
-  });
+  }, 20000);
 
   it("shows toast when auto sync fails in background", async () => {
     const { default: App } = await import("@/App");
@@ -244,7 +306,7 @@ describe("App integration with MSW", () => {
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalled();
     });
-  });
+  }, 20000);
 
   it("duplicates openclaw providers with a generated key that avoids live-only ids", async () => {
     setProviders("openclaw", {

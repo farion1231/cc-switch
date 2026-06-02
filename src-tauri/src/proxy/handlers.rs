@@ -132,8 +132,14 @@ async fn handle_messages_for_app(
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
     // Orchestration: skip for streaming requests or tool-use requests (can't wrap SSE)
-    let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
-    let has_tools = body.get("tools").and_then(|t| t.as_array()).is_some_and(|a| !a.is_empty());
+    let is_streaming = body
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let has_tools = body
+        .get("tools")
+        .and_then(|t| t.as_array())
+        .is_some_and(|a| !a.is_empty());
     if !is_streaming && !has_tools {
         if let Some(resp) = try_orchestrate_claude(&state, &body).await {
             return resp;
@@ -504,8 +510,14 @@ pub async fn handle_chat_completions(
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
     // Orchestration: skip for streaming requests or tool-use requests
-    let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
-    let has_tools = body.get("tools").and_then(|t| t.as_array()).is_some_and(|a| !a.is_empty());
+    let is_streaming = body
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let has_tools = body
+        .get("tools")
+        .and_then(|t| t.as_array())
+        .is_some_and(|a| !a.is_empty());
     if !is_streaming && !has_tools {
         if let Some(resp) = try_orchestrate_openai(&state, &body).await {
             return resp;
@@ -577,8 +589,14 @@ pub async fn handle_responses(
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
     // Orchestration: skip for streaming requests or tool-use requests
-    let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
-    let has_tools = body.get("tools").and_then(|t| t.as_array()).is_some_and(|a| !a.is_empty());
+    let is_streaming = body
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let has_tools = body
+        .get("tools")
+        .and_then(|t| t.as_array())
+        .is_some_and(|a| !a.is_empty());
     if !is_streaming && !has_tools {
         if let Some(resp) = try_orchestrate_openai(&state, &body).await {
             return resp;
@@ -1207,7 +1225,10 @@ async fn log_usage(
 
 use crate::orchestration::engine::OrchestrationDecision;
 
-fn log_orchestration_usage(state: &ProxyState, result: &crate::orchestration::executor::ExecutionResult) {
+fn log_orchestration_usage(
+    state: &ProxyState,
+    result: &crate::orchestration::executor::ExecutionResult,
+) {
     use super::usage::logger::UsageLogger;
     use super::usage::parser::TokenUsage;
     use rust_decimal::Decimal;
@@ -1266,7 +1287,11 @@ async fn try_orchestrate_claude(
     let tools = body.get("tools").and_then(|t| t.as_array()).cloned();
 
     // Use execute() directly to avoid double-decide (C3 fix)
-    match state.orchestration.execute(&decision, messages, tools).await {
+    match state
+        .orchestration
+        .execute(&decision, messages, tools)
+        .await
+    {
         Ok(result) => {
             log::info!(
                 "[Orchestration] Strategy executed: model={}, strategy={}, verified={}, latency={}ms",
@@ -1298,10 +1323,15 @@ async fn try_orchestrate_claude(
                     http::HeaderValue::from_static("application/json"),
                 )],
                 Json(response_body),
-            ).into_response()))
+            )
+                .into_response()))
         }
         Err(e) => {
-            log::warn!("[Orchestration] Execution failed (decision={:?}), falling back to passthrough: {}", decision, e);
+            log::warn!(
+                "[Orchestration] Execution failed (decision={:?}), falling back to passthrough: {}",
+                decision,
+                e
+            );
             None
         }
     }
@@ -1325,7 +1355,11 @@ async fn try_orchestrate_openai(
         .unwrap_or_default();
     let tools = body.get("tools").and_then(|t| t.as_array()).cloned();
 
-    match state.orchestration.execute(&decision, messages, tools).await {
+    match state
+        .orchestration
+        .execute(&decision, messages, tools)
+        .await
+    {
         Ok(result) => {
             log::info!(
                 "[Orchestration] OpenAI strategy executed: model={}, strategy={}",
@@ -1361,7 +1395,8 @@ async fn try_orchestrate_openai(
                     http::HeaderValue::from_static("application/json"),
                 )],
                 Json(response_body),
-            ).into_response()))
+            )
+                .into_response()))
         }
         Err(e) => {
             log::warn!("[Orchestration] OpenAI execution failed (decision={:?}), falling back to passthrough: {}", decision, e);

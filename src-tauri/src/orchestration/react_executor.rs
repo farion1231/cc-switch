@@ -126,18 +126,20 @@ impl ReACTExecutor {
 
         for iteration in 0..self.max_iterations {
             let temperature = retry_policy.temperature_for_attempt(iteration);
-            let current_messages = self.build_messages(
-                &messages,
-                &feedback,
-                &tools_used,
-                iteration,
-            );
+            let current_messages =
+                self.build_messages(&messages, &feedback, &tools_used, iteration);
 
             // Call the model.
             let model_response = model_caller
                 .call(model_key, current_messages.clone(), None, Some(temperature))
                 .await
-                .map_err(|e| format!("ReACT iteration {}: model call failed: {}", iteration + 1, e))?;
+                .map_err(|e| {
+                    format!(
+                        "ReACT iteration {}: model call failed: {}",
+                        iteration + 1,
+                        e
+                    )
+                })?;
 
             let content = model_response.content;
 
@@ -218,11 +220,7 @@ impl ReACTExecutor {
             // Quality failed but iterations remain -> build feedback for retry.
             if iteration + 1 < self.max_iterations {
                 let unused = self.unused_tools(&tools_used);
-                feedback = Some(Self::retry_feedback(
-                    &quality_result,
-                    temperature,
-                    &unused,
-                ));
+                feedback = Some(Self::retry_feedback(&quality_result, temperature, &unused));
                 log::info!(
                     "[ReACT] Iteration {}: quality {:.3} below threshold, retrying \
                      with temp {:.2}, unused tools: [{}]",
@@ -272,18 +270,6 @@ impl ReACTExecutor {
             return msgs;
         }
 
-        // Inject feedback from the previous iteration.
-        if let Some(ref fb) = feedback {
-            msgs.push(json!({
-                "role": "user",
-                "content": format!(
-                    "[Verification Feedback]\n{}\n\nPlease improve your previous response \
-                     based on this feedback. Focus on the issues identified above.",
-                    fb
-                ),
-            }));
-        }
-
         // Inject tool-diversity hint if not all tools have been used.
         let unused = self.unused_tools(tools_used);
         if !unused.is_empty() {
@@ -293,6 +279,18 @@ impl ReACTExecutor {
                     "Note: the following verification tools have not been used yet: [{}]. \
                      Consider applying them for a more thorough verification.",
                     unused.join(", "),
+                ),
+            }));
+        }
+
+        // Keep feedback last so it is the final instruction for the retry.
+        if let Some(ref fb) = feedback {
+            msgs.push(json!({
+                "role": "user",
+                "content": format!(
+                    "[Verification Feedback]\n{}\n\nPlease improve your previous response \
+                     based on this feedback. Focus on the issues identified above.",
+                    fb
                 ),
             }));
         }
@@ -461,11 +459,7 @@ mod tests {
 
     #[test]
     fn unused_tools_returns_correct_set() {
-        let executor = ReACTExecutor::new(vec![
-            "a".to_string(),
-            "b".to_string(),
-            "c".to_string(),
-        ]);
+        let executor = ReACTExecutor::new(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
         let used: HashSet<String> = vec!["a".to_string()].into_iter().collect();
         let unused = executor.unused_tools(&used);
         assert_eq!(unused, vec!["b".to_string(), "c".to_string()]);
@@ -473,13 +467,8 @@ mod tests {
 
     #[test]
     fn unused_tools_empty_when_all_used() {
-        let executor = ReACTExecutor::new(vec![
-            "a".to_string(),
-            "b".to_string(),
-        ]);
-        let used: HashSet<String> = vec!["a".to_string(), "b".to_string()]
-            .into_iter()
-            .collect();
+        let executor = ReACTExecutor::new(vec!["a".to_string(), "b".to_string()]);
+        let used: HashSet<String> = vec!["a".to_string(), "b".to_string()].into_iter().collect();
         let unused = executor.unused_tools(&used);
         assert!(unused.is_empty());
     }
@@ -559,11 +548,8 @@ mod tests {
                 ("pattern_match".to_string(), 0.5),
             ],
         };
-        let feedback = ReACTExecutor::retry_feedback(
-            &quality_result,
-            0.6,
-            &["schema_validator".to_string()],
-        );
+        let feedback =
+            ReACTExecutor::retry_feedback(&quality_result, 0.6, &["schema_validator".to_string()]);
         assert!(feedback.contains("0.400"));
         assert!(feedback.contains("structural_check (0.30)"));
         assert!(feedback.contains("0.60"));
@@ -586,17 +572,42 @@ mod tests {
         let built = executor.build_messages(&msgs, &feedback, &HashSet::new(), 1);
         assert!(built.len() > msgs.len());
         // The feedback message should be present.
-        let last_content = built.last().unwrap().get("content").unwrap().as_str().unwrap();
+        let last_content = built
+            .last()
+            .unwrap()
+            .get("content")
+            .unwrap()
+            .as_str()
+            .unwrap();
         assert!(last_content.contains("Verification Feedback"));
     }
 
     #[test]
-    fn build_messages_includes_unused_tools_hint() {
+    fn build_messages_puts_feedback_after_unused_tool_hint() {
         let executor = ReACTExecutor::new(vec![
-            "a".to_string(),
-            "b".to_string(),
-            "c".to_string(),
+            "structural_check".to_string(),
+            "pattern_match".to_string(),
         ]);
+        let msgs = test_messages();
+        let feedback = Some("Please improve".to_string());
+        let used: HashSet<String> = vec!["structural_check".to_string()].into_iter().collect();
+
+        let built = executor.build_messages(&msgs, &feedback, &used, 1);
+        let last_content = built
+            .last()
+            .unwrap()
+            .get("content")
+            .unwrap()
+            .as_str()
+            .unwrap();
+
+        assert!(last_content.contains("Verification Feedback"));
+        assert!(last_content.contains("Please improve"));
+    }
+
+    #[test]
+    fn build_messages_includes_unused_tools_hint() {
+        let executor = ReACTExecutor::new(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
         let msgs = test_messages();
         let used: HashSet<String> = vec!["a".to_string()].into_iter().collect();
         let built = executor.build_messages(&msgs, &None, &used, 1);
@@ -618,10 +629,7 @@ mod tests {
     async fn test_successful_verification_on_first_attempt() {
         // Use a quality gate with only structural_check at a low threshold.
         // Clean code should pass immediately.
-        let gate = make_gate(
-            vec![VerificationTool::StructuralCheck],
-            0.5,
-        );
+        let gate = make_gate(vec![VerificationTool::StructuralCheck], 0.5);
 
         // We cannot call the real model in tests, so we test the logic
         // by verifying the gate passes on clean code directly.
@@ -632,15 +640,16 @@ fn add(a: i32, b: i32) -> i32 {
 ```"#;
         let result = gate.verify(code, None, None, None).await;
         assert!(result.passed, "Clean code should pass structural check");
-        assert!(result.score >= 0.5, "Score should be >= 0.5, got {}", result.score);
+        assert!(
+            result.score >= 0.5,
+            "Score should be >= 0.5, got {}",
+            result.score
+        );
     }
 
     #[tokio::test]
     async fn test_quality_gate_fails_on_bad_code() {
-        let gate = make_gate(
-            vec![VerificationTool::PatternMatch],
-            0.9,
-        );
+        let gate = make_gate(vec![VerificationTool::PatternMatch], 0.9);
 
         let bad_code = r#"password = "hardcoded_secret"
 api_key = "sk-12345"

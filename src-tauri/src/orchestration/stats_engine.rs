@@ -104,10 +104,7 @@ impl StatsEngine {
             }
 
             // Count pass rate based on records where this model was called.
-            let model_called = rec
-                .models_called
-                .iter()
-                .any(|mc| mc.model_key == model_key);
+            let model_called = rec.models_called.iter().any(|mc| mc.model_key == model_key);
             if model_called {
                 if rec.passed {
                     pass_count += 1;
@@ -179,9 +176,9 @@ impl StatsEngine {
                 continue;
             }
             for mc in &rec.models_called {
-                let entry = model_data.entry(mc.model_key.clone()).or_insert_with(|| {
-                    (Vec::new(), Vec::new(), Vec::new())
-                });
+                let entry = model_data
+                    .entry(mc.model_key.clone())
+                    .or_insert_with(|| (Vec::new(), Vec::new(), Vec::new()));
                 entry.0.push(mc.quality_score);
                 entry.1.push(mc.cost_usd);
                 entry.2.push(mc.latency_ms);
@@ -243,9 +240,7 @@ impl StatsEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orchestration::history::{
-        ModelCall, OrchestrationRecord, QualityScore,
-    };
+    use crate::orchestration::history::{ModelCall, OrchestrationRecord, QualityScore};
     use tempfile::TempDir;
 
     fn db_path(dir: &TempDir) -> PathBuf {
@@ -273,13 +268,7 @@ mod tests {
         let path = db_path(dir);
         let store = HistoryStore::new(&path).expect("open store");
 
-        let mut rec = OrchestrationRecord::new(
-            task_type,
-            0.5,
-            "low",
-            "test prompt",
-            strategy,
-        );
+        let mut rec = OrchestrationRecord::new(task_type, 0.5, "low", "test prompt", strategy);
         rec.passed = passed;
         rec.final_quality = quality;
         rec.total_latency_ms = latency_ms;
@@ -309,9 +298,39 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let _ = make_engine(&dir);
 
-        insert_sample_record(&dir, "coding", "cascade", "claude-sonnet", 0.8, true, 1000, 0.01, None);
-        insert_sample_record(&dir, "coding", "cascade", "claude-sonnet", 0.9, true, 1200, 0.02, None);
-        insert_sample_record(&dir, "coding", "cascade", "claude-sonnet", 0.7, false, 800, 0.01, None);
+        insert_sample_record(
+            &dir,
+            "coding",
+            "cascade",
+            "claude-sonnet",
+            0.8,
+            true,
+            1000,
+            0.01,
+            None,
+        );
+        insert_sample_record(
+            &dir,
+            "coding",
+            "cascade",
+            "claude-sonnet",
+            0.9,
+            true,
+            1200,
+            0.02,
+            None,
+        );
+        insert_sample_record(
+            &dir,
+            "coding",
+            "cascade",
+            "claude-sonnet",
+            0.7,
+            false,
+            800,
+            0.01,
+            None,
+        );
 
         let engine = make_engine(&dir);
         let stats = engine
@@ -320,10 +339,18 @@ mod tests {
 
         assert_eq!(stats.model_key, "claude-sonnet");
         assert_eq!(stats.total_requests, 3);
-        assert!((stats.avg_quality - 0.8).abs() < 0.01, "avg_quality should be ~0.8, got {}", stats.avg_quality);
+        assert!(
+            (stats.avg_quality - 0.8).abs() < 0.01,
+            "avg_quality should be ~0.8, got {}",
+            stats.avg_quality
+        );
         assert_eq!(stats.avg_latency_ms, 1000);
         assert!((stats.avg_cost_usd - 0.01333).abs() < 0.001);
-        assert!((stats.pass_rate - 0.6667).abs() < 0.01, "pass_rate should be ~0.667, got {}", stats.pass_rate);
+        assert!(
+            (stats.pass_rate - 0.6667).abs() < 0.01,
+            "pass_rate should be ~0.667, got {}",
+            stats.pass_rate
+        );
     }
 
     // ---- Test: Model weights calculation ----
@@ -334,15 +361,25 @@ mod tests {
         let _ = make_engine(&dir);
 
         // Model A: high quality, higher cost, medium latency
-        insert_sample_record(&dir, "coding", "cascade", "model-a", 0.9, true, 1000, 0.05, None);
+        insert_sample_record(
+            &dir, "coding", "cascade", "model-a", 0.9, true, 1000, 0.05, None,
+        );
         // Model B: medium quality, low cost, fast latency
-        insert_sample_record(&dir, "coding", "cascade", "model-b", 0.7, true, 200, 0.001, None);
+        insert_sample_record(
+            &dir, "coding", "cascade", "model-b", 0.7, true, 200, 0.001, None,
+        );
 
         let engine = make_engine(&dir);
         let weights = engine.model_weights("coding").unwrap();
 
-        assert!(weights.contains_key("model-a"), "model-a should have a weight");
-        assert!(weights.contains_key("model-b"), "model-b should have a weight");
+        assert!(
+            weights.contains_key("model-a"),
+            "model-a should have a weight"
+        );
+        assert!(
+            weights.contains_key("model-b"),
+            "model-b should have a weight"
+        );
 
         let weight_a = weights["model-a"];
         let weight_b = weights["model-b"];
@@ -372,10 +409,18 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let _ = make_engine(&dir);
 
-        insert_sample_record(&dir, "coding", "cascade", "model-a", 0.9, true, 1000, 0.01, None);
-        insert_sample_record(&dir, "coding", "cascade", "model-a", 0.85, true, 1000, 0.01, None);
-        insert_sample_record(&dir, "coding", "cascade", "model-a", 0.4, false, 1000, 0.01, None);
-        insert_sample_record(&dir, "coding", "route", "model-b", 0.8, true, 500, 0.005, None);
+        insert_sample_record(
+            &dir, "coding", "cascade", "model-a", 0.9, true, 1000, 0.01, None,
+        );
+        insert_sample_record(
+            &dir, "coding", "cascade", "model-a", 0.85, true, 1000, 0.01, None,
+        );
+        insert_sample_record(
+            &dir, "coding", "cascade", "model-a", 0.4, false, 1000, 0.01, None,
+        );
+        insert_sample_record(
+            &dir, "coding", "route", "model-b", 0.8, true, 500, 0.005, None,
+        );
 
         let engine = make_engine(&dir);
 
@@ -402,7 +447,9 @@ mod tests {
         let engine = make_engine(&dir);
 
         // Insert a current record.
-        insert_sample_record(&dir, "coding", "cascade", "model-a", 0.9, true, 1000, 0.01, None);
+        insert_sample_record(
+            &dir, "coding", "cascade", "model-a", 0.9, true, 1000, 0.01, None,
+        );
 
         // Should be found in all windows.
         let stats_24h = engine
@@ -455,7 +502,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let engine = make_engine(&dir);
 
-        let rate = engine.pass_rate("nonexistent-strategy", TimeWindow::Last30d).unwrap();
+        let rate = engine
+            .pass_rate("nonexistent-strategy", TimeWindow::Last30d)
+            .unwrap();
         assert_eq!(rate, 0.0, "No data should return 0.0 pass rate");
     }
 
@@ -465,7 +514,10 @@ mod tests {
         let engine = make_engine(&dir);
 
         let weights = engine.model_weights("nonexistent-task").unwrap();
-        assert!(weights.is_empty(), "No data should return empty weights map");
+        assert!(
+            weights.is_empty(),
+            "No data should return empty weights map"
+        );
     }
 
     // ---- Test: User satisfaction calculation ----
@@ -475,10 +527,42 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let _ = make_engine(&dir);
 
-        insert_sample_record(&dir, "coding", "cascade", "model-a", 0.9, true, 1000, 0.01, Some("thumbs_up"));
-        insert_sample_record(&dir, "coding", "cascade", "model-a", 0.85, true, 1000, 0.01, Some("accepted"));
-        insert_sample_record(&dir, "coding", "cascade", "model-a", 0.4, false, 1000, 0.01, Some("thumbs_down"));
-        insert_sample_record(&dir, "coding", "cascade", "model-a", 0.6, true, 1000, 0.01, None);
+        insert_sample_record(
+            &dir,
+            "coding",
+            "cascade",
+            "model-a",
+            0.9,
+            true,
+            1000,
+            0.01,
+            Some("thumbs_up"),
+        );
+        insert_sample_record(
+            &dir,
+            "coding",
+            "cascade",
+            "model-a",
+            0.85,
+            true,
+            1000,
+            0.01,
+            Some("accepted"),
+        );
+        insert_sample_record(
+            &dir,
+            "coding",
+            "cascade",
+            "model-a",
+            0.4,
+            false,
+            1000,
+            0.01,
+            Some("thumbs_down"),
+        );
+        insert_sample_record(
+            &dir, "coding", "cascade", "model-a", 0.6, true, 1000, 0.01, None,
+        );
 
         let engine = make_engine(&dir);
         let stats = engine

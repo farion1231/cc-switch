@@ -140,7 +140,12 @@ impl SpotChecker {
         let resp = model_caller
             .call_prompt(&self.inspector_model, "", &inspector_prompt, Some(0.0))
             .await
-            .map_err(|e| format!("Inspector model '{}' call failed: {}", self.inspector_model, e))?;
+            .map_err(|e| {
+                format!(
+                    "Inspector model '{}' call failed: {}",
+                    self.inspector_model, e
+                )
+            })?;
 
         let (agreed, reasoning) = Self::parse_inspector_response(&resp.content);
 
@@ -167,9 +172,8 @@ impl SpotChecker {
         candidates: &[CandidateAnswer],
         judge_best_idx: usize,
     ) -> String {
-        let mut body = String::from(
-            "You are an impartial inspector verifying an AI judge's decision.\n\n",
-        );
+        let mut body =
+            String::from("You are an impartial inspector verifying an AI judge's decision.\n\n");
         body.push_str("The original question was:\n");
         body.push_str(original_prompt);
         body.push_str("\n\n");
@@ -231,9 +235,7 @@ impl SpotChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orchestration::cross_judge::{
-        ConsensusLevel, IndividualJudgeScore,
-    };
+    use crate::orchestration::cross_judge::{ConsensusLevel, IndividualJudgeScore};
 
     fn make_candidates(n: usize) -> Vec<CandidateAnswer> {
         (0..n)
@@ -357,9 +359,8 @@ mod tests {
 
     #[test]
     fn parse_no_with_explanation() {
-        let (agreed, _) = SpotChecker::parse_inspector_response(
-            "NO, I disagree.\nBecause reasons.",
-        );
+        let (agreed, _) =
+            SpotChecker::parse_inspector_response("NO, I disagree.\nBecause reasons.");
         assert!(!agreed);
     }
 

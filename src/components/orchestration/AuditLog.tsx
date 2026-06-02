@@ -87,8 +87,7 @@ export function AuditLog() {
         <ScrollArea className="h-[200px]">
           <div className="space-y-2">
             {MOCK_ENTRIES.map((entry) => {
-              const Icon =
-                EVENT_ICONS[entry.eventType] ?? FileText;
+              const Icon = EVENT_ICONS[entry.eventType] ?? FileText;
               const isError = entry.eventType === "error";
               return (
                 <div
@@ -101,9 +100,7 @@ export function AuditLog() {
                   <Icon
                     className={cn(
                       "h-3.5 w-3.5 mt-0.5 flex-shrink-0",
-                      isError
-                        ? "text-red-500"
-                        : "text-muted-foreground",
+                      isError ? "text-red-500" : "text-muted-foreground",
                     )}
                   />
                   <div className="flex-1 min-w-0">

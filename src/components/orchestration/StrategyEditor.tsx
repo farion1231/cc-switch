@@ -42,11 +42,7 @@ const MOCK_STRATEGIES: StrategyRule[] = [
     type: "debate",
     complexityRange: [0.7, 1.0],
     riskLevels: ["high", "critical"],
-    models: [
-      "mid_executor_code",
-      "cheap_executor_code",
-      "frontier_planner",
-    ],
+    models: ["mid_executor_code", "cheap_executor_code", "frontier_planner"],
     qualityThreshold: 0.75,
   },
 ];
@@ -77,7 +73,14 @@ export function StrategyEditor() {
             })}
           </CardTitle>
         </div>
-        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" title={t("orchestration.addStrategy", { defaultValue: "Add Strategy" })}>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 text-xs gap-1"
+          title={t("orchestration.addStrategy", {
+            defaultValue: "Add Strategy",
+          })}
+        >
           <Plus className="h-3 w-3" />
           {t("orchestration.addStrategy", { defaultValue: "Add Strategy" })}
         </Button>
@@ -103,7 +106,9 @@ export function StrategyEditor() {
                 size="icon"
                 className="h-6 w-6 text-muted-foreground hover:text-destructive"
                 onClick={() => removeStrategy(strategy.id)}
-                title={t("orchestration.removeStrategy", { defaultValue: "Remove strategy" })}
+                title={t("orchestration.removeStrategy", {
+                  defaultValue: "Remove strategy",
+                })}
               >
                 <Trash2 className="h-3 w-3" />
               </Button>

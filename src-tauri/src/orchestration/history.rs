@@ -85,8 +85,8 @@ impl HistoryStore {
             }
         }
 
-        let conn = Connection::open(db_path)
-            .map_err(|e| format!("failed to open SQLite db: {}", e))?;
+        let conn =
+            Connection::open(db_path).map_err(|e| format!("failed to open SQLite db: {}", e))?;
 
         // Enable WAL for concurrent read performance.
         conn.execute_batch("PRAGMA journal_mode=WAL;")
@@ -240,8 +240,10 @@ impl HistoryStore {
                     strategy_used: row.get(5)?,
                     prompt_hash: row.get(6)?,
                     prompt_summary: row.get(7)?,
-                    models_called: serde_json::from_str(&row.get::<_, String>(8)?).unwrap_or_default(),
-                    quality_scores: serde_json::from_str(&row.get::<_, String>(9)?).unwrap_or_default(),
+                    models_called: serde_json::from_str(&row.get::<_, String>(8)?)
+                        .unwrap_or_default(),
+                    quality_scores: serde_json::from_str(&row.get::<_, String>(9)?)
+                        .unwrap_or_default(),
                     final_quality: row.get(10)?,
                     passed: passed != 0,
                     total_cost_usd: row.get(12)?,
@@ -302,8 +304,10 @@ impl HistoryStore {
                         strategy_used: row.get(5)?,
                         prompt_hash: row.get(6)?,
                         prompt_summary: row.get(7)?,
-                        models_called: serde_json::from_str(&row.get::<_, String>(8)?).unwrap_or_default(),
-                        quality_scores: serde_json::from_str(&row.get::<_, String>(9)?).unwrap_or_default(),
+                        models_called: serde_json::from_str(&row.get::<_, String>(8)?)
+                            .unwrap_or_default(),
+                        quality_scores: serde_json::from_str(&row.get::<_, String>(9)?)
+                            .unwrap_or_default(),
                         final_quality: row.get(10)?,
                         passed: passed != 0,
                         total_cost_usd: row.get(12)?,
@@ -325,10 +329,7 @@ impl HistoryStore {
     }
 
     /// Return all records in timestamp order (helper for stats_engine).
-    pub fn query_records_since(
-        &self,
-        since: &str,
-    ) -> Result<Vec<OrchestrationRecord>, String> {
+    pub fn query_records_since(&self, since: &str) -> Result<Vec<OrchestrationRecord>, String> {
         let mut stmt = self
             .conn
             .prepare(
@@ -363,8 +364,10 @@ impl HistoryStore {
                     strategy_used: row.get(5)?,
                     prompt_hash: row.get(6)?,
                     prompt_summary: row.get(7)?,
-                    models_called: serde_json::from_str(&row.get::<_, String>(8)?).unwrap_or_default(),
-                    quality_scores: serde_json::from_str(&row.get::<_, String>(9)?).unwrap_or_default(),
+                    models_called: serde_json::from_str(&row.get::<_, String>(8)?)
+                        .unwrap_or_default(),
+                    quality_scores: serde_json::from_str(&row.get::<_, String>(9)?)
+                        .unwrap_or_default(),
                     final_quality: row.get(10)?,
                     passed: passed != 0,
                     total_cost_usd: row.get(12)?,
@@ -476,7 +479,12 @@ mod tests {
         HistoryStore::new(&path).expect("HistoryStore::new should succeed")
     }
 
-    fn sample_record(task_type: &str, complexity: f64, risk: &str, strategy: &str) -> OrchestrationRecord {
+    fn sample_record(
+        task_type: &str,
+        complexity: f64,
+        risk: &str,
+        strategy: &str,
+    ) -> OrchestrationRecord {
         let mut rec = OrchestrationRecord::new(
             task_type,
             complexity,
@@ -484,22 +492,18 @@ mod tests {
             "Write a function to sort an array using merge sort in Rust",
             strategy,
         );
-        rec.models_called = vec![
-            ModelCall {
-                model_key: "claude-sonnet".to_string(),
-                provider: "anthropic".to_string(),
-                latency_ms: 1200,
-                cost_usd: 0.005,
-                quality_score: 0.88,
-                was_selected: true,
-            },
-        ];
-        rec.quality_scores = vec![
-            QualityScore {
-                tool_name: "structural_check".to_string(),
-                score: 0.95,
-            },
-        ];
+        rec.models_called = vec![ModelCall {
+            model_key: "claude-sonnet".to_string(),
+            provider: "anthropic".to_string(),
+            latency_ms: 1200,
+            cost_usd: 0.005,
+            quality_score: 0.88,
+            was_selected: true,
+        }];
+        rec.quality_scores = vec![QualityScore {
+            tool_name: "structural_check".to_string(),
+            score: 0.95,
+        }];
         rec.final_quality = 0.88;
         rec.passed = true;
         rec.total_cost_usd = 0.005;
@@ -616,7 +620,10 @@ mod tests {
     fn hash_prompt_differs_for_different_input() {
         let hash1 = HistoryStore::hash_prompt("Write a sort function");
         let hash2 = HistoryStore::hash_prompt("Write a search function");
-        assert_ne!(hash1, hash2, "Different inputs should produce different hashes");
+        assert_ne!(
+            hash1, hash2,
+            "Different inputs should produce different hashes"
+        );
     }
 
     #[test]

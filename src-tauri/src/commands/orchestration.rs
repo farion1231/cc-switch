@@ -16,9 +16,7 @@ pub async fn orchestration_status(
 }
 
 #[tauri::command]
-pub async fn orchestration_reload(
-    state: State<'_, OrchestrationState>,
-) -> Result<(), String> {
+pub async fn orchestration_reload(state: State<'_, OrchestrationState>) -> Result<(), String> {
     state.0.reload_config().await
 }
 

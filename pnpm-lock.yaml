@@ -219,6 +219,9 @@ importers:
       vitest:
         specifier: ^2.0.5
         version: 2.1.9(@types/node@20.19.9)(jsdom@25.0.1)(lightningcss@1.30.1)(msw@2.11.6(@types/node@20.19.9)(typescript@5.9.2))
+      ws:
+        specifier: ^8.21.0
+        version: 8.21.0
 
 packages:
 
@@ -3064,8 +3067,8 @@ packages:
     resolution: {integrity: sha512-YVGIj2kamLSTxw6NsZjoBxfSwsn0ycdesmc4p+Q21c5zPuZ1pl+NfxVdxPtdHvmNVOQ6XSYG4AUtyt/Fi7D16Q==}
     engines: {node: '>=10'}
 
-  ws@8.18.3:
-    resolution: {integrity: sha512-PEIGCY5tSlUt50cqyMXfCzX+oOPqN0vuGqWzbcJ2xvnkzkq46oOpz7dQaTDBdfICb4N14+GARUDw2XV2N4tvzg==}
+  ws@8.21.0:
+    resolution: {integrity: sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
@@ -5078,7 +5081,7 @@ snapshots:
       whatwg-encoding: 3.1.1
       whatwg-mimetype: 4.0.0
       whatwg-url: 14.2.0
-      ws: 8.18.3
+      ws: 8.21.0
       xml-name-validator: 5.0.0
     transitivePeerDependencies:
       - bufferutil
@@ -5814,7 +5817,7 @@ snapshots:
       string-width: 4.2.3
       strip-ansi: 6.0.1
 
-  ws@8.18.3: {}
+  ws@8.21.0: {}
 
   xml-name-validator@5.0.0: {}
 

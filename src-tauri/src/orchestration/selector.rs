@@ -23,7 +23,10 @@ impl StrategySelector {
         best_match.map(|(name, _)| (name.clone(), config.strategies[name].action.clone()))
     }
 
-    fn match_score(profile: &TaskProfile, condition: &crate::orchestration::config::StrategyCondition) -> f64 {
+    fn match_score(
+        profile: &TaskProfile,
+        condition: &crate::orchestration::config::StrategyCondition,
+    ) -> f64 {
         let mut score = 0.0;
         let mut total_weight = 0.0;
 

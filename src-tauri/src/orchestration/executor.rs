@@ -38,7 +38,9 @@ impl StrategyExecutor {
         tools: Option<Vec<Value>>,
     ) -> Result<ExecutionResult, String> {
         match decision {
-            OrchestrationDecision::Passthrough => Err("Passthrough: no execution needed".to_string()),
+            OrchestrationDecision::Passthrough => {
+                Err("Passthrough: no execution needed".to_string())
+            }
 
             OrchestrationDecision::Route { model } => {
                 self.execute_route(model, messages, tools).await
@@ -100,12 +102,10 @@ impl StrategyExecutor {
                     total_input += resp.usage.input_tokens;
                     total_output += resp.usage.output_tokens;
 
-                    let quality_result = self.quality_gate.verify(
-                        &resp.content,
-                        None,
-                        Some(&self.caller),
-                        None,
-                    ).await;
+                    let quality_result = self
+                        .quality_gate
+                        .verify(&resp.content, None, Some(&self.caller), None)
+                        .await;
                     let score = quality_result.score;
 
                     if score >= quality_threshold {
@@ -136,11 +136,7 @@ impl StrategyExecutor {
                     );
                 }
                 Err(e) => {
-                    log::warn!(
-                        "[Cascade] Model '{}' failed: {}, trying next",
-                        model_key,
-                        e
-                    );
+                    log::warn!("[Cascade] Model '{}' failed: {}, trying next", model_key, e);
                     last_error = Some(e);
                 }
             }
@@ -267,16 +263,25 @@ mod tests {
     #[test]
     fn extract_score_from_valid_judge_response() {
         let content = "SCORE: 0.85\nANSWER:\nThe best approach is...";
-        assert_eq!(StrategyExecutor::extract_score_from_judge(content), Some(0.85));
+        assert_eq!(
+            StrategyExecutor::extract_score_from_judge(content),
+            Some(0.85)
+        );
     }
 
     #[test]
     fn extract_score_clamps_to_range() {
         let content = "SCORE: 1.5\nANSWER:\n...";
-        assert_eq!(StrategyExecutor::extract_score_from_judge(content), Some(1.0));
+        assert_eq!(
+            StrategyExecutor::extract_score_from_judge(content),
+            Some(1.0)
+        );
 
         let content = "SCORE: -0.2\nANSWER:\n...";
-        assert_eq!(StrategyExecutor::extract_score_from_judge(content), Some(0.0));
+        assert_eq!(
+            StrategyExecutor::extract_score_from_judge(content),
+            Some(0.0)
+        );
     }
 
     #[test]
@@ -338,8 +343,14 @@ mod tests {
             ),
         ];
         let prompt = StrategyExecutor::build_debate_prompt(&responses);
-        assert!(!prompt.contains("secret_model_alpha"), "must not leak model key");
-        assert!(!prompt.contains("secret_model_beta"), "must not leak model key");
+        assert!(
+            !prompt.contains("secret_model_alpha"),
+            "must not leak model key"
+        );
+        assert!(
+            !prompt.contains("secret_model_beta"),
+            "must not leak model key"
+        );
         assert!(!prompt.contains("alpha-v2"), "must not leak model name");
         assert!(!prompt.contains("beta-v1"), "must not leak model name");
         assert!(prompt.contains("Answer A"), "must include content");

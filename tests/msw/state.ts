@@ -98,6 +98,7 @@ let settingsState: Settings = {
   claudeConfigDir: "/default/claude",
   codexConfigDir: "/default/codex",
   language: "zh",
+  firstRunNoticeConfirmed: true,
 };
 let appConfigDirOverride: string | null = null;
 const sessionMessageKey = (providerId: string, sourcePath: string) =>
@@ -216,6 +217,7 @@ export const resetProviderState = () => {
     claudeConfigDir: "/default/claude",
     codexConfigDir: "/default/codex",
     language: "zh",
+    firstRunNoticeConfirmed: true,
   };
   appConfigDirOverride = null;
   mcpConfigs = {

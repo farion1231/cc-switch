@@ -38,7 +38,10 @@ pub fn validate_base_url(url: &str) -> Result<(), String> {
     let parsed = url::Url::parse(url).map_err(|e| format!("Invalid URL '{}': {}", url, e))?;
 
     if parsed.scheme() != "https" {
-        return Err(format!("base_url must use HTTPS, got '{}'", parsed.scheme()));
+        return Err(format!(
+            "base_url must use HTTPS, got '{}'",
+            parsed.scheme()
+        ));
     }
 
     let host = parsed.host_str().unwrap_or("");
@@ -55,7 +58,10 @@ pub fn validate_base_url(url: &str) -> Result<(), String> {
         || host.ends_with(".local")
         || host.ends_with(".localhost")
     {
-        return Err(format!("base_url points to internal/private address: '{}'", host));
+        return Err(format!(
+            "base_url points to internal/private address: '{}'",
+            host
+        ));
     }
 
     Ok(())
@@ -66,10 +72,17 @@ pub fn validate_base_url(url: &str) -> Result<(), String> {
 pub fn validate_api_key_env(name: &str) -> Result<(), String> {
     let upper = name.to_uppercase();
     let allowed_suffixes = [
-        "API_KEY", "API_SECRET", "TOKEN", "ACCESS_TOKEN",
-        "SECRET_KEY", "SECRET", "KEY",
+        "API_KEY",
+        "API_SECRET",
+        "TOKEN",
+        "ACCESS_TOKEN",
+        "SECRET_KEY",
+        "SECRET",
+        "KEY",
     ];
-    let is_allowed = allowed_suffixes.iter().any(|suffix| upper.ends_with(suffix))
+    let is_allowed = allowed_suffixes
+        .iter()
+        .any(|suffix| upper.ends_with(suffix))
         || upper.contains("API_KEY")
         || upper.contains("API_SECRET");
 
@@ -103,13 +116,37 @@ pub struct OrchestrationConfig {
 }
 
 impl OrchestrationConfig {
-    /// Validate all model configs for security. Returns first error found.
+    /// Validate model configs and strategy references. Returns first error found.
     pub fn validate(&self) -> Result<(), String> {
         for (name, model) in &self.models {
             if let Err(e) = model.validate() {
                 return Err(format!("model '{}': {}", name, e));
             }
         }
+
+        for (strategy_name, strategy) in &self.strategies {
+            match &strategy.action {
+                StrategyAction::Route { use_model, .. } => {
+                    if !self.models.contains_key(use_model) {
+                        return Err(format!(
+                            "strategy '{}' references undefined model '{}'",
+                            strategy_name, use_model
+                        ));
+                    }
+                }
+                StrategyAction::Cascade { models, .. } => {
+                    for model_key in models {
+                        if !self.models.contains_key(model_key) {
+                            return Err(format!(
+                                "strategy '{}' references undefined model '{}'",
+                                strategy_name, model_key
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -207,10 +244,7 @@ impl Default for OrchestrationConfig {
                     ..Default::default()
                 },
                 action: StrategyAction::Cascade {
-                    models: vec![
-                        "cheap_coder".to_string(),
-                        "frontier".to_string(),
-                    ],
+                    models: vec!["cheap_coder".to_string(), "frontier".to_string()],
                     verify_each: true,
                     escalate_on_fail: true,
                     quality_threshold: 0.65,
@@ -293,7 +327,11 @@ strategies:
 "#;
         let config: OrchestrationConfig = serde_yaml::from_str(yaml).unwrap();
         match &config.strategies["test"].action {
-            StrategyAction::Cascade { models, quality_threshold, .. } => {
+            StrategyAction::Cascade {
+                models,
+                quality_threshold,
+                ..
+            } => {
                 assert_eq!(models, &vec!["a".to_string(), "b".to_string()]);
                 assert!((*quality_threshold - 0.8).abs() < 0.001);
             }
@@ -309,5 +347,45 @@ strategies:
         assert_eq!(parsed.enabled, original.enabled);
         assert_eq!(parsed.models.len(), original.models.len());
         assert_eq!(parsed.strategies.len(), original.strategies.len());
+    }
+
+    #[test]
+    fn validate_rejects_route_model_that_is_not_defined() {
+        let yaml = r#"
+enabled: true
+models: {}
+strategies:
+  bad:
+    description: "Bad route"
+    when: {}
+    action:
+      type: route
+      use_model: missing_model
+"#;
+        let config: OrchestrationConfig = serde_yaml::from_str(yaml).unwrap();
+        let err = config.validate().unwrap_err();
+        assert!(err.contains("missing_model"));
+    }
+
+    #[test]
+    fn validate_rejects_cascade_model_that_is_not_defined() {
+        let yaml = r#"
+enabled: true
+models:
+  present:
+    provider: deepseek
+    model: deepseek-chat
+    api_key_env: DEEPSEEK_API_KEY
+strategies:
+  bad:
+    description: "Bad cascade"
+    when: {}
+    action:
+      type: cascade
+      models: [present, missing_model]
+"#;
+        let config: OrchestrationConfig = serde_yaml::from_str(yaml).unwrap();
+        let err = config.validate().unwrap_err();
+        assert!(err.contains("missing_model"));
     }
 }

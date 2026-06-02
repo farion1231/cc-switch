@@ -22,7 +22,7 @@ pub mod stats_engine;
 pub mod workflow_assembler;
 
 pub use audit_log::AuditLogger;
-pub use classifier::{TaskProfile, TaskClassifier};
+pub use classifier::{TaskClassifier, TaskProfile};
 pub use config::OrchestrationConfig;
 pub use cross_judge::{ConsensusLevel, CrossJudge, CrossJudgeResult, JudgeAggregation};
 pub use engine::OrchestrationEngine;

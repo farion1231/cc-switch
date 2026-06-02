@@ -313,8 +313,8 @@ requires_openai_auth = true
 
     assert_eq!(
         parsed.get("model_provider").and_then(|v| v.as_str()),
-        Some("custom"),
-        "live Codex third-party model_provider should use the CC Switch history bucket"
+        Some("aihubmix"),
+        "live Codex third-party model_provider should preserve the provider-specific id"
     );
 
     let model_providers = parsed
@@ -322,16 +322,16 @@ requires_openai_auth = true
         .and_then(|v| v.as_table())
         .expect("model_providers table exists");
     assert!(
-        model_providers.get("aihubmix").is_none(),
-        "target provider-specific id should be rewritten in live config"
+        model_providers.get("custom").is_none(),
+        "provider switch should not force the live config into the legacy custom bucket"
     );
     assert_eq!(
         model_providers
-            .get("custom")
+            .get("aihubmix")
             .and_then(|v| v.get("base_url"))
             .and_then(|v| v.as_str()),
         Some("https://aihubmix.example/v1"),
-        "stable provider id should point at the newly selected supplier endpoint"
+        "provider-specific id should point at the newly selected supplier endpoint"
     );
 
     let providers = state
@@ -469,16 +469,16 @@ requires_openai_auth = true
     assert_eq!(
         parsed_live
             .get("model_providers")
-            .and_then(|v| v.get("custom"))
+            .and_then(|v| v.get("aihubmix"))
             .and_then(|v| v.get("experimental_bearer_token"))
             .and_then(|v| v.as_str()),
         Some("bridge-key"),
-        "third-party key should be injected into the stable live provider table"
+        "third-party key should be injected into the active provider-specific live table"
     );
     assert_eq!(
         parsed_live
             .get("model_providers")
-            .and_then(|v| v.get("custom"))
+            .and_then(|v| v.get("aihubmix"))
             .and_then(|v| v.get("requires_openai_auth"))
             .and_then(|v| v.as_bool()),
         Some(true)

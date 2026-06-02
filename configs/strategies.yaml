@@ -1,53 +1,117 @@
 # OmniAgent Workbench — Orchestration Strategies
 # Edit this file to customize strategy behavior. Changes are hot-reloaded.
 #
-# Note: Model keys must match the keys defined in the models section (or Rust defaults).
-# Default model keys: cheap_coder (deepseek), frontier (anthropic)
-# Debate and MoA strategies use type: cascade since no dedicated debate action exists yet.
+# Supported providers: anthropic, openai, deepseek, qwen, glm, kimi,
+#                      doubao, yi, baichuan, spark
+# All non-anthropic providers use OpenAI-compatible API format (Bearer token).
+# Set environment variables for API keys before starting the app.
 
 enabled: false  # Set to true to enable orchestration
 
+# ── Model Definitions ──────────────────────────────────────────────────────
+# Each model has a logical name (the key), a provider, model ID, and the env
+# var name that holds its API key. Only define models you have keys for.
+
+models:
+  # ── 国产模型 ──
+  deepseek:
+    provider: deepseek
+    model: deepseek-chat
+    api_key_env: DEEPSEEK_API_KEY
+    max_tokens: 16384
+
+  glm:
+    provider: glm
+    model: glm-4-flash
+    api_key_env: GLM_API_KEY
+    max_tokens: 16384
+
+  kimi:
+    provider: kimi
+    model: moonshot-v1-128k
+    api_key_env: KIMI_API_KEY
+    max_tokens: 16384
+
+  qwen:
+    provider: qwen
+    model: qwen-plus
+    api_key_env: QWEN_API_KEY
+    max_tokens: 16384
+
+  doubao:
+    provider: doubao
+    model: doubao-pro-32k
+    api_key_env: DOUBAO_API_KEY
+    max_tokens: 16384
+
+  yi:
+    provider: yi
+    model: yi-lightning
+    api_key_env: YI_API_KEY
+    max_tokens: 16384
+
+  # ── 海外模型（可选）──
+  anthropic:
+    provider: anthropic
+    model: claude-sonnet-4-20250514
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 16384
+
+  openai:
+    provider: openai
+    model: gpt-4o
+    api_key_env: OPENAI_API_KEY
+    max_tokens: 16384
+
+# ── Strategy Definitions ───────────────────────────────────────────────────
+# Strategies are matched by complexity + risk. First match wins.
+
 strategies:
+  # 低复杂度 → 用便宜快速的国产模型直接路由
   route:
-    description: "Direct route to best model, no verification"
+    description: "简单任务直接路由到便宜模型"
     when:
       complexity: [0, 0.4]
       risk: ["low"]
     action:
       type: route
-      use_model: cheap_coder
+      use_model: deepseek
       verify: false
 
+  # 中复杂度 → DeepSeek 先答，质量不够则升级 GLM
   cascade:
-    description: "Cheap first → quality check → escalate"
+    description: "DeepSeek 先答 → 质量检查 → 不达标升级到 GLM"
     when:
       complexity: [0.4, 0.7]
       risk: ["medium", "high"]
     action:
       type: cascade
       models:
-        - cheap_coder
-        - frontier
+        - deepseek
+        - glm
       verify_each: true
       escalate_on_fail: true
       quality_threshold: 0.65
 
+  # 高复杂度 → 多模型辩论：DeepSeek + Kimi 各自回答，GLM 做 judge
   debate:
-    description: "Multi-model debate with independent judge (uses cascade)"
+    description: "DeepSeek + Kimi 各自回答，GLM 做评判"
     when:
       complexity: [0.7, 1.0]
       risk: ["high", "critical"]
     action:
       type: cascade
       models:
-        - cheap_coder
-        - frontier
+        - deepseek
+        - kimi
+        - glm
       verify_each: true
       escalate_on_fail: true
       quality_threshold: 0.75
 
+  # 极高复杂度 → MoA：多提议者 + 聚合
   moa:
-    description: "Mixture of Agents — multiple proposers + aggregator (uses cascade)"
+    description: "DeepSeek + Kimi 提议，GLM 聚合"
     when:
       complexity: [0.8, 1.0]
       risk: ["critical"]
@@ -55,8 +119,9 @@ strategies:
     action:
       type: cascade
       models:
-        - cheap_coder
-        - frontier
+        - deepseek
+        - kimi
+        - glm
       verify_each: true
       escalate_on_fail: true
       quality_threshold: 0.80
