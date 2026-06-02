@@ -11,6 +11,57 @@ use std::fs;
 use std::process::Command;
 use toml_edit::DocumentMut;
 
+/// Convert a Windows UNC WSL path to the Linux-native path that a process
+/// inside WSL would use. Returns `None` if the path is not a WSL UNC path.
+///
+/// ```text
+/// \\wsl.localhost\Ubuntu\home\user\.codex\catalog.json → /home/user/.codex/catalog.json
+/// \\wsl$\Ubuntu\home\user\.codex\catalog.json          → /home/user/.codex/catalog.json
+/// C:\Users\user\.codex\catalog.json                    → None (not a WSL path)
+/// ```
+#[cfg(target_os = "windows")]
+fn wsl_unc_to_linux_path(path: &Path) -> Option<PathBuf> {
+    use std::path::{Component, Prefix};
+
+    let mut components = path.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        return None;
+    };
+
+    match prefix.kind() {
+        // VerbatimUNC is defensive — pick_directory() uses .simplified() which
+        // strips the \\?\UNC\ prefix, so paths arrive as standard UNC. Keeping
+        // this branch costs nothing and guards against future path sources.
+        Prefix::UNC(server, _share) | Prefix::VerbatimUNC(server, _share) => {
+            let server_name = server.to_string_lossy();
+            if !server_name.eq_ignore_ascii_case("wsl$")
+                && !server_name.eq_ignore_ascii_case("wsl.localhost")
+            {
+                return None;
+            }
+            // Skip the share component (distro name, e.g. "Ubuntu") and
+            // reconstruct the rest as a Linux absolute path.
+            let linux_path: String = components
+                .filter(|c| !matches!(c, std::path::Component::RootDir))
+                .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/");
+            if linux_path.is_empty() {
+                Some(PathBuf::from("/"))
+            } else {
+                Some(PathBuf::from(format!("/{linux_path}")))
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Non-Windows stub: WSL path translation is never needed outside Windows.
+#[cfg(not(target_os = "windows"))]
+fn wsl_unc_to_linux_path(_path: &Path) -> Option<PathBuf> {
+    None
+}
+
 pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
 const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
@@ -686,7 +737,8 @@ fn set_codex_model_catalog_json_field(
 
     match catalog_path {
         Some(path) => {
-            doc["model_catalog_json"] = toml_edit::value(path.to_string_lossy().as_ref());
+            let display_path = wsl_unc_to_linux_path(path).unwrap_or_else(|| path.to_path_buf());
+            doc["model_catalog_json"] = toml_edit::value(display_path.to_string_lossy().as_ref());
         }
         None => {
             let should_remove = doc
@@ -2025,5 +2077,112 @@ name = "any"
                 "static template must contain key '{key}'"
             );
         }
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn set_catalog_json_field_converts_wsl_unc_to_linux_path() {
+        let input = r#"model_provider = "custom"
+model = "glm-5"
+"#;
+        // Simulate a WSL UNC path as cc-switch would see it on Windows
+        let unc_path = Path::new(r"\\wsl.localhost\Ubuntu\home\user\.codex\cc-switch-model-catalog.json");
+
+        let result = set_codex_model_catalog_json_field(input, Some(unc_path)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        let written_path = parsed
+            .get("model_catalog_json")
+            .and_then(|v| v.as_str())
+            .expect("model_catalog_json should be set");
+        assert_eq!(
+            written_path, "/home/user/.codex/cc-switch-model-catalog.json",
+            "UNC path should be translated to Linux-native path for Codex in WSL"
+        );
+    }
+
+    #[test]
+    fn set_catalog_json_field_keeps_non_wsl_path_unchanged() {
+        let input = r#"model_provider = "custom"
+model = "glm-5"
+"#;
+        let regular_path = Path::new("/home/user/.codex/cc-switch-model-catalog.json");
+
+        let result = set_codex_model_catalog_json_field(input, Some(regular_path)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
+            Some("/home/user/.codex/cc-switch-model-catalog.json"),
+            "non-WSL paths should be written as-is"
+        );
+    }
+
+    #[test]
+    fn set_catalog_json_none_removes_cc_switch_owned_by_filename() {
+        // After the WSL fix, TOML may contain a Linux-style path.
+        // The None arm must still remove it (file_name match catches any format).
+        let input = r#"model_catalog_json = "/home/user/.codex/cc-switch-model-catalog.json"
+"#;
+        let result = set_codex_model_catalog_json_field(input, None).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert!(
+            parsed.get("model_catalog_json").is_none(),
+            "None arm should remove cc-switch-owned field regardless of path format"
+        );
+    }
+
+    #[test]
+    fn set_catalog_json_none_preserves_user_owned_catalog() {
+        let input = r#"model_catalog_json = "/Users/me/.codex/my-custom-catalog.json"
+"#;
+        let result = set_codex_model_catalog_json_field(input, None).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert_eq!(
+            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
+            Some("/Users/me/.codex/my-custom-catalog.json"),
+            "None arm should NOT remove user-owned catalog"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn wsl_unc_converts_wsl_localhost_to_linux() {
+        let path = Path::new(r"\\wsl.localhost\Ubuntu\home\user\.codex\cc-switch-model-catalog.json");
+        let result = wsl_unc_to_linux_path(path).expect("should convert");
+        assert_eq!(
+            result,
+            PathBuf::from("/home/user/.codex/cc-switch-model-catalog.json")
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn wsl_unc_converts_wsl_dollar_to_linux() {
+        let path = Path::new(r"\\wsl$\Debian\home\user\file.toml");
+        let result = wsl_unc_to_linux_path(path).expect("should convert");
+        assert_eq!(result, PathBuf::from("/home/user/file.toml"));
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn wsl_unc_returns_none_for_regular_windows_path() {
+        let path = Path::new(r"C:\Users\user\.codex\catalog.json");
+        assert!(wsl_unc_to_linux_path(path).is_none());
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn wsl_unc_returns_none_for_non_wsl_unc() {
+        let path = Path::new(r"\\server\share\file.txt");
+        assert!(wsl_unc_to_linux_path(path).is_none());
+    }
+
+    #[test]
+    fn wsl_unc_returns_none_on_non_windows() {
+        // On Linux/macOS the function is a stub that always returns None.
+        // This test runs everywhere and verifies the non-Windows stub compiles.
+        let path = Path::new("/home/user/.codex/catalog.json");
+        assert!(wsl_unc_to_linux_path(path).is_none());
     }
 }
