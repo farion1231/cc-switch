@@ -59,21 +59,12 @@ pub fn get_hermes_dir() -> PathBuf {
     }
 
     // 2. HERMES_HOME 环境变量（与 Hermes 自身行为一致）
-    //    展开 ~ 前缀，与 settings::resolve_override_path 行为一致。
+    //    不做 ~ 展开：Hermes 的 get_hermes_home() 也是 trim() 后直接 Path(val)，
+    //    展开会导致 HERMES_HOME 含 ~ 时两边路径不一致。
     if let Ok(hermes_home) = std::env::var("HERMES_HOME") {
         let trimmed = hermes_home.trim();
         if !trimmed.is_empty() {
-            let path = if trimmed == "~" {
-                crate::config::get_home_dir()
-            } else if let Some(stripped) = trimmed
-                .strip_prefix("~/")
-                .or_else(|| trimmed.strip_prefix("~\\"))
-            {
-                crate::config::get_home_dir().join(stripped)
-            } else {
-                PathBuf::from(trimmed)
-            };
-            return path;
+            return PathBuf::from(trimmed);
         }
     }
 
@@ -2040,31 +2031,26 @@ user_profile_enabled: false
 
     #[test]
     #[serial]
-    fn hermes_dir_expands_tilde_in_hermes_home() {
-        // HERMES_HOME=~/custom should expand ~ to the actual home directory,
-        // matching settings::resolve_override_path behaviour.
+    fn hermes_dir_does_not_expand_tilde_in_hermes_home() {
+        // HERMES_HOME with ~ prefix must NOT be expanded, matching Hermes'
+        // own get_hermes_home() which does Path(val) without expanduser.
+        // Expanding would cause a config split when the env var comes from
+        // .env files or GUI launchers that don't perform shell expansion.
         let _guard = test_guard();
         let old_home = std::env::var_os("HERMES_HOME");
         let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
 
-        // Use a real home dir so ~ expansion is testable
         std::env::remove_var("CC_SWITCH_TEST_HOME");
-        let real_home = crate::config::get_home_dir();
 
-        // Test ~/ prefix
+        // ~/ prefix → used as-is (not expanded to home dir)
         std::env::set_var("HERMES_HOME", "~/custom-hermes");
         let dir = get_hermes_dir();
-        assert_eq!(dir, real_home.join("custom-hermes"));
+        assert_eq!(dir, PathBuf::from("~/custom-hermes"));
 
-        // Test ~ alone
+        // ~ alone → used as-is
         std::env::set_var("HERMES_HOME", "~");
         let dir = get_hermes_dir();
-        assert_eq!(dir, real_home);
-
-        // Test ~\ prefix (Windows-style backslash)
-        std::env::set_var("HERMES_HOME", "~\\hermes-win");
-        let dir = get_hermes_dir();
-        assert_eq!(dir, real_home.join("hermes-win"));
+        assert_eq!(dir, PathBuf::from("~"));
 
         // Cleanup
         match old_home {
