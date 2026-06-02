@@ -13,7 +13,7 @@ use crate::error::AppError;
 /// - `dirs::home_dir()` 在 Windows 上使用 `SHGetKnownFolderPath(FOLDERID_Profile)`，
 ///   返回的是真实用户目录（类似 `C:\\Users\\Alice`），与 v3.10.2 行为一致。
 /// - 不要直接使用 `HOME` 环境变量：它可能由 Git/Cygwin/MSYS 等第三方工具注入，
-///   且不一定等于用户目录，可能导致 `.cc-switch/cc-switch.db` 路径变化，从而“看起来像数据丢失”。
+///   且不一定等于用户目录，可能导致 `.cc-switch/cc-switch.db` 路径变化，从而"看起来像数据丢失"。
 ///
 /// ## 测试隔离
 ///
@@ -37,6 +37,13 @@ pub fn get_home_dir() -> PathBuf {
 pub fn get_claude_config_dir() -> PathBuf {
     if let Some(custom) = crate::settings::get_claude_override_dir() {
         return custom;
+    }
+
+    if let Ok(env_dir) = std::env::var("CLAUDE_CONFIG_DIR") {
+        let p = PathBuf::from(env_dir);
+        if p.is_absolute() {
+            return p;
+        }
     }
 
     get_home_dir().join(".claude")
@@ -67,6 +74,16 @@ pub fn get_claude_mcp_path() -> PathBuf {
             return path;
         }
     }
+
+    if let Ok(env_dir) = std::env::var("CLAUDE_CONFIG_DIR") {
+        let p = PathBuf::from(&env_dir);
+        if p.is_absolute() {
+            if let Some(path) = derive_mcp_path_from_override(&p) {
+                return path;
+            }
+        }
+    }
+
     get_default_claude_mcp_path()
 }
 
@@ -96,7 +113,7 @@ pub fn get_app_config_dir() -> PathBuf {
 
     // 兼容 v3.10.3：当用户环境存在 `HOME` 且与真实用户目录不同，
     // v3.10.3 可能在 `HOME/.cc-switch/` 下创建/使用了数据库。
-    // 这里仅在“默认位置没有数据库”时回退到旧位置，避免再次出现“供应商消失”问题，
+    // 这里仅在"默认位置没有数据库"时回退到旧位置，避免再次出现"供应商消失"问题，
     // 同时也避免新安装因为 `HOME` 被设置而写入非预期路径。
     #[cfg(windows)]
     {
@@ -287,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn derive_mcp_path_from_root_like_dir_returns_none() {
+    fn derive_mcp_path_from_override_from_root_like_dir_returns_none() {
         let override_dir = PathBuf::from("/");
         assert!(derive_mcp_path_from_override(&override_dir).is_none());
     }
