@@ -1413,6 +1413,42 @@ fn extend_mise_node_search_paths(paths: &mut Vec<std::path::PathBuf>, home: &Pat
     }
 }
 
+fn extend_rc_managed_node_search_paths(paths: &mut Vec<std::path::PathBuf>, home: &Path) {
+    if home.as_os_str().is_empty() {
+        return;
+    }
+
+    push_unique_path(paths, home.join(".local/share/pnpm"));
+    push_unique_path(paths, home.join(".bun").join("bin"));
+    push_unique_path(paths, home.join(".asdf").join("shims"));
+
+    let fnm_bases = [
+        home.join(".local/share/fnm").join("node-versions"),
+        home.join(".fnm").join("node-versions"),
+    ];
+    for base in fnm_bases {
+        extend_existing_child_search_paths(paths, &base, Some("installation/bin"));
+    }
+}
+
+fn extend_fnm_multishell_search_paths(paths: &mut Vec<std::path::PathBuf>, home: &Path) {
+    if home.as_os_str().is_empty() {
+        return;
+    }
+
+    let fnm_base = home.join(".local/state/fnm_multishells");
+    extend_existing_child_search_paths(paths, &fnm_base, Some("bin"));
+}
+
+fn extend_nvm_node_search_paths(paths: &mut Vec<std::path::PathBuf>, home: &Path) {
+    if home.as_os_str().is_empty() {
+        return;
+    }
+
+    let nvm_base = home.join(".nvm/versions/node");
+    extend_existing_child_search_paths(paths, &nvm_base, Some("bin"));
+}
+
 /// 构建某工具的候选搜索目录（原生安装优先，PATH 兜底）。
 /// 单探兜底 (`scan_cli_version`) 与全量枚举 (`enumerate_tool_installations`) 共用，
 /// 确保两条路径看到的是同一组安装位置。
@@ -1427,6 +1463,9 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
         push_unique_path(&mut search_paths, home.join("n/bin"));
         push_unique_path(&mut search_paths, home.join(".volta/bin"));
         extend_mise_node_search_paths(&mut search_paths, &home);
+        extend_rc_managed_node_search_paths(&mut search_paths, &home);
+        extend_fnm_multishell_search_paths(&mut search_paths, &home);
+        extend_nvm_node_search_paths(&mut search_paths, &home);
     }
 
     #[cfg(target_os = "macos")]
@@ -1501,30 +1540,6 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
             std::path::PathBuf::from("C:\\Program Files\\nodejs"),
         );
         extend_windows_cli_manager_search_paths(&mut search_paths, &home);
-    }
-
-    let fnm_base = home.join(".local/state/fnm_multishells");
-    if fnm_base.exists() {
-        if let Ok(entries) = std::fs::read_dir(&fnm_base) {
-            for entry in entries.flatten() {
-                let bin_path = entry.path().join("bin");
-                if bin_path.exists() {
-                    push_unique_path(&mut search_paths, bin_path);
-                }
-            }
-        }
-    }
-
-    let nvm_base = home.join(".nvm/versions/node");
-    if nvm_base.exists() {
-        if let Ok(entries) = std::fs::read_dir(&nvm_base) {
-            for entry in entries.flatten() {
-                let bin_path = entry.path().join("bin");
-                if bin_path.exists() {
-                    push_unique_path(&mut search_paths, bin_path);
-                }
-            }
-        }
     }
 
     if tool == "opencode" {
@@ -4673,6 +4688,41 @@ mod tests {
 
         assert!(paths.contains(&home.join(".local/share/mise/shims")));
         assert!(paths.contains(&node_bin));
+    }
+
+    #[test]
+    fn rc_managed_node_search_paths_include_common_shell_initialized_bins() {
+        let temp = tempfile::tempdir().expect("temp dir should be created");
+        let home = temp.path();
+        let fnm_bin = home
+            .join(".local/share/fnm/node-versions/v25.8.0")
+            .join("installation/bin");
+        std::fs::create_dir_all(&fnm_bin).expect("fnm node bin should be created");
+
+        let mut paths = Vec::new();
+        extend_rc_managed_node_search_paths(&mut paths, home);
+
+        assert!(paths.contains(&home.join(".local/share/pnpm")));
+        assert!(paths.contains(&home.join(".bun/bin")));
+        assert!(paths.contains(&home.join(".asdf/shims")));
+        assert!(paths.contains(&fnm_bin));
+    }
+
+    #[test]
+    fn node_manager_search_paths_include_nvm_and_fnm_multishell_bins() {
+        let temp = tempfile::tempdir().expect("temp dir should be created");
+        let home = temp.path();
+        let nvm_bin = home.join(".nvm/versions/node/v25.8.0").join("bin");
+        let fnm_bin = home.join(".local/state/fnm_multishells/12345").join("bin");
+        std::fs::create_dir_all(&nvm_bin).expect("nvm node bin should be created");
+        std::fs::create_dir_all(&fnm_bin).expect("fnm multishell bin should be created");
+
+        let mut paths = Vec::new();
+        extend_nvm_node_search_paths(&mut paths, home);
+        extend_fnm_multishell_search_paths(&mut paths, home);
+
+        assert!(paths.contains(&nvm_bin));
+        assert!(paths.contains(&fnm_bin));
     }
 
     #[cfg(not(target_os = "windows"))]
