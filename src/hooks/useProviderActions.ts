@@ -296,7 +296,13 @@ export function useProviderActions(
     async (
       provider: Provider,
       script: UsageScript,
-      opencodeGoMeta?: { workspaceId?: string; authCookie?: string },
+      opencodeGoMeta?: {
+        workspaceId?: string;
+        authCookie?: string;
+        showRolling?: boolean;
+        showWeekly?: boolean;
+        showMonthly?: boolean;
+      },
     ) => {
       try {
         const nextMeta: ProviderMeta = {
@@ -305,7 +311,11 @@ export function useProviderActions(
         };
 
         if (script.enabled && script.templateType === "opencode_go") {
-          nextMeta.opencodeGoWorkspaceId = opencodeGoMeta?.workspaceId?.trim() || undefined;
+          nextMeta.opencodeGoWorkspaceId =
+            opencodeGoMeta?.workspaceId?.trim() || undefined;
+          nextMeta.opencodeGoShowRolling = opencodeGoMeta?.showRolling !== false;
+          nextMeta.opencodeGoShowWeekly = opencodeGoMeta?.showWeekly !== false;
+          nextMeta.opencodeGoShowMonthly = opencodeGoMeta?.showMonthly !== false;
           const authCookie = opencodeGoMeta?.authCookie?.trim();
           if (authCookie) {
             nextMeta.opencodeGoAuthCookie = authCookie;
@@ -313,6 +323,9 @@ export function useProviderActions(
         } else {
           delete nextMeta.opencodeGoWorkspaceId;
           delete nextMeta.opencodeGoAuthCookie;
+          delete nextMeta.opencodeGoShowRolling;
+          delete nextMeta.opencodeGoShowWeekly;
+          delete nextMeta.opencodeGoShowMonthly;
         }
 
         const updatedProvider: Provider = {

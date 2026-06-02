@@ -227,6 +227,10 @@ export interface ProviderMeta {
   opencodeGoWorkspaceId?: string;
   // OpenCode Go auth cookie (for quota scraping, only used in Rust backend)
   opencodeGoAuthCookie?: string;
+  // OpenCode Go 用量窗口顯示開關（預設全部顯示）
+  opencodeGoShowRolling?: boolean;
+  opencodeGoShowWeekly?: boolean;
+  opencodeGoShowMonthly?: boolean;
 }
 
 // Skill 同步方式

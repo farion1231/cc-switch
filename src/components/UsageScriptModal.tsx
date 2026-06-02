@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { cn } from "@/lib/utils";
@@ -37,7 +38,13 @@ interface UsageScriptModalProps {
   onClose: () => void;
   onSave: (
     script: UsageScript,
-    opencodeGoMeta?: { workspaceId?: string; authCookie?: string },
+    opencodeGoMeta?: {
+      workspaceId?: string;
+      authCookie?: string;
+      showRolling?: boolean;
+      showWeekly?: boolean;
+      showMonthly?: boolean;
+    },
   ) => void;
 }
 
@@ -111,11 +118,11 @@ const generatePresetTemplates = (
   // Coding Plan 模板不需要脚本，使用专用 Rust 查询
   [TEMPLATE_TYPES.TOKEN_PLAN]: "",
 
-  // 官方余额查询模板不需要脚本，使用专用 Rust 查询
-  [TEMPLATE_TYPES.BALANCE]: "",
-
   // OpenCode Go 模板不需要脚本，使用专用 Rust 查询
   [TEMPLATE_TYPES.OPENCODE_GO]: "",
+
+  // 官方余额查询模板不需要脚本，使用专用 Rust 查询
+  [TEMPLATE_TYPES.BALANCE]: "",
 });
 
 // 模板名称国际化键映射
@@ -125,8 +132,8 @@ const TEMPLATE_NAME_KEYS: Record<string, string> = {
   [TEMPLATE_TYPES.NEW_API]: "usageScript.templateNewAPI",
   [TEMPLATE_TYPES.GITHUB_COPILOT]: "usageScript.templateCopilot",
   [TEMPLATE_TYPES.TOKEN_PLAN]: "usageScript.templateTokenPlan",
-  [TEMPLATE_TYPES.BALANCE]: "usageScript.templateBalance",
   [TEMPLATE_TYPES.OPENCODE_GO]: "usageScript.templateOpenCodeGo",
+  [TEMPLATE_TYPES.BALANCE]: "usageScript.templateBalance",
 };
 
 /** 官方余额查询供应商检测 */
@@ -285,6 +292,17 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   );
   const [opencodeGoAuthCookie, setOpenCodeGoAuthCookie] = useState("");
   const [showOpenCodeGoCookie, setShowOpenCodeGoCookie] = useState(false);
+
+  // OpenCode Go window visibility toggles (default all shown)
+  const [showRolling, setShowRolling] = useState(
+    () => provider.meta?.opencodeGoShowRolling !== false,
+  );
+  const [showWeekly, setShowWeekly] = useState(
+    () => provider.meta?.opencodeGoShowWeekly !== false,
+  );
+  const [showMonthly, setShowMonthly] = useState(
+    () => provider.meta?.opencodeGoShowMonthly !== false,
+  );
 
   // 🔧 失焦时的验证（严格）- 仅确保有效整数
   const validateTimeout = (value: string): number => {
@@ -454,6 +472,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         ? {
             workspaceId: opencodeGoWorkspaceId.trim(),
             authCookie: opencodeGoAuthCookie.trim(),
+            showRolling,
+            showWeekly,
+            showMonthly,
           }
         : undefined;
 
@@ -1067,6 +1088,33 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                         </button>
                       )}
                     </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <Label>{t("usageScript.openCodeGoVisibleWindows")}</Label>
+                  <div className="flex flex-wrap gap-4">
+                    <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Checkbox
+                        checked={showRolling}
+                        onCheckedChange={(checked) => setShowRolling(checked === true)}
+                      />
+                      {t("usageScript.openCodeGoShowRolling")}
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Checkbox
+                        checked={showWeekly}
+                        onCheckedChange={(checked) => setShowWeekly(checked === true)}
+                      />
+                      {t("usageScript.openCodeGoShowWeekly")}
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Checkbox
+                        checked={showMonthly}
+                        onCheckedChange={(checked) => setShowMonthly(checked === true)}
+                      />
+                      {t("usageScript.openCodeGoShowMonthly")}
+                    </label>
                   </div>
                 </div>
               </div>

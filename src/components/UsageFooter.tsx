@@ -26,6 +26,25 @@ function toQuotaTier(data: UsageData): QuotaTier {
   };
 }
 
+function filterOpenCodeGoUsage(data: UsageData[], provider: Provider): UsageData[] {
+  if (provider.meta?.usage_script?.templateType !== "opencode_go") {
+    return data;
+  }
+
+  return data.filter((item) => {
+    if (item.planName === "5h Rolling") {
+      return provider.meta?.opencodeGoShowRolling !== false;
+    }
+    if (item.planName === "Weekly") {
+      return provider.meta?.opencodeGoShowWeekly !== false;
+    }
+    if (item.planName === "Monthly") {
+      return provider.meta?.opencodeGoShowMonthly !== false;
+    }
+    return true;
+  });
+}
+
 const UsageFooter: React.FC<UsageFooterProps> = ({
   provider,
   providerId,
@@ -117,7 +136,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
     );
   }
 
-  const usageDataList = usage.data || [];
+  const usageDataList = filterOpenCodeGoUsage(usage.data || [], provider);
 
   // 无数据时不显示
   if (usageDataList.length === 0) return null;
