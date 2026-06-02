@@ -596,6 +596,7 @@
       "title": "Preferred Terminal",
       "description": "Choose which terminal app to use when clicking the terminal button",
       "fallbackHint": "If the selected terminal is unavailable, the system default will be used",
+      "cmuxAutomationHint": "For cmux: open Settings → Automation and set Socket control mode to Automation mode, then press Cmd+Q to fully quit and reopen cmux.",
       "options": {
         "macos": {
           "terminal": "Terminal.app",

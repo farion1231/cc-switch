@@ -110,6 +110,11 @@ export function TerminalSettings({ value, onChange }: TerminalSettingsProps) {
       <p className="text-xs text-muted-foreground">
         {t("settings.terminal.fallbackHint")}
       </p>
+      {currentValue === "cmux" && (
+        <p className="text-xs text-muted-foreground">
+          {t("settings.terminal.cmuxAutomationHint")}
+        </p>
+      )}
     </section>
   );
 }

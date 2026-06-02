@@ -596,6 +596,7 @@
       "title": "首选终端",
       "description": "选择点击终端按钮时使用的终端应用",
       "fallbackHint": "如果选择的终端不可用，将自动使用系统默认终端",
+      "cmuxAutomationHint": "使用 cmux 时：请在 cmux 设置 → Automation 中将 Socket control mode 设为 Automation mode，并按 Cmd+Q 完全退出后重新打开 cmux。",
       "options": {
         "macos": {
           "terminal": "Terminal.app",

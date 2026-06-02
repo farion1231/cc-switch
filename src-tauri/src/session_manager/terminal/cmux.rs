@@ -48,7 +48,7 @@ pub fn is_macos_gui_cmux_binary(path: &Path) -> bool {
 }
 
 /// 定位 cmux.app 的 GUI 主程序，用于冷启动时附带 `CMUX_SOCKET_MODE=allowAll`。
-pub fn find_cmux_bundle_main_executable() -> Option<PathBuf> {
+fn find_cmux_bundle_main_executable() -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(home) = dirs::home_dir() {
         candidates.push(home.join("Applications/cmux.app/Contents/MacOS/cmux"));
@@ -75,8 +75,19 @@ fn cmux_ping(exe: &Path) -> bool {
         || run_cmux_checked(exe, &["ping"], "ping", "allowAll").is_ok()
 }
 
+fn is_cmux_app_running() -> bool {
+    Command::new("pgrep")
+        .args(["-x", "cmux"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 fn wait_for_cmux_ping(exe: &Path, max_wait_ms: u64) -> bool {
-    let step = Duration::from_millis(150);
+    let step = Duration::from_millis(100);
     let mut waited = 0u64;
     while waited < max_wait_ms {
         if cmux_ping(exe) {
@@ -88,31 +99,83 @@ fn wait_for_cmux_ping(exe: &Path, max_wait_ms: u64) -> bool {
     false
 }
 
-/// 确保 cmux 已运行且 socket 可用。
-fn ensure_cmux_app_ready(exe: &Path) -> Result<(), String> {
-    if cmux_ping(exe) {
-        // 已在运行：激活窗口即可，不要再次 spawn（避免多实例或重复恢复 workspace）
-        let status = Command::new("open")
-            .args(["-a", "cmux"])
-            .status()
-            .map_err(|e| format!("Failed to run open -a cmux: {e}"))?;
-        if status.success() {
-            thread::sleep(Duration::from_millis(200));
-            return Ok(());
+/// 新版 cmux 的 socket 在 `~/Library/Application Support/cmux/cmux-501.sock`，
+/// 不在文档默认的 `/tmp/cmux.sock`；CLI 会写 last-socket-path 供外部读取。
+fn resolve_cmux_socket_path() -> Option<PathBuf> {
+    if let Ok(custom) = std::env::var("CMUX_SOCKET_PATH") {
+        let trimmed = custom.trim();
+        if !trimmed.is_empty() {
+            return Some(PathBuf::from(trimmed));
         }
-        return Err(
-            "open -a cmux failed. Make sure cmux is installed in /Applications.".into(),
+    }
+    let mut path_files = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        path_files.push(
+            home.join("Library/Application Support/cmux/last-socket-path"),
         );
     }
+    path_files.push(PathBuf::from("/tmp/cmux-last-socket-path"));
+    for path_file in path_files {
+        if let Ok(content) = std::fs::read_to_string(&path_file) {
+            let socket = content.trim();
+            if !socket.is_empty() {
+                return Some(PathBuf::from(socket));
+            }
+        }
+    }
+    None
+}
 
-    // cmux 未运行：必须用 GUI 主二进制 + allowAll 启动，单纯 `open -a` 不会写入 socket 策略
+fn configure_cmux_command(cmd: &mut Command, socket_mode: &str) {
+    cmd.env("CMUX_SOCKET_MODE", socket_mode);
+    if let Some(path) = resolve_cmux_socket_path() {
+        cmd.env("CMUX_SOCKET_PATH", path);
+    }
+}
+
+/// 外部 GUI 能否通过 socket 控制 cmux（与 run_cmux_with_modes 一致：先 automation 再 allowAll）。
+fn cmux_external_control_ready(exe: &Path) -> bool {
+    if !cmux_ping(exe) {
+        return false;
+    }
+    run_cmux_checked(exe, &["list-windows"], "list-windows", "automation").is_ok()
+        || run_cmux_checked(exe, &["list-windows"], "list-windows", "allowAll").is_ok()
+}
+
+/// 用户需在 cmux 中开启的外部 socket 配置说明（错误提示共用）。
+const CMUX_AUTOMATION_MODE_SETUP_HINT: &str = "In cmux, go to Settings → Automation and set Socket control mode \
+to Automation mode, then press Cmd+Q to fully quit cmux and reopen it.";
+
+fn cmux_running_without_external_access_error() -> String {
+    format!("CC Switch cannot connect to cmux. {CMUX_AUTOMATION_MODE_SETUP_HINT}")
+}
+
+/// 确保 cmux 已运行且 socket 可用。
+fn ensure_cmux_app_ready(exe: &Path) -> Result<(), String> {
+    if cmux_external_control_ready(exe) {
+        thread::sleep(Duration::from_millis(200));
+        return Ok(());
+    }
+
+    // cmux 已在跑但外部不可控：不 quit、不 spawn 第二实例，避免打断用户当前会话
+    if is_cmux_app_running() {
+        return Err(cmux_running_without_external_access_error());
+    }
+
+    // cmux 未运行：冷启动并附带 allowAll
     if !spawn_cmux_main_with_allow_all() {
         return Err("Failed to launch cmux.app. Make sure cmux is installed.".into());
     }
     if !wait_for_cmux_ping(exe, 5000) {
         return Err("Timed out waiting for cmux socket.".into());
     }
-    thread::sleep(Duration::from_millis(400));
+    if !cmux_external_control_ready(exe) {
+        return Err(format!(
+            "cmux started but CC Switch cannot connect. {CMUX_AUTOMATION_MODE_SETUP_HINT}"
+        ));
+    }
+    // 留时间给 allowAll 实例完成 autoResume，再 new-workspace
+    thread::sleep(Duration::from_millis(800));
     Ok(())
 }
 
@@ -184,10 +247,6 @@ fn resolve_via_zsh_login_shell() -> Option<PathBuf> {
     }
 }
 
-fn format_cmux_failure_hint() -> &'static str {
-    " | Fix: allow external socket access in cmux settings, or quit and reopen cmux; see https://cmux.com/docs/api"
-}
-
 fn format_cmux_failure(output: &Output, step: &str) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -199,7 +258,8 @@ fn format_cmux_failure(output: &Output, step: &str) -> String {
         msg.push_str(": ");
         msg.push_str(stdout.trim());
     }
-    msg.push_str(format_cmux_failure_hint());
+    msg.push_str(" | Fix: ");
+    msg.push_str(CMUX_AUTOMATION_MODE_SETUP_HINT);
     msg
 }
 
@@ -209,8 +269,9 @@ fn run_cmux_checked(
     step: &str,
     socket_mode: &str,
 ) -> Result<(), String> {
-    let output = Command::new(exe)
-        .env("CMUX_SOCKET_MODE", socket_mode)
+    let mut cmd = Command::new(exe);
+    configure_cmux_command(&mut cmd, socket_mode);
+    let output = cmd
         .args(args)
         .output()
         .map_err(|e| format!("Failed to run cmux ({step}): {e}"))?;
@@ -259,16 +320,16 @@ fn stderr_suggests_unknown_flag(stderr: &str, flag: &str) -> bool {
     lower.contains("unknown") && lower.contains(flag)
 }
 
-#[derive(Clone, Copy, Default)]
-struct NewWorkspaceOpts {
+#[derive(Clone, Default)]
+struct NewWorkspaceOpts<'a> {
     json: bool,
     with_name: bool,
-    with_command: bool,
     with_cwd: bool,
     with_focus: bool,
+    window: Option<&'a str>,
 }
 
-fn build_new_workspace_argv(launch: &CmuxWorkspaceLaunch, opts: NewWorkspaceOpts) -> Vec<String> {
+fn build_new_workspace_argv(launch: &CmuxWorkspaceLaunch, opts: NewWorkspaceOpts<'_>) -> Vec<String> {
     let mut args = vec!["new-workspace".into()];
     if opts.json {
         args.push("--json".into());
@@ -283,9 +344,9 @@ fn build_new_workspace_argv(launch: &CmuxWorkspaceLaunch, opts: NewWorkspaceOpts
         args.push("--name".into());
         args.push(launch.title.clone());
     }
-    if opts.with_command {
-        args.push("--command".into());
-        args.push(launch.command.clone());
+    if let Some(window) = opts.window {
+        args.push("--window".into());
+        args.push(window.to_string());
     }
     if opts.with_focus {
         args.push("--focus".into());
@@ -294,13 +355,74 @@ fn build_new_workspace_argv(launch: &CmuxWorkspaceLaunch, opts: NewWorkspaceOpts
     args
 }
 
+/// 外部 GUI 进程没有 `$CMUX_WORKSPACE_ID`，new-workspace 必须显式指定 window。
+fn resolve_target_window_ref(exe: &Path) -> Option<String> {
+    if let Some(id) = read_cmux_window_id(exe, &["current-window"]) {
+        return Some(id);
+    }
+    read_cmux_window_id(exe, &["list-windows"])
+}
+
+fn read_cmux_window_id(exe: &Path, args: &[&str]) -> Option<String> {
+    let output = run_cmux_output_with_modes(exe, args).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_window_ref(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_window_ref(stdout: &str) -> Option<String> {
+    for line in stdout.lines() {
+        let token = line.split_whitespace().next()?.trim();
+        if token.starts_with("window:") {
+            return Some(token.to_string());
+        }
+    }
+    let trimmed = stdout.trim();
+    if trimmed.starts_with("window:") {
+        return Some(trimmed.to_string());
+    }
+    None
+}
+
+fn select_workspace(exe: &Path, workspace: &str, window: Option<&str>) -> Result<(), String> {
+    let mut args = vec!["select-workspace", "--workspace", workspace];
+    if let Some(window) = window {
+        args.push("--window");
+        args.push(window);
+    }
+    run_cmux_with_modes(exe, &args, "select-workspace")
+}
+
+fn activate_cmux_app() -> Result<(), String> {
+    let status = Command::new("open")
+        .args(["-a", "cmux"])
+        .status()
+        .map_err(|e| format!("Failed to run open -a cmux: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("open -a cmux failed. Make sure cmux is installed in /Applications.".into())
+    }
+}
+
+fn finish_workspace_launch(
+    exe: &Path,
+    workspace: &str,
+    window: Option<&str>,
+) -> Result<(), String> {
+    select_workspace(exe, workspace, window)?;
+    activate_cmux_app()?;
+    thread::sleep(Duration::from_millis(150));
+    Ok(())
+}
+
 /// 先 automation，失败再 allowAll；失败时返回 **最后一次** 尝试的 Output。
 fn run_cmux_output_with_modes(exe: &Path, args: &[&str]) -> Result<Output, String> {
     let run = |mode: &str| {
-        Command::new(exe)
-            .env("CMUX_SOCKET_MODE", mode)
-            .args(args)
-            .output()
+        let mut cmd = Command::new(exe);
+        configure_cmux_command(&mut cmd, mode);
+        cmd.args(args).output()
     };
     let output = run("automation").map_err(|e| format!("Failed to run cmux: {e}"))?;
     if output.status.success() {
@@ -322,6 +444,7 @@ fn clear_surface_resume(exe: &Path, workspace: &str) {
 fn send_command_to_workspace(
     exe: &Path,
     workspace: &str,
+    window: Option<&str>,
     launch: &CmuxWorkspaceLaunch,
 ) -> Result<(), String> {
     clear_surface_resume(exe, workspace);
@@ -331,14 +454,8 @@ fn send_command_to_workspace(
         exe,
         &["send", "--workspace", workspace, &send_body],
         "send",
-    )
-}
-
-fn new_workspace_with_title_and_command(
-    exe: &Path,
-    launch: &CmuxWorkspaceLaunch,
-) -> Result<(), String> {
-    new_workspace_create_then_send(exe, launch, true)
+    )?;
+    finish_workspace_launch(exe, workspace, window)
 }
 
 /// 先创建 workspace（不用 `--command`，避免与 autoResume 竞态），再 clear resume + send。
@@ -347,6 +464,8 @@ fn new_workspace_create_then_send(
     launch: &CmuxWorkspaceLaunch,
     with_focus: bool,
 ) -> Result<(), String> {
+    let window = resolve_target_window_ref(exe);
+    let window_ref = window.as_deref();
     let args = build_new_workspace_argv(
         launch,
         NewWorkspaceOpts {
@@ -354,6 +473,7 @@ fn new_workspace_create_then_send(
             with_name: true,
             with_cwd: true,
             with_focus,
+            window: window_ref,
             ..Default::default()
         },
     );
@@ -366,7 +486,7 @@ fn new_workspace_create_then_send(
             .ok_or_else(|| {
                 format!("cmux new-workspace --json did not return a workspace id: {stdout}")
             })?;
-        return send_command_to_workspace(exe, &ws, launch);
+        return send_command_to_workspace(exe, &ws, window_ref, launch);
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -388,6 +508,8 @@ fn new_workspace_rename_then_command(
     launch: &CmuxWorkspaceLaunch,
     with_focus: bool,
 ) -> Result<(), String> {
+    let window = resolve_target_window_ref(exe);
+    let window_ref = window.as_deref();
     // 旧版 cmux 不支持 `new-workspace --name`：先创建再 rename
     let args = build_new_workspace_argv(
         launch,
@@ -395,6 +517,7 @@ fn new_workspace_rename_then_command(
             json: true,
             with_cwd: true,
             with_focus,
+            window: window_ref,
             ..Default::default()
         },
     );
@@ -418,7 +541,7 @@ fn new_workspace_rename_then_command(
         "rename-workspace",
     )?;
 
-    send_command_to_workspace(exe, &ws, launch)
+    send_command_to_workspace(exe, &ws, window_ref, launch)
 }
 
 fn new_workspace_send_fallback(
@@ -426,12 +549,15 @@ fn new_workspace_send_fallback(
     launch: &CmuxWorkspaceLaunch,
     with_focus: bool,
 ) -> Result<(), String> {
+    let window = resolve_target_window_ref(exe);
+    let window_ref = window.as_deref();
     // 更旧版本不支持 `--cwd`：在 send 正文里手动 `cd`
     let args = build_new_workspace_argv(
         launch,
         NewWorkspaceOpts {
             json: true,
             with_focus,
+            window: window_ref,
             ..Default::default()
         },
     );
@@ -468,7 +594,9 @@ fn new_workspace_send_fallback(
         exe,
         &["rename-workspace", "--workspace", &ws, &launch.title],
         "rename-workspace",
-    )
+    )?;
+
+    finish_workspace_launch(exe, &ws, window_ref)
 }
 
 fn shell_single_quote(value: &str) -> String {
@@ -479,7 +607,7 @@ fn shell_single_quote(value: &str) -> String {
 pub fn run_cmux_workspace(launch: &CmuxWorkspaceLaunch) -> Result<(), String> {
     let exe = resolve_cmux_cli()?;
     ensure_cmux_app_ready(&exe)?;
-    new_workspace_with_title_and_command(&exe, launch)
+    new_workspace_create_then_send(&exe, launch, true)
 }
 
 #[cfg(test)]
@@ -548,5 +676,42 @@ mod tests {
             "socket connection refused",
             "focus"
         ));
+    }
+
+    #[test]
+    fn parse_window_ref_from_current_window_line() {
+        assert_eq!(
+            parse_window_ref("window:1\n"),
+            Some("window:1".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_window_ref_from_list_windows() {
+        assert_eq!(
+            parse_window_ref("window:1\tcmux\nwindow:2\tother\n"),
+            Some("window:1".to_string())
+        );
+    }
+
+    #[test]
+    fn build_new_workspace_includes_window_when_set() {
+        let launch = CmuxWorkspaceLaunch {
+            title: "Test · Claude".into(),
+            cwd: None,
+            command: "claude".into(),
+        };
+        let args = build_new_workspace_argv(
+            &launch,
+            NewWorkspaceOpts {
+                json: true,
+                with_name: true,
+                with_focus: true,
+                window: Some("window:1"),
+                ..Default::default()
+            },
+        );
+        assert!(args.iter().any(|w| w == "--window"));
+        assert!(args.contains(&"window:1".to_string()));
     }
 }
