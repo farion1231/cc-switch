@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { FormLabel } from "@/components/ui/form";
@@ -70,6 +70,10 @@ interface CodexFormFieldsProps {
   catalogModels?: CodexCatalogModel[];
   onCatalogModelsChange?: (models: CodexCatalogModel[]) => void;
 
+  // Multimodal Fallback Model
+  multimodalFallbackModel?: string;
+  onMultimodalFallbackModelChange?: (model: string) => void;
+
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
 }
@@ -127,6 +131,8 @@ export function CodexFormFields({
   onCodexChatReasoningChange,
   catalogModels = [],
   onCatalogModelsChange,
+  multimodalFallbackModel = "",
+  onMultimodalFallbackModelChange,
   speedTestEndpoints,
 }: CodexFormFieldsProps) {
   const { t } = useTranslation();
@@ -146,29 +152,22 @@ export function CodexFormFields({
     catalogModels.map((m) => createCatalogRow(m)),
   );
 
-  // 记录上次发送给父组件的数据，避免重复触发
-  const lastSentModelsRef = useRef<CodexCatalogModel[]>(catalogModels);
+  // 璁板綍涓婃鍙戦€佺粰鐖剁粍浠剁殑鏁版嵁锛岄伩鍏嶉噸澶嶈Е鍙?  const lastSentModelsRef = useRef<CodexCatalogModel[]>(catalogModels);
 
-  // 父 → 子：仅当 prop 数据真的变化（预设切换 / 编辑加载）时才重建 rowId；
-  // 同 shape 时保留现有 rowId，避免编辑过程中焦点丢失。
-  useEffect(() => {
+  // 鐖?鈫?瀛愶細浠呭綋 prop 鏁版嵁鐪熺殑鍙樺寲锛堥璁惧垏鎹?/ 缂栬緫鍔犺浇锛夋椂鎵嶉噸寤?rowId锛?  // 鍚?shape 鏃朵繚鐣欑幇鏈?rowId锛岄伩鍏嶇紪杈戣繃绋嬩腑鐒︾偣涓㈠け銆?  useEffect(() => {
     setCatalogRows((current) => {
       if (catalogRowsMatchModels(current, catalogModels)) return current;
       return catalogModels.map((m) => createCatalogRow(m));
     });
-    // 同步更新 ref，避免父组件传入新数据时子→父 effect 误判为本地修改
-    lastSentModelsRef.current = catalogModels;
+    // 鍚屾鏇存柊 ref锛岄伩鍏嶇埗缁勪欢浼犲叆鏂版暟鎹椂瀛愨啋鐖?effect 璇垽涓烘湰鍦颁慨鏀?    lastSentModelsRef.current = catalogModels;
   }, [catalogModels]);
 
-  // 子 → 父：rowId 是视图层概念，不应进入持久化数据；剥离后再回传。
-  // 注意：依赖数组不包含 catalogModels，避免父→子更新触发子→父回调形成循环。
-  useEffect(() => {
+  // 瀛?鈫?鐖讹細rowId 鏄鍥惧眰姒傚康锛屼笉搴旇繘鍏ユ寔涔呭寲鏁版嵁锛涘墺绂诲悗鍐嶅洖浼犮€?  // 娉ㄦ剰锛氫緷璧栨暟缁勪笉鍖呭惈 catalogModels锛岄伩鍏嶇埗鈫掑瓙鏇存柊瑙﹀彂瀛愨啋鐖跺洖璋冨舰鎴愬惊鐜€?  useEffect(() => {
     if (!onCatalogModelsChange) return;
     const next: CodexCatalogModel[] = catalogRows.map(
       ({ rowId: _rowId, ...rest }) => rest,
     );
-    // 只有当数据真的变化时才通知父组件
-    if (catalogRowsMatchModels(catalogRows, lastSentModelsRef.current)) return;
+    // 鍙湁褰撴暟鎹湡鐨勫彉鍖栨椂鎵嶉€氱煡鐖剁粍浠?    if (catalogRowsMatchModels(catalogRows, lastSentModelsRef.current)) return;
     lastSentModelsRef.current = next;
     onCatalogModelsChange(next);
   }, [catalogRows, onCatalogModelsChange]);
@@ -284,7 +283,7 @@ export function CodexFormFields({
 
   return (
     <>
-      {/* Codex API Key 输入框 */}
+      {/* Codex API Key 杈撳叆妗?*/}
       <ApiKeySection
         id="codexApiKey"
         label="API Key"
@@ -297,15 +296,15 @@ export function CodexFormFields({
         partnerPromotionKey={partnerPromotionKey}
         placeholder={{
           official: t("providerForm.codexOfficialNoApiKey", {
-            defaultValue: "官方供应商无需 API Key",
+            defaultValue: "瀹樻柟渚涘簲鍟嗘棤闇€ API Key",
           }),
           thirdParty: t("providerForm.codexApiKeyAutoFill", {
-            defaultValue: "输入 API Key，将自动填充到配置",
+            defaultValue: "杈撳叆 API Key锛屽皢鑷姩濉厖鍒伴厤缃?,
           }),
         }}
       />
 
-      {/* Codex Base URL 输入框 */}
+      {/* Codex Base URL 杈撳叆妗?*/}
       {shouldShowSpeedTest && (
         <EndpointField
           id="codexBaseUrl"
@@ -327,18 +326,18 @@ export function CodexFormFields({
             <div className="space-y-1">
               <FormLabel>
                 {t("codexConfig.localRoutingToggle", {
-                  defaultValue: "需要本地路由映射",
+                  defaultValue: "闇€瑕佹湰鍦拌矾鐢辨槧灏?,
                 })}
               </FormLabel>
               <p className="text-xs leading-relaxed text-muted-foreground">
                 {needsLocalRouting
                   ? t("codexConfig.localRoutingOnHint", {
                       defaultValue:
-                        "Codex 目前仅原生支持 OpenAI Responses API 与 GPT 系列模型；如果您的供应商使用 Chat Completions 协议或非 GPT 模型（如 DeepSeek、Kimi），则需要打开本开关，并在使用过程中保持本地路由开启。",
+                        "Codex 鐩墠浠呭師鐢熸敮鎸?OpenAI Responses API 涓?GPT 绯诲垪妯″瀷锛涘鏋滄偍鐨勪緵搴斿晢浣跨敤 Chat Completions 鍗忚鎴栭潪 GPT 妯″瀷锛堝 DeepSeek銆並imi锛夛紝鍒欓渶瑕佹墦寮€鏈紑鍏筹紝骞跺湪浣跨敤杩囩▼涓繚鎸佹湰鍦拌矾鐢卞紑鍚€?,
                     })
                   : t("codexConfig.localRoutingOffHint", {
                       defaultValue:
-                        "如果您的供应商不是原生 OpenAI Responses API，或者模型名不是 Codex 默认的 GPT 系列，请打开此开关。",
+                        "濡傛灉鎮ㄧ殑渚涘簲鍟嗕笉鏄師鐢?OpenAI Responses API锛屾垨鑰呮ā鍨嬪悕涓嶆槸 Codex 榛樿鐨?GPT 绯诲垪锛岃鎵撳紑姝ゅ紑鍏炽€?,
                     })}
               </p>
             </div>
@@ -346,7 +345,7 @@ export function CodexFormFields({
               checked={needsLocalRouting}
               onCheckedChange={handleLocalRoutingChange}
               aria-label={t("codexConfig.localRoutingToggle", {
-                defaultValue: "需要本地路由映射",
+                defaultValue: "闇€瑕佹湰鍦拌矾鐢辨槧灏?,
               })}
             />
           </div>
@@ -372,7 +371,7 @@ export function CodexFormFields({
                 <ChevronRight className="h-4 w-4" />
               )}
               {t("codexConfig.reasoningSectionToggle", {
-                defaultValue: "思考能力（高级·通常自动识别）",
+                defaultValue: "鎬濊€冭兘鍔涳紙楂樼骇路閫氬父鑷姩璇嗗埆锛?,
               })}
             </Button>
           </CollapsibleTrigger>
@@ -380,7 +379,7 @@ export function CodexFormFields({
             <p className="mt-1 ml-1 text-xs text-muted-foreground">
               {t("codexConfig.reasoningSectionHint", {
                 defaultValue:
-                  "预设供应商已自动配置；自定义供应商会按名称/地址自动推断。仅当自动识别不准时才需展开手动覆盖。",
+                  "棰勮渚涘簲鍟嗗凡鑷姩閰嶇疆锛涜嚜瀹氫箟渚涘簲鍟嗕細鎸夊悕绉?鍦板潃鑷姩鎺ㄦ柇銆備粎褰撹嚜鍔ㄨ瘑鍒笉鍑嗘椂鎵嶉渶灞曞紑鎵嬪姩瑕嗙洊銆?,
               })}
             </p>
           )}
@@ -389,13 +388,13 @@ export function CodexFormFields({
               <div className="space-y-1">
                 <FormLabel>
                   {t("codexConfig.reasoningModeToggle", {
-                    defaultValue: "支持思考模式",
+                    defaultValue: "鏀寔鎬濊€冩ā寮?,
                   })}
                 </FormLabel>
                 <p className="text-xs leading-relaxed text-muted-foreground">
                   {t("codexConfig.reasoningModeHint", {
                     defaultValue:
-                      "上游 Chat Completions 接口支持开启或关闭 thinking 时启用。Kimi、GLM、Qwen 等通常属于这一类。",
+                      "涓婃父 Chat Completions 鎺ュ彛鏀寔寮€鍚垨鍏抽棴 thinking 鏃跺惎鐢ㄣ€侹imi銆丟LM銆丵wen 绛夐€氬父灞炰簬杩欎竴绫汇€?,
                   })}
                 </p>
               </div>
@@ -403,7 +402,7 @@ export function CodexFormFields({
                 checked={supportsThinking}
                 onCheckedChange={handleReasoningThinkingChange}
                 aria-label={t("codexConfig.reasoningModeToggle", {
-                  defaultValue: "支持思考模式",
+                  defaultValue: "鏀寔鎬濊€冩ā寮?,
                 })}
               />
             </div>
@@ -412,13 +411,13 @@ export function CodexFormFields({
               <div className="space-y-1">
                 <FormLabel>
                   {t("codexConfig.reasoningEffortToggle", {
-                    defaultValue: "支持思考等级",
+                    defaultValue: "鏀寔鎬濊€冪瓑绾?,
                   })}
                 </FormLabel>
                 <p className="text-xs leading-relaxed text-muted-foreground">
                   {t("codexConfig.reasoningEffortHint", {
                     defaultValue:
-                      "上游支持 low/high/max 等思考深度控制时启用。启用后会自动启用思考模式，并把 Codex 的 reasoning.effort 转成上游 Chat 参数。",
+                      "涓婃父鏀寔 low/high/max 绛夋€濊€冩繁搴︽帶鍒舵椂鍚敤銆傚惎鐢ㄥ悗浼氳嚜鍔ㄥ惎鐢ㄦ€濊€冩ā寮忥紝骞舵妸 Codex 鐨?reasoning.effort 杞垚涓婃父 Chat 鍙傛暟銆?,
                   })}
                 </p>
               </div>
@@ -426,7 +425,7 @@ export function CodexFormFields({
                 checked={supportsEffort}
                 onCheckedChange={handleReasoningEffortChange}
                 aria-label={t("codexConfig.reasoningEffortToggle", {
-                  defaultValue: "支持思考等级",
+                  defaultValue: "鏀寔鎬濊€冪瓑绾?,
                 })}
               />
             </div>
@@ -434,48 +433,48 @@ export function CodexFormFields({
         </Collapsible>
       )}
 
-      {/* Codex 模型映射 —— 仅在本地路由 + 可编辑时显示 */}
+      {/* Codex 妯″瀷鏄犲皠 鈥斺€?浠呭湪鏈湴璺敱 + 鍙紪杈戞椂鏄剧ず */}
       {needsLocalRouting && canEditCatalog && (
         <div className="space-y-4 rounded-lg border border-border-default p-4">
           <div className="space-y-1">
             <div className="flex items-center justify-between gap-3">
               <FormLabel>
                 {t("codexConfig.modelMappingTitle", {
-                  defaultValue: "模型映射",
+                  defaultValue: "妯″瀷鏄犲皠",
                 })}
               </FormLabel>
               {renderCatalogActionButtons(
                 handleAddCatalogRow,
                 t("codexConfig.addCatalogModel", {
-                  defaultValue: "添加模型",
+                  defaultValue: "娣诲姞妯″瀷",
                 }),
               )}
             </div>
             <p className="text-xs leading-relaxed text-muted-foreground">
               {t("codexConfig.modelMappingHint", {
                 defaultValue:
-                  "选择模型角色后，CC Switch 会自动生成 Codex 兼容路由；菜单显示名可以填 DeepSeek、Kimi 等品牌模型，实际请求模型按右侧填写内容发送。",
+                  "閫夋嫨妯″瀷瑙掕壊鍚庯紝CC Switch 浼氳嚜鍔ㄧ敓鎴?Codex 鍏煎璺敱锛涜彍鍗曟樉绀哄悕鍙互濉?DeepSeek銆並imi 绛夊搧鐗屾ā鍨嬶紝瀹為檯璇锋眰妯″瀷鎸夊彸渚у～鍐欏唴瀹瑰彂閫併€?,
               })}
             </p>
           </div>
 
           {catalogRows.length > 0 && (
             <div className="space-y-2">
-              {/* 列头：md+ 显示 */}
+              {/* 鍒楀ご锛歮d+ 鏄剧ず */}
               <div className="hidden grid-cols-[1fr_1fr_140px_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
                 <span>
                   {t("codexConfig.catalogColumnDisplay", {
-                    defaultValue: "菜单显示名",
+                    defaultValue: "鑿滃崟鏄剧ず鍚?,
                   })}
                 </span>
                 <span>
                   {t("codexConfig.catalogColumnModel", {
-                    defaultValue: "实际请求模型",
+                    defaultValue: "瀹為檯璇锋眰妯″瀷",
                   })}
                 </span>
                 <span>
                   {t("codexConfig.catalogColumnContext", {
-                    defaultValue: "上下文窗口",
+                    defaultValue: "涓婁笅鏂囩獥鍙?,
                   })}
                 </span>
                 <span />
@@ -496,11 +495,11 @@ export function CodexFormFields({
                     placeholder={t(
                       "codexConfig.catalogDisplayNamePlaceholder",
                       {
-                        defaultValue: "例如: DeepSeek V4 Flash",
+                        defaultValue: "渚嬪: DeepSeek V4 Flash",
                       },
                     )}
                     aria-label={t("codexConfig.catalogColumnDisplay", {
-                      defaultValue: "菜单显示名",
+                      defaultValue: "鑿滃崟鏄剧ず鍚?,
                     })}
                   />
                   <div className="flex gap-1">
@@ -512,10 +511,10 @@ export function CodexFormFields({
                         })
                       }
                       placeholder={t("codexConfig.catalogModelPlaceholder", {
-                        defaultValue: "例如: deepseek-v4-flash",
+                        defaultValue: "渚嬪: deepseek-v4-flash",
                       })}
                       aria-label={t("codexConfig.catalogColumnModel", {
-                        defaultValue: "实际请求模型",
+                        defaultValue: "瀹為檯璇锋眰妯″瀷",
                       })}
                       className="flex-1"
                     />
@@ -544,10 +543,10 @@ export function CodexFormFields({
                       })
                     }
                     placeholder={t("codexConfig.contextWindowPlaceholder", {
-                      defaultValue: "例如: 128000",
+                      defaultValue: "渚嬪: 128000",
                     })}
                     aria-label={t("codexConfig.catalogColumnContext", {
-                      defaultValue: "上下文窗口",
+                      defaultValue: "涓婁笅鏂囩獥鍙?,
                     })}
                   />
                   <Button
@@ -556,7 +555,7 @@ export function CodexFormFields({
                     size="icon"
                     className="h-9 w-9 text-muted-foreground hover:text-destructive"
                     onClick={() => handleRemoveCatalogRow(index)}
-                    title={t("common.delete", { defaultValue: "删除" })}
+                    title={t("common.delete", { defaultValue: "鍒犻櫎" })}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -567,7 +566,47 @@ export function CodexFormFields({
         </div>
       )}
 
-      {/* 端点测速弹窗 - Codex */}
+      {/* 澶氭ā鎬侀檷绾фā鍨?鈥斺€?浠呭湪鏈夊涓ā鍨嬫椂鏄剧ず */}
+      {catalogModels.length > 1 && onMultimodalFallbackModelChange && (
+        <div className="space-y-2 rounded-lg border border-border-default p-4">
+          <FormLabel>
+            {t("codexConfig.multimodalFallbackModel", {
+              defaultValue: "澶氭ā鎬侀檷绾фā鍨?,
+            })}
+          </FormLabel>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {t("codexConfig.multimodalFallbackHint", {
+              defaultValue:
+                "褰撹姹傚寘鍚浘鐗囦笖褰撳墠妯″瀷涓嶆敮鎸佸妯℃€佹椂锛岃嚜鍔ㄥ垏鎹㈠埌姝ゆā鍨嬨€傜暀绌哄垯涓嶉檷绾с€?,
+            })}
+          </p>
+          <select
+            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            value={multimodalFallbackModel}
+            onChange={(e) => onMultimodalFallbackModelChange(e.target.value)}
+          >
+            <option value="">
+              {t("codexConfig.noFallback", { defaultValue: "涓嶉檷绾? })}
+            </option>
+            {catalogModels
+              .filter((m) => {
+                // 过滤掉当前主模型
+                const mainModel = codexModel || currentModel;
+                if (m.model === mainModel) return false;
+                // 只显示支持多模态的模型（如果定义了 supportsMultimodal）
+                if (m.supportsMultimodal === false) return false;
+                return true;
+              })
+              .map((m) => (
+              <option key={m.model} value={m.model}>
+                {m.displayName || m.model}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {/* 绔偣娴嬮€熷脊绐?- Codex */}
       {shouldShowSpeedTest && isEndpointModalOpen && (
         <EndpointSpeedTest
           appId="codex"

@@ -1,6 +1,5 @@
-/**
- * Codex 预设供应商配置模板
- */
+﻿/**
+ * Codex 棰勮渚涘簲鍟嗛厤缃ā鏉? */
 import { ProviderCategory } from "../types";
 import type {
   CodexApiFormat,
@@ -13,32 +12,30 @@ export interface CodexProviderPreset {
   name: string;
   nameKey?: string; // i18n key for localized display name
   websiteUrl: string;
-  // 第三方供应商可提供单独的获取 API Key 链接
+  // 绗笁鏂逛緵搴斿晢鍙彁渚涘崟鐙殑鑾峰彇 API Key 閾炬帴
   apiKeyUrl?: string;
-  auth: Record<string, any>; // 将写入 ~/.codex/auth.json
-  config: string; // 将写入 ~/.codex/config.toml（TOML 字符串）
-  isOfficial?: boolean; // 标识是否为官方预设
-  isPartner?: boolean; // 标识是否为商业合作伙伴
-  partnerPromotionKey?: string; // 合作伙伴促销信息的 i18n key
-  category?: ProviderCategory; // 新增：分类
-  isCustomTemplate?: boolean; // 标识是否为自定义模板
-  // 新增：请求地址候选列表（用于地址管理/测速）
+  auth: Record<string, any>; // 灏嗗啓鍏?~/.codex/auth.json
+  config: string; // 灏嗗啓鍏?~/.codex/config.toml锛圱OML 瀛楃涓诧級
+  isOfficial?: boolean; // 鏍囪瘑鏄惁涓哄畼鏂归璁?  isPartner?: boolean; // 鏍囪瘑鏄惁涓哄晢涓氬悎浣滀紮浼?  partnerPromotionKey?: string; // 鍚堜綔浼欎即淇冮攢淇℃伅鐨?i18n key
+  category?: ProviderCategory; // 鏂板锛氬垎绫?  isCustomTemplate?: boolean; // 鏍囪瘑鏄惁涓鸿嚜瀹氫箟妯℃澘
+  // 鏂板锛氳姹傚湴鍧€鍊欓€夊垪琛紙鐢ㄤ簬鍦板潃绠＄悊/娴嬮€燂級
   endpointCandidates?: string[];
-  // 新增：视觉主题配置
-  theme?: PresetTheme;
-  // 图标配置
-  icon?: string; // 图标名称
-  iconColor?: string; // 图标颜色
-  // Codex API 格式
+  // 鏂板锛氳瑙変富棰橀厤缃?  theme?: PresetTheme;
+  // 鍥炬爣閰嶇疆
+  icon?: string; // 鍥炬爣鍚嶇О
+  iconColor?: string; // 鍥炬爣棰滆壊
+  // Codex API 鏍煎紡
   apiFormat?: CodexApiFormat;
-  // Codex Chat 本地路由模式下的模型目录
+  // Codex Chat 鏈湴璺敱妯″紡涓嬬殑妯″瀷鐩綍
   modelCatalog?: CodexCatalogModel[];
   // Codex Responses -> Chat Completions reasoning capability defaults
   codexChatReasoning?: CodexChatReasoning;
+  // 澶氭ā鎬侀檷绾фā鍨嬶細褰撹姹傚寘鍚浘鐗囨椂鑷姩鍒囨崲鍒版妯″瀷
+  multimodalFallbackModel?: string;
 }
 
 /**
- * 生成第三方供应商的 auth.json
+ * 鐢熸垚绗笁鏂逛緵搴斿晢鐨?auth.json
  */
 export function generateThirdPartyAuth(apiKey: string): Record<string, any> {
   return {
@@ -47,7 +44,7 @@ export function generateThirdPartyAuth(apiKey: string): Record<string, any> {
 }
 
 /**
- * 生成第三方供应商的 config.toml
+ * 鐢熸垚绗笁鏂逛緵搴斿晢鐨?config.toml
  */
 export function generateThirdPartyConfig(
   providerName: string,
@@ -70,12 +67,20 @@ requires_openai_auth = true`;
 
 function modelCatalog(
   models: Array<
-    string | { model: string; displayName?: string; contextWindow?: number }
+    string | { model: string; displayName?: string; contextWindow?: number; supportsMultimodal?: boolean }
   >,
 ): CodexCatalogModel[] {
   return models.map((entry) =>
     typeof entry === "string"
       ? { model: entry }
+      : {
+          model: entry.model,
+          displayName: entry.displayName,
+          contextWindow: entry.contextWindow,
+          supportsMultimodal: entry.supportsMultimodal,
+        },
+  );
+}
       : {
           model: entry.model,
           displayName: entry.displayName,
@@ -133,7 +138,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     icon: "pateway",
   },
   {
-    name: "火山Agentplan",
+    name: "鐏北Agentplan",
     websiteUrl:
       "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
@@ -627,12 +632,10 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://api.xiaomimimo.com/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
-      {
-        model: "mimo-v2.5-pro",
-        displayName: "MiMo V2.5 Pro",
-        contextWindow: 1048576,
-      },
-    ]),
+      { model: 'mimo-v2.5-pro', displayName: 'MiMo V2.5 Pro', contextWindow: 1048576, supportsMultimodal: false },
+      { model: 'mimo-v2.5', displayName: 'MiMo V2.5 (Multimodal)', contextWindow: 1048576, supportsMultimodal: true },
+]),
+    multimodalFallbackModel: "mimo-v2.5",
     codexChatReasoning: {
       supportsThinking: true,
       supportsEffort: false,
@@ -662,7 +665,13 @@ requires_openai_auth = true`,
         displayName: "MiMo V2.5 Pro",
         contextWindow: 1048576,
       },
+      {
+        model: "mimo-v2.5",
+        displayName: "MiMo V2.5 (Multimodal)",
+        contextWindow: 1048576,
+      },
     ]),
+    multimodalFallbackModel: "mimo-v2.5",
     codexChatReasoning: {
       supportsThinking: true,
       supportsEffort: false,
@@ -810,8 +819,8 @@ requires_openai_auth = true`,
       "gpt-5.5",
     ),
     endpointCandidates: ["https://www.dmxapi.cn/v1"],
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "dmxapi", // 促销信息 i18n key
+    isPartner: true, // 鍚堜綔浼欎即
+    partnerPromotionKey: "dmxapi", // 淇冮攢淇℃伅 i18n key
   },
   {
     name: "PackyCode",
@@ -828,8 +837,8 @@ requires_openai_auth = true`,
       "https://www.packyapi.com/v1",
       "https://api-slb.packyapi.com/v1",
     ],
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "packycode", // 促销信息 i18n key
+    isPartner: true, // 鍚堜綔浼欎即
+    partnerPromotionKey: "packycode", // 淇冮攢淇℃伅 i18n key
     icon: "packycode",
   },
   {
@@ -989,8 +998,8 @@ requires_openai_auth = true`,
       "https://api-bwg.cubence.com/v1",
     ],
     category: "third_party",
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "cubence", // 促销信息 i18n key
+    isPartner: true, // 鍚堜綔浼欎即
+    partnerPromotionKey: "cubence", // 淇冮攢淇℃伅 i18n key
     icon: "cubence",
     iconColor: "#000000",
   },
@@ -1006,8 +1015,8 @@ requires_openai_auth = true`,
       "gpt-5.5",
     ),
     endpointCandidates: ["https://api.aigocode.com"],
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "aigocode", // 促销信息 i18n key
+    isPartner: true, // 鍚堜綔浼欎即
+    partnerPromotionKey: "aigocode", // 淇冮攢淇℃伅 i18n key
     icon: "aigocode",
     iconColor: "#5B7FFF",
   },
@@ -1078,8 +1087,8 @@ requires_openai_auth = true`,
       "https://anti.sssaicode.com/api/v1",
     ],
     category: "third_party",
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "sssaicode", // 促销信息 i18n key
+    isPartner: true, // 鍚堜綔浼欎即
+    partnerPromotionKey: "sssaicode", // 淇冮攢淇℃伅 i18n key
     icon: "sssaicode",
     iconColor: "#000000",
   },
@@ -1097,8 +1106,8 @@ requires_openai_auth = true`,
     ),
     endpointCandidates: ["https://api.modelverse.cn/v1"],
     category: "aggregator",
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "ucloud", // 促销信息 i18n key
+    isPartner: true, // 鍚堜綔浼欎即
+    partnerPromotionKey: "ucloud", // 淇冮攢淇℃伅 i18n key
     icon: "ucloud",
     iconColor: "#000000",
   },
@@ -1116,8 +1125,8 @@ requires_openai_auth = true`,
     ),
     endpointCandidates: ["https://cp.compshare.cn/v1"],
     category: "aggregator",
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "ucloud", // 促销信息 i18n key（复用）
+    isPartner: true, // 鍚堜綔浼欎即
+    partnerPromotionKey: "ucloud", // 淇冮攢淇℃伅 i18n key锛堝鐢級
     icon: "ucloud",
     iconColor: "#000000",
   },
@@ -1133,8 +1142,8 @@ requires_openai_auth = true`,
     ),
     endpointCandidates: ["https://www.micuapi.ai/v1"],
     category: "third_party",
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "micu", // 促销信息 i18n key
+    isPartner: true, // 鍚堜綔浼欎即
+    partnerPromotionKey: "micu", // 淇冮攢淇℃伅 i18n key
     icon: "micu",
     iconColor: "#000000",
   },
@@ -1150,8 +1159,8 @@ requires_openai_auth = true`,
     ),
     endpointCandidates: ["https://api.ctok.ai/v1"],
     category: "third_party",
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "ctok", // 促销信息 i18n key
+    isPartner: true, // 鍚堜綔浼欎即
+    partnerPromotionKey: "ctok", // 淇冮攢淇℃伅 i18n key
     icon: "ctok",
     iconColor: "#000000",
   },

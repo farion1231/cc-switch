@@ -509,6 +509,9 @@ function ProviderFormFull({
     useState<CodexChatReasoning>(
       () => initialData?.meta?.codexChatReasoning ?? {},
     );
+  const [multimodalFallbackModel, setMultimodalFallbackModel] = useState(
+    () => initialData?.meta?.multimodalFallbackModel ?? "",
+  );
 
   const {
     codexAuth,
@@ -1410,6 +1413,7 @@ function ProviderFormFull({
         supportsFullUrl && category !== "official" && localIsFullUrl
           ? true
           : undefined,
+      multimodalFallbackModel: multimodalFallbackModel || undefined,
     };
 
     if (!isCodexOauthProvider && "codexFastMode" in nextMeta) {
@@ -1565,6 +1569,7 @@ function ProviderFormFull({
 
       resetCodexConfig(auth, config, preset.modelCatalog ?? []);
       setCodexChatReasoning(preset.codexChatReasoning ?? {});
+      setMultimodalFallbackModel(preset.multimodalFallbackModel ?? "");
       setLocalCodexApiFormat(
         preset.apiFormat ??
           codexApiFormatFromWireApi(extractCodexWireApi(config)) ??
@@ -2040,6 +2045,8 @@ function ProviderFormFull({
               onCodexChatReasoningChange={setCodexChatReasoning}
               catalogModels={codexCatalogModels}
               onCatalogModelsChange={setCodexCatalogModels}
+              multimodalFallbackModel={multimodalFallbackModel}
+              onMultimodalFallbackModelChange={setMultimodalFallbackModel}
               speedTestEndpoints={speedTestEndpoints}
             />
           )}
