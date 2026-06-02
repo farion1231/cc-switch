@@ -561,8 +561,33 @@ pub async fn testUsageScript(
     #[allow(non_snake_case)] accessToken: Option<String>,
     #[allow(non_snake_case)] userId: Option<String>,
     #[allow(non_snake_case)] templateType: Option<String>,
+    #[allow(non_snake_case)] opencodeGoWorkspaceId: Option<String>,
+    #[allow(non_snake_case)] opencodeGoAuthCookie: Option<String>,
 ) -> Result<crate::provider::UsageResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+
+    if templateType.as_deref() == Some(TEMPLATE_TYPE_OPENCODE_GO) {
+        let providers = state
+            .db
+            .get_all_providers(app_type.as_str())
+            .map_err(|e| format!("Failed to get providers: {e}"))?;
+        let meta = providers.get(&providerId).and_then(|p| p.meta.as_ref());
+        let workspace_id = opencodeGoWorkspaceId
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .or_else(|| meta.and_then(|m| m.opencode_go_workspace_id.as_deref()))
+            .unwrap_or("");
+        let auth_cookie = opencodeGoAuthCookie
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .or_else(|| meta.and_then(|m| m.opencode_go_auth_cookie.as_deref()))
+            .unwrap_or("");
+
+        return crate::services::opencode_go_quota::get_quota(workspace_id, auth_cookie).await;
+    }
+
     ProviderService::test_usage_script(
         state.inner(),
         app_type,

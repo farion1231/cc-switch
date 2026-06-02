@@ -1393,6 +1393,8 @@
     "openCodeGoAuthCookiePlaceholder": "粘贴浏览器 Cookie",
     "openCodeGoAuthCookieSaved": "已保存，留空则不变更",
     "openCodeGoSaveBeforeTest": "请先保存 OpenCode Go 工作区 ID 和 Auth Cookie，再执行测试",
+    "openCodeGoWorkspaceRequired": "请输入 OpenCode Go 工作区 ID",
+    "openCodeGoAuthCookieRequired": "请输入 OpenCode Go Auth Cookie",
     "authFailureHint": "认证失败，请检查 OpenCode Go Auth Cookie",
     "parseFailureMessage": "无法解析 OpenCode Go 仪表盘数据，页面格式可能已变更",
     "resetDate": "重置日期",

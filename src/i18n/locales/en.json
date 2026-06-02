@@ -1393,6 +1393,8 @@
     "openCodeGoAuthCookiePlaceholder": "Paste browser cookie",
     "openCodeGoAuthCookieSaved": "Saved; leave empty to keep unchanged",
     "openCodeGoSaveBeforeTest": "Save the OpenCode Go workspace ID and auth cookie before testing",
+    "openCodeGoWorkspaceRequired": "Enter an OpenCode Go workspace ID",
+    "openCodeGoAuthCookieRequired": "Enter an OpenCode Go auth cookie",
     "authFailureHint": "Authentication failed. Check the OpenCode Go auth cookie.",
     "parseFailureMessage": "Could not parse OpenCode Go dashboard data. The page format may have changed.",
     "resetDate": "Reset date",

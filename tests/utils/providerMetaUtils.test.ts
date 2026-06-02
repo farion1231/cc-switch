@@ -1,10 +1,45 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderMeta } from "@/types";
-import { mergeProviderMeta } from "@/utils/providerMetaUtils";
+import {
+  mergeProviderMeta,
+  sanitizeProviderMetaForDuplicate,
+} from "@/utils/providerMetaUtils";
 
 const buildEndpoint = (url: string) => ({
   url,
   addedAt: 1,
+});
+
+describe("sanitizeProviderMetaForDuplicate", () => {
+  it("removes OpenCode Go auth cookie but preserves other metadata", () => {
+    const initial: ProviderMeta = {
+      usage_script: {
+        enabled: true,
+        language: "javascript",
+        code: "",
+        templateType: "opencode_go",
+      },
+      custom_endpoints: {
+        "https://example.com": buildEndpoint("https://example.com"),
+      },
+      opencodeGoWorkspaceId: "workspace_123",
+      opencodeGoAuthCookie: "__cc_switch_saved_opencode_go_auth_cookie__",
+    };
+
+    const result = sanitizeProviderMetaForDuplicate(initial);
+
+    expect(result).toEqual({
+      usage_script: initial.usage_script,
+      custom_endpoints: initial.custom_endpoints,
+      opencodeGoWorkspaceId: "workspace_123",
+    });
+    expect(result).not.toBe(initial);
+    expect(result?.usage_script).not.toBe(initial.usage_script);
+  });
+
+  it("returns undefined when there is no metadata", () => {
+    expect(sanitizeProviderMetaForDuplicate(undefined)).toBeUndefined();
+  });
 });
 
 describe("mergeProviderMeta", () => {

@@ -33,6 +33,8 @@ export const usageApi = {
     accessToken?: string,
     userId?: string,
     templateType?: TemplateType,
+    opencodeGoWorkspaceId?: string,
+    opencodeGoAuthCookie?: string,
   ): Promise<UsageResult> => {
     return invoke("testUsageScript", {
       providerId,
@@ -44,6 +46,8 @@ export const usageApi = {
       accessToken,
       userId,
       templateType,
+      opencodeGoWorkspaceId,
+      opencodeGoAuthCookie,
     });
   },
 

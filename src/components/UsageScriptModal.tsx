@@ -369,6 +369,26 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const [showApiKey, setShowApiKey] = useState(false);
   const [showAccessToken, setShowAccessToken] = useState(false);
 
+  const getOpenCodeGoInputs = () => ({
+    workspaceId: opencodeGoWorkspaceId.trim(),
+    authCookie: opencodeGoAuthCookie.trim(),
+  });
+
+  const hasSavedOpenCodeGoCookie = Boolean(provider.meta?.opencodeGoAuthCookie);
+
+  const validateOpenCodeGoCredentials = () => {
+    const inputs = getOpenCodeGoInputs();
+    if (!inputs.workspaceId) {
+      toast.error(t("usageScript.openCodeGoWorkspaceRequired"));
+      return null;
+    }
+    if (!inputs.authCookie && !hasSavedOpenCodeGoCookie) {
+      toast.error(t("usageScript.openCodeGoAuthCookieRequired"));
+      return null;
+    }
+    return inputs;
+  };
+
   const handleEnableToggle = (checked: boolean) => {
     if (checked && !settingsData?.usageConfirmed) {
       setShowUsageConfirm(true);
@@ -408,6 +428,13 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         return;
       }
     }
+    if (selectedTemplate === TEMPLATE_TYPES.OPENCODE_GO && script.enabled) {
+      const inputs = validateOpenCodeGoCredentials();
+      if (!inputs) {
+        return;
+      }
+    }
+
     // 保存时记录当前选择的模板类型
     const scriptWithTemplate = {
       ...script,
@@ -502,19 +529,26 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         return;
       }
 
-      // OpenCode Go 模板使用 queryProviderUsage；测试前需要先保存 ProviderMeta 凭据
+      // OpenCode Go 模板使用原生配额查询，并测试当前表单输入
       if (selectedTemplate === TEMPLATE_TYPES.OPENCODE_GO) {
-        const hasSavedCredentials = Boolean(
-          provider.meta?.opencodeGoWorkspaceId && provider.meta?.opencodeGoAuthCookie,
-        );
-        if (!hasSavedCredentials) {
-          toast.error(t("usageScript.openCodeGoSaveBeforeTest"), {
-            duration: 5000,
-          });
+        const inputs = validateOpenCodeGoCredentials();
+        if (!inputs) {
           return;
         }
 
-        const result = await usageApi.query(provider.id, appId);
+        const result = await usageApi.testScript(
+          provider.id,
+          appId,
+          "",
+          script.timeout,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          TEMPLATE_TYPES.OPENCODE_GO,
+          inputs.workspaceId,
+          inputs.authCookie || undefined,
+        );
         if (result.success && result.data && result.data.length > 0) {
           const summary = result.data
             .map((plan: UsageData) =>

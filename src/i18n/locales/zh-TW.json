@@ -1339,6 +1339,8 @@
     "openCodeGoAuthCookiePlaceholder": "貼上瀏覽器 Cookie",
     "openCodeGoAuthCookieSaved": "已儲存，留空則不變更",
     "openCodeGoSaveBeforeTest": "請先儲存 OpenCode Go 工作區 ID 和 Auth Cookie，再執行測試",
+    "openCodeGoWorkspaceRequired": "請輸入 OpenCode Go 工作區 ID",
+    "openCodeGoAuthCookieRequired": "請輸入 OpenCode Go Auth Cookie",
     "authFailureHint": "驗證失敗，請檢查 OpenCode Go Auth Cookie",
     "parseFailureMessage": "無法解析 OpenCode Go 儀表板資料，頁面格式可能已變更",
     "resetDate": "重設日期",

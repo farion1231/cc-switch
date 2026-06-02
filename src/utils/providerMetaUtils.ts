@@ -1,4 +1,17 @@
 import type { CustomEndpoint, ProviderMeta } from "@/types";
+import { deepClone } from "@/utils/deepClone";
+
+export function sanitizeProviderMetaForDuplicate(
+  meta: ProviderMeta | undefined,
+): ProviderMeta | undefined {
+  if (!meta) {
+    return undefined;
+  }
+
+  const cloned = deepClone(meta);
+  delete cloned.opencodeGoAuthCookie;
+  return cloned;
+}
 
 /**
  * 合并供应商元数据中的自定义端点。

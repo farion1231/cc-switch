@@ -128,6 +128,21 @@ fn normalize_window_usage(
     }
 }
 
+fn build_dashboard_url(workspace_id: &str) -> Result<url::Url, String> {
+    let ws = workspace_id.trim();
+    if ws.is_empty() {
+        return Err("Workspace ID is empty".to_string());
+    }
+
+    let mut url = url::Url::parse(DASHBOARD_URL)
+        .map_err(|e| format!("Invalid OpenCode Go dashboard URL: {e}"))?;
+    url.path_segments_mut()
+        .map_err(|_| "Invalid OpenCode Go dashboard URL".to_string())?
+        .push(ws)
+        .push("go");
+    Ok(url)
+}
+
 // ── Public API ────────────────────────────────────────────────
 
 pub async fn get_quota(workspace_id: &str, auth_cookie: &str) -> Result<UsageResult, String> {
@@ -140,12 +155,15 @@ pub async fn get_quota(workspace_id: &str, auth_cookie: &str) -> Result<UsageRes
         return Ok(make_error("Auth cookie is empty".to_string()));
     }
 
-    let url = format!("{DASHBOARD_URL}/{ws}/go");
+    let url = match build_dashboard_url(ws) {
+        Ok(url) => url,
+        Err(e) => return Ok(make_error(e)),
+    };
     let cookie_header = build_cookie_header(cookie);
     let client = crate::proxy::http_client::get();
 
     let resp = client
-        .get(&url)
+        .get(url)
         .header("Cookie", cookie_header)
         .header("User-Agent", USER_AGENT)
         .header("Accept", "text/html, application/xhtml+xml")
@@ -405,6 +423,32 @@ mod tests {
         let usage = normalize_window_usage(LABEL_ROLLING, &scraped, now);
         assert_eq!(usage.remaining, Some(0.0));
         assert_eq!(usage.used, Some(100.0));
+    }
+
+    #[test]
+    fn build_dashboard_url_uses_normal_workspace_path() {
+        let url = build_dashboard_url("workspace_123").expect("url");
+        assert_eq!(
+            url.as_str(),
+            "https://opencode.ai/workspace/workspace_123/go"
+        );
+    }
+
+    #[test]
+    fn build_dashboard_url_encodes_workspace_as_single_path_segment() {
+        let url = build_dashboard_url("team/foo bar?x=1#frag").expect("url");
+        assert_eq!(
+            url.as_str(),
+            "https://opencode.ai/workspace/team%2Ffoo%20bar%3Fx=1%23frag/go"
+        );
+        assert!(url.query().is_none());
+        assert!(url.fragment().is_none());
+    }
+
+    #[test]
+    fn build_dashboard_url_rejects_empty_workspace_id() {
+        let err = build_dashboard_url("  ").expect_err("error");
+        assert_eq!(err, "Workspace ID is empty");
     }
 
     #[tokio::test]

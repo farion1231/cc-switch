@@ -61,7 +61,7 @@ mod tests {
     use crate::claude_desktop_config::PROFILE_ID;
     use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
     use crate::database::Database;
-    use crate::provider::ProviderMeta;
+    use crate::provider::{ProviderMeta, UsageScript};
     #[cfg(any(target_os = "macos", windows))]
     use crate::provider::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
     use crate::proxy::types::ProxyConfig;
@@ -328,6 +328,19 @@ mod tests {
         let mut provider = opencode_provider("opencode-go");
         provider.meta = Some(ProviderMeta {
             live_config_managed: Some(false),
+            usage_script: Some(UsageScript {
+                enabled: true,
+                language: "javascript".to_string(),
+                code: String::new(),
+                timeout: None,
+                api_key: None,
+                base_url: None,
+                access_token: None,
+                user_id: None,
+                template_type: Some("opencode_go".to_string()),
+                auto_query_interval: None,
+                coding_plan_provider: None,
+            }),
             opencode_go_workspace_id: Some("workspace_123".to_string()),
             opencode_go_auth_cookie: Some("session=secret".to_string()),
             ..ProviderMeta::default()
@@ -355,6 +368,60 @@ mod tests {
                 .and_then(|meta| meta.opencode_go_auth_cookie.as_deref()),
             Some("session=secret")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn update_clears_opencode_go_auth_cookie_when_template_changes() -> Result<(), AppError> {
+        let db = Arc::new(Database::memory()?);
+        let state = AppState::new(db.clone());
+        let mut provider = opencode_provider("opencode-go");
+        provider.meta = Some(ProviderMeta {
+            usage_script: Some(UsageScript {
+                enabled: true,
+                language: "javascript".to_string(),
+                code: String::new(),
+                timeout: None,
+                api_key: None,
+                base_url: None,
+                access_token: None,
+                user_id: None,
+                template_type: Some("opencode_go".to_string()),
+                auto_query_interval: None,
+                coding_plan_provider: None,
+            }),
+            opencode_go_workspace_id: Some("workspace_123".to_string()),
+            opencode_go_auth_cookie: Some("session=secret".to_string()),
+            ..ProviderMeta::default()
+        });
+        db.save_provider(AppType::OpenCode.as_str(), &provider)?;
+
+        let mut update = provider.clone();
+        update.meta = Some(ProviderMeta {
+            usage_script: Some(UsageScript {
+                enabled: true,
+                language: "javascript".to_string(),
+                code: "return {};".to_string(),
+                timeout: None,
+                api_key: None,
+                base_url: None,
+                access_token: None,
+                user_id: None,
+                template_type: Some("general".to_string()),
+                auto_query_interval: None,
+                coding_plan_provider: None,
+            }),
+            ..ProviderMeta::default()
+        });
+
+        ProviderService::update(&state, AppType::OpenCode, None, update)?;
+
+        let stored = db
+            .get_provider_by_id("opencode-go", AppType::OpenCode.as_str())?
+            .expect("stored provider");
+        let meta = stored.meta.as_ref().expect("meta");
+        assert!(meta.opencode_go_workspace_id.is_none());
+        assert!(meta.opencode_go_auth_cookie.is_none());
         Ok(())
     }
 
@@ -1242,6 +1309,15 @@ impl ProviderService {
         let Some(meta) = provider.meta.as_mut() else {
             return;
         };
+
+        let should_preserve_cookie = meta.usage_script.as_ref().is_some_and(|script| {
+            script.enabled && script.template_type.as_deref() == Some("opencode_go")
+        });
+        if !should_preserve_cookie {
+            meta.opencode_go_workspace_id = None;
+            meta.opencode_go_auth_cookie = None;
+            return;
+        }
 
         let incoming_cookie = meta.opencode_go_auth_cookie.as_deref().unwrap_or("");
         if !incoming_cookie.is_empty() && incoming_cookie != OPENCODE_GO_AUTH_COOKIE_REDACTED {

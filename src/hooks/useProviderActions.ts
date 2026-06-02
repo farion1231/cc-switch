@@ -304,12 +304,15 @@ export function useProviderActions(
           usage_script: script,
         };
 
-        if (script.templateType === "opencode_go") {
+        if (script.enabled && script.templateType === "opencode_go") {
           nextMeta.opencodeGoWorkspaceId = opencodeGoMeta?.workspaceId?.trim() || undefined;
           const authCookie = opencodeGoMeta?.authCookie?.trim();
           if (authCookie) {
             nextMeta.opencodeGoAuthCookie = authCookie;
           }
+        } else {
+          delete nextMeta.opencodeGoWorkspaceId;
+          delete nextMeta.opencodeGoAuthCookie;
         }
 
         const updatedProvider: Provider = {
