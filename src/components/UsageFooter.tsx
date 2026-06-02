@@ -26,7 +26,10 @@ function toQuotaTier(data: UsageData): QuotaTier {
   };
 }
 
-function filterOpenCodeGoUsage(data: UsageData[], provider: Provider): UsageData[] {
+function filterOpenCodeGoUsage(
+  data: UsageData[],
+  provider: Provider,
+): UsageData[] {
   if (provider.meta?.usage_script?.templateType !== "opencode_go") {
     return data;
   }

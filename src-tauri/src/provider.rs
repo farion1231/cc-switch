@@ -477,19 +477,34 @@ pub struct ProviderMeta {
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
     /// OpenCode Go 工作區 ID（用於用量查詢）
-    #[serde(rename = "opencodeGoWorkspaceId", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "opencodeGoWorkspaceId",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub opencode_go_workspace_id: Option<String>,
     /// OpenCode Go 認證 Cookie（用於用量查詢，僅在 Rust 端使用）
-    #[serde(rename = "opencodeGoAuthCookie", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "opencodeGoAuthCookie",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub opencode_go_auth_cookie: Option<String>,
     /// OpenCode Go 顯示 5h Rolling 用量（預設顯示）
-    #[serde(rename = "opencodeGoShowRolling", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "opencodeGoShowRolling",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub opencode_go_show_rolling: Option<bool>,
     /// OpenCode Go 顯示 Weekly 用量（預設顯示）
-    #[serde(rename = "opencodeGoShowWeekly", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "opencodeGoShowWeekly",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub opencode_go_show_weekly: Option<bool>,
     /// OpenCode Go 顯示 Monthly 用量（預設顯示）
-    #[serde(rename = "opencodeGoShowMonthly", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "opencodeGoShowMonthly",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub opencode_go_show_monthly: Option<bool>,
 }
 

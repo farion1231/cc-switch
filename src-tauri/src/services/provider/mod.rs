@@ -61,9 +61,9 @@ mod tests {
     use crate::claude_desktop_config::PROFILE_ID;
     use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
     use crate::database::Database;
-    use crate::provider::{ProviderMeta, UsageScript};
     #[cfg(any(target_os = "macos", windows))]
     use crate::provider::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
+    use crate::provider::{ProviderMeta, UsageScript};
     use crate::proxy::types::ProxyConfig;
     use crate::store::AppState;
     use serde_json::json;
@@ -349,11 +349,8 @@ mod tests {
 
         let mut update = provider.clone();
         update.name = "Updated OpenCode Go".to_string();
-        update
-            .meta
-            .as_mut()
-            .expect("meta")
-            .opencode_go_auth_cookie = Some(OPENCODE_GO_AUTH_COOKIE_REDACTED.to_string());
+        update.meta.as_mut().expect("meta").opencode_go_auth_cookie =
+            Some(OPENCODE_GO_AUTH_COOKIE_REDACTED.to_string());
 
         ProviderService::update(&state, AppType::OpenCode, None, update)?;
 
@@ -1296,7 +1293,11 @@ impl ProviderService {
 
     fn redact_opencode_go_auth_cookie(provider: &mut Provider) {
         if let Some(meta) = provider.meta.as_mut() {
-            if meta.opencode_go_auth_cookie.as_deref().is_some_and(|cookie| !cookie.is_empty()) {
+            if meta
+                .opencode_go_auth_cookie
+                .as_deref()
+                .is_some_and(|cookie| !cookie.is_empty())
+            {
                 meta.opencode_go_auth_cookie = Some(OPENCODE_GO_AUTH_COOKIE_REDACTED.to_string());
             }
         }
