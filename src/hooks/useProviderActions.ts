@@ -313,11 +313,22 @@ export function useProviderActions(
         if (script.enabled && script.templateType === "opencode_go") {
           nextMeta.opencodeGoWorkspaceId =
             opencodeGoMeta?.workspaceId?.trim() || undefined;
-          nextMeta.opencodeGoShowRolling =
-            opencodeGoMeta?.showRolling !== false;
-          nextMeta.opencodeGoShowWeekly = opencodeGoMeta?.showWeekly !== false;
-          nextMeta.opencodeGoShowMonthly =
-            opencodeGoMeta?.showMonthly !== false;
+          const showRolling =
+            opencodeGoMeta?.showRolling ?? provider.meta?.opencodeGoShowRolling;
+          const showWeekly =
+            opencodeGoMeta?.showWeekly ?? provider.meta?.opencodeGoShowWeekly;
+          const showMonthly =
+            opencodeGoMeta?.showMonthly ?? provider.meta?.opencodeGoShowMonthly;
+
+          if (showRolling !== undefined) {
+            nextMeta.opencodeGoShowRolling = showRolling;
+          }
+          if (showWeekly !== undefined) {
+            nextMeta.opencodeGoShowWeekly = showWeekly;
+          }
+          if (showMonthly !== undefined) {
+            nextMeta.opencodeGoShowMonthly = showMonthly;
+          }
           const authCookie = opencodeGoMeta?.authCookie?.trim();
           if (authCookie) {
             nextMeta.opencodeGoAuthCookie = authCookie;
