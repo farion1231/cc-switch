@@ -21,7 +21,6 @@ mod linux_fix;
 mod mcp;
 mod openclaw_config;
 mod opencode_config;
-mod opencode_go_quota;
 mod panic_hook;
 mod prompt;
 mod prompt_files;

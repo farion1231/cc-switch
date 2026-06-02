@@ -538,7 +538,7 @@ async fn query_provider_usage_inner(
             .and_then(|m| m.opencode_go_auth_cookie.as_deref())
             .unwrap_or("");
 
-        return crate::opencode_go_quota::get_quota(workspace_id, auth_cookie).await;
+        return crate::services::opencode_go_quota::get_quota(workspace_id, auth_cookie).await;
     }
 
     // ── 通用 JS 脚本路径 ──
