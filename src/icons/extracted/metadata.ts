@@ -166,6 +166,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["cloudflare", "cdn"],
     defaultColor: "#F38020",
   },
+  coderplan: {
+    name: "coderplan",
+    displayName: "CoderPlan.ai",
+    category: "ai-provider",
+    keywords: ["coderplan", "coderplan.ai", "aggregator", "gateway"],
+    defaultColor: "#cba6f7",
+  },
   cohere: {
     name: "cohere",
     displayName: "Cohere",

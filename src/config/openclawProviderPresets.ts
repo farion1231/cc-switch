@@ -742,6 +742,37 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "CoderPlan",
+    websiteUrl: "https://coderplan.ai",
+    apiKeyUrl: "https://coderplan.ai/register?aff=cc-switch",
+    settingsConfig: {
+      baseUrl: "https://api.coderplan.ai",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-sonnet-4-6",
+          name: "Claude Sonnet 4.6",
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "coderplan",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "coderplan/claude-sonnet-4-6" },
+      modelCatalog: {
+        "coderplan/claude-sonnet-4-6": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
     name: "BaiLing",
     websiteUrl: "https://alipaytbox.yuque.com/sxs0ba/ling/get_started",
     settingsConfig: {

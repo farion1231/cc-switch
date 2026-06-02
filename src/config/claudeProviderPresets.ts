@@ -467,6 +467,28 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#29E154",
   },
   {
+    name: "CoderPlan",
+    websiteUrl: "https://coderplan.ai",
+    apiKeyUrl: "https://coderplan.ai/register?aff=cc-switch",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.coderplan.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+        API_TIMEOUT_MS: "3000000",
+        DISABLE_TELEMETRY: 1,
+        DISABLE_ERROR_REPORTING: 1,
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
+        ANTHROPIC_MODEL: "claude-sonnet-4-6",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-4-6",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-4-7",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://api.coderplan.ai"],
+    icon: "coderplan",
+  },
+  {
     name: "MiniMax",
     websiteUrl: "https://platform.minimaxi.com",
     apiKeyUrl: "https://platform.minimaxi.com/subscribe/coding-plan",

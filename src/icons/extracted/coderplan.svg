@@ -1,0 +1,16 @@
+<svg height="1em" style="flex:none;line-height:1" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg">
+  <title>CoderPlan.ai</title>
+  <defs>
+    <linearGradient id="coderplan-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e1e2e"/>
+      <stop offset="100%" stop-color="#181825"/>
+    </linearGradient>
+  </defs>
+  <rect width="24" height="24" rx="5.6" fill="url(#coderplan-bg)"/>
+  <rect x="3.2" y="3.6" width="17.6" height="2" rx="1" fill="#313244"/>
+  <circle cx="5.2" cy="4.6" r=".6" fill="#f38ba8"/>
+  <circle cx="7.2" cy="4.6" r=".6" fill="#f9e2af"/>
+  <circle cx="9.2" cy="4.6" r=".6" fill="#a6e3a1"/>
+  <text x="6" y="15.2" font-family="'SF Mono','Fira Code','Cascadia Code',monospace" font-size="8.4" font-weight="700" fill="#cba6f7">$</text>
+  <rect x="13.6" y="12.8" width="4" height="1" rx=".5" fill="#cdd6f4"/>
+</svg>
