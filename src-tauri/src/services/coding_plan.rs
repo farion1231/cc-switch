@@ -389,7 +389,10 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> SubscriptionQuota {
 ///
 /// 新接口语义:`current_*_remaining_percent` 是"剩余百分比"(0-100),
 /// `model_remains` 数组里有 `general`(编程套餐)和 `video` 等其他模型,
-/// 这里只取 `general`,跳过 video。`current_*_status` 字段暂不消费。
+/// 这里只取 `general`,跳过 video。
+///
+/// 5h 桶始终存在;周桶并非所有套餐都有,靠 `current_weekly_status == 1`
+/// 判定激活(无周限额套餐该字段为 3,`remaining_percent` 恒为 100,不应展示)。
 fn parse_minimax_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
     let mut tiers = Vec::new();
 
@@ -423,20 +426,22 @@ fn parse_minimax_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
         });
     }
 
-    // 周桶:剩余百分比 → 已用百分比
-    if let Some(remain_pct) = item
-        .get("current_weekly_remaining_percent")
-        .and_then(|v| v.as_f64())
-    {
-        let resets_at = item
-            .get("weekly_end_time")
-            .and_then(|v| v.as_i64())
-            .and_then(millis_to_iso8601);
-        tiers.push(QuotaTier {
-            name: TIER_WEEKLY_LIMIT.to_string(),
-            utilization: 100.0 - remain_pct,
-            resets_at,
-        });
+    // 周桶:仅当 status=1 时激活;status=3 等表示该套餐无周限额,跳过
+    if item.get("current_weekly_status").and_then(|v| v.as_i64()) == Some(1) {
+        if let Some(remain_pct) = item
+            .get("current_weekly_remaining_percent")
+            .and_then(|v| v.as_f64())
+        {
+            let resets_at = item
+                .get("weekly_end_time")
+                .and_then(|v| v.as_i64())
+                .and_then(millis_to_iso8601);
+            tiers.push(QuotaTier {
+                name: TIER_WEEKLY_LIMIT.to_string(),
+                utilization: 100.0 - remain_pct,
+                resets_at,
+            });
+        }
     }
 
     tiers
@@ -631,6 +636,8 @@ mod tests {
                     "model_name": "general",
                     "current_interval_remaining_percent": 98.0,
                     "current_weekly_remaining_percent": 95.0,
+                    "current_interval_status": 1,
+                    "current_weekly_status": 1,
                     "end_time": 1_780_329_600_000_i64,
                     "weekly_end_time": 1_780_848_000_000_i64
                 },
@@ -665,7 +672,9 @@ mod tests {
                 {
                     "model_name": "general",
                     "current_interval_remaining_percent": 80.0,
-                    "current_weekly_remaining_percent": 70.0
+                    "current_weekly_remaining_percent": 70.0,
+                    "current_interval_status": 1,
+                    "current_weekly_status": 1
                 }
             ]
         });
@@ -703,7 +712,8 @@ mod tests {
         let body = json!({
             "model_remains": [{
                 "model_name": "general",
-                "current_interval_remaining_percent": 60.0
+                "current_interval_remaining_percent": 60.0,
+                "current_weekly_status": 1
                 // 缺 current_weekly_remaining_percent
             }]
         });
@@ -720,7 +730,9 @@ mod tests {
             "model_remains": [{
                 "model_name": "general",
                 "current_interval_remaining_percent": -5.0,
-                "current_weekly_remaining_percent": 150.0
+                "current_weekly_remaining_percent": 150.0,
+                "current_interval_status": 1,
+                "current_weekly_status": 1
             }]
         });
         let tiers = parse_minimax_tiers(&body);
@@ -730,20 +742,56 @@ mod tests {
     }
 
     #[test]
-    fn minimax_status_fields_are_ignored() {
-        // current_*_status 字段当前不消费,只验证解析过程不依赖它
+    fn minimax_weekly_status_3_skips_weekly_tier() {
+        // 无周限额套餐:current_weekly_status=3,remaining_percent 恒为 100,
+        // 不应推 weekly_limit tier(否则会显示"0% 已用"的假周桶)
+        let body = json!({
+            "model_remains": [
+                {
+                    "model_name": "general",
+                    "start_time": 1_780_347_600_000_i64,
+                    "end_time": 1_780_365_600_000_i64,
+                    "remains_time": 4_161_372_i64,
+                    "current_interval_remaining_percent": 99,
+                    "current_interval_status": 1,
+                    "current_weekly_total_count": 0,
+                    "current_weekly_usage_count": 0,
+                    "weekly_start_time": 1_780_243_200_000_i64,
+                    "weekly_end_time": 1_780_848_000_000_i64,
+                    "weekly_remains_time": 486_561_372_i64,
+                    "current_weekly_status": 3,
+                    "current_weekly_remaining_percent": 100
+                },
+                {
+                    "model_name": "video",
+                    "current_interval_remaining_percent": 100,
+                    "current_weekly_status": 3,
+                    "current_weekly_remaining_percent": 100
+                }
+            ],
+            "base_resp": { "status_code": 0, "status_msg": "success" }
+        });
+        let tiers = parse_minimax_tiers(&body);
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(tiers[0].utilization, 1.0);
+        assert!(tiers[0].resets_at.is_some());
+    }
+
+    #[test]
+    fn minimax_weekly_status_2_also_skips_weekly_tier() {
+        // 防御性:除 1 之外的 status 都视为周桶未激活,跳过
         let body = json!({
             "model_remains": [{
                 "model_name": "general",
-                "current_interval_remaining_percent": 50.0,
+                "current_interval_remaining_percent": 80.0,
                 "current_weekly_remaining_percent": 50.0,
-                "current_interval_status": 3,
-                "current_weekly_status": 1
+                "current_weekly_status": 2
             }]
         });
         let tiers = parse_minimax_tiers(&body);
-        assert_eq!(tiers.len(), 2);
-        assert_eq!(tiers[0].utilization, 50.0);
-        assert_eq!(tiers[1].utilization, 50.0);
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(tiers[0].utilization, 20.0);
     }
 }
