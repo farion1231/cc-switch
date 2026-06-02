@@ -253,7 +253,32 @@ impl ProxyService {
             return;
         };
 
-        let mut client_model = takeover_model.to_string();
+        // When the upstream model is a Claude model of the same role family
+        // AND uses the dash-separated ID format that Claude Code accepts
+        // (e.g. claude-opus-4-6, not claude-opus-4.6), preserve the user's
+        // chosen version instead of forcing the hardcoded constant.
+        let stripped = Self::strip_claude_one_m_marker(upstream_model);
+        let base = stripped.rsplit('/').next().unwrap_or(&stripped);
+        let base_lower = base.to_lowercase();
+        let role = if takeover_model.contains("haiku") {
+            "haiku"
+        } else if takeover_model.contains("opus") {
+            "opus"
+        } else if takeover_model.contains("sonnet") {
+            "sonnet"
+        } else {
+            ""
+        };
+        let is_dash_format = !base.contains('.');
+        let mut client_model = if !role.is_empty()
+            && is_dash_format
+            && base_lower.starts_with("claude-")
+            && base_lower.contains(role)
+        {
+            base.to_string()
+        } else {
+            takeover_model.to_string()
+        };
         if supports_one_m && Self::has_claude_one_m_marker(upstream_model) {
             client_model.push_str(CLAUDE_ONE_M_MARKER_FOR_CLIENT);
         }
