@@ -68,6 +68,22 @@ pub fn supports_reasoning_effort(model: &str) -> bool {
             .is_some_and(|c| c.is_ascii_digit() && c >= '5')
 }
 
+/// Detect models that support vision (image input).
+///
+/// Known text-only model families return `false`; all others are conservatively
+/// assumed to support vision. When `false`, image content blocks in the request
+/// are replaced with a text placeholder to avoid 400 errors from the upstream API.
+///
+/// Known text-only families:
+/// - DeepSeek (all variants: v3*, v4*, chat, reasoner)
+/// - Kimi / Moonshot
+pub fn supports_vision(model: &str) -> bool {
+    let model_lower = model.to_lowercase();
+    !(model_lower.starts_with("deepseek")
+        || model_lower.starts_with("kimi")
+        || model_lower.starts_with("moonshot"))
+}
+
 /// Resolve the appropriate OpenAI `reasoning_effort` from an Anthropic request body.
 ///
 /// Priority:
@@ -161,10 +177,15 @@ pub fn anthropic_to_openai_with_reasoning_content(
 
     // 转换 messages
     if let Some(msgs) = body.get("messages").and_then(|m| m.as_array()) {
+        let supports_vision = body
+            .get("model")
+            .and_then(|m| m.as_str())
+            .map(supports_vision)
+            .unwrap_or(true);
         for msg in msgs {
             let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
             let content = msg.get("content");
-            let converted = convert_message_to_openai(role, content, preserve_reasoning_content)?;
+            let converted = convert_message_to_openai(role, content, preserve_reasoning_content, supports_vision)?;
             messages.extend(converted);
         }
     }
@@ -348,6 +369,7 @@ fn convert_message_to_openai(
     role: &str,
     content: Option<&Value>,
     preserve_reasoning_content: bool,
+    supports_vision: bool,
 ) -> Result<Vec<Value>, ProxyError> {
     let mut result = Vec::new();
 
@@ -387,15 +409,22 @@ fn convert_message_to_openai(
                     }
                 }
                 "image" => {
-                    if let Some(source) = block.get("source") {
-                        let media_type = source
-                            .get("media_type")
-                            .and_then(|m| m.as_str())
-                            .unwrap_or("image/png");
-                        let data = source.get("data").and_then(|d| d.as_str()).unwrap_or("");
+                    if supports_vision {
+                        if let Some(source) = block.get("source") {
+                            let media_type = source
+                                .get("media_type")
+                                .and_then(|m| m.as_str())
+                                .unwrap_or("image/png");
+                            let data = source.get("data").and_then(|d| d.as_str()).unwrap_or("");
+                            content_parts.push(json!({
+                                "type": "image_url",
+                                "image_url": {"url": format!("data:{};base64,{}", media_type, data)}
+                            }));
+                        }
+                    } else {
                         content_parts.push(json!({
-                            "type": "image_url",
-                            "image_url": {"url": format!("data:{};base64,{}", media_type, data)}
+                            "type": "text",
+                            "text": "[Image omitted - model does not support vision input]"
                         }));
                     }
                 }

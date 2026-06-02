@@ -9,6 +9,7 @@
 //! - usage 字段命名与 Anthropic 一致 (input_tokens/output_tokens)
 
 use crate::proxy::{error::ProxyError, json_canonical::canonical_json_string};
+use super::transform::supports_vision;
 use serde_json::{json, Value};
 
 pub(crate) fn sanitize_anthropic_tool_use_input(name: &str, input: Value) -> Value {
@@ -82,7 +83,12 @@ pub fn anthropic_to_responses(
 
     // messages → input
     if let Some(msgs) = body.get("messages").and_then(|m| m.as_array()) {
-        let input = convert_messages_to_input(msgs)?;
+        let supports_vision = body
+            .get("model")
+            .and_then(|m| m.as_str())
+            .map(supports_vision)
+            .unwrap_or(true);
+        let input = convert_messages_to_input(msgs, supports_vision)?;
         result["input"] = json!(input);
     }
 
@@ -365,7 +371,7 @@ pub(crate) fn build_anthropic_usage_from_responses(usage: Option<&Value>) -> Val
 /// - tool_use 从 assistant message 中"提升"为独立的 function_call item
 /// - tool_result 从 user message 中"提升"为独立的 function_call_output item
 /// - thinking blocks → 丢弃
-fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyError> {
+fn convert_messages_to_input(messages: &[Value], supports_vision: bool) -> Result<Vec<Value>, ProxyError> {
     let mut input = Vec::new();
 
     for msg in messages {
@@ -408,16 +414,23 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                         }
 
                         "image" => {
-                            if let Some(source) = block.get("source") {
-                                let media_type = source
-                                    .get("media_type")
-                                    .and_then(|m| m.as_str())
-                                    .unwrap_or("image/png");
-                                let data =
-                                    source.get("data").and_then(|d| d.as_str()).unwrap_or("");
+                            if supports_vision {
+                                if let Some(source) = block.get("source") {
+                                    let media_type = source
+                                        .get("media_type")
+                                        .and_then(|m| m.as_str())
+                                        .unwrap_or("image/png");
+                                    let data =
+                                        source.get("data").and_then(|d| d.as_str()).unwrap_or("");
+                                    message_content.push(json!({
+                                        "type": "input_image",
+                                        "image_url": format!("data:{media_type};base64,{data}")
+                                    }));
+                                }
+                            } else {
                                 message_content.push(json!({
-                                    "type": "input_image",
-                                    "image_url": format!("data:{media_type};base64,{data}")
+                                    "type": "input_text",
+                                    "text": "[Image omitted - model does not support vision input]"
                                 }));
                             }
                         }
