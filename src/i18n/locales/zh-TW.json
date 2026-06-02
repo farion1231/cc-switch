@@ -2507,6 +2507,8 @@
     "modelNotFoundHint": "該模型可能已被供應商棄用。請在「模型測試設定」中更新預設測試模型。",
     "quotaExceeded": "{{providerName}} Coding Plan 額度已用盡",
     "quotaExceededHint": "百度千帆回傳了 Coding Plan 超額錯誤。請等待 5 小時 / 每週 / 每月額度重新整理，或在千帆控制台切換方案。",
+    "context1mRequired": "{{providerName}} 此線路對 {{model}} 強制啟用 1M 上下文",
+    "context1mRequiredHint": "線路要求 opus-4-8/sonnet-4-6 等模型必須帶 1M 上下文（context-1m）。實際使用通常正常——真實請求會自動攜帶該標記。探測包現已對這些模型補上該標記；若仍出現此提示，可暫時把測試模型改為 haiku 驗證連通性。",
     "httpHint": {
       "400": "供應商拒絕了請求格式。健康檢測的探測格式可能與實際使用不同。",
       "401": "API Key 可能無效，或供應商使用 OAuth 等驗證方式。檢查失敗不代表實際不可用。",

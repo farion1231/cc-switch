@@ -307,6 +307,28 @@ impl StreamCheckService {
             .and_then(|meta| meta.custom_user_agent_header().ok().flatten())
     }
 
+    /// 探测包使用的 anthropic-beta，与真实 Claude Code 在 1M 线路上的请求对齐。
+    ///
+    /// 部分中转对 adaptive 组模型（opus-4-8/4-7/4-6、sonnet-4-6）强制 1M 上下文窗口，
+    /// 缺少 `context-1m-2025-08-07` 的请求一律 400。真实使用时该 beta 由 Claude Code
+    /// 客户端自带（用户在 CC 里开了 1M），经代理透传到上游；而 Stream Check 探测包
+    /// 直连上游、客户端不在链路里，必须在这里按模型补上，否则把可用供应商误判为不可用。
+    ///
+    /// 仅按模型判断（不依赖全局 optimizer 开关）：代理侧的 `thinking_optimizer` 只对
+    /// Bedrock provider 生效（forwarder.rs），非 Bedrock 中转线路的 1M 本就来自客户端头，
+    /// 与 optimizer 无关。模型清单复用 `thinking_optimizer::uses_adaptive_thinking`，避免
+    /// 与生产判断分叉。这几个模型支持 1M，官方 API 与中转都接受该 beta。
+    pub(crate) fn anthropic_probe_beta(model: &str) -> &'static str {
+        const BASE: &str = "claude-code-20250219,interleaved-thinking-2025-05-14";
+        const WITH_1M: &str =
+            "claude-code-20250219,interleaved-thinking-2025-05-14,context-1m-2025-08-07";
+        if crate::proxy::thinking_optimizer::uses_adaptive_thinking(&model.to_lowercase()) {
+            WITH_1M
+        } else {
+            BASE
+        }
+    }
+
     /// Claude 流式检查
     ///
     /// 根据供应商的 api_format 选择请求格式：
@@ -318,6 +340,9 @@ impl StreamCheckService {
     /// `extra_headers` 是一个可选的供应商级自定义 header 集合（从 OpenClaw
     /// 的 `settings_config.headers` 或 OpenCode 的 `settings_config.options.headers`
     /// 读取），在所有内置 header 之后追加，用于覆盖或补充（例如自定义 User-Agent）。
+    ///
+    /// anthropic-beta 由 `anthropic_probe_beta` 按模型决定：adaptive 组模型会带上
+    /// `context-1m-2025-08-07`，以匹配真实 Claude Code 在强制 1M 线路上的请求。
     #[allow(clippy::too_many_arguments)]
     async fn check_claude_stream(
         client: &Client,
@@ -468,10 +493,7 @@ impl StreamCheckService {
             request_builder = request_builder
                 // Anthropic required headers
                 .header("anthropic-version", "2023-06-01")
-                .header(
-                    "anthropic-beta",
-                    "claude-code-20250219,interleaved-thinking-2025-05-14",
-                )
+                .header("anthropic-beta", Self::anthropic_probe_beta(model))
                 .header("anthropic-dangerous-direct-browser-access", "true")
                 // Content type headers
                 .header("content-type", "application/json")
@@ -843,9 +865,12 @@ impl StreamCheckService {
 
     /// 基于 HTTP 状态码和响应体识别细粒度错误分类。
     ///
-    /// 目前仅识别"模型不存在 / 已下架"：各厂商该类错误通常返回 4xx，body 中会包含
-    /// 如 `model_not_found`（OpenAI）、`does not exist`、`invalid model`、`not_found_error`
-    /// + `model` 字样（Anthropic）等标记。
+    /// 识别若干 4xx 错误，供前端渲染专门文案：
+    /// - `quotaExceeded`：千帆 Coding Plan 超额（coding_plan_*_quota_exceeded）。
+    /// - `context1mRequired`：中转对 opus-4-8/sonnet-4-6 强制 1M 上下文、缺
+    ///   `context-1m-2025-08-07` 时的 400（文案「请启用 1m 上下文」）。
+    /// - `modelNotFound`：模型不存在 / 已下架，body 含 `model_not_found`（OpenAI）、
+    ///   `does not exist`、`invalid model`、`not_found_error` + `model`（Anthropic）等。
     pub(crate) fn detect_error_category(status: u16, body: &str) -> Option<&'static str> {
         // 只检查 4xx；5xx 的错误信息里可能巧合出现"model"之类的词，容易误判
         if !(400..500).contains(&status) {
@@ -859,6 +884,14 @@ impl StreamCheckService {
         ];
         if qianfan_quota_indicators.iter().any(|s| lower.contains(s)) {
             return Some("quotaExceeded");
+        }
+
+        // 1M 上下文门：部分中转对 opus-4-8/sonnet-4-6 强制 1M 窗口，缺少
+        // `context-1m-2025-08-07` 的请求一律 400，文案为「请启用 1m 上下文后重试」。
+        // 该错误体里没有 "model" 字样，必须在下面的 model 早返回之前识别。
+        let one_m_indicators = ["1m 上下文", "context-1m", "1m context", "启用 1m"];
+        if one_m_indicators.iter().any(|s| lower.contains(s)) {
+            return Some("context1mRequired");
         }
 
         // 必须提到 "model"，避免通用 404 / 400 被误判
@@ -1905,6 +1938,70 @@ mod tests {
                 Some("quotaExceeded")
             );
         }
+    }
+
+    #[test]
+    fn test_detect_context_1m_required() {
+        // 中转强制 1M 的典型 400 文案（中文）
+        let zh_400 = r#"{"error":"1m 上下文已经全量可用，请启用 1m 上下文后重试","type":"error"}"#;
+        assert_eq!(
+            StreamCheckService::detect_error_category(400, zh_400),
+            Some("context1mRequired")
+        );
+
+        // body 中直接出现 beta 名也应识别
+        let beta_400 = r#"{"error":"missing anthropic-beta: context-1m-2025-08-07"}"#;
+        assert_eq!(
+            StreamCheckService::detect_error_category(400, beta_400),
+            Some("context1mRequired")
+        );
+
+        // 5xx 即便含 "1m 上下文" 也不分类（沿用 4xx 守卫，避免误判临时故障）
+        let server_error = r#"{"error":"1m 上下文 暂不可用"}"#;
+        assert_eq!(
+            StreamCheckService::detect_error_category(503, server_error),
+            None
+        );
+
+        // 与 modelNotFound 不冲突：提到 model 的 400 仍按模型不存在分类
+        let model_400 = r#"{"error":{"message":"invalid model specified"}}"#;
+        assert_eq!(
+            StreamCheckService::detect_error_category(400, model_400),
+            Some("modelNotFound")
+        );
+    }
+
+    #[test]
+    fn test_anthropic_probe_beta() {
+        const BETA_1M: &str = "context-1m-2025-08-07";
+
+        // adaptive 组 → 带 1M beta（匹配真实 Claude Code 在 1M 线路上的请求）
+        assert!(StreamCheckService::anthropic_probe_beta("claude-opus-4-8").contains(BETA_1M));
+        assert!(StreamCheckService::anthropic_probe_beta("claude-sonnet-4-6").contains(BETA_1M));
+        assert!(StreamCheckService::anthropic_probe_beta("claude-opus-4-7").contains(BETA_1M));
+        assert!(StreamCheckService::anthropic_probe_beta("claude-opus-4-6").contains(BETA_1M));
+        // 点号写法（与 thinking_optimizer 的归一化一致）
+        assert!(
+            StreamCheckService::anthropic_probe_beta("anthropic/claude-opus-4.8").contains(BETA_1M)
+        );
+        // 大写也应命中（内部 lowercase）
+        assert!(StreamCheckService::anthropic_probe_beta("Claude-Opus-4-8").contains(BETA_1M));
+
+        // 非 adaptive 组（haiku / sonnet-4-5）不带 1M
+        assert!(
+            !StreamCheckService::anthropic_probe_beta("claude-haiku-4-5-20251001")
+                .contains(BETA_1M)
+        );
+        assert!(
+            !StreamCheckService::anthropic_probe_beta("claude-sonnet-4-5-20250929")
+                .contains(BETA_1M)
+        );
+
+        // base beta 始终保留 claude-code 标记
+        assert!(
+            StreamCheckService::anthropic_probe_beta("claude-haiku-4-5-20251001")
+                .contains("claude-code-20250219")
+        );
     }
 
     #[test]
