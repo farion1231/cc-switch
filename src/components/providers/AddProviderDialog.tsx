@@ -30,6 +30,7 @@ interface AddProviderDialogProps {
     provider: Omit<Provider, "id"> & {
       providerKey?: string;
       suggestedDefaults?: OpenClawSuggestedDefaults;
+      ensureClaudeDesktopOfficialSeed?: boolean;
     },
   ) => Promise<void> | void;
 }
@@ -98,6 +99,7 @@ export function AddProviderDialog({
       const providerData: Omit<Provider, "id"> & {
         providerKey?: string;
         suggestedDefaults?: OpenClawSuggestedDefaults;
+        ensureClaudeDesktopOfficialSeed?: boolean;
       } = {
         name: values.name.trim(),
         notes: values.notes?.trim() || undefined,
@@ -108,6 +110,16 @@ export function AddProviderDialog({
         ...(values.presetCategory ? { category: values.presetCategory } : {}),
         ...(values.meta ? { meta: values.meta } : {}),
       };
+
+      if (appId === "claude-desktop" && values.presetId) {
+        const presetIndex = parseInt(
+          values.presetId.replace("claude-desktop-", ""),
+        );
+        const preset = claudeDesktopProviderPresets[presetIndex];
+        providerData.ensureClaudeDesktopOfficialSeed =
+          values.presetCategory === "official" &&
+          preset?.category === "official";
+      }
 
       // OpenCode/OpenClaw: pass providerKey for ID generation
       if (

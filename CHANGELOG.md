@@ -5,7 +5,38 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.16.1] - 2026-06-01
+
+Development since v3.16.0 focuses on hardening Codex provider switching and Local Routing takeover: preserving official OAuth auth and model catalogs across normal switches, hot-switches, backup restore, and edit flows; restoring Codex Chat tool/plugin compatibility over Chat Completions upstreams; improving Codex proxy diagnostics and CLI discovery; and documenting DeepSeek routing.
+
+**Stats**: 23 commits | 62 files changed | +5,603 insertions | -1,113 deletions
+
+### Added
+
+- **Codex Official Auth Preservation Setting**: Added an opt-in setting that keeps the official ChatGPT / Codex OAuth login in `auth.json` when switching third-party Codex providers, while moving third-party provider tokens into `config.toml` when enabled.
+- **Codex DeepSeek Routing Guides**: Added localized DeepSeek routing guides for Codex in English, Chinese, and Japanese, with screenshots covering provider routing requirements, Codex provider setup, and Local Routing takeover.
+
+### Changed
+
+- **Codex Auth Preservation Is Opt-In**: The new official-auth preservation setting now defaults to off, so third-party Codex switches keep the legacy behavior of writing the active provider auth unless users explicitly enable preservation.
+- **Codex Provider Switch Restart Hint**: Successful Codex provider switches now tell users to restart the Codex client so catalog and config changes take effect.
+- **Codex Proxy Takeover Switching Is Serialized**: Provider switches and takeover toggles now share a per-app lock and use backup / live placeholder ownership signals instead of lagging `enabled` or server-running flags, preventing normal live writes from racing a just-activated or temporarily stopped takeover.
+- **Codex Takeover Hot-Switch Display Refresh**: Hot-switching a Codex provider while Local Routing owns Live now refreshes the proxy-safe live provider id, model, and display name while keeping endpoints pointed at the local proxy.
+- **Sponsor Ordering**: Swapped the Shengsuanyun and AICodeMirror sponsor blocks across README locales.
+- **Docs Organization**: Moved the Chinese proxy guide under `docs/guides/` and removed the obsolete working-directory plan document.
+
+### Fixed
+
+- **Codex Provider Edit Dialog Under Takeover**: The Codex provider edit form now shows an explicit notice and storage-aware auth / config hints clarifying that it displays the stored provider config (not the proxy-managed live `auth.json` / `config.toml`), so the official OAuth token is no longer mistaken as lost while takeover is active. The dialog also treats takeover as active regardless of whether the proxy server is currently running.
+- **Codex OAuth Auth During Proxy Takeover**: Fixed multiple preserve-mode takeover paths that could clear or overwrite the official ChatGPT / Codex OAuth `auth.json`. Takeover detection now recognizes `PROXY_MANAGED` in `config.toml`, cleanup only removes placeholder bearer tokens, config-only takeover writes are used consistently, and mis-categorized third-party providers no longer trigger the official-provider auth overwrite path. Provider sync and switching now treat the restore backup and live placeholders as the takeover-ownership signal (instead of the lagging `enabled` / proxy-running flags) and serialize switch/takeover per app, so a just-activated or proxy-stopped takeover can no longer be overwritten by a normal live write.
+- **Codex Model Catalog Data Loss**: Fixed cases where Codex `modelCatalog` could be wiped by live-config backfill, active-provider edit dialogs, provider switches, or proxy takeover-off restore. Snapshot backups now keep existing `model_catalog_json` pointers, provider-rebuilt backups regenerate the catalog projection from the database source of truth, active edit dialogs prefer the DB catalog over lossy Live reconstruction, and provider switches always refresh the generated catalog JSON.
+- **Codex Chat Tools Over Chat Completions Routing**: Restored Codex `tool_search`, loaded namespace tools, custom tools, and tool outputs when third-party Codex providers are routed through Chat Completions. Non-streaming and streaming Chat responses now map back to the right Responses item types, including native `response.custom_tool_call_input.*` events for custom-tool streaming.
+- **Codex Proxy Error Diagnostics**: Codex forwarding failures now return richer JSON errors with provider, model, endpoint, upstream status, stable `cc_switch_*` codes, and HTTP statuses aligned with the canonical `ProxyError` response mapping.
+- **Codex Native Balance / Coding-Plan Queries**: Fixed native usage and plan lookups so each app resolves the correct provider credentials instead of leaking assumptions from another app surface.
+- **Codex CLI Discovery and Catalog Projection**: Fixed third-party Codex catalog projection that could fail when the Codex CLI was not reachable through one narrow PATH lookup, by adding multi-platform CLI discovery plus a bundled GPT-5.5 model-catalog template fallback.
+- **Claude Desktop Official Provider Creation**: Fixed adding the Claude Desktop Official provider when the official category/config path was selected.
+- **Anthropic Tool Thinking History for Kimi / Moonshot**: Added Kimi and Moonshot to the Anthropic-compatible tool-thinking history normalizer so later turns can replay reasoning and tool-call context correctly.
+- **Windows Tool Version Probing**: Fixed Windows version checks that could misquote `.cmd` / `.bat` commands and decode localized command output as mojibake, causing working tools to appear as "installed but not runnable".
 
 ## [3.16.0] - 2026-05-29
 

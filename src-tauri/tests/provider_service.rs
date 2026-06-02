@@ -523,6 +523,173 @@ requires_openai_auth = true
     );
 }
 
+#[tokio::test(flavor = "current_thread")]
+#[allow(
+    clippy::await_holding_lock,
+    reason = "this integration-style test must serialize global test HOME and settings mutations across async takeover calls"
+)]
+async fn codex_official_to_deepseek_then_takeover_enters_and_restores_proxy_managed_live_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let _home = ensure_test_home();
+
+    let oauth_auth = json!({
+        "auth_mode": "chatgpt",
+        "tokens": {
+            "access_token": "oauth-access",
+            "id_token": "oauth-id"
+        }
+    });
+    let official_config = r#"model_provider = "openai"
+model = "gpt-5"
+
+[model_providers.openai]
+name = "OpenAI"
+wire_api = "responses"
+"#;
+    write_codex_live_atomic(&oauth_auth, Some(official_config))
+        .expect("seed official Codex OAuth live config");
+
+    let deepseek_provider_config = r#"model_provider = "deepseek"
+model = "deepseek-chat"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "https://api.deepseek.com/v1"
+wire_api = "responses"
+"#;
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "official-provider".to_string();
+
+        let mut official_provider = Provider::with_id(
+            "official-provider".to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": oauth_auth,
+                "config": official_config
+            }),
+            None,
+        );
+        official_provider.category = Some("official".to_string());
+        manager
+            .providers
+            .insert("official-provider".to_string(), official_provider);
+
+        let mut deepseek_provider = Provider::with_id(
+            "deepseek-provider".to_string(),
+            "DeepSeek".to_string(),
+            json!({
+                "auth": {"OPENAI_API_KEY": "deepseek-key"},
+                "config": deepseek_provider_config
+            }),
+            None,
+        );
+        deepseek_provider.category = Some("custom".to_string());
+        manager
+            .providers
+            .insert("deepseek-provider".to_string(), deepseek_provider);
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "deepseek-provider")
+        .expect("switch from official subscription to DeepSeek");
+
+    let auth_after_switch: serde_json::Value =
+        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth after switch");
+    assert_eq!(
+        auth_after_switch, oauth_auth,
+        "normal provider switch with Codex preservation enabled must keep OAuth auth.json"
+    );
+
+    let config_after_switch =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config");
+    assert!(
+        config_after_switch.contains("https://api.deepseek.com/v1"),
+        "normal switch should write the DeepSeek endpoint before takeover"
+    );
+    assert!(
+        config_after_switch.contains("deepseek-key"),
+        "normal switch should inject the DeepSeek key into config.toml"
+    );
+
+    state
+        .proxy_service
+        .set_takeover_for_app("codex", true)
+        .await
+        .expect("enable Codex takeover");
+
+    let auth_after_takeover: serde_json::Value =
+        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth after takeover");
+    assert_eq!(
+        auth_after_takeover, oauth_auth,
+        "enabling takeover must not rewrite Codex OAuth auth.json"
+    );
+
+    let config_after_takeover =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config");
+    assert!(
+        config_after_takeover.contains("http://127.0.0.1:15721/v1"),
+        "enabling takeover should point Codex config.toml at the local proxy"
+    );
+    assert!(
+        config_after_takeover.contains("PROXY_MANAGED"),
+        "enabling takeover should move the proxy placeholder into config.toml"
+    );
+    assert!(
+        !config_after_takeover.contains("https://api.deepseek.com/v1"),
+        "takeover live config should not keep the upstream DeepSeek endpoint"
+    );
+
+    let backup = state
+        .db
+        .get_live_backup("codex")
+        .await
+        .expect("read Codex backup")
+        .expect("backup exists after takeover");
+    let backup_value: serde_json::Value =
+        serde_json::from_str(&backup.original_config).expect("parse backup");
+    let backup_config = backup_value
+        .get("config")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    assert!(
+        backup_config.contains("https://api.deepseek.com/v1")
+            && backup_config.contains("deepseek-key"),
+        "takeover backup should remain the restorable DeepSeek config"
+    );
+
+    state
+        .proxy_service
+        .set_takeover_for_app("codex", false)
+        .await
+        .expect("disable Codex takeover");
+
+    let restored_auth: serde_json::Value =
+        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read restored auth");
+    assert_eq!(
+        restored_auth, oauth_auth,
+        "disabling takeover should restore without replacing OAuth auth.json"
+    );
+
+    let restored_config = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read restored config");
+    assert!(
+        restored_config.contains("https://api.deepseek.com/v1")
+            && restored_config.contains("deepseek-key"),
+        "disabling takeover should restore the selected DeepSeek live config"
+    );
+    assert!(
+        !restored_config.contains("PROXY_MANAGED"),
+        "restored live config must not keep the proxy placeholder"
+    );
+}
+
 #[test]
 fn provider_service_switch_codex_default_overwrites_official_auth_when_preservation_off() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
@@ -1017,6 +1184,158 @@ fn sync_current_provider_for_app_keeps_live_takeover_and_updates_restore_backup(
         Some("real-token"),
         "restore backup should preserve the provider token rather than proxy placeholder"
     );
+}
+
+#[test]
+fn switch_codex_provider_with_takeover_live_but_stopped_proxy_keeps_proxy_live_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let _home = ensure_test_home();
+
+    let oauth_auth = json!({
+        "auth_mode": "chatgpt",
+        "tokens": {
+            "access_token": "oauth-access",
+            "id_token": "oauth-id"
+        }
+    });
+    let old_provider_config = r#"model_provider = "deepseek"
+model = "deepseek-chat"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "https://api.deepseek.com/v1"
+wire_api = "responses"
+experimental_bearer_token = "old-key"
+"#;
+    let proxy_live_config = r#"model_provider = "deepseek"
+model = "deepseek-chat"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+experimental_bearer_token = "PROXY_MANAGED"
+"#;
+    write_codex_live_atomic(&oauth_auth, Some(proxy_live_config))
+        .expect("seed taken-over Codex live config");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "old-provider".to_string();
+
+        let mut old_provider = Provider::with_id(
+            "old-provider".to_string(),
+            "DeepSeek Old".to_string(),
+            json!({
+                "auth": {"OPENAI_API_KEY": "old-key"},
+                "config": old_provider_config
+            }),
+            None,
+        );
+        old_provider.category = Some("custom".to_string());
+        manager
+            .providers
+            .insert("old-provider".to_string(), old_provider);
+
+        let mut new_provider = Provider::with_id(
+            "new-provider".to_string(),
+            "DeepSeek New".to_string(),
+            json!({
+                "auth": {"OPENAI_API_KEY": "new-key"},
+                "config": r#"model_provider = "deepseek-new"
+model = "deepseek-reasoner"
+
+[model_providers.deepseek-new]
+name = "DeepSeek New"
+base_url = "https://new.deepseek.example/v1"
+wire_api = "responses"
+"#
+            }),
+            None,
+        );
+        new_provider.category = Some("custom".to_string());
+        manager
+            .providers
+            .insert("new-provider".to_string(), new_provider);
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    futures::executor::block_on(
+        state.db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": oauth_auth,
+                "config": old_provider_config
+            }))
+            .expect("serialize backup"),
+        ),
+    )
+    .expect("seed Codex live backup");
+
+    assert!(
+        !futures::executor::block_on(state.proxy_service.is_running()),
+        "fixture keeps the proxy server stopped"
+    );
+
+    ProviderService::switch(&state, AppType::Codex, "new-provider")
+        .expect("switch should update takeover backup instead of writing normal live config");
+
+    let auth_after: serde_json::Value =
+        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
+    assert_eq!(
+        auth_after, oauth_auth,
+        "provider switch during takeover ownership must not rewrite Codex OAuth auth"
+    );
+
+    let live_config =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    assert!(
+        live_config.contains("http://127.0.0.1:15721/v1"),
+        "live config should remain pointed at the local proxy"
+    );
+    assert!(
+        live_config.contains("PROXY_MANAGED"),
+        "live config should keep the proxy bearer placeholder"
+    );
+    assert!(
+        live_config.contains(r#"model_provider = "deepseek-new""#)
+            && live_config.contains(r#"name = "DeepSeek New""#),
+        "live config should update the Codex-visible provider label during takeover"
+    );
+    assert!(
+        !live_config.contains("https://new.deepseek.example/v1"),
+        "normal provider base_url must not overwrite taken-over live config"
+    );
+
+    let backup = futures::executor::block_on(state.db.get_live_backup("codex"))
+        .expect("get Codex backup")
+        .expect("backup exists");
+    let backup_value: serde_json::Value =
+        serde_json::from_str(&backup.original_config).expect("parse backup");
+    assert_eq!(
+        backup_value.get("auth"),
+        Some(&auth_after),
+        "restore backup should preserve the official OAuth auth"
+    );
+    let backup_config = backup_value
+        .get("config")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    assert!(
+        backup_config.contains("new-key") && backup_config.contains("deepseek-new"),
+        "restore backup should be rebuilt from the newly selected provider"
+    );
+
+    let current = state
+        .db
+        .get_current_provider(AppType::Codex.as_str())
+        .expect("get current provider");
+    assert_eq!(current.as_deref(), Some("new-provider"));
 }
 
 #[test]

@@ -21,6 +21,8 @@ use serde_json::{json, Value};
 
 const ANTHROPIC_THINKING_PLACEHOLDER: &str = "tool call";
 const ANTHROPIC_REDACTED_THINKING_PLACEHOLDER: &str = "[redacted thinking]";
+// Keep hints lowercase; matching lowercases only the input value.
+const REASONING_VENDOR_HINTS: &[&str] = &["moonshot", "kimi", "deepseek", "mimo", "xiaomimimo"];
 
 /// 获取 Claude 供应商的 API 格式
 ///
@@ -86,18 +88,11 @@ pub fn claude_api_format_needs_transform(api_format: &str) -> bool {
     )
 }
 
-fn is_reasoning_content_compatible_identifier(value: &str) -> bool {
+fn is_reasoning_vendor_identifier(value: &str) -> bool {
     let value = value.to_ascii_lowercase();
-    value.contains("moonshot")
-        || value.contains("kimi")
-        || value.contains("deepseek")
-        || value.contains("mimo")
-        || value.contains("xiaomimimo")
-}
-
-fn is_anthropic_tool_thinking_history_identifier(value: &str) -> bool {
-    let value = value.to_ascii_lowercase();
-    value.contains("deepseek") || value.contains("mimo") || value.contains("xiaomimimo")
+    REASONING_VENDOR_HINTS
+        .iter()
+        .any(|hint| value.contains(hint))
 }
 
 fn should_normalize_anthropic_tool_thinking_history(
@@ -112,7 +107,7 @@ fn should_normalize_anthropic_tool_thinking_history(
     if body
         .get("model")
         .and_then(|m| m.as_str())
-        .is_some_and(is_anthropic_tool_thinking_history_identifier)
+        .is_some_and(is_reasoning_vendor_identifier)
     {
         return true;
     }
@@ -129,7 +124,7 @@ fn should_normalize_anthropic_tool_thinking_history(
     ]
     .into_iter()
     .flatten()
-    .any(is_anthropic_tool_thinking_history_identifier)
+    .any(is_reasoning_vendor_identifier)
 }
 
 /// DeepSeek's Anthropic-compatible endpoint requires thinking history to be
@@ -224,7 +219,7 @@ fn should_preserve_reasoning_content_for_openai_chat(provider: &Provider, body: 
     if body
         .get("model")
         .and_then(|m| m.as_str())
-        .is_some_and(is_reasoning_content_compatible_identifier)
+        .is_some_and(is_reasoning_vendor_identifier)
     {
         return true;
     }
@@ -243,7 +238,7 @@ fn should_preserve_reasoning_content_for_openai_chat(provider: &Provider, body: 
     base_urls
         .into_iter()
         .flatten()
-        .any(is_reasoning_content_compatible_identifier)
+        .any(is_reasoning_vendor_identifier)
 }
 
 pub fn transform_claude_request_for_api_format(
@@ -1998,6 +1993,37 @@ mod tests {
         assert_eq!(content[0]["thinking"], ANTHROPIC_THINKING_PLACEHOLDER);
         assert_eq!(content[1]["type"], "text");
         assert_eq!(content[2]["type"], "tool_use");
+    }
+
+    #[test]
+    fn test_kimi_anthropic_tool_history_injects_missing_thinking() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "model": "kimi-for-coding",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "call_123", "name": "read_file", "input": {"path": "README.md"}}
+                ]
+            }]
+        });
+
+        let changed = normalize_anthropic_tool_thinking_history_for_provider(
+            &mut body,
+            &provider,
+            "anthropic",
+        );
+
+        assert!(changed);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(content[0]["thinking"], ANTHROPIC_THINKING_PLACEHOLDER);
+        assert_eq!(content[1]["type"], "tool_use");
     }
 
     #[test]

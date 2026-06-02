@@ -1947,12 +1947,13 @@ mod tests {
         let direct = direct_provider("direct");
         assert!(is_compatible_direct_provider(&direct));
 
-        let claude_official = Provider::with_id(
+        let mut claude_official = Provider::with_id(
             "claude-official".to_string(),
             "Claude Official".to_string(),
             json!({"env": {}}),
             Some("https://www.anthropic.com/claude-code".to_string()),
         );
+        claude_official.category = Some("official".to_string());
         assert!(!is_compatible_direct_provider(&claude_official));
 
         let mut openai_format = direct_provider("openai");

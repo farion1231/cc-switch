@@ -1391,11 +1391,13 @@ impl ProviderService {
                     .ok()
                     .flatten()
                     .is_some();
-            let is_proxy_running = futures::executor::block_on(state.proxy_service.is_running());
             let live_taken_over = state
                 .proxy_service
                 .detect_takeover_in_live_config_for_app(&app_type);
-            let should_sync_via_proxy = is_proxy_running && (has_live_backup || live_taken_over);
+            // Backup or live placeholders mean the live file is currently owned
+            // by proxy takeover, including the short activation window before
+            // proxy_config.enabled is committed.
+            let should_sync_via_proxy = has_live_backup || live_taken_over;
 
             if should_sync_via_proxy {
                 if matches!(app_type, AppType::ClaudeDesktop) {
@@ -1409,7 +1411,9 @@ impl ProviderService {
                     .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
                 }
 
-                if matches!(app_type, AppType::Claude) {
+                if matches!(app_type, AppType::Claude)
+                    && futures::executor::block_on(state.proxy_service.is_running())
+                {
                     futures::executor::block_on(
                         state
                             .proxy_service
@@ -1559,7 +1563,7 @@ impl ProviderService {
     /// Switch flow:
     /// 1. Validate target provider exists
     /// 2. Check if proxy takeover mode is active AND proxy server is running
-    /// 3. If takeover mode active: hot-switch proxy target only (no Live config write)
+    /// 3. If takeover mode active: hot-switch proxy target and refresh proxy-safe Live labels
     /// 4. If normal mode:
     ///    a. **Backfill mechanism**: Backfill current live config to current provider
     ///    b. Update local settings current_provider_xxx (device-level)
@@ -1589,21 +1593,32 @@ impl ProviderService {
             return Self::switch_normal(state, app_type, id, &providers);
         }
 
-        // Check if proxy takeover mode is active AND proxy server is actually running
-        // Both conditions must be true to use hot-switch mode
-        // Use blocking wait since this is a sync function
+        // Provider switches and takeover toggles both mutate live config and the
+        // restore backup. Serialize them per app, then decide from the locked
+        // current state so a just-started takeover cannot be overwritten by a
+        // normal live write.
+        let _switch_guard =
+            if matches!(app_type, AppType::Claude | AppType::Codex | AppType::Gemini) {
+                Some(futures::executor::block_on(
+                    state.proxy_service.lock_switch_for_app(app_type.as_str()),
+                ))
+            } else {
+                None
+            };
+
+        // Backup or live placeholders mean the live file is owned by proxy
+        // takeover, even if the proxy server is temporarily stopped or is in the
+        // activation window before enabled=true is committed.
         let is_app_taken_over =
             futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
                 .ok()
                 .flatten()
                 .is_some();
-        let is_proxy_running = futures::executor::block_on(state.proxy_service.is_running());
         let live_taken_over = state
             .proxy_service
             .detect_takeover_in_live_config_for_app(&app_type);
 
-        // Hot-switch only when BOTH: this app is taken over AND proxy server is actually running
-        let should_hot_switch = (is_app_taken_over || live_taken_over) && is_proxy_running;
+        let should_hot_switch = is_app_taken_over || live_taken_over;
 
         // Block switching to official providers when proxy takeover is active.
         // Using a proxy with official APIs (Anthropic/OpenAI/Google) may cause account bans.
@@ -1616,7 +1631,9 @@ impl ProviderService {
         }
 
         if should_hot_switch {
-            // Proxy takeover mode: hot-switch only, don't write Live config
+            // Proxy takeover mode: hot-switch without restoring upstream Live config.
+            // The proxy layer may still refresh proxy-safe Live fields so client labels
+            // follow the selected provider while endpoints remain local.
             log::info!(
                 "代理接管模式：热切换 {} 的目标供应商为 {}",
                 app_type.as_str(),
@@ -1626,12 +1643,12 @@ impl ProviderService {
             futures::executor::block_on(
                 state
                     .proxy_service
-                    .hot_switch_provider(app_type.as_str(), id),
+                    .hot_switch_provider_inner(app_type.as_str(), id),
             )
             .map_err(|e| AppError::Message(format!("热切换失败: {e}")))?;
 
-            // Note: No Live config write, no MCP sync
-            // The proxy server will route requests to the new provider via is_current
+            // The proxy server will route requests to the new provider via is_current.
+            // MCP sync is intentionally skipped while Live config is owned by takeover.
             return Ok(SwitchResult::default());
         }
 
@@ -1800,11 +1817,6 @@ impl ProviderService {
             return Ok(());
         };
 
-        let takeover_enabled =
-            futures::executor::block_on(state.db.get_proxy_config_for_app(app_type.as_str()))
-                .map(|config| config.enabled)
-                .unwrap_or(false);
-
         let has_live_backup =
             futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
                 .ok()
@@ -1815,7 +1827,9 @@ impl ProviderService {
             .proxy_service
             .detect_takeover_in_live_config_for_app(&app_type);
 
-        if takeover_enabled && (has_live_backup || live_taken_over) {
+        // See the save path above: backup/placeholders are the ownership signal
+        // here, not just proxy_config.enabled.
+        if has_live_backup || live_taken_over {
             if matches!(app_type, AppType::ClaudeDesktop) {
                 write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
                 return Ok(());
