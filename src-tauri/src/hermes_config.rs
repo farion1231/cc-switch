@@ -46,21 +46,12 @@ use std::sync::{Mutex, OnceLock};
 
 /// 获取 Hermes 配置目录
 ///
-/// 优先级（与 Hermes 自身 `hermes_constants.get_hermes_home()` 对齐）：
-/// 1. CC Switch 设置覆盖 (`settings.hermes_config_dir`)
-/// 2. `HERMES_HOME` 环境变量（Hermes 自身的配置目录覆盖）
-/// 3. 默认路径: `~/.hermes/`
-///
-/// 参见 https://github.com/NousResearch/hermes-agent/blob/main/hermes_constants.py
+/// 优先级：settings override > HERMES_HOME > ~/.hermes/
 pub fn get_hermes_dir() -> PathBuf {
-    // 1. CC Switch 自身的 settings override（最高优先级）
     if let Some(override_dir) = get_hermes_override_dir() {
         return override_dir;
     }
 
-    // 2. HERMES_HOME 环境变量（与 Hermes 自身行为一致）
-    //    不做 ~ 展开：Hermes 的 get_hermes_home() 也是 trim() 后直接 Path(val)，
-    //    展开会导致 HERMES_HOME 含 ~ 时两边路径不一致。
     if let Ok(hermes_home) = std::env::var("HERMES_HOME") {
         let trimmed = hermes_home.trim();
         if !trimmed.is_empty() {
@@ -68,7 +59,6 @@ pub fn get_hermes_dir() -> PathBuf {
         }
     }
 
-    // 3. 默认路径
     crate::config::get_home_dir().join(".hermes")
 }
 
@@ -1963,136 +1953,67 @@ user_profile_enabled: false
 
     // ---- get_hermes_dir() path resolution ----
 
-    #[test]
-    #[serial]
-    fn hermes_dir_respects_hermes_home_env_var() {
-        // When HERMES_HOME is set, get_hermes_dir() must use it (matching
-        // Hermes' own hermes_constants.get_hermes_home() behaviour).
-        // This is the fix for cc-switch issue #3406.
-        let _guard = test_guard();
-        let tmp = tempfile::tempdir().unwrap();
-        let old_home = std::env::var_os("HERMES_HOME");
-        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+    /// Helper: save and restore a single env var across a test.
+    struct EnvGuard {
+        key: &'static str,
+        old: Option<String>,
+    }
 
-        // Clear CC_SWITCH_TEST_HOME so get_home_dir() falls back to real
-        // dirs::home_dir(), and set HERMES_HOME to our temp dir.
-        std::env::remove_var("CC_SWITCH_TEST_HOME");
-        std::env::set_var("HERMES_HOME", tmp.path());
-
-        let hermes_dir = get_hermes_dir();
-        assert_eq!(hermes_dir, tmp.path());
-
-        // Cleanup
-        match old_home {
-            Some(value) => std::env::set_var("HERMES_HOME", value),
-            None => std::env::remove_var("HERMES_HOME"),
-        }
-        match old_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+    impl EnvGuard {
+        fn new(key: &'static str) -> Self {
+            let old = std::env::var(key).ok();
+            Self { key, old }
         }
     }
 
-    #[test]
-    #[serial]
-    fn hermes_dir_ignores_empty_hermes_home() {
-        let _guard = test_guard();
-        let old = std::env::var_os("HERMES_HOME");
-
-        // Empty or whitespace-only HERMES_HOME should fall through to default
-        std::env::set_var("HERMES_HOME", "   ");
-        let dir = get_hermes_dir();
-        assert!(dir.ends_with(".hermes"));
-
-        match old {
-            Some(value) => std::env::set_var("HERMES_HOME", value),
-            None => std::env::remove_var("HERMES_HOME"),
-        }
-    }
-
-    #[test]
-    #[serial]
-    fn hermes_dir_with_test_home_falls_back_to_default() {
-        // When neither override nor HERMES_HOME is set, should use
-        // CC_SWITCH_TEST_HOME/.hermes (the test isolation default).
-        with_test_home(|| {
-            let old = std::env::var_os("HERMES_HOME");
-            std::env::remove_var("HERMES_HOME");
-
-            let dir = get_hermes_dir();
-            assert!(dir.ends_with(".hermes"));
-
-            match old {
-                Some(value) => std::env::set_var("HERMES_HOME", value),
-                None => {}
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.old {
+                Some(v) => std::env::set_var(self.key, v),
+                None => std::env::remove_var(self.key),
             }
-        });
-    }
-
-    #[test]
-    #[serial]
-    fn hermes_dir_does_not_expand_tilde_in_hermes_home() {
-        // HERMES_HOME with ~ prefix must NOT be expanded, matching Hermes'
-        // own get_hermes_home() which does Path(val) without expanduser.
-        // Expanding would cause a config split when the env var comes from
-        // .env files or GUI launchers that don't perform shell expansion.
-        let _guard = test_guard();
-        let old_home = std::env::var_os("HERMES_HOME");
-        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-
-        std::env::remove_var("CC_SWITCH_TEST_HOME");
-
-        // ~/ prefix → used as-is (not expanded to home dir)
-        std::env::set_var("HERMES_HOME", "~/custom-hermes");
-        let dir = get_hermes_dir();
-        assert_eq!(dir, PathBuf::from("~/custom-hermes"));
-
-        // ~ alone → used as-is
-        std::env::set_var("HERMES_HOME", "~");
-        let dir = get_hermes_dir();
-        assert_eq!(dir, PathBuf::from("~"));
-
-        // Cleanup
-        match old_home {
-            Some(value) => std::env::set_var("HERMES_HOME", value),
-            None => std::env::remove_var("HERMES_HOME"),
-        }
-        match old_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
         }
     }
 
     #[test]
     #[serial]
-    fn hermes_dir_settings_override_beats_hermes_home() {
-        // When both settings override and HERMES_HOME are set,
-        // settings override should win (highest priority).
-        // This test verifies priority order: settings > HERMES_HOME > default.
-        //
-        // Note: We can only test this indirectly since get_hermes_override_dir()
-        // reads from the global settings store which is hard to mock in unit tests.
-        // The key assertion is that HERMES_HOME works when no override is set.
-        // The override > HERMES_HOME priority is enforced by the code ordering
-        // (override check comes first in get_hermes_dir()).
-        let _guard = test_guard();
-        let old = std::env::var_os("HERMES_HOME");
-        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+    fn uses_hermes_home_env() {
+        let _guard = EnvGuard::new("HERMES_HOME");
+        let _g = test_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("HERMES_HOME", tmp.path());
+        assert_eq!(get_hermes_dir(), tmp.path());
+    }
 
-        std::env::remove_var("CC_SWITCH_TEST_HOME");
+    #[test]
+    #[serial]
+    fn skips_empty_hermes_home() {
+        let _guard = EnvGuard::new("HERMES_HOME");
+        let _g = test_guard();
+        std::env::set_var("HERMES_HOME", "   ");
+        assert!(get_hermes_dir().ends_with(".hermes"));
+    }
+
+    #[test]
+    #[serial]
+    fn defaults_to_hermes_dir() {
+        let _guard = EnvGuard::new("HERMES_HOME");
+        let _g = test_guard();
         std::env::remove_var("HERMES_HOME");
+        assert!(get_hermes_dir().ends_with(".hermes"));
+    }
 
-        // Without any override or HERMES_HOME, falls back to default
-        let dir = get_hermes_dir();
-        assert!(dir.ends_with(".hermes"));
+    #[test]
+    #[serial]
+    fn no_tilde_expansion() {
+        // ~/xxx 和 ~ 两种情况都不展开，与 Hermes 自身行为一致
+        let _guard = EnvGuard::new("HERMES_HOME");
+        let _g = test_guard();
 
-        match old {
-            Some(value) => std::env::set_var("HERMES_HOME", value),
-            None => std::env::remove_var("HERMES_HOME"),
-        }
-        match old_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
+        std::env::set_var("HERMES_HOME", "~/custom");
+        assert_eq!(get_hermes_dir(), PathBuf::from("~/custom"));
+
+        std::env::set_var("HERMES_HOME", "~");
+        assert_eq!(get_hermes_dir(), PathBuf::from("~"));
     }
 }
