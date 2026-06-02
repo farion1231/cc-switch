@@ -839,6 +839,94 @@ impl RequestForwarder {
                             );
                             log::warn!("[{app_type_str}] [{log_code}] {log_message}");
 
+                            // 检测是否是智谱 Coding Plan 用量耗尽，尝试自动 fallback 到 MiniMax
+                            if is_zhipu_quota_exceeded(&e) {
+                                if let Ok(Some(minimax)) = self
+                                    .router
+                                    .find_fallback_provider(app_type_str, "minimax")
+                                    .await
+                                {
+                                    // 先检查 MiniMax 自身用量阈值
+                                    if !check_fallback_provider_quota(&minimax, app_type).await {
+                                        log::info!(
+                                            "[{app_type_str}] [FALLBACK] MiniMax 用量超阈值, 跳过 fallback"
+                                        );
+                                    } else {
+                                        log::info!(
+                                            "[{app_type_str}] [FALLBACK] 智谱 quota 耗尽, 尝试 fallback 到 MiniMax: {}",
+                                            minimax.name
+                                        );
+                                        match self
+                                            .forward(
+                                                app_type,
+                                                &method,
+                                                &minimax,
+                                                endpoint,
+                                                &body,
+                                                &headers,
+                                                &extensions,
+                                                adapter.as_ref(),
+                                            )
+                                            .await
+                                        {
+                                            Ok((response, claude_api_format)) => {
+                                                log::info!(
+                                                    "[{app_type_str}] [FALLBACK-OK] MiniMax fallback 成功"
+                                                );
+                                                self.record_success_result(
+                                                    &minimax.id,
+                                                    app_type_str,
+                                                    false,
+                                                )
+                                                .await;
+                                                {
+                                                    let mut current_providers =
+                                                        self.current_providers.write().await;
+                                                    current_providers.insert(
+                                                        app_type_str.to_string(),
+                                                        (minimax.id.clone(), minimax.name.clone()),
+                                                    );
+                                                }
+                                                {
+                                                    let mut status = self.status.write().await;
+                                                    status.success_requests += 1;
+                                                    status.last_error = None;
+                                                    status.failover_count += 1;
+                                                    if status.total_requests > 0 {
+                                                        status.success_rate = (status
+                                                            .success_requests
+                                                            as f32
+                                                            / status.total_requests as f32)
+                                                            * 100.0;
+                                                    }
+                                                }
+                                                return Ok(ForwardResult {
+                                                    response,
+                                                    provider: minimax,
+                                                    claude_api_format,
+                                                    connection_guard: None,
+                                                });
+                                            }
+                                            Err(fallback_err) => {
+                                                log::warn!(
+                                                    "[{app_type_str}] [FALLBACK-FAIL] MiniMax fallback 失败: {fallback_err}"
+                                                );
+                                                let _ = self
+                                                    .router
+                                                    .record_result(
+                                                        &minimax.id,
+                                                        app_type_str,
+                                                        false,
+                                                        false,
+                                                        Some(fallback_err.to_string()),
+                                                    )
+                                                    .await;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             last_error = Some(e);
                             last_provider = Some(provider.clone());
                             // 继续尝试下一个供应商
@@ -1990,6 +2078,90 @@ fn build_terminal_failure_log(
             "已尝试 {attempted_providers}/{total_providers} 个 Provider，均失败。最后错误: {error_summary}"
         ),
     ))
+}
+
+/// 检测错误是否是智谱 Coding Plan 用量耗尽。
+///
+/// 覆盖以下典型错误形态：
+/// - 智谱官方错误码: `coding_plan_hour_quota_exceeded` / `coding_plan_week_quota_exceeded`
+/// - 通用 quota 关键字: `"quota exceeded"`
+/// - 智谱 429 响应中同时提到 rate limit + zhipu/bigmodel
+fn is_zhipu_quota_exceeded(error: &ProxyError) -> bool {
+    match error {
+        ProxyError::UpstreamError { body, .. } => {
+            let Some(body_str) = body else {
+                return false;
+            };
+            let lower = body_str.to_lowercase();
+            lower.contains("coding_plan_hour_quota_exceeded")
+                || lower.contains("coding_plan_week_quota_exceeded")
+                || lower.contains("coding_plan_month_quota_exceeded")
+                || lower.contains("quota exceeded")
+                || (lower.contains("rate limit") && lower.contains("exceeded"))
+        }
+        _ => false,
+    }
+}
+
+/// 检查 fallback provider 的 Coding Plan 用量是否可用。
+///
+/// 阈值（与智谱对齐）:
+/// - 5小时限额利用率 < 80%
+/// - 周限额利用率 < 95%
+///
+/// 任一条件不满足则视为不可用，返回 `false`。
+/// 查询失败时也保守返回 `false`（宁可不用，也不冒超配额风险）。
+async fn check_fallback_provider_quota(
+    provider: &Provider,
+    app_type: &AppType,
+) -> bool {
+    let (base_url, api_key) = provider.resolve_usage_credentials(app_type);
+
+    if api_key.is_empty() {
+        log::warn!("[QuotaCheck] fallback provider API key 为空，无法查询用量");
+        return false;
+    }
+
+    let quota =
+        match crate::services::coding_plan::get_coding_plan_quota(&base_url, &api_key).await {
+            Ok(q) => q,
+            Err(e) => {
+                log::warn!("[QuotaCheck] 查询 fallback provider 用量失败: {e}");
+                return false;
+            }
+        };
+
+    if !quota.success {
+        log::warn!("[QuotaCheck] fallback provider 用量查询返回失败");
+        return false;
+    }
+
+    for tier in &quota.tiers {
+        match tier.name.as_str() {
+            "five_hour" => {
+                if tier.utilization >= 80.0 {
+                    log::info!(
+                        "[QuotaCheck] fallback provider 5小时限额已用 {:.1}%, 超过 80% 阈值，不可用",
+                        tier.utilization
+                    );
+                    return false;
+                }
+            }
+            "weekly_limit" => {
+                if tier.utilization >= 95.0 {
+                    log::info!(
+                        "[QuotaCheck] fallback provider 周限额已用 {:.1}%, 超过 95% 阈值，不可用",
+                        tier.utilization
+                    );
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    log::debug!("[QuotaCheck] fallback provider 用量检查通过");
+    true
 }
 
 fn summarize_proxy_error(error: &ProxyError) -> String {

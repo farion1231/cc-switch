@@ -267,6 +267,34 @@ impl ProviderRouter {
 
         breaker
     }
+
+    /// 查找指定应用的 fallback provider（用于跨 provider 的模型级回退）。
+    ///
+    /// 按 `base_url_keyword` 在 provider 的 `ANTHROPIC_BASE_URL` 中匹配（大小写不敏感）。
+    /// 返回第一个匹配的 provider（按数据库中的 sort_index 排序）。
+    pub async fn find_fallback_provider(
+        &self,
+        app_type: &str,
+        base_url_keyword: &str,
+    ) -> Result<Option<Provider>, AppError> {
+        let all_providers = self.db.get_all_providers(app_type)?;
+        let keyword = base_url_keyword.to_lowercase();
+
+        let mut candidates: Vec<Provider> = all_providers
+            .into_values()
+            .filter(|p| {
+                p.settings_config
+                    .pointer("/env/ANTHROPIC_BASE_URL")
+                    .and_then(|v| v.as_str())
+                    .map(|url| url.to_lowercase().contains(&keyword))
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        // 按 sort_index 排序，取第一个
+        candidates.sort_by_key(|p| p.sort_index.unwrap_or(usize::MAX));
+        Ok(candidates.into_iter().next())
+    }
 }
 
 #[cfg(test)]
