@@ -474,7 +474,6 @@ fn new_workspace_create_then_send(
             with_cwd: true,
             with_focus,
             window: window_ref,
-            ..Default::default()
         },
     );
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
