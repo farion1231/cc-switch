@@ -749,6 +749,7 @@ dependencies = [
  "dirs 5.0.1",
  "flate2",
  "futures",
+ "gtk",
  "http",
  "http-body",
  "http-body-util",

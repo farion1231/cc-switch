@@ -1,121 +1,254 @@
-//! Linux 专用的主窗口恢复补丁。
+//! Linux-specific window startup and size handling.
 //!
-//! 解决 Tauri 2.x 在部分 Linux 发行版（尤其是 Wayland / 某些 WebKitGTK
-//! 版本）上启动后 UI 无法响应点击的问题：
-//!
-//! - **失效模式 A**（Tauri #10746 / wry #637）：webview 在 `show()` 后
-//!   没有获得 keyboard focus，导致首次点击被 X11/Wayland 用作
-//!   click-to-activate 而非传给 webview。
-//! - **失效模式 B**：GTK surface 与 WebKitWebView 的 input region 尺寸
-//!   协商在 `visible:false` → `show()` 的路径上失败，整窗永远不响应
-//!   点击，只有重新 `size_allocate`（例如最大化-还原）才能恢复。
-//!
-//! 本模块导出 [`nudge_main_window`]，它通过「显式 set_focus + 无视觉
-//! 版本的 ±1px 伪 resize」精确模拟用户手动最大化再还原的 workaround，
-//! 但肉眼无法察觉。所有"让主窗口出现在用户面前"的路径（正常启动、
-//! deeplink 唤起、single_instance 回调、托盘 show_main、lightweight
-//! 退出）都应在现有 `set_focus()` 之后追加一次调用。
+//! GNOME/Wayland is sensitive to how a hidden Tauri/WebKitGTK window is first
+//! shown. The startup path keeps Tauri's normal `show()` call, then refreshes
+//! the GTK top-level presentation so native titlebar hit testing is initialized.
+//! The old +/-1px resize nudge is intentionally not used because it inflated
+//! window size and polluted persisted state on GNOME.
 
-use std::time::Duration;
+use std::{
+    fs,
+    path::PathBuf,
+    sync::OnceLock,
+    time::{Duration, Instant},
+};
 
-use tauri::{PhysicalSize, WebviewWindow};
+use serde::{Deserialize, Serialize};
+use tauri::{LogicalSize, Manager, PhysicalSize, Size, WebviewWindow, WindowEvent};
 
-/// 在 webview realize 之后的延迟，等 GTK 主循环把 realize 事件处理完。
-/// 200ms 是社区经验值；太短 set_focus 仍会无效，太长会让首屏可交互
-/// 时间被肉眼感知到。
 const REALIZE_WAIT: Duration = Duration::from_millis(200);
+const STARTUP_RESIZE_IGNORE: Duration = Duration::from_secs(2);
 
-/// ±1px 伪 resize 两步之间的间隔，确保 GTK 先处理了第一次
-/// `size_allocate` 再收到第二次 resize。放宽到 100ms 是因为 Tao 在 Linux
-/// 上的尺寸 API 是异步的（底层走 `gtk_window_resize` → 合成器 configure），
-/// 太短会让合成器把两次连续 resize coalesce 成一次。
-const RESIZE_GAP: Duration = Duration::from_millis(100);
+const DEFAULT_WIDTH: u32 = 1000;
+const DEFAULT_HEIGHT: u32 = 650;
+const MIN_WIDTH: u32 = 900;
+const MIN_HEIGHT: u32 = 600;
+const MAX_SAVED_WIDTH: u32 = 10_000;
+const MAX_SAVED_HEIGHT: u32 = 10_000;
+const MONITOR_MARGIN: u32 = 80;
+const WINDOW_SIZE_STATE_FILE: &str = "linux-window-size.json";
 
-/// 尺寸对账回读前的额外等待。200ms + 100ms + 500ms = 总共 ~800ms 后
-/// 校验窗口尺寸是否回到 original。这个时间足够所有合成器处理完
-/// resize 消息队列。
-const RECONCILE_WAIT: Duration = Duration::from_millis(500);
+static STARTED_AT: OnceLock<Instant> = OnceLock::new();
 
-/// 对主窗口执行 Linux 专用的「focus + surface 重激活」序列。
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+struct SavedWindowSize {
+    width: u32,
+    height: u32,
+}
+
+pub(crate) fn start_window_size_tracking() {
+    let _ = STARTED_AT.set(Instant::now());
+}
+
+pub(crate) fn restore_saved_window_size(window: &WebviewWindow) {
+    let Some(size) = read_saved_window_size() else {
+        return;
+    };
+
+    let size = clamp_to_current_monitor(window, size);
+    if size.width == DEFAULT_WIDTH && size.height == DEFAULT_HEIGHT {
+        return;
+    }
+
+    match window.set_size(Size::Logical(LogicalSize::new(
+        size.width as f64,
+        size.height as f64,
+    ))) {
+        Ok(()) => log::info!(
+            "Linux: restored saved window size {}x{}",
+            size.width,
+            size.height
+        ),
+        Err(err) => log::warn!("Linux: failed to restore saved window size: {err}"),
+    }
+}
+
+/// Refresh native GTK/GNOME presentation after Tauri has shown the WebView.
 ///
-/// 调用是 fire-and-forget：内部 spawn 一个异步任务在 ~250ms 后完成。
-/// 调用线程立即返回，不阻塞 UI。
+/// Calling GTK `present()` instead of Tauri `show()` can leave the WebView
+/// blank. Calling it after Tauri `show()` preserves native decorations and fixes
+/// the GNOME/Wayland titlebar button hit-test initialization.
+pub(crate) fn present_after_tauri_show(window: &WebviewWindow) {
+    let presentation_window = window.clone();
+    if let Err(err) = window.run_on_main_thread(move || {
+        refresh_gtk_presentation(&presentation_window);
+    }) {
+        log::warn!("Linux: failed to schedule GTK presentation refresh: {err}");
+    }
+}
+
 pub(crate) fn nudge_main_window(window: WebviewWindow) {
-    // 第一次 set_focus：webview 可能还没 realize，这一次通常是无效的，
-    // 但成本极低（线程安全，内部 run_on_main_thread），顺手做掉。
     let _ = window.set_focus();
 
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(REALIZE_WAIT).await;
-
-        // 第二次 set_focus：此时 webview realize 已完成，在绝大多数
-        // 发行版上这一次会真的生效，消除失效模式 A。
+        present_after_tauri_show(&window);
         let _ = window.set_focus();
-
-        // 伪 resize：读取当前 inner_size，先加 1px 再还原。这会触发
-        // GTK 的 size-allocate → WebKitWebViewBase::size_allocate →
-        // 重新 attach input surface，消除失效模式 B。
-        //
-        // 使用 PhysicalSize 避免跨 DPI 的逻辑坐标漂移；saturating_add
-        // 防止极端尺寸溢出。
-        match window.inner_size() {
-            Ok(original) => {
-                let bumped = PhysicalSize::new(original.width.saturating_add(1), original.height);
-                let _ = window.set_size(bumped);
-                tokio::time::sleep(RESIZE_GAP).await;
-                let _ = window.set_size(original);
-                log::info!("Linux: 已对主窗口执行 focus + surface 重激活");
-
-                // 尺寸对账回读：Tao Linux 的尺寸 API 是异步的，`set_size` 只是把
-                // resize 请求送进 GTK 主循环队列，合成器可能会 coalesce 两次连续
-                // 请求（尤其是第二次 `set_size(original)`），导致窗口永久停留在
-                // width+1。这里等合成器处理完队列后读一次实际尺寸，发现 drift 就
-                // 再补一次 `set_size(original)` 兜底。
-                //
-                // 已知限制：tiling Wayland 合成器（sway/river/hyprland）会完全忽略
-                // `set_size`，此时对账永远 drift=0（因为两次 set_size 都是 no-op），
-                // 看起来"没问题"但失效模式 B 其实没被修复；这是已知限制，需要用户
-                // 侧用 GDK_BACKEND=x11 绕过，README 应该有说明。
-                tokio::time::sleep(RECONCILE_WAIT).await;
-                match window.inner_size() {
-                    Ok(after) => {
-                        if after.width != original.width || after.height != original.height {
-                            log::info!(
-                                "Linux nudge 尺寸 drift: expected={}x{}, got={}x{}，已补偿",
-                                original.width,
-                                original.height,
-                                after.width,
-                                after.height
-                            );
-                            let _ = window.set_size(original);
-                            // 最终校验：如果补偿后仍然不一致，记 warn 让用户/开发者
-                            // 知道对账失败。这时窗口会停在非预期尺寸（通常是 +1px），
-                            // 属于极端兜底场景。
-                            if let Ok(final_size) = window.inner_size() {
-                                if final_size.width != original.width
-                                    || final_size.height != original.height
-                                {
-                                    log::warn!(
-                                        "Linux nudge 尺寸 drift 补偿后仍不一致: expected={}x{}, got={}x{}",
-                                        original.width,
-                                        original.height,
-                                        final_size.width,
-                                        final_size.height
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("Linux nudge: 对账回读 inner_size 失败: {e}");
-                    }
-                }
-            }
-            Err(e) => {
-                // 极罕见的失败路径；只做了 set_focus 也比什么都不做强，
-                // 不要让 resize 失败把整个补丁吞掉。
-                log::warn!("Linux nudge: 读取 inner_size 失败，跳过伪 resize: {e}");
-            }
-        }
+        log::info!("Linux: retried main window focus");
     });
+}
+
+pub(crate) fn handle_window_event(event: &WindowEvent, window: &WebviewWindow) {
+    if let WindowEvent::Resized(_) = event {
+        save_window_size_after_resize(window);
+    }
+}
+
+pub(crate) fn save_current_window_size_now(app_handle: &tauri::AppHandle) {
+    let Some(window) = app_handle.get_webview_window("main") else {
+        return;
+    };
+
+    if let Err(err) = save_window_size_for_window(&window) {
+        log::warn!("Linux: failed to save window size: {err}");
+    }
+}
+
+fn save_window_size_after_resize(window: &WebviewWindow) {
+    if STARTED_AT
+        .get()
+        .map(|started| started.elapsed() < STARTUP_RESIZE_IGNORE)
+        .unwrap_or(true)
+    {
+        return;
+    }
+
+    if let Err(err) = save_window_size_for_window(window) {
+        log::warn!("Linux: failed to save window size: {err}");
+    }
+}
+
+fn save_window_size_for_window(window: &WebviewWindow) -> Result<(), String> {
+    if !is_normal_visible_window(window) {
+        return Ok(());
+    }
+
+    let size = gtk_content_size(window)?;
+    if !is_valid_saved_size(size) {
+        return Ok(());
+    }
+
+    write_saved_window_size(size)
+}
+
+fn refresh_gtk_presentation(window: &WebviewWindow) {
+    match window.gtk_window() {
+        Ok(gtk_window) => {
+            use gtk::prelude::{GtkWindowExt, WidgetExt};
+            gtk_window.show_all();
+            gtk_window.present();
+            log::info!("Linux: refreshed GTK presentation after Tauri show");
+        }
+        Err(err) => {
+            log::warn!("Linux: failed to get GTK window for presentation refresh: {err}");
+        }
+    }
+}
+
+fn gtk_content_size(window: &WebviewWindow) -> Result<PhysicalSize<u32>, String> {
+    let gtk_window = window
+        .gtk_window()
+        .map_err(|err| format!("failed to get GTK window: {err}"))?;
+
+    use gtk::prelude::{BinExt, WidgetExt};
+
+    let child = gtk_window
+        .child()
+        .ok_or_else(|| "GTK window has no content child".to_string())?;
+    let allocation = child.allocation();
+    let width = u32::try_from(allocation.width()).unwrap_or(0);
+    let height = u32::try_from(allocation.height()).unwrap_or(0);
+
+    Ok(PhysicalSize::new(width, height))
+}
+
+fn is_normal_visible_window(window: &WebviewWindow) -> bool {
+    let visible = window.is_visible().unwrap_or(false);
+    let maximized = window.is_maximized().unwrap_or(false);
+    let minimized = window.is_minimized().unwrap_or(false);
+    visible && !maximized && !minimized
+}
+
+fn is_valid_saved_size(size: PhysicalSize<u32>) -> bool {
+    (MIN_WIDTH..=MAX_SAVED_WIDTH).contains(&size.width)
+        && (MIN_HEIGHT..=MAX_SAVED_HEIGHT).contains(&size.height)
+}
+
+fn read_saved_window_size() -> Option<PhysicalSize<u32>> {
+    let path = window_size_state_path();
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(err) => {
+            log::warn!(
+                "Linux: failed to read saved window size {}: {err}",
+                path.display()
+            );
+            return None;
+        }
+    };
+
+    let saved = match serde_json::from_str::<SavedWindowSize>(&raw) {
+        Ok(saved) => saved,
+        Err(err) => {
+            log::warn!(
+                "Linux: failed to parse saved window size {}: {err}",
+                path.display()
+            );
+            return None;
+        }
+    };
+
+    let size = PhysicalSize::new(saved.width, saved.height);
+    is_valid_saved_size(size).then_some(size)
+}
+
+fn write_saved_window_size(size: PhysicalSize<u32>) -> Result<(), String> {
+    let path = window_size_state_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+    }
+
+    let saved = SavedWindowSize {
+        width: size.width,
+        height: size.height,
+    };
+    let raw = serde_json::to_string_pretty(&saved)
+        .map_err(|err| format!("failed to encode saved window size: {err}"))?;
+    fs::write(&path, format!("{raw}\n"))
+        .map_err(|err| format!("failed to write {}: {err}", path.display()))?;
+
+    Ok(())
+}
+
+fn clamp_to_current_monitor(window: &WebviewWindow, size: PhysicalSize<u32>) -> PhysicalSize<u32> {
+    let monitor_size = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .map(|monitor| monitor.work_area().size);
+
+    let Some(monitor_size) = monitor_size else {
+        return size;
+    };
+
+    let max_width = monitor_size
+        .width
+        .saturating_sub(MONITOR_MARGIN)
+        .max(MIN_WIDTH);
+    let max_height = monitor_size
+        .height
+        .saturating_sub(MONITOR_MARGIN)
+        .max(MIN_HEIGHT);
+
+    PhysicalSize::new(
+        size.width.clamp(MIN_WIDTH, max_width),
+        size.height.clamp(MIN_HEIGHT, max_height),
+    )
+}
+
+fn window_size_state_path() -> PathBuf {
+    crate::config::get_app_config_dir().join(WINDOW_SIZE_STATE_FILE)
 }

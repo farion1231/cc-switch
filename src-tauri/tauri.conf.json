@@ -10,10 +10,11 @@
     "beforeBuildCommand": "pnpm run build:renderer"
   },
   "app": {
+    "enableGTKAppId": true,
     "windows": [
       {
         "label": "main",
-        "title": "",
+        "title": "CC Switch",
         "titleBarStyle": "Overlay",
         "width": 1000,
         "height": 650,
@@ -36,6 +37,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "DeveloperTool",
     "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
@@ -47,6 +49,14 @@
     "windows": {
       "wix": {
         "template": "wix/per-user-main.wxs"
+      }
+    },
+    "linux": {
+      "deb": {
+        "desktopTemplate": "desktop/cc-switch.desktop.hbs"
+      },
+      "rpm": {
+        "desktopTemplate": "desktop/cc-switch.desktop.hbs"
       }
     },
     "macOS": {
