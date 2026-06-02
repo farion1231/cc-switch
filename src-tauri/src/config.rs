@@ -3,6 +3,7 @@ use serde_json::{Map, Value};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use crate::error::AppError;
 
@@ -86,8 +87,52 @@ pub fn get_claude_settings_path() -> PathBuf {
     settings
 }
 
+/// 便携模式检测缓存
+static PORTABLE_MODE_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+/// 便携模式检测（仅执行一次）
+///
+/// 检测策略（按优先级）：
+/// 1. 可执行文件同目录下存在 `.portable` 标记文件 → 使用 `./data/` 目录
+/// 2. 可执行文件同目录下存在 `data/` 目录 → 使用 `./data/` 目录
+///
+/// 返回 `Some(data_dir)` 表示处于便携模式，`None` 表示使用默认路径。
+pub fn detect_portable_mode() -> Option<PathBuf> {
+    PORTABLE_MODE_DIR.get_or_init(|| {
+        let exe_path = std::env::current_exe().ok()?;
+        let exe_dir = exe_path.parent()?;
+
+        // 优先检测 .portable 标记文件
+        if exe_dir.join(".portable").exists() {
+            let data_dir = exe_dir.join("data");
+            log::info!(
+                "便携模式已激活（标记文件 .portable），数据目录: {}",
+                data_dir.display()
+            );
+            return Some(data_dir);
+        }
+
+        // 检测 data/ 目录是否存在
+        let data_dir = exe_dir.join("data");
+        if data_dir.exists() && data_dir.is_dir() {
+            log::info!(
+                "便携模式已激活（检测到 data/ 目录），数据目录: {}",
+                data_dir.display()
+            );
+            return Some(data_dir);
+        }
+
+        None
+    }).clone()
+}
+
 /// 获取应用配置目录路径 (~/.cc-switch)
 pub fn get_app_config_dir() -> PathBuf {
+    // 便携模式（最高优先级）：可执行文件同目录下的 data/ 或 .portable 标记
+    if let Some(portable) = detect_portable_mode() {
+        return portable;
+    }
+
     if let Some(custom) = crate::app_store::get_app_config_dir_override() {
         return custom;
     }
