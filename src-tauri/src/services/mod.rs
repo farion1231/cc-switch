@@ -18,6 +18,7 @@ pub mod speedtest;
 pub mod sql_helpers;
 pub mod stream_check;
 pub mod subscription;
+pub mod token_budget;
 pub mod usage_cache;
 pub mod usage_stats;
 pub mod webdav;

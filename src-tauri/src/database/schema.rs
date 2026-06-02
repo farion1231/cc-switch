@@ -287,6 +287,35 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 19. Token Budgets 表 (L0+L1：定义预算 + 进度对比)
+        //
+        // scope='global' 时 scope_value 留 NULL；'app' 时填 app_type；
+        // 'provider' 时填 provider_id；'model' 时填 model id。
+        // limit_tokens / limit_usd 至少填一个，两者都填则先到为准。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS token_budgets (
+                id               TEXT PRIMARY KEY,
+                name             TEXT NOT NULL,
+                scope            TEXT NOT NULL,
+                scope_value      TEXT,
+                period           TEXT NOT NULL,
+                period_start_day INTEGER NOT NULL DEFAULT 1,
+                limit_tokens     INTEGER,
+                limit_usd        TEXT,
+                enabled          BOOLEAN NOT NULL DEFAULT 1,
+                created_at       INTEGER NOT NULL,
+                updated_at       INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_token_budgets_scope
+             ON token_budgets(scope, scope_value, enabled)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 尝试添加 live_takeover_active 列到 proxy_config 表
         let _ = conn.execute(
             "ALTER TABLE proxy_config ADD COLUMN live_takeover_active INTEGER NOT NULL DEFAULT 0",
@@ -430,6 +459,11 @@ impl Database {
                         log::info!("迁移数据库从 v9 到 v10（添加 Hermes Agent 支持）");
                         Self::migrate_v9_to_v10(conn)?;
                         Self::set_user_version(conn, 10)?;
+                    }
+                    10 => {
+                        log::info!("迁移数据库从 v10 到 v11（Token Budgets 预算规划表）");
+                        Self::migrate_v10_to_v11(conn)?;
+                        Self::set_user_version(conn, 11)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1197,6 +1231,38 @@ impl Database {
         }
 
         log::info!("v9 -> v10 迁移完成：已添加 Hermes Agent 支持");
+        Ok(())
+    }
+
+    /// v10 -> v11 迁移：新增 token_budgets 表（L0+L1 预算规划）
+    ///
+    /// 表结构必须与 `create_tables_on_conn` 中保持完全一致；fresh DB 走 CREATE 路径，
+    /// 老 DB 走这里。`IF NOT EXISTS` 让两侧都幂等，避免任何时序竞争。
+    fn migrate_v10_to_v11(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS token_budgets (
+                id               TEXT PRIMARY KEY,
+                name             TEXT NOT NULL,
+                scope            TEXT NOT NULL,
+                scope_value      TEXT,
+                period           TEXT NOT NULL,
+                period_start_day INTEGER NOT NULL DEFAULT 1,
+                limit_tokens     INTEGER,
+                limit_usd        TEXT,
+                enabled          BOOLEAN NOT NULL DEFAULT 1,
+                created_at       INTEGER NOT NULL,
+                updated_at       INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 token_budgets 表失败: {e}")))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_token_budgets_scope
+             ON token_budgets(scope, scope_value, enabled)",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 token_budgets 索引失败: {e}")))?;
+        log::info!("v10 -> v11 迁移完成：已创建 token_budgets 表");
         Ok(())
     }
 
