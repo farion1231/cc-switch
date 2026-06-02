@@ -1083,7 +1083,7 @@ mod tests {
             "tools": [{ "type": "custom", "name": "exec" }]
         });
         let context =
-            super::super::transform_codex_chat::build_codex_tool_context_from_request(&request);
+            super::super::transform_codex_chat::build_codex_tool_context_from_request(&request, false);
         let output = collect_with_context(
             vec![
                 "data: {\"id\":\"chatcmpl_custom\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_custom\",\"type\":\"function\",\"function\":{\"name\":\"exec\"}}]}}]}\n\n",
@@ -1153,7 +1153,7 @@ mod tests {
             }]
         });
         let context =
-            super::super::transform_codex_chat::build_codex_tool_context_from_request(&request);
+            super::super::transform_codex_chat::build_codex_tool_context_from_request(&request, false);
         let output = collect_with_context(
             vec![
                 "data: {\"id\":\"chatcmpl_gmail\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_gmail\",\"type\":\"function\",\"function\":{\"name\":\"mcp__codex_apps__gmail___search_emails\"}}]}}]}\n\n",
@@ -1178,7 +1178,7 @@ mod tests {
             "input": "Search for Gmail tools."
         });
         let context =
-            super::super::transform_codex_chat::build_codex_tool_context_from_request(&request);
+            super::super::transform_codex_chat::build_codex_tool_context_from_request(&request, false);
         let output = collect_with_context(
             vec![
                 "data: {\"id\":\"chatcmpl_tool_search\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_tool_search_1\",\"type\":\"function\",\"function\":{\"name\":\"tool_search\"}}]}}]}\n\n",

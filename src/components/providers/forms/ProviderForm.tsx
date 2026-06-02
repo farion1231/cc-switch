@@ -17,6 +17,7 @@ import type {
   CodexApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
+  CodexDeepseekConfig,
   ClaudeApiKeyField,
 } from "@/types";
 import {
@@ -355,6 +356,7 @@ function ProviderFormFull({
       ),
     });
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
+    setCodexDeepseekConfig(initialData?.meta?.codexDeepseekConfig ?? {});
   }, [appId, initialData, supportsFullUrl]);
 
   const defaultValues: ProviderFormData = useMemo(
@@ -508,6 +510,10 @@ function ProviderFormFull({
   const [codexChatReasoning, setCodexChatReasoning] =
     useState<CodexChatReasoning>(
       () => initialData?.meta?.codexChatReasoning ?? {},
+    );
+  const [codexDeepseekConfig, setCodexDeepseekConfig] =
+    useState<CodexDeepseekConfig>(
+      () => initialData?.meta?.codexDeepseekConfig ?? {},
     );
 
   const {
@@ -1386,6 +1392,12 @@ function ProviderFormFull({
         localCodexApiFormat === "openai_chat"
           ? normalizeCodexChatReasoningForSave(codexChatReasoning)
           : undefined,
+      codexDeepseekConfig:
+        appId === "codex" &&
+        category !== "official" &&
+        localCodexApiFormat === "openai_chat"
+          ? codexDeepseekConfig
+          : undefined,
       testConfig: testConfig.enabled ? testConfig : undefined,
       costMultiplier: pricingConfig.enabled
         ? pricingConfig.costMultiplier
@@ -1565,6 +1577,7 @@ function ProviderFormFull({
 
       resetCodexConfig(auth, config, preset.modelCatalog ?? []);
       setCodexChatReasoning(preset.codexChatReasoning ?? {});
+      setCodexDeepseekConfig({});
       setLocalCodexApiFormat(
         preset.apiFormat ??
           codexApiFormatFromWireApi(extractCodexWireApi(config)) ??
@@ -2038,6 +2051,16 @@ function ProviderFormFull({
               onApiFormatChange={handleCodexApiFormatChange}
               codexChatReasoning={codexChatReasoning}
               onCodexChatReasoningChange={setCodexChatReasoning}
+              codexDeepseekConfig={codexDeepseekConfig}
+              onCodexDeepseekConfigChange={setCodexDeepseekConfig}
+              tomlModel={codexConfig.match(/^model\s*=\s*"([^"]*)"/m)?.[1] ?? ""}
+              onTomlModelChange={(model) => {
+                const newConfig = codexConfig.replace(
+                  /^model\s*=\s*"[^"]*"/m,
+                  `model = "${model}"`,
+                );
+                handleCodexConfigChange(newConfig);
+              }}
               catalogModels={codexCatalogModels}
               onCatalogModelsChange={setCodexCatalogModels}
               speedTestEndpoints={speedTestEndpoints}

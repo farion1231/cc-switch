@@ -9,7 +9,7 @@ use super::codex_chat_common::{
     response_function_call_item, response_function_call_item_with_namespace,
     split_leading_think_block,
 };
-use crate::provider::CodexChatReasoningConfig;
+use crate::provider::{CodexChatReasoningConfig, CodexDeepseekConfig};
 use crate::proxy::{
     error::ProxyError,
     json_canonical::{
@@ -62,6 +62,8 @@ pub(crate) struct CodexToolContext {
     seen_chat_names: HashSet<String>,
     chat_name_to_spec: HashMap<String, CodexToolSpec>,
     namespace_name_to_chat_name: HashMap<(String, String), String>,
+    /// When enabled, recursively expand namespace tools and filter non-function tools
+    pub(crate) namespace_fix: bool,
 }
 
 impl CodexToolContext {
@@ -204,8 +206,10 @@ impl CodexToolContext {
         };
 
         for child in children {
-            if child.get("type").and_then(|v| v.as_str()) == Some("function") {
-                self.add_function_tool(child, Some(namespace));
+            match child.get("type").and_then(|v| v.as_str()) {
+                Some("function") => self.add_function_tool(child, Some(namespace)),
+                Some("namespace") if self.namespace_fix => self.add_namespace_tool(child),
+                _ => {}
             }
         }
     }
@@ -230,8 +234,14 @@ impl CodexToolContext {
     }
 }
 
-pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolContext {
-    let mut context = CodexToolContext::default();
+pub(crate) fn build_codex_tool_context_from_request(
+    body: &Value,
+    namespace_fix: bool,
+) -> CodexToolContext {
+    let mut context = CodexToolContext {
+        namespace_fix,
+        ..CodexToolContext::default()
+    };
 
     if let Some(tools) = body.get("tools").and_then(|v| v.as_array()) {
         for tool in tools {
@@ -249,17 +259,22 @@ pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolCo
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request.
 #[allow(dead_code)]
 pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
-    responses_to_chat_completions_with_reasoning(body, None)
+    responses_to_chat_completions_with_reasoning(body, None, None)
 }
 
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request,
 /// using provider-declared Codex Chat reasoning capabilities when available.
+/// `deepseek_config` controls optional DeepSeek/3rd-party compatibility fixes.
 pub fn responses_to_chat_completions_with_reasoning(
     body: Value,
     reasoning_config: Option<&CodexChatReasoningConfig>,
+    deepseek_config: Option<&CodexDeepseekConfig>,
 ) -> Result<Value, ProxyError> {
     let mut result = json!({});
-    let tool_context = build_codex_tool_context_from_request(&body);
+    let namespace_fix = deepseek_config
+        .map(|c| c.namespace_fix_enabled())
+        .unwrap_or(false);
+    let tool_context = build_codex_tool_context_from_request(&body, namespace_fix);
 
     if let Some(model) = body.get("model") {
         result["model"] = model.clone();
@@ -305,7 +320,19 @@ pub fn responses_to_chat_completions_with_reasoning(
 
     apply_reasoning_options(&mut result, &body, model, reasoning_config);
 
-    let tools = tool_context.chat_tools();
+    let tools: Vec<&Value> = if namespace_fix {
+        tool_context
+            .chat_tools()
+            .iter()
+            .filter(|tool| {
+                tool.get("type")
+                    .and_then(|v| v.as_str())
+                    == Some("function")
+            })
+            .collect()
+    } else {
+        tool_context.chat_tools().iter().collect()
+    };
     if !tools.is_empty() {
         result["tools"] = json!(tools);
     }
@@ -2541,7 +2568,7 @@ mod tests {
                 }]
             }]
         });
-        let context = build_codex_tool_context_from_request(&request);
+        let context = build_codex_tool_context_from_request(&request, false);
         let chat = json!({
             "id": "chatcmpl_gmail",
             "object": "chat.completion",
@@ -2582,7 +2609,7 @@ mod tests {
             "tools": [{"type": "tool_search"}],
             "input": "Find tools."
         });
-        let context = build_codex_tool_context_from_request(&request);
+        let context = build_codex_tool_context_from_request(&request, false);
         let chat = json!({
             "id": "chatcmpl_tool_search",
             "object": "chat.completion",
@@ -2623,7 +2650,7 @@ mod tests {
             "tools": [{"type": "custom", "name": "apply_patch"}],
             "input": "Patch it."
         });
-        let context = build_codex_tool_context_from_request(&request);
+        let context = build_codex_tool_context_from_request(&request, false);
         let chat = json!({
             "id": "chatcmpl_custom",
             "object": "chat.completion",

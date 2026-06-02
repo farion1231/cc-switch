@@ -173,6 +173,12 @@ export interface CodexChatReasoning {
   outputFormat?: CodexChatReasoningOutputFormat;
 }
 
+/** Codex DeepSeek / 第三方 Chat 供应商兼容性配置 */
+export interface CodexDeepseekConfig {
+  /** 是否启用 namespace 工具递归展开 + 输出过滤 */
+  namespaceFix?: boolean;
+}
+
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
@@ -219,6 +225,8 @@ export interface ProviderMeta {
   codexFastMode?: boolean;
   // Codex Responses -> Chat Completions reasoning capability metadata
   codexChatReasoning?: CodexChatReasoning;
+  // Codex DeepSeek / 第三方 Chat 供应商兼容性配置
+  codexDeepseekConfig?: CodexDeepseekConfig;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）

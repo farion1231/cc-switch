@@ -383,6 +383,20 @@ pub struct CodexChatReasoningConfig {
     pub output_format: Option<String>,
 }
 
+/// Codex DeepSeek / 第三方 Chat 供应商兼容性配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CodexDeepseekConfig {
+    /// 是否启用 namespace 工具递归展开 + 输出过滤
+    #[serde(rename = "namespaceFix", skip_serializing_if = "Option::is_none")]
+    pub namespace_fix: Option<bool>,
+}
+
+impl CodexDeepseekConfig {
+    pub fn namespace_fix_enabled(&self) -> bool {
+        self.namespace_fix.unwrap_or(false)
+    }
+}
+
 /// 供应商元数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
@@ -464,6 +478,13 @@ pub struct ProviderMeta {
     /// Codex Responses -> Chat Completions reasoning capability metadata.
     #[serde(rename = "codexChatReasoning", skip_serializing_if = "Option::is_none")]
     pub codex_chat_reasoning: Option<CodexChatReasoningConfig>,
+    /// Codex DeepSeek 相关配置
+    #[serde(
+        rename = "codexDeepseekConfig",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub codex_deepseek_config: Option<CodexDeepseekConfig>,
     /// 累加模式应用中，该 provider 是否已写入 live config。
     /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
     #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]
