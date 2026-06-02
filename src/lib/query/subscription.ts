@@ -29,6 +29,19 @@ export function useSubscriptionQuota(
   });
 }
 
+export function useHermesCodexQuota(enabled: boolean, autoQuery = false) {
+  return useQuery({
+    queryKey: [...subscriptionKeys.all, "quota", "hermes_codex"] as const,
+    queryFn: () => subscriptionApi.getQuota("hermes_codex"),
+    enabled,
+    refetchInterval: autoQuery ? REFETCH_INTERVAL : false,
+    refetchIntervalInBackground: autoQuery,
+    refetchOnWindowFocus: autoQuery,
+    staleTime: REFETCH_INTERVAL,
+    retry: 1,
+  });
+}
+
 export interface UseCodexOauthQuotaOptions {
   enabled?: boolean;
   /** 是否启用自动轮询（5 分钟）与窗口 focus 重取 */
