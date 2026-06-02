@@ -73,7 +73,12 @@ pub fn optimize(body: &mut Value, config: &OptimizerConfig) {
     }
 }
 
-fn uses_adaptive_thinking(model: &str) -> bool {
+/// 该模型是否走 adaptive thinking 路径（即生产侧会注入 `context-1m-2025-08-07`）。
+///
+/// `pub(crate)` 以便 Stream Check 探测包复用同一份模型清单，避免探测与生产对
+/// 1M 上下文的判断出现分叉（这正是健康检查"检测失败但实际能用"的根因之一）。
+/// 调用方需自行 lowercase（`optimize()` 在入口已做）。
+pub(crate) fn uses_adaptive_thinking(model: &str) -> bool {
     let normalized = model.replace('.', "-");
     ["opus-4-8", "opus-4-7", "opus-4-6", "sonnet-4-6"]
         .iter()
