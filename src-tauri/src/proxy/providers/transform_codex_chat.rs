@@ -1042,7 +1042,10 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
         result["input_tokens_details"] = json!({ "cached_tokens": cached });
     }
 
-    if let Some(details) = usage.get("completion_tokens_details") {
+    if let Some(details) = usage
+        .get("completion_tokens_details")
+        .filter(|v| v.is_object())
+    {
         let mut details = details.clone();
         if details.get("reasoning_tokens").is_none() {
             details["reasoning_tokens"] = json!(0);
