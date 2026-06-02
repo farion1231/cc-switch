@@ -2,6 +2,49 @@ import type { ReactNode } from "react";
 import { createElement } from "react";
 import { SessionMeta } from "@/types";
 
+const CODEX_IDE_CONTEXT_PREFIX = "# Context from my IDE setup:";
+const CODEX_REQUEST_MARKER = "my request for codex";
+
+const getCodexRequestHeadingPayload = (lineText: string) => {
+  if (!lineText.startsWith("#")) return null;
+
+  const heading = lineText.replace(/^#+\s*/, "");
+  const suffix = heading.toLowerCase().startsWith(CODEX_REQUEST_MARKER)
+    ? heading.slice(CODEX_REQUEST_MARKER.length).trimStart()
+    : null;
+
+  if (suffix === null) return null;
+  if (!suffix) return "";
+  if (!/^[:：\-—]/.test(suffix)) return null;
+
+  return suffix.replace(/^[:：\-—\s]+/, "").trim();
+};
+
+const extractCodexPromptFromIdeContext = (content: string) => {
+  const trimmed = content.trim();
+  if (!trimmed.startsWith(CODEX_IDE_CONTEXT_PREFIX)) {
+    return null;
+  }
+
+  const lines = trimmed.replace(/\r\n/g, "\n").split("\n");
+  for (const [index, line] of lines.entries()) {
+    const inlinePrompt = getCodexRequestHeadingPayload(line.trim());
+    if (inlinePrompt === null) continue;
+
+    if (inlinePrompt) {
+      return inlinePrompt;
+    }
+
+    const followingPrompt = lines
+      .slice(index + 1)
+      .join("\n")
+      .trim();
+    return followingPrompt || null;
+  }
+
+  return null;
+};
+
 export const getSessionKey = (session: SessionMeta) =>
   `${session.providerId}:${session.sessionId}:${session.sourcePath ?? ""}`;
 
@@ -78,6 +121,29 @@ export const formatSessionTitle = (session: SessionMeta) => {
     session.title ||
     getBaseName(session.projectDir) ||
     session.sessionId.slice(0, 8)
+  );
+};
+
+export const shouldHideCodexMessageFromToc = (content: string) => {
+  const trimmed = content.trim();
+  return (
+    trimmed.startsWith("# AGENTS.md instructions for ") ||
+    trimmed.startsWith("<environment_context>") ||
+    (trimmed.startsWith(CODEX_IDE_CONTEXT_PREFIX) &&
+      !extractCodexPromptFromIdeContext(trimmed))
+  );
+};
+
+export const extractCodexPromptPreview = (content: string) => {
+  return extractCodexPromptFromIdeContext(content) ?? content;
+};
+
+export const formatSessionMessagePreview = (
+  content: string,
+  maxLength = 50,
+) => {
+  return (
+    content.slice(0, maxLength) + (content.length > maxLength ? "..." : "")
   );
 };
 
