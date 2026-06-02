@@ -666,11 +666,12 @@ fn convert_message_content_to_parts(
                 // on every functionCall in a multi-turn tool-use exchange.
                 // Without replaying the stored signature the upstream may
                 // reject with "missing a `thought_signature`".
+                let mut part = json!({ "functionCall": function_call });
                 if let Some(sig) = thought_signature_by_id.get(id) {
-                    function_call["thoughtSignature"] = json!(sig);
+                    part["thoughtSignature"] = json!(sig);
                 }
 
-                parts.push(json!({ "functionCall": function_call }));
+                parts.push(part);
             }
             "tool_result" => {
                 let tool_use_id = block

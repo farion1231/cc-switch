@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "CC Switch",
+  "productName": "CC Switch Portable",
   "version": "3.16.1",
-  "identifier": "com.ccswitch.desktop",
+  "identifier": "com.ccswitch.portable",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:3000",
