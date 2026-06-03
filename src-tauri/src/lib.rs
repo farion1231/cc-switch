@@ -35,6 +35,7 @@ mod settings;
 mod store;
 
 mod tray;
+mod usage_events;
 mod usage_script;
 
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
@@ -338,6 +339,11 @@ pub fn run() {
                 )?;
             }
 
+            // 注入 AppHandle 给 usage_events，让无 AppHandle 持有的写日志路径
+            // 也能向前端推送 `usage-log-recorded`。
+            // 放在日志系统初始化之后，确保 init 的日志能正常输出。
+            usage_events::init(app.handle().clone());
+
             // 初始化数据库
             let app_config_dir = crate::config::get_app_config_dir();
             let db_path = app_config_dir.join("cc-switch.db");
@@ -558,6 +564,24 @@ pub fn run() {
                         }
                         Err(e) => {
                             log::warn!("✗ Codex history provider bucket migration failed: {e}");
+                        }
+                    }
+
+                    match crate::codex_history_migration::maybe_migrate_codex_provider_template_bucket(
+                        &db_for_codex_history_migration,
+                    ) {
+                        Ok(outcome) => {
+                            if let Some(reason) = outcome.skipped_reason {
+                                log::debug!("○ Codex provider template bucket migration skipped: {reason}");
+                            } else if !outcome.migrated_provider_ids.is_empty() {
+                                log::info!(
+                                    "✓ Codex provider template bucket migration completed: providers={}",
+                                    outcome.migrated_provider_ids.len()
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("✗ Codex provider template bucket migration failed: {e}");
                         }
                     }
                 });
@@ -1083,6 +1107,7 @@ pub fn run() {
             commands::get_claude_desktop_status,
             commands::get_claude_desktop_default_routes,
             commands::import_claude_desktop_providers_from_claude,
+            commands::ensure_claude_desktop_official_provider,
             commands::get_claude_config_status,
             commands::get_config_status,
             commands::get_claude_code_config_path,

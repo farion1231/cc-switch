@@ -75,6 +75,7 @@ export function useProviderActions(
         providerKey?: string;
         suggestedDefaults?: OpenClawSuggestedDefaults;
         addToLive?: boolean;
+        ensureClaudeDesktopOfficialSeed?: boolean;
       },
     ) => {
       const enhanced = injectCodingPlanUsageScript(activeApp, provider);
@@ -247,7 +248,10 @@ export function useProviderActions(
         if (!proxyRequiredReason) {
           let messageKey = "notifications.switchSuccess";
           let defaultMessage = "切换成功！";
-          if (activeApp === "claude-desktop") {
+          if (activeApp === "codex") {
+            messageKey = "notifications.codexRestartRequired";
+            defaultMessage = "切换成功，请重启客户端以生效";
+          } else if (activeApp === "claude-desktop") {
             if (provider.meta?.claudeDesktopMode === "proxy") {
               messageKey = "notifications.claudeDesktopProxyRestartRequired";
               defaultMessage =

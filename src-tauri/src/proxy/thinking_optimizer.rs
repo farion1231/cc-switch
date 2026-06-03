@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 ///
 /// 三路径分发：
 /// - skip: haiku 模型直接跳过
-/// - adaptive: opus-4-7 / opus-4-6 / sonnet-4-6 使用 adaptive thinking
+/// - adaptive: opus-4-8 / opus-4-7 / opus-4-6 / sonnet-4-6 使用 adaptive thinking
 /// - legacy: 其他模型注入 enabled thinking + budget_tokens
 pub fn optimize(body: &mut Value, config: &OptimizerConfig) {
     if !config.thinking_optimizer {
@@ -24,7 +24,7 @@ pub fn optimize(body: &mut Value, config: &OptimizerConfig) {
         return;
     }
 
-    if model.contains("opus-4-7") || model.contains("opus-4-6") || model.contains("sonnet-4-6") {
+    if uses_adaptive_thinking(&model) {
         log::info!("[OPT] thinking: adaptive({model})");
         body["thinking"] = json!({"type": "adaptive"});
         body["output_config"] = json!({"effort": "max"});
@@ -73,6 +73,13 @@ pub fn optimize(body: &mut Value, config: &OptimizerConfig) {
     }
 }
 
+fn uses_adaptive_thinking(model: &str) -> bool {
+    let normalized = model.replace('.', "-");
+    ["opus-4-8", "opus-4-7", "opus-4-6", "sonnet-4-6"]
+        .iter()
+        .any(|needle| normalized.contains(needle))
+}
+
 /// 追加 beta 标识到 anthropic_beta 数组（去重）
 fn append_beta(body: &mut Value, beta: &str) {
     match body.get_mut("anthropic_beta") {
@@ -112,6 +119,24 @@ mod tests {
             cache_injection: true,
             cache_ttl: "1h".to_string(),
         }
+    }
+
+    #[test]
+    fn test_adaptive_opus_4_8() {
+        let mut body = json!({
+            "model": "anthropic/claude-opus-4.8",
+            "max_tokens": 16384,
+            "thinking": {"type": "enabled", "budget_tokens": 8000},
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+
+        optimize(&mut body, &enabled_config());
+
+        assert_eq!(body["thinking"]["type"], "adaptive");
+        assert!(body["thinking"].get("budget_tokens").is_none());
+        assert_eq!(body["output_config"]["effort"], "max");
+        let betas = body["anthropic_beta"].as_array().unwrap();
+        assert!(betas.iter().any(|v| v == "context-1m-2025-08-07"));
     }
 
     #[test]

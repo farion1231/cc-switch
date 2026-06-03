@@ -4,16 +4,18 @@
 //! 失败时不写标记，下一次启动自动重试。
 
 use crate::codex_config::{
-    get_codex_config_dir, is_custom_codex_model_provider_id, read_codex_config_text,
-    stable_codex_model_provider_id_from_config, CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+    get_codex_config_dir, read_codex_config_text, CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
 };
 use crate::config::{atomic_write, copy_file, get_app_config_dir};
 use crate::database::{is_official_seed_id, Database};
 use crate::error::AppError;
-use crate::settings::CodexThirdPartyHistoryProviderBucketMigration;
+use crate::settings::{
+    CodexProviderTemplateMigration, CodexThirdPartyHistoryProviderBucketMigration,
+};
 use chrono::{Local, Utc};
 use rusqlite::{backup::Backup, params_from_iter, Connection};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -23,7 +25,11 @@ use toml_edit::DocumentMut;
 
 const MIGRATION_NAME: &str = "codex-history-provider-migration-v1";
 const CODEX_STATE_DB_FILENAME: &str = "state_5.sqlite";
+const LEGACY_CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "ccswitch";
+// If a Codex preset ever used a temporary routing key, keep that old key here
+// so local history can be bucketed under the current custom provider id.
 const CC_SWITCH_LEGACY_CODEX_MODEL_PROVIDER_IDS: &[&str] = &[
+    LEGACY_CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
     "aicodemirror",
     "aicoding",
     "aigocode",
@@ -77,6 +83,12 @@ pub struct CodexHistoryProviderBucketMigrationOutcome {
     pub source_provider_ids: Vec<String>,
     pub migrated_jsonl_files: usize,
     pub migrated_state_rows: usize,
+    pub skipped_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CodexProviderTemplateBucketMigrationOutcome {
+    pub migrated_provider_ids: Vec<String>,
     pub skipped_reason: Option<String>,
 }
 
@@ -135,6 +147,74 @@ pub fn maybe_migrate_codex_third_party_history_provider_bucket(
     })
 }
 
+pub fn maybe_migrate_codex_provider_template_bucket(
+    db: &Database,
+) -> Result<CodexProviderTemplateBucketMigrationOutcome, AppError> {
+    if crate::settings::is_codex_provider_template_migrated() {
+        return Ok(CodexProviderTemplateBucketMigrationOutcome {
+            skipped_reason: Some("already_migrated".to_string()),
+            ..Default::default()
+        });
+    }
+
+    let backup_root = migration_backup_root();
+    let outcome = migrate_codex_provider_templates_to_custom(db, &backup_root)?;
+    crate::settings::mark_codex_provider_template_migrated(CodexProviderTemplateMigration {
+        completed_at: Utc::now().to_rfc3339(),
+        migrated_provider_ids: outcome.migrated_provider_ids.clone(),
+    })?;
+
+    Ok(outcome)
+}
+
+fn migrate_codex_provider_templates_to_custom(
+    db: &Database,
+    backup_root: &Path,
+) -> Result<CodexProviderTemplateBucketMigrationOutcome, AppError> {
+    let providers = db.get_all_providers("codex")?;
+    let mut migrated_provider_ids = Vec::new();
+
+    for (_, provider) in providers {
+        if provider.category.as_deref() == Some("official")
+            || is_official_seed_id(&provider.id)
+            || provider.is_codex_oauth()
+        {
+            continue;
+        }
+
+        let Some(config_text) = provider
+            .settings_config
+            .get("config")
+            .and_then(|value| value.as_str())
+        else {
+            continue;
+        };
+
+        let Some(migrated_config_text) = migrate_provider_config_template_to_custom(config_text)?
+        else {
+            continue;
+        };
+
+        let mut settings = provider.settings_config.clone();
+        let Some(obj) = settings.as_object_mut() else {
+            log::warn!(
+                "Skipping Codex provider template migration for {}: settings_config is not an object",
+                provider.id
+            );
+            continue;
+        };
+        backup_provider_settings_config(&provider.id, &provider.settings_config, backup_root)?;
+        obj.insert("config".to_string(), Value::String(migrated_config_text));
+        db.update_provider_settings_config("codex", &provider.id, &settings)?;
+        migrated_provider_ids.push(provider.id);
+    }
+
+    Ok(CodexProviderTemplateBucketMigrationOutcome {
+        migrated_provider_ids,
+        skipped_reason: None,
+    })
+}
+
 fn collect_source_model_provider_ids(db: &Database) -> Result<BTreeSet<String>, AppError> {
     let providers = db.get_all_providers("codex")?;
     let mut ids = BTreeSet::new();
@@ -144,11 +224,6 @@ fn collect_source_model_provider_ids(db: &Database) -> Result<BTreeSet<String>, 
             || is_official_seed_id(&provider.id)
             || provider.is_codex_oauth()
         {
-            continue;
-        }
-
-        let is_cc_switch_custom_provider = is_cc_switch_created_custom_provider(provider);
-        if provider.category.as_deref() == Some("custom") && !is_cc_switch_custom_provider {
             continue;
         }
 
@@ -162,41 +237,24 @@ fn collect_source_model_provider_ids(db: &Database) -> Result<BTreeSet<String>, 
             continue;
         };
 
-        if let Some(provider_id) = stable_codex_model_provider_id_from_config(config_text) {
-            if is_cc_switch_custom_provider {
-                insert_migratable_source_id(&mut ids, &provider_id);
-            } else {
-                insert_known_cc_switch_legacy_source_id(&mut ids, &provider_id);
-            }
+        for provider_id in trusted_legacy_codex_model_provider_ids_from_config(config_text) {
+            insert_known_cc_switch_legacy_source_id(&mut ids, &provider_id);
         }
         if let Some(provider_id) =
             legacy_codex_model_provider_id_from_normalized_config(config_text)
         {
-            insert_migratable_source_id(&mut ids, &provider_id);
+            insert_known_cc_switch_legacy_source_id(&mut ids, &provider_id);
         }
     }
 
     Ok(ids)
 }
 
-fn is_cc_switch_created_custom_provider(provider: &crate::provider::Provider) -> bool {
-    provider.category.as_deref() == Some("custom")
-        && provider.created_at.is_some()
-        && provider.id != "default"
-}
-
-fn insert_migratable_source_id(ids: &mut BTreeSet<String>, provider_id: &str) {
+fn insert_known_cc_switch_legacy_source_id(ids: &mut BTreeSet<String>, provider_id: &str) {
     let trimmed = provider_id.trim();
-    if is_migratable_source_id(trimmed) {
+    if is_known_cc_switch_legacy_codex_model_provider_id(trimmed) {
         ids.insert(trimmed.to_string());
     }
-}
-
-fn is_migratable_source_id(provider_id: &str) -> bool {
-    let trimmed = provider_id.trim();
-    !trimmed.is_empty()
-        && trimmed != CC_SWITCH_CODEX_MODEL_PROVIDER_ID
-        && is_custom_codex_model_provider_id(trimmed)
 }
 
 fn migration_backup_root() -> PathBuf {
@@ -204,13 +262,6 @@ fn migration_backup_root() -> PathBuf {
         .join("backups")
         .join(MIGRATION_NAME)
         .join(Local::now().format("%Y%m%d_%H%M%S").to_string())
-}
-
-fn insert_known_cc_switch_legacy_source_id(ids: &mut BTreeSet<String>, provider_id: &str) {
-    let trimmed = provider_id.trim();
-    if is_known_cc_switch_legacy_codex_model_provider_id(trimmed) {
-        insert_migratable_source_id(ids, trimmed);
-    }
 }
 
 fn is_known_cc_switch_legacy_codex_model_provider_id(provider_id: &str) -> bool {
@@ -225,14 +276,16 @@ fn legacy_codex_model_provider_id_from_normalized_config(config_text: &str) -> O
         .get("model_provider")
         .and_then(|item| item.as_str())
         .map(str::trim)?;
-    if provider_id != CC_SWITCH_CODEX_MODEL_PROVIDER_ID {
+    if provider_id != CC_SWITCH_CODEX_MODEL_PROVIDER_ID
+        && provider_id != LEGACY_CC_SWITCH_CODEX_MODEL_PROVIDER_ID
+    {
         return None;
     }
 
     let name = doc
         .get("model_providers")
         .and_then(|item| item.as_table())
-        .and_then(|table| table.get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID))
+        .and_then(|table| table.get(provider_id))
         .and_then(|item| item.as_table())
         .and_then(|table| table.get("name"))
         .and_then(|item| item.as_str())?
@@ -254,6 +307,166 @@ fn normalized_legacy_codex_provider_name(name: &str) -> Option<&'static str> {
         "PIPELLM" => Some("pipellm"),
         _ => None,
     }
+}
+
+fn trusted_legacy_codex_model_provider_ids_from_config(config_text: &str) -> BTreeSet<String> {
+    let Ok(doc) = config_text.parse::<DocumentMut>() else {
+        return BTreeSet::new();
+    };
+
+    trusted_legacy_codex_model_provider_ids_from_doc(&doc)
+}
+
+fn trusted_legacy_codex_model_provider_ids_from_doc(doc: &DocumentMut) -> BTreeSet<String> {
+    let mut ids = BTreeSet::new();
+    insert_trusted_legacy_config_model_provider_id(&mut ids, doc, doc.get("model_provider"));
+
+    if let Some(profiles) = doc.get("profiles").and_then(|item| item.as_table_like()) {
+        for (_, profile_item) in profiles.iter() {
+            if let Some(profile_table) = profile_item.as_table_like() {
+                insert_trusted_legacy_config_model_provider_id(
+                    &mut ids,
+                    doc,
+                    profile_table.get("model_provider"),
+                );
+            }
+        }
+    }
+
+    ids
+}
+
+fn insert_trusted_legacy_config_model_provider_id(
+    ids: &mut BTreeSet<String>,
+    doc: &DocumentMut,
+    item: Option<&toml_edit::Item>,
+) {
+    let Some(provider_id) = item.and_then(|item| item.as_str()).map(str::trim) else {
+        return;
+    };
+    if provider_id.is_empty()
+        || !is_known_cc_switch_legacy_codex_model_provider_id(provider_id)
+        || !config_defines_model_provider(doc, provider_id)
+    {
+        return;
+    }
+    ids.insert(provider_id.to_string());
+}
+
+fn config_defines_model_provider(doc: &DocumentMut, provider_id: &str) -> bool {
+    doc.get("model_providers")
+        .and_then(|item| item.as_table())
+        .and_then(|table| table.get(provider_id))
+        .and_then(|item| item.as_table())
+        .is_some()
+}
+
+fn migrate_provider_config_template_to_custom(
+    config_text: &str,
+) -> Result<Option<String>, AppError> {
+    if config_text.trim().is_empty() {
+        return Ok(None);
+    }
+
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+
+    let source_provider_ids = trusted_legacy_codex_model_provider_ids_from_doc(&doc);
+    if source_provider_ids.is_empty() {
+        return Ok(None);
+    }
+
+    let active_provider_id = doc
+        .get("model_provider")
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|provider_id| !provider_id.is_empty())
+        .map(str::to_string);
+
+    let custom_table_exists =
+        config_defines_model_provider(&doc, CC_SWITCH_CODEX_MODEL_PROVIDER_ID);
+    let source_provider_id_to_move = active_provider_id
+        .as_deref()
+        .filter(|provider_id| source_provider_ids.contains(*provider_id))
+        .map(str::to_string)
+        .or_else(|| {
+            if custom_table_exists {
+                None
+            } else {
+                source_provider_ids.iter().next().cloned()
+            }
+        });
+
+    let mut changed = false;
+
+    if let Some(source_provider_id) = source_provider_id_to_move {
+        let Some(model_providers) = doc
+            .get_mut("model_providers")
+            .and_then(|item| item.as_table_mut())
+        else {
+            return Ok(None);
+        };
+
+        let Some(provider_table) = model_providers.remove(source_provider_id.as_str()) else {
+            return Ok(None);
+        };
+        model_providers[CC_SWITCH_CODEX_MODEL_PROVIDER_ID] = provider_table;
+        changed = true;
+    }
+
+    if active_provider_id
+        .as_deref()
+        .is_some_and(|provider_id| source_provider_ids.contains(provider_id))
+    {
+        doc["model_provider"] = toml_edit::value(CC_SWITCH_CODEX_MODEL_PROVIDER_ID);
+        changed = true;
+    }
+
+    for source_provider_id in source_provider_ids {
+        if rewrite_legacy_provider_profile_refs(&mut doc, source_provider_id.as_str()) {
+            changed = true;
+        }
+    }
+
+    if changed {
+        Ok(Some(doc.to_string()))
+    } else {
+        Ok(None)
+    }
+}
+
+fn rewrite_legacy_provider_profile_refs(doc: &mut DocumentMut, source_provider_id: &str) -> bool {
+    let Some(profiles) = doc
+        .get_mut("profiles")
+        .and_then(|item| item.as_table_like_mut())
+    else {
+        return false;
+    };
+
+    let mut changed = false;
+    let profile_keys: Vec<String> = profiles.iter().map(|(key, _)| key.to_string()).collect();
+    for profile_key in profile_keys {
+        let Some(profile_table) = profiles
+            .get_mut(&profile_key)
+            .and_then(|item| item.as_table_like_mut())
+        else {
+            continue;
+        };
+
+        let references_legacy = profile_table
+            .get("model_provider")
+            .and_then(|item| item.as_str())
+            == Some(source_provider_id);
+        if references_legacy {
+            profile_table.insert(
+                "model_provider",
+                toml_edit::value(CC_SWITCH_CODEX_MODEL_PROVIDER_ID),
+            );
+            changed = true;
+        }
+    }
+    changed
 }
 
 fn migrate_codex_jsonl_files(
@@ -529,6 +742,52 @@ fn backup_codex_state_db(
     Ok(())
 }
 
+fn backup_provider_settings_config(
+    provider_id: &str,
+    settings_config: &Value,
+    backup_root: &Path,
+) -> Result<(), AppError> {
+    let backup_path = backup_root
+        .join("providers")
+        .join(provider_settings_backup_filename(provider_id));
+    if let Some(parent) = backup_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+    }
+
+    let payload = serde_json::json!({
+        "providerId": provider_id,
+        "settingsConfig": settings_config,
+    });
+    let bytes =
+        serde_json::to_vec_pretty(&payload).map_err(|e| AppError::JsonSerialize { source: e })?;
+    atomic_write(&backup_path, &bytes)
+}
+
+fn provider_settings_backup_filename(provider_id: &str) -> String {
+    let safe_id: String = provider_id
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let safe_id = if safe_id.is_empty() {
+        "provider".to_string()
+    } else {
+        safe_id
+    };
+    // Keep the hash stable across processes while avoiding collisions after sanitization.
+    let digest = Sha256::digest(provider_id.as_bytes());
+    let hash = digest[..8]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("{hash}-{safe_id}.settings_config.json")
+}
+
 fn copy_existing_file(source: &Path, target: &Path) -> Result<(), AppError> {
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
@@ -559,6 +818,278 @@ mod tests {
 
     fn source_ids(values: &[&str]) -> BTreeSet<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    fn migrate_provider_templates_for_test(
+        db: &Database,
+    ) -> (
+        CodexProviderTemplateBucketMigrationOutcome,
+        tempfile::TempDir,
+    ) {
+        let backup_dir = tempdir().expect("backup dir");
+        let outcome = migrate_codex_provider_templates_to_custom(db, backup_dir.path())
+            .expect("migrate template");
+        (outcome, backup_dir)
+    }
+
+    #[test]
+    fn simulates_local_codex_provider_bucket_migration_end_to_end() {
+        let dir = tempdir().expect("tempdir");
+        let codex_dir = dir.path().join(".codex");
+        let backup_root = dir.path().join("backup");
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        let db = Database::memory().expect("memory db");
+        let providers = [
+            Provider::with_id(
+                "rightcode".to_string(),
+                "RightCode".to_string(),
+                serde_json::json!({
+                    "auth": {},
+                    "config": r#"model_provider = "aihubmix"
+
+[model_providers.aihubmix]
+name = "AIHubMix"
+base_url = "https://aihubmix.example/v1"
+"#
+                }),
+                None,
+            ),
+            Provider::with_id(
+                "legacy-ccswitch".to_string(),
+                "Legacy CC Switch".to_string(),
+                serde_json::json!({
+                    "auth": {},
+                    "config": r#"model_provider = "ccswitch"
+
+[model_providers.ccswitch]
+name = "AIHubMix"
+base_url = "https://aihubmix.example/v1"
+"#
+                }),
+                None,
+            ),
+            Provider::with_id(
+                "normalized-aihubmix".to_string(),
+                "Already Normalized".to_string(),
+                serde_json::json!({
+                    "auth": {},
+                    "config": r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "AIHubMix"
+base_url = "https://aihubmix.example/v1"
+"#
+                }),
+                None,
+            ),
+            Provider::with_id(
+                "manual-relay".to_string(),
+                "Manual Relay".to_string(),
+                serde_json::json!({
+                    "auth": {},
+                    "config": r#"model_provider = "my-private-relay"
+
+[model_providers.my-private-relay]
+name = "Manual Relay"
+base_url = "http://localhost:8080/v1"
+"#
+                }),
+                None,
+            ),
+            Provider::with_id(
+                "custom-openai".to_string(),
+                "Custom OpenAI".to_string(),
+                serde_json::json!({
+                    "auth": {},
+                    "config": r#"model_provider = "openai"
+
+[model_providers.openai]
+name = "Custom OpenAI"
+base_url = "https://proxy.example/v1"
+"#
+                }),
+                None,
+            ),
+        ];
+        for provider in providers {
+            db.save_provider("codex", &provider).expect("save provider");
+        }
+
+        let mut official = Provider::with_id(
+            "codex-official".to_string(),
+            "OpenAI Official".to_string(),
+            serde_json::json!({"auth": {}, "config": "model_provider = \"openai\""}),
+            None,
+        );
+        official.category = Some("official".to_string());
+        db.save_provider("codex", &official).expect("save official");
+
+        let source_provider_ids = collect_source_model_provider_ids(&db).expect("collect ids");
+        assert_eq!(
+            source_provider_ids,
+            source_ids(&["aihubmix", "ccswitch", "rightcode"])
+        );
+
+        let session_dir = codex_dir.join("sessions/2026/05/28");
+        fs::create_dir_all(&session_dir).expect("create session dir");
+        let session_path = session_dir.join("local-sim.jsonl");
+        fs::write(
+            &session_path,
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s1\",\"model_provider\":\"rightcode\"}}\n",
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s2\",\"model_provider\":\"aihubmix\"}}\n",
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s3\",\"model_provider\":\"ccswitch\"}}\n",
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s4\",\"model_provider\":\"my-private-relay\"}}\n",
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s5\",\"model_provider\":\"openai\"}}\n",
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s6\",\"model_provider\":\"custom\"}}\n",
+            ),
+        )
+        .expect("write session");
+
+        let migrated_jsonl =
+            migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root)
+                .expect("migrate jsonl");
+        assert_eq!(migrated_jsonl, 1);
+        let session_text = fs::read_to_string(&session_path).expect("read session");
+        assert_eq!(
+            session_text
+                .matches("\"model_provider\":\"custom\"")
+                .count(),
+            4
+        );
+        assert!(session_text.contains("\"model_provider\":\"my-private-relay\""));
+        assert!(session_text.contains("\"model_provider\":\"openai\""));
+        assert!(backup_root
+            .join("jsonl/sessions/2026/05/28/local-sim.jsonl")
+            .exists());
+
+        let state_db_path = codex_dir.join(CODEX_STATE_DB_FILENAME);
+        let conn = Connection::open(&state_db_path).expect("open state db");
+        conn.execute_batch(
+            "CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                model_provider TEXT NOT NULL
+            );
+            INSERT INTO threads (id, model_provider) VALUES
+                ('rightcode-thread', 'rightcode'),
+                ('aihubmix-thread', 'aihubmix'),
+                ('ccswitch-thread', 'ccswitch'),
+                ('manual-thread', 'my-private-relay'),
+                ('openai-thread', 'openai'),
+                ('custom-thread', 'custom');",
+        )
+        .expect("seed state db");
+        drop(conn);
+
+        let migrated_state_rows = migrate_codex_state_db_provider_bucket(
+            &state_db_path,
+            &codex_dir,
+            &source_provider_ids,
+            &backup_root,
+        )
+        .expect("migrate state db");
+        assert_eq!(migrated_state_rows, 3);
+
+        let conn = Connection::open(&state_db_path).expect("reopen state db");
+        let count_provider = |provider_id: &str| -> i64 {
+            conn.query_row(
+                "SELECT COUNT(*) FROM threads WHERE model_provider = ?1",
+                [provider_id],
+                |row| row.get(0),
+            )
+            .expect("count provider")
+        };
+        assert_eq!(count_provider("custom"), 4);
+        assert_eq!(count_provider("my-private-relay"), 1);
+        assert_eq!(count_provider("openai"), 1);
+        assert!(backup_root
+            .join("state")
+            .join(CODEX_STATE_DB_FILENAME)
+            .exists());
+        drop(conn);
+
+        let template_outcome = migrate_codex_provider_templates_to_custom(&db, &backup_root)
+            .expect("migrate provider templates");
+        assert!(!template_outcome
+            .migrated_provider_ids
+            .iter()
+            .any(|id| id == "normalized-aihubmix"));
+        assert_eq!(
+            source_ids(
+                &template_outcome
+                    .migrated_provider_ids
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+            ),
+            source_ids(&["legacy-ccswitch", "rightcode"])
+        );
+
+        let config_provider_id = |provider_id: &str| -> String {
+            db.get_provider_by_id(provider_id, "codex")
+                .expect("get provider")
+                .expect("provider exists")
+                .settings_config
+                .get("config")
+                .and_then(Value::as_str)
+                .expect("config text")
+                .to_string()
+        };
+
+        let rightcode_config: toml::Value =
+            toml::from_str(&config_provider_id("rightcode")).expect("parse rightcode config");
+        assert_eq!(
+            rightcode_config
+                .get("model_provider")
+                .and_then(|value| value.as_str()),
+            Some("custom")
+        );
+        assert!(rightcode_config
+            .get("model_providers")
+            .and_then(|value| value.get("aihubmix"))
+            .is_none());
+
+        let ccswitch_config: toml::Value =
+            toml::from_str(&config_provider_id("legacy-ccswitch")).expect("parse ccswitch config");
+        assert_eq!(
+            ccswitch_config
+                .get("model_provider")
+                .and_then(|value| value.as_str()),
+            Some("custom")
+        );
+        assert!(ccswitch_config
+            .get("model_providers")
+            .and_then(|value| value.get("ccswitch"))
+            .is_none());
+
+        let manual_config: toml::Value =
+            toml::from_str(&config_provider_id("manual-relay")).expect("parse manual config");
+        assert_eq!(
+            manual_config
+                .get("model_provider")
+                .and_then(|value| value.as_str()),
+            Some("my-private-relay")
+        );
+
+        let openai_config: toml::Value =
+            toml::from_str(&config_provider_id("custom-openai")).expect("parse openai config");
+        assert_eq!(
+            openai_config
+                .get("model_provider")
+                .and_then(|value| value.as_str()),
+            Some("openai")
+        );
+
+        let normalized_config: toml::Value =
+            toml::from_str(&config_provider_id("normalized-aihubmix"))
+                .expect("parse normalized config");
+        assert_eq!(
+            normalized_config
+                .get("model_provider")
+                .and_then(|value| value.as_str()),
+            Some("custom")
+        );
     }
 
     #[test]
@@ -758,7 +1289,7 @@ mod tests {
     }
 
     #[test]
-    fn skips_unknown_non_custom_provider_model_provider_id() {
+    fn skips_unknown_provider_model_provider_id_from_existing_config() {
         let db = Database::memory().expect("memory db");
         let mut provider = Provider::with_id(
             "manual-aggregator".to_string(),
@@ -774,7 +1305,55 @@ mod tests {
         db.save_provider("codex", &provider).expect("save provider");
 
         let ids = collect_source_model_provider_ids(&db).expect("collect ids");
-        assert!(ids.is_empty());
+        assert!(!ids.contains("my-private-relay"));
+    }
+
+    #[test]
+    fn skips_undefined_provider_model_provider_id_from_existing_config() {
+        let db = Database::memory().expect("memory db");
+        let mut provider = Provider::with_id(
+            "manual-aggregator".to_string(),
+            "Manual Aggregator".to_string(),
+            serde_json::json!({
+                "auth": {},
+                "config": "model_provider = \"my-private-relay\"\n"
+            }),
+            None,
+        );
+        provider.category = Some("aggregator".to_string());
+
+        db.save_provider("codex", &provider).expect("save provider");
+
+        let ids = collect_source_model_provider_ids(&db).expect("collect ids");
+        assert!(!ids.contains("my-private-relay"));
+    }
+
+    #[test]
+    fn skips_unknown_profile_model_provider_id_from_existing_config() {
+        let db = Database::memory().expect("memory db");
+        let mut provider = Provider::with_id(
+            "manual-aggregator".to_string(),
+            "Manual Aggregator".to_string(),
+            serde_json::json!({
+                "auth": {},
+                "config": r#"profile = "work"
+
+[model_providers.my-private-relay]
+name = "Manual Relay"
+base_url = "http://localhost:8080/v1"
+
+[profiles.work]
+model_provider = "my-private-relay"
+"#
+            }),
+            None,
+        );
+        provider.category = Some("aggregator".to_string());
+
+        db.save_provider("codex", &provider).expect("save provider");
+
+        let ids = collect_source_model_provider_ids(&db).expect("collect ids");
+        assert!(!ids.contains("my-private-relay"));
     }
 
     #[test]
@@ -799,7 +1378,322 @@ mod tests {
     }
 
     #[test]
-    fn collects_custom_category_provider_when_created_by_cc_switch() {
+    fn collects_legacy_ccswitch_provider_id_from_stored_config() {
+        let db = Database::memory().expect("memory db");
+        let mut provider = Provider::with_id(
+            "generated-uuid".to_string(),
+            "Legacy Stable".to_string(),
+            serde_json::json!({
+                "auth": {},
+                "config": "model_provider = \"ccswitch\"\n\n[model_providers.ccswitch]\nname = \"AIHubMix\"\nbase_url = \"https://aihubmix.example/v1\""
+            }),
+            None,
+        );
+        provider.category = Some("aggregator".to_string());
+
+        db.save_provider("codex", &provider).expect("save provider");
+
+        let ids = collect_source_model_provider_ids(&db).expect("collect ids");
+        assert!(ids.contains("ccswitch"));
+        assert!(ids.contains("aihubmix"));
+        assert!(!ids.contains("generated-uuid"));
+    }
+
+    #[test]
+    fn migrates_stored_provider_template_to_custom() {
+        let db = Database::memory().expect("memory db");
+        let provider = Provider::with_id(
+            "legacy".to_string(),
+            "Legacy Stable".to_string(),
+            serde_json::json!({
+                "auth": {},
+                "config": r#"model_provider = "aihubmix"
+model = "gpt-5.4"
+profile = "work"
+
+[model_providers.aihubmix]
+name = "AIHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+
+[profiles.work]
+model_provider = "aihubmix"
+model = "gpt-5.4"
+"#
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider).expect("save provider");
+
+        let (outcome, backup_dir) = migrate_provider_templates_for_test(&db);
+        assert_eq!(outcome.migrated_provider_ids, vec!["legacy".to_string()]);
+
+        let saved = db
+            .get_provider_by_id("legacy", "codex")
+            .expect("get provider")
+            .expect("provider exists");
+        let config_text = saved
+            .settings_config
+            .get("config")
+            .and_then(Value::as_str)
+            .expect("config text");
+        let parsed: toml::Value = toml::from_str(config_text).expect("parse config");
+
+        assert_eq!(
+            parsed
+                .get("model_provider")
+                .and_then(|value| value.as_str()),
+            Some("custom")
+        );
+        assert!(parsed
+            .get("model_providers")
+            .and_then(|value| value.get("aihubmix"))
+            .is_none());
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|value| value.get("custom"))
+                .and_then(|value| value.get("base_url"))
+                .and_then(|value| value.as_str()),
+            Some("https://aihubmix.example/v1")
+        );
+        assert_eq!(
+            parsed
+                .get("profiles")
+                .and_then(|value| value.get("work"))
+                .and_then(|value| value.get("model_provider"))
+                .and_then(|value| value.as_str()),
+            Some("custom")
+        );
+
+        let backups: Vec<_> = fs::read_dir(backup_dir.path().join("providers"))
+            .expect("provider backups")
+            .flatten()
+            .collect();
+        assert_eq!(backups.len(), 1);
+        let backup_text = fs::read_to_string(backups[0].path()).expect("read provider backup");
+        assert!(backup_text.contains(r#""providerId": "legacy""#));
+        assert!(backup_text.contains(r#"model_provider = \"aihubmix\""#));
+
+        let (second, _second_backup_dir) = migrate_provider_templates_for_test(&db);
+        assert!(second.migrated_provider_ids.is_empty());
+    }
+
+    #[test]
+    fn migrates_legacy_ccswitch_provider_template_to_custom() {
+        let db = Database::memory().expect("memory db");
+        let provider = Provider::with_id(
+            "legacy-ccswitch".to_string(),
+            "Legacy CC Switch".to_string(),
+            serde_json::json!({
+                "auth": {},
+                "config": r#"model_provider = "ccswitch"
+
+[model_providers.ccswitch]
+name = "AIHubMix"
+base_url = "https://aihubmix.example/v1"
+"#
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider).expect("save provider");
+
+        let (outcome, _backup_dir) = migrate_provider_templates_for_test(&db);
+        assert_eq!(
+            outcome.migrated_provider_ids,
+            vec!["legacy-ccswitch".to_string()]
+        );
+
+        let saved = db
+            .get_provider_by_id("legacy-ccswitch", "codex")
+            .expect("get provider")
+            .expect("provider exists");
+        let config_text = saved
+            .settings_config
+            .get("config")
+            .and_then(Value::as_str)
+            .expect("config text");
+        let parsed: toml::Value = toml::from_str(config_text).expect("parse config");
+
+        assert_eq!(
+            parsed
+                .get("model_provider")
+                .and_then(|value| value.as_str()),
+            Some("custom")
+        );
+        assert!(parsed
+            .get("model_providers")
+            .and_then(|value| value.get("ccswitch"))
+            .is_none());
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|value| value.get("custom"))
+                .and_then(|value| value.get("base_url"))
+                .and_then(|value| value.as_str()),
+            Some("https://aihubmix.example/v1")
+        );
+    }
+
+    #[test]
+    fn skips_unknown_stored_provider_template() {
+        let db = Database::memory().expect("memory db");
+        let provider = Provider::with_id(
+            "manual".to_string(),
+            "Manual Relay".to_string(),
+            serde_json::json!({
+                "auth": {},
+                "config": r#"model_provider = "my-private-relay"
+
+[model_providers.my-private-relay]
+name = "Manual Relay"
+base_url = "http://localhost:8080/v1"
+"#
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider).expect("save provider");
+
+        let (outcome, _backup_dir) = migrate_provider_templates_for_test(&db);
+        assert!(outcome.migrated_provider_ids.is_empty());
+
+        let saved = db
+            .get_provider_by_id("manual", "codex")
+            .expect("get provider")
+            .expect("provider exists");
+        let config_text = saved
+            .settings_config
+            .get("config")
+            .and_then(Value::as_str)
+            .expect("config text");
+        let parsed: toml::Value = toml::from_str(config_text).expect("parse config");
+
+        assert_eq!(
+            parsed
+                .get("model_provider")
+                .and_then(|value| value.as_str()),
+            Some("my-private-relay")
+        );
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|value| value.get("my-private-relay"))
+                .and_then(|value| value.get("base_url"))
+                .and_then(|value| value.as_str()),
+            Some("http://localhost:8080/v1")
+        );
+    }
+
+    #[test]
+    fn skips_reserved_key_in_non_official_stored_provider_template() {
+        let db = Database::memory().expect("memory db");
+        let provider = Provider::with_id(
+            "custom-openai".to_string(),
+            "Custom OpenAI".to_string(),
+            serde_json::json!({
+                "auth": {},
+                "config": r#"model_provider = "openai"
+
+[model_providers.openai]
+name = "Custom OpenAI"
+base_url = "https://proxy.example/v1"
+"#
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider).expect("save provider");
+
+        let (outcome, _backup_dir) = migrate_provider_templates_for_test(&db);
+        assert!(outcome.migrated_provider_ids.is_empty());
+
+        let saved = db
+            .get_provider_by_id("custom-openai", "codex")
+            .expect("get provider")
+            .expect("provider exists");
+        let config_text = saved
+            .settings_config
+            .get("config")
+            .and_then(Value::as_str)
+            .expect("config text");
+        let parsed: toml::Value = toml::from_str(config_text).expect("parse config");
+
+        assert_eq!(
+            parsed
+                .get("model_provider")
+                .and_then(|value| value.as_str()),
+            Some("openai")
+        );
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|value| value.get("openai"))
+                .and_then(|value| value.get("base_url"))
+                .and_then(|value| value.as_str()),
+            Some("https://proxy.example/v1")
+        );
+    }
+
+    #[test]
+    fn migrates_profile_model_provider_refs_to_custom_when_top_level_is_already_custom() {
+        let db = Database::memory().expect("memory db");
+        let provider = Provider::with_id(
+            "profiled".to_string(),
+            "Profiled Relay".to_string(),
+            serde_json::json!({
+                "auth": {},
+                "config": r#"model_provider = "custom"
+profile = "work"
+
+[model_providers.custom]
+name = "Current"
+base_url = "https://current.example/v1"
+
+[model_providers.aihubmix]
+name = "AIHubMix"
+base_url = "https://aihubmix.example/v1"
+
+[profiles.work]
+model_provider = "aihubmix"
+"#
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider).expect("save provider");
+
+        let (outcome, _backup_dir) = migrate_provider_templates_for_test(&db);
+        assert_eq!(outcome.migrated_provider_ids, vec!["profiled".to_string()]);
+
+        let saved = db
+            .get_provider_by_id("profiled", "codex")
+            .expect("get provider")
+            .expect("provider exists");
+        let config_text = saved
+            .settings_config
+            .get("config")
+            .and_then(Value::as_str)
+            .expect("config text");
+        let parsed: toml::Value = toml::from_str(config_text).expect("parse config");
+
+        assert_eq!(
+            parsed
+                .get("profiles")
+                .and_then(|value| value.get("work"))
+                .and_then(|value| value.get("model_provider"))
+                .and_then(|value| value.as_str()),
+            Some("custom")
+        );
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|value| value.get("custom"))
+                .and_then(|value| value.get("base_url"))
+                .and_then(|value| value.as_str()),
+            Some("https://current.example/v1")
+        );
+    }
+
+    #[test]
+    fn skips_custom_category_unknown_provider_when_created_by_cc_switch() {
         let db = Database::memory().expect("memory db");
         let mut provider = Provider::with_id(
             "generated-uuid".to_string(),
@@ -816,11 +1710,12 @@ mod tests {
         db.save_provider("codex", &provider).expect("save provider");
 
         let ids = collect_source_model_provider_ids(&db).expect("collect ids");
-        assert!(ids.contains("my-private-relay"));
+        assert!(!ids.contains("my-private-relay"));
+        assert!(!ids.contains("generated-uuid"));
     }
 
     #[test]
-    fn skips_custom_category_provider_even_when_config_has_custom_model_provider_id() {
+    fn skips_custom_category_unknown_provider_model_provider_id() {
         let db = Database::memory().expect("memory db");
         let mut provider = Provider::with_id(
             "manual".to_string(),
@@ -836,6 +1731,6 @@ mod tests {
         db.save_provider("codex", &provider).expect("save provider");
 
         let ids = collect_source_model_provider_ids(&db).expect("collect ids");
-        assert!(ids.is_empty());
+        assert!(!ids.contains("my-local-relay"));
     }
 }
