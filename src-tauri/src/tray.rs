@@ -22,6 +22,7 @@ static TRAY_SECTION_SUBMENUS: Lazy<
 pub struct TrayTexts {
     pub show_main: &'static str,
     pub open_website: &'static str,
+    pub switch_profile: &'static str,
     pub no_providers_label: &'static str,
     pub lightweight_mode: &'static str,
     pub quit: &'static str,
@@ -34,6 +35,7 @@ impl TrayTexts {
             "en" => Self {
                 show_main: "Open main window",
                 open_website: "Open Official Website",
+                switch_profile: "Switch profile",
                 no_providers_label: "(no providers)",
                 lightweight_mode: "Lightweight Mode",
                 quit: "Quit",
@@ -42,6 +44,7 @@ impl TrayTexts {
             "ja" => Self {
                 show_main: "メインウィンドウを開く",
                 open_website: "公式サイトを開く",
+                switch_profile: "プロファイル切替",
                 no_providers_label: "(プロバイダーなし)",
                 lightweight_mode: "軽量モード",
                 quit: "終了",
@@ -50,6 +53,7 @@ impl TrayTexts {
             "zh-TW" => Self {
                 show_main: "開啟主介面",
                 open_website: "開啟官方網站",
+                switch_profile: "切換 Profile",
                 no_providers_label: "(無供應商)",
                 lightweight_mode: "輕量模式",
                 quit: "退出",
@@ -58,6 +62,7 @@ impl TrayTexts {
             _ => Self {
                 show_main: "打开主界面",
                 open_website: "打开官方网站",
+                switch_profile: "切换 Profile",
                 no_providers_label: "(无供应商)",
                 lightweight_mode: "轻量模式",
                 quit: "退出",
@@ -79,6 +84,7 @@ pub struct TrayAppSection {
 /// Auto 菜单项后缀
 pub const AUTO_SUFFIX: &str = "auto";
 pub const TRAY_ID: &str = "cc-switch";
+const PROFILE_EVENT_PREFIX: &str = "profile_";
 
 pub const TRAY_SECTIONS: [TrayAppSection; 3] = [
     TrayAppSection {
@@ -338,6 +344,44 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
     false
 }
 
+fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool {
+    let Some(profile_id) = event_id.strip_prefix(PROFILE_EVENT_PREFIX) else {
+        return false;
+    };
+
+    let app_handle = app.clone();
+    let profile_id = profile_id.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(e) = handle_profile_click(&app_handle, &profile_id) {
+            log::error!("切换 Profile 失败: {e}");
+        }
+    });
+    true
+}
+
+fn handle_profile_click(app: &tauri::AppHandle, profile_id: &str) -> Result<(), AppError> {
+    let Some(app_state) = app.try_state::<AppState>() else {
+        return Ok(());
+    };
+
+    crate::settings::switch_profile(profile_id)?;
+    crate::services::ProviderService::sync_profile_managed_to_live(app_state.inner())?;
+    refresh_tray_menu(app);
+    let frontend_settings = crate::settings::get_settings_for_frontend();
+
+    if let Err(e) = app.emit(
+        "profile-switched",
+        serde_json::json!({
+            "profileId": profile_id,
+            "settings": frontend_settings,
+        }),
+    ) {
+        log::error!("发射 profile-switched 事件失败: {e}");
+    }
+
+    Ok(())
+}
+
 /// 处理 Auto 点击：启用 proxy 和 auto_failover
 fn handle_auto_click(app: &tauri::AppHandle, app_type: &AppType) -> Result<(), AppError> {
     if let Some(app_state) = app.try_state::<AppState>() {
@@ -502,6 +546,30 @@ pub fn create_tray_menu(
         .item(&show_main_item)
         .item(&open_website_item)
         .separator();
+
+    if app_settings.profiles.len() > 1 {
+        let mut profile_submenu_builder =
+            SubmenuBuilder::with_id(app, "submenu_profiles", tray_texts.switch_profile);
+        let active_profile_id = app_settings.active_profile_id.as_deref();
+
+        for profile in &app_settings.profiles {
+            let item = CheckMenuItem::with_id(
+                app,
+                format!("{PROFILE_EVENT_PREFIX}{}", profile.id),
+                &profile.label,
+                true,
+                active_profile_id == Some(profile.id.as_str()),
+                None::<&str>,
+            )
+            .map_err(|e| AppError::Message(format!("创建 Profile 菜单项失败: {e}")))?;
+            profile_submenu_builder = profile_submenu_builder.item(&item);
+        }
+
+        let profile_submenu = profile_submenu_builder
+            .build()
+            .map_err(|e| AppError::Message(format!("构建 Profile 子菜单失败: {e}")))?;
+        menu_builder = menu_builder.item(&profile_submenu).separator();
+    }
 
     // Pre-compute proxy running state (used to disable official providers in tray menu)
     let is_proxy_running = futures::executor::block_on(app_state.proxy_service.is_running());
@@ -729,6 +797,9 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
             app.exit(0);
         }
         _ => {
+            if handle_profile_tray_event(app, event_id) {
+                return;
+            }
             if handle_provider_tray_event(app, event_id) {
                 return;
             }

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+#[cfg(unix)]
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
@@ -176,6 +177,92 @@ impl WebDavSyncSettings {
     }
 }
 
+/// 本机环境配置档。
+///
+/// Profile 保存每个环境自己的目录覆盖和当前供应商选择；切换时再把这些值
+/// 拷贝回 AppSettings 的单值字段，让现有读写路径继续复用原逻辑。
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Profile {
+    pub id: String,
+    pub label: String,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gemini_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opencode_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openclaw_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hermes_config_dir: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_claude: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_claude_desktop: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_codex: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_gemini: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_opencode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_openclaw: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_hermes: Option<String>,
+}
+
+fn normalize_optional_string(value: &mut Option<String>) {
+    *value = value
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+}
+
+impl Profile {
+    fn from_settings(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        settings: &AppSettings,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            claude_config_dir: settings.claude_config_dir.clone(),
+            codex_config_dir: settings.codex_config_dir.clone(),
+            current_provider_claude: settings.current_provider_claude.clone(),
+            current_provider_codex: settings.current_provider_codex.clone(),
+            ..Default::default()
+        }
+    }
+
+    fn normalize(&mut self) {
+        self.id = self.id.trim().to_string();
+        self.label = self.label.trim().to_string();
+        normalize_optional_string(&mut self.claude_config_dir);
+        normalize_optional_string(&mut self.codex_config_dir);
+        normalize_optional_string(&mut self.gemini_config_dir);
+        normalize_optional_string(&mut self.opencode_config_dir);
+        normalize_optional_string(&mut self.openclaw_config_dir);
+        normalize_optional_string(&mut self.hermes_config_dir);
+        normalize_optional_string(&mut self.current_provider_claude);
+        normalize_optional_string(&mut self.current_provider_claude_desktop);
+        normalize_optional_string(&mut self.current_provider_codex);
+        normalize_optional_string(&mut self.current_provider_gemini);
+        normalize_optional_string(&mut self.current_provider_opencode);
+        normalize_optional_string(&mut self.current_provider_openclaw);
+        normalize_optional_string(&mut self.current_provider_hermes);
+        if self.label.is_empty() {
+            self.label = self.id.clone();
+        }
+    }
+}
+
 /// 本机自动迁移状态。
 ///
 /// 这里记录的是本机启动时执行过的一次性迁移；标记不随数据库同步。
@@ -310,6 +397,13 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_hermes: Option<String>,
 
+    // ===== 环境配置档（设备级）=====
+    /// 多环境配置档。切换时会同步到上面的单值字段以保持旧逻辑兼容。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<Profile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_profile_id: Option<String>,
+
     // ===== Skill 同步设置 =====
     /// Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
     #[serde(default)]
@@ -389,6 +483,8 @@ impl Default for AppSettings {
             current_provider_opencode: None,
             current_provider_openclaw: None,
             current_provider_hermes: None,
+            profiles: Vec::new(),
+            active_profile_id: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
             webdav_sync: None,
@@ -412,47 +508,19 @@ impl AppSettings {
     }
 
     fn normalize_paths(&mut self) {
-        self.claude_config_dir = self
-            .claude_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.codex_config_dir = self
-            .codex_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.gemini_config_dir = self
-            .gemini_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.opencode_config_dir = self
-            .opencode_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.openclaw_config_dir = self
-            .openclaw_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.hermes_config_dir = self
-            .hermes_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
+        normalize_optional_string(&mut self.claude_config_dir);
+        normalize_optional_string(&mut self.codex_config_dir);
+        normalize_optional_string(&mut self.gemini_config_dir);
+        normalize_optional_string(&mut self.opencode_config_dir);
+        normalize_optional_string(&mut self.openclaw_config_dir);
+        normalize_optional_string(&mut self.hermes_config_dir);
+        normalize_optional_string(&mut self.current_provider_claude);
+        normalize_optional_string(&mut self.current_provider_claude_desktop);
+        normalize_optional_string(&mut self.current_provider_codex);
+        normalize_optional_string(&mut self.current_provider_gemini);
+        normalize_optional_string(&mut self.current_provider_opencode);
+        normalize_optional_string(&mut self.current_provider_openclaw);
+        normalize_optional_string(&mut self.current_provider_hermes);
 
         self.language = self
             .language
@@ -467,6 +535,88 @@ impl AppSettings {
                 self.webdav_sync = None;
             }
         }
+
+        self.normalize_profiles();
+    }
+
+    fn normalize_for_save(&mut self) {
+        self.normalize_paths();
+        self.save_single_fields_to_active_profile();
+        self.normalize_profiles();
+    }
+
+    fn normalize_profiles(&mut self) {
+        normalize_optional_string(&mut self.active_profile_id);
+
+        let mut seen = std::collections::HashSet::new();
+        let mut normalized_profiles = Vec::with_capacity(self.profiles.len());
+        for mut profile in std::mem::take(&mut self.profiles) {
+            profile.normalize();
+            if profile.id.is_empty() || !seen.insert(profile.id.clone()) {
+                continue;
+            }
+            normalized_profiles.push(profile);
+        }
+        self.profiles = normalized_profiles;
+
+        if let Some(active_id) = self.active_profile_id.clone() {
+            if !self.profiles.iter().any(|profile| profile.id == active_id) {
+                self.active_profile_id = None;
+            }
+        }
+
+        if self.active_profile_id.is_none() && !self.profiles.is_empty() {
+            self.active_profile_id = self.profiles.first().map(|profile| profile.id.clone());
+        }
+
+        if self.profiles.is_empty() && self.has_profile_managed_values() {
+            let profile = Profile::from_settings("default", "Default", self);
+            self.profiles.push(profile);
+            self.active_profile_id = Some("default".to_string());
+        }
+    }
+
+    fn has_profile_managed_values(&self) -> bool {
+        self.claude_config_dir.is_some()
+            || self.codex_config_dir.is_some()
+            || self.current_provider_claude.is_some()
+            || self.current_provider_codex.is_some()
+    }
+
+    fn save_single_fields_to_active_profile(&mut self) {
+        let Some(active_id) = self.active_profile_id.clone() else {
+            return;
+        };
+        let snapshot = Profile::from_settings(active_id.clone(), active_id.clone(), self);
+        if let Some(profile) = self
+            .profiles
+            .iter_mut()
+            .find(|profile| profile.id == active_id)
+        {
+            profile.claude_config_dir = snapshot.claude_config_dir;
+            profile.codex_config_dir = snapshot.codex_config_dir;
+            profile.current_provider_claude = snapshot.current_provider_claude;
+            profile.current_provider_codex = snapshot.current_provider_codex;
+        }
+    }
+
+    fn apply_active_profile_to_single_fields(&mut self) {
+        let Some(active_id) = self.active_profile_id.as_deref() else {
+            return;
+        };
+        let Some(profile) = self
+            .profiles
+            .iter()
+            .find(|profile| profile.id == active_id)
+            .cloned()
+        else {
+            return;
+        };
+
+        self.claude_config_dir = profile.claude_config_dir;
+        self.codex_config_dir = profile.codex_config_dir;
+        self.current_provider_claude = profile.current_provider_claude;
+        self.current_provider_codex = profile.current_provider_codex;
     }
 
     fn load_from_file() -> Self {
@@ -477,6 +627,7 @@ impl AppSettings {
             match serde_json::from_str::<AppSettings>(&content) {
                 Ok(mut settings) => {
                     settings.normalize_paths();
+                    settings.apply_active_profile_to_single_fields();
                     settings
                 }
                 Err(err) => {
@@ -496,7 +647,7 @@ impl AppSettings {
 
 fn save_settings_file(settings: &AppSettings) -> Result<(), AppError> {
     let mut normalized = settings.clone();
-    normalized.normalize_paths();
+    normalized.normalize_for_save();
     let Some(path) = AppSettings::settings_path() else {
         return Err(AppError::Config("无法获取用户主目录".to_string()));
     };
@@ -575,7 +726,7 @@ pub fn get_settings_for_frontend() -> AppSettings {
 }
 
 pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
-    new_settings.normalize_paths();
+    new_settings.normalize_for_save();
     save_settings_file(&new_settings)?;
 
     let mut guard = settings_store().write().unwrap_or_else(|e| {
@@ -584,6 +735,17 @@ pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     });
     *guard = new_settings;
     Ok(())
+}
+
+pub fn update_settings_from_frontend(
+    mut new_settings: AppSettings,
+    profiles_are_authoritative: bool,
+) -> Result<(), AppError> {
+    if profiles_are_authoritative {
+        new_settings.normalize_paths();
+        new_settings.apply_active_profile_to_single_fields();
+    }
+    update_settings(new_settings)
 }
 
 fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
@@ -596,10 +758,44 @@ where
     });
     let mut next = guard.clone();
     mutator(&mut next);
-    next.normalize_paths();
+    next.normalize_for_save();
     save_settings_file(&next)?;
     *guard = next;
     Ok(())
+}
+
+/// 切换环境配置档，并把旧环境的当前单值字段保存回 profile。
+pub fn switch_profile(profile_id: &str) -> Result<AppSettings, AppError> {
+    let profile_id = profile_id.trim();
+    if profile_id.is_empty() {
+        return Err(AppError::Message("Profile ID 不能为空".to_string()));
+    }
+
+    let mut guard = settings_store().write().unwrap_or_else(|e| {
+        log::warn!("设置锁已毒化，使用恢复值: {e}");
+        e.into_inner()
+    });
+
+    let mut next = guard.clone();
+    next.normalize_paths();
+    next.save_single_fields_to_active_profile();
+    let target_profile = next
+        .profiles
+        .iter()
+        .find(|profile| profile.id == profile_id)
+        .cloned()
+        .ok_or_else(|| AppError::Message(format!("Profile {profile_id} 不存在")))?;
+
+    next.active_profile_id = Some(profile_id.to_string());
+    next.claude_config_dir = target_profile.claude_config_dir;
+    next.codex_config_dir = target_profile.codex_config_dir;
+    next.current_provider_claude = target_profile.current_provider_claude;
+    next.current_provider_codex = target_profile.current_provider_codex;
+    next.normalize_for_save();
+
+    save_settings_file(&next)?;
+    *guard = next.clone();
+    Ok(next)
 }
 
 pub fn is_codex_third_party_history_provider_bucket_migrated() -> bool {
@@ -916,5 +1112,216 @@ mod tests {
         .expect("visible apps");
 
         assert!(!visible.is_visible(&AppType::ClaudeDesktop));
+    }
+
+    #[test]
+    fn profile_from_settings_snapshots_only_claude_code_and_codex() {
+        let settings = AppSettings {
+            claude_config_dir: Some("/profiles/claude".to_string()),
+            codex_config_dir: Some("/profiles/codex".to_string()),
+            gemini_config_dir: Some("/profiles/gemini".to_string()),
+            opencode_config_dir: Some("/profiles/opencode".to_string()),
+            openclaw_config_dir: Some("/profiles/openclaw".to_string()),
+            hermes_config_dir: Some("/profiles/hermes".to_string()),
+            current_provider_claude: Some("claude-provider".to_string()),
+            current_provider_claude_desktop: Some("desktop-provider".to_string()),
+            current_provider_codex: Some("codex-provider".to_string()),
+            current_provider_gemini: Some("gemini-provider".to_string()),
+            current_provider_opencode: Some("opencode-provider".to_string()),
+            current_provider_openclaw: Some("openclaw-provider".to_string()),
+            current_provider_hermes: Some("hermes-provider".to_string()),
+            ..AppSettings::default()
+        };
+
+        let profile = Profile::from_settings("work", "Work", &settings);
+
+        assert_eq!(
+            profile.claude_config_dir.as_deref(),
+            Some("/profiles/claude")
+        );
+        assert_eq!(profile.codex_config_dir.as_deref(), Some("/profiles/codex"));
+        assert_eq!(
+            profile.current_provider_claude.as_deref(),
+            Some("claude-provider")
+        );
+        assert_eq!(
+            profile.current_provider_codex.as_deref(),
+            Some("codex-provider")
+        );
+        assert_eq!(profile.gemini_config_dir, None);
+        assert_eq!(profile.opencode_config_dir, None);
+        assert_eq!(profile.openclaw_config_dir, None);
+        assert_eq!(profile.hermes_config_dir, None);
+        assert_eq!(profile.current_provider_claude_desktop, None);
+        assert_eq!(profile.current_provider_gemini, None);
+        assert_eq!(profile.current_provider_opencode, None);
+        assert_eq!(profile.current_provider_openclaw, None);
+        assert_eq!(profile.current_provider_hermes, None);
+    }
+
+    #[test]
+    fn applying_active_profile_preserves_unmanaged_app_fields() {
+        let mut settings = AppSettings {
+            claude_config_dir: Some("/old/claude".to_string()),
+            codex_config_dir: Some("/old/codex".to_string()),
+            gemini_config_dir: Some("/keep/gemini".to_string()),
+            opencode_config_dir: Some("/keep/opencode".to_string()),
+            openclaw_config_dir: Some("/keep/openclaw".to_string()),
+            hermes_config_dir: Some("/keep/hermes".to_string()),
+            current_provider_claude: Some("old-claude".to_string()),
+            current_provider_claude_desktop: Some("keep-desktop".to_string()),
+            current_provider_codex: Some("old-codex".to_string()),
+            current_provider_gemini: Some("keep-gemini".to_string()),
+            current_provider_opencode: Some("keep-opencode".to_string()),
+            current_provider_openclaw: Some("keep-openclaw".to_string()),
+            current_provider_hermes: Some("keep-hermes".to_string()),
+            profiles: vec![Profile {
+                id: "work".to_string(),
+                label: "Work".to_string(),
+                claude_config_dir: Some("/new/claude".to_string()),
+                codex_config_dir: Some("/new/codex".to_string()),
+                gemini_config_dir: Some("/ignored/gemini".to_string()),
+                opencode_config_dir: Some("/ignored/opencode".to_string()),
+                openclaw_config_dir: Some("/ignored/openclaw".to_string()),
+                hermes_config_dir: Some("/ignored/hermes".to_string()),
+                current_provider_claude: Some("new-claude".to_string()),
+                current_provider_claude_desktop: Some("ignored-desktop".to_string()),
+                current_provider_codex: Some("new-codex".to_string()),
+                current_provider_gemini: Some("ignored-gemini".to_string()),
+                current_provider_opencode: Some("ignored-opencode".to_string()),
+                current_provider_openclaw: Some("ignored-openclaw".to_string()),
+                current_provider_hermes: Some("ignored-hermes".to_string()),
+            }],
+            active_profile_id: Some("work".to_string()),
+            ..AppSettings::default()
+        };
+
+        settings.apply_active_profile_to_single_fields();
+
+        assert_eq!(settings.claude_config_dir.as_deref(), Some("/new/claude"));
+        assert_eq!(settings.codex_config_dir.as_deref(), Some("/new/codex"));
+        assert_eq!(
+            settings.current_provider_claude.as_deref(),
+            Some("new-claude")
+        );
+        assert_eq!(
+            settings.current_provider_codex.as_deref(),
+            Some("new-codex")
+        );
+        assert_eq!(settings.gemini_config_dir.as_deref(), Some("/keep/gemini"));
+        assert_eq!(
+            settings.opencode_config_dir.as_deref(),
+            Some("/keep/opencode")
+        );
+        assert_eq!(
+            settings.openclaw_config_dir.as_deref(),
+            Some("/keep/openclaw")
+        );
+        assert_eq!(settings.hermes_config_dir.as_deref(), Some("/keep/hermes"));
+        assert_eq!(
+            settings.current_provider_claude_desktop.as_deref(),
+            Some("keep-desktop")
+        );
+        assert_eq!(
+            settings.current_provider_gemini.as_deref(),
+            Some("keep-gemini")
+        );
+        assert_eq!(
+            settings.current_provider_opencode.as_deref(),
+            Some("keep-opencode")
+        );
+        assert_eq!(
+            settings.current_provider_openclaw.as_deref(),
+            Some("keep-openclaw")
+        );
+        assert_eq!(
+            settings.current_provider_hermes.as_deref(),
+            Some("keep-hermes")
+        );
+    }
+
+    #[test]
+    fn saving_single_fields_updates_only_active_profile_managed_fields() {
+        let mut settings = AppSettings {
+            claude_config_dir: Some("/active/claude".to_string()),
+            codex_config_dir: Some("/active/codex".to_string()),
+            gemini_config_dir: Some("/single/gemini".to_string()),
+            current_provider_claude: Some("active-claude".to_string()),
+            current_provider_codex: Some("active-codex".to_string()),
+            current_provider_gemini: Some("single-gemini".to_string()),
+            profiles: vec![Profile {
+                id: "active".to_string(),
+                label: "Active".to_string(),
+                claude_config_dir: Some("/profile/claude".to_string()),
+                codex_config_dir: Some("/profile/codex".to_string()),
+                gemini_config_dir: Some("/profile/gemini".to_string()),
+                current_provider_claude: Some("profile-claude".to_string()),
+                current_provider_codex: Some("profile-codex".to_string()),
+                current_provider_gemini: Some("profile-gemini".to_string()),
+                ..Profile::default()
+            }],
+            active_profile_id: Some("active".to_string()),
+            ..AppSettings::default()
+        };
+
+        settings.save_single_fields_to_active_profile();
+        let profile = settings.profiles.first().expect("active profile");
+
+        assert_eq!(profile.claude_config_dir.as_deref(), Some("/active/claude"));
+        assert_eq!(profile.codex_config_dir.as_deref(), Some("/active/codex"));
+        assert_eq!(
+            profile.current_provider_claude.as_deref(),
+            Some("active-claude")
+        );
+        assert_eq!(
+            profile.current_provider_codex.as_deref(),
+            Some("active-codex")
+        );
+        assert_eq!(
+            profile.gemini_config_dir.as_deref(),
+            Some("/profile/gemini")
+        );
+        assert_eq!(
+            profile.current_provider_gemini.as_deref(),
+            Some("profile-gemini")
+        );
+    }
+
+    #[test]
+    fn saving_then_applying_active_profile_uses_latest_single_fields() {
+        let mut settings = AppSettings {
+            claude_config_dir: Some("/latest/claude".to_string()),
+            codex_config_dir: Some("/latest/codex".to_string()),
+            current_provider_claude: Some("latest-claude".to_string()),
+            current_provider_codex: Some("latest-codex".to_string()),
+            profiles: vec![Profile {
+                id: "active".to_string(),
+                label: "Active".to_string(),
+                claude_config_dir: Some("/stale/claude".to_string()),
+                codex_config_dir: Some("/stale/codex".to_string()),
+                current_provider_claude: Some("stale-claude".to_string()),
+                current_provider_codex: Some("stale-codex".to_string()),
+                ..Profile::default()
+            }],
+            active_profile_id: Some("active".to_string()),
+            ..AppSettings::default()
+        };
+
+        settings.save_single_fields_to_active_profile();
+        settings.apply_active_profile_to_single_fields();
+
+        assert_eq!(
+            settings.claude_config_dir.as_deref(),
+            Some("/latest/claude")
+        );
+        assert_eq!(settings.codex_config_dir.as_deref(), Some("/latest/codex"));
+        assert_eq!(
+            settings.current_provider_claude.as_deref(),
+            Some("latest-claude")
+        );
+        assert_eq!(
+            settings.current_provider_codex.as_deref(),
+            Some("latest-codex")
+        );
     }
 }

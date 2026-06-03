@@ -27,6 +27,10 @@ export const settingsApi = {
     return await invoke("save_settings", { settings });
   },
 
+  async switchProfile(profileId: string): Promise<Settings> {
+    return await invoke("switch_profile", { profileId });
+  },
+
   async restart(): Promise<boolean> {
     return await invoke("restart_app");
   },
@@ -149,6 +153,18 @@ export const settingsApi = {
     };
     if (!result?.success) {
       throw new Error(result?.message || "Sync current providers failed");
+    }
+  },
+
+  async syncProfileManagedProvidersLive(): Promise<void> {
+    const result = (await invoke("sync_profile_managed_providers_live")) as {
+      success?: boolean;
+      message?: string;
+    };
+    if (!result?.success) {
+      throw new Error(
+        result?.message || "Sync profile-managed providers failed",
+      );
     }
   },
 

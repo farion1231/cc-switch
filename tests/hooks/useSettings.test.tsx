@@ -10,6 +10,7 @@ const applyClaudePluginConfigMock = vi.fn();
 const applyClaudeOnboardingSkipMock = vi.fn();
 const clearClaudeOnboardingSkipMock = vi.fn();
 const syncCurrentProvidersLiveMock = vi.fn();
+const syncProfileManagedProvidersLiveMock = vi.fn();
 const updateTrayMenuMock = vi.fn();
 const getCurrentMock = vi.fn();
 const getAllMock = vi.fn();
@@ -73,6 +74,8 @@ vi.mock("@/lib/api", () => ({
       clearClaudeOnboardingSkipMock(...args),
     syncCurrentProvidersLive: (...args: unknown[]) =>
       syncCurrentProvidersLiveMock(...args),
+    syncProfileManagedProvidersLive: (...args: unknown[]) =>
+      syncProfileManagedProvidersLiveMock(...args),
   },
   providersApi: {
     updateTrayMenu: (...args: unknown[]) => updateTrayMenuMock(...args),
@@ -144,6 +147,7 @@ describe("useSettings hook", () => {
     applyClaudeOnboardingSkipMock.mockReset();
     clearClaudeOnboardingSkipMock.mockReset();
     syncCurrentProvidersLiveMock.mockReset();
+    syncProfileManagedProvidersLiveMock.mockReset();
     getCurrentMock.mockReset();
     getAllMock.mockReset();
     getQueryDataMock.mockReset();
@@ -184,6 +188,7 @@ describe("useSettings hook", () => {
     applyClaudeOnboardingSkipMock.mockResolvedValue(true);
     clearClaudeOnboardingSkipMock.mockResolvedValue(true);
     syncCurrentProvidersLiveMock.mockResolvedValue({ ok: true });
+    syncProfileManagedProvidersLiveMock.mockResolvedValue({ ok: true });
     getCurrentMock.mockResolvedValue(null);
     getAllMock.mockResolvedValue({});
     // 默认将 queryClient 缓存对齐到 serverSettings，既有断言的 "prev === data" 语义保持不变
@@ -301,8 +306,9 @@ describe("useSettings hook", () => {
     expect(metadataMock.setRequiresRestart).toHaveBeenCalledWith(true);
     expect(window.localStorage.getItem("language")).toBe("en");
     expect(toastErrorMock).not.toHaveBeenCalled();
-    // 插件同步已包含 syncCurrentProvidersLiveSafe，目录变更不再重复调用
-    expect(syncCurrentProvidersLiveMock).toHaveBeenCalledTimes(1);
+    // 插件同步已包含 syncProfileManagedProvidersLiveSafe，目录变更不再重复调用
+    expect(syncProfileManagedProvidersLiveMock).toHaveBeenCalledTimes(1);
+    expect(syncCurrentProvidersLiveMock).not.toHaveBeenCalled();
   });
 
   it("saves settings without restart when directory unchanged", async () => {
@@ -421,7 +427,8 @@ describe("useSettings hook", () => {
 
     // 修复生效：读的是缓存实时值 true，payload=false，差异触发 clear_claude_config
     expect(applyClaudePluginConfigMock).toHaveBeenCalledWith({ official: true });
-    expect(syncCurrentProvidersLiveMock).toHaveBeenCalled();
+    expect(syncProfileManagedProvidersLiveMock).toHaveBeenCalled();
+    expect(syncCurrentProvidersLiveMock).not.toHaveBeenCalled();
   });
 
   it("resets form, language and directories using server data", () => {

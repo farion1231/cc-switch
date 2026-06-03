@@ -247,6 +247,8 @@
     "deleteFailed": "刪除供應商失敗：{{error}}",
     "settingsSaved": "設定已儲存",
     "settingsSaveFailed": "儲存設定失敗：{{error}}",
+    "profileSwitchSuccess": "已切換到 {{profile}}",
+    "profileSwitchFailed": "切換設定檔失敗：{{error}}",
     "proxyRequiredForSwitch": "此供應商 {{reason}}，需要路由服務才能正常使用，請先啟動路由",
     "proxyReasonCopilot": "使用 GitHub Copilot 作為 Claude 供應商",
     "proxyReasonOpenAIChat": "使用 OpenAI Chat API 格式",
@@ -315,6 +317,10 @@
       "codexOauthDescription": "管理 ChatGPT 帳號"
     },
     "advanced": {
+      "profiles": {
+        "title": "環境設定檔",
+        "description": "依本機環境隔離目錄覆寫與目前供應商"
+      },
       "configDir": {
         "title": "設定檔目錄",
         "description": "管理 Claude、Codex 和 Gemini 的設定儲存路徑"
@@ -403,6 +409,28 @@
           "debug": "詳細資訊，包含 SSE 串流與請求/回應詳情",
           "trace": "全部日誌，最詳細"
         }
+      }
+    },
+    "profiles": {
+      "title": "設定檔",
+      "description": "隔離本機目錄和目前供應商選擇。",
+      "switch": "切換設定檔",
+      "placeholder": "設定檔",
+      "add": "新增設定檔",
+      "active": "目前",
+      "name": "名稱",
+      "id": "ID",
+      "configDirectories": "設定目錄",
+      "emptyHint": "留空時使用該應用程式的預設位置。",
+      "duplicate": "複製",
+      "setActive": "設為目前",
+      "defaultPlaceholder": "預設",
+      "defaultName": "預設",
+      "defaultLabel": "設定檔 {{number}}",
+      "copyLabel": "{{label}} 副本",
+      "apps": {
+        "claudeCode": "Claude Code",
+        "codex": "Codex"
       }
     },
     "language": "介面語言",

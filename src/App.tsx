@@ -28,7 +28,7 @@ import {
   LayoutDashboard,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { Provider, VisibleApps } from "@/types";
+import type { Provider, Settings as AppSettings, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
 import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
@@ -58,6 +58,7 @@ import {
   DRAG_REGION_STYLE,
 } from "@/lib/platform";
 import { AppSwitcher } from "@/components/AppSwitcher";
+import { ProfileSwitcher } from "@/components/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
@@ -111,6 +112,11 @@ interface WebDavSyncStatusUpdatedPayload {
   source?: string;
   status?: string;
   error?: string;
+}
+
+interface ProfileSwitchedPayload {
+  profileId?: string;
+  settings?: AppSettings;
 }
 
 const DEFAULT_DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px
@@ -370,6 +376,22 @@ function App() {
       console.error("[App] Failed to update tray menu", error);
     }
   });
+
+  useTauriEvent<ProfileSwitchedPayload | null | undefined>(
+    "profile-switched",
+    async (payload) => {
+      if (payload?.settings) {
+        queryClient.setQueryData(["settings"], payload.settings);
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settings"] }),
+        queryClient.invalidateQueries({ queryKey: ["providers"] }),
+        queryClient.invalidateQueries({ queryKey: ["proxyStatus"] }),
+        queryClient.invalidateQueries({ queryKey: ["proxyTakeoverStatus"] }),
+      ]);
+      await refetch();
+    },
+  );
 
   useTauriEvent<WebDavSyncStatusUpdatedPayload | null | undefined>(
     "webdav-sync-status-updated",
@@ -1196,6 +1218,12 @@ function App() {
           </div>
 
           <div className="flex flex-1 min-w-0 items-center justify-end gap-1.5">
+            <div
+              className="shrink-0"
+              style={{ WebkitAppRegion: "no-drag" } as any}
+            >
+              <ProfileSwitcher settings={settingsData} />
+            </div>
             {currentView === "providers" &&
               activeApp !== "opencode" &&
               activeApp !== "openclaw" &&

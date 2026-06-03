@@ -1126,6 +1126,7 @@ pub fn run() {
             commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,
+            commands::switch_profile,
             commands::get_rectifier_config,
             commands::set_rectifier_config,
             commands::get_optimizer_config,
@@ -1207,6 +1208,7 @@ pub fn run() {
             commands::rename_db_backup,
             commands::delete_db_backup,
             commands::sync_current_providers_live,
+            commands::sync_profile_managed_providers_live,
             // Deep link import
             commands::parse_deeplink,
             commands::merge_deeplink_config,

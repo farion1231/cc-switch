@@ -291,6 +291,25 @@ export interface WebDavSyncSettings {
 
 export type RemoteSnapshotLayout = "current" | "legacy";
 
+// 本机环境配置档：目录覆盖和当前供应商选择按 profile 隔离。
+export interface Profile {
+  id: string;
+  label: string;
+  claudeConfigDir?: string;
+  codexConfigDir?: string;
+  geminiConfigDir?: string;
+  opencodeConfigDir?: string;
+  openclawConfigDir?: string;
+  hermesConfigDir?: string;
+  currentProviderClaude?: string;
+  currentProviderClaudeDesktop?: string;
+  currentProviderCodex?: string;
+  currentProviderGemini?: string;
+  currentProviderOpencode?: string;
+  currentProviderOpenclaw?: string;
+  currentProviderHermes?: string;
+}
+
 // 远端快照信息（下载前预览）
 export interface RemoteSnapshotInfo {
   deviceName: string;
@@ -372,6 +391,16 @@ export interface Settings {
   currentProviderCodex?: string;
   // 当前 Gemini 供应商 ID（优先于数据库 is_current）
   currentProviderGemini?: string;
+  // 当前 OpenCode 供应商 ID（优先于数据库 is_current）
+  currentProviderOpencode?: string;
+  // 当前 OpenClaw 供应商 ID（优先于数据库 is_current）
+  currentProviderOpenclaw?: string;
+  // 当前 Hermes 供应商 ID（优先于数据库 is_current）
+  currentProviderHermes?: string;
+
+  // ===== 环境配置档（设备级）=====
+  profiles?: Profile[];
+  activeProfileId?: string;
 
   // ===== Skill 同步设置 =====
   // Skill 同步方式：auto（默认，优先 symlink）、symlink、copy

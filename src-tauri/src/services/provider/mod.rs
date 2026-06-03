@@ -24,7 +24,7 @@ use crate::store::AppState;
 pub use live::{
     import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
     import_opencode_providers_from_live, read_live_settings,
-    should_import_default_config_on_startup, sync_current_to_live,
+    should_import_default_config_on_startup, sync_current_to_live, sync_profile_managed_to_live,
 };
 
 // Internal re-exports (pub(crate))
@@ -1796,6 +1796,10 @@ impl ProviderService {
     /// Sync current provider to live configuration (re-export)
     pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         sync_current_to_live(state)
+    }
+
+    pub fn sync_profile_managed_to_live(state: &AppState) -> Result<(), AppError> {
+        sync_profile_managed_to_live(state)
     }
 
     pub fn sync_current_provider_for_app(
