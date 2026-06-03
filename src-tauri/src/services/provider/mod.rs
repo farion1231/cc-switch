@@ -6159,8 +6159,8 @@ impl ProviderService {
         let claude_switch_plan =
             matches!(app_type, AppType::Claude).then(|| Self::claude_switch_plan(provider));
         if let Some(plan) = claude_switch_plan.as_ref() {
-            Self::validate_claude_runtime_switch_plan(&plan)?;
-            Self::apply_claude_switch_plan(&plan)?;
+            Self::validate_claude_runtime_switch_plan(plan)?;
+            Self::apply_claude_switch_plan(plan)?;
         }
 
         let is_claude_profile_only = matches!(
