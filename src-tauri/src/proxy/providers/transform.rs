@@ -499,8 +499,33 @@ fn convert_message_to_openai(
 }
 
 /// 清理 JSON schema（移除不支持的 format）
-pub fn clean_schema(mut schema: Value) -> Value {
+pub fn clean_schema(schema: Value) -> Value {
+    clean_schema_inner(schema, true)
+}
+
+fn clean_schema_inner(mut schema: Value, require_object_schema: bool) -> Value {
+    if !schema.is_object() {
+        return if require_object_schema {
+            json!({
+                "type": "object",
+                "properties": {}
+            })
+        } else {
+            schema
+        };
+    }
+
     if let Some(obj) = schema.as_object_mut() {
+        if require_object_schema && obj.get("type").and_then(|v| v.as_str()).is_none() {
+            obj.insert("type".to_string(), json!("object"));
+        }
+        if require_object_schema
+            && obj.get("type").and_then(|v| v.as_str()) == Some("object")
+            && !obj.contains_key("properties")
+        {
+            obj.insert("properties".to_string(), json!({}));
+        }
+
         // 移除 "format": "uri"
         if obj.get("format").and_then(|v| v.as_str()) == Some("uri") {
             obj.remove("format");
@@ -509,12 +534,12 @@ pub fn clean_schema(mut schema: Value) -> Value {
         // 递归清理嵌套 schema
         if let Some(properties) = obj.get_mut("properties").and_then(|v| v.as_object_mut()) {
             for (_, value) in properties.iter_mut() {
-                *value = clean_schema(value.clone());
+                *value = clean_schema_inner(value.clone(), false);
             }
         }
 
         if let Some(items) = obj.get_mut("items") {
-            *items = clean_schema(items.clone());
+            *items = clean_schema_inner(items.clone(), false);
         }
     }
     schema
@@ -826,6 +851,26 @@ mod tests {
         let result = anthropic_to_openai(input).unwrap();
         assert_eq!(result["tools"][0]["type"], "function");
         assert_eq!(result["tools"][0]["function"]["name"], "get_weather");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_tool_schema_null_defaults_to_object() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Search the web"}],
+            "tools": [{
+                "name": "web_search",
+                "description": "Search the web",
+                "input_schema": null
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(
+            result["tools"][0]["function"]["parameters"],
+            json!({"type": "object", "properties": {}})
+        );
     }
 
     #[test]
