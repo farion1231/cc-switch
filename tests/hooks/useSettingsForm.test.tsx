@@ -81,6 +81,29 @@ describe("useSettingsForm Hook", () => {
     expect(changeLanguageSpy).toHaveBeenCalledWith("ja");
   });
 
+  it("should support traditional chinese language preference aliases", async () => {
+    useSettingsQueryMock.mockReturnValue({
+      data: {
+        showInTray: true,
+        minimizeToTrayOnClose: true,
+        enableClaudePluginIntegration: false,
+        claudeConfigDir: "/Users/demo",
+        codexConfigDir: null,
+        language: "zh-Hant",
+      },
+      isLoading: false,
+    });
+
+    const { result } = renderHook(() => useSettingsForm());
+
+    await waitFor(() => {
+      expect(result.current.settings?.language).toBe("zh-TW");
+    });
+
+    expect(result.current.initialLanguage).toBe("zh-TW");
+    expect(changeLanguageSpy).toHaveBeenCalledWith("zh-TW");
+  });
+
   it("should prioritize reading language from local storage in readPersistedLanguage", () => {
     useSettingsQueryMock.mockReturnValue({
       data: null,

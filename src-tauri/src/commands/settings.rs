@@ -21,6 +21,24 @@ fn merge_settings_for_save(
         }
         _ => {}
     }
+    if incoming.local_migrations.is_none() {
+        incoming.local_migrations = existing.local_migrations.clone();
+    } else if let (Some(incoming_migrations), Some(existing_migrations)) =
+        (&mut incoming.local_migrations, &existing.local_migrations)
+    {
+        if incoming_migrations
+            .codex_third_party_history_provider_bucket_v1
+            .is_none()
+        {
+            incoming_migrations.codex_third_party_history_provider_bucket_v1 = existing_migrations
+                .codex_third_party_history_provider_bucket_v1
+                .clone();
+        }
+        if incoming_migrations.codex_provider_template_v1.is_none() {
+            incoming_migrations.codex_provider_template_v1 =
+                existing_migrations.codex_provider_template_v1.clone();
+        }
+    }
     incoming
 }
 
@@ -83,7 +101,10 @@ pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::merge_settings_for_save;
-    use crate::settings::{AppSettings, WebDavSyncSettings};
+    use crate::settings::{
+        AppSettings, CodexProviderTemplateMigration, CodexThirdPartyHistoryProviderBucketMigration,
+        LocalMigrations, WebDavSyncSettings,
+    };
 
     #[test]
     fn save_settings_should_preserve_existing_webdav_when_payload_omits_it() {
@@ -202,6 +223,55 @@ mod tests {
         assert_eq!(
             merged.webdav_sync.as_ref().map(|v| v.password.as_str()),
             Some("")
+        );
+    }
+
+    #[test]
+    fn save_settings_should_preserve_local_migrations_when_payload_omits_it() {
+        let existing = AppSettings {
+            local_migrations: Some(LocalMigrations {
+                codex_third_party_history_provider_bucket_v1: Some(
+                    CodexThirdPartyHistoryProviderBucketMigration {
+                        completed_at: "2026-05-20T00:00:00Z".to_string(),
+                        target_provider_id: "custom".to_string(),
+                        source_provider_ids: vec!["rightcode".to_string()],
+                        migrated_jsonl_files: 2,
+                        migrated_state_rows: 3,
+                        scanned_history_files: true,
+                    },
+                ),
+                codex_provider_template_v1: Some(CodexProviderTemplateMigration {
+                    completed_at: "2026-05-20T00:01:00Z".to_string(),
+                    migrated_provider_ids: vec!["legacy".to_string()],
+                }),
+            }),
+            ..AppSettings::default()
+        };
+
+        let incoming = AppSettings::default();
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        let migration = merged
+            .local_migrations
+            .as_ref()
+            .and_then(|migrations| {
+                migrations
+                    .codex_third_party_history_provider_bucket_v1
+                    .as_ref()
+            })
+            .expect("local migration marker should be preserved");
+        assert_eq!(migration.target_provider_id, "custom");
+        assert_eq!(migration.migrated_jsonl_files, 2);
+        assert_eq!(migration.migrated_state_rows, 3);
+
+        let template_migration = merged
+            .local_migrations
+            .as_ref()
+            .and_then(|migrations| migrations.codex_provider_template_v1.as_ref())
+            .expect("template migration marker should be preserved");
+        assert_eq!(
+            template_migration.migrated_provider_ids,
+            vec!["legacy".to_string()]
         );
     }
 }
