@@ -2,6 +2,7 @@ pub mod providers;
 pub mod terminal;
 
 use crate::database::Database;
+use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -251,15 +252,19 @@ fn load_title_overrides(db: &Database) -> Result<Vec<SessionTitleOverride>, Stri
         .get_setting("session_title_overrides")
         .map_err(|e| e.to_string())?;
 
+    Ok(parse_title_overrides(raw))
+}
+
+fn parse_title_overrides(raw: Option<String>) -> Vec<SessionTitleOverride> {
     match raw {
         Some(value) if !value.trim().is_empty() => match serde_json::from_str(&value) {
-            Ok(overrides) => Ok(overrides),
+            Ok(overrides) => overrides,
             Err(error) => {
                 log::warn!("Ignoring invalid session title overrides from settings: {error}");
-                Ok(Vec::new())
+                Vec::new()
             }
         },
-        _ => Ok(Vec::new()),
+        _ => Vec::new(),
     }
 }
 
@@ -277,7 +282,22 @@ fn upsert_title_override(
     source_path: &str,
     title: &str,
 ) -> Result<(), String> {
-    let mut overrides = load_title_overrides(db)?;
+    let mut conn = db
+        .conn
+        .lock()
+        .map_err(|e| format!("Mutex lock failed: {e}"))?;
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
+    let raw = tx
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params!["session_title_overrides"],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let mut overrides = parse_title_overrides(raw);
 
     if let Some(existing) = overrides.iter_mut().find(|entry| {
         entry.provider_id == provider_id
@@ -294,7 +314,14 @@ fn upsert_title_override(
         });
     }
 
-    save_title_overrides(db, &overrides)
+    let json = serde_json::to_string(&overrides)
+        .map_err(|e| format!("Failed to serialize session title overrides: {e}"))?;
+    tx.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+        params!["session_title_overrides", json],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())
 }
 
 fn delete_session_with_root(
@@ -506,6 +533,26 @@ mod tests {
         let saved = load_title_overrides(&db).expect("load overrides");
         assert_eq!(saved.len(), 1);
         assert_eq!(saved[0].title, "Second title");
+    }
+
+    #[test]
+    fn upsert_title_override_preserves_other_entries() {
+        let db = Database::memory().expect("memory db");
+
+        upsert_title_override(&db, "codex", "s1", "/tmp/s1.jsonl", "First title")
+            .expect("insert first override");
+        upsert_title_override(&db, "claude", "s2", "/tmp/s2.jsonl", "Second title")
+            .expect("insert second override");
+
+        let saved = load_title_overrides(&db).expect("load overrides");
+
+        assert_eq!(saved.len(), 2);
+        assert!(saved
+            .iter()
+            .any(|entry| entry.session_id == "s1" && entry.title == "First title"));
+        assert!(saved
+            .iter()
+            .any(|entry| entry.session_id == "s2" && entry.title == "Second title"));
     }
 
     #[test]
