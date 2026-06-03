@@ -670,7 +670,14 @@ fn restore_unmanaged_subtables(
         return;
     };
     for (k, tbl) in preserved {
-        server_tbl.insert(&k, toml_edit::Item::Table(tbl));
+        match server_tbl.get_mut(&k).and_then(|item| item.as_table_mut()) {
+            Some(existing_tbl) => {
+                merge_table_preserving_old(existing_tbl, &tbl);
+            }
+            None => {
+                server_tbl.insert(&k, toml_edit::Item::Table(tbl));
+            }
+        }
     }
 }
 
@@ -685,8 +692,8 @@ fn restore_unmanaged_subtables(
 /// 语义：
 /// - "受管子表"（`CC_SWITCH_MANAGED_SUBTABLE_KEYS`）跳过——它们由 cc-switch 自己负责。
 /// - **逐子键深度合并**：旧 live 与新文本同时存在某子表（如 `tools`）时，按叶子键
-///   合并而非整体取舍——旧 `tools.search` 与新 `tools.read` 都保留；同名叶子键冲突
-///   时新文本优先（处理用户在 provider config 中显式改写 `tools.*` 的少见情况）。
+///   合并而非整体取舍——旧 `tools.search` 与新 `tools.read` 都保留；同名叶子键冲突时
+///   旧 live 优先，避免 provider 中被 backfill 的 stale runtime 副本覆盖 Codex CLI 最新权限。
 /// - **不为新文本中不存在的 server 凭空建父表**：新文本没有的 server 说明切换后的
 ///   provider 配置不含它，且 provider 切换路径之后不会再跑 MCP sync 补全 command/url，
 ///   建一个只有 `tools.*` 的残缺 server 会让 Codex 无法加载——这类孤儿 runtime 子表直接丢弃。
@@ -698,10 +705,7 @@ pub(crate) fn merge_codex_runtime_subtables(new_text: &str, old_text: &str) -> S
     let Ok(old_doc) = old_text.parse::<DocumentMut>() else {
         return new_text.to_string();
     };
-    let Some(old_mcp_servers) = old_doc
-        .get("mcp_servers")
-        .and_then(|item| item.as_table())
-    else {
+    let Some(old_mcp_servers) = old_doc.get("mcp_servers").and_then(|item| item.as_table()) else {
         return new_text.to_string();
     };
 
@@ -749,16 +753,17 @@ pub(crate) fn merge_codex_runtime_subtables(new_text: &str, old_text: &str) -> S
         else {
             continue;
         };
-        // P2：逐子键合并——新文本已有同名子表（如 `tools`）时深度合并（新文本优先），
-        //     而非整体跳过，从而保住旧 live 中新文本未声明的 per-tool 授权。
-        match server_tbl.get_mut(&key) {
+        // P2：逐子键合并——新文本已有同名子表（如 `tools`）时深度合并（旧 live 优先），
+        //     而非整体跳过，从而保住 Codex CLI 最新写入的 per-tool 授权。
+        match server_tbl
+            .get_mut(&key)
+            .and_then(|item| item.as_table_mut())
+        {
+            Some(existing_tbl) => {
+                merge_table_preserving_old(existing_tbl, &tbl);
+            }
             None => {
                 server_tbl.insert(&key, toml_edit::Item::Table(tbl));
-            }
-            Some(existing) => {
-                if let Some(existing_tbl) = existing.as_table_mut() {
-                    merge_table_preserving_new(existing_tbl, &tbl);
-                }
             }
         }
     }
@@ -766,20 +771,20 @@ pub(crate) fn merge_codex_runtime_subtables(new_text: &str, old_text: &str) -> S
     new_doc.to_string()
 }
 
-/// 深度合并：把 `old` 的键并入 `target`，target（新文本）已有的叶子键优先保留，
-/// 仅补齐缺失键；两边同名且皆为子表时递归合并。用于在 `tools` 等子表层面做到
-/// 逐工具粒度的保留。
-fn merge_table_preserving_new(target: &mut toml_edit::Table, old: &toml_edit::Table) {
+/// 深度合并：把 `old` 的键并入 `target`，同名叶子键以 `old`（旧 live/runtime）优先；
+/// 两边同名且皆为子表时递归合并。用于在 `tools` 等子表层面做到逐工具粒度的保留。
+fn merge_table_preserving_old(target: &mut toml_edit::Table, old: &toml_edit::Table) {
     for (k, v) in old.iter() {
         match target.get_mut(k) {
             None => {
                 target.insert(k, v.clone());
             }
             Some(existing) => {
-                if let (Some(existing_tbl), Some(old_tbl)) =
-                    (existing.as_table_mut(), v.as_table())
+                if let (Some(existing_tbl), Some(old_tbl)) = (existing.as_table_mut(), v.as_table())
                 {
-                    merge_table_preserving_new(existing_tbl, old_tbl);
+                    merge_table_preserving_old(existing_tbl, old_tbl);
+                } else {
+                    *existing = v.clone();
                 }
             }
         }
@@ -1077,18 +1082,13 @@ command = "y"
         );
 
         let mut enabled = HashMap::new();
-        enabled.insert(
-            "y".to_string(),
-            json!({ "type": "stdio", "command": "y2" }),
-        );
+        enabled.insert("y".to_string(), json!({ "type": "stdio", "command": "y2" }));
 
         apply_enabled_servers_to_doc(&mut doc, &enabled);
         let v = parse_value(&doc);
 
         assert!(
-            v.get("mcp_servers")
-                .and_then(|m| m.get("x"))
-                .is_none(),
+            v.get("mcp_servers").and_then(|m| m.get("x")).is_none(),
             "未在 enabled 中的 server 应被整体移除（pre-existing 行为）"
         );
         assert_eq!(v["mcp_servers"]["y"]["command"].as_str(), Some("y2"));
@@ -1131,7 +1131,10 @@ command = "ace"
 
         // 新文本的字段保留
         assert_eq!(v["model_provider"].as_str(), Some("anthropic"));
-        assert_eq!(v["mcp_servers"]["ace-tool-rs"]["command"].as_str(), Some("ace"));
+        assert_eq!(
+            v["mcp_servers"]["ace-tool-rs"]["command"].as_str(),
+            Some("ace")
+        );
         // 旧 tools.* 必须保留
         assert_eq!(
             v["mcp_servers"]["ace-tool-rs"]["tools"]["search_context"]["approval_mode"].as_str(),
@@ -1168,7 +1171,10 @@ command = "new"
 
         assert_eq!(v["mcp_servers"]["x"]["command"].as_str(), Some("new"));
         // 受管子表都不应该被保留进来
-        assert!(v["mcp_servers"]["x"].get("env").is_none(), "env 受管，不应被 Layer 2 保留");
+        assert!(
+            v["mcp_servers"]["x"].get("env").is_none(),
+            "env 受管，不应被 Layer 2 保留"
+        );
         assert!(
             v["mcp_servers"]["x"].get("http_headers").is_none(),
             "http_headers 受管，不应被 Layer 2 保留"
@@ -1185,8 +1191,9 @@ command = "new"
     }
 
     #[test]
-    fn merge_runtime_new_wins_when_key_collides() {
-        // 用户在 provider config 中显式声明了 tools.*——新文本优先
+    fn merge_runtime_live_wins_when_key_collides() {
+        // provider config 可能是之前从 live backfill 的 stale runtime 副本；
+        // 发生冲突时应保留当前 live 中 Codex CLI 最新写入的权限。
         let old = r#"
 [mcp_servers.x.tools.t1]
 approval_mode = "approve"
@@ -1200,8 +1207,8 @@ approval_mode = "deny"
 
         assert_eq!(
             v["mcp_servers"]["x"]["tools"]["t1"]["approval_mode"].as_str(),
-            Some("deny"),
-            "新文本显式声明同名子表时应保留新值"
+            Some("approve"),
+            "同名 runtime 子表冲突时应保留旧 live 中的最新权限"
         );
     }
 
