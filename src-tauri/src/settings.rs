@@ -342,6 +342,17 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_terminal: Option<String>,
 
+    // ===== 远程管理设置 =====
+    /// 是否启用远程管理 HTTP 服务（默认 true）
+    #[serde(default = "default_remote_enabled")]
+    pub remote_enabled: bool,
+    /// 远程管理服务端口（默认 4000）
+    #[serde(default = "default_remote_port")]
+    pub remote_port: u16,
+    /// 是否同时监听 Tailscale IP 以允许远程访问（默认 false）
+    #[serde(default)]
+    pub remote_tailscale_enabled: bool,
+
     // ===== 本机自动迁移状态 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_migrations: Option<LocalMigrations>,
@@ -353,6 +364,14 @@ fn default_show_in_tray() -> bool {
 
 fn default_minimize_to_tray_on_close() -> bool {
     true
+}
+
+fn default_remote_enabled() -> bool {
+    true
+}
+
+fn default_remote_port() -> u16 {
+    4000
 }
 
 impl Default for AppSettings {
@@ -396,6 +415,9 @@ impl Default for AppSettings {
             backup_interval_hours: None,
             backup_retain_count: None,
             preferred_terminal: None,
+            remote_enabled: true,
+            remote_port: 4000,
+            remote_tailscale_enabled: false,
             local_migrations: None,
         }
     }

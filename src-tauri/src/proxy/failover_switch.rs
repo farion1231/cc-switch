@@ -128,6 +128,14 @@ impl FailoverSwitchManager {
             if let Err(e) = app.emit("provider-switched", event_data) {
                 log::error!("[Failover] 发射事件失败: {e}");
             }
+
+            // 广播给远程浏览器（SSE）
+            let app = app.clone();
+            let app_type = app_type.to_string();
+            let provider_id = provider_id.to_string();
+            tauri::async_runtime::spawn(async move {
+                crate::remote::broadcast_provider_switch(&app, &app_type, &provider_id).await;
+            });
         }
 
         Ok(switched)

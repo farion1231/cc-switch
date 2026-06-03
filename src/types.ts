@@ -395,6 +395,11 @@ export interface Settings {
   // Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
   preferredTerminal?: string;
 
+  // ===== 远程管理设置 =====
+  remoteEnabled?: boolean;
+  remotePort?: number;
+  remoteTailscaleEnabled?: boolean;
+
   // ===== 本机自动迁移状态 =====
   localMigrations?: {
     codexThirdPartyHistoryProviderBucketV1?: {
