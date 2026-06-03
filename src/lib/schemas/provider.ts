@@ -1,8 +1,15 @@
 import { z } from "zod";
 import { getActiveLanguage } from "@/lib/locale";
 
-function t(messages: Record<"zh" | "en" | "ja" | "ru", string>): string {
-  return messages[getActiveLanguage()] ?? messages.en;
+type TranslationMessages = Record<"zh" | "en" | "ja" | "ru", string> &
+  Partial<Record<"zh-TW", string>>;
+
+function t(messages: TranslationMessages): string {
+  const language = getActiveLanguage();
+  if (language === "zh-TW") {
+    return messages["zh-TW"] ?? messages.zh;
+  }
+  return messages[language] ?? messages.en;
 }
 
 /**

@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/dialog";
 import { useRequestDetail } from "@/lib/query/usage";
 import { getFreshInputTokens, isUnpricedUsage } from "@/types/usage";
+import { getLocaleFromLanguage } from "./format";
 
 interface RequestDetailPanelProps {
   requestId: string;
@@ -20,13 +21,7 @@ export function RequestDetailPanel({
   const { t, i18n } = useTranslation();
   const { data: request, isLoading } = useRequestDetail(requestId);
   const language = i18n.resolvedLanguage || i18n.language || "en";
-  const dateLocale = language.startsWith("zh")
-    ? "zh-CN"
-    : language.startsWith("ja")
-      ? "ja-JP"
-      : language.startsWith("ru")
-        ? "ru-RU"
-        : "en-US";
+  const dateLocale = getLocaleFromLanguage(language);
 
   if (isLoading) {
     return (

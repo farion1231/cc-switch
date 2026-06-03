@@ -26,13 +26,14 @@ fn current_language() -> String {
     settings::get_settings()
         .language
         .unwrap_or_else(|| "zh".to_string())
+        .to_lowercase()
 }
 
 fn localized_text(zh: &str, en: &str, ja: &str, ru: &str) -> String {
     match current_language().as_str() {
-        "en" => en.to_string(),
-        "ja" => ja.to_string(),
-        "ru" => ru.to_string(),
+        l if l.starts_with("en") => en.to_string(),
+        l if l.starts_with("ja") => ja.to_string(),
+        l if l.starts_with("ru") => ru.to_string(),
         _ => zh.to_string(),
     }
 }
@@ -79,7 +80,7 @@ impl SpeedtestService {
                             &format!("URL 无效: {err}"),
                             &format!("Invalid URL: {err}"),
                             &format!("URL が無効です: {err}"),
-                            &format!("URL недействителен: {err}"),
+                            &format!("Недопустимый URL: {err}"),
                         )),
                     });
                 }
@@ -119,7 +120,7 @@ impl SpeedtestService {
                                 "请求超时",
                                 "Request timed out",
                                 "リクエストがタイムアウトしました",
-                                "Время ожидания запроса истекло",
+                                "Превышено время ожидания запроса",
                             )
                         } else if err.is_connect() {
                             localized_text(

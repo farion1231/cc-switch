@@ -4,18 +4,12 @@ import { useSettingsQuery } from "@/lib/query";
 import type { Settings } from "@/types";
 import {
   DEFAULT_LANGUAGE,
-  isSupportedLanguage,
+  normalizeLanguage,
   type Language,
 } from "@/i18n/languages";
 
 export type SettingsFormState = Omit<Settings, "language"> & {
   language: Language;
-};
-
-const normalizeLanguage = (lang?: string | null): Language => {
-  if (!lang) return DEFAULT_LANGUAGE;
-  const normalized = lang.toLowerCase();
-  return isSupportedLanguage(normalized) ? normalized : DEFAULT_LANGUAGE;
 };
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -56,10 +50,7 @@ export function useSettingsForm(): UseSettingsFormResult {
     if (typeof window !== "undefined") {
       const stored = window.localStorage.getItem("language");
       if (stored) {
-        const normalized = stored.toLowerCase();
-        if (isSupportedLanguage(normalized)) {
-          return normalized;
-        }
+        return normalizeLanguage(stored);
       }
     }
     return normalizeLanguage(i18n.language);
@@ -89,6 +80,8 @@ export function useSettingsForm(): UseSettingsFormResult {
         data.enableClaudePluginIntegration ?? false,
       silentStartup: data.silentStartup ?? false,
       skipClaudeOnboarding: data.skipClaudeOnboarding ?? false,
+      preserveCodexOfficialAuthOnSwitch:
+        data.preserveCodexOfficialAuthOnSwitch ?? false,
       claudeConfigDir: sanitizeDir(data.claudeConfigDir),
       codexConfigDir: sanitizeDir(data.codexConfigDir),
       geminiConfigDir: sanitizeDir(data.geminiConfigDir),
@@ -113,6 +106,7 @@ export function useSettingsForm(): UseSettingsFormResult {
             useAppWindowControls: false,
             enableClaudePluginIntegration: false,
             skipClaudeOnboarding: false,
+            preserveCodexOfficialAuthOnSwitch: false,
             language: readPersistedLanguage(),
           } as SettingsFormState);
 
@@ -150,6 +144,8 @@ export function useSettingsForm(): UseSettingsFormResult {
           serverData.enableClaudePluginIntegration ?? false,
         silentStartup: serverData.silentStartup ?? false,
         skipClaudeOnboarding: serverData.skipClaudeOnboarding ?? false,
+        preserveCodexOfficialAuthOnSwitch:
+          serverData.preserveCodexOfficialAuthOnSwitch ?? false,
         claudeConfigDir: sanitizeDir(serverData.claudeConfigDir),
         codexConfigDir: sanitizeDir(serverData.codexConfigDir),
         geminiConfigDir: sanitizeDir(serverData.geminiConfigDir),

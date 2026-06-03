@@ -57,11 +57,17 @@ pub fn anthropic_to_gemini_with_shadow(
         .map(|snapshot| snapshot.turns)
         .unwrap_or_default();
 
-    if let Some(system) = build_system_instruction(body.get("system"))? {
+    let messages = body.get("messages").and_then(|value| value.as_array());
+
+    let system_instruction = build_system_instruction(
+        body.get("system"),
+        messages.map(|messages| messages.as_slice()),
+    )?;
+    if let Some(system) = system_instruction {
         result["systemInstruction"] = system;
     }
 
-    if let Some(messages) = body.get("messages").and_then(|value| value.as_array()) {
+    if let Some(messages) = messages {
         result["contents"] = json!(convert_messages_to_contents(messages, &shadow_turns)?);
     }
 
@@ -269,31 +275,26 @@ pub fn extract_gemini_model(body: &Value) -> Option<&str> {
     body.get("model").and_then(|value| value.as_str())
 }
 
-fn build_system_instruction(system: Option<&Value>) -> Result<Option<Value>, ProxyError> {
-    let Some(system) = system else {
-        return Ok(None);
-    };
+fn build_system_instruction(
+    system: Option<&Value>,
+    messages: Option<&[Value]>,
+) -> Result<Option<Value>, ProxyError> {
+    let mut texts = Vec::new();
 
-    if let Some(text) = system.as_str() {
-        if text.is_empty() {
-            return Ok(None);
-        }
-        return Ok(Some(json!({
-            "parts": [{ "text": text }]
-        })));
+    if let Some(system) = system {
+        collect_system_texts(system, &mut texts)?;
     }
 
-    let Some(blocks) = system.as_array() else {
-        return Err(ProxyError::TransformError(
-            "Anthropic system must be a string or an array".to_string(),
-        ));
-    };
-
-    let texts: Vec<&str> = blocks
-        .iter()
-        .filter_map(|block| block.get("text").and_then(|value| value.as_str()))
-        .filter(|text| !text.is_empty())
-        .collect();
+    if let Some(messages) = messages {
+        for message in messages {
+            if message.get("role").and_then(|value| value.as_str()) != Some("system") {
+                continue;
+            }
+            if let Some(content) = message.get("content") {
+                collect_system_texts(content, &mut texts)?;
+            }
+        }
+    }
 
     if texts.is_empty() {
         return Ok(None);
@@ -302,6 +303,31 @@ fn build_system_instruction(system: Option<&Value>) -> Result<Option<Value>, Pro
     Ok(Some(json!({
         "parts": [{ "text": texts.join("\n\n") }]
     })))
+}
+
+fn collect_system_texts(value: &Value, texts: &mut Vec<String>) -> Result<(), ProxyError> {
+    if let Some(text) = value.as_str() {
+        if !text.is_empty() {
+            texts.push(text.to_string());
+        }
+        return Ok(());
+    }
+
+    let Some(blocks) = value.as_array() else {
+        return Err(ProxyError::TransformError(
+            "Anthropic system must be a string or an array".to_string(),
+        ));
+    };
+
+    texts.extend(
+        blocks
+            .iter()
+            .filter_map(|block| block.get("text").and_then(|value| value.as_str()))
+            .filter(|text| !text.is_empty())
+            .map(ToString::to_string),
+    );
+
+    Ok(())
 }
 
 fn build_generation_config(body: &Value) -> Option<Value> {
@@ -383,6 +409,9 @@ fn convert_messages_to_contents(
             .get("role")
             .and_then(|value| value.as_str())
             .unwrap_or("user");
+        if role == "system" {
+            continue;
+        }
 
         let gemini_role = if role == "assistant" { "model" } else { "user" };
 
@@ -1147,6 +1176,32 @@ mod tests {
         assert_eq!(result["contents"][0]["role"], "user");
         assert_eq!(result["contents"][0]["parts"][0]["text"], "Hello");
         assert_eq!(result["generationConfig"]["maxOutputTokens"], 128);
+    }
+
+    #[test]
+    fn anthropic_to_gemini_merges_system_messages_into_system_instruction() {
+        let input = json!({
+            "model": "gemini-3-pro",
+            "system": [{ "type": "text", "text": "Top level system." }],
+            "messages": [
+                { "role": "system", "content": "Message system." },
+                {
+                    "role": "system",
+                    "content": [{ "type": "text", "text": "Block system." }]
+                },
+                { "role": "user", "content": "Hello" }
+            ]
+        });
+
+        let result = anthropic_to_gemini(input).unwrap();
+
+        assert_eq!(
+            result["systemInstruction"]["parts"][0]["text"],
+            "Top level system.\n\nMessage system.\n\nBlock system."
+        );
+        assert_eq!(result["contents"].as_array().unwrap().len(), 1);
+        assert_eq!(result["contents"][0]["role"], "user");
+        assert_eq!(result["contents"][0]["parts"][0]["text"], "Hello");
     }
 
     #[test]

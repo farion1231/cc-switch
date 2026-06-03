@@ -49,10 +49,19 @@ impl TrayTexts {
             },
             "ru" => Self {
                 show_main: "Открыть главное окно",
+                open_website: "Открыть официальный сайт",
                 no_providers_label: "(нет провайдеров)",
                 lightweight_mode: "Облегченный режим",
                 quit: "Выход",
                 _auto_label: "Авто (аварийное переключение)",
+            },
+            "zh-TW" => Self {
+                show_main: "開啟主介面",
+                open_website: "開啟官方網站",
+                no_providers_label: "(無供應商)",
+                lightweight_mode: "輕量模式",
+                quit: "退出",
+                _auto_label: "自動 (故障轉移)",
             },
             _ => Self {
                 show_main: "打开主界面",
@@ -901,6 +910,8 @@ mod tests {
             name: name.to_string(),
             utilization,
             resets_at: None,
+            used_value_usd: None,
+            max_value_usd: None,
         }
     }
 

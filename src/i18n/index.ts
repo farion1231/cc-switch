@@ -5,10 +5,12 @@ import en from "./locales/en.json";
 import ja from "./locales/ja.json";
 import ru from "./locales/ru.json";
 import zh from "./locales/zh.json";
+import zhTW from "./locales/zh-TW.json";
 import {
   DEFAULT_LANGUAGE,
   type Language,
   isSupportedLanguage,
+  normalizeLanguage,
 } from "./languages";
 
 const getInitialLanguage = (): Language => {
@@ -29,23 +31,7 @@ const getInitialLanguage = (): Language => {
         navigator.languages?.[0]?.toLowerCase())
       : undefined;
 
-  if (navigatorLang?.startsWith("zh")) {
-    return "zh";
-  }
-
-  if (navigatorLang?.startsWith("ja")) {
-    return "ja";
-  }
-
-  if (navigatorLang?.startsWith("ru")) {
-    return "ru";
-  }
-
-  if (navigatorLang?.startsWith("en")) {
-    return "en";
-  }
-
-  return DEFAULT_LANGUAGE;
+  return normalizeLanguage(navigatorLang ?? DEFAULT_LANGUAGE);
 };
 
 const resources = {
@@ -60,6 +46,9 @@ const resources = {
   },
   zh: {
     translation: zh,
+  },
+  "zh-TW": {
+    translation: zhTW,
   },
 };
 

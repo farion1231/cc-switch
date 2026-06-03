@@ -170,7 +170,8 @@
         "oauthHint": "Официальный Google использует персональную OAuth-авторизацию, API-ключ не требуется. При первом запуске браузер автоматически откроется для входа.",
         "apiKeyPlaceholder": "Введите API-ключ Gemini"
       }
-    }
+    },
+    "importFromClaude": "Импортировать существующих провайдеров из Claude Code"
   },
   "notifications": {
     "providerAdded": "Провайдер добавлен",
@@ -211,7 +212,10 @@
     "backfillWarning": "Переключение выполнено успешно, но не удалось сохранить изменения обратно в предыдущего провайдера",
     "windowControlFailed": "Не удалось выполнить управление окном: {{error}}",
     "officialBlockedByProxy": "Нельзя переключиться на официальный провайдер, пока активна локальная маршрутизация. Использование маршрутизации с официальными API может привести к блокировке аккаунта.",
-    "proxyOfficialWarning": "Текущий провайдер {{name}} является официальным. Перед использованием локальной маршрутизации рекомендуется переключиться на стороннего провайдера."
+    "proxyOfficialWarning": "Текущий провайдер {{name}} является официальным. Перед использованием локальной маршрутизации рекомендуется переключиться на стороннего провайдера.",
+    "codexRestartRequired": "Переключение выполнено. Перезапустите клиент, чтобы применить изменения.",
+    "claudeDesktopRestartRequired": "Переключение выполнено. Перезапустите Claude Desktop, чтобы применить изменения.",
+    "claudeDesktopProxyRestartRequired": "Переключение выполнено. Оставьте CC Switch запущенным и перезапустите Claude Desktop, чтобы применить изменения."
   },
   "confirm": {
     "deleteProvider": "Удалить провайдера",
@@ -608,7 +612,6 @@
     "releaseNotes": "Примечания к выпуску",
     "viewReleaseNotes": "Показать примечания к выпуску для этой версии",
     "viewCurrentReleaseNotes": "Показать примечания к текущей версии",
-    "oneClickInstall": "Установка в один клик",
     "oneClickInstallHint": "Установить Claude Code / Codex / Gemini CLI / OpenCode",
     "localEnvCheck": "Проверка локальной среды",
     "envBadge": {
@@ -658,7 +661,43 @@
       "defaultCostMultiplierRequired": "Требуется коэффициент по умолчанию",
       "defaultCostMultiplierInvalid": "Неверный формат коэффициента"
     },
-    "saveFailedGeneric": "Не удалось сохранить, попробуйте ещё раз"
+    "saveFailedGeneric": "Не удалось сохранить, попробуйте ещё раз",
+    "codexAuth": "Улучшения приложения Codex",
+    "preserveCodexOfficialAuthOnSwitch": "Сохранять официальный вход Codex при переключении сторонних провайдеров",
+    "preserveCodexOfficialAuthOnSwitchDescription": "Если включено, можно пользоваться официальными плагинами приложения Codex, удалённым управлением с мобильного и другими функциями при работе через сторонние API.",
+    "officialWebsite": "Официальный сайт",
+    "github": "GitHub",
+    "manualInstallCommands": "Команды ручной установки",
+    "updateAllTools": "Обновить все ({{count}})",
+    "currentVersion": "Текущая версия",
+    "latestVersion": "Последняя версия",
+    "updateAvailableShort": "Обновить",
+    "toolInstall": "Установить",
+    "toolUpdate": "Обновить",
+    "toolReady": "Готово",
+    "toolActionDone": "{{action}} выполнено для {{count}} инструментов",
+    "toolActionPartial": "{{action}} выполнено: {{succeeded}}, ошибок: {{failed}}",
+    "toolActionFailed": "Команда установки/обновления завершилась ошибкой",
+    "toolNotRunnable": "Установлено, но не запускается (версия не определена)",
+    "toolActionVersionUnchangedTitle": "Версия не изменилась",
+    "toolActionVersionUnchanged": "По-прежнему {{version}} (последняя: {{latest}}). Обновлятор мог сообщить об успехе, не применив обновление.",
+    "toolActionInstalledNotRunnable": "Установлено, но не запускается в текущем окружении — проверьте установку",
+    "installedNotRunnable": "Установлено · не запускается",
+    "toolCheckEnv": "Проверить окружение",
+    "toolDiagnose": "Диагностировать установки",
+    "toolDiagnosing": "Диагностика…",
+    "toolConflictTitle": "Обнаружено несколько установок",
+    "toolConflictHint": "Командная строка использует установку, помеченную как «По умолчанию»; обновление могло быть записано в другую.",
+    "toolConflictDefault": "По умолчанию",
+    "toolConflictNotRunnable": "не запускается",
+    "toolDiagnoseNoConflict": "Конфликтующих установок не найдено",
+    "toolDiagnoseFailed": "Диагностика не удалась",
+    "toolUpgradeConfirmTitle": "Подтвердите цель обновления",
+    "toolUpgradeConfirmHint": "Обнаружено несколько установок. Это обновление не обновит их все; ниже показано, на что оно фактически нацелено для каждого инструмента.",
+    "toolUpgradeWillRun": "Будет выполнено:",
+    "toolUpgradeConfirmBtn": "Подтвердить обновление",
+    "toolUpgradeUnanchoredHint": "Не удалось определить, какую установку использует командная строка; будет выполнена команда обновления по умолчанию (может установить пакет в первый npm из PATH).",
+    "languageOptionTraditionalChinese": "繁體中文"
   },
   "apps": {
     "claude": "Claude",
@@ -666,7 +705,10 @@
     "gemini": "Gemini",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "claudeCode": "Claude Code",
+    "claudeDesktop": "Claude Desktop",
+    "claude-desktop": "Claude Desktop"
   },
   "sessionManager": {
     "title": "Менеджер сессий",
@@ -790,17 +832,25 @@
       "aigocode": "AIGoCode — официальный партнёр CC Switch. Зарегистрируйтесь по этой ссылке и получите 10% бонусного кредита на первое пополнение!",
       "rightcode": "RightCode — официальный партнёр CC Switch. Зарегистрируйтесь по этой ссылке и получите 5% бонусного кредита на каждое пополнение!",
       "aicodemirror": "AICodeMirror — официальный партнёр CC Switch. Зарегистрируйтесь по этой ссылке и получите скидку 20%!",
-      "aicoding": "AI Coding предлагает эксклюзивную скидку для пользователей CC Switch — 10% на первое пополнение!",
       "crazyrouter": "CrazyRouter предлагает эксклюзивный бонус для пользователей CC Switch — 30% дополнительного кредита на первое пополнение!",
       "sssaicode": "SSAI Code предлагает эксклюзивный бонус для пользователей CC Switch — $10 дополнительного кредита на каждое пополнение!",
       "siliconflow": "SiliconFlow — официальный партнёр CC Switch",
       "ucloud": "Compshare предлагает эксклюзивный бонус для пользователей CC Switch — зарегистрируйтесь по этой ссылке и получите ¥5 тестового кредита на платформу!",
       "micu": "Micu — официальный партнёр CC Switch",
       "ctok": "Присоединяйтесь к сообществу CTok на официальном сайте и оформите план.",
-      "ddshub": "DDSHub предлагает специальный бонус для пользователей CC Switch — зарегистрируйтесь по этой ссылке и получите 10% дополнительного кредита на первое пополнение (для получения свяжитесь с администратором группы)!",
-      "lionccapi": "LionCCAPI предлагает эксклюзивные преимущества для пользователей CC Switch. После регистрации добавьте WeChat HSQBJ088888888 и укажите 'cc-switch', чтобы получить $10 бесплатного кредита!",
       "shengsuanyun": "Shengsuanyun предлагает эксклюзивные преимущества для пользователей CC Switch. Новые пользователи, зарегистрировавшиеся по этой ссылке, получают ¥10 бесплатного кредита и 10% бонуса на первое пополнение!",
-      "lemondata": "Lemon Code предлагает специальную акцию для пользователей CC Switch. Зарегистрируйтесь по этой ссылке, чтобы получить $1 бесплатного кредита."
+      "lemondata": "Lemon Code предлагает специальную акцию для пользователей CC Switch. Зарегистрируйтесь по этой ссылке, чтобы получить $1 бесплатного кредита.",
+      "apikeyfun": "APIKEY.FUN предлагает специальное условие для пользователей CC Switch: зарегистрируйтесь по эксклюзивной ссылке и получите постоянную скидку до 5% на пополнения.",
+      "apinebula": "APINEBULA предлагает пользователям CC Switch специальную скидку: зарегистрируйтесь по ссылке и введите промокод ccswitch при первом пополнении, чтобы получить скидку 10%.",
+      "atlascloud": "Atlas Cloud — полноформатная платформа AI-инференса: один API для генерации видео, изображений и доступа к LLM. Обратите внимание на новую акцию Coding Plan для более выгодного API-доступа.",
+      "byteplus": "Зарегистрируйтесь по этой ссылке, чтобы получить 500 000 бесплатных токенов инференса для каждой модели.",
+      "claudeapi": "ClaudeAPI предлагает специальные бонусы для пользователей CC Switch. Зарегистрируйтесь по этой ссылке, чтобы получить тестовые кредиты.",
+      "claudecn": "ClaudeCN — корпоративный AI-шлюз, управляемый зарегистрированной компанией, с поддержкой корпоративных закупок, оплат от юрлиц, договоров и гарантий соответствия требованиям.",
+      "doubaoseed": "DouBao предлагает эксклюзивные бонусы для пользователей CC Switch: зарегистрируйтесь по ссылке и получите 500K токенов инференса для всех текстовых моделей DouBao и 5M бесплатных токенов Seedance 2.0.",
+      "patewayai": "PatewayAI предлагает специальные бонусы для пользователей CC Switch. Зарегистрируйтесь по этой ссылке, чтобы получить кредит $3.",
+      "runapi": "RunAPI предлагает специальные бонусы для пользователей CC Switch. Зарегистрируйтесь по этой ссылке и обратитесь в поддержку, чтобы получить бесплатный кредит ¥14.",
+      "sudocode": "SudoCode — глобальный сервис агрегации AI-моделей. Один API-ключ работает с несколькими моделями, есть пресеты для Claude Code, Codex, Gemini CLI, OpenClaw и других.",
+      "volcengine_agentplan": "Volcengine Ark Agent Plan предлагает эксклюзивные бонусы для пользователей CC Switch: оформите подписку по этой ссылке, для новых клиентов цены начинаются от ¥40 в месяц."
     },
     "presets": {
       "ucloud": "Compshare",
@@ -883,7 +933,21 @@
     "fetchModelsAuthFailed": "API-ключ недействителен или не имеет прав",
     "fetchModelsNotSupported": "Этот провайдер не поддерживает получение списка моделей",
     "fetchModelsEndpointNotFound": "Не найден доступный endpoint моделей. Проверьте Base URL или уточните, предоставляет ли провайдер этот API.",
-    "fetchModelsTimeout": "Время ожидания запроса истекло, проверьте сетевое подключение"
+    "fetchModelsTimeout": "Время ожидания запроса истекло, проверьте сетевое подключение",
+    "codexApiFormatHint": "Выберите формат Codex API, который действительно поддерживает этот провайдер; для новых версий Codex конфигурация остаётся на Responses, а Chat Completions преобразуется через локальную маршрутизацию.",
+    "codexApiFormatOpenAIChat": "OpenAI Chat Completions (требуется маршрутизация)",
+    "codexApiFormatResponses": "OpenAI Responses API (нативно)",
+    "fallbackModelHint": "Используется только когда запрос Claude Code нельзя явно сопоставить с Sonnet, Opus или Haiku. Обычно можно оставить пустым.",
+    "fallbackModelLabel": "Модель fallback по умолчанию",
+    "modelDisplayNameLabel": "Отображаемое имя",
+    "modelDisplayNamePlaceholder": "например, DeepSeek V4 Pro",
+    "modelOneMHeader": "Заявить 1M",
+    "modelOneMLabel": "1M",
+    "modelRoleLabel": "Роль модели",
+    "modelRoleSonnet": "Sonnet",
+    "modelRoleOpus": "Opus",
+    "modelRoleHaiku": "Haiku",
+    "requestModelLabel": "Запрашиваемая модель"
   },
   "copilot": {
     "authSection": "Авторизация GitHub Copilot",
@@ -1010,7 +1074,39 @@
     "modelNamePlaceholder": "например, gpt-5-codex",
     "contextWindow1M": "Окно контекста 1M",
     "autoCompactLimit": "Предел авто-сжатия",
-    "autoCompactLimitHint": "Автоматически сжимает историю, когда контекст достигает этого лимита токенов"
+    "autoCompactLimitHint": "Автоматически сжимает историю, когда контекст достигает этого лимита токенов",
+    "authJsonStorageHint": "Proxy takeover показывает сохранённую авторизацию, а не текущий auth.json.",
+    "configTomlStorageHint": "Proxy takeover показывает сохранённую конфигурацию, а не текущий config.toml.",
+    "proxyTakeoverStorageNotice": "Подсказка: это приложение находится под управлением proxy takeover. Вы редактируете сохранённую конфигурацию провайдера; активная конфигурация уже временно управляется прокси.",
+    "enableGoalMode": "Включить режим Goal",
+    "enableRemoteCompaction": "Включить удалённое сжатие",
+    "remoteCompactionHint": "Если включено, имя активной записи model_providers записывается как OpenAI, чтобы Codex мог попробовать удалённое сжатие.",
+    "localRoutingToggle": "Требуется локальная маршрутизация",
+    "localRoutingOffHint": "Если провайдер не является нативным OpenAI Responses API или имя модели не относится к стандартной GPT-серии Codex, включите этот переключатель.",
+    "localRoutingOnHint": "Codex сейчас нативно поддерживает только OpenAI Responses API и модели GPT-серии. Если провайдер использует Chat Completions или не-GPT модели, например DeepSeek или Kimi, включите этот переключатель и держите локальную маршрутизацию запущенной во время использования.",
+    "upstreamModelName": "Имя upstream-модели",
+    "upstreamModelNameHint": "Для формата Chat укажите здесь реальную upstream-модель; маршрутизация преобразует Codex Responses-запросы в Chat Completions, сохраняя эту модель.",
+    "contextWindow": "Окно контекста",
+    "contextWindowPlaceholder": "например, 128000",
+    "autoCompactLimitPlaceholder": "например, 90000",
+    "modelMetadataAdvanced": "Дополнительные параметры метаданных модели",
+    "modelMetadataAdvancedHint": "Переопределяет метаданные Codex для неизвестных моделей; очистка поля удаляет соответствующую запись из config.toml.",
+    "modelMappingTitle": "Сопоставление моделей",
+    "modelMappingHint": "Генерирует Codex model_catalog_json, чтобы /model показывал имена сторонних моделей; записи сохраняются ровно в указанном виде. После изменений Codex нужно перезапустить, чтобы обновить список моделей.",
+    "addCatalogModel": "Добавить модель",
+    "catalogDisplayName": "Отображаемое имя",
+    "catalogDisplayNamePlaceholder": "например, DeepSeek V4 Flash",
+    "catalogModelId": "ID модели",
+    "catalogModelPlaceholder": "например, deepseek-v4-flash",
+    "catalogColumnDisplay": "Имя в меню",
+    "catalogColumnModel": "Реальная модель запроса",
+    "catalogColumnContext": "Окно контекста",
+    "reasoningModeToggle": "Поддерживает режим thinking",
+    "reasoningModeHint": "Включите, если upstream Chat Completions API поддерживает переключение thinking. Обычно это относится к провайдерам Kimi, GLM и Qwen.",
+    "reasoningEffortToggle": "Поддерживает уровень reasoning effort",
+    "reasoningEffortHint": "Включите, если upstream поддерживает управление глубиной thinking, например low/high/max. Это также включает thinking mode и преобразует Codex reasoning.effort в upstream-параметр Chat.",
+    "reasoningSectionToggle": "Возможности reasoning (дополнительно · обычно определяются автоматически)",
+    "reasoningSectionHint": "Пресетные провайдеры настроены автоматически; пользовательские провайдеры определяются по имени/URL. Раскрывайте для ручного переопределения только если автоопределение ошиблось."
   },
   "geminiConfig": {
     "envFile": "Переменные окружения (.env)",
@@ -1122,8 +1218,7 @@
       "all": "Все",
       "claude": "Claude Code",
       "codex": "Codex",
-      "gemini": "Gemini",
-      "hermes": "Hermes"
+      "gemini": "Gemini"
     },
     "dataSources": "Источники данных",
     "dataSource": {
@@ -1131,8 +1226,7 @@
       "session_log": "Журнал сессий",
       "codex_db": "База Codex",
       "codex_session": "Сессия Codex",
-      "gemini_session": "Сессия Gemini",
-      "hermes_session": "Сессия Hermes"
+      "gemini_session": "Сессия Gemini"
     },
     "sessionSync": {
       "trigger": "Синхронизировать журналы сессий",
@@ -1221,7 +1315,14 @@
     "pricingAdded": "Тариф добавлен",
     "pricingUpdated": "Тариф обновлён",
     "cacheReadCostPerMillion": "Стоимость чтения кэша (за миллион токенов, USD)",
-    "cacheCreationCostPerMillion": "Стоимость записи кэша (за миллион токенов, USD)"
+    "cacheCreationCostPerMillion": "Стоимость записи кэша (за миллион токенов, USD)",
+    "realTotal": "Обработано токенов",
+    "realTotalHint": "Input + Output + Cache Write + Cache Read",
+    "tokensSuffix": "токенов",
+    "freshInput": "Свежий ввод",
+    "cacheHitRate": "Доля попаданий в кэш",
+    "cacheWriteNotReported": "Протокол OpenAI не разделяет создание кэша; сообщаются только попадания в кэш",
+    "cacheWritePartial": "Некоторые протоколы, например OpenAI, не сообщают создание кэша; значение может быть неполным"
   },
   "usageScript": {
     "title": "Настройка запроса статистики",
@@ -2341,7 +2442,10 @@
     "savedAndSynced": "Сохранено и синхронизировано со всеми приложениями",
     "saveAndSyncError": "Не удалось сохранить и синхронизировать",
     "configJsonPreview": "Предпросмотр JSON-конфигурации",
-    "configJsonPreviewHint": "Следующие конфигурации будут синхронизированы с каждым приложением (перезапишутся только показанные поля, остальные пользовательские настройки сохранятся)"
+    "configJsonPreviewHint": "Следующие конфигурации будут синхронизированы с каждым приложением (перезапишутся только показанные поля, остальные пользовательские настройки сохранятся)",
+    "duplicate": "Дублировать",
+    "duplicatedAndSynced": "Универсальный провайдер продублирован и синхронизирован",
+    "duplicateError": "Не удалось продублировать универсальный провайдер"
   },
   "omo": {
     "editProfile": "Редактировать конфигурацию OMO",
@@ -2407,7 +2511,7 @@
     "fillRecommendedSuccess": "Заполнено рекомендованных моделей: {{count}}",
     "fillRecommendedPartial": "Заполнено рекомендованных моделей: {{filled}}, не сопоставлено: {{unmatched}}",
     "fillRecommendedAllSet": "Во всех слотах уже настроены модели",
-    "fillRecommendedNoMatch": "Рекомендуемые модели не найдены среди настроенных провайдеров",
+    "fillRecommendedNoMatch": "Рекомендуемые модели не найдены среди настроенных провайдеров (например, {{examples}})",
     "configSummary": "{{agents}} агентов, {{categories}} категорий настроено · Нажмите ⚙ для дополнительных параметров",
     "enabledModelsCount": "Доступно настроенных моделей: {{count}}",
     "source": "из:",
@@ -2500,7 +2604,8 @@
       "designer": "Современный адаптивный дизайн, опыт CSS/Tailwind",
       "fixer": "Реализация кода, рефакторинг, тестирование, проверка",
       "council": "Агент консенсуса из нескольких моделей. Запускает несколько читающих советников параллельно, затем мастер синтезирует окончательный ответ."
-    }
+    },
+    "fillRecommendedMostlyUnmatched": "Заполнено только {{filled}}, не сопоставлено: {{unmatched}} (например, {{examples}}). Настройте провайдеров с этими моделями или выберите замену."
   },
   "openclawConfig": {
     "defaultModel": {
@@ -2549,5 +2654,52 @@
     "expiredHint": "Выполните команду {{tool}}, чтобы обновить вход",
     "queryFailed": "Запрос не выполнен",
     "refresh": "Обновить"
+  },
+  "claudeCode": {
+    "needsRouting": "Требуется маршрутизация",
+    "noRoutingSupport": "Маршрутизация не поддерживается"
+  },
+  "codex": {
+    "needsRouting": "Требуется маршрутизация",
+    "noRoutingSupport": "Маршрутизация не поддерживается"
+  },
+  "claudeDesktop": {
+    "officialNotice": "Официальные провайдеры Claude Desktop используют встроенный вход 1P. API-ключ и URL endpoint не требуются.",
+    "mode": "Обработка моделей",
+    "modeDirect": "Напрямую",
+    "modeProxy": "Требуется маршрутизация",
+    "modelMappingToggle": "Требуется сопоставление моделей",
+    "modelMappingOffHint": "Прямой режим работает только если провайдер принимает три ролевых ID Claude Desktop (claude-sonnet-* / claude-opus-* / claude-haiku-*). Для любого другого имени модели, включая устаревшие ID вроде claude-3-5-sonnet-…, включите сопоставление.",
+    "modelMappingOnHint": "Claude Desktop принимает только три ролевых ID claude-sonnet-* / claude-opus-* / claude-haiku-*. Когда включено, CC Switch сопоставляет эти роли с реальными моделями провайдера и поддерживает локальную маршрутизацию во время использования.",
+    "routeMapTitle": "Сопоставление моделей",
+    "routeMapHint": "Укажите реальную модель запроса для уровней Sonnet, Opus и Haiku. Для брендированных моделей вроде DeepSeek или Kimi используйте имя, отображаемое в меню. Пустой уровень наследует модель Sonnet или первый заполненный уровень, поэтому Haiku для подагентов всегда будет доступен.",
+    "routeModelLabel": "Роль модели",
+    "routeRoleSonnet": "Sonnet",
+    "routeRoleOpus": "Opus",
+    "routeRoleHaiku": "Haiku",
+    "labelOverrideLabel": "Имя в меню",
+    "upstreamModelLabel": "Запрашиваемая модель",
+    "supports1mLabel": "Заявить 1M",
+    "supports1mShort": "1M",
+    "directModelListTitle": "Указать модели Claude Desktop вручную (дополнительно)",
+    "directModelListCollapsedHint": "Обычно для нативных провайдеров Claude это не требуется. Claude Desktop автоматически получит список через /v1/models.",
+    "directModelListHint": "Заполняйте только если /v1/models у провайдера недоступен или не возвращает распознаваемые Claude Desktop ID моделей Sonnet / Opus / Haiku. Отметка 1M сообщает Claude Desktop о поддержке контекста 1M.",
+    "directModelInvalid": "Прямые модели должны использовать распознаваемые Claude Desktop ID Sonnet / Opus / Haiku",
+    "addModel": "Добавить модель",
+    "addRoute": "Добавить модель",
+    "routeInvalid": "Выберите роль модели и укажите запрашиваемую модель",
+    "routesRequired": "Требуется хотя бы одно сопоставление модели",
+    "statusTitle": "Конфигурация Claude Desktop требует внимания",
+    "statusUnsupported": "Эта платформа пока не поддерживает запись 3P-конфигурации Claude Desktop.",
+    "statusStaleRawModels": "Профиль Claude Desktop содержит ID моделей вне семейств ролей Sonnet / Opus / Haiku. Новые версии Claude Desktop могут отклонить такую конфигурацию; переключитесь на текущего провайдера ещё раз, чтобы исправить её.",
+    "statusMissingRouteMappings": "У текущего провайдера включено сопоставление моделей, но нет корректных маршрутов. Отредактируйте провайдера и добавьте хотя бы одно сопоставление.",
+    "statusGatewayTokenMissing": "Токен локальной маршрутизации ещё не создан. Повторное переключение на этого провайдера запишет новый локальный токен.",
+    "statusBaseUrlMismatch": "Профиль Claude Desktop указывает на URL, отличный от текущего провайдера. Текущий: {{actual}}; ожидаемый: {{expected}}. Переключитесь на текущего провайдера ещё раз, чтобы исправить это.",
+    "route": {
+      "tooltip": {
+        "active": "Локальная маршрутизация Claude Desktop запущена - {{address}}:{{port}}",
+        "inactive": "Включите локальную маршрутизацию Claude Desktop для провайдеров, которым нужно сопоставление моделей или преобразование формата. Настроенный адрес: {{address}}:{{port}}"
+      }
+    }
   }
 }
