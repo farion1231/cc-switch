@@ -4,11 +4,13 @@ use super::{
     codex_chat_common::{
         extract_reasoning_field_text, split_leading_think_block, strip_leading_think_open_tag,
     },
+    codex_custom_tools::{
+        custom_tool_arguments_from_chat_str, custom_tool_input_from_chat_arguments,
+    },
     transform_codex_chat::{
-        chat_usage_to_responses_usage, custom_tool_input_from_chat_arguments_for_tool,
-        response_id_from_chat_id, response_status_from_finish_reason,
-        response_tool_call_item_from_chat_name, response_tool_call_item_id_from_chat_name,
-        CodexToolContext,
+        chat_usage_to_responses_usage, response_id_from_chat_id,
+        response_status_from_finish_reason, response_tool_call_item_from_chat_name,
+        response_tool_call_item_id_from_chat_name, CodexToolContext,
     },
 };
 use crate::proxy::json_canonical::canonicalize_tool_arguments_str;
@@ -720,8 +722,12 @@ impl ChatToResponsesState {
                 continue;
             };
             let output_index = state.output_index.unwrap_or(0);
-            let arguments = canonicalize_tool_arguments_str(&state.arguments);
             let is_custom_tool = self.tool_context.is_custom_tool_chat_name(&state.name);
+            let arguments = if is_custom_tool {
+                custom_tool_arguments_from_chat_str(&state.arguments)
+            } else {
+                canonicalize_tool_arguments_str(&state.arguments)
+            };
             let item = response_tool_call_item_from_chat_name(
                 &state.item_id,
                 "completed",
@@ -735,7 +741,7 @@ impl ChatToResponsesState {
             self.output_items.push((output_index, item.clone()));
 
             if is_custom_tool {
-                let input = custom_tool_input_from_chat_arguments_for_tool(&state.name, &arguments);
+                let input = custom_tool_input_from_chat_arguments(&state.name, &arguments);
                 if !input.is_empty() {
                     events.push(sse_event(
                         "response.custom_tool_call_input.delta",
@@ -1104,6 +1110,30 @@ mod tests {
         assert!(output.contains("\"type\":\"custom_tool_call\""));
         assert!(output.contains("\"name\":\"exec\""));
         assert!(output.contains("\"input\":\"ls -la\""));
+    }
+
+    #[tokio::test]
+    async fn streamed_custom_tool_without_arguments_keeps_empty_input() {
+        let request = json!({
+            "model": "gpt-5.4",
+            "tools": [{ "type": "custom", "name": "exec" }]
+        });
+        let context =
+            super::super::transform_codex_chat::build_codex_tool_context_from_request(&request);
+        let output = collect_with_context(
+            vec![
+                "data: {\"id\":\"chatcmpl_custom_empty\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_custom\",\"type\":\"function\",\"function\":{\"name\":\"exec\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            context,
+        )
+        .await;
+
+        assert!(output.contains("event: response.custom_tool_call_input.done"));
+        assert!(output.contains("\"type\":\"custom_tool_call\""));
+        assert!(output.contains("\"name\":\"exec\""));
+        assert!(output.contains("\"input\":\"\""));
+        assert!(!output.contains("\"input\":\"{}\""));
     }
 
     #[tokio::test]

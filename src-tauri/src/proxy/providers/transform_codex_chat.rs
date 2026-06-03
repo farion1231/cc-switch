@@ -9,6 +9,11 @@ use super::codex_chat_common::{
     response_function_call_item, response_function_call_item_with_namespace,
     split_leading_think_block,
 };
+use super::codex_custom_tools::{
+    custom_tool_arguments_from_chat_value, custom_tool_arguments_from_response_input,
+    custom_tool_chat_description, custom_tool_input_description,
+    custom_tool_input_from_chat_arguments, CUSTOM_TOOL_INPUT_FIELD,
+};
 use crate::provider::CodexChatReasoningConfig;
 use crate::proxy::{
     error::ProxyError,
@@ -38,51 +43,7 @@ const EXTRA_CHAT_PASSTHROUGH_FIELDS: &[&str] = &[
 ];
 
 const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
-const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
-const APPLY_PATCH_TOOL_NAME: &str = "apply_patch";
 const CHAT_TOOL_NAME_MAX_LEN: usize = 64;
-const APPLY_PATCH_BEGIN_MARKER: &str = "*** Begin Patch";
-const APPLY_PATCH_END_MARKER: &str = "*** End Patch";
-const APPLY_PATCH_CHAT_DESCRIPTION: &str = r#"Apply file edits using Codex's raw apply_patch format.
-
-For this Chat Completions bridge you must call the function with JSON arguments:
-{"input":"<raw patch text>"}
-
-The input string itself must be only the raw patch. Do not include Markdown fences,
-shell heredocs, JSON, prose, or an apply_patch command wrapper inside input. The
-patch must start with "*** Begin Patch" and end with "*** End Patch".
-
-Supported operations:
-
-Add a file:
-*** Begin Patch
-*** Add File: path/to/new.txt
-+first line
-+second line
-*** End Patch
-
-Update a file:
-*** Begin Patch
-*** Update File: path/to/file.txt
-@@
--old line
-+new line
-*** End Patch
-
-Delete a file:
-*** Begin Patch
-*** Delete File: path/to/old.txt
-*** End Patch
-
-Move/update a file:
-*** Begin Patch
-*** Update File: old/path.txt
-*** Move to: new/path.txt
-@@
--old content
-+new content
-*** End Patch"#;
-const APPLY_PATCH_INPUT_DESCRIPTION: &str = r#"Raw apply_patch patch text. It must begin with "*** Begin Patch" and end with "*** End Patch". Put the patch here as a plain string; do not wrap it in Markdown code fences, prose, a shell command, or a second JSON object. Use "*** Add File:", "*** Update File:", "*** Delete File:", and optionally "*** Move to:" hunks."#;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CodexToolKind {
@@ -175,19 +136,8 @@ impl CodexToolContext {
         let Some(name) = responses_tool_name(tool) else {
             return;
         };
-        let is_apply_patch = name == APPLY_PATCH_TOOL_NAME;
-        let description = if is_apply_patch {
-            json!(APPLY_PATCH_CHAT_DESCRIPTION)
-        } else {
-            tool.get("description")
-                .cloned()
-                .unwrap_or_else(|| json!("Custom Codex tool."))
-        };
-        let input_description = if is_apply_patch {
-            APPLY_PATCH_INPUT_DESCRIPTION
-        } else {
-            "Input to pass to the custom Codex tool."
-        };
+        let description = custom_tool_chat_description(&name, tool);
+        let input_description = custom_tool_input_description(&name);
         let chat_tool = json!({
             "type": "function",
             "function": {
@@ -201,7 +151,8 @@ impl CodexToolContext {
                             "description": input_description
                         }
                     },
-                    "required": [CUSTOM_TOOL_INPUT_FIELD]
+                    "required": [CUSTOM_TOOL_INPUT_FIELD],
+                    "additionalProperties": false
                 }
             }
         });
@@ -1155,14 +1106,14 @@ fn responses_custom_tool_call_to_chat_tool_call(item: &Value) -> Value {
         .and_then(|v| v.as_str())
         .unwrap_or("");
     let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
-    let input = item.get("input").cloned().unwrap_or_else(|| json!(""));
+    let arguments = custom_tool_arguments_from_response_input(item.get("input"));
 
     json!({
         "id": call_id,
         "type": "function",
         "function": {
             "name": name,
-            "arguments": canonical_json_string(&json!({ CUSTOM_TOOL_INPUT_FIELD: input }))
+            "arguments": arguments
         }
     })
 }
@@ -1425,7 +1376,8 @@ fn chat_tool_call_to_response_item(
         .unwrap_or_else(|| format!("call_{index}"));
     let function = tool_call.get("function").unwrap_or(&Value::Null);
     let name = function.get("name").and_then(|v| v.as_str()).unwrap_or("");
-    let arguments = canonicalize_tool_arguments(function.get("arguments"));
+    let arguments =
+        canonicalize_chat_arguments_for_tool(name, function.get("arguments"), tool_context);
 
     let item_id = response_tool_call_item_id_from_chat_name(&call_id, name, tool_context);
     response_tool_call_item_from_chat_name(
@@ -1453,7 +1405,8 @@ fn chat_legacy_function_call_to_response_item(
         .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let arguments = canonicalize_tool_arguments(function_call.get("arguments"));
+    let arguments =
+        canonicalize_chat_arguments_for_tool(name, function_call.get("arguments"), tool_context);
 
     let item_id = response_tool_call_item_id_from_chat_name(call_id, name, tool_context);
     response_tool_call_item_from_chat_name(
@@ -1465,6 +1418,18 @@ fn chat_legacy_function_call_to_response_item(
         reasoning,
         tool_context,
     )
+}
+
+fn canonicalize_chat_arguments_for_tool(
+    chat_name: &str,
+    arguments: Option<&Value>,
+    tool_context: &CodexToolContext,
+) -> String {
+    if tool_context.is_custom_tool_chat_name(chat_name) {
+        custom_tool_arguments_from_chat_value(arguments)
+    } else {
+        canonicalize_tool_arguments(arguments)
+    }
 }
 
 pub(crate) fn response_tool_call_item_id_from_chat_name(
@@ -1536,7 +1501,7 @@ fn response_custom_tool_call_item(
     arguments: &str,
     reasoning: Option<&str>,
 ) -> Value {
-    let input = custom_tool_input_from_chat_arguments_for_tool(name, arguments);
+    let input = custom_tool_input_from_chat_arguments(name, arguments);
     let mut item = json!({
         "id": item_id,
         "type": "custom_tool_call",
@@ -1557,112 +1522,6 @@ fn parse_tool_arguments_object(arguments: &str) -> Value {
         .ok()
         .filter(|value| value.is_object())
         .unwrap_or_else(|| json!({ "query": arguments }))
-}
-
-pub(crate) fn custom_tool_input_from_chat_arguments_for_tool(
-    tool_name: &str,
-    arguments: &str,
-) -> String {
-    if tool_name == APPLY_PATCH_TOOL_NAME {
-        return apply_patch_input_from_chat_arguments(arguments);
-    }
-
-    if arguments.trim().is_empty() {
-        return String::new();
-    }
-    match serde_json::from_str::<Value>(arguments) {
-        Ok(Value::Object(obj)) => obj
-            .get(CUSTOM_TOOL_INPUT_FIELD)
-            .and_then(|value| value.as_str())
-            .unwrap_or(arguments)
-            .to_string(),
-        _ => arguments.to_string(),
-    }
-}
-
-fn apply_patch_input_from_chat_arguments(arguments: &str) -> String {
-    let Some(candidate) = apply_patch_candidate_from_chat_arguments(arguments) else {
-        return normalize_apply_patch_input(arguments);
-    };
-    normalize_apply_patch_input(&candidate)
-}
-
-fn apply_patch_candidate_from_chat_arguments(arguments: &str) -> Option<String> {
-    let trimmed = arguments.trim();
-    if trimmed.is_empty() {
-        return Some(String::new());
-    }
-
-    let value = serde_json::from_str::<Value>(trimmed).ok()?;
-    match value {
-        Value::String(text) => Some(text),
-        Value::Object(obj) => {
-            for key in [CUSTOM_TOOL_INPUT_FIELD, "patch", "command"] {
-                if let Some(value) = obj.get(key) {
-                    if let Some(candidate) = apply_patch_candidate_from_value(value) {
-                        return Some(candidate);
-                    }
-                }
-            }
-            None
-        }
-        _ => None,
-    }
-}
-
-fn apply_patch_candidate_from_value(value: &Value) -> Option<String> {
-    match value {
-        Value::String(text) => Some(text.clone()),
-        Value::Array(items) => {
-            if items
-                .first()
-                .and_then(|value| value.as_str())
-                .is_some_and(|name| name == APPLY_PATCH_TOOL_NAME)
-            {
-                return items
-                    .iter()
-                    .skip(1)
-                    .filter_map(|value| value.as_str())
-                    .find(|text| text.contains(APPLY_PATCH_BEGIN_MARKER))
-                    .map(ToString::to_string);
-            }
-            None
-        }
-        _ => None,
-    }
-}
-
-fn normalize_apply_patch_input(input: &str) -> String {
-    let mut value = strip_markdown_fence(input.trim()).trim().to_string();
-    if let Some(extracted) = extract_apply_patch_body(&value) {
-        value = extracted;
-    }
-    strip_markdown_fence(value.trim()).trim().to_string()
-}
-
-fn extract_apply_patch_body(input: &str) -> Option<String> {
-    let begin = input.find(APPLY_PATCH_BEGIN_MARKER)?;
-    let after_begin = &input[begin..];
-    let end_relative = after_begin.find(APPLY_PATCH_END_MARKER)?;
-    let end = begin + end_relative + APPLY_PATCH_END_MARKER.len();
-    Some(input[begin..end].to_string())
-}
-
-fn strip_markdown_fence(input: &str) -> &str {
-    let trimmed = input.trim();
-    let Some(rest) = trimmed.strip_prefix("```") else {
-        return input;
-    };
-    let Some(first_newline) = rest.find('\n') else {
-        return input;
-    };
-    let body = &rest[first_newline + 1..];
-    let body = body.trim_end();
-    if let Some(body) = body.strip_suffix("```") {
-        body.trim_end()
-    } else {
-        input
-    }
 }
 
 pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
@@ -2056,6 +1915,40 @@ mod tests {
     }
 
     #[test]
+    fn responses_request_to_chat_enriches_exec_description() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "custom",
+                "name": "exec",
+                "description": "Accepts raw JavaScript source text, not JSON.",
+                "format": {
+                    "type": "grammar",
+                    "syntax": "lark",
+                    "definition": "start: SOURCE"
+                }
+            }],
+            "input": "Run code."
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let description = result["tools"][0]["function"]["description"]
+            .as_str()
+            .unwrap();
+        let input_description = result["tools"][0]["function"]["parameters"]["properties"]["input"]
+            ["description"]
+            .as_str()
+            .unwrap();
+
+        assert!(description.contains(r#"{"input":"<raw JavaScript source>"}"#));
+        assert!(description.contains("const result = await tools.exec_command"));
+        assert!(description.contains("Original Codex tool description:"));
+        assert!(description.contains("Accepts raw JavaScript source text"));
+        assert!(input_description.contains("Raw JavaScript source"));
+        assert!(input_description.contains("// @exec"));
+    }
+
+    #[test]
     fn chat_response_to_responses_extracts_apply_patch_from_patch_alias_and_fence() {
         let request = json!({
             "model": "gpt-5.4",
@@ -2094,7 +1987,7 @@ mod tests {
 
     #[test]
     fn apply_patch_input_extraction_accepts_command_array_wrappers() {
-        let input = custom_tool_input_from_chat_arguments_for_tool(
+        let input = custom_tool_input_from_chat_arguments(
             "apply_patch",
             r#"{"command":["apply_patch","*** Begin Patch\n*** Delete File: old.txt\n*** End Patch"]}"#,
         );
@@ -2102,6 +1995,45 @@ mod tests {
         assert_eq!(
             input,
             "*** Begin Patch\n*** Delete File: old.txt\n*** End Patch"
+        );
+    }
+
+    #[test]
+    fn chat_response_to_responses_extracts_exec_from_code_alias_and_fence() {
+        let request = json!({
+            "model": "gpt-5.4",
+            "tools": [{"type": "custom", "name": "exec"}],
+            "input": "Run JS."
+        });
+        let context = build_codex_tool_context_from_request(&request);
+        let chat = json!({
+            "id": "chatcmpl_exec",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "gpt-5.4",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call_exec",
+                        "type": "function",
+                        "function": {
+                            "name": "exec",
+                            "arguments": "{\"code\":\"```js\\nconst result = await tools.exec_command({cmd: \\\"pwd\\\"});\\ntext(result.output);\\n```\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let result = chat_completion_to_response_with_context(chat, &context).unwrap();
+
+        assert_eq!(result["output"][0]["type"], "custom_tool_call");
+        assert_eq!(result["output"][0]["name"], "exec");
+        assert_eq!(
+            result["output"][0]["input"],
+            "const result = await tools.exec_command({cmd: \"pwd\"});\ntext(result.output);"
         );
     }
 
