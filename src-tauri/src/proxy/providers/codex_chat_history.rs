@@ -109,16 +109,12 @@ impl CodexChatHistoryStore {
 
         let output_call_ids = items
             .iter()
-            .filter(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
-            })
+            .filter(|item| is_tool_call_output_item(item))
             .filter_map(response_item_call_id)
             .collect::<HashSet<_>>();
         let existing_call_ids = items
             .iter()
-            .filter(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call")
-            })
+            .filter(|item| is_tool_call_item(item))
             .filter_map(response_item_call_id)
             .collect::<HashSet<_>>();
         let requested_call_ids = output_call_ids
@@ -143,7 +139,7 @@ impl CodexChatHistoryStore {
 
         for mut item in items {
             match item.get("type").and_then(|value| value.as_str()) {
-                Some("function_call") => {
+                Some("function_call") | Some("custom_tool_call") => {
                     if let Some(call_id) = response_item_call_id(&item) {
                         if let Some(cached) = lookup.call(&call_id) {
                             if enrich_function_call_reasoning(&mut item, cached) {
@@ -154,7 +150,7 @@ impl CodexChatHistoryStore {
                     }
                     new_items.push(item);
                 }
-                Some("function_call_output") => {
+                Some("function_call_output") | Some("custom_tool_call_output") => {
                     if let Some(group) = restore_group.take().filter(|group| !group.is_empty()) {
                         for (call_id, cached_item) in group {
                             seen_call_ids.insert(call_id);
@@ -360,6 +356,20 @@ fn append_restore_group(
     }
 }
 
+fn is_tool_call_item(item: &Value) -> bool {
+    matches!(
+        item.get("type").and_then(|value| value.as_str()),
+        Some("function_call" | "custom_tool_call")
+    )
+}
+
+fn is_tool_call_output_item(item: &Value) -> bool {
+    matches!(
+        item.get("type").and_then(|value| value.as_str()),
+        Some("function_call_output" | "custom_tool_call_output")
+    )
+}
+
 pub fn record_responses_sse_stream(
     stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
     history: Arc<CodexChatHistoryStore>,
@@ -437,7 +447,7 @@ async fn inspect_sse_block(
 }
 
 fn cached_function_call(item: &Value) -> Option<(String, Value)> {
-    if item.get("type").and_then(|value| value.as_str()) != Some("function_call") {
+    if !is_tool_call_item(item) {
         return None;
     }
     let call_id = response_item_call_id(item)?;
@@ -501,6 +511,42 @@ mod tests {
         assert_eq!(input[0]["type"], "function_call");
         assert_eq!(input[0]["reasoning_content"], "Need to inspect the file.");
         assert_eq!(input[1]["type"], "function_call_output");
+    }
+
+    #[tokio::test]
+    async fn enriches_custom_tool_output_with_cached_custom_tool_call() {
+        let history = CodexChatHistoryStore::default();
+        history
+            .record_response(&json!({
+                "id": "resp_1",
+                "output": [
+                    {
+                        "type": "custom_tool_call",
+                        "call_id": "call_patch",
+                        "name": "apply_patch",
+                        "input": "*** Begin Patch\n*** Add File: hello.txt\n+hi\n*** End Patch",
+                        "reasoning_content": "Need to edit the file."
+                    }
+                ]
+            }))
+            .await;
+
+        let mut request = json!({
+            "previous_response_id": "resp_1",
+            "input": [
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "call_patch",
+                    "output": "Success. Updated the following files:\nA hello.txt\n"
+                }
+            ]
+        });
+
+        assert_eq!(history.enrich_request(&mut request).await, 1);
+        let input = request["input"].as_array().unwrap();
+        assert_eq!(input[0]["type"], "custom_tool_call");
+        assert_eq!(input[0]["reasoning_content"], "Need to edit the file.");
+        assert_eq!(input[1]["type"], "custom_tool_call_output");
     }
 
     #[tokio::test]

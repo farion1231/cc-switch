@@ -39,7 +39,50 @@ const EXTRA_CHAT_PASSTHROUGH_FIELDS: &[&str] = &[
 
 const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
 const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
+const APPLY_PATCH_TOOL_NAME: &str = "apply_patch";
 const CHAT_TOOL_NAME_MAX_LEN: usize = 64;
+const APPLY_PATCH_BEGIN_MARKER: &str = "*** Begin Patch";
+const APPLY_PATCH_END_MARKER: &str = "*** End Patch";
+const APPLY_PATCH_CHAT_DESCRIPTION: &str = r#"Apply file edits using Codex's raw apply_patch format.
+
+For this Chat Completions bridge you must call the function with JSON arguments:
+{"input":"<raw patch text>"}
+
+The input string itself must be only the raw patch. Do not include Markdown fences,
+shell heredocs, JSON, prose, or an apply_patch command wrapper inside input. The
+patch must start with "*** Begin Patch" and end with "*** End Patch".
+
+Supported operations:
+
+Add a file:
+*** Begin Patch
+*** Add File: path/to/new.txt
++first line
++second line
+*** End Patch
+
+Update a file:
+*** Begin Patch
+*** Update File: path/to/file.txt
+@@
+-old line
++new line
+*** End Patch
+
+Delete a file:
+*** Begin Patch
+*** Delete File: path/to/old.txt
+*** End Patch
+
+Move/update a file:
+*** Begin Patch
+*** Update File: old/path.txt
+*** Move to: new/path.txt
+@@
+-old content
++new content
+*** End Patch"#;
+const APPLY_PATCH_INPUT_DESCRIPTION: &str = r#"Raw apply_patch patch text. It must begin with "*** Begin Patch" and end with "*** End Patch". Put the patch here as a plain string; do not wrap it in Markdown code fences, prose, a shell command, or a second JSON object. Use "*** Add File:", "*** Update File:", "*** Delete File:", and optionally "*** Move to:" hunks."#;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CodexToolKind {
@@ -132,10 +175,19 @@ impl CodexToolContext {
         let Some(name) = responses_tool_name(tool) else {
             return;
         };
-        let description = tool
-            .get("description")
-            .cloned()
-            .unwrap_or_else(|| json!("Custom Codex tool."));
+        let is_apply_patch = name == APPLY_PATCH_TOOL_NAME;
+        let description = if is_apply_patch {
+            json!(APPLY_PATCH_CHAT_DESCRIPTION)
+        } else {
+            tool.get("description")
+                .cloned()
+                .unwrap_or_else(|| json!("Custom Codex tool."))
+        };
+        let input_description = if is_apply_patch {
+            APPLY_PATCH_INPUT_DESCRIPTION
+        } else {
+            "Input to pass to the custom Codex tool."
+        };
         let chat_tool = json!({
             "type": "function",
             "function": {
@@ -146,7 +198,7 @@ impl CodexToolContext {
                     "properties": {
                         CUSTOM_TOOL_INPUT_FIELD: {
                             "type": "string",
-                            "description": "Input to pass to the custom Codex tool."
+                            "description": input_description
                         }
                     },
                     "required": [CUSTOM_TOOL_INPUT_FIELD]
@@ -620,18 +672,29 @@ fn append_responses_item_as_chat_message(
                 last_assistant_index,
             );
             let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
-            let output = match item.get("output") {
-                Some(Value::String(s)) => canonicalize_json_string_if_parseable(s),
-                Some(v) => canonical_json_string(v),
-                None => String::new(),
-            };
+            let output = tool_output_content_for_chat(item);
             messages.push(json!({
                 "role": "tool",
                 "tool_call_id": call_id,
                 "content": output
             }));
         }
-        Some("custom_tool_call_output") | Some("tool_search_output") => {
+        Some("custom_tool_call_output") => {
+            flush_pending_tool_calls(
+                messages,
+                pending_tool_calls,
+                pending_reasoning,
+                last_assistant_index,
+            );
+            let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
+            let output = tool_output_content_for_chat(item);
+            messages.push(json!({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": output
+            }));
+        }
+        Some("tool_search_output") => {
             flush_pending_tool_calls(
                 messages,
                 pending_tool_calls,
@@ -683,6 +746,14 @@ fn append_responses_item_as_chat_message(
     }
 
     Ok(())
+}
+
+fn tool_output_content_for_chat(item: &Value) -> String {
+    match item.get("output") {
+        Some(Value::String(s)) => canonicalize_json_string_if_parseable(s),
+        Some(v) => canonical_json_string(v),
+        None => String::new(),
+    }
 }
 
 fn flush_pending_tool_calls(
@@ -1465,7 +1536,7 @@ fn response_custom_tool_call_item(
     arguments: &str,
     reasoning: Option<&str>,
 ) -> Value {
-    let input = custom_tool_input_from_chat_arguments(arguments);
+    let input = custom_tool_input_from_chat_arguments_for_tool(name, arguments);
     let mut item = json!({
         "id": item_id,
         "type": "custom_tool_call",
@@ -1488,7 +1559,14 @@ fn parse_tool_arguments_object(arguments: &str) -> Value {
         .unwrap_or_else(|| json!({ "query": arguments }))
 }
 
-pub(crate) fn custom_tool_input_from_chat_arguments(arguments: &str) -> String {
+pub(crate) fn custom_tool_input_from_chat_arguments_for_tool(
+    tool_name: &str,
+    arguments: &str,
+) -> String {
+    if tool_name == APPLY_PATCH_TOOL_NAME {
+        return apply_patch_input_from_chat_arguments(arguments);
+    }
+
     if arguments.trim().is_empty() {
         return String::new();
     }
@@ -1499,6 +1577,91 @@ pub(crate) fn custom_tool_input_from_chat_arguments(arguments: &str) -> String {
             .unwrap_or(arguments)
             .to_string(),
         _ => arguments.to_string(),
+    }
+}
+
+fn apply_patch_input_from_chat_arguments(arguments: &str) -> String {
+    let Some(candidate) = apply_patch_candidate_from_chat_arguments(arguments) else {
+        return normalize_apply_patch_input(arguments);
+    };
+    normalize_apply_patch_input(&candidate)
+}
+
+fn apply_patch_candidate_from_chat_arguments(arguments: &str) -> Option<String> {
+    let trimmed = arguments.trim();
+    if trimmed.is_empty() {
+        return Some(String::new());
+    }
+
+    let value = serde_json::from_str::<Value>(trimmed).ok()?;
+    match value {
+        Value::String(text) => Some(text),
+        Value::Object(obj) => {
+            for key in [CUSTOM_TOOL_INPUT_FIELD, "patch", "command"] {
+                if let Some(value) = obj.get(key) {
+                    if let Some(candidate) = apply_patch_candidate_from_value(value) {
+                        return Some(candidate);
+                    }
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn apply_patch_candidate_from_value(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => Some(text.clone()),
+        Value::Array(items) => {
+            if items
+                .first()
+                .and_then(|value| value.as_str())
+                .is_some_and(|name| name == APPLY_PATCH_TOOL_NAME)
+            {
+                return items
+                    .iter()
+                    .skip(1)
+                    .filter_map(|value| value.as_str())
+                    .find(|text| text.contains(APPLY_PATCH_BEGIN_MARKER))
+                    .map(ToString::to_string);
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn normalize_apply_patch_input(input: &str) -> String {
+    let mut value = strip_markdown_fence(input.trim()).trim().to_string();
+    if let Some(extracted) = extract_apply_patch_body(&value) {
+        value = extracted;
+    }
+    strip_markdown_fence(value.trim()).trim().to_string()
+}
+
+fn extract_apply_patch_body(input: &str) -> Option<String> {
+    let begin = input.find(APPLY_PATCH_BEGIN_MARKER)?;
+    let after_begin = &input[begin..];
+    let end_relative = after_begin.find(APPLY_PATCH_END_MARKER)?;
+    let end = begin + end_relative + APPLY_PATCH_END_MARKER.len();
+    Some(input[begin..end].to_string())
+}
+
+fn strip_markdown_fence(input: &str) -> &str {
+    let trimmed = input.trim();
+    let Some(rest) = trimmed.strip_prefix("```") else {
+        return input;
+    };
+    let Some(first_newline) = rest.find('\n') else {
+        return input;
+    };
+    let body = &rest[first_newline + 1..];
+    let body = body.trim_end();
+    if let Some(body) = body.strip_suffix("```") {
+        body.trim_end()
+    } else {
+        input
     }
 }
 
@@ -1854,6 +2017,125 @@ mod tests {
         assert_eq!(
             result["messages"][0]["tool_calls"][0]["function"]["arguments"],
             r#"{"input":"*** Begin Patch\n*** End Patch"}"#
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_enriches_apply_patch_description() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "custom",
+                "name": "apply_patch",
+                "description": "Use the `apply_patch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.",
+                "format": {
+                    "type": "grammar",
+                    "syntax": "lark",
+                    "definition": "start: begin_patch hunk+ end_patch"
+                }
+            }],
+            "input": "Patch it."
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let description = result["tools"][0]["function"]["description"]
+            .as_str()
+            .unwrap();
+        let input_description = result["tools"][0]["function"]["parameters"]["properties"]["input"]
+            ["description"]
+            .as_str()
+            .unwrap();
+
+        assert!(description.contains(r#"{"input":"<raw patch text>"}"#));
+        assert!(description.contains("*** Add File: path/to/new.txt"));
+        assert!(description.contains("*** Update File: path/to/file.txt"));
+        assert!(description.contains("*** Delete File: path/to/old.txt"));
+        assert!(description.contains("*** Move to: new/path.txt"));
+        assert!(input_description.contains("*** Begin Patch"));
+        assert!(input_description.contains("Markdown code fences"));
+    }
+
+    #[test]
+    fn chat_response_to_responses_extracts_apply_patch_from_patch_alias_and_fence() {
+        let request = json!({
+            "model": "gpt-5.4",
+            "tools": [{"type": "custom", "name": "apply_patch"}],
+            "input": "Patch it."
+        });
+        let context = build_codex_tool_context_from_request(&request);
+        let chat = json!({
+            "id": "chatcmpl_custom",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "gpt-5.4",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call_patch",
+                        "type": "function",
+                        "function": {
+                            "name": "apply_patch",
+                            "arguments": "{\"patch\":\"```patch\\n*** Begin Patch\\n*** Update File: hello.txt\\n@@\\n-old\\n+new\\n*** End Patch\\n```\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let result = chat_completion_to_response_with_context(chat, &context).unwrap();
+
+        assert_eq!(
+            result["output"][0]["input"],
+            "*** Begin Patch\n*** Update File: hello.txt\n@@\n-old\n+new\n*** End Patch"
+        );
+    }
+
+    #[test]
+    fn apply_patch_input_extraction_accepts_command_array_wrappers() {
+        let input = custom_tool_input_from_chat_arguments_for_tool(
+            "apply_patch",
+            r#"{"command":["apply_patch","*** Begin Patch\n*** Delete File: old.txt\n*** End Patch"]}"#,
+        );
+
+        assert_eq!(
+            input,
+            "*** Begin Patch\n*** Delete File: old.txt\n*** End Patch"
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_maps_custom_tool_output_as_plain_output() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "call_patch",
+                    "name": "apply_patch",
+                    "input": "*** Begin Patch\n*** Add File: hello.txt\n+hi\n*** End Patch"
+                },
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "call_patch",
+                    "output": "Success. Updated the following files:\nA hello.txt\n"
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(
+            messages[0]["tool_calls"][0]["function"]["name"],
+            "apply_patch"
+        );
+        assert_eq!(messages[1]["role"], "tool");
+        assert_eq!(
+            messages[1]["content"],
+            "Success. Updated the following files:\nA hello.txt\n"
         );
     }
 

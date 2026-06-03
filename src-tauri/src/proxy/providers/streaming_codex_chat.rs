@@ -5,7 +5,7 @@ use super::{
         extract_reasoning_field_text, split_leading_think_block, strip_leading_think_open_tag,
     },
     transform_codex_chat::{
-        chat_usage_to_responses_usage, custom_tool_input_from_chat_arguments,
+        chat_usage_to_responses_usage, custom_tool_input_from_chat_arguments_for_tool,
         response_id_from_chat_id, response_status_from_finish_reason,
         response_tool_call_item_from_chat_name, response_tool_call_item_id_from_chat_name,
         CodexToolContext,
@@ -735,7 +735,7 @@ impl ChatToResponsesState {
             self.output_items.push((output_index, item.clone()));
 
             if is_custom_tool {
-                let input = custom_tool_input_from_chat_arguments(&arguments);
+                let input = custom_tool_input_from_chat_arguments_for_tool(&state.name, &arguments);
                 if !input.is_empty() {
                     events.push(sse_event(
                         "response.custom_tool_call_input.delta",
