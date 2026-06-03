@@ -1041,9 +1041,10 @@ fn serialize_tool_definition_for_description(tool: &Value) -> Option<String> {
         return None;
     }
 
-    serde_json::to_string_pretty(tool)
-        .ok()
-        .or_else(|| Some(canonical_json_string(tool)))
+    // Keep the embedded definition compact to reduce tool-description token
+    // overhead for chat-only upstreams, while remaining stable across map
+    // storage order.
+    Some(canonical_json_string(tool))
 }
 
 fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option<Value> {
@@ -1900,9 +1901,9 @@ mod tests {
 
         assert!(description.starts_with("Original tool definition:"));
         assert!(!description.contains("Original Codex tool definition"));
-        assert!(description.contains("\"type\": \"custom\""));
-        assert!(description.contains("\"format\""));
-        assert!(description.contains("\"syntax\": \"lark\""));
+        assert!(description.contains("\"type\":\"custom\""));
+        assert!(description.contains("\"format\":"));
+        assert!(description.contains("\"syntax\":\"lark\""));
     }
 
     #[test]
