@@ -56,7 +56,7 @@ pub async fn check_for_updates(handle: AppHandle) -> Result<bool, String> {
     handle
         .opener()
         .open_url(
-            "https://github.com/farion1231/cc-switch/releases/latest",
+            "https://github.com/nameLogen/cc-switch/releases/latest",
             None::<String>,
         )
         .map_err(|e| format!("打开更新页面失败: {e}"))?;
@@ -2437,6 +2437,7 @@ fn extract_env_vars_from_config(
         let base_url_key = match app_type {
             AppType::Claude | AppType::ClaudeDesktop => Some("ANTHROPIC_BASE_URL"),
             AppType::Gemini => Some("GOOGLE_GEMINI_BASE_URL"),
+            AppType::Kimi => Some("KIMI_BASE_URL"),
             _ => None,
         };
 

@@ -4,7 +4,7 @@ version = "3.16.1"
 description = "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
 authors = ["Jason Young"]
 license = "MIT"
-repository = "https://github.com/farion1231/cc-switch"
+repository = "https://github.com/nameLogen/cc-switch"
 edition = "2021"
 rust-version = "1.85.0"
 

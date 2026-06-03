@@ -47,6 +47,11 @@
     "windows": {
       "wix": {
         "template": "wix/per-user-main.wxs"
+      },
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "displayLanguageSelector": false,
+        "installMode": "both"
       }
     },
     "macOS": {
@@ -60,9 +65,9 @@
       }
     },
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM4MDI4QzlBNTczOTI4RTMKUldUaktEbFhtb3dDeUM5US9kT0FmdGR5Ti9vQzcwa2dTMlpibDVDUmQ2M0VGTzVOWnd0SGpFVlEK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJCMUU3N0M0Qzg0RUZGQTMKUldTai8wN0l4SGNlSzNwYlp0Q2ZhSVoxWkxDcWxhRXQ3blVMWmpqT3dzN0lJbmZzSERXRkRycmUK",
       "endpoints": [
-        "https://github.com/farion1231/cc-switch/releases/latest/download/latest.json"
+        "https://github.com/nameLogen/cc-switch/releases/latest/download/latest.json"
       ]
     }
   }

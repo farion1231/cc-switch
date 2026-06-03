@@ -18,6 +18,7 @@ import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 import { geminiProviderPresets } from "@/config/geminiProviderPresets";
 import { claudeDesktopProviderPresets } from "@/config/claudeDesktopProviderPresets";
+import { kimiProviderPresets } from "@/config/kimiProviderPresets";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
@@ -203,6 +204,21 @@ export function AddProviderDialog({
               }
               addUrl(preset.baseUrl);
             }
+          } else if (appId === "kimi") {
+            const presets = kimiProviderPresets;
+            const presetIndex = parseInt(
+              values.presetId.replace("kimi-", ""),
+            );
+            if (
+              !isNaN(presetIndex) &&
+              presetIndex >= 0 &&
+              presetIndex < presets.length
+            ) {
+              const preset = presets[presetIndex];
+              if (Array.isArray(preset.endpointCandidates)) {
+                preset.endpointCandidates.forEach(addUrl);
+              }
+            }
           }
         }
 
@@ -244,6 +260,11 @@ export function AddProviderDialog({
         } else if (appId === "hermes") {
           if (parsedConfig.base_url) {
             addUrl(parsedConfig.base_url as string);
+          }
+        } else if (appId === "kimi") {
+          const env = parsedConfig.env as Record<string, any> | undefined;
+          if (env?.KIMI_BASE_URL) {
+            addUrl(env.KIMI_BASE_URL);
           }
         }
 

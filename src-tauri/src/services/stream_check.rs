@@ -210,7 +210,7 @@ impl StreamCheckService {
         // 或 `npm` 字段显式指定。它们不走 get_adapter 路径，而是直接分发。
         if matches!(
             app_type,
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Kimi
         ) {
             return Self::check_once_without_adapter(app_type, provider, config, start).await;
         }
@@ -278,9 +278,9 @@ impl StreamCheckService {
                 )
                 .await
             }
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Kimi => {
                 // Already handled via early dispatch above
-                unreachable!("OpenCode/OpenClaw/Hermes 已通过 check_once_without_adapter 处理")
+                unreachable!("OpenCode/OpenClaw/Hermes/Kimi 已通过 check_once_without_adapter 处理")
             }
         };
 
@@ -697,6 +697,75 @@ impl StreamCheckService {
         }
     }
 
+    /// Kimi 流式检查
+    ///
+    /// 使用 OpenAI Chat Completions API 格式 (/v1/chat/completions)
+    async fn check_kimi_stream(
+        client: &Client,
+        base_url: &str,
+        auth: &AuthInfo,
+        model: &str,
+        test_prompt: &str,
+        timeout: std::time::Duration,
+    ) -> Result<(u16, String), AppError> {
+        let base = base_url.trim_end_matches('/');
+
+        // Kimi 使用 OpenAI Chat Completions 端点
+        let url = if base.ends_with("/v1") {
+            format!("{base}/chat/completions")
+        } else {
+            format!("{base}/v1/chat/completions")
+        };
+
+        // Chat Completions API 请求体格式
+        // 添加 max_tokens=1 减少响应开销；temperature=0 确保确定性输出
+        let body = json!({
+            "model": model,
+            "messages": [{ "role": "user", "content": test_prompt }],
+            "stream": true,
+            "max_tokens": 1,
+            "temperature": 0.0
+        });
+
+        let version = env!("CARGO_PKG_VERSION");
+        let request_id = format!("{}-check-{}"
+            , uuid::Uuid::new_v4().to_string().split('-').next().unwrap_or("ccsw")
+            , chrono::Utc::now().timestamp_millis()
+        );
+        let response = client
+            .post(&url)
+            .header("authorization", format!("Bearer {}", auth.api_key))
+            .header("content-type", "application/json")
+            .header("accept", "text/event-stream")
+            .header("accept-encoding", "identity")
+            .header("user-agent", format!("CC-Switch/{}", version))
+            .header("x-request-id", &request_id)
+            .header("x-client-name", "cc-switch")
+            .header("x-client-version", version)
+            .timeout(timeout)
+            .json(&body)
+            .send()
+            .await
+            .map_err(Self::map_request_error)?;
+
+        let status = response.status().as_u16();
+
+        if !response.status().is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(Self::http_status_error(status, error_text));
+        }
+
+        let mut stream = response.bytes_stream();
+        if let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(_) => Ok((status, model.to_string())),
+                Err(e) => Err(AppError::Message(format!("Stream read failed: {e}"))),
+            }
+        } else {
+            Err(AppError::Message("No response data received".to_string()))
+        }
+    }
+
     /// OpenCode / OpenClaw 的独立分发入口（绕过 `get_adapter`）
     ///
     /// 这两个应用的 `settings_config` 与 Claude/Codex/Gemini 完全不同：
@@ -749,7 +818,22 @@ impl StreamCheckService {
                 )
                 .await
             }
-            _ => unreachable!("check_once_without_adapter 只处理 OpenCode/OpenClaw/Hermes"),
+            AppType::Kimi => {
+                let env_map = crate::kimi_config::json_to_env(&provider.settings_config)?;
+                let base_url = env_map.get("KIMI_BASE_URL").cloned().unwrap_or_default();
+                let api_key = env_map.get("KIMI_API_KEY").cloned().unwrap_or_default();
+                let auth = AuthInfo::new(api_key, AuthStrategy::Bearer);
+                Self::check_kimi_stream(
+                    &client,
+                    &base_url,
+                    &auth,
+                    &model_to_test,
+                    test_prompt,
+                    request_timeout,
+                )
+                .await
+            }
+            _ => unreachable!("check_once_without_adapter 只处理 OpenCode/OpenClaw/Hermes/Kimi"),
         };
 
         let response_time = start.elapsed().as_millis() as u64;
@@ -1411,6 +1495,11 @@ impl StreamCheckService {
                 // OpenClaw/Hermes use models array in settings_config
                 // Try to extract first model from the models array
                 Self::extract_openclaw_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
+            }
+            AppType::Kimi => {
+                Self::extract_env_model(provider, "KIMI_MODEL")
+                    .or_else(|| crate::kimi_config::get_kimi_model_from_config())
+                    .unwrap_or_else(|| "kimi-for-coding".to_string())
             }
         }
     }

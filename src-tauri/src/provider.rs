@@ -167,6 +167,13 @@ impl Provider {
                 let api_key = first_non_empty(env, &["GEMINI_API_KEY", "GOOGLE_API_KEY"]);
                 (base_url, api_key)
             }
+            // Kimi uses KIMI_BASE_URL and KIMI_API_KEY in the env map.
+            AppType::Kimi => {
+                let env = settings.get("env");
+                let base_url = str_at(env.and_then(|e| e.get("KIMI_BASE_URL")));
+                let api_key = str_at(env.and_then(|e| e.get("KIMI_API_KEY")));
+                (base_url, api_key)
+            }
             // Hermes (config.yaml) flattens credentials at the top level, snake_case.
             AppType::Hermes => (
                 str_at(settings.get("base_url")),

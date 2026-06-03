@@ -637,6 +637,8 @@
     "opencodeConfigDirDescription": "覆盖 OpenCode 配置目录 (opencode.json)。",
     "openclawConfigDir": "OpenClaw 配置目录",
     "openclawConfigDirDescription": "覆盖 OpenClaw 配置目录 (openclaw.json)。",
+    "kimiConfigDir": "Kimi 配置目录",
+    "kimiConfigDirDescription": "覆盖 Kimi 配置目录 (config.toml)。",
     "hermesConfigDir": "Hermes 配置目录",
     "hermesConfigDirDescription": "覆盖 Hermes 配置目录 (config.yaml)。",
     "browsePlaceholderClaude": "例如：/home/<你的用户名>/.claude",
@@ -644,6 +646,7 @@
     "browsePlaceholderGemini": "例如：/home/<你的用户名>/.gemini",
     "browsePlaceholderOpencode": "例如：/home/<你的用户名>/.config/opencode",
     "browsePlaceholderOpenclaw": "例如：/home/<你的用户名>/.openclaw",
+    "browsePlaceholderKimi": "例如：/home/<你的用户名>/.kimi",
     "browsePlaceholderHermes": "例如：/home/<你的用户名>/.hermes",
     "browseDirectory": "浏览目录",
     "resetDefault": "恢复默认目录（需保存后生效）",
@@ -752,6 +755,7 @@
     "claude-desktop": "Claude Desktop",
     "codex": "Codex",
     "gemini": "Gemini",
+    "kimi": "Kimi Code",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes"
@@ -1479,6 +1483,7 @@
         "claude": "Claude",
         "codex": "Codex",
         "gemini": "Gemini",
+        "kimi": "Kimi Code",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes"

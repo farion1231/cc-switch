@@ -348,6 +348,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
             _ => false,
         },
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => false,
+        AppType::Kimi => false,
     }
 }
 
@@ -417,7 +418,7 @@ pub(crate) fn remove_common_config_from_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop | AppType::Kimi => {
             Ok(settings.clone())
         }
     }
@@ -474,7 +475,7 @@ fn apply_common_config_to_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop | AppType::Kimi => {
             Ok(settings.clone())
         }
     }
@@ -862,6 +863,30 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
+        AppType::Kimi => {
+            let env_map = crate::kimi_config::json_to_env(&provider.settings_config)?;
+            let mut base_url = env_map.get("KIMI_BASE_URL").cloned().unwrap_or_default();
+            let mut api_key = env_map.get("KIMI_API_KEY").cloned().unwrap_or_default();
+            let provider_name = env_map.get("KIMI_PROVIDER_NAME").cloned().unwrap_or_else(|| crate::kimi_config::KIMI_DEFAULT_PROVIDER_NAME.to_string());
+
+            // 向后兼容：如果 settingsConfig 是完整 TOML 格式（包含 providers 字段），
+            // 从中提取当前 provider 的 base_url 和 api_key
+            if base_url.is_empty() && api_key.is_empty() {
+                if let Some(providers) = provider.settings_config.get("providers") {
+                    if let Some(provider_table) = providers.get(&provider_name) {
+                        if let Some(b) = provider_table.get("base_url").and_then(|v| v.as_str()) {
+                            base_url = b.to_string();
+                        }
+                        if let Some(a) = provider_table.get("api_key").and_then(|v| v.as_str()) {
+                            api_key = a.to_string();
+                        }
+                    }
+                }
+            }
+
+            crate::kimi_config::write_kimi_live(&base_url, &api_key, &provider_name)?;
+            log::debug!("Kimi provider '{}' written to live config", provider.id);
+        }
     }
     Ok(())
 }
@@ -1111,6 +1136,49 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = crate::hermes_config::yaml_to_json(&yaml_config)?;
             Ok(config)
         }
+        AppType::Kimi => {
+            let config_path = crate::kimi_config::get_kimi_config_path();
+            if !config_path.exists() {
+                return Err(AppError::localized(
+                    "kimi.config.missing",
+                    "Kimi 配置文件不存在",
+                    "Kimi configuration file not found",
+                ));
+            }
+            let doc = crate::kimi_config::read_kimi_config()?
+                .ok_or_else(|| AppError::localized(
+                    "kimi.config.missing",
+                    "Kimi 配置文件不存在",
+                    "Kimi configuration file not found",
+                ))?;
+
+            // Extract active provider info from TOML and return CC Switch internal format
+            let default_model = doc.get("default_model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("kimi-code/kimi-for-coding");
+            let provider_name = doc.get("models")
+                .and_then(|m| m.get(default_model))
+                .or_else(|| doc.get("models").and_then(|m| m.get("kimi-code/kimi-for-coding")))
+                .and_then(|m| m.get("provider"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(crate::kimi_config::KIMI_DEFAULT_PROVIDER_NAME);
+            let (base_url, api_key) = doc.get("providers")
+                .and_then(|p| p.get(provider_name))
+                .map(|provider| {
+                    let base_url = provider.get("base_url").and_then(|v| v.as_str()).unwrap_or("");
+                    let api_key = provider.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
+                    (base_url, api_key)
+                })
+                .unwrap_or(("", ""));
+
+            Ok(json!({
+                "env": {
+                    "KIMI_BASE_URL": base_url,
+                    "KIMI_API_KEY": api_key,
+                    "KIMI_PROVIDER_NAME": provider_name
+                }
+            }))
+        }
     }
 }
 
@@ -1186,6 +1254,45 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             json!({
                 "env": env_obj,
                 "config": config_obj
+            })
+        }
+        AppType::Kimi => {
+            let config_path = crate::kimi_config::get_kimi_config_path();
+            if !config_path.exists() {
+                return Err(AppError::localized(
+                    "kimi.live.missing",
+                    "Kimi 配置文件不存在",
+                    "Kimi configuration file is missing",
+                ));
+            }
+            let content = std::fs::read_to_string(&config_path)
+                .map_err(|e| AppError::io(&config_path, e))?;
+            let toml_value: toml::Value = toml::from_str(&content)
+                .map_err(|e| AppError::Message(format!("Invalid Kimi config.toml: {e}")))?;
+
+            // Follow the active provider referenced by models (not just the first one in the table)
+            let provider_name = toml_value
+                .get("models")
+                .and_then(|m| m.get("kimi-code/kimi-for-coding"))
+                .and_then(|m| m.get("provider"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(crate::kimi_config::KIMI_DEFAULT_PROVIDER_NAME);
+            let (base_url, api_key) = toml_value
+                .get("providers")
+                .and_then(|p| p.as_table())
+                .and_then(|providers| providers.get(provider_name))
+                .and_then(|provider| {
+                    let base_url = provider.get("base_url").and_then(|v| v.as_str()).unwrap_or("");
+                    let api_key = provider.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
+                    Some((base_url.to_string(), api_key.to_string()))
+                })
+                .unwrap_or_default();
+
+            json!({
+                "env": {
+                    "KIMI_BASE_URL": base_url,
+                    "KIMI_API_KEY": api_key,
+                }
             })
         }
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above

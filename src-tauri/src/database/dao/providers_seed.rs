@@ -7,6 +7,7 @@
 //! - `src/config/claudeProviderPresets.ts`（"Claude Official"）
 //! - `src/config/codexProviderPresets.ts`（"OpenAI Official"）
 //! - `src/config/geminiProviderPresets.ts`（"Google Official"）
+//! - `src/config/kimiProviderPresets.ts`（"Kimi Official"）
 
 use crate::app_config::AppType;
 
@@ -67,6 +68,15 @@ pub(crate) const OFFICIAL_SEEDS: &[OfficialProviderSeed] = &[
         icon_color: "#4285F4",
         // 空 env + 空 config 让用户走 Google OAuth
         settings_config_json: r#"{"env":{},"config":{}}"#,
+    },
+    OfficialProviderSeed {
+        id: "kimi-official",
+        app_type: AppType::Kimi,
+        name: "Kimi Official",
+        website_url: "https://platform.moonshot.cn/console",
+        icon: "kimi",
+        icon_color: "#6366F1",
+        settings_config_json: r#"{"env":{"KIMI_BASE_URL":"https://api.moonshot.cn/v1","KIMI_API_KEY":""}}"#,
     },
 ];
 

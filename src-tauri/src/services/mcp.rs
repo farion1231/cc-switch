@@ -137,6 +137,9 @@ impl McpService {
             AppType::Hermes => {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
+            AppType::Kimi => {
+                log::debug!("Kimi MCP support is not available in MVP, skipping sync");
+            }
         }
         Ok(())
     }
@@ -171,6 +174,9 @@ impl McpService {
             }
             AppType::Hermes => {
                 mcp::remove_server_from_hermes(id)?;
+            }
+            AppType::Kimi => {
+                log::debug!("Kimi MCP support is not available in MVP, skipping remove");
             }
         }
         Ok(())
