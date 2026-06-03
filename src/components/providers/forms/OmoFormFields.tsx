@@ -725,12 +725,19 @@ export function OmoFormFields({
     let filledCount = 0;
     let alreadySetCount = 0;
     let unmatchedCount = 0;
+    const unmatchedExamples: string[] = [];
+
+    const formatExample = (display: string, recommended?: string) =>
+      recommended ? `${display}: ${recommended}` : display;
 
     const updatedAgents = { ...agents };
     for (const agentDef of builtinAgentDefs) {
       const recommendedValue = resolveRecommendedModel(agentDef.recommended);
       if (!recommendedValue) {
         unmatchedCount++;
+        unmatchedExamples.push(
+          formatExample(agentDef.display, agentDef.recommended),
+        );
       } else if (updatedAgents[agentDef.key]?.model) {
         alreadySetCount++;
       } else {
@@ -749,6 +756,9 @@ export function OmoFormFields({
         const recommendedValue = resolveRecommendedModel(catDef.recommended);
         if (!recommendedValue) {
           unmatchedCount++;
+          unmatchedExamples.push(
+            formatExample(catDef.display, catDef.recommended),
+          );
         } else if (updatedCategories[catDef.key]?.model) {
           alreadySetCount++;
         } else {
@@ -762,6 +772,10 @@ export function OmoFormFields({
       onCategoriesChange(updatedCategories);
     }
 
+    const exampleNames = unmatchedExamples.slice(0, 3).join(", ");
+    const examples =
+      unmatchedExamples.length > 3 ? `${exampleNames}…` : exampleNames;
+
     if (filledCount > 0 && unmatchedCount === 0) {
       toast.success(
         t("omo.fillRecommendedSuccess", {
@@ -769,13 +783,23 @@ export function OmoFormFields({
           count: filledCount,
         }),
       );
-    } else if (filledCount > 0 && unmatchedCount > 0) {
+    } else if (filledCount > unmatchedCount) {
       toast.success(
         t("omo.fillRecommendedPartial", {
           defaultValue:
             "Filled {{filled}} recommended models, {{unmatched}} unmatched",
           filled: filledCount,
           unmatched: unmatchedCount,
+        }),
+      );
+    } else if (filledCount > 0) {
+      toast.warning(
+        t("omo.fillRecommendedMostlyUnmatched", {
+          defaultValue:
+            "Filled only {{filled}}, {{unmatched}} unmatched (e.g. {{examples}}). Configure providers offering these models or pick a substitute.",
+          filled: filledCount,
+          unmatched: unmatchedCount,
+          examples,
         }),
       );
     } else if (alreadySetCount > 0 && unmatchedCount === 0) {
@@ -787,7 +811,9 @@ export function OmoFormFields({
     } else {
       toast.warning(
         t("omo.fillRecommendedNoMatch", {
-          defaultValue: "Recommended models not found in configured providers",
+          defaultValue:
+            "Recommended models not found in configured providers (e.g. {{examples}})",
+          examples,
         }),
       );
     }

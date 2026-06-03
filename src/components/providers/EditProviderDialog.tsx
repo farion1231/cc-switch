@@ -132,11 +132,31 @@ export function EditProviderDialog({
   }, [open, provider?.id, appId, hasLoadedLive, isProxyTakeover]); // 只依赖 provider.id，不依赖整个 provider 对象
 
   const initialSettingsConfig = useMemo(() => {
-    return (liveSettings ?? provider?.settingsConfig ?? {}) as Record<
+    const base = (liveSettings ?? provider?.settingsConfig ?? {}) as Record<
       string,
       unknown
     >;
-  }, [liveSettings, provider?.settingsConfig]); // 只依赖 settingsConfig，不依赖整个 provider
+
+    // Codex 的 modelCatalog 是 cc-switch 私有字段，SSOT 在数据库。Live 的 config.toml
+    // 仅在写入时投影出 model_catalog_json 指针；Codex.app 改写配置、代理接管/恢复周期、
+    // 来回切换供应商都可能让 Live 丢失该投影，从而 read_live_settings 反解为空。
+    // 若放任 Live 覆盖，编辑界面会显示空映射表，保存后连同数据库里的映射一起清空（数据丢失）。
+    // 因此始终以数据库 SSOT 的 modelCatalog 为准，仅在数据库确实没有时才回退到 Live 反解结果。
+    if (
+      appId === "codex" &&
+      liveSettings &&
+      provider?.settingsConfig &&
+      typeof provider.settingsConfig === "object"
+    ) {
+      const dbCatalog = (provider.settingsConfig as Record<string, unknown>)
+        .modelCatalog;
+      if (dbCatalog !== undefined) {
+        return { ...base, modelCatalog: dbCatalog };
+      }
+    }
+
+    return base;
+  }, [liveSettings, provider?.settingsConfig, appId]); // 只依赖 settingsConfig，不依赖整个 provider
 
   // 固定 initialData，防止 provider 对象更新时重置表单
   const initialData = useMemo(() => {
@@ -227,6 +247,7 @@ export function EditProviderDialog({
         onSubmittingChange={setIsFormSubmitting}
         initialData={initialData}
         showButtons={false}
+        isProxyTakeover={isProxyTakeover}
       />
     </FullScreenPanel>
   );

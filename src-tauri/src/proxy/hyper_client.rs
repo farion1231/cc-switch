@@ -250,18 +250,14 @@ pub async fn send_request(
         proxy_url,
     );
 
-    if has_cases {
+    if let Some(original_cases) = original_cases
+        .as_ref()
+        .filter(|cases| !cases.cases.is_empty())
+    {
         // Primary path: use raw write + hyper handshake for exact header casing
         let result = tokio::time::timeout(
             timeout,
-            send_raw_request(
-                &uri,
-                &method,
-                &headers,
-                original_cases.as_ref().unwrap(),
-                &body,
-                proxy_url,
-            ),
+            send_raw_request(&uri, &method, &headers, original_cases, &body, proxy_url),
         )
         .await
         .map_err(|_| ProxyError::Timeout(format!("请求超时: {}s", timeout.as_secs())))?;

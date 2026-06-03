@@ -89,6 +89,9 @@ impl Database {
                     log::info!(
                         "Rolled up and pruned {deleted} proxy_request_logs (retain={retain_days}d)"
                     );
+                    // 归档触发了表结构变化，前端 30 天前的统计可能跟着变，
+                    // 通知一次让 UsageDashboard 重拉数据
+                    crate::usage_events::notify_log_recorded();
                 }
                 Ok(deleted)
             }
