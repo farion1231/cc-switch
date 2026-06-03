@@ -16,6 +16,7 @@ enum CodingPlanProvider {
     ZhipuEn,
     MiniMaxCn,
     MiniMaxEn,
+    ZenMux,
 }
 
 fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
@@ -30,6 +31,8 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         Some(CodingPlanProvider::MiniMaxCn)
     } else if url.contains("api.minimax.io") {
         Some(CodingPlanProvider::MiniMaxEn)
+    } else if url.contains("zenmux") {
+        Some(CodingPlanProvider::ZenMux)
     } else {
         None
     }
@@ -145,6 +148,8 @@ async fn query_kimi(api_key: &str) -> SubscriptionQuota {
                     name: "five_hour".to_string(),
                     utilization,
                     resets_at,
+                    used_value_usd: None,
+                    max_value_usd: None,
                 });
             }
         }
@@ -166,6 +171,8 @@ async fn query_kimi(api_key: &str) -> SubscriptionQuota {
             name: "weekly_limit".to_string(),
             utilization,
             resets_at,
+            used_value_usd: None,
+            max_value_usd: None,
         });
     }
 
@@ -225,6 +232,8 @@ fn parse_zhipu_token_tiers(data: &serde_json::Value) -> Vec<QuotaTier> {
                 name: name.to_string(),
                 utilization: percentage,
                 resets_at,
+                used_value_usd: None,
+                max_value_usd: None,
             })
         })
         .collect()
@@ -370,50 +379,8 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> SubscriptionQuota {
         }
     }
 
-    let mut tiers = Vec::new();
-
-    if let Some(model_remains) = body.get("model_remains").and_then(|v| v.as_array()) {
-        // 只取第一个模型（MiniMax-M*，主力编程模型）
-        if let Some(item) = model_remains.first() {
-            // usage_count 是剩余量（满额=total，用完=0），需反转为已用百分比
-            let interval_total = item
-                .get("current_interval_total_count")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
-            let interval_remaining = item
-                .get("current_interval_usage_count")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
-            let end_time = item.get("end_time").and_then(|v| v.as_i64());
-
-            if interval_total > 0.0 {
-                tiers.push(QuotaTier {
-                    name: "five_hour".to_string(),
-                    utilization: ((interval_total - interval_remaining) / interval_total) * 100.0,
-                    resets_at: end_time.and_then(millis_to_iso8601),
-                });
-            }
-
-            // 周额度
-            let weekly_total = item
-                .get("current_weekly_total_count")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
-            let weekly_remaining = item
-                .get("current_weekly_usage_count")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
-            let weekly_end = item.get("weekly_end_time").and_then(|v| v.as_i64());
-
-            if weekly_total > 0.0 {
-                tiers.push(QuotaTier {
-                    name: "weekly_limit".to_string(),
-                    utilization: ((weekly_total - weekly_remaining) / weekly_total) * 100.0,
-                    resets_at: weekly_end.and_then(millis_to_iso8601),
-                });
-            }
-        }
-    }
+    // 提取纯函数便于无 mock 单元测试;新接口直接给"剩余百分比",反转为已用百分比
+    let tiers = parse_minimax_tiers(&body);
 
     SubscriptionQuota {
         tool: "coding_plan".to_string(),
@@ -425,6 +392,204 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> SubscriptionQuota {
         error: None,
         queried_at: Some(now_millis()),
     }
+}
+
+// ── ZenMux ──────────────────────────────────────────────────
+
+async fn query_zenmux(base_url: &str, api_key: &str) -> SubscriptionQuota {
+    let client = crate::proxy::http_client::get();
+
+    let resp = client
+        .get(base_url)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Accept", "application/json")
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return make_error(format!("Network error: {e}")),
+    };
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return SubscriptionQuota {
+            tool: "coding_plan".to_string(),
+            credential_status: CredentialStatus::Expired,
+            credential_message: Some("Invalid API key".to_string()),
+            success: false,
+            tiers: vec![],
+            extra_usage: None,
+            error: Some(format!("Authentication failed (HTTP {status})")),
+            queried_at: Some(now_millis()),
+        };
+    }
+
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return make_error(format!("API error (HTTP {status}): {body}"));
+    }
+
+    let body: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => return make_error(format!("Failed to parse response: {e}")),
+    };
+
+    // 检查业务级别错误
+    if body.get("success").and_then(|v| v.as_bool()) != Some(true) {
+        let msg = body
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
+        return make_error(format!("API error: {msg}"));
+    }
+
+    let data = match body.get("data") {
+        Some(d) => d,
+        None => return make_error("Missing 'data' field in response".to_string()),
+    };
+
+    let mut tiers = Vec::new();
+
+    // 5 小时窗口限额
+    if let Some(q5h) = data.get("quota_5_hour") {
+        let usage_pct = q5h
+            .get("usage_percentage")
+            .and_then(parse_f64)
+            .unwrap_or(0.0);
+        let resets_at = q5h
+            .get("resets_at")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let used_usd = q5h.get("used_value_usd").and_then(parse_f64);
+        let max_usd = q5h.get("max_value_usd").and_then(parse_f64);
+        tiers.push(QuotaTier {
+            name: "five_hour".to_string(),
+            utilization: usage_pct * 100.0,
+            resets_at,
+            used_value_usd: used_usd,
+            max_value_usd: max_usd,
+        });
+    }
+
+    // 7 天窗口限额
+    if let Some(q7d) = data.get("quota_7_day") {
+        let usage_pct = q7d
+            .get("usage_percentage")
+            .and_then(parse_f64)
+            .unwrap_or(0.0);
+        let resets_at = q7d
+            .get("resets_at")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let used_usd = q7d.get("used_value_usd").and_then(parse_f64);
+        let max_usd = q7d.get("max_value_usd").and_then(parse_f64);
+        tiers.push(QuotaTier {
+            name: "weekly_limit".to_string(),
+            utilization: usage_pct * 100.0,
+            resets_at,
+            used_value_usd: used_usd,
+            max_value_usd: max_usd,
+        });
+    }
+
+    // 套餐等级和账户状态存入 credential_message
+    let plan_tier = data
+        .get("plan")
+        .and_then(|p| p.get("tier"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let account_status = data
+        .get("account_status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let plan_info = if !plan_tier.is_empty() {
+        format!("{plan_tier} ({account_status})")
+    } else {
+        String::new()
+    };
+
+    SubscriptionQuota {
+        tool: "coding_plan".to_string(),
+        credential_status: CredentialStatus::Valid,
+        credential_message: if plan_info.is_empty() {
+            None
+        } else {
+            Some(plan_info)
+        },
+        success: true,
+        tiers,
+        extra_usage: None,
+        error: None,
+        queried_at: Some(now_millis()),
+    }
+}
+
+/// 从 `/coding_plan/remains` 响应中解析 MiniMax 编程套餐的额度 tier。
+///
+/// 新接口语义:`current_*_remaining_percent` 是"剩余百分比"(0-100),
+/// `model_remains` 数组里有 `general`(编程套餐)和 `video` 等其他模型,
+/// 这里只取 `general`,跳过 video。
+///
+/// 5h 桶始终存在;周桶并非所有套餐都有,靠 `current_weekly_status == 1`
+/// 判定激活(无周限额套餐该字段为 3,`remaining_percent` 恒为 100,不应展示)。
+fn parse_minimax_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
+    let mut tiers = Vec::new();
+
+    let Some(model_remains) = body.get("model_remains").and_then(|v| v.as_array()) else {
+        return tiers;
+    };
+
+    // 只取 model_name == "general" 的条目,跳过 video 等非编程模型
+    let Some(item) = model_remains.iter().find(|item| {
+        item.get("model_name")
+            .and_then(|v| v.as_str())
+            .map(|s| s == "general")
+            .unwrap_or(false)
+    }) else {
+        return tiers;
+    };
+
+    // 5h 桶:剩余百分比 → 已用百分比
+    if let Some(remain_pct) = item
+        .get("current_interval_remaining_percent")
+        .and_then(|v| v.as_f64())
+    {
+        let resets_at = item
+            .get("end_time")
+            .and_then(|v| v.as_i64())
+            .and_then(millis_to_iso8601);
+        tiers.push(QuotaTier {
+            name: TIER_FIVE_HOUR.to_string(),
+            utilization: 100.0 - remain_pct,
+            resets_at,
+            used_value_usd: None,
+            max_value_usd: None,
+        });
+    }
+
+    // 周桶:仅当 status=1 时激活;status=3 等表示该套餐无周限额,跳过
+    if item.get("current_weekly_status").and_then(|v| v.as_i64()) == Some(1) {
+        if let Some(remain_pct) = item
+            .get("current_weekly_remaining_percent")
+            .and_then(|v| v.as_f64())
+        {
+            let resets_at = item
+                .get("weekly_end_time")
+                .and_then(|v| v.as_i64())
+                .and_then(millis_to_iso8601);
+            tiers.push(QuotaTier {
+                name: TIER_WEEKLY_LIMIT.to_string(),
+                utilization: 100.0 - remain_pct,
+                resets_at,
+                used_value_usd: None,
+                max_value_usd: None,
+            });
+        }
+    }
+
+    tiers
 }
 
 // ── 公开入口 ────────────────────────────────────────────────
@@ -467,6 +632,7 @@ pub async fn get_coding_plan_quota(
         CodingPlanProvider::ZhipuCn | CodingPlanProvider::ZhipuEn => query_zhipu(api_key).await,
         CodingPlanProvider::MiniMaxCn => query_minimax(api_key, true).await,
         CodingPlanProvider::MiniMaxEn => query_minimax(api_key, false).await,
+        CodingPlanProvider::ZenMux => query_zenmux(base_url, api_key).await,
     };
 
     Ok(quota)
@@ -474,7 +640,7 @@ pub async fn get_coding_plan_quota(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_zhipu_token_tiers, TIER_FIVE_HOUR, TIER_WEEKLY_LIMIT};
+    use super::{parse_minimax_tiers, parse_zhipu_token_tiers, TIER_FIVE_HOUR, TIER_WEEKLY_LIMIT};
     use serde_json::json;
 
     #[test]
@@ -603,5 +769,175 @@ mod tests {
         assert_eq!(tiers.len(), 2);
         assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
         assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+    }
+
+    // ── MiniMax ──
+
+    #[test]
+    fn minimax_general_two_tiers_from_remaining_percent() {
+        // 主路径:general 桶 5h 剩 98% / weekly 剩 95% → 已用 2% / 5%
+        let body = json!({
+            "model_remains": [
+                {
+                    "model_name": "general",
+                    "current_interval_remaining_percent": 98.0,
+                    "current_weekly_remaining_percent": 95.0,
+                    "current_interval_status": 1,
+                    "current_weekly_status": 1,
+                    "end_time": 1_780_329_600_000_i64,
+                    "weekly_end_time": 1_780_848_000_000_i64
+                },
+                {
+                    "model_name": "video",
+                    "current_interval_remaining_percent": 100.0,
+                    "current_weekly_remaining_percent": 100.0
+                }
+            ],
+            "base_resp": { "status_code": 0, "status_msg": "success" }
+        });
+        let tiers = parse_minimax_tiers(&body);
+        assert_eq!(tiers.len(), 2);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(tiers[0].utilization, 2.0);
+        assert!(tiers[0].resets_at.is_some());
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(tiers[1].utilization, 5.0);
+        assert!(tiers[1].resets_at.is_some());
+    }
+
+    #[test]
+    fn minimax_skips_video_and_finds_general_in_any_position() {
+        // 防御性:即使 video 排在数组前面,general 排在后面,仍应被定位到。
+        let body = json!({
+            "model_remains": [
+                {
+                    "model_name": "video",
+                    "current_interval_remaining_percent": 50.0,
+                    "current_weekly_remaining_percent": 50.0
+                },
+                {
+                    "model_name": "general",
+                    "current_interval_remaining_percent": 80.0,
+                    "current_weekly_remaining_percent": 70.0,
+                    "current_interval_status": 1,
+                    "current_weekly_status": 1
+                }
+            ]
+        });
+        let tiers = parse_minimax_tiers(&body);
+        assert_eq!(tiers.len(), 2);
+        // 取的是 general 桶,不是 video(20%/30% 而非 50%/50%)
+        assert_eq!(tiers[0].utilization, 20.0);
+        assert_eq!(tiers[1].utilization, 30.0);
+    }
+
+    #[test]
+    fn minimax_missing_general_returns_empty() {
+        // model_remains 只有 video / 空 / 缺字段 → 不应崩溃,tiers 为空
+        let body = json!({
+            "model_remains": [
+                {
+                    "model_name": "video",
+                    "current_interval_remaining_percent": 100.0,
+                    "current_weekly_remaining_percent": 100.0
+                }
+            ]
+        });
+        assert!(parse_minimax_tiers(&body).is_empty());
+
+        let body_empty: serde_json::Value = json!({ "model_remains": [] });
+        assert!(parse_minimax_tiers(&body_empty).is_empty());
+
+        let body_no_field = json!({});
+        assert!(parse_minimax_tiers(&body_no_field).is_empty());
+    }
+
+    #[test]
+    fn minimax_missing_percent_fields_skips_tier() {
+        // 字段缺失时只跳过对应桶,另一边仍能展示
+        let body = json!({
+            "model_remains": [{
+                "model_name": "general",
+                "current_interval_remaining_percent": 60.0,
+                "current_weekly_status": 1
+                // 缺 current_weekly_remaining_percent
+            }]
+        });
+        let tiers = parse_minimax_tiers(&body);
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(tiers[0].utilization, 40.0);
+    }
+
+    #[test]
+    fn minimax_negative_percent_passes_through() {
+        // 防御性:与 parse_zhipu_token_tiers 约定一致,负数 / 超 100 不做范围裁剪
+        let body = json!({
+            "model_remains": [{
+                "model_name": "general",
+                "current_interval_remaining_percent": -5.0,
+                "current_weekly_remaining_percent": 150.0,
+                "current_interval_status": 1,
+                "current_weekly_status": 1
+            }]
+        });
+        let tiers = parse_minimax_tiers(&body);
+        assert_eq!(tiers.len(), 2);
+        assert_eq!(tiers[0].utilization, 105.0); // 100 - (-5)
+        assert_eq!(tiers[1].utilization, -50.0); // 100 - 150
+    }
+
+    #[test]
+    fn minimax_weekly_status_3_skips_weekly_tier() {
+        // 无周限额套餐:current_weekly_status=3,remaining_percent 恒为 100,
+        // 不应推 weekly_limit tier(否则会显示"0% 已用"的假周桶)
+        let body = json!({
+            "model_remains": [
+                {
+                    "model_name": "general",
+                    "start_time": 1_780_347_600_000_i64,
+                    "end_time": 1_780_365_600_000_i64,
+                    "remains_time": 4_161_372_i64,
+                    "current_interval_remaining_percent": 99,
+                    "current_interval_status": 1,
+                    "current_weekly_total_count": 0,
+                    "current_weekly_usage_count": 0,
+                    "weekly_start_time": 1_780_243_200_000_i64,
+                    "weekly_end_time": 1_780_848_000_000_i64,
+                    "weekly_remains_time": 486_561_372_i64,
+                    "current_weekly_status": 3,
+                    "current_weekly_remaining_percent": 100
+                },
+                {
+                    "model_name": "video",
+                    "current_interval_remaining_percent": 100,
+                    "current_weekly_status": 3,
+                    "current_weekly_remaining_percent": 100
+                }
+            ],
+            "base_resp": { "status_code": 0, "status_msg": "success" }
+        });
+        let tiers = parse_minimax_tiers(&body);
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(tiers[0].utilization, 1.0);
+        assert!(tiers[0].resets_at.is_some());
+    }
+
+    #[test]
+    fn minimax_weekly_status_2_also_skips_weekly_tier() {
+        // 防御性:除 1 之外的 status 都视为周桶未激活,跳过
+        let body = json!({
+            "model_remains": [{
+                "model_name": "general",
+                "current_interval_remaining_percent": 80.0,
+                "current_weekly_remaining_percent": 50.0,
+                "current_weekly_status": 2
+            }]
+        });
+        let tiers = parse_minimax_tiers(&body);
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(tiers[0].utilization, 20.0);
     }
 }

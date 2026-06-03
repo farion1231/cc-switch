@@ -393,7 +393,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
     settingsConfig: {
       name: "zhipu_glm",
-      base_url: "https://open.bigmodel.cn/api/paas/v4",
+      base_url: "https://open.bigmodel.cn/api/coding/paas/v4",
       api_key: "",
       api_mode: "chat_completions",
       models: [{ id: "glm-5.1", name: "GLM-5.1" }],
@@ -411,7 +411,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
     settingsConfig: {
       name: "zhipu_glm_en",
-      base_url: "https://api.z.ai/api/paas/v4",
+      base_url: "https://api.z.ai/api/coding/paas/v4",
       api_key: "",
       api_mode: "chat_completions",
       models: [{ id: "glm-5.1", name: "GLM-5.1" }],
