@@ -252,8 +252,13 @@ fn load_title_overrides(db: &Database) -> Result<Vec<SessionTitleOverride>, Stri
         .map_err(|e| e.to_string())?;
 
     match raw {
-        Some(value) if !value.trim().is_empty() => serde_json::from_str(&value)
-            .map_err(|e| format!("Failed to parse session title overrides from settings: {e}")),
+        Some(value) if !value.trim().is_empty() => match serde_json::from_str(&value) {
+            Ok(overrides) => Ok(overrides),
+            Err(error) => {
+                log::warn!("Ignoring invalid session title overrides from settings: {error}");
+                Ok(Vec::new())
+            }
+        },
         _ => Ok(Vec::new()),
     }
 }
@@ -501,5 +506,16 @@ mod tests {
         let saved = load_title_overrides(&db).expect("load overrides");
         assert_eq!(saved.len(), 1);
         assert_eq!(saved[0].title, "Second title");
+    }
+
+    #[test]
+    fn load_title_overrides_ignores_invalid_json() {
+        let db = Database::memory().expect("memory db");
+        db.set_setting("session_title_overrides", "{not-json")
+            .expect("seed invalid overrides");
+
+        let saved = load_title_overrides(&db).expect("load overrides");
+
+        assert!(saved.is_empty());
     }
 }
