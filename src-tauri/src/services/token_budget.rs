@@ -10,6 +10,9 @@
 //!
 //! MVP 不读 `usage_daily_rollups`：单周期最多 ~31 天的 detail rows，SQLite 直接聚合足够快。
 //! 若后续发现热路径慢，再合并 rollup（参考 `usage_stats::get_usage_summary` 写法）。
+//!
+//! **时间单位**：`proxy_request_logs.created_at` 存储为 Unix **秒**（与 usage_stats.rs 一致），
+//! 所有窗口边界、SQL 条件均使用秒级时间戳。
 
 use crate::database::Database;
 use crate::error::AppError;
@@ -27,14 +30,14 @@ use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// 周期窗口（unix ms，本地时区）。半开区间：[start, end)。
+/// 周期窗口（unix **秒**，本地时区）。半开区间：[start, end)。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BudgetWindow {
-    /// 窗口起始（含），unix ms
-    pub start_ms: i64,
-    /// 窗口结束（不含），unix ms
-    pub end_ms: i64,
+    /// 窗口起始（含），unix 秒
+    pub start_sec: i64,
+    /// 窗口结束（不含），unix 秒
+    pub end_sec: i64,
 }
 
 /// 一条预算的实时状态。前端 BudgetCard 直接消费。
@@ -71,7 +74,7 @@ impl TokenBudgetService {
     ) -> Result<TokenBudget, AppError> {
         validate_input(&input)?;
         let id = Uuid::new_v4().to_string();
-        let now = now_ms();
+        let now = now_sec();
         state.db.insert_token_budget(&id, &input, now)
     }
 
@@ -99,7 +102,7 @@ impl TokenBudgetService {
         {
             // 完全空 patch：仍然 touch updated_at，给用户明确的"保存了"反馈
         }
-        let now = now_ms();
+        let now = now_sec();
         let updated = state.db.update_token_budget(id, &patch, now)?;
         // 校验副作用：上面借用结束才调用 DAO
         drop(merged);
@@ -119,12 +122,12 @@ impl TokenBudgetService {
         let Some(budget) = state.db.get_token_budget(id)? else {
             return Ok(None);
         };
-        Ok(Some(Self::status_for(state.db.clone(), &budget, now_ms())?))
+        Ok(Some(Self::status_for(state.db.clone(), &budget, now_sec())?))
     }
 
     pub fn get_all_statuses(state: &AppState) -> Result<Vec<BudgetStatus>, AppError> {
         let budgets = state.db.list_token_budgets()?;
-        let now = now_ms();
+        let now = now_sec();
         let db = state.db.clone();
         budgets
             .into_iter()
@@ -138,9 +141,9 @@ impl TokenBudgetService {
     pub(crate) fn status_for(
         db: Arc<Database>,
         budget: &TokenBudget,
-        now_ms: i64,
+        now_sec: i64,
     ) -> Result<BudgetStatus, AppError> {
-        let window = compute_period_window(budget.period, budget.period_start_day, now_ms);
+        let window = compute_period_window(budget.period, budget.period_start_day, now_sec);
         let (consumed_tokens, consumed_usd) = aggregate_window(&db, budget, window)?;
 
         let pct_tokens = budget
@@ -176,7 +179,7 @@ impl TokenBudgetService {
 
 // ── 周期窗口 ────────────────────────────────────────────────────────
 
-/// 计算当前时间点 `now_ms`（unix ms）落在哪个预算周期内，并返回该周期的边界。
+/// 计算当前时间点 `now_sec`（unix **秒**）落在哪个预算周期内，并返回该周期的边界。
 ///
 /// * `daily` → 本地时区今日 00:00 ~ 明日 00:00；忽略 `start_day`。
 /// * `weekly` → 本地本周 `start_day` 00:00 起的 7 天；`start_day=0` 表示周日。
@@ -185,10 +188,10 @@ impl TokenBudgetService {
 pub fn compute_period_window(
     period: BudgetPeriod,
     start_day: i32,
-    now_ms: i64,
+    now_sec: i64,
 ) -> BudgetWindow {
     let now_local = Local
-        .timestamp_millis_opt(now_ms)
+        .timestamp_opt(now_sec, 0)
         .single()
         .unwrap_or_else(|| Local::now());
     match period {
@@ -209,8 +212,8 @@ fn daily_window(now: DateTime<Local>) -> BudgetWindow {
         .expect("midnight always valid");
     let end_local = start_local + chrono::Duration::days(1);
     BudgetWindow {
-        start_ms: start_local.timestamp_millis(),
-        end_ms: end_local.timestamp_millis(),
+        start_sec: start_local.timestamp(),
+        end_sec: end_local.timestamp(),
     }
 }
 
@@ -227,8 +230,8 @@ fn weekly_window(now: DateTime<Local>, start_day: i32) -> BudgetWindow {
         .expect("midnight valid");
     let end_local = start_local + chrono::Duration::days(7);
     BudgetWindow {
-        start_ms: start_local.timestamp_millis(),
-        end_ms: end_local.timestamp_millis(),
+        start_sec: start_local.timestamp(),
+        end_sec: end_local.timestamp(),
     }
 }
 
@@ -266,8 +269,8 @@ fn monthly_window(now: DateTime<Local>, start_day: i32) -> BudgetWindow {
         .expect("midnight valid");
 
     BudgetWindow {
-        start_ms: start_local.timestamp_millis(),
-        end_ms: end_local.timestamp_millis(),
+        start_sec: start_local.timestamp(),
+        end_sec: end_local.timestamp(),
     }
 }
 
@@ -301,8 +304,8 @@ fn aggregate_window(
     let dedup = effective_usage_log_filter("l");
 
     let mut conditions = vec![
-        format!("l.created_at >= {}", window.start_ms),
-        format!("l.created_at < {}", window.end_ms),
+        format!("l.created_at >= {}", window.start_sec),
+        format!("l.created_at < {}", window.end_sec),
         dedup,
     ];
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -316,9 +319,18 @@ fn aggregate_window(
             }
         }
         BudgetScope::Provider => {
+            // scope_value 格式: "app_type:provider_id"（与前端 BudgetEditor 写入格式一致）
             if let Some(v) = &budget.scope_value {
-                conditions.push("l.provider_id = ?".to_string());
-                params.push(Box::new(v.clone()));
+                if let Some((app_type, provider_id)) = v.split_once(':') {
+                    conditions.push("l.app_type = ?".to_string());
+                    params.push(Box::new(app_type.to_string()));
+                    conditions.push("l.provider_id = ?".to_string());
+                    params.push(Box::new(provider_id.to_string()));
+                } else {
+                    // 回退：旧数据没有 app_type 前缀时，仅按 provider_id 过滤
+                    conditions.push("l.provider_id = ?".to_string());
+                    params.push(Box::new(v.clone()));
+                }
             }
         }
         BudgetScope::Model => {
@@ -364,6 +376,16 @@ fn validate_input(input: &CreateTokenBudgetInput) -> Result<(), AppError> {
             "全局预算不应指定 scope_value".into(),
         ));
     }
+    // provider scope 的 scope_value 应为 "app_type:provider_id" 格式
+    if matches!(input.scope, BudgetScope::Provider) {
+        if let Some(ref v) = input.scope_value {
+            if !v.contains(':') {
+                return Err(AppError::Message(
+                    "provider 预算的 scope_value 格式必须为 \"app_type:provider_id\"（如 \"claude:my-provider\"）".into(),
+                ));
+            }
+        }
+    }
     if !matches!(input.scope, BudgetScope::Global) && input.scope_value.as_deref().map_or(true, |s| s.trim().is_empty()) {
         return Err(AppError::Message(
             "非全局预算必须指定 scope_value".into(),
@@ -382,6 +404,15 @@ fn validate_merged(merged: &TokenBudget) -> Result<(), AppError> {
         return Err(AppError::Message(
             "全局预算不应指定 scope_value".into(),
         ));
+    }
+    if matches!(merged.scope, BudgetScope::Provider) {
+        if let Some(ref v) = merged.scope_value {
+            if !v.contains(':') {
+                return Err(AppError::Message(
+                    "provider 预算的 scope_value 格式必须为 \"app_type:provider_id\"".into(),
+                ));
+            }
+        }
     }
     if !matches!(merged.scope, BudgetScope::Global)
         && merged
@@ -479,8 +510,8 @@ fn merge_for_validation(
     merged
 }
 
-fn now_ms() -> i64 {
-    chrono::Local::now().timestamp_millis()
+fn now_sec() -> i64 {
+    chrono::Local::now().timestamp()
 }
 
 #[cfg(test)]
@@ -491,7 +522,7 @@ mod tests {
         Local
             .with_ymd_and_hms(year, month, day, hour, 0, 0)
             .unwrap()
-            .timestamp_millis()
+            .timestamp()
     }
 
     #[test]
@@ -500,8 +531,8 @@ mod tests {
         let w = compute_period_window(BudgetPeriod::Daily, 1, now);
         let expected_start = ts(2026, 6, 2, 0);
         let expected_end = ts(2026, 6, 3, 0);
-        assert_eq!(w.start_ms, expected_start);
-        assert_eq!(w.end_ms, expected_end);
+        assert_eq!(w.start_sec, expected_start);
+        assert_eq!(w.end_sec, expected_end);
     }
 
     #[test]
@@ -509,8 +540,8 @@ mod tests {
         // 2026-06-03 is Wednesday; start_day=1 (Mon) → window starts 2026-06-01.
         let now = ts(2026, 6, 3, 10);
         let w = compute_period_window(BudgetPeriod::Weekly, 1, now);
-        assert_eq!(w.start_ms, ts(2026, 6, 1, 0));
-        assert_eq!(w.end_ms, ts(2026, 6, 8, 0));
+        assert_eq!(w.start_sec, ts(2026, 6, 1, 0));
+        assert_eq!(w.end_sec, ts(2026, 6, 8, 0));
     }
 
     #[test]
@@ -518,8 +549,8 @@ mod tests {
         // 2026-06-03 Wed; start_day=0 (Sun) → window starts 2026-05-31.
         let now = ts(2026, 6, 3, 10);
         let w = compute_period_window(BudgetPeriod::Weekly, 0, now);
-        assert_eq!(w.start_ms, ts(2026, 5, 31, 0));
-        assert_eq!(w.end_ms, ts(2026, 6, 7, 0));
+        assert_eq!(w.start_sec, ts(2026, 5, 31, 0));
+        assert_eq!(w.end_sec, ts(2026, 6, 7, 0));
     }
 
     #[test]
@@ -527,8 +558,8 @@ mod tests {
         // start_day=1 → window = current month 1st ~ next month 1st.
         let now = ts(2026, 6, 15, 12);
         let w = compute_period_window(BudgetPeriod::Monthly, 1, now);
-        assert_eq!(w.start_ms, ts(2026, 6, 1, 0));
-        assert_eq!(w.end_ms, ts(2026, 7, 1, 0));
+        assert_eq!(w.start_sec, ts(2026, 6, 1, 0));
+        assert_eq!(w.end_sec, ts(2026, 7, 1, 0));
     }
 
     #[test]
@@ -536,8 +567,8 @@ mod tests {
         // start_day=15; on June 5 → window = May 15 ~ June 15.
         let now = ts(2026, 6, 5, 12);
         let w = compute_period_window(BudgetPeriod::Monthly, 15, now);
-        assert_eq!(w.start_ms, ts(2026, 5, 15, 0));
-        assert_eq!(w.end_ms, ts(2026, 6, 15, 0));
+        assert_eq!(w.start_sec, ts(2026, 5, 15, 0));
+        assert_eq!(w.end_sec, ts(2026, 6, 15, 0));
     }
 
     #[test]
@@ -545,8 +576,8 @@ mod tests {
         // 31 is clamped to 28; on March 1 → window = Feb 28 ~ Mar 28.
         let now = ts(2026, 3, 1, 0);
         let w = compute_period_window(BudgetPeriod::Monthly, 31, now);
-        assert_eq!(w.start_ms, ts(2026, 2, 28, 0));
-        assert_eq!(w.end_ms, ts(2026, 3, 28, 0));
+        assert_eq!(w.start_sec, ts(2026, 2, 28, 0));
+        assert_eq!(w.end_sec, ts(2026, 3, 28, 0));
     }
 
     #[test]
@@ -554,8 +585,8 @@ mod tests {
         // start_day=1; on 2027-01-15 → window = 2027-01-01 ~ 2027-02-01.
         let now = ts(2027, 1, 15, 0);
         let w = compute_period_window(BudgetPeriod::Monthly, 1, now);
-        assert_eq!(w.start_ms, ts(2027, 1, 1, 0));
-        assert_eq!(w.end_ms, ts(2027, 2, 1, 0));
+        assert_eq!(w.start_sec, ts(2027, 1, 1, 0));
+        assert_eq!(w.end_sec, ts(2027, 2, 1, 0));
     }
 
     #[test]
@@ -563,8 +594,8 @@ mod tests {
         // start_day=15; on 2026-01-05 → window = 2025-12-15 ~ 2026-01-15.
         let now = ts(2026, 1, 5, 0);
         let w = compute_period_window(BudgetPeriod::Monthly, 15, now);
-        assert_eq!(w.start_ms, ts(2025, 12, 15, 0));
-        assert_eq!(w.end_ms, ts(2026, 1, 15, 0));
+        assert_eq!(w.start_sec, ts(2025, 12, 15, 0));
+        assert_eq!(w.end_sec, ts(2026, 1, 15, 0));
     }
 
     #[test]

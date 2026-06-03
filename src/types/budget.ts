@@ -1,6 +1,7 @@
 // Token Budget 类型定义
 // 映射 src-tauri/src/token_budget.rs + services/token_budget.rs
 // Rust 端 #[serde(rename_all = "camelCase")] → TS camelCase
+// 时间单位：秒（与 proxy_request_logs.created_at 一致）
 
 /** 预算作用域 */
 export type BudgetScope = "global" | "app" | "provider" | "model";
@@ -13,13 +14,13 @@ export interface TokenBudget {
   id: string;
   name: string;
   scope: BudgetScope;
-  scopeValue?: string; // scope=global 时不存在
+  scopeValue?: string; // scope=global 时不存在; provider 时为 "app_type:provider_id"
   period: BudgetPeriod;
   periodStartDay: number;
   limitTokens?: number; // i64
   limitUsd?: string; // Decimal 字符串 "10.500000"
   enabled: boolean;
-  createdAt?: number; // unix ms
+  createdAt?: number; // unix sec
   updatedAt?: number;
 }
 
@@ -47,10 +48,10 @@ export interface UpdateTokenBudgetInput {
   enabled?: boolean;
 }
 
-/** 周期窗口（半开区间 [startMs, endMs)） */
+/** 周期窗口（半开区间 [startSec, endSec)），单位：秒 */
 export interface BudgetWindow {
-  startMs: number;
-  endMs: number;
+  startSec: number;
+  endSec: number;
 }
 
 /** 预算实时状态（L1） */

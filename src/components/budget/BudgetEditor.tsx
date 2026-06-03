@@ -58,15 +58,16 @@ export function BudgetEditor({ open, onOpenChange, budget, recommendation }: Bud
   const { data: geminiProviders } = useProvidersQuery("gemini");
   const { data: modelPricing } = useModelPricing();
 
+  // providers 列表保留 app_type 信息，scope_value 存储为 "app_type:provider_id"
   const providers = useMemo(() => {
     const seen = new Set<string>();
-    const list: { id: string; name: string }[] = [];
+    const list: { id: string; name: string; appType: string }[] = [];
     for (const data of [claudeProviders, codexProviders, geminiProviders]) {
       if (!data?.providers) continue;
       for (const [id, p] of Object.entries(data.providers)) {
         if (!seen.has(id)) {
           seen.add(id);
-          list.push({ id, name: p.name || id });
+          list.push({ id, name: p.name || id, appType: data.appType || "" });
         }
       }
     }
@@ -201,7 +202,7 @@ export function BudgetEditor({ open, onOpenChange, budget, recommendation }: Bud
   const renderScopeValueSelector = () => {
     if (scope === "global") return null;
 
-    let items: { id: string; name: string }[] = [];
+    let items: { id: string; name: string; appType?: string }[] = [];
     if (scope === "app") items = apps;
     else if (scope === "provider") items = providers;
     else if (scope === "model") items = models;
@@ -218,11 +219,18 @@ export function BudgetEditor({ open, onOpenChange, budget, recommendation }: Bud
               <SelectValue placeholder={t("budget.scopeValuePlaceholder")} />
             </SelectTrigger>
             <SelectContent className="max-h-48">
-              {items.map((item) => (
-                <SelectItem key={item.id} value={item.id}>
-                  {item.name}
-                </SelectItem>
-              ))}
+              {items.map((item) => {
+                const itemValue = scope === "provider" && item.appType
+                  ? `${item.appType}:${item.id}`
+                  : item.id;
+                return (
+                  <SelectItem key={item.id} value={itemValue}>
+                    {scope === "provider" && item.appType
+                      ? `[${item.appType}] ${item.name}`
+                      : item.name}
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
         ) : (
