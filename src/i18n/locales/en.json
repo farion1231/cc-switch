@@ -2756,6 +2756,9 @@
       "4": "Thu",
       "5": "Fri",
       "6": "Sat"
-    }
+    },
+    "loadingRecommendation": "Analyzing historical usage...",
+    "recommendationTitle": "Recommended budgets (based on last 7 days)",
+    "applyRecommendation": "Apply"
   }
 }

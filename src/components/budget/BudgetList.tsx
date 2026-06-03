@@ -8,6 +8,7 @@ import type { TokenBudget } from "@/types/budget";
 import { BudgetCard } from "./BudgetCard";
 import { BudgetEditor } from "./BudgetEditor";
 import { BudgetDeleteDialog } from "./BudgetDeleteDialog";
+import { BudgetRecommendation, type Recommendation } from "./BudgetRecommendation";
 
 export function BudgetList() {
   const { t } = useTranslation();
@@ -18,17 +19,26 @@ export function BudgetList() {
   // Editor state
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingBudget, setEditingBudget] = useState<TokenBudget | undefined>();
+  const [recommendation, setRecommendation] = useState<Recommendation | undefined>();
 
   // Delete dialog state
   const [deleteTarget, setDeleteTarget] = useState<TokenBudget | null>(null);
 
   const handleEdit = (budget: TokenBudget) => {
     setEditingBudget(budget);
+    setRecommendation(undefined);
     setEditorOpen(true);
   };
 
   const handleCreate = () => {
     setEditingBudget(undefined);
+    setRecommendation(undefined);
+    setEditorOpen(true);
+  };
+
+  const handleApplyRecommendation = (rec: Recommendation) => {
+    setEditingBudget(undefined);
+    setRecommendation(rec);
     setEditorOpen(true);
   };
 
@@ -63,6 +73,9 @@ export function BudgetList() {
 
   return (
     <div className="space-y-4">
+      {/* 推荐消耗计划 */}
+      <BudgetRecommendation onApply={handleApplyRecommendation} />
+
       {/* 添加按钮 */}
       <div className="flex justify-end">
         <Button onClick={handleCreate} size="sm">
@@ -95,8 +108,12 @@ export function BudgetList() {
       {/* 编辑/新建弹窗 */}
       <BudgetEditor
         open={editorOpen}
-        onOpenChange={setEditorOpen}
+        onOpenChange={(open) => {
+          setEditorOpen(open);
+          if (!open) setRecommendation(undefined);
+        }}
         budget={editingBudget}
+        recommendation={recommendation}
       />
 
       {/* 删除确认弹窗 */}

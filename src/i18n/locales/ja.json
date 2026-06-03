@@ -2756,6 +2756,9 @@
       "4": "木",
       "5": "金",
       "6": "土"
-    }
+    },
+    "loadingRecommendation": "履歴消費を分析中...",
+    "recommendationTitle": "推奨予算（過去 7 日間の消費に基づく）",
+    "applyRecommendation": "適用"
   }
 }

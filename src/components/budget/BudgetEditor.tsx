@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -26,19 +26,65 @@ import {
   useCreateBudget,
   useUpdateBudget,
 } from "@/lib/query/budget";
+import { useModelPricing } from "@/lib/query/usage";
+import { useProvidersQuery } from "@/lib/query/queries";
+import { KNOWN_APP_TYPES } from "@/types/usage";
 import type { TokenBudget } from "@/types/budget";
 
 interface BudgetEditorProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   budget?: TokenBudget; // undefined = 新建, defined = 编辑
+  /** 预填推荐值（来自推荐面板） */
+  recommendation?: {
+    name: string;
+    scope: BudgetFormData["scope"];
+    scopeValue?: string;
+    period: BudgetFormData["period"];
+    limitTokens?: number;
+    limitUsd?: string;
+  };
 }
 
-export function BudgetEditor({ open, onOpenChange, budget }: BudgetEditorProps) {
+export function BudgetEditor({ open, onOpenChange, budget, recommendation }: BudgetEditorProps) {
   const { t } = useTranslation();
   const isEdit = !!budget;
   const createMutation = useCreateBudget();
   const updateMutation = useUpdateBudget();
+
+  // 拉取 provider / model 列表用于动态选择器
+  const { data: claudeProviders } = useProvidersQuery("claude");
+  const { data: codexProviders } = useProvidersQuery("codex");
+  const { data: geminiProviders } = useProvidersQuery("gemini");
+  const { data: modelPricing } = useModelPricing();
+
+  const providers = useMemo(() => {
+    const seen = new Set<string>();
+    const list: { id: string; name: string }[] = [];
+    for (const data of [claudeProviders, codexProviders, geminiProviders]) {
+      if (!data?.providers) continue;
+      for (const [id, p] of Object.entries(data.providers)) {
+        if (!seen.has(id)) {
+          seen.add(id);
+          list.push({ id, name: p.name || id });
+        }
+      }
+    }
+    return list.sort((a, b) => a.name.localeCompare(b.name));
+  }, [claudeProviders, codexProviders, geminiProviders]);
+
+  const models = useMemo(() => {
+    if (!modelPricing) return [];
+    // 从 proxy_request_logs 的 model 字段值 = modelPricing.modelId
+    return modelPricing
+      .map((m) => ({ id: m.modelId, name: m.displayName || m.modelId }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [modelPricing]);
+
+  const apps = useMemo(
+    () => KNOWN_APP_TYPES.map((a) => ({ id: a, name: a.charAt(0).toUpperCase() + a.slice(1) })),
+    [],
+  );
 
   const {
     register,
@@ -64,7 +110,7 @@ export function BudgetEditor({ open, onOpenChange, budget }: BudgetEditorProps) 
   const scope = watch("scope");
   const period = watch("period");
 
-  // 编辑模式下填充表单
+  // 编辑模式或推荐模式填充表单
   useEffect(() => {
     if (budget) {
       reset({
@@ -76,6 +122,17 @@ export function BudgetEditor({ open, onOpenChange, budget }: BudgetEditorProps) 
         limitTokens: budget.limitTokens,
         limitUsd: budget.limitUsd ?? "",
         enabled: budget.enabled,
+      });
+    } else if (recommendation) {
+      reset({
+        name: recommendation.name,
+        scope: recommendation.scope,
+        scopeValue: recommendation.scopeValue ?? "",
+        period: recommendation.period,
+        periodStartDay: 1,
+        limitTokens: recommendation.limitTokens,
+        limitUsd: recommendation.limitUsd ?? "",
+        enabled: true,
       });
     } else {
       reset({
@@ -89,7 +146,13 @@ export function BudgetEditor({ open, onOpenChange, budget }: BudgetEditorProps) 
         enabled: true,
       });
     }
-  }, [budget, reset]);
+  }, [budget, recommendation, reset]);
+
+  // scope 切换时清空 scopeValue
+  const handleScopeChange = (v: string) => {
+    setValue("scope", v as BudgetFormData["scope"]);
+    setValue("scopeValue", "");
+  };
 
   const onSubmit = async (data: BudgetFormData) => {
     try {
@@ -134,6 +197,50 @@ export function BudgetEditor({ open, onOpenChange, budget }: BudgetEditorProps) 
     }
   };
 
+  // 根据 scope 类型渲染不同的 scopeValue 选择器
+  const renderScopeValueSelector = () => {
+    if (scope === "global") return null;
+
+    let items: { id: string; name: string }[] = [];
+    if (scope === "app") items = apps;
+    else if (scope === "provider") items = providers;
+    else if (scope === "model") items = models;
+
+    return (
+      <div className="space-y-1.5">
+        <Label>{t("budget.scopeValue")}</Label>
+        {items.length > 0 ? (
+          <Select
+            value={watch("scopeValue") || ""}
+            onValueChange={(v) => setValue("scopeValue", v)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder={t("budget.scopeValuePlaceholder")} />
+            </SelectTrigger>
+            <SelectContent className="max-h-48">
+              {items.map((item) => (
+                <SelectItem key={item.id} value={item.id}>
+                  {item.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          // fallback: 没有可选项时用文本输入
+          <Input
+            placeholder={t("budget.scopeValuePlaceholder")}
+            {...register("scopeValue")}
+          />
+        )}
+        {errors.scopeValue && (
+          <p className="text-xs text-destructive">
+            {t(errors.scopeValue.message ?? "")}
+          </p>
+        )}
+      </div>
+    );
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
@@ -159,13 +266,13 @@ export function BudgetEditor({ open, onOpenChange, budget }: BudgetEditorProps) 
             )}
           </div>
 
-          {/* 作用域 */}
+          {/* 作用域 + 周期 */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>{t("budget.scope")}</Label>
               <Select
                 value={scope}
-                onValueChange={(v) => setValue("scope", v as BudgetFormData["scope"])}
+                onValueChange={handleScopeChange}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -179,7 +286,6 @@ export function BudgetEditor({ open, onOpenChange, budget }: BudgetEditorProps) 
               </Select>
             </div>
 
-            {/* 周期 */}
             <div className="space-y-1.5">
               <Label>{t("budget.period")}</Label>
               <Select
@@ -198,24 +304,10 @@ export function BudgetEditor({ open, onOpenChange, budget }: BudgetEditorProps) 
             </div>
           </div>
 
-          {/* 作用域值（非 global 时显示） */}
-          {scope !== "global" && (
-            <div className="space-y-1.5">
-              <Label htmlFor="scopeValue">{t("budget.scopeValue")}</Label>
-              <Input
-                id="scopeValue"
-                placeholder={t("budget.scopeValuePlaceholder")}
-                {...register("scopeValue")}
-              />
-              {errors.scopeValue && (
-                <p className="text-xs text-destructive">
-                  {t(errors.scopeValue.message ?? "")}
-                </p>
-              )}
-            </div>
-          )}
+          {/* 作用域值：动态下拉 */}
+          {renderScopeValueSelector()}
 
-          {/* 起始日（非 daily 时显示） */}
+          {/* 起始日 */}
           {period !== "daily" && (
             <div className="space-y-1.5">
               <Label htmlFor="periodStartDay">

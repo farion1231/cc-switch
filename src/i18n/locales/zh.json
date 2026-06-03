@@ -2756,6 +2756,9 @@
       "4": "周四",
       "5": "周五",
       "6": "周六"
-    }
+    },
+    "loadingRecommendation": "正在分析历史消耗...",
+    "recommendationTitle": "推荐预算（基于近 7 天消耗）",
+    "applyRecommendation": "应用"
   }
 }
