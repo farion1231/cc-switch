@@ -147,6 +147,21 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["anthropic"],
     defaultColor: "#D4915D",
   },
+  cherryin: {
+    name: "cherryin",
+    displayName: "CherryIN",
+    category: "ai-provider",
+    keywords: [
+      "cherryin",
+      "cherry",
+      "gateway",
+      "relay",
+      "newapi",
+      "claude",
+      "codex",
+    ],
+    defaultColor: "#FB6354",
+  },
   claudeapi: {
     name: "claudeapi",
     displayName: "ClaudeAPI",
