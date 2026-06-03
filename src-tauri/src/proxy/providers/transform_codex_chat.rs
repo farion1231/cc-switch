@@ -40,9 +40,9 @@ const EXTRA_CHAT_PASSTHROUGH_FIELDS: &[&str] = &[
 const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
 const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
 const CHAT_TOOL_NAME_MAX_LEN: usize = 64;
-const CUSTOM_TOOL_FALLBACK_DESCRIPTION: &str = "Custom Codex tool.";
-const CUSTOM_TOOL_INPUT_DESCRIPTION: &str = "Raw string input for the original Codex custom tool. Preserve formatting exactly and follow the original tool definition embedded in the description.";
-const CUSTOM_TOOL_PRESERVED_METADATA_HEADING: &str = "Original Codex tool definition:";
+const CUSTOM_TOOL_FALLBACK_DESCRIPTION: &str = "Custom tool.";
+const CUSTOM_TOOL_INPUT_DESCRIPTION: &str = "Raw string input for the original custom tool. Preserve formatting exactly and follow the original tool definition embedded in the description.";
+const CUSTOM_TOOL_PRESERVED_METADATA_HEADING: &str = "Original tool definition:";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CodexToolKind {
@@ -1017,27 +1017,23 @@ fn responses_tool_name(tool: &Value) -> Option<String> {
 }
 
 fn responses_custom_tool_description(tool: &Value) -> String {
-    let base = tool
+    let fallback = tool
         .get("description")
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or(CUSTOM_TOOL_FALLBACK_DESCRIPTION);
-    let mut description = base.to_string();
-
-    description.push_str(
-        "\n\nThis tool originated as a Codex custom tool. When calling it through Chat Completions, pass the exact raw tool payload in the `input` string argument.",
-    );
 
     if let Some(serialized) = serialize_tool_definition_for_description(tool) {
-        description.push_str("\n\n");
+        let mut description = String::new();
         description.push_str(CUSTOM_TOOL_PRESERVED_METADATA_HEADING);
         description.push_str("\n```json\n");
         description.push_str(&serialized);
         description.push_str("\n```");
+        return description;
     }
 
-    description
+    fallback.to_string()
 }
 
 fn serialize_tool_definition_for_description(tool: &Value) -> Option<String> {
@@ -1902,7 +1898,8 @@ mod tests {
             .as_str()
             .unwrap();
 
-        assert!(description.contains("Original Codex tool definition"));
+        assert!(description.starts_with("Original tool definition:"));
+        assert!(!description.contains("Original Codex tool definition"));
         assert!(description.contains("\"type\": \"custom\""));
         assert!(description.contains("\"format\""));
         assert!(description.contains("\"syntax\": \"lark\""));
