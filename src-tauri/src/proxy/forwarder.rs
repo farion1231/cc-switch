@@ -893,11 +893,10 @@ impl RequestForwarder {
                                                     status.last_error = None;
                                                     status.failover_count += 1;
                                                     if status.total_requests > 0 {
-                                                        status.success_rate = (status
-                                                            .success_requests
-                                                            as f32
-                                                            / status.total_requests as f32)
-                                                            * 100.0;
+                                                        status.success_rate =
+                                                            (status.success_requests as f32
+                                                                / status.total_requests as f32)
+                                                                * 100.0;
                                                     }
                                                 }
                                                 return Ok(ForwardResult {
@@ -2111,10 +2110,7 @@ fn is_zhipu_quota_exceeded(error: &ProxyError) -> bool {
 ///
 /// 任一条件不满足则视为不可用，返回 `false`。
 /// 查询失败时也保守返回 `false`（宁可不用，也不冒超配额风险）。
-async fn check_fallback_provider_quota(
-    provider: &Provider,
-    app_type: &AppType,
-) -> bool {
+async fn check_fallback_provider_quota(provider: &Provider, app_type: &AppType) -> bool {
     let (base_url, api_key) = provider.resolve_usage_credentials(app_type);
 
     if api_key.is_empty() {
@@ -2122,14 +2118,14 @@ async fn check_fallback_provider_quota(
         return false;
     }
 
-    let quota =
-        match crate::services::coding_plan::get_coding_plan_quota(&base_url, &api_key).await {
-            Ok(q) => q,
-            Err(e) => {
-                log::warn!("[QuotaCheck] 查询 fallback provider 用量失败: {e}");
-                return false;
-            }
-        };
+    let quota = match crate::services::coding_plan::get_coding_plan_quota(&base_url, &api_key).await
+    {
+        Ok(q) => q,
+        Err(e) => {
+            log::warn!("[QuotaCheck] 查询 fallback provider 用量失败: {e}");
+            return false;
+        }
+    };
 
     if !quota.success {
         log::warn!("[QuotaCheck] fallback provider 用量查询返回失败");
@@ -2138,23 +2134,19 @@ async fn check_fallback_provider_quota(
 
     for tier in &quota.tiers {
         match tier.name.as_str() {
-            "five_hour" => {
-                if tier.utilization >= 80.0 {
-                    log::info!(
-                        "[QuotaCheck] fallback provider 5小时限额已用 {:.1}%, 超过 80% 阈值，不可用",
-                        tier.utilization
-                    );
-                    return false;
-                }
+            "five_hour" if tier.utilization >= 80.0 => {
+                log::info!(
+                    "[QuotaCheck] fallback provider 5小时限额已用 {:.1}%, 超过 80% 阈值，不可用",
+                    tier.utilization
+                );
+                return false;
             }
-            "weekly_limit" => {
-                if tier.utilization >= 95.0 {
-                    log::info!(
-                        "[QuotaCheck] fallback provider 周限额已用 {:.1}%, 超过 95% 阈值，不可用",
-                        tier.utilization
-                    );
-                    return false;
-                }
+            "weekly_limit" if tier.utilization >= 95.0 => {
+                log::info!(
+                    "[QuotaCheck] fallback provider 周限额已用 {:.1}%, 超过 95% 阈值，不可用",
+                    tier.utilization
+                );
+                return false;
             }
             _ => {}
         }

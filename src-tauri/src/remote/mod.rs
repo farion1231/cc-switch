@@ -325,7 +325,9 @@ impl RemoteServer {
                 .parse::<HeaderValue>()
                 .expect("valid origin"),
             // Tauri webview: production (macOS/Linux)
-            "tauri://localhost".parse::<HeaderValue>().expect("valid origin"),
+            "tauri://localhost"
+                .parse::<HeaderValue>()
+                .expect("valid origin"),
             // Tauri webview: production (Windows)
             "https://tauri.localhost"
                 .parse::<HeaderValue>()
