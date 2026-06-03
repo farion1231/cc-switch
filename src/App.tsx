@@ -30,6 +30,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
 import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
+import { useUsageSummary } from "@/lib/query/usage";
+import { fmtTokenAbbr } from "@/components/usage/format";
 import {
   providersApi,
   settingsApi,
@@ -275,6 +277,30 @@ function App() {
     isProxyRunning,
   });
   const providers = useMemo(() => data?.providers ?? {}, [data]);
+
+  const { data: allTimeSummary } = useUsageSummary(
+    { preset: "custom", customStartDate: 0 },
+    undefined,
+    { refetchInterval: 60000 },
+  );
+  const { data: todaySummary } = useUsageSummary({ preset: "today" }, undefined, {
+    refetchInterval: 30000,
+  });
+  const tokensBadge = useMemo(() => {
+    const sumTokens = (s: typeof allTimeSummary) =>
+      s
+        ? (s.totalInputTokens ?? 0) +
+          (s.totalOutputTokens ?? 0) +
+          (s.totalCacheCreationTokens ?? 0) +
+          (s.totalCacheReadTokens ?? 0)
+        : 0;
+    const todayTotal = sumTokens(todaySummary);
+    const allTotal = sumTokens(allTimeSummary);
+    if (allTotal === 0) return null;
+    const todayPart = todayTotal > 0 ? fmtTokenAbbr(todayTotal) : "0";
+    return `(${todayPart}/${fmtTokenAbbr(allTotal)})`;
+  }, [allTimeSummary, todaySummary]);
+
   const currentProviderId = data?.currentProviderId ?? "";
   const isOpenClawView =
     activeApp === "openclaw" &&
@@ -1175,10 +1201,12 @@ function App() {
             ) : (
               <div className="flex items-center gap-2">
                 <div className="relative inline-flex items-center">
-                  <a
-                    href="https://ccswitch.io"
-                    target="_blank"
-                    rel="noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSettingsDefaultTab("usage");
+                      setCurrentView("settings");
+                    }}
                     className={cn(
                       "text-xl font-semibold transition-colors",
                       isProxyRunning && isCurrentAppTakeoverActive
@@ -1187,7 +1215,12 @@ function App() {
                     )}
                   >
                     CC Switch
-                  </a>
+                    {tokensBadge && (
+                      <span className="ml-1.5 text-xl font-semibold text-amber-800 dark:text-amber-600">
+                        {tokensBadge}
+                      </span>
+                    )}
+                  </button>
                 </div>
                 <Button
                   variant="ghost"
