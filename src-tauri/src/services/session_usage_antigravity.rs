@@ -100,7 +100,8 @@ impl<'a> ProtoParser<'a> {
                 // Try to decode as UTF-8 string
                 if let Ok(s) = std::str::from_utf8(blob) {
                     // Only treat as string if it looks printable
-                    if s.chars().all(|c| c.is_ascii_graphic() || c.is_ascii_whitespace() || c == '\0')
+                    if s.chars()
+                        .all(|c| c.is_ascii_graphic() || c.is_ascii_whitespace() || c == '\0')
                     {
                         Some((field_num, ProtoValue::String(s.to_string())))
                     } else {
@@ -193,10 +194,7 @@ pub fn sync_antigravity_usage(db: &Database) -> Result<SessionSyncResult, AppErr
                 result.skipped += skipped;
             }
             Err(e) => {
-                let msg = format!(
-                    "Antigravity 会话文件解析失败 {}: {e}",
-                    file_path.display()
-                );
+                let msg = format!("Antigravity 会话文件解析失败 {}: {e}", file_path.display());
                 log::warn!("[ANTIGRAVITY-SYNC] {msg}");
                 result.errors.push(msg);
             }
@@ -247,15 +245,12 @@ fn collect_antigravity_db_files(antigravity_dir: &Path) -> Vec<PathBuf> {
 }
 
 /// 同步单个 Antigravity DB 文件，返回 (imported, skipped)
-fn sync_single_antigravity_db(
-    db: &Database,
-    db_path: &Path,
-) -> Result<(u32, u32), AppError> {
+fn sync_single_antigravity_db(db: &Database, db_path: &Path) -> Result<(u32, u32), AppError> {
     let file_path_str = db_path.to_string_lossy().to_string();
 
     // 获取文件元数据
-    let metadata = fs::metadata(db_path)
-        .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
+    let metadata =
+        fs::metadata(db_path).map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
     let file_modified = metadata_modified_nanos(&metadata);
     let file_modified_secs = metadata
         .modified()
@@ -292,16 +287,15 @@ fn sync_single_antigravity_db(
 
     let mut imported: u32 = 0;
     let mut skipped: u32 = 0;
-    let max_idx = gen_entries.len() as i64;
+    let max_idx = gen_entries.last().map(|e| e.idx + 1).unwrap_or(0);
 
     // 获取会话 ID
-    let session_id = trajectory_meta
-        .as_ref()
-        .and_then(|m| m.session_id.clone());
+    let session_id = trajectory_meta.as_ref().and_then(|m| m.session_id.clone());
 
     // 处理每个 gen_metadata 条目，计算 delta
-    for (idx, entry) in gen_entries.iter().enumerate() {
-        if (idx as i64) < last_gen_idx {
+    for entry in &gen_entries {
+        let idx = entry.idx;
+        if idx < last_gen_idx {
             continue; // 已处理过
         }
 
@@ -314,7 +308,7 @@ fn sync_single_antigravity_db(
 
             // 优先用 steps 表的精确时间戳，没有 steps 的条目用文件修改时间
             let created_at = step_timestamps
-                .get(&(idx as i64))
+                .get(&idx)
                 .copied()
                 .unwrap_or(file_modified_secs);
 
@@ -354,9 +348,7 @@ fn read_trajectory_metadata(conn: &rusqlite::Connection) -> Option<TrajectoryMet
     let mut stmt = conn
         .prepare("SELECT data FROM trajectory_metadata_blob WHERE id = 'main'")
         .ok()?;
-    let data: Vec<u8> = stmt
-        .query_row([], |row| row.get(0))
-        .ok()?;
+    let data: Vec<u8> = stmt.query_row([], |row| row.get(0)).ok()?;
 
     let mut parser = ProtoParser::new(&data);
     let mut meta = TrajectoryMetadata::default();
@@ -395,6 +387,7 @@ fn read_trajectory_metadata(conn: &rusqlite::Connection) -> Option<TrajectoryMet
 /// 单个 gen_metadata 条目
 #[derive(Debug)]
 struct GenMetadataEntry {
+    idx: i64,
     token_data: Option<AntigravityTokenData>,
 }
 
@@ -409,16 +402,17 @@ fn read_gen_metadata_entries(conn: &rusqlite::Connection) -> Vec<GenMetadataEntr
 
     let rows = stmt
         .query_map([], |row| {
-            let _idx: i64 = row.get(0)?;
+            let idx: i64 = row.get(0)?;
             let data: Vec<u8> = row.get(1)?;
-            Ok(data)
+            Ok((idx, data))
         })
         .ok();
 
     if let Some(rows) = rows {
         for row in rows.flatten() {
-            let token_data = parse_gen_metadata_blob(&row);
-            entries.push(GenMetadataEntry { token_data });
+            let (idx, data) = row;
+            let token_data = parse_gen_metadata_blob(&data);
+            entries.push(GenMetadataEntry { idx, token_data });
         }
     }
 
@@ -436,9 +430,7 @@ fn read_step_timestamps(conn: &rusqlite::Connection) -> std::collections::HashMa
         Err(_) => return map,
     };
 
-    let rows = stmt
-        .query_map([], |row| row.get::<_, Vec<u8>>(0))
-        .ok();
+    let rows = stmt.query_map([], |row| row.get::<_, Vec<u8>>(0)).ok();
 
     if let Some(rows) = rows {
         for row in rows.flatten() {
@@ -519,7 +511,13 @@ fn parse_gen_metadata_blob(data: &[u8]) -> Option<AntigravityTokenData> {
             // f4: token usage for this step
             4 => {
                 if let ProtoValue::Nested(nested) = value {
-                    extract_token_fields(&nested, &mut input_tokens, &mut output_tokens, &mut cached_tokens, &mut thoughts_tokens);
+                    extract_token_fields(
+                        &nested,
+                        &mut input_tokens,
+                        &mut output_tokens,
+                        &mut cached_tokens,
+                        &mut thoughts_tokens,
+                    );
                 }
             }
             // f9.f10.f1: total accumulated tokens
@@ -654,7 +652,8 @@ fn insert_antigravity_session_entry(
 
     let pricing = find_model_pricing(&conn, &token_data.model);
     let multiplier = Decimal::from(1);
-    let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) = match pricing {
+    let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) = match pricing
+    {
         Some(p) => {
             let cost = CostCalculator::calculate_for_app("gemini", &usage, &p, multiplier);
             (
