@@ -2032,7 +2032,8 @@ model = "glm-5"
 "#;
         // Simulate a WSL UNC path as cc-switch would see it on Windows;
         // the function now writes just the relative filename.
-        let unc_path = Path::new(r"\\wsl.localhost\Ubuntu\home\user\.codex\cc-switch-model-catalog.json");
+        let unc_path =
+            Path::new(r"\\wsl.localhost\Ubuntu\home\user\.codex\cc-switch-model-catalog.json");
 
         let result = set_codex_model_catalog_json_field(input, Some(unc_path)).unwrap();
         let parsed: toml::Value = toml::from_str(&result).unwrap();
@@ -2128,5 +2129,4 @@ model_catalog_json = "cc-switch-model-catalog.json"
             "None arm should remove relative cc-switch-owned field"
         );
     }
-
 }
