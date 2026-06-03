@@ -138,14 +138,14 @@ const expectedChatPresets = new Map<
     "Xiaomi MiMo",
     {
       baseUrl: "https://api.xiaomimimo.com/v1",
-      contextWindows: { "mimo-v2.5-pro": 1048576 },
+      contextWindows: { "mimo-v2.5-pro": 1048576, "mimo-v2.5": 1048576 },
     },
   ],
   [
     "Xiaomi MiMo Token Plan (China)",
     {
       baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
-      contextWindows: { "mimo-v2.5-pro": 1048576 },
+      contextWindows: { "mimo-v2.5-pro": 1048576, "mimo-v2.5": 1048576 },
     },
   ],
   [

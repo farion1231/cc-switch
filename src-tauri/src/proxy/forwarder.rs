@@ -958,6 +958,26 @@ impl RequestForwarder {
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
 
+        // 多模态降级：检测请求中的图片内容，自动切换到预配置的多模态模型
+        // 适用于 MiMo-v2.5-pro → mimo-v2.5、DeepSeek-v4-pro → deepseek-v4 等场景
+        if super::model_mapper::request_contains_images(&mapped_body) {
+            if let Some(fallback_model) = provider
+                .meta
+                .as_ref()
+                .and_then(|m| m.multimodal_fallback_model.as_deref())
+            {
+                let original_model = mapped_body["model"].as_str().unwrap_or("?").to_string();
+                log::info!(
+                    "[ModelMapper] 检测到图片内容，降级模型: {} → {}",
+                    original_model,
+                    fallback_model
+                );
+                mapped_body["model"] = serde_json::json!(fallback_model);
+            }
+            // 未配置 fallback 时不干预：让请求正常发送到上游，
+            // 由上游 API 决定模型是否支持图片输入
+        }
+
         if is_copilot {
             mapped_body =
                 super::providers::copilot_model_map::apply_copilot_model_normalization(mapped_body);

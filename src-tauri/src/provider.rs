@@ -476,6 +476,9 @@ pub struct ProviderMeta {
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
+    /// 多模态降级模型：当请求包含图片且当前模型不支持多模态时，自动切换到此模型
+    #[serde(rename = "multimodalFallbackModel", skip_serializing_if = "Option::is_none")]
+    pub multimodal_fallback_model: Option<String>,
 }
 
 impl ProviderMeta {

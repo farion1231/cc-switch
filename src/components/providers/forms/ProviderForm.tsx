@@ -509,6 +509,9 @@ function ProviderFormFull({
     useState<CodexChatReasoning>(
       () => initialData?.meta?.codexChatReasoning ?? {},
     );
+  const [multimodalFallbackModel, setMultimodalFallbackModel] = useState<
+    string | undefined
+  >(() => initialData?.meta?.multimodalFallbackModel);
 
   const {
     codexAuth,
@@ -1386,6 +1389,10 @@ function ProviderFormFull({
         localCodexApiFormat === "openai_chat"
           ? normalizeCodexChatReasoningForSave(codexChatReasoning)
           : undefined,
+      multimodalFallbackModel:
+        appId === "codex" && category !== "official"
+          ? multimodalFallbackModel
+          : undefined,
       testConfig: testConfig.enabled ? testConfig : undefined,
       costMultiplier: pricingConfig.enabled
         ? pricingConfig.costMultiplier
@@ -1524,6 +1531,7 @@ function ProviderFormFull({
         const template = getCodexCustomTemplate();
         resetCodexConfig(template.auth, template.config);
         setCodexChatReasoning({});
+        setMultimodalFallbackModel(undefined);
         setLocalCodexApiFormat(
           codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
             "openai_responses",
@@ -1565,6 +1573,7 @@ function ProviderFormFull({
 
       resetCodexConfig(auth, config, preset.modelCatalog ?? []);
       setCodexChatReasoning(preset.codexChatReasoning ?? {});
+      setMultimodalFallbackModel(preset.multimodalFallbackModel);
       setLocalCodexApiFormat(
         preset.apiFormat ??
           codexApiFormatFromWireApi(extractCodexWireApi(config)) ??

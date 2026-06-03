@@ -33,6 +33,8 @@ export interface CodexProviderPreset {
   apiFormat?: CodexApiFormat;
   // Codex Chat 本地路由模式下的模型目录
   modelCatalog?: CodexCatalogModel[];
+  // 多模态降级模型：当请求包含图片且当前模型不支持多模态时，自动切换到此模型
+  multimodalFallbackModel?: string;
   // Codex Responses -> Chat Completions reasoning capability defaults
   codexChatReasoning?: CodexChatReasoning;
 }
@@ -70,7 +72,7 @@ requires_openai_auth = true`;
 
 function modelCatalog(
   models: Array<
-    string | { model: string; displayName?: string; contextWindow?: number }
+    string | { model: string; displayName?: string; contextWindow?: number; supportsMultimodal?: boolean }
   >,
 ): CodexCatalogModel[] {
   return models.map((entry) =>
@@ -80,6 +82,7 @@ function modelCatalog(
           model: entry.model,
           displayName: entry.displayName,
           contextWindow: entry.contextWindow,
+          supportsMultimodal: entry.supportsMultimodal,
         },
   );
 }
@@ -631,8 +634,16 @@ requires_openai_auth = true`,
         model: "mimo-v2.5-pro",
         displayName: "MiMo V2.5 Pro",
         contextWindow: 1048576,
+        supportsMultimodal: false,
+      },
+      {
+        model: "mimo-v2.5",
+        displayName: "MiMo V2.5 (Multimodal)",
+        contextWindow: 1048576,
+        supportsMultimodal: true,
       },
     ]),
+    multimodalFallbackModel: "mimo-v2.5",
     codexChatReasoning: {
       supportsThinking: true,
       supportsEffort: false,
@@ -661,8 +672,16 @@ requires_openai_auth = true`,
         model: "mimo-v2.5-pro",
         displayName: "MiMo V2.5 Pro",
         contextWindow: 1048576,
+        supportsMultimodal: false,
+      },
+      {
+        model: "mimo-v2.5",
+        displayName: "MiMo V2.5 (Multimodal)",
+        contextWindow: 1048576,
+        supportsMultimodal: true,
       },
     ]),
+    multimodalFallbackModel: "mimo-v2.5",
     codexChatReasoning: {
       supportsThinking: true,
       supportsEffort: false,

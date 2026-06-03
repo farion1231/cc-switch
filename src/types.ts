@@ -217,6 +217,8 @@ export interface ProviderMeta {
   promptCacheKey?: string;
   // Codex OAuth FAST mode: injects service_tier="priority" on ChatGPT Codex requests
   codexFastMode?: boolean;
+  // 多模态降级模型：当请求包含图片且当前模型不支持多模态时，自动切换到此模型
+  multimodalFallbackModel?: string;
   // Codex Responses -> Chat Completions reasoning capability metadata
   codexChatReasoning?: CodexChatReasoning;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
@@ -251,6 +253,7 @@ export interface CodexCatalogModel {
   model: string;
   displayName?: string;
   contextWindow?: string | number;
+  supportsMultimodal?: boolean;
 }
 
 // Claude 认证字段类型

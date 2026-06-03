@@ -140,6 +140,62 @@ pub fn strip_one_m_suffix_for_upstream_from_body(mut body: Value) -> Value {
     body
 }
 
+/// 检测请求体中是否包含图片内容。
+///
+/// 支持两种 API 格式：
+/// - Anthropic Messages API: `messages[].content[].type == "image"`（需验证 source 字段）
+/// - OpenAI Responses API: `input[].type == "input_image"` 或 `input[].content[].type == "input_image"`
+///
+/// 用于多模态降级判断：当检测到图片且当前模型不支持多模态时，自动切换到预配置的降级模型。
+pub fn request_contains_images(body: &Value) -> bool {
+    // Anthropic Messages API 格式
+    if let Some(messages) = body.get("messages").and_then(|m| m.as_array()) {
+        for msg in messages {
+            if let Some(content) = msg.get("content").and_then(|c| c.as_array()) {
+                for block in content {
+                    if block.get("type").and_then(|t| t.as_str()) == Some("image") {
+                        // 验证 source 字段是否存在且有效
+                        if let Some(source) = block.get("source") {
+                            if let Some(source_type) = source.get("type").and_then(|t| t.as_str()) {
+                                if source_type == "base64" && source.get("data").is_some() {
+                                    return true;
+                                }
+                                if source_type == "url" && source.get("url").is_some() {
+                                    return true;
+                                }
+                            }
+                            // 兼容旧格式：直接检查 data 或 url
+                            if source.get("data").is_some() || source.get("url").is_some() {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // OpenAI Responses API 格式
+    if let Some(input) = body.get("input").and_then(|i| i.as_array()) {
+        for item in input {
+            // input item 直接是 content block
+            if item.get("type").and_then(|t| t.as_str()) == Some("input_image") {
+                return true;
+            }
+            // input item 是 message，内含 content 数组
+            if let Some(content) = item.get("content").and_then(|c| c.as_array()) {
+                for block in content {
+                    if block.get("type").and_then(|t| t.as_str()) == Some("input_image") {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,5 +364,88 @@ mod tests {
         let body = json!({"model": "deepseek-v4-pro"});
         let result = strip_one_m_suffix_for_upstream_from_body(body);
         assert_eq!(result["model"], "deepseek-v4-pro");
+    }
+
+    // ==================== request_contains_images 测试 ====================
+
+    #[test]
+    fn test_request_contains_images_anthropic_base64() {
+        let body = json!({
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "describe this"},
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBOR..."}}
+                ]
+            }]
+        });
+        assert!(request_contains_images(&body));
+    }
+
+    #[test]
+    fn test_request_contains_images_anthropic_url() {
+        let body = json!({
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "url", "url": "https://example.com/img.png"}}
+                ]
+            }]
+        });
+        assert!(request_contains_images(&body));
+    }
+
+    #[test]
+    fn test_request_contains_images_responses_format() {
+        let body = json!({
+            "input": [
+                {"type": "message", "role": "user", "content": [
+                    {"type": "input_text", "text": "what is this"},
+                    {"type": "input_image", "image_url": "data:image/png;base64,abc123"}
+                ]}
+            ]
+        });
+        assert!(request_contains_images(&body));
+    }
+
+    #[test]
+    fn test_request_contains_images_responses_direct_input_image() {
+        let body = json!({
+            "input": [
+                {"type": "input_image", "image_url": "data:image/png;base64,abc123"}
+            ]
+        });
+        assert!(request_contains_images(&body));
+    }
+
+    #[test]
+    fn test_request_no_images_text_only() {
+        let body = json!({
+            "messages": [{
+                "role": "user",
+                "content": [{"type": "text", "text": "hello world"}]
+            }]
+        });
+        assert!(!request_contains_images(&body));
+    }
+
+    #[test]
+    fn test_request_no_images_responses_text_only() {
+        let body = json!({
+            "input": [
+                {"type": "message", "role": "user", "content": [
+                    {"type": "input_text", "text": "hello world"}
+                ]}
+            ]
+        });
+        assert!(!request_contains_images(&body));
+    }
+
+    #[test]
+    fn test_request_no_images_empty_content() {
+        let body = json!({
+            "messages": [{"role": "user", "content": []}]
+        });
+        assert!(!request_contains_images(&body));
     }
 }
