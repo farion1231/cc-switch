@@ -2643,7 +2643,8 @@ exec bash --norc --noprofile
         "kaku" => launch_macos_open_app("Kaku", &script_file, true),
         "cmux" => {
             let title = crate::session_manager::terminal::cmux::format_cmux_workspace_title(
-                provider_name, app,
+                provider_name,
+                app,
             );
             launch_macos_cmux(config_file, &script_file, cwd, &title)
         }

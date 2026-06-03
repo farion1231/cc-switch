@@ -110,9 +110,7 @@ fn resolve_cmux_socket_path() -> Option<PathBuf> {
     }
     let mut path_files = Vec::new();
     if let Some(home) = dirs::home_dir() {
-        path_files.push(
-            home.join("Library/Application Support/cmux/last-socket-path"),
-        );
+        path_files.push(home.join("Library/Application Support/cmux/last-socket-path"));
     }
     path_files.push(PathBuf::from("/tmp/cmux-last-socket-path"));
     for path_file in path_files {
@@ -143,7 +141,8 @@ fn cmux_external_control_ready(exe: &Path) -> bool {
 }
 
 /// 用户需在 cmux 中开启的外部 socket 配置说明（错误提示共用）。
-const CMUX_AUTOMATION_MODE_SETUP_HINT: &str = "In cmux, go to Settings → Automation and set Socket control mode \
+const CMUX_AUTOMATION_MODE_SETUP_HINT: &str =
+    "In cmux, go to Settings → Automation and set Socket control mode \
 to Automation mode, then press Cmd+Q to fully quit cmux and reopen it.";
 
 fn cmux_running_without_external_access_error() -> String {
@@ -193,7 +192,9 @@ pub fn resolve_cmux_cli() -> Result<PathBuf, String> {
                 }
                 return Ok(p);
             }
-            return Err(format!("CMUX_CLI is set but is not a valid file: {trimmed}"));
+            return Err(format!(
+                "CMUX_CLI is set but is not a valid file: {trimmed}"
+            ));
         }
     }
 
@@ -329,7 +330,10 @@ struct NewWorkspaceOpts<'a> {
     window: Option<&'a str>,
 }
 
-fn build_new_workspace_argv(launch: &CmuxWorkspaceLaunch, opts: NewWorkspaceOpts<'_>) -> Vec<String> {
+fn build_new_workspace_argv(
+    launch: &CmuxWorkspaceLaunch,
+    opts: NewWorkspaceOpts<'_>,
+) -> Vec<String> {
     let mut args = vec!["new-workspace".into()];
     if opts.json {
         args.push("--json".into());
@@ -450,11 +454,7 @@ fn send_command_to_workspace(
     clear_surface_resume(exe, workspace);
     // send 需要 trailing newline 才会在 shell 里执行，而不是只粘贴到提示符
     let send_body = format!("{}\n", launch.command);
-    run_cmux_with_modes(
-        exe,
-        &["send", "--workspace", workspace, &send_body],
-        "send",
-    )?;
+    run_cmux_with_modes(exe, &["send", "--workspace", workspace, &send_body], "send")?;
     finish_workspace_launch(exe, workspace, window)
 }
 
@@ -481,10 +481,9 @@ fn new_workspace_create_then_send(
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let ws = parse_workspace_id(&stdout)
-            .ok_or_else(|| {
-                format!("cmux new-workspace --json did not return a workspace id: {stdout}")
-            })?;
+        let ws = parse_workspace_id(&stdout).ok_or_else(|| {
+            format!("cmux new-workspace --json did not return a workspace id: {stdout}")
+        })?;
         return send_command_to_workspace(exe, &ws, window_ref, launch);
     }
 
@@ -531,8 +530,9 @@ fn new_workspace_rename_then_command(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let ws = parse_workspace_id(&stdout)
-        .ok_or_else(|| format!("cmux new-workspace --json did not return a workspace id: {stdout}"))?;
+    let ws = parse_workspace_id(&stdout).ok_or_else(|| {
+        format!("cmux new-workspace --json did not return a workspace id: {stdout}")
+    })?;
 
     run_cmux_with_modes(
         exe,
@@ -571,8 +571,9 @@ fn new_workspace_send_fallback(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let ws = parse_workspace_id(&stdout)
-        .ok_or_else(|| format!("cmux new-workspace --json did not return a workspace id: {stdout}"))?;
+    let ws = parse_workspace_id(&stdout).ok_or_else(|| {
+        format!("cmux new-workspace --json did not return a workspace id: {stdout}")
+    })?;
 
     let mut send_text = String::new();
     if let Some(cwd) = &launch.cwd {
@@ -679,10 +680,7 @@ mod tests {
 
     #[test]
     fn parse_window_ref_from_current_window_line() {
-        assert_eq!(
-            parse_window_ref("window:1\n"),
-            Some("window:1".to_string())
-        );
+        assert_eq!(parse_window_ref("window:1\n"), Some("window:1".to_string()));
     }
 
     #[test]
