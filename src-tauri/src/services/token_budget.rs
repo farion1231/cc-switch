@@ -19,7 +19,8 @@ use crate::store::AppState;
 use crate::token_budget::{
     BudgetPeriod, BudgetScope, CreateTokenBudgetInput, TokenBudget, UpdateTokenBudgetInput,
 };
-use chrono::{DateTime, Datelike, Local, NaiveDate, TimeZone, Timelike, Weekday};
+use chrono::{DateTime, Datelike, Local, NaiveDate, TimeZone, Weekday};
+use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -77,7 +78,7 @@ impl TokenBudgetService {
     pub fn update(
         state: &AppState,
         id: &str,
-        mut patch: UpdateTokenBudgetInput,
+        patch: UpdateTokenBudgetInput,
     ) -> Result<TokenBudget, AppError> {
         // 校验：若 patch 改了 limit/period/scope，需结合 DB 中现有值再校验最终合法性。
         let existing = state.db.get_token_budget(id)?.ok_or_else(|| {
@@ -166,7 +167,7 @@ impl TokenBudgetService {
             consumed_tokens,
             consumed_usd: format!("{consumed_usd:.6}"),
             pct_tokens,
-            pct_usd: pct_usd.map(|v| v.to_string()),
+            pct_usd: pct_usd.map(|v| v.to_f64().unwrap_or(0.0)),
             remaining_tokens,
             remaining_usd: remaining_usd.map(|d| format!("{d:.6}")),
         })
@@ -237,7 +238,7 @@ fn monthly_window(now: DateTime<Local>, start_day: i32) -> BudgetWindow {
     let month = now.month();
 
     // 尝试当月 start_day；若今天日期 < start_day，则窗口实为上月 start_day 起。
-    let (start_year, start_month) = if now.day() >= day_clamped {
+    let (start_year, start_month) = if now.day() >= day_clamped as u32 {
         (year, month)
     } else {
         if month == 1 {
