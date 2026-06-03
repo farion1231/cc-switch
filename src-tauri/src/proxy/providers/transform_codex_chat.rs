@@ -40,7 +40,6 @@ const EXTRA_CHAT_PASSTHROUGH_FIELDS: &[&str] = &[
 const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
 const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
 const CHAT_TOOL_NAME_MAX_LEN: usize = 64;
-const CUSTOM_TOOL_FALLBACK_DESCRIPTION: &str = "Custom tool.";
 const CUSTOM_TOOL_INPUT_DESCRIPTION: &str = "Raw string input for the original custom tool. Preserve formatting exactly and follow the original tool definition embedded in the description.";
 const CUSTOM_TOOL_PRESERVED_METADATA_HEADING: &str = "Original tool definition:";
 
@@ -1017,34 +1016,19 @@ fn responses_tool_name(tool: &Value) -> Option<String> {
 }
 
 fn responses_custom_tool_description(tool: &Value) -> String {
-    let fallback = tool
-        .get("description")
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(CUSTOM_TOOL_FALLBACK_DESCRIPTION);
-
-    if let Some(serialized) = serialize_tool_definition_for_description(tool) {
-        let mut description = String::new();
-        description.push_str(CUSTOM_TOOL_PRESERVED_METADATA_HEADING);
-        description.push_str("\n```json\n");
-        description.push_str(&serialized);
-        description.push_str("\n```");
-        return description;
-    }
-
-    fallback.to_string()
+    let mut description = String::new();
+    description.push_str(CUSTOM_TOOL_PRESERVED_METADATA_HEADING);
+    description.push_str("\n```json\n");
+    description.push_str(&serialize_tool_definition_for_description(tool));
+    description.push_str("\n```");
+    description
 }
 
-fn serialize_tool_definition_for_description(tool: &Value) -> Option<String> {
-    if !tool.is_object() {
-        return None;
-    }
-
+fn serialize_tool_definition_for_description(tool: &Value) -> String {
     // Keep the embedded definition compact to reduce tool-description token
     // overhead for chat-only upstreams, while remaining stable across map
     // storage order.
-    Some(canonical_json_string(tool))
+    canonical_json_string(tool)
 }
 
 fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option<Value> {
