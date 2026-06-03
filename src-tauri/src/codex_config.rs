@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::config::{
@@ -172,255 +173,15 @@ pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
             .any(|reserved| reserved.eq_ignore_ascii_case(id))
 }
 
-pub(crate) fn stable_codex_model_provider_id_from_config(config_text: &str) -> Option<String> {
-    let doc = config_text.parse::<DocumentMut>().ok()?;
-    let provider_id = active_codex_model_provider_id(&doc)?;
-
-    if is_custom_codex_model_provider_id(&provider_id) {
-        Some(provider_id)
-    } else {
-        None
-    }
-}
-
-fn codex_model_provider_id_with_table_from_config(
-    config_text: &str,
-) -> Result<Option<String>, AppError> {
-    if config_text.trim().is_empty() {
-        return Ok(None);
-    }
-
-    let doc = config_text
-        .parse::<DocumentMut>()
-        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
-    let Some(provider_id) = active_codex_model_provider_id(&doc) else {
-        return Ok(None);
-    };
-
-    let has_provider_table = doc
-        .get("model_providers")
-        .and_then(|item| item.as_table())
-        .and_then(|table| table.get(provider_id.as_str()))
-        .is_some();
-
-    Ok(has_provider_table.then_some(provider_id))
-}
-
-fn normalize_codex_live_config_model_provider(config_text: &str) -> Result<String, AppError> {
-    if config_text.trim().is_empty() {
-        return Ok(config_text.to_string());
-    }
-
-    let mut doc = config_text
-        .parse::<DocumentMut>()
-        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
-
-    let Some(source_provider_id) = active_codex_model_provider_id(&doc) else {
-        return Ok(config_text.to_string());
-    };
-
-    let has_source_provider_table = doc
-        .get("model_providers")
-        .and_then(|item| item.as_table())
-        .and_then(|table| table.get(source_provider_id.as_str()))
-        .is_some();
-    if !has_source_provider_table {
-        return Ok(config_text.to_string());
-    }
-    if !is_custom_codex_model_provider_id(&source_provider_id) {
-        return Ok(config_text.to_string());
-    }
-
-    let stable_provider_id = CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string();
-
-    if stable_provider_id == source_provider_id {
-        return Ok(config_text.to_string());
-    }
-
-    if let Some(model_providers) = doc
-        .get_mut("model_providers")
-        .and_then(|item| item.as_table_mut())
-    {
-        let Some(provider_table) = model_providers.remove(source_provider_id.as_str()) else {
-            return Ok(config_text.to_string());
-        };
-        model_providers[stable_provider_id.as_str()] = provider_table;
-    }
-
-    rewrite_codex_profile_model_provider_refs(&mut doc, &source_provider_id, &stable_provider_id);
-    doc["model_provider"] = toml_edit::value(stable_provider_id.as_str());
-
-    Ok(doc.to_string())
-}
-
-fn rewrite_codex_profile_model_provider_refs(
-    doc: &mut DocumentMut,
-    source_provider_id: &str,
-    stable_provider_id: &str,
-) {
-    let Some(profiles) = doc
-        .get_mut("profiles")
-        .and_then(|item| item.as_table_like_mut())
-    else {
-        return;
-    };
-
-    let profile_keys: Vec<String> = profiles.iter().map(|(key, _)| key.to_string()).collect();
-    for profile_key in profile_keys {
-        let Some(profile_table) = profiles
-            .get_mut(&profile_key)
-            .and_then(|item| item.as_table_like_mut())
-        else {
-            continue;
-        };
-
-        let references_source = profile_table
-            .get("model_provider")
-            .and_then(|item| item.as_str())
-            == Some(source_provider_id);
-        if references_source {
-            profile_table.insert("model_provider", toml_edit::value(stable_provider_id));
-        }
-    }
-}
-
-/// Keep Codex's active `model_provider` stable across CC Switch provider changes.
-///
-/// Codex stores and filters resume history by `model_provider`, so switching between
-/// provider-specific ids like `rightcode` and `aihubmix` makes history appear to move.
-/// CC Switch-managed third-party providers share one stable bucket while official
-/// built-in providers such as `openai` keep their original identity.
-pub fn normalize_codex_settings_config_model_provider(
-    settings: &mut Value,
-) -> Result<(), AppError> {
-    let Some(config_text) = settings
-        .get("config")
-        .and_then(|value| value.as_str())
-        .map(str::to_string)
-    else {
-        return Ok(());
-    };
-
-    let normalized = normalize_codex_live_config_model_provider(&config_text)?;
-
-    if let Some(obj) = settings.as_object_mut() {
-        obj.insert("config".to_string(), Value::String(normalized));
-    }
-
-    Ok(())
-}
-
-fn restore_codex_backfill_model_provider_id(
-    config_text: &str,
-    template_config_text: &str,
-) -> Result<String, AppError> {
-    let Some(template_provider_id) =
-        codex_model_provider_id_with_table_from_config(template_config_text)?
-    else {
-        return Ok(config_text.to_string());
-    };
-
-    if config_text.trim().is_empty() {
-        return Ok(config_text.to_string());
-    }
-
-    let mut doc = config_text
-        .parse::<DocumentMut>()
-        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
-    let Some(live_provider_id) = active_codex_model_provider_id(&doc) else {
-        return Ok(config_text.to_string());
-    };
-
-    if live_provider_id == template_provider_id {
-        return Ok(config_text.to_string());
-    }
-
-    if let Some(model_providers) = doc
-        .get_mut("model_providers")
-        .and_then(|item| item.as_table_mut())
-    {
-        let Some(provider_table) = model_providers.remove(live_provider_id.as_str()) else {
-            return Ok(config_text.to_string());
-        };
-        model_providers[template_provider_id.as_str()] = provider_table;
-    } else {
-        return Ok(config_text.to_string());
-    }
-
-    rewrite_codex_profile_model_provider_refs(&mut doc, &live_provider_id, &template_provider_id);
-    doc["model_provider"] = toml_edit::value(template_provider_id.as_str());
-
-    Ok(doc.to_string())
-}
-
-/// Convert a Codex live config that was normalized for history stability back
-/// to the provider-specific id used by the stored provider template.
-pub fn restore_codex_settings_config_model_provider_for_backfill(
-    settings: &mut Value,
-    template_settings: &Value,
-) -> Result<(), AppError> {
-    let Some(config_text) = settings
-        .get("config")
-        .and_then(|value| value.as_str())
-        .map(str::to_string)
-    else {
-        return Ok(());
-    };
-    let Some(template_config_text) = template_settings
-        .get("config")
-        .and_then(|value| value.as_str())
-    else {
-        return Ok(());
-    };
-
-    let restored = restore_codex_backfill_model_provider_id(&config_text, template_config_text)?;
-    if let Some(obj) = settings.as_object_mut() {
-        obj.insert("config".to_string(), Value::String(restored));
-    }
-
-    Ok(())
-}
-
-/// Atomically write Codex live config after normalizing provider-specific ids.
-///
-/// Use this for provider-driven live writes. Keep `write_codex_live_atomic` available
-/// for exact restore/backup paths that must preserve the config text byte-for-byte.
-pub fn write_codex_live_atomic_with_stable_provider(
-    auth: &Value,
-    config_text_opt: Option<&str>,
-) -> Result<(), AppError> {
-    match config_text_opt {
-        Some(config_text) => {
-            let config_text = normalize_codex_config_for_live_provider(config_text)?;
-            write_codex_live_atomic(auth, Some(&config_text))
-        }
-        None => write_codex_live_atomic(auth, None),
-    }
-}
-
-fn normalize_codex_config_for_live_provider(config_text: &str) -> Result<String, AppError> {
-    let mut settings = serde_json::Map::new();
-    settings.insert("config".to_string(), Value::String(config_text.to_string()));
-    let mut settings = Value::Object(settings);
-    normalize_codex_settings_config_model_provider(&mut settings)?;
-    Ok(settings
-        .get("config")
-        .and_then(|value| value.as_str())
-        .unwrap_or(config_text)
-        .to_string())
-}
-
 /// Write only Codex `config.toml` for provider switching.
 ///
 /// Codex login state lives in `auth.json`; provider routing, endpoint, model,
 /// and provider-scoped bearer tokens live in `config.toml`. Provider switches
 /// should not overwrite the user's ChatGPT login cache.
-pub fn write_codex_live_config_atomic_with_stable_provider(
-    config_text_opt: Option<&str>,
-) -> Result<(), AppError> {
+pub fn write_codex_live_config_atomic(config_text_opt: Option<&str>) -> Result<(), AppError> {
     let config_path = get_codex_config_path();
     let cfg_text = match config_text_opt {
-        Some(config_text) => normalize_codex_config_for_live_provider(config_text)?,
+        Some(config_text) => config_text.to_string(),
         None => String::new(),
     };
 
@@ -442,6 +203,29 @@ pub fn extract_codex_auth_api_key(auth: &Value) -> Option<String> {
 pub fn extract_codex_api_key(auth: Option<&Value>, config_text: Option<&str>) -> Option<String> {
     auth.and_then(extract_codex_auth_api_key)
         .or_else(|| config_text.and_then(extract_codex_experimental_bearer_token))
+}
+
+/// Extract the upstream base URL from a Codex `config.toml` string.
+///
+/// Prefers the active `[model_providers.<model_provider>].base_url`, falling
+/// back to a top-level `base_url` when no model provider is selected.
+pub fn extract_codex_base_url(config_text: &str) -> Option<String> {
+    let doc = config_text.parse::<toml::Value>().ok()?;
+
+    if let Some(active_provider) = doc.get("model_provider").and_then(|v| v.as_str()) {
+        if let Some(base_url) = doc
+            .get("model_providers")
+            .and_then(|providers| providers.get(active_provider))
+            .and_then(|provider| provider.get("base_url"))
+            .and_then(|v| v.as_str())
+        {
+            return Some(base_url.to_string());
+        }
+    }
+
+    doc.get("base_url")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
 }
 
 pub fn codex_auth_has_login_material(auth: &Value) -> bool {
@@ -633,37 +417,225 @@ fn load_codex_model_template_from_cache() -> Result<Option<Value>, AppError> {
     Ok(find_codex_model_template(&catalog))
 }
 
-fn load_codex_model_template_from_bundled() -> Result<Option<Value>, AppError> {
-    let output = match Command::new("codex")
-        .args(["debug", "models", "--bundled"])
-        .output()
-    {
-        Ok(output) => output,
-        Err(err) => {
-            log::debug!("failed to run `codex debug models --bundled`: {err}");
-            return Ok(None);
-        }
+/// Fixed candidates for locating the `codex` CLI when it is not on the process
+/// PATH (common in GUI apps launched outside a terminal).
+const CODEX_CLI_FIXED_CANDIDATES: &[&str] = &[
+    "codex",                                // PATH (all platforms)
+    "/opt/homebrew/bin/codex",              // macOS Apple Silicon Homebrew
+    "/usr/local/bin/codex",                 // macOS Intel Homebrew / Linux
+    "/home/linuxbrew/.linuxbrew/bin/codex", // Linux Homebrew
+];
+
+fn push_codex_cli_candidate(
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut HashSet<String>,
+    candidate: PathBuf,
+) {
+    let key = candidate.to_string_lossy().into_owned();
+    if seen.insert(key) {
+        candidates.push(candidate);
+    }
+}
+
+fn push_existing_codex_cli_candidate(
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut HashSet<String>,
+    candidate: PathBuf,
+) {
+    if candidate.exists() {
+        push_codex_cli_candidate(candidates, seen, candidate);
+    }
+}
+
+fn push_codex_cli_candidates_from_version_dirs(
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut HashSet<String>,
+    versions_dir: PathBuf,
+    suffix: &[&str],
+) {
+    let Ok(entries) = fs::read_dir(versions_dir) else {
+        return;
     };
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        log::debug!("`codex debug models --bundled` failed: {stderr}");
-        return Ok(None);
+    let mut discovered = entries
+        .filter_map(Result::ok)
+        .map(|entry| {
+            let mut candidate = entry.path();
+            for component in suffix {
+                candidate.push(component);
+            }
+            candidate
+        })
+        .filter(|candidate| candidate.exists())
+        .collect::<Vec<_>>();
+
+    // Prefer newer-looking version directories before older global installs.
+    discovered.sort_by(|a, b| b.cmp(a));
+    for candidate in discovered {
+        push_codex_cli_candidate(candidates, seen, candidate);
+    }
+}
+
+fn push_home_codex_cli_candidates(
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut HashSet<String>,
+    home: &Path,
+) {
+    for relative in [
+        ".nvm/current/bin/codex",
+        ".volta/bin/codex",
+        ".asdf/shims/codex",
+        ".local/share/mise/shims/codex",
+        ".config/mise/shims/codex",
+        ".local/bin/codex",
+        ".npm-global/bin/codex",
+        ".npm-packages/bin/codex",
+        ".local/share/pnpm/codex",
+        "Library/pnpm/codex",
+    ] {
+        push_existing_codex_cli_candidate(candidates, seen, home.join(relative));
     }
 
-    let catalog: Value = serde_json::from_slice(&output.stdout).map_err(|e| {
-        AppError::Message(format!(
-            "Failed to parse `codex debug models --bundled` output: {e}"
-        ))
-    })?;
-    Ok(find_codex_model_template(&catalog))
+    push_codex_cli_candidates_from_version_dirs(
+        candidates,
+        seen,
+        home.join(".nvm/versions/node"),
+        &["bin", "codex"],
+    );
+    push_codex_cli_candidates_from_version_dirs(
+        candidates,
+        seen,
+        home.join(".local/share/fnm/node-versions"),
+        &["installation", "bin", "codex"],
+    );
+    push_codex_cli_candidates_from_version_dirs(
+        candidates,
+        seen,
+        home.join("Library/Application Support/fnm/node-versions"),
+        &["installation", "bin", "codex"],
+    );
+}
+
+fn push_env_codex_cli_candidates(candidates: &mut Vec<PathBuf>, seen: &mut HashSet<String>) {
+    for (env_key, suffix) in [
+        ("NPM_CONFIG_PREFIX", &["bin", "codex"][..]),
+        ("VOLTA_HOME", &["bin", "codex"][..]),
+        ("ASDF_DATA_DIR", &["shims", "codex"][..]),
+        ("MISE_DATA_DIR", &["shims", "codex"][..]),
+        ("PNPM_HOME", &["codex"][..]),
+    ] {
+        let Some(prefix) = std::env::var_os(env_key) else {
+            continue;
+        };
+        let mut candidate = PathBuf::from(prefix);
+        for component in suffix {
+            candidate.push(component);
+        }
+        push_existing_codex_cli_candidate(candidates, seen, candidate);
+    }
+
+    if let Some(nvm_dir) = std::env::var_os("NVM_DIR") {
+        push_codex_cli_candidates_from_version_dirs(
+            candidates,
+            seen,
+            PathBuf::from(nvm_dir).join("versions/node"),
+            &["bin", "codex"],
+        );
+    }
+
+    if let Some(fnm_dir) = std::env::var_os("FNM_DIR") {
+        push_codex_cli_candidates_from_version_dirs(
+            candidates,
+            seen,
+            PathBuf::from(fnm_dir).join("node-versions"),
+            &["installation", "bin", "codex"],
+        );
+    }
+
+    #[cfg(windows)]
+    {
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            let npm_dir = PathBuf::from(appdata).join("npm");
+            for name in ["codex.cmd", "codex.exe", "codex"] {
+                push_existing_codex_cli_candidate(candidates, seen, npm_dir.join(name));
+            }
+        }
+    }
+}
+
+fn codex_cli_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let mut seen = HashSet::new();
+
+    for candidate in CODEX_CLI_FIXED_CANDIDATES {
+        push_codex_cli_candidate(&mut candidates, &mut seen, PathBuf::from(candidate));
+    }
+
+    push_env_codex_cli_candidates(&mut candidates, &mut seen);
+    push_home_codex_cli_candidates(&mut candidates, &mut seen, &get_home_dir());
+
+    candidates
+}
+
+fn load_codex_model_template_from_bundled() -> Result<Option<Value>, AppError> {
+    for candidate in codex_cli_candidates() {
+        let candidate_label = candidate.to_string_lossy();
+        let output = match Command::new(&candidate)
+            .args(["debug", "models", "--bundled"])
+            .output()
+        {
+            Ok(output) => output,
+            Err(err) => {
+                log::debug!("failed to run `{candidate_label} debug models --bundled`: {err}");
+                continue;
+            }
+        };
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::debug!("`{candidate_label} debug models --bundled` failed: {stderr}");
+            continue;
+        }
+
+        let catalog: Value = match serde_json::from_slice(&output.stdout) {
+            Ok(catalog) => catalog,
+            Err(e) => {
+                log::debug!(
+                    "Failed to parse `{candidate_label} debug models --bundled` output: {e}"
+                );
+                continue;
+            }
+        };
+        if let Some(template) = find_codex_model_template(&catalog) {
+            return Ok(Some(template));
+        }
+    }
+
+    Ok(None)
+}
+
+fn load_codex_model_template_static() -> Option<Value> {
+    let text = include_str!("resources/gpt5_5_template.json");
+    match serde_json::from_str(text) {
+        Ok(template) => Some(template),
+        Err(e) => {
+            log::warn!("Failed to parse bundled gpt-5.5 template: {e}");
+            None
+        }
+    }
 }
 
 fn load_codex_model_catalog_template() -> Result<Value, AppError> {
+    // ① models_cache.json (created by Codex when it connects to OpenAI)
     if let Some(template) = load_codex_model_template_from_cache()? {
         return Ok(template);
     }
+    // ② codex CLI (PATH + platform-specific common paths)
     if let Some(template) = load_codex_model_template_from_bundled()? {
+        return Ok(template);
+    }
+    // ③ Static fallback bundled at compile time
+    if let Some(template) = load_codex_model_template_static() {
         return Ok(template);
     }
 
@@ -874,18 +846,39 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
     Some(json!({ "models": entries }))
 }
 
-/// Unified helper: write Codex live config with model catalog preparation.
-/// Replaces scattered `prepare_codex_config_text_with_model_catalog` calls.
-pub fn write_codex_live_with_catalog(
+/// Decide the `config.toml` text to write during a takeover-off restore,
+/// projecting the model catalog **only when `settings` carries an inline
+/// `modelCatalog`**.
+///
+/// Restore feeds back a stored backup, and Codex backups come in two shapes that
+/// need opposite handling:
+///
+/// - **Snapshot backup** (`read_codex_live_settings`): `{ auth, config }` with no
+///   inline `modelCatalog`. Its `config.toml` text already carries whatever
+///   `model_catalog_json` pointer existed at backup time, and the generated
+///   catalog file on disk is untouched. Here we must keep the config **raw** —
+///   running catalog projection would see "no specs" and strip the live pointer.
+/// - **Provider-rebuilt backup** (`update_live_backup_from_provider`): the DB
+///   provider's settings, i.e. `{ auth, config (no pointer), modelCatalog
+///   (inline DB SSOT) }`. Here the pointer/catalog file must be (re)generated
+///   from the inline `modelCatalog`, or the mapping is lost on restore.
+///
+/// Gating on the presence of the inline `modelCatalog` key routes each shape
+/// correctly; an empty inline catalog still projects (and so correctly drops a
+/// now-stale pointer), while an absent key leaves the text untouched. This is
+/// **orthogonal to auth** — a provider-rebuilt backup can pair an inline
+/// `modelCatalog` with empty `auth.json` (the API key living in the config's
+/// `experimental_bearer_token`), so the caller must decide config projection
+/// independently of whether it writes or deletes `auth.json`.
+pub fn prepare_codex_live_config_text_with_optional_catalog(
     settings: &Value,
-    auth: &Value,
-    config_text: Option<&str>,
-) -> Result<(), AppError> {
-    let prepared_config = config_text
-        .map(|text| prepare_codex_config_text_with_model_catalog(settings, text))
-        .transpose()?;
-
-    write_codex_live_atomic_with_stable_provider(auth, prepared_config.as_deref())
+    config_text: &str,
+) -> Result<String, AppError> {
+    if settings.get("modelCatalog").is_some() {
+        prepare_codex_config_text_with_model_catalog(settings, config_text)
+    } else {
+        Ok(config_text.to_string())
+    }
 }
 
 pub fn write_codex_provider_live_with_catalog(
@@ -979,7 +972,10 @@ fn set_codex_experimental_bearer_token(config_text: &str, token: &str) -> Result
     Ok(doc.to_string())
 }
 
-fn remove_codex_experimental_bearer_token(config_text: &str) -> Result<String, AppError> {
+pub fn remove_codex_experimental_bearer_token_if(
+    config_text: &str,
+    predicate: impl Fn(&str) -> bool,
+) -> Result<String, AppError> {
     if config_text.trim().is_empty() || !config_text.contains("experimental_bearer_token") {
         return Ok(config_text.to_string());
     }
@@ -995,12 +991,30 @@ fn remove_codex_experimental_bearer_token(config_text: &str) -> Result<String, A
             .and_then(|table| table.get_mut(provider_id.as_str()))
             .and_then(|item| item.as_table_mut())
         {
-            provider_table.remove("experimental_bearer_token");
+            let should_remove = provider_table
+                .get("experimental_bearer_token")
+                .and_then(|item| item.as_str())
+                .map(str::trim)
+                .is_some_and(&predicate);
+            if should_remove {
+                provider_table.remove("experimental_bearer_token");
+            }
         }
     }
 
-    doc.as_table_mut().remove("experimental_bearer_token");
+    let should_remove_top_level = doc
+        .get("experimental_bearer_token")
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .is_some_and(&predicate);
+    if should_remove_top_level {
+        doc.as_table_mut().remove("experimental_bearer_token");
+    }
     Ok(doc.to_string())
+}
+
+fn remove_codex_experimental_bearer_token(config_text: &str) -> Result<String, AppError> {
+    remove_codex_experimental_bearer_token_if(config_text, |_| true)
 }
 
 /// Read the current Codex live settings as a `{ auth, config }` object.
@@ -1028,19 +1042,23 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
 
 /// Route a Codex live write between full auth+config or config-only.
 ///
-/// Official providers with usable login material own `auth.json`; everyone
-/// else only touches `config.toml` so the user's ChatGPT login cache survives
-/// third-party switches.
+/// Official providers with usable login material own `auth.json`. Third-party
+/// providers only touch `config.toml` when the compatibility setting is enabled
+/// so the user's ChatGPT login cache survives provider switches.
 pub fn write_codex_live_for_provider(
     category: Option<&str>,
     auth: &Value,
     config_text: Option<&str>,
 ) -> Result<(), AppError> {
-    if category == Some("official") && codex_auth_has_login_material(auth) {
-        write_codex_live_atomic_with_stable_provider(auth, config_text)
+    let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
+        || (category != Some("official")
+            && !crate::settings::preserve_codex_official_auth_on_switch());
+
+    if should_write_auth {
+        write_codex_live_atomic(auth, config_text)
     } else {
         let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
-        write_codex_live_config_atomic_with_stable_provider(Some(&live_config))
+        write_codex_live_config_atomic(Some(&live_config))
     }
 }
 
@@ -1110,7 +1128,6 @@ pub fn restore_codex_settings_for_backfill(
     template_settings: &Value,
     restore_provider_token: bool,
 ) -> Result<(), AppError> {
-    restore_codex_settings_config_model_provider_for_backfill(settings, template_settings)?;
     if restore_provider_token {
         restore_codex_provider_token_for_backfill(settings, template_settings)?;
     }
@@ -1238,84 +1255,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn normalize_live_config_uses_custom_for_third_party_model_provider_id() {
-        let target = r#"model_provider = "aihubmix"
-model = "gpt-5.4"
-
-[model_providers.aihubmix]
-name = "AiHubMix"
-base_url = "https://aihubmix.example/v1"
-wire_api = "responses"
-requires_openai_auth = true
-
-[mcp_servers.context7]
-command = "npx"
-"#;
-
-        let result = normalize_codex_live_config_model_provider(target).unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-
-        assert_eq!(
-            parsed.get("model_provider").and_then(|v| v.as_str()),
-            Some("custom")
-        );
-
-        let model_providers = parsed
-            .get("model_providers")
-            .and_then(|v| v.as_table())
-            .expect("model_providers should exist");
-        assert!(
-            model_providers.get("aihubmix").is_none(),
-            "source provider id should not remain in live config"
-        );
-
-        let stable_provider = model_providers
-            .get("custom")
-            .expect("stable provider table should exist");
-        assert_eq!(
-            stable_provider.get("base_url").and_then(|v| v.as_str()),
-            Some("https://aihubmix.example/v1")
-        );
-        assert!(
-            parsed.get("mcp_servers").is_some(),
-            "unrelated config should be preserved"
-        );
-    }
-
-    #[test]
-    fn normalize_live_config_uses_custom_for_custom_provider_even_without_anchor() {
-        let target = r#"model_provider = "aihubmix"
-
-[model_providers.aihubmix]
-name = "AiHubMix"
-base_url = "https://aihubmix.example/v1"
-wire_api = "responses"
-"#;
-
-        let result = normalize_codex_live_config_model_provider(target).unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-
-        assert_eq!(
-            parsed.get("model_provider").and_then(|v| v.as_str()),
-            Some("custom")
-        );
-        assert!(
-            parsed
-                .get("model_providers")
-                .and_then(|v| v.get("custom"))
-                .is_some(),
-            "third-party provider id should be normalized to custom"
-        );
-    }
-
-    #[test]
-    fn normalize_live_config_leaves_official_empty_config_unchanged() {
-        let result = normalize_codex_live_config_model_provider("").unwrap();
-
-        assert_eq!(result, "");
-    }
-
-    #[test]
     fn prepare_provider_live_config_rejects_key_without_config() {
         let err = prepare_codex_provider_live_config(&json!({"OPENAI_API_KEY": "sk-test"}), "")
             .expect_err("empty config with API key should not truncate live config");
@@ -1418,8 +1357,8 @@ model = "gpt-5"
     }
 
     #[test]
-    fn normalize_live_config_rewrites_matching_profile_model_provider_refs() {
-        let target = r#"model_provider = "vendor_alpha"
+    fn prepare_provider_live_config_preserves_custom_provider_id() {
+        let input = r#"model_provider = "vendor_alpha"
 model = "gpt-5.4"
 profile = "work"
 
@@ -1433,12 +1372,29 @@ model_provider = "vendor_alpha"
 model = "gpt-5.4"
 "#;
 
-        let result = normalize_codex_live_config_model_provider(target).unwrap();
+        let result =
+            prepare_codex_provider_live_config(&json!({"OPENAI_API_KEY": "sk-test"}), input)
+                .expect("prepare live config");
         let parsed: toml::Value = toml::from_str(&result).unwrap();
 
         assert_eq!(
             parsed.get("model_provider").and_then(|v| v.as_str()),
-            Some("custom")
+            Some("vendor_alpha")
+        );
+        assert!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("custom"))
+                .is_none(),
+            "provider writes should not force custom provider ids"
+        );
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("vendor_alpha"))
+                .and_then(|v| v.get("experimental_bearer_token"))
+                .and_then(|v| v.as_str()),
+            Some("sk-test")
         );
         assert_eq!(
             parsed
@@ -1446,90 +1402,48 @@ model = "gpt-5.4"
                 .and_then(|v| v.get("work"))
                 .and_then(|v| v.get("model_provider"))
                 .and_then(|v| v.as_str()),
-            Some("custom"),
-            "profile override matching the rewritten provider should stay valid"
+            Some("vendor_alpha"),
+            "profile provider references should be preserved"
         );
     }
 
     #[test]
-    fn normalize_live_config_keeps_unrelated_profile_model_provider_refs() {
-        let target = r#"model_provider = "vendor_alpha"
-model = "gpt-5.4"
-
-[model_providers.vendor_alpha]
-name = "Vendor Alpha"
-base_url = "https://alpha.example/v1"
-wire_api = "responses"
-
-[model_providers.local_profile]
-name = "Local Profile"
-base_url = "http://localhost:11434/v1"
-wire_api = "responses"
-
-[profiles.local]
-model_provider = "local_profile"
-model = "local-model"
-"#;
-
-        let result = normalize_codex_live_config_model_provider(target).unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
-
-        assert_eq!(
-            parsed
-                .get("profiles")
-                .and_then(|v| v.get("local"))
-                .and_then(|v| v.get("model_provider"))
-                .and_then(|v| v.as_str()),
-            Some("local_profile"),
-            "unrelated profile provider references should be preserved"
-        );
-        assert!(
-            parsed
-                .get("model_providers")
-                .and_then(|v| v.get("local_profile"))
-                .is_some(),
-            "unrelated provider tables should also remain available"
-        );
-    }
-
-    #[test]
-    fn normalize_live_config_keeps_custom_across_repeated_switches() {
-        let first_target = r#"model_provider = "vendor_alpha"
-
-[model_providers.vendor_alpha]
-name = "Vendor Alpha"
-base_url = "https://alpha.example/v1"
-wire_api = "responses"
-"#;
-        let second_target = r#"model_provider = "vendor_beta"
+    fn backfill_preserves_live_model_provider_id() {
+        let mut live_settings = json!({
+            "auth": {},
+            "config": r#"model_provider = "vendor_beta"
 
 [model_providers.vendor_beta]
 name = "Vendor Beta"
 base_url = "https://beta.example/v1"
 wire_api = "responses"
-"#;
+"#,
+        });
+        let template_settings = json!({
+            "auth": {},
+            "config": r#"model_provider = "custom"
 
-        let first = normalize_codex_live_config_model_provider(first_target).unwrap();
-        let second = normalize_codex_live_config_model_provider(second_target).unwrap();
-        let first_parsed: toml::Value = toml::from_str(&first).unwrap();
-        let parsed: toml::Value = toml::from_str(&second).unwrap();
+[model_providers.custom]
+name = "Custom"
+base_url = "https://custom.example/v1"
+wire_api = "responses"
+"#,
+        });
 
-        assert_eq!(
-            first_parsed.get("model_provider").and_then(|v| v.as_str()),
-            Some("custom")
-        );
+        restore_codex_settings_for_backfill(&mut live_settings, &template_settings, false).unwrap();
+        let config = live_settings.get("config").and_then(Value::as_str).unwrap();
+        let parsed: toml::Value = toml::from_str(config).unwrap();
+
         assert_eq!(
             parsed.get("model_provider").and_then(|v| v.as_str()),
-            Some("custom"),
-            "stable provider id should not drift across repeated switches"
+            Some("vendor_beta")
         );
-        assert_eq!(
+        assert!(
             parsed
                 .get("model_providers")
-                .and_then(|v| v.get("custom"))
-                .and_then(|v| v.get("base_url"))
-                .and_then(|v| v.as_str()),
-            Some("https://beta.example/v1")
+                .and_then(|v| v.get("vendor_beta"))
+                .is_some(),
+            "backfill should not rewrite user-selected provider tables"
         );
     }
 
@@ -2020,5 +1934,96 @@ name = "any"
             .is_none(),
             "entries lacking slug are skipped; a fully-skipped catalog yields None"
         );
+    }
+
+    #[test]
+    fn codex_cli_candidates_are_non_empty() {
+        let candidates = codex_cli_candidates();
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate == Path::new("codex")),
+            "codex CLI candidates must include the PATH entry"
+        );
+    }
+
+    #[test]
+    fn codex_cli_candidates_include_user_node_manager_bins() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let home = temp_home.path();
+        let expected = [
+            home.join(".nvm/versions/node/v22.14.0/bin/codex"),
+            home.join(".volta/bin/codex"),
+            home.join(".asdf/shims/codex"),
+            home.join(".local/share/mise/shims/codex"),
+            home.join(".local/share/fnm/node-versions/v22.14.0/installation/bin/codex"),
+        ];
+
+        for candidate in &expected {
+            std::fs::create_dir_all(candidate.parent().expect("candidate parent"))
+                .expect("create candidate parent");
+            std::fs::write(candidate, "").expect("create candidate");
+        }
+
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+        push_home_codex_cli_candidates(&mut candidates, &mut seen, home);
+
+        for candidate in expected {
+            assert!(
+                candidates.contains(&candidate),
+                "user-level Codex CLI candidate should be discovered: {}",
+                candidate.display()
+            );
+        }
+    }
+
+    #[test]
+    fn codex_cli_candidates_deduplicate_entries() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let home = temp_home.path();
+        let candidate = home.join(".volta/bin/codex");
+        std::fs::create_dir_all(candidate.parent().expect("candidate parent"))
+            .expect("create candidate parent");
+        std::fs::write(&candidate, "").expect("create candidate");
+
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+        push_existing_codex_cli_candidate(&mut candidates, &mut seen, candidate.clone());
+        push_home_codex_cli_candidates(&mut candidates, &mut seen, home);
+
+        assert_eq!(
+            candidates.iter().filter(|path| **path == candidate).count(),
+            1,
+            "duplicate candidates should be removed"
+        );
+    }
+
+    #[test]
+    fn static_template_is_valid_json_with_slug() {
+        let template =
+            load_codex_model_template_static().expect("static template must parse as valid JSON");
+        assert_eq!(
+            template.get("slug").and_then(|v| v.as_str()),
+            Some("gpt-5.5"),
+            "static template slug must be gpt-5.5"
+        );
+    }
+
+    #[test]
+    fn static_template_has_required_keys() {
+        let template =
+            load_codex_model_template_static().expect("static template must parse as valid JSON");
+        for key in &[
+            "model_messages",
+            "base_instructions",
+            "context_window",
+            "display_name",
+        ] {
+            assert!(
+                template.get(key).is_some(),
+                "static template must contain key '{key}'"
+            );
+        }
     }
 }
