@@ -1165,6 +1165,7 @@ pub fn run() {
             commands::get_log_config,
             commands::set_log_config,
             commands::restart_app,
+            commands::install_update_and_restart,
             commands::check_for_updates,
             commands::is_portable_mode,
             commands::copy_text_to_clipboard,
@@ -1960,6 +1961,22 @@ pub fn save_window_state_before_exit(app_handle: &tauri::AppHandle) {
     } else {
         log::info!("已在退出前保存窗口状态");
     }
+}
+
+/// 主动释放 single-instance 锁。
+///
+/// macOS single-instance 使用 `/tmp/{identifier}.sock`。我们有若干路径会直接
+/// `std::process::exit(0)`，不会触发插件挂在 `RunEvent::Exit` 上的清理钩子。
+/// 重启前主动 destroy 可以避免新进程误连旧 listener 后自行退出。
+pub fn destroy_single_instance_lock(app_handle: &tauri::AppHandle) {
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    tauri_plugin_single_instance::destroy(app_handle);
+}
+
+/// 释放 single-instance 锁后重启当前应用。
+pub fn restart_process(app_handle: &tauri::AppHandle) -> ! {
+    destroy_single_instance_lock(app_handle);
+    tauri::process::restart(&app_handle.env());
 }
 
 #[cfg(test)]
