@@ -663,6 +663,66 @@ fn schema_model_pricing_is_seeded_on_init() {
 }
 
 #[test]
+fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
+    let db = Database::memory().expect("create memory db");
+
+    {
+        let conn = db.conn.lock().expect("lock conn");
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '1.68',
+                 output_cost_per_million = '3.36',
+                 cache_read_cost_per_million = '0.14',
+                 cache_creation_cost_per_million = '0'
+             WHERE model_id = 'deepseek-v4-pro'",
+            [],
+        )
+        .expect("restore old DeepSeek price");
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '9',
+                 output_cost_per_million = '9',
+                 cache_read_cost_per_million = '9',
+                 cache_creation_cost_per_million = '0'
+             WHERE model_id = 'glm-5.1'",
+            [],
+        )
+        .expect("set custom GLM price");
+    }
+
+    db.ensure_model_pricing_seeded()
+        .expect("ensure pricing seeded");
+
+    let conn = db.conn.lock().expect("lock conn");
+    let deepseek: (String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million, cache_read_cost_per_million
+             FROM model_pricing WHERE model_id = 'deepseek-v4-pro'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("query DeepSeek price");
+    assert_eq!(
+        deepseek,
+        (
+            "0.435".to_string(),
+            "0.87".to_string(),
+            "0.003625".to_string()
+        )
+    );
+
+    let glm: (String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million, cache_read_cost_per_million
+             FROM model_pricing WHERE model_id = 'glm-5.1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("query GLM price");
+    assert_eq!(glm, ("9".to_string(), "9".to_string(), "9".to_string()));
+}
+
+#[test]
 fn ensure_incremental_auto_vacuum_rebuilds_existing_file_db() {
     let temp = NamedTempFile::new().expect("create temp db file");
     let path = temp.path().to_path_buf();

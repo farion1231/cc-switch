@@ -3214,6 +3214,11 @@ mod tests {
             result.is_some(),
             "Claude Desktop 短路由 claude-haiku-4-5 应能匹配到 claude-haiku-4-5-20251001"
         );
+        let result = find_model_pricing_row(&conn, "anthropic/claude-opus-4.8")?;
+        assert!(
+            result.is_some(),
+            "聚合商点号格式 anthropic/claude-opus-4.8 应能匹配到 claude-opus-4-8"
+        );
 
         // Claude Desktop 旧版/异常包装的非 Anthropic route：claude-gpt-5.5 → gpt-5.5
         let result = find_model_pricing_row(&conn, "claude-gpt-5.5")?;
@@ -3228,6 +3233,16 @@ mod tests {
         assert!(
             result.is_some(),
             "Bedrock/Vertex 风格 Claude 模型 ID 应能归一化到基础 Claude 模型定价"
+        );
+        let result = find_model_pricing_row(&conn, "global.anthropic.claude-opus-4-8-v1:0")?;
+        assert!(
+            result.is_some(),
+            "Bedrock 风格 Claude Opus 4.8 模型 ID 应能归一化到基础 Claude 模型定价"
+        );
+        let result = find_model_pricing_row(&conn, "claude-opus-4-8@20260527")?;
+        assert!(
+            result.is_some(),
+            "Vertex 风格 Claude Opus 4.8 模型 ID 应能归一化到基础 Claude 模型定价"
         );
 
         // Reasoning effort 后缀：没有专门价格时回退到基础模型

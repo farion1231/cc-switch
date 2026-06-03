@@ -82,7 +82,8 @@ pub async fn get_config_status(
         }
         AppType::Codex => {
             let auth_path = codex_config::get_codex_auth_path();
-            let exists = auth_path.exists();
+            let config_text = codex_config::read_codex_config_text().unwrap_or_default();
+            let exists = auth_path.exists() || !config_text.trim().is_empty();
             let path = codex_config::get_codex_config_dir()
                 .to_string_lossy()
                 .to_string();

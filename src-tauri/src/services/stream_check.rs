@@ -58,8 +58,8 @@ impl Default for StreamCheckConfig {
             max_retries: 2,
             degraded_threshold_ms: 6000,
             claude_model: "claude-haiku-4-5-20251001".to_string(),
-            codex_model: "gpt-5.4@low".to_string(),
-            gemini_model: "gemini-3-flash-preview".to_string(),
+            codex_model: "gpt-5.5@low".to_string(),
+            gemini_model: "gemini-3.5-flash".to_string(),
             test_prompt: default_test_prompt(),
         }
     }
@@ -532,7 +532,15 @@ impl StreamCheckService {
             .as_ref()
             .and_then(|meta| meta.is_full_url)
             .unwrap_or(false);
-        let urls = Self::resolve_codex_stream_urls(base_url, is_full_url);
+        // 当 provider 的 api_format 标记为 openai_chat 时，上游不接受 Responses API；
+        // 必须改打 /chat/completions 并发送 Chat 格式 body，否则 Stream Check 与代理路径不一致，
+        // 会把"实际可用"的供应商误报为不可用（典型如 DeepSeek、MiniMax、Kimi 等 Chat 兼容厂商）。
+        let uses_chat = crate::proxy::providers::codex_provider_uses_chat_completions(provider);
+        let urls = if uses_chat {
+            Self::resolve_codex_chat_stream_urls(base_url, is_full_url)
+        } else {
+            Self::resolve_codex_stream_urls(base_url, is_full_url)
+        };
 
         // 解析模型名和推理等级 (支持 model@level 或 model#level 格式)
         let (actual_model, reasoning_effort) = Self::parse_model_with_effort(model);
@@ -541,16 +549,33 @@ impl StreamCheckService {
         let os_name = Self::get_os_name();
         let arch_name = Self::get_arch_name();
 
-        // Responses API 请求体格式 (input 必须是数组)
-        let mut body = json!({
-            "model": actual_model,
-            "input": [{ "role": "user", "content": test_prompt }],
-            "stream": true
-        });
+        let mut body = if uses_chat {
+            // Chat Completions 请求体（与 transform_codex_chat::responses_to_chat_completions 对齐）
+            json!({
+                "model": actual_model,
+                "messages": [{ "role": "user", "content": test_prompt }],
+                "max_tokens": 1,
+                "stream": true
+            })
+        } else {
+            // Responses API 请求体格式 (input 必须是数组)
+            json!({
+                "model": actual_model,
+                "input": [{ "role": "user", "content": test_prompt }],
+                "stream": true
+            })
+        };
 
-        // 如果是推理模型，添加 reasoning_effort
+        // Chat 路径只对 OpenAI o-series 透传 reasoning_effort，与 transform_codex_chat
+        // 一致；非 o-series（DeepSeek、Kimi 等）收到未知字段会 400。
         if let Some(effort) = reasoning_effort {
-            body["reasoning"] = json!({ "effort": effort });
+            if uses_chat
+                && crate::proxy::providers::transform::supports_reasoning_effort(&actual_model)
+            {
+                body["reasoning_effort"] = json!(effort);
+            } else if !uses_chat {
+                body["reasoning"] = json!({ "effort": effort });
+            }
         }
 
         for (i, url) in urls.iter().enumerate() {
@@ -1510,17 +1535,54 @@ impl StreamCheckService {
         }
     }
 
+    /// Codex Responses 流式 URL 构造（薄包装，详见 `resolve_codex_endpoint_urls`）。
     fn resolve_codex_stream_urls(base_url: &str, is_full_url: bool) -> Vec<String> {
+        Self::resolve_codex_endpoint_urls(base_url, is_full_url, "responses")
+    }
+
+    /// Codex Chat Completions 流式 URL 构造（薄包装，详见 `resolve_codex_endpoint_urls`）。
+    fn resolve_codex_chat_stream_urls(base_url: &str, is_full_url: bool) -> Vec<String> {
+        Self::resolve_codex_endpoint_urls(base_url, is_full_url, "chat/completions")
+    }
+
+    /// 与 `CodexAdapter::build_url` 优先级对齐的 stream check URL 列表构造。
+    ///
+    /// 纯 origin 在生产路径上会自动补 `/v1`，所以 Stream Check 必须优先走
+    /// `<base>/v1/<endpoint>`。否则上游对 bare 路径返回 401/400/405（非 404）
+    /// 时不会触发循环里的 fallback，会把可用供应商误判为不可用。
+    fn resolve_codex_endpoint_urls(
+        base_url: &str,
+        is_full_url: bool,
+        endpoint: &str,
+    ) -> Vec<String> {
         if is_full_url {
             return vec![base_url.to_string()];
         }
 
         let base = base_url.trim_end_matches('/');
+        let lower = base.to_ascii_lowercase();
+        let endpoint_suffix = format!("/{endpoint}");
+        let endpoint_lower = endpoint_suffix.to_ascii_lowercase();
+
+        // 用户在 base_url 里写了完整 endpoint 但忘开 is_full_url 的兜底
+        if lower.ends_with(&endpoint_lower) {
+            return vec![base.to_string()];
+        }
 
         if base.ends_with("/v1") {
-            vec![format!("{base}/responses")]
+            return vec![format!("{base}{endpoint_suffix}")];
+        }
+
+        if crate::proxy::providers::is_origin_only_url(base) {
+            vec![
+                format!("{base}/v1{endpoint_suffix}"),
+                format!("{base}{endpoint_suffix}"),
+            ]
         } else {
-            vec![format!("{base}/responses"), format!("{base}/v1/responses")]
+            vec![
+                format!("{base}{endpoint_suffix}"),
+                format!("{base}/v1{endpoint_suffix}"),
+            ]
         }
     }
 
@@ -1824,7 +1886,7 @@ mod tests {
             AuthStrategy::Bearer,
             "openai_chat",
             true,
-            "gpt-5.4",
+            "gpt-5.5",
         );
 
         assert_eq!(url, "https://relay.example/v1/chat/completions");
@@ -1837,7 +1899,7 @@ mod tests {
             AuthStrategy::GitHubCopilot,
             "openai_chat",
             false,
-            "gpt-5.4",
+            "gpt-5.5",
         );
 
         assert_eq!(url, "https://api.githubcopilot.com/chat/completions");
@@ -1850,7 +1912,7 @@ mod tests {
             AuthStrategy::GitHubCopilot,
             "openai_responses",
             false,
-            "gpt-5.4",
+            "gpt-5.5",
         );
 
         assert_eq!(url, "https://api.githubcopilot.com/v1/responses");
@@ -1863,7 +1925,7 @@ mod tests {
             AuthStrategy::Bearer,
             "openai_chat",
             false,
-            "gpt-5.4",
+            "gpt-5.5",
         );
 
         assert_eq!(url, "https://example.com/v1/chat/completions");
@@ -1876,7 +1938,7 @@ mod tests {
             AuthStrategy::Bearer,
             "openai_responses",
             false,
-            "gpt-5.4",
+            "gpt-5.5",
         );
 
         assert_eq!(url, "https://example.com/v1/responses");
@@ -1943,7 +2005,7 @@ mod tests {
     #[test]
     fn test_resolve_claude_stream_url_for_gemini_native_cloudflare_vertex_full_url() {
         let url = StreamCheckService::resolve_claude_stream_url(
-            "https://gateway.ai.cloudflare.com/v1/account/gateway/google-vertex-ai/v1/projects/project/locations/us-central1/publishers/google/models/gemini-3.1-pro-preview:streamGenerateContent",
+            "https://gateway.ai.cloudflare.com/v1/account/gateway/google-vertex-ai/v1/projects/project/locations/us-central1/publishers/google/models/gemini-3.5-flash:streamGenerateContent",
             AuthStrategy::Google,
             "gemini_native",
             true,
@@ -1952,7 +2014,7 @@ mod tests {
 
         assert_eq!(
             url,
-            "https://gateway.ai.cloudflare.com/v1/account/gateway/google-vertex-ai/v1/projects/project/locations/us-central1/publishers/google/models/gemini-3.1-pro-preview:streamGenerateContent?alt=sse"
+            "https://gateway.ai.cloudflare.com/v1/account/gateway/google-vertex-ai/v1/projects/project/locations/us-central1/publishers/google/models/gemini-3.5-flash:streamGenerateContent?alt=sse"
         );
     }
 
@@ -1995,16 +2057,110 @@ mod tests {
         assert_eq!(urls, vec!["https://api.openai.com/v1/responses"]);
     }
 
+    /// 纯 origin 必须优先 /v1/responses（与 CodexAdapter::build_url 一致）。
+    /// OpenAI 官方 /responses 实际挂在 /v1 下，bare 路径只在用户配置错误的
+    /// 反代上才可能命中，作为 fallback 保留即可。
     #[test]
-    fn test_resolve_codex_stream_urls_for_origin_base() {
+    fn test_resolve_codex_stream_urls_for_origin_base_prioritizes_v1() {
         let urls = StreamCheckService::resolve_codex_stream_urls("https://api.openai.com", false);
 
         assert_eq!(
             urls,
             vec![
-                "https://api.openai.com/responses",
                 "https://api.openai.com/v1/responses",
+                "https://api.openai.com/responses",
             ]
         );
+    }
+
+    /// 自定义前缀（如 /openai）生产路径不会自动补 /v1，Stream Check 应先打
+    /// 不带 /v1 的版本与之对齐；/v1 作为 misconfigured 兜底。
+    #[test]
+    fn test_resolve_codex_stream_urls_for_custom_prefix() {
+        let urls =
+            StreamCheckService::resolve_codex_stream_urls("https://relay.example/openai", false);
+
+        assert_eq!(
+            urls,
+            vec![
+                "https://relay.example/openai/responses",
+                "https://relay.example/openai/v1/responses",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_resolve_codex_stream_urls_recognizes_full_endpoint_without_flag() {
+        let urls = StreamCheckService::resolve_codex_stream_urls(
+            "https://api.openai.com/v1/responses",
+            false,
+        );
+
+        assert_eq!(urls, vec!["https://api.openai.com/v1/responses"]);
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_stream_urls_for_v1_base() {
+        let urls = StreamCheckService::resolve_codex_chat_stream_urls(
+            "https://api.deepseek.com/v1",
+            false,
+        );
+
+        assert_eq!(urls, vec!["https://api.deepseek.com/v1/chat/completions"]);
+    }
+
+    /// 纯 origin 必须优先 /v1/chat/completions，与 CodexAdapter::build_url 一致；
+    /// bare /chat/completions 仅作为 fallback。如果颠倒了优先级，上游对 bare
+    /// 路径返回 401/400/405 时（非 404）fallback 不会触发，会误判为不可用。
+    #[test]
+    fn test_resolve_codex_chat_stream_urls_for_origin_base_prioritizes_v1() {
+        let urls =
+            StreamCheckService::resolve_codex_chat_stream_urls("https://api.deepseek.com", false);
+
+        assert_eq!(
+            urls,
+            vec![
+                "https://api.deepseek.com/v1/chat/completions",
+                "https://api.deepseek.com/chat/completions",
+            ]
+        );
+    }
+
+    /// 自定义前缀（路径中已经包含段如 `/openai`）生产路径不会自动补 /v1。
+    /// Stream Check 应先打不带 /v1 的版本，与 build_url 行为一致。
+    #[test]
+    fn test_resolve_codex_chat_stream_urls_for_custom_prefix() {
+        let urls =
+            StreamCheckService::resolve_codex_chat_stream_urls("https://example.com/openai", false);
+
+        assert_eq!(
+            urls,
+            vec![
+                "https://example.com/openai/chat/completions",
+                "https://example.com/openai/v1/chat/completions",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_stream_urls_for_full_url_mode() {
+        let urls = StreamCheckService::resolve_codex_chat_stream_urls(
+            "https://relay.example/custom/chat/completions",
+            true,
+        );
+
+        assert_eq!(urls, vec!["https://relay.example/custom/chat/completions"]);
+    }
+
+    /// 用户在 base_url 里直接写完整 chat/completions endpoint 但忘开 is_full_url 时，
+    /// 不应该再追加 `/chat/completions` 后缀。
+    #[test]
+    fn test_resolve_codex_chat_stream_urls_recognizes_full_endpoint_without_flag() {
+        let urls = StreamCheckService::resolve_codex_chat_stream_urls(
+            "https://api.deepseek.com/v1/chat/completions",
+            false,
+        );
+
+        assert_eq!(urls, vec!["https://api.deepseek.com/v1/chat/completions"]);
     }
 }

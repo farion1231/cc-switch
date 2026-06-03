@@ -106,15 +106,15 @@ CC Switch ユーザーマニュアル
 
 ## バージョン情報
 
-- ドキュメントバージョン：v3.15.0
-- 最終更新：2026-05-16
-- CC Switch v3.15.0+ 対応
+- ドキュメントバージョン：v3.16.0
+- 最終更新：2026-05-29
+- CC Switch v3.16.0+ 対応
 
-### v3.15.0 の注目機能
+### v3.16.0 の注目機能
 
-- **Claude Desktop の一等管理パネル**：サードパーティプロバイダー、直結 / モデルマッピングの 2 モード、Copilot / Codex OAuth 再利用、3P profile 書き込みに対応 — 詳細は [2.6 Claude Desktop](./2-providers/2.6-claude-desktop.md)
-- **役割別モデルマッピング**：Sonnet / Opus / Haiku ルートと `supports1m` フラグで Claude Desktop のモデル検証に対応
-- **Claude Desktop ローカルルーティング**：変換が必要なプロバイダー向けに `127.0.0.1:15721/claude-desktop` のローカルゲートウェイを提供
+- **Codex Chat Completions ルーティング**：DeepSeek、Kimi、GLM、MiniMax など Chat 専用プロバイダーを Codex で利用可能 — 詳細は [2.1 プロバイダーの追加](./2-providers/2.1-add.md)
+- **管理対象 CLI ツールのライフサイクル**：設定 / About で Claude / Codex / Gemini / OpenCode / OpenClaw / Hermes のインストール、更新、一括更新、診断に対応 — 詳細は [1.5 個人設定](./1-getting-started/1.5-settings.md)
+- **プロバイダーとモデルマトリクス更新**：提携プリセットを追加し、既定モデルと価格表を更新。Claude Opus は 4.8、該当する GPT 既定値は 5.5 に更新
 - **ルーティング対応バッジ**：Claude Code / Codex のプロバイダーカードで Local Routing 対応可否を確認可能
 - **Codex OAuth ライブモデル検出**：ChatGPT Codex 系プロバイダーは必要に応じて ChatGPT バックエンドから利用可能モデルを取得
 - **フィルター連動 Usage Hero**：キャッシュ正規化後の実消費 Token とキャッシュヒット率を表示し、日付 / プロバイダー / モデルフィルターに追従 — 詳細は [4.4 使用量統計](./4-proxy/4.4-usage.md)
@@ -124,7 +124,7 @@ CC Switch ユーザーマニュアル
 - **アプリ別トレイサブメニュー**：Claude / Codex / Gemini のサブメニューで現在のプロバイダーと使用量サマリーを確認可能 — 詳細は [2.2 プロバイダーの切り替え](./2-providers/2.2-switch.md)
 - **Skills の発見と一括更新**：SHA-256 ハッシュによる更新検出、一括更新、skills.sh 公式レジストリ検索 — 詳細は [3.3 Skills スキル管理](./3-extensions/3.3-skills.md)
 - **完全URLエンドポイントモード**：高度なオプションで `base_url` を完全なアップストリームエンドポイントとして扱う — 詳細は [2.1 プロバイダーの追加](./2-providers/2.1-add.md)
-- **OpenCode / OpenClaw ストリームチェック対応**：Stream Check は Claude / Codex / Gemini / OpenCode / OpenClaw をカバー — 詳細は [4.5 モデルテスト](./4-proxy/4.5-model-test.md)
+- **OpenCode / OpenClaw / Hermes ストリームチェック対応**：Stream Check は Claude / Codex / Gemini / OpenCode / OpenClaw / Hermes をカバー — 詳細は [4.5 モデルテスト](./4-proxy/4.5-model-test.md)
 
 ## コントリビュート
 
