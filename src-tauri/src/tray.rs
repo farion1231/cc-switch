@@ -47,6 +47,14 @@ impl TrayTexts {
                 quit: "終了",
                 _auto_label: "自動 (フェイルオーバー)",
             },
+            "vi" => Self {
+                show_main: "Mở cửa sổ chính",
+                open_website: "Mở trang web chính thức",
+                no_providers_label: "(không có nhà cung cấp)",
+                lightweight_mode: "Chế độ nhẹ",
+                quit: "Thoát",
+                _auto_label: "Tự động (Chuyển dự phòng)",
+            },
             "zh-TW" => Self {
                 show_main: "開啟主介面",
                 open_website: "開啟官方網站",
