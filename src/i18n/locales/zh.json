@@ -42,6 +42,13 @@
     "enabled": "已开启",
     "notSet": "未设置"
   },
+  "customHeaders": {
+    "title": "自定义请求头",
+    "add": "添加",
+    "name": "Header 名称",
+    "value": "Header 值",
+    "empty": "未配置自定义请求头"
+  },
   "firstRunNotice": {
     "title": "欢迎使用 CC Switch",
     "bodyDefault": "CC Switch 可以帮你在 Claude Code / Codex / Gemini CLI 的多个供应商之间一键切换。如果你之前已经配置过这些工具，CC Switch 会自动把现有设置保存为名为 “default” 的供应商，保证你的配置不会丢失。",

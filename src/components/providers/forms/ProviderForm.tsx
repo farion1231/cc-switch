@@ -101,6 +101,7 @@ import {
   useCodexOauth,
 } from "./hooks";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { CustomHeadersEditor } from "./CustomHeadersEditor";
 import { useSettingsQuery } from "@/lib/query";
 import {
   CLAUDE_DEFAULT_CONFIG,
@@ -209,6 +210,42 @@ const normalizeCodexChatReasoningForSave = (
     outputFormat: value?.outputFormat ?? "auto",
   };
 };
+
+function parseCustomHeaders(settingsConfig: string): Record<string, string> {
+  try {
+    const config = JSON.parse(settingsConfig || "{}") as Record<
+      string,
+      unknown
+    >;
+    const headers = config.headers;
+    if (headers && typeof headers === "object" && !Array.isArray(headers)) {
+      return headers as Record<string, string>;
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return {};
+}
+
+function updateCustomHeaders(
+  settingsConfig: string,
+  headers: Record<string, string>,
+): string {
+  try {
+    const config = JSON.parse(settingsConfig || "{}") as Record<
+      string,
+      unknown
+    >;
+    if (Object.keys(headers).length > 0) {
+      config.headers = headers;
+    } else {
+      delete config.headers;
+    }
+    return JSON.stringify(config, null, 2);
+  } catch {
+    return settingsConfig;
+  }
+}
 
 export interface ProviderFormProps {
   appId: AppId;
@@ -1204,9 +1241,26 @@ function ProviderFormFull({
           auth: unknown;
           config: string;
           modelCatalog?: { models: CodexCatalogModel[] };
+          headers?: Record<string, string>;
         };
         if (normalizedCatalogModels.length > 0) {
           configObj.modelCatalog = { models: normalizedCatalogModels };
+        }
+        // 保留自定义请求头
+        try {
+          const existing = JSON.parse(values.settingsConfig || "{}") as Record<
+            string,
+            unknown
+          >;
+          if (
+            existing.headers &&
+            typeof existing.headers === "object" &&
+            !Array.isArray(existing.headers)
+          ) {
+            configObj.headers = existing.headers as Record<string, string>;
+          }
+        } catch {
+          /* ignore */
         }
         settingsConfig = JSON.stringify(configObj);
       } catch (err) {
@@ -1219,7 +1273,27 @@ function ProviderFormFull({
         const combined = {
           env: envObj,
           config: configObj,
+        } as {
+          env: Record<string, string>;
+          config: Record<string, unknown>;
+          headers?: Record<string, string>;
         };
+        // 保留自定义请求头
+        try {
+          const existing = JSON.parse(values.settingsConfig || "{}") as Record<
+            string,
+            unknown
+          >;
+          if (
+            existing.headers &&
+            typeof existing.headers === "object" &&
+            !Array.isArray(existing.headers)
+          ) {
+            combined.headers = existing.headers as Record<string, string>;
+          }
+        } catch {
+          /* ignore */
+        }
         settingsConfig = JSON.stringify(combined);
       } catch (err) {
         settingsConfig = values.settingsConfig.trim();
@@ -1246,6 +1320,22 @@ function ProviderFormFull({
         if (otherFields) {
           omoConfig.otherFields = otherFields;
         }
+      }
+      // 保留自定义请求头
+      try {
+        const existing = JSON.parse(values.settingsConfig || "{}") as Record<
+          string,
+          unknown
+        >;
+        if (
+          existing.headers &&
+          typeof existing.headers === "object" &&
+          !Array.isArray(existing.headers)
+        ) {
+          omoConfig.headers = existing.headers as Record<string, string>;
+        }
+      } catch {
+        /* ignore */
       }
       settingsConfig = JSON.stringify(omoConfig);
     } else {
@@ -2302,6 +2392,18 @@ function ProviderFormFull({
               {settingsConfigErrorField}
             </>
           )}
+
+          {/* 自定义请求头 */}
+          <CustomHeadersEditor
+            headers={parseCustomHeaders(form.watch("settingsConfig"))}
+            onChange={(headers) => {
+              const updated = updateCustomHeaders(
+                form.getValues("settingsConfig"),
+                headers,
+              );
+              form.setValue("settingsConfig", updated);
+            }}
+          />
 
           {!isAnyOmoCategory &&
             appId !== "opencode" &&

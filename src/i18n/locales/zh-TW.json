@@ -42,6 +42,13 @@
     "enabled": "已啟用",
     "notSet": "未設定"
   },
+  "customHeaders": {
+    "title": "自訂請求頭",
+    "add": "新增",
+    "name": "Header 名稱",
+    "value": "Header 值",
+    "empty": "未設定自訂請求頭"
+  },
   "firstRunNotice": {
     "title": "歡迎使用 CC Switch",
     "bodyDefault": "CC Switch 可以協助您在 Claude Code / Codex / Gemini CLI 的多個供應商之間一鍵切換。如果您之前已經設定過這些工具，CC Switch 會自動將現有設定儲存為名為 default 的供應商，確保您的設定不會遺失。",

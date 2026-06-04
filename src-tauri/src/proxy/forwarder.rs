@@ -86,6 +86,32 @@ impl Drop for ActiveConnectionGuard {
     }
 }
 
+/// Extract custom headers from provider.settings_config["headers"] and inject them
+/// into the upstream request HeaderMap. Custom headers override existing headers.
+fn inject_provider_custom_headers(
+    ordered_headers: &mut http::HeaderMap,
+    provider: &Provider,
+) {
+    let custom = provider
+        .settings_config
+        .get("headers")
+        .and_then(|v| v.as_object())
+        .map(|obj| {
+            obj.iter()
+                .filter_map(|(k, v)| {
+                    let name = http::HeaderName::from_bytes(k.as_bytes()).ok()?;
+                    let value = http::HeaderValue::from_str(v.as_str()?).ok()?;
+                    Some((name, value))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    for (name, value) in custom {
+        ordered_headers.insert(name, value);
+    }
+}
+
 pub struct RequestForwarder {
     /// 共享的 ProviderRouter（持有熔断器状态）
     router: Arc<ProviderRouter>,
@@ -1604,6 +1630,9 @@ impl RequestForwarder {
             );
         }
 
+        // 注入供应商自定义请求头（覆盖已有同名头）
+        inject_provider_custom_headers(&mut ordered_headers, provider);
+
         reject_proxy_placeholder_for_managed_account_upstream(&url, &ordered_headers)?;
 
         // 输出请求信息日志
@@ -3105,5 +3134,141 @@ mod tests {
             let will_replace = is_copilot && !is_full_url;
             assert_eq!(will_replace, should_replace, "{desc}");
         }
+    }
+
+    #[test]
+    fn inject_provider_custom_headers_adds_new_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-existing", HeaderValue::from_static("keep"));
+
+        let provider = Provider {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            settings_config: json!({
+                "headers": {
+                    "User-Agent": "Claude Code",
+                    "X-Custom": "value"
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        inject_provider_custom_headers(&mut headers, &provider);
+
+        assert_eq!(
+            headers.get("x-existing").unwrap().to_str().unwrap(),
+            "keep"
+        );
+        assert_eq!(
+            headers.get("User-Agent").unwrap().to_str().unwrap(),
+            "Claude Code"
+        );
+        assert_eq!(
+            headers.get("X-Custom").unwrap().to_str().unwrap(),
+            "value"
+        );
+    }
+
+    #[test]
+    fn inject_provider_custom_headers_overrides_existing() {
+        let mut headers = HeaderMap::new();
+        headers.insert("User-Agent", HeaderValue::from_static("Original"));
+
+        let provider = Provider {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            settings_config: json!({
+                "headers": {
+                    "User-Agent": "Claude Code"
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        inject_provider_custom_headers(&mut headers, &provider);
+
+        assert_eq!(
+            headers.get("User-Agent").unwrap().to_str().unwrap(),
+            "Claude Code"
+        );
+    }
+
+    #[test]
+    fn inject_provider_custom_headers_skips_invalid_names() {
+        let mut headers = HeaderMap::new();
+
+        let provider = Provider {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            settings_config: json!({
+                "headers": {
+                    "Valid-Header": "ok",
+                    "": "empty-key",
+                    "Also\nInvalid": "bad"
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        inject_provider_custom_headers(&mut headers, &provider);
+
+        assert_eq!(
+            headers.get("Valid-Header").unwrap().to_str().unwrap(),
+            "ok"
+        );
+        assert!(!headers.contains_key(""));
+    }
+
+    #[test]
+    fn inject_provider_custom_headers_noop_when_missing() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-existing", HeaderValue::from_static("keep"));
+
+        let provider = Provider {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            settings_config: json!({}),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        inject_provider_custom_headers(&mut headers, &provider);
+
+        assert_eq!(
+            headers.get("x-existing").unwrap().to_str().unwrap(),
+            "keep"
+        );
+        assert_eq!(headers.len(), 1);
     }
 }

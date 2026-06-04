@@ -42,6 +42,13 @@
     "enabled": "Enabled",
     "notSet": "Not Set"
   },
+  "customHeaders": {
+    "title": "Custom Headers",
+    "add": "Add Header",
+    "name": "Header Name",
+    "value": "Header Value",
+    "empty": "No custom headers configured"
+  },
   "firstRunNotice": {
     "title": "Welcome to CC Switch",
     "bodyDefault": "CC Switch lets you switch between multiple Claude Code / Codex / Gemini CLI providers with a single click. If you already had these tools configured, CC Switch has saved your existing setup as a provider named “default” so none of your previous configuration is lost.",

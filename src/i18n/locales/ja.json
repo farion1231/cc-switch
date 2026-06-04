@@ -42,6 +42,13 @@
     "enabled": "有効",
     "notSet": "未設定"
   },
+  "customHeaders": {
+    "title": "カスタムヘッダー",
+    "add": "追加",
+    "name": "ヘッダー名",
+    "value": "ヘッダー値",
+    "empty": "カスタムヘッダーが設定されていません"
+  },
   "firstRunNotice": {
     "title": "CC Switch へようこそ",
     "bodyDefault": "CC Switch は Claude Code / Codex / Gemini CLI の複数プロバイダーをワンクリックで切り替えられるツールです。すでにこれらのツールを設定済みの場合、CC Switch は現在の設定を「default」という名前のプロバイダーとして自動的に保存するので、既存の設定が失われることはありません。",
