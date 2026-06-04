@@ -77,11 +77,9 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
     }
 
     // 打开 opencode 的 SQLite 数据库（只读）
-    let opencode_conn = rusqlite::Connection::open_with_flags(
-        &db_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .map_err(|e| AppError::Database(format!("无法打开 opencode.db: {e}")))?;
+    let opencode_conn =
+        rusqlite::Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e| AppError::Database(format!("无法打开 opencode.db: {e}")))?;
 
     let mut result = SessionSyncResult {
         imported: 0,
@@ -150,7 +148,9 @@ fn query_sessions(conn: &rusqlite::Connection) -> Result<Vec<(String, i64)>, App
         .map_err(|e| AppError::Database(format!("准备会话查询失败: {e}")))?;
 
     let rows = stmt
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
         .map_err(|e| AppError::Database(format!("查询会话失败: {e}")))?;
 
     let mut sessions = Vec::new();
@@ -208,14 +208,8 @@ fn query_assistant_messages(
 fn parse_message_data(value: &serde_json::Value) -> Option<OpenCodeMessageData> {
     let tokens = value.get("tokens")?;
 
-    let input_tokens = tokens
-        .get("input")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32;
-    let output_tokens = tokens
-        .get("output")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32;
+    let input_tokens = tokens.get("input").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let output_tokens = tokens.get("output").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     let reasoning_tokens = tokens
         .get("reasoning")
         .and_then(|v| v.as_u64())
