@@ -1910,6 +1910,9 @@ mod tests {
         assert!(description.contains("*** Update File: path/to/file.txt"));
         assert!(description.contains("*** Delete File: path/to/old.txt"));
         assert!(description.contains("*** Move to: new/path.txt"));
+        assert!(description.contains("Original tool definition:"));
+        assert!(description.contains("\"format\":"));
+        assert!(description.contains("\"syntax\":\"lark\""));
         assert!(input_description.contains("*** Begin Patch"));
         assert!(input_description.contains("Markdown code fences"));
     }
@@ -1942,8 +1945,10 @@ mod tests {
 
         assert!(description.contains(r#"{"input":"<raw JavaScript source>"}"#));
         assert!(description.contains("const result = await tools.exec_command"));
-        assert!(description.contains("Original Codex tool description:"));
-        assert!(description.contains("Accepts raw JavaScript source text"));
+        assert!(description.contains("Original tool definition:"));
+        assert!(description
+            .contains("\"description\":\"Accepts raw JavaScript source text, not JSON.\""));
+        assert!(description.contains("\"syntax\":\"lark\""));
         assert!(input_description.contains("Raw JavaScript source"));
         assert!(input_description.contains("// @exec"));
     }
@@ -2069,6 +2074,35 @@ mod tests {
             messages[1]["content"],
             "Success. Updated the following files:\nA hello.txt\n"
         );
+    }
+
+    #[test]
+    fn responses_request_to_chat_preserves_custom_tool_metadata_in_description() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "custom",
+                "name": "freeform",
+                "description": "Accepts a raw payload.",
+                "format": {
+                    "type": "grammar",
+                    "syntax": "lark",
+                    "definition": "start: payload"
+                }
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let description = result["tools"][0]["function"]["description"]
+            .as_str()
+            .unwrap();
+
+        assert!(description.contains(r#"{"input":"<raw tool input>"}"#));
+        assert!(description.contains("Original tool definition:"));
+        assert!(!description.contains("Original Codex tool definition"));
+        assert!(description.contains("\"type\":\"custom\""));
+        assert!(description.contains("\"format\":"));
+        assert!(description.contains("\"syntax\":\"lark\""));
     }
 
     #[test]

@@ -9,6 +9,7 @@ const APPLY_PATCH_TOOL_NAME: &str = "apply_patch";
 const EXEC_TOOL_NAME: &str = "exec";
 const APPLY_PATCH_BEGIN_MARKER: &str = "*** Begin Patch";
 const APPLY_PATCH_END_MARKER: &str = "*** End Patch";
+const CUSTOM_TOOL_PRESERVED_METADATA_HEADING: &str = "Original tool definition:";
 
 const CUSTOM_CHAT_DESCRIPTION: &str = r#"Codex custom/freeform tool adapted for Chat Completions.
 
@@ -98,11 +99,12 @@ impl CustomToolInputKind {
     }
 
     fn chat_description(self, tool: &Value) -> String {
-        match self {
+        let bridge_description = match self {
             Self::ApplyPatch => APPLY_PATCH_CHAT_DESCRIPTION.to_string(),
-            Self::Exec => with_original_tool_description(EXEC_CHAT_DESCRIPTION, tool),
-            Self::Generic => with_original_tool_description(CUSTOM_CHAT_DESCRIPTION, tool),
-        }
+            Self::Exec => EXEC_CHAT_DESCRIPTION.to_string(),
+            Self::Generic => CUSTOM_CHAT_DESCRIPTION.to_string(),
+        };
+        with_original_tool_definition(&bridge_description, tool)
     }
 
     fn input_description(self) -> &'static str {
@@ -258,8 +260,7 @@ fn apply_patch_candidate_from_command_array(value: &Value) -> Option<String> {
         .iter()
         .skip(1)
         .filter_map(Value::as_str)
-        .find(|text| text.contains(APPLY_PATCH_BEGIN_MARKER))
-        .map(ToString::to_string)
+        .find_map(extract_apply_patch_body)
 }
 
 fn normalize_apply_patch_input(input: &str) -> String {
@@ -290,11 +291,28 @@ fn normalize_generic_input(input: &str) -> String {
 }
 
 fn extract_apply_patch_body(input: &str) -> Option<String> {
-    let begin = input.find(APPLY_PATCH_BEGIN_MARKER)?;
-    let after_begin = &input[begin..];
-    let end_relative = after_begin.find(APPLY_PATCH_END_MARKER)?;
-    let end = begin + end_relative + APPLY_PATCH_END_MARKER.len();
-    Some(input[begin..end].to_string())
+    let mut lines = input.lines();
+    let mut patch_lines = Vec::new();
+
+    for line in lines.by_ref() {
+        if line == APPLY_PATCH_BEGIN_MARKER {
+            patch_lines.push(line);
+            break;
+        }
+    }
+
+    if patch_lines.is_empty() {
+        return None;
+    }
+
+    for line in lines {
+        patch_lines.push(line);
+        if line == APPLY_PATCH_END_MARKER {
+            return Some(patch_lines.join("\n"));
+        }
+    }
+
+    None
 }
 
 fn strip_markdown_fence(input: &str) -> Option<&str> {
@@ -305,17 +323,11 @@ fn strip_markdown_fence(input: &str) -> Option<&str> {
     body.strip_suffix("```").map(str::trim_end)
 }
 
-fn with_original_tool_description(prefix: &str, tool: &Value) -> String {
-    let Some(description) = tool
-        .get("description")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return prefix.to_string();
-    };
-
-    format!("{prefix}\n\nOriginal Codex tool description:\n{description}")
+fn with_original_tool_definition(prefix: &str, tool: &Value) -> String {
+    format!(
+        "{prefix}\n\n{CUSTOM_TOOL_PRESERVED_METADATA_HEADING}\n```json\n{}\n```",
+        canonical_json_string(tool)
+    )
 }
 
 #[cfg(test)]
@@ -375,12 +387,33 @@ mod tests {
     }
 
     #[test]
-    fn custom_tool_chat_description_preserves_original_description() {
-        let description =
-            custom_tool_chat_description("exec", &json!({"description": "Original exec details."}));
+    fn apply_patch_input_keeps_literal_end_marker_content_lines() {
+        let input = custom_tool_input_from_chat_arguments(
+            "apply_patch",
+            r#"{"input":"prose\n*** Begin Patch\n*** Add File: doc.md\n+*** End Patch\n*** End Patch\nextra"}"#,
+        );
+
+        assert_eq!(
+            input,
+            "*** Begin Patch\n*** Add File: doc.md\n+*** End Patch\n*** End Patch"
+        );
+    }
+
+    #[test]
+    fn custom_tool_chat_description_preserves_original_definition() {
+        let description = custom_tool_chat_description(
+            "exec",
+            &json!({
+                "type": "custom",
+                "name": "exec",
+                "description": "Original exec details.",
+                "format": {"type": "grammar", "syntax": "lark"}
+            }),
+        );
 
         assert!(description.contains(r#"{"input":"<raw JavaScript source>"}"#));
-        assert!(description.contains("Original Codex tool description:"));
-        assert!(description.contains("Original exec details."));
+        assert!(description.contains("Original tool definition:"));
+        assert!(description.contains(r#""description":"Original exec details.""#));
+        assert!(description.contains(r#""syntax":"lark""#));
     }
 }
