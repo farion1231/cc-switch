@@ -301,6 +301,7 @@ pub struct AppSettings {
     /// - Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_terminal: Option<String>,
+
 }
 
 fn default_show_in_tray() -> bool {
@@ -760,6 +761,8 @@ pub fn get_preferred_terminal() -> Option<String> {
         .preferred_terminal
         .clone()
 }
+
+
 
 // ===== WebDAV 同步设置管理函数 =====
 

@@ -350,6 +350,8 @@ export interface Settings {
   // Windows: "cmd" | "powershell" | "wt"
   // Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
   preferredTerminal?: string;
+  // 附加 CLI 启动参数（比如 --dangerously-skip-permissions）
+  customCliArgs?: string;
 }
 
 export interface SessionMeta {
