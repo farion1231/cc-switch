@@ -3,6 +3,7 @@ import type { AppId } from "@/lib/api";
 import type { ProviderPreset } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
 import type { ProviderMeta, EndpointCandidate } from "@/types";
+import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 
 type PresetEntry = {
   id: string;
@@ -128,10 +129,9 @@ export function useSpeedTestEndpoints({
         }
       | undefined;
     const configStr = initialCodexConfig?.config ?? "";
-    // 从 TOML 中提取 base_url
-    const match = /base_url\s*=\s*["']([^"']+)["']/i.exec(configStr);
-    if (match?.[1]) {
-      add(match[1]);
+    const extractedBaseUrl = extractCodexBaseUrl(configStr);
+    if (extractedBaseUrl) {
+      add(extractedBaseUrl);
     }
 
     // 3. 预设中的 endpointCandidates
@@ -141,11 +141,9 @@ export function useSpeedTestEndpoints({
         const preset = entry.preset as CodexProviderPreset;
         // 添加预设自己的 baseUrl
         const presetConfig = preset.config || "";
-        const presetMatch = /base_url\s*=\s*["']([^"']+)["']/i.exec(
-          presetConfig,
-        );
-        if (presetMatch?.[1]) {
-          add(presetMatch[1]);
+        const presetBaseUrl = extractCodexBaseUrl(presetConfig);
+        if (presetBaseUrl) {
+          add(presetBaseUrl);
         }
         // 添加预设的候选端点
         if (preset.endpointCandidates) {

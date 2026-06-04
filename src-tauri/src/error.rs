@@ -44,6 +44,8 @@ pub enum AppError {
     McpValidation(String),
     #[error("{0}")]
     Message(String),
+    #[error("HTTP {status}: {body}")]
+    HttpStatus { status: u16, body: String },
     #[error("{zh} ({en})")]
     Localized {
         key: &'static str,

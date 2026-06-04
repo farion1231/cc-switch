@@ -15,20 +15,25 @@ export const settingsSchema = z.object({
   skipClaudeOnboarding: z.boolean().optional(),
   launchOnStartup: z.boolean().optional(),
   enableLocalProxy: z.boolean().optional(),
-  language: z.enum(["en", "zh", "ja"]).optional(),
+  preserveCodexOfficialAuthOnSwitch: z.boolean().optional(),
+  language: z.enum(["en", "zh", "zh-TW", "ja"]).optional(),
 
   // 设备级目录覆盖
   claudeConfigDir: directorySchema.nullable().optional(),
   codexConfigDir: directorySchema.nullable().optional(),
   geminiConfigDir: directorySchema.nullable().optional(),
+  opencodeConfigDir: directorySchema.nullable().optional(),
+  openclawConfigDir: directorySchema.nullable().optional(),
 
   // 当前供应商 ID（设备级）
   currentProviderClaude: z.string().optional(),
+  currentProviderClaudeDesktop: z.string().optional(),
   currentProviderCodex: z.string().optional(),
   currentProviderGemini: z.string().optional(),
 
   // Skill 同步设置
   skillSyncMethod: z.enum(["auto", "symlink", "copy"]).optional(),
+  skillStorageLocation: z.enum(["cc_switch", "unified"]).optional(),
 
   // WebDAV v2 同步设置（通过专用命令保存，schema 仅用于读取）
   webdavSync: z
@@ -48,6 +53,21 @@ export const settingsSchema = z.object({
           lastRemoteEtag: z.string().nullable().optional(),
           lastLocalManifestHash: z.string().nullable().optional(),
           lastRemoteManifestHash: z.string().nullable().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+
+  // 本机自动迁移状态（后端维护，前端保存设置时应透传）
+  localMigrations: z
+    .object({
+      codexThirdPartyHistoryProviderBucketV1: z
+        .object({
+          completedAt: z.string(),
+          targetProviderId: z.string(),
+          sourceProviderIds: z.array(z.string()).optional(),
+          migratedJsonlFiles: z.number().optional(),
+          migratedStateRows: z.number().optional(),
         })
         .optional(),
     })

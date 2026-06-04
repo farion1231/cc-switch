@@ -56,6 +56,8 @@ If you prefer minimal permissions (e.g., for Flathub submission or security conc
   - --filesystem=~/.claude.json
   - --filesystem=~/.codex:create
   - --filesystem=~/.gemini:create
+  - --filesystem=~/.config/opencode:create
+  - --filesystem=~/.openclaw:create
 ```
 
 Note: Flatpak's `:create` modifier only works with directories, not files. Therefore, `~/.claude.json` cannot use `:create`. If this file doesn't exist on the user's machine, the app may not be able to create it with restricted permissions. Users should either run Claude Code once to generate it, or manually create an empty JSON file (content: `{}`).

@@ -9,6 +9,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Session 日志 request_id 前缀，与 `session_usage.rs` 中的格式保持一致
+pub const SESSION_REQUEST_ID_PREFIX: &str = "session:";
+
 /// Token 使用量统计
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TokenUsage {
@@ -18,6 +21,22 @@ pub struct TokenUsage {
     pub cache_creation_tokens: u32,
     /// 从响应中提取的实际模型名称（如果可用）
     pub model: Option<String>,
+    /// 从响应中提取的消息 ID（用于跨源去重）
+    ///
+    /// Claude API: `msg_xxx`，与 session JSONL 中的 `message.id` 一致
+    #[serde(skip)]
+    pub message_id: Option<String>,
+}
+
+impl TokenUsage {
+    /// 生成与 session 日志共享的 request_id，用于跨源去重。
+    /// 有 message_id 时返回 `session:{id}`，否则回退到随机 UUID。
+    pub fn dedup_request_id(&self) -> String {
+        self.message_id
+            .as_ref()
+            .map(|mid| format!("{SESSION_REQUEST_ID_PREFIX}{mid}"))
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+    }
 }
 
 /// API 类型
@@ -39,6 +58,10 @@ impl TokenUsage {
             .get("model")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        let message_id = body
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
 
         Some(Self {
             input_tokens: usage.get("input_tokens")?.as_u64()? as u32,
@@ -52,6 +75,7 @@ impl TokenUsage {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
             model,
+            message_id,
         })
     }
 
@@ -60,16 +84,21 @@ impl TokenUsage {
     pub fn from_claude_stream_events(events: &[Value]) -> Option<Self> {
         let mut usage = Self::default();
         let mut model: Option<String> = None;
+        let mut message_id: Option<String> = None;
 
         for event in events {
             if let Some(event_type) = event.get("type").and_then(|v| v.as_str()) {
                 match event_type {
                     "message_start" => {
-                        // 从 message_start 提取模型名称
-                        if model.is_none() {
-                            if let Some(message) = event.get("message") {
+                        if let Some(message) = event.get("message") {
+                            if model.is_none() {
                                 if let Some(m) = message.get("model").and_then(|v| v.as_str()) {
                                     model = Some(m.to_string());
+                                }
+                            }
+                            if message_id.is_none() {
+                                if let Some(id) = message.get("id").and_then(|v| v.as_str()) {
+                                    message_id = Some(id.to_string());
                                 }
                             }
                         }
@@ -109,6 +138,25 @@ impl TokenUsage {
                                     usage.input_tokens = input as u32;
                                 }
                             }
+                            // 从 message_delta 中处理缓存命中(cache_read_input_tokens)
+                            if usage.cache_read_tokens == 0 {
+                                if let Some(cache_read) = delta_usage
+                                    .get("cache_read_input_tokens")
+                                    .and_then(|v| v.as_u64())
+                                {
+                                    usage.cache_read_tokens = cache_read as u32;
+                                }
+                            }
+                            // 从 message_delta 中处理缓存创建(cache_creation_input_tokens)
+                            // 注: 现在 zhipu 没有返回 cache_creation_input_tokens 字段
+                            if usage.cache_creation_tokens == 0 {
+                                if let Some(cache_creation) = delta_usage
+                                    .get("cache_creation_input_tokens")
+                                    .and_then(|v| v.as_u64())
+                                {
+                                    usage.cache_creation_tokens = cache_creation as u32;
+                                }
+                            }
                         }
                     }
                     _ => {}
@@ -118,6 +166,7 @@ impl TokenUsage {
 
         if usage.input_tokens > 0 || usage.output_tokens > 0 {
             usage.model = model;
+            usage.message_id = message_id;
             Some(usage)
         } else {
             None
@@ -134,6 +183,7 @@ impl TokenUsage {
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
             model: None,
+            message_id: None,
         })
     }
 
@@ -183,6 +233,7 @@ impl TokenUsage {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
             model,
+            message_id: None,
         })
     }
 
@@ -226,6 +277,7 @@ impl TokenUsage {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
             model,
+            message_id: None,
         })
     }
 
@@ -320,6 +372,7 @@ impl TokenUsage {
             cache_read_tokens: cached_tokens,
             cache_creation_tokens: 0,
             model,
+            message_id: None,
         })
     }
 
@@ -364,6 +417,7 @@ impl TokenUsage {
                 .unwrap_or(0) as u32,
             cache_creation_tokens: 0,
             model,
+            message_id: None,
         })
     }
 
@@ -414,6 +468,7 @@ impl TokenUsage {
                 cache_read_tokens: total_cache_read,
                 cache_creation_tokens: 0,
                 model,
+                message_id: None,
             })
         } else {
             None

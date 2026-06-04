@@ -1,0 +1,97 @@
+name: "🐛 Bug Report / Bug 报告"
+description: |
+  Report errors or unexpected behavior.
+  报告错误或异常行为。
+labels:
+  - bug
+body:
+  - type: checkboxes
+    attributes:
+      label: Self Checks / 自检
+      options:
+        - label: |
+            I have read the [FAQ](https://github.com/farion1231/cc-switch#faq) section in README.
+            我已阅读 README 中的[常见问题](https://github.com/farion1231/cc-switch#常见问题)。
+          required: true
+        - label: |
+            I have searched for [existing issues](https://github.com/farion1231/cc-switch/issues), including closed ones.
+            我已搜索过[已有的 Issue](https://github.com/farion1231/cc-switch/issues)，包括已关闭的。
+          required: true
+
+  - type: input
+    attributes:
+      label: CC Switch Version / 版本号
+      description: |
+        See the Settings page in the app.
+        查看应用设置页面中的版本号。
+      placeholder: "e.g. 3.11.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: Operating System / 操作系统
+      multiple: false
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: Related App / 涉及应用
+      description: |
+        Which app is affected?
+        涉及哪个应用？
+      multiple: true
+      options:
+        - Claude Code
+        - Codex
+        - Gemini CLI
+        - OpenCode
+        - OpenClaw
+        - Other / 其他
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Steps to Reproduce / 重现步骤
+      description: |
+        Please describe the steps to reproduce the bug. Screenshots and logs are helpful.
+        请描述重现步骤。截图和日志会很有帮助。
+      placeholder: |
+        1. Go to ...
+        2. Click on ...
+        3. See error ...
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Expected Behavior / 期望行为
+      description: |
+        What did you expect to happen?
+        你期望发生什么？
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Actual Behavior / 实际行为
+      description: |
+        What actually happened?
+        实际发生了什么？
+    validations:
+      required: false
+
+  - type: textarea
+    attributes:
+      label: Additional Context / 补充信息
+      description: |
+        Any other information, screenshots, or logs.
+        其他信息、截图或日志。
+    validations:
+      required: false

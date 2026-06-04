@@ -27,12 +27,7 @@ fn s3_not_configured_error() -> String {
 }
 
 fn s3_sync_disabled_error() -> String {
-    AppError::localized(
-        "s3.sync.disabled",
-        "S3 同步未启用",
-        "S3 sync is disabled.",
-    )
-    .to_string()
+    AppError::localized("s3.sync.disabled", "S3 同步未启用", "S3 sync is disabled.").to_string()
 }
 
 fn require_enabled_s3_settings() -> Result<S3SyncSettings, String> {
@@ -87,11 +82,8 @@ pub async fn s3_test_connection(
     #[allow(non_snake_case)] preserveEmptyPassword: Option<bool>,
 ) -> Result<Value, String> {
     let preserve_empty = preserveEmptyPassword.unwrap_or(true);
-    let resolved = resolve_secret_for_request(
-        settings,
-        settings::get_s3_sync_settings(),
-        preserve_empty,
-    );
+    let resolved =
+        resolve_secret_for_request(settings, settings::get_s3_sync_settings(), preserve_empty);
     s3_sync_service::check_connection(&resolved)
         .await
         .map_err(|e| e.to_string())?;
@@ -215,10 +207,9 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn map_sync_result_runs_error_handler_after_lock_release() {
-        let result = run_with_s3_lock(async {
-            Err::<(), AppError>(AppError::Config("boom".to_string()))
-        })
-        .await;
+        let result =
+            run_with_s3_lock(async { Err::<(), AppError>(AppError::Config("boom".to_string())) })
+                .await;
 
         let mut lock_released = false;
         let mapped = map_sync_result(result, |_| {
@@ -282,8 +273,7 @@ mod tests {
             profile: "default".to_string(),
             ..S3SyncSettings::default()
         };
-        crate::settings::set_s3_sync_settings(Some(current.clone()))
-            .expect("seed s3 settings");
+        crate::settings::set_s3_sync_settings(Some(current.clone())).expect("seed s3 settings");
 
         persist_sync_error(
             &mut current,
@@ -355,8 +345,7 @@ mod tests {
         }))
         .expect("seed enabled s3 settings");
 
-        let settings =
-            require_enabled_s3_settings().expect("enabled settings should be accepted");
+        let settings = require_enabled_s3_settings().expect("enabled settings should be accepted");
         assert!(settings.enabled);
         assert_eq!(settings.region, "us-east-1");
     }

@@ -29,6 +29,7 @@ import {
 import type { ProxyStatus } from "@/types/proxy";
 import { useTranslation } from "react-i18next";
 import { AnimatePresence, motion } from "framer-motion";
+import { extractErrorMessage } from "@/utils/errorUtils";
 
 interface ProxyPanelProps {
   enableLocalProxy: boolean;
@@ -88,8 +89,12 @@ export function ProxyPanel({
         { closeButton: true },
       );
     } catch (error) {
+      const detail =
+        extractErrorMessage(error) ||
+        t("common.unknown", { defaultValue: "未知错误" });
       toast.error(
         t("proxy.takeover.failed", {
+          detail,
           defaultValue: "切换接管状态失败",
         }),
       );
@@ -119,22 +124,36 @@ export function ProxyPanel({
   const handleSaveBasicConfig = async () => {
     if (!globalConfig) return;
 
-    // 校验地址格式（简单的 IP 地址或 localhost 校验）
+    // 校验地址格式（IPv4 / IPv6 字面量 / localhost）
     const addressTrimmed = listenAddress.trim();
     const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+    const isValidIpv4 = (addr: string): boolean =>
+      ipv4Regex.test(addr) &&
+      addr.split(".").every((n) => {
+        const num = parseInt(n, 10);
+        return num >= 0 && num <= 255;
+      });
+    // IPv6 字面量校验：必须含 `:` 且能在 [..] 包装后被 URL 解析器接受。
+    // 后端 (services/proxy.rs) 会把 `::` 改写成 `::1`，所以这里也接受 `::`。
+    const isValidIpv6 = (addr: string): boolean => {
+      if (!addr.includes(":")) return false;
+      try {
+        new URL(`http://[${addr}]/`);
+        return true;
+      } catch {
+        return false;
+      }
+    };
     const isValidAddress =
       addressTrimmed === "localhost" ||
       addressTrimmed === "0.0.0.0" ||
-      (ipv4Regex.test(addressTrimmed) &&
-        addressTrimmed.split(".").every((n) => {
-          const num = parseInt(n);
-          return num >= 0 && num <= 255;
-        }));
+      isValidIpv4(addressTrimmed) ||
+      isValidIpv6(addressTrimmed);
     if (!isValidAddress) {
       toast.error(
         t("proxy.settings.invalidAddress", {
           defaultValue:
-            "地址无效，请输入有效的 IP 地址（如 127.0.0.1）或 localhost",
+            "地址无效，请输入 IPv4（如 127.0.0.1）、IPv6（如 ::1）或 localhost",
         }),
       );
       return;
@@ -711,6 +730,7 @@ function ProviderQueueItem({
       {/* 健康徽章 */}
       <ProviderHealthBadge
         consecutiveFailures={health?.consecutive_failures ?? 0}
+        isHealthy={health?.is_healthy}
       />
     </div>
   );

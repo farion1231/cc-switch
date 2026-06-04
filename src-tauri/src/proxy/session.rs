@@ -6,7 +6,7 @@
 //!
 //! 支持从客户端请求中提取 Session ID，用于关联同一对话的多个请求：
 //! - Claude: 从 `metadata.user_id` (格式: `user_xxx_session_yyy`) 或 `metadata.session_id` 提取
-//! - Codex: 从 `previous_response_id` 或 headers 中的 `session_id` 提取
+//! - Codex: 从 headers 中的 `session_id` / `x-session-id` 或 `metadata.session_id` 提取
 //! - 其他: 生成新的 UUID
 
 use axum::http::HeaderMap;
@@ -197,8 +197,6 @@ pub enum SessionIdSource {
     MetadataSessionId,
     /// 从 headers 提取 (Codex)
     Header,
-    /// 从 previous_response_id 提取 (Codex)
-    PreviousResponseId,
     /// 新生成
     Generated,
 }
@@ -228,8 +226,7 @@ pub struct SessionIdResult {
 /// ### Codex 请求
 /// 1. Headers: `session_id` 或 `x-session-id`
 /// 2. `metadata.session_id`
-/// 3. `previous_response_id` (对话延续)
-/// 4. 生成新 UUID
+/// 3. 生成新 UUID
 ///
 /// ## 示例
 ///
@@ -242,6 +239,12 @@ pub fn extract_session_id(
     body: &serde_json::Value,
     client_format: &str,
 ) -> SessionIdResult {
+    if client_format == "claude" {
+        if let Some(result) = extract_claude_session(headers, body) {
+            return result;
+        }
+    }
+
     // Codex 请求特殊处理
     if client_format == "codex" || client_format == "openai" {
         if let Some(result) = extract_codex_session(headers, body) {
@@ -256,6 +259,28 @@ pub fn extract_session_id(
 
     // 兜底：生成新 Session ID
     generate_new_session_id()
+}
+
+/// 提取 Claude Session ID
+fn extract_claude_session(
+    headers: &HeaderMap,
+    body: &serde_json::Value,
+) -> Option<SessionIdResult> {
+    for header_name in &["x-claude-code-session-id", "claude-code-session-id"] {
+        if let Some(value) = headers.get(*header_name) {
+            if let Ok(session_id) = value.to_str() {
+                if !session_id.is_empty() {
+                    return Some(SessionIdResult {
+                        session_id: session_id.to_string(),
+                        source: SessionIdSource::Header,
+                        client_provided: true,
+                    });
+                }
+            }
+        }
+    }
+
+    extract_from_metadata(body)
 }
 
 /// 提取 Codex Session ID
@@ -291,16 +316,9 @@ fn extract_codex_session(headers: &HeaderMap, body: &serde_json::Value) -> Optio
         }
     }
 
-    // 3. 从 previous_response_id 提取（对话延续）
-    if let Some(prev_id) = body.get("previous_response_id").and_then(|v| v.as_str()) {
-        if prev_id.len() > 10 {
-            return Some(SessionIdResult {
-                session_id: format!("codex_{prev_id}"),
-                source: SessionIdSource::PreviousResponseId,
-                client_provided: true,
-            });
-        }
-    }
+    // previous_response_id 是 Responses 协议里的响应游标，不是稳定会话身份。
+    // Chat/Responses 桥接时该值通常来自上游每轮返回的随机 response id；
+    // 若把它当 prompt_cache_key 或 Codex session header，会导致每轮请求换缓存 key。
 
     None
 }
@@ -337,7 +355,7 @@ fn extract_from_metadata(body: &serde_json::Value) -> Option<SessionIdResult> {
 /// 从 user_id 解析 session_id
 ///
 /// 格式: `user_identifier_session_actual_session_id`
-fn parse_session_from_user_id(user_id: &str) -> Option<String> {
+pub(super) fn parse_session_from_user_id(user_id: &str) -> Option<String> {
     // 查找 "_session_" 分隔符
     if let Some(pos) = user_id.find("_session_") {
         let session_id = &user_id[pos + 9..]; // "_session_" 长度为 9
@@ -516,7 +534,48 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_session_from_codex_previous_response_id() {
+    fn test_extract_session_from_claude_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-claude-code-session-id",
+            "d937243f-2702-4f20-97b6-c9682235ab81".parse().unwrap(),
+        );
+        let body = json!({
+            "model": "claude-3-5-sonnet",
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = extract_session_id(&headers, &body, "claude");
+
+        assert_eq!(result.session_id, "d937243f-2702-4f20-97b6-c9682235ab81");
+        assert_eq!(result.source, SessionIdSource::Header);
+        assert!(result.client_provided);
+    }
+
+    #[test]
+    fn test_extract_session_from_claude_header_precedes_metadata() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-claude-code-session-id",
+            "header-session-123".parse().unwrap(),
+        );
+        let body = json!({
+            "model": "claude-3-5-sonnet",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "metadata": {
+                "session_id": "my-session-123"
+            }
+        });
+
+        let result = extract_session_id(&headers, &body, "claude");
+
+        assert_eq!(result.session_id, "header-session-123");
+        assert_eq!(result.source, SessionIdSource::Header);
+        assert!(result.client_provided);
+    }
+
+    #[test]
+    fn test_codex_previous_response_id_is_not_stable_session_identity() {
         let headers = HeaderMap::new();
         let body = json!({
             "input": "Write a function",
@@ -525,9 +584,9 @@ mod tests {
 
         let result = extract_session_id(&headers, &body, "codex");
 
-        assert_eq!(result.session_id, "codex_resp_abc123def456789");
-        assert_eq!(result.source, SessionIdSource::PreviousResponseId);
-        assert!(result.client_provided);
+        assert!(!result.session_id.is_empty());
+        assert_eq!(result.source, SessionIdSource::Generated);
+        assert!(!result.client_provided);
     }
 
     #[test]

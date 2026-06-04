@@ -17,8 +17,8 @@ use crate::settings::{update_s3_sync_status, S3SyncSettings, WebDavSyncStatus};
 use super::sync_protocol::{
     apply_snapshot, build_local_snapshot, localized, persist_sync_success_best_effort, sha256_hex,
     validate_artifact_size_limit, validate_manifest_compat, verify_artifact, ArtifactMeta,
-    SyncManifest, MAX_MANIFEST_BYTES, MAX_SYNC_ARTIFACT_BYTES, PROTOCOL_VERSION, REMOTE_DB_SQL,
-    REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
+    RemoteLayout, SyncManifest, DB_COMPAT_VERSION, MAX_MANIFEST_BYTES, MAX_SYNC_ARTIFACT_BYTES,
+    PROTOCOL_VERSION, REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
 };
 
 // ─── Sync lock ───────────────────────────────────────────────
@@ -114,7 +114,7 @@ pub async fn download(
             source: e,
         })?;
 
-    validate_manifest_compat(&manifest)?;
+    validate_manifest_compat(&manifest, RemoteLayout::Current)?;
 
     // Download and verify artifacts
     let db_sql = download_and_verify(settings, &creds, REMOTE_DB_SQL, &manifest.artifacts).await?;
@@ -136,8 +136,7 @@ pub async fn fetch_remote_info(settings: &S3SyncSettings) -> Result<Option<Value
     let creds = creds_for(settings);
     let manifest_key = s3_key(settings, REMOTE_MANIFEST);
 
-    let Some((bytes, _)) = s3::get_object(&creds, &manifest_key, MAX_MANIFEST_BYTES).await?
-    else {
+    let Some((bytes, _)) = s3::get_object(&creds, &manifest_key, MAX_MANIFEST_BYTES).await? else {
         return Ok(None);
     };
 
@@ -146,15 +145,19 @@ pub async fn fetch_remote_info(settings: &S3SyncSettings) -> Result<Option<Value
         source: e,
     })?;
 
-    let compatible = validate_manifest_compat(&manifest).is_ok();
+    let compatible = validate_manifest_compat(&manifest, RemoteLayout::Current).is_ok();
 
     let payload = serde_json::json!({
         "deviceName": manifest.device_name,
         "createdAt": manifest.created_at,
         "snapshotId": manifest.snapshot_id,
         "version": manifest.version,
+        "protocolVersion": manifest.version,
+        "dbCompatVersion": manifest.db_compat_version,
         "compatible": compatible,
         "artifacts": manifest.artifacts.keys().collect::<Vec<_>>(),
+        "layout": RemoteLayout::Current.as_str(),
+        "remotePath": s3_dir_display(settings),
     });
 
     Ok(Some(payload))
@@ -215,12 +218,19 @@ async fn download_and_verify(
 
 /// Build the S3 object key for a given artifact.
 ///
-/// Format: `{remote_root}/v{PROTOCOL_VERSION}/{profile}/{artifact}`
-/// Example: `cc-switch-sync/v2/default/manifest.json`
+/// Format: `{remote_root}/v{PROTOCOL_VERSION}/db-v{DB_COMPAT_VERSION}/{profile}/{artifact}`
+/// Example: `cc-switch-sync/v2/db-v6/default/manifest.json`
 fn s3_key(settings: &S3SyncSettings, artifact: &str) -> String {
     format!(
-        "{}/v{}/{}/{}",
-        settings.remote_root, PROTOCOL_VERSION, settings.profile, artifact
+        "{}/v{}/db-v{}/{}/{}",
+        settings.remote_root, PROTOCOL_VERSION, DB_COMPAT_VERSION, settings.profile, artifact
+    )
+}
+
+fn s3_dir_display(settings: &S3SyncSettings) -> String {
+    format!(
+        "{}/v{}/db-v{}/{}",
+        settings.remote_root, PROTOCOL_VERSION, DB_COMPAT_VERSION, settings.profile
     )
 }
 
@@ -252,7 +262,7 @@ mod tests {
     fn s3_key_uses_v2_and_correct_format() {
         let settings = test_settings();
         let key = s3_key(&settings, "manifest.json");
-        assert_eq!(key, "cc-switch-sync/v2/default/manifest.json");
+        assert_eq!(key, "cc-switch-sync/v2/db-v6/default/manifest.json");
     }
 
     #[test]
@@ -262,27 +272,31 @@ mod tests {
             profile: "work".to_string(),
             ..S3SyncSettings::default()
         };
-        assert_eq!(s3_key(&settings, "db.sql"), "my-root/v2/work/db.sql");
+        assert_eq!(s3_key(&settings, "db.sql"), "my-root/v2/db-v6/work/db.sql");
     }
 
     #[test]
     fn s3_key_matches_expected_pattern() {
         let settings = test_settings();
         let key = s3_key(&settings, "skills.zip");
-        // Should follow {remote_root}/v{version}/{profile}/{artifact}
-        let parts: Vec<&str> = key.splitn(4, '/').collect();
-        assert_eq!(parts.len(), 4);
+        // Should follow {remote_root}/v{version}/db-v{db}/{profile}/{artifact}
+        let parts: Vec<&str> = key.splitn(5, '/').collect();
+        assert_eq!(parts.len(), 5);
         assert_eq!(parts[0], "cc-switch-sync");
         assert_eq!(parts[1], "v2");
-        assert_eq!(parts[2], "default");
-        assert_eq!(parts[3], "skills.zip");
+        assert_eq!(parts[2], "db-v6");
+        assert_eq!(parts[3], "default");
+        assert_eq!(parts[4], "skills.zip");
     }
 
     #[test]
     fn sync_mutex_is_singleton() {
         let m1 = sync_mutex();
         let m2 = sync_mutex();
-        assert!(std::ptr::eq(m1, m2), "sync_mutex must return the same instance");
+        assert!(
+            std::ptr::eq(m1, m2),
+            "sync_mutex must return the same instance"
+        );
     }
 
     #[test]

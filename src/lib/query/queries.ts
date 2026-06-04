@@ -17,6 +17,7 @@ import type {
   SessionMeta,
   SessionMessage,
 } from "@/types";
+import { usageKeys } from "@/lib/query/usage";
 
 const sortProviders = (
   providers: Record<string, Provider>,
@@ -113,7 +114,7 @@ export const useUsageQuery = (
       : 5 * 60 * 1000; // 默认 5 分钟
 
   const query = useQuery<UsageResult>({
-    queryKey: ["usage", providerId, appId],
+    queryKey: usageKeys.script(providerId, appId),
     queryFn: async () => usageApi.query(providerId, appId),
     enabled: enabled && !!providerId,
     refetchInterval:

@@ -12,6 +12,7 @@ interface UseApiKeyStateProps {
   selectedPresetId: string | null;
   category?: ProviderCategory;
   appType?: string;
+  apiKeyField?: string;
 }
 
 /**
@@ -24,6 +25,7 @@ export function useApiKeyState({
   selectedPresetId,
   category,
   appType,
+  apiKeyField,
 }: UseApiKeyStateProps) {
   const [apiKey, setApiKey] = useState(() => {
     if (initialConfig) {
@@ -58,7 +60,7 @@ export function useApiKeyState({
         initialConfig || "{}",
         key.trim(),
         {
-          // 最佳实践：仅在“新增模式”且“非官方类别”时补齐缺失字段
+          // 最佳实践：仅在"新增模式"且"非官方类别"时补齐缺失字段
           // - 新增模式：selectedPresetId !== null
           // - 非官方类别：category !== undefined && category !== "official"
           // - 官方类别：不创建字段（UI 也会禁用输入框）
@@ -68,12 +70,20 @@ export function useApiKeyState({
             category !== undefined &&
             category !== "official",
           appType,
+          apiKeyField,
         },
       );
 
       onConfigChange(configString);
     },
-    [initialConfig, selectedPresetId, category, appType, onConfigChange],
+    [
+      initialConfig,
+      selectedPresetId,
+      category,
+      appType,
+      apiKeyField,
+      onConfigChange,
+    ],
   );
 
   const showApiKey = useCallback(

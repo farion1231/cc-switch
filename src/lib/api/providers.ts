@@ -21,6 +21,31 @@ export interface SwitchResult {
   warnings: string[];
 }
 
+export interface OpenTerminalOptions {
+  cwd?: string;
+}
+
+export interface ClaudeDesktopStatus {
+  supported: boolean;
+  configured: boolean;
+  appliedId?: string | null;
+  profilePath?: string | null;
+  configLibraryPath?: string | null;
+  mode?: "direct" | "proxy" | null;
+  expectedBaseUrl?: string | null;
+  actualBaseUrl?: string | null;
+  proxyRunning: boolean;
+  staleRawModels: boolean;
+  missingRouteMappings: boolean;
+  gatewayTokenConfigured: boolean;
+}
+
+export interface ClaudeDesktopDefaultRoute {
+  routeId: string;
+  envKey: string;
+  supports1m: boolean;
+}
+
 export const providersApi = {
   async getAll(appId: AppId): Promise<Record<string, Provider>> {
     return await invoke("get_providers", { app: appId });
@@ -30,12 +55,24 @@ export const providersApi = {
     return await invoke("get_current_provider", { app: appId });
   },
 
-  async add(provider: Provider, appId: AppId): Promise<boolean> {
-    return await invoke("add_provider", { provider, app: appId });
+  async add(
+    provider: Provider,
+    appId: AppId,
+    addToLive?: boolean,
+  ): Promise<boolean> {
+    return await invoke("add_provider", { provider, app: appId, addToLive });
   },
 
-  async update(provider: Provider, appId: AppId): Promise<boolean> {
-    return await invoke("update_provider", { provider, app: appId });
+  async update(
+    provider: Provider,
+    appId: AppId,
+    originalId?: string,
+  ): Promise<boolean> {
+    return await invoke("update_provider", {
+      provider,
+      app: appId,
+      originalId,
+    });
   },
 
   async delete(id: string, appId: AppId): Promise<boolean> {
@@ -56,6 +93,22 @@ export const providersApi = {
 
   async importDefault(appId: AppId): Promise<boolean> {
     return await invoke("import_default_config", { app: appId });
+  },
+
+  async importClaudeDesktopFromClaude(): Promise<number> {
+    return await invoke("import_claude_desktop_providers_from_claude");
+  },
+
+  async ensureClaudeDesktopOfficialProvider(): Promise<boolean> {
+    return await invoke("ensure_claude_desktop_official_provider");
+  },
+
+  async getClaudeDesktopStatus(): Promise<ClaudeDesktopStatus> {
+    return await invoke("get_claude_desktop_status");
+  },
+
+  async getClaudeDesktopDefaultRoutes(): Promise<ClaudeDesktopDefaultRoute[]> {
+    return await invoke("get_claude_desktop_default_routes");
   },
 
   async updateTrayMenu(): Promise<boolean> {
@@ -83,8 +136,17 @@ export const providersApi = {
    * 任何提供商都可以打开终端，不受是否为当前激活提供商的限制
    * 终端会使用该提供商特定的 API 配置，不影响全局设置
    */
-  async openTerminal(providerId: string, appId: AppId): Promise<boolean> {
-    return await invoke("open_provider_terminal", { providerId, app: appId });
+  async openTerminal(
+    providerId: string,
+    appId: AppId,
+    options?: OpenTerminalOptions,
+  ): Promise<boolean> {
+    const { cwd } = options ?? {};
+    return await invoke("open_provider_terminal", {
+      providerId,
+      app: appId,
+      cwd,
+    });
   },
 
   /**
@@ -112,11 +174,27 @@ export const providersApi = {
   },
 
   /**
+   * 获取 Hermes live 配置中的供应商 ID 列表
+   * 用于前端判断供应商是否已添加到 Hermes 配置
+   */
+  async getHermesLiveProviderIds(): Promise<string[]> {
+    return await invoke("get_hermes_live_provider_ids");
+  },
+
+  /**
    * 从 OpenClaw live 配置导入供应商到数据库
    * OpenClaw 特有功能：由于累加模式，用户可能已在 openclaw.json 中配置供应商
    */
   async importOpenClawFromLive(): Promise<number> {
     return await invoke("import_openclaw_providers_from_live");
+  },
+
+  /**
+   * 从 Hermes live 配置导入供应商到数据库
+   * Hermes 特有功能：由于累加模式，用户可能已在 Hermes 配置中配置供应商
+   */
+  async importHermesFromLive(): Promise<number> {
+    return await invoke("import_hermes_providers_from_live");
   },
 };
 

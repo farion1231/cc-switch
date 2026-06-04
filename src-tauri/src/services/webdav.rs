@@ -204,10 +204,11 @@ pub async fn ensure_remote_directories(
             s if s == StatusCode::CREATED || s.is_success() => {
                 log::info!("[WebDAV] MKCOL ok: {}", redact_url(&dir_url));
             }
-            // 405 commonly means "already exists" on many WebDAV servers
-            StatusCode::METHOD_NOT_ALLOWED => {}
             // Ambiguous — verify directory actually exists via PROPFIND
-            s if s == StatusCode::CONFLICT || s.is_redirection() => {
+            s if s == StatusCode::METHOD_NOT_ALLOWED
+                || s == StatusCode::CONFLICT
+                || s.is_redirection() =>
+            {
                 if !propfind_exists(&client, &dir_url, auth).await? {
                     return Err(webdav_status_error("MKCOL", status, &dir_url));
                 }
@@ -478,6 +479,7 @@ mod tests {
             &[
                 "cc switch-sync".to_string(),
                 "v2".to_string(),
+                "db-v6".to_string(),
                 "default profile".to_string(),
                 "manifest.json".to_string(),
             ],
@@ -485,7 +487,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             url,
-            "https://dav.example.com/remote.php/dav/files/demo/cc%20switch-sync/v2/default%20profile/manifest.json"
+            "https://dav.example.com/remote.php/dav/files/demo/cc%20switch-sync/v2/db-v6/default%20profile/manifest.json"
         );
         assert!(!url.contains("//cc"), "should not have double-slash");
     }

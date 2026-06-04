@@ -112,6 +112,22 @@ pub enum AuthStrategy {
     ///
     /// 用于 Gemini CLI 等需要 OAuth 的场景
     GoogleOAuth,
+
+    /// GitHub Copilot 认证方式
+    ///
+    /// - Header: `Authorization: Bearer <copilot_token>`
+    ///
+    /// 使用动态获取的 Copilot Token（通过 GitHub OAuth 设备码流程获取）
+    GitHubCopilot,
+
+    /// Codex OAuth 认证方式（ChatGPT Plus/Pro）
+    ///
+    /// - Header: `Authorization: Bearer <access_token>`
+    /// - Header: `ChatGPT-Account-Id: <account_id>` (来自 forwarder 注入)
+    /// - Header: `originator: cc-switch`
+    ///
+    /// 使用动态获取的 OpenAI access_token（通过 Device Code 流程获取）
+    CodexOAuth,
 }
 
 #[cfg(test)]
@@ -226,6 +242,8 @@ mod tests {
             AuthStrategy::Bearer,
             AuthStrategy::Google,
             AuthStrategy::GoogleOAuth,
+            AuthStrategy::GitHubCopilot,
+            AuthStrategy::CodexOAuth,
         ];
 
         for (i, s1) in strategies.iter().enumerate() {

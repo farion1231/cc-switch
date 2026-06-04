@@ -182,10 +182,7 @@ fn sign_request(
     };
 
     // Canonical headers — sorted by lowercase name.
-    let mut header_names: Vec<String> = headers
-        .keys()
-        .map(|k| k.as_str().to_lowercase())
-        .collect();
+    let mut header_names: Vec<String> = headers.keys().map(|k| k.as_str().to_lowercase()).collect();
     header_names.sort();
     header_names.dedup();
 
@@ -302,11 +299,7 @@ fn response_too_large_error(url: &str, max_bytes: usize) -> AppError {
     let max_mb = max_bytes / 1024 / 1024;
     AppError::localized(
         "s3.response_too_large",
-        format!(
-            "S3 响应体超过上限（{} MB）: {}",
-            max_mb,
-            redact_url(url)
-        ),
+        format!("S3 响应体超过上限（{} MB）: {}", max_mb, redact_url(url)),
         format!(
             "S3 response body exceeds limit ({} MB): {}",
             max_mb,
@@ -351,7 +344,14 @@ pub(crate) async fn test_connection(creds: &S3Credentials) -> Result<(), AppErro
     let client = http_client::get();
     let body_hash = sha256_hex(b"");
     let mut headers = reqwest::header::HeaderMap::new();
-    sign_request("HEAD", &url, &mut headers, &body_hash, creds, chrono::Utc::now());
+    sign_request(
+        "HEAD",
+        &url,
+        &mut headers,
+        &body_hash,
+        creds,
+        chrono::Utc::now(),
+    );
 
     let resp = client
         .head(url.as_str())
@@ -387,7 +387,14 @@ pub(crate) async fn put_object(
     let body_hash = sha256_hex(&bytes);
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert("content-type", content_type.parse().unwrap());
-    sign_request("PUT", &url, &mut headers, &body_hash, creds, chrono::Utc::now());
+    sign_request(
+        "PUT",
+        &url,
+        &mut headers,
+        &body_hash,
+        creds,
+        chrono::Utc::now(),
+    );
 
     let resp = client
         .put(url.as_str())
@@ -424,7 +431,14 @@ pub(crate) async fn get_object(
     let client = http_client::get();
     let body_hash = sha256_hex(b"");
     let mut headers = reqwest::header::HeaderMap::new();
-    sign_request("GET", &url, &mut headers, &body_hash, creds, chrono::Utc::now());
+    sign_request(
+        "GET",
+        &url,
+        &mut headers,
+        &body_hash,
+        creds,
+        chrono::Utc::now(),
+    );
 
     let resp = client
         .get(url.as_str())
@@ -483,7 +497,14 @@ pub(crate) async fn head_object(
     let client = http_client::get();
     let body_hash = sha256_hex(b"");
     let mut headers = reqwest::header::HeaderMap::new();
-    sign_request("HEAD", &url, &mut headers, &body_hash, creds, chrono::Utc::now());
+    sign_request(
+        "HEAD",
+        &url,
+        &mut headers,
+        &body_hash,
+        creds,
+        chrono::Utc::now(),
+    );
 
     let resp = client
         .head(url.as_str())
@@ -606,13 +627,19 @@ mod tests {
     #[test]
     fn build_object_url_endpoint_with_trailing_slash() {
         let creds = test_creds("minio.local:9000/", "us-east-1", "b");
-        assert_eq!(build_object_url(&creds, "k"), "https://minio.local:9000/b/k");
+        assert_eq!(
+            build_object_url(&creds, "k"),
+            "https://minio.local:9000/b/k"
+        );
     }
 
     #[test]
     fn build_object_url_endpoint_with_scheme_prefix() {
         let creds = test_creds("https://minio.local:9000", "us-east-1", "b");
-        assert_eq!(build_object_url(&creds, "k"), "https://minio.local:9000/b/k");
+        assert_eq!(
+            build_object_url(&creds, "k"),
+            "https://minio.local:9000/b/k"
+        );
     }
 
     // ── HTTP scheme preservation (MinIO support) ──

@@ -44,12 +44,17 @@ export function ProxyToggle({ className, activeApp }: ProxyToggleProps) {
   const tooltipText = takeoverEnabled
     ? isRunning
       ? t("proxy.takeover.tooltip.active", {
+          appLabel,
+          address: status?.address,
+          port: status?.port,
           defaultValue: `${appLabel} 已接管 - ${status?.address}:${status?.port}\n切换该应用供应商为热切换`,
         })
       : t("proxy.takeover.tooltip.broken", {
+          appLabel,
           defaultValue: `${appLabel} 已接管，但代理服务未运行`,
         })
     : t("proxy.takeover.tooltip.inactive", {
+        appLabel,
         defaultValue: `接管 ${appLabel} 的 Live 配置，让该应用请求走本地代理`,
       });
 

@@ -8,13 +8,16 @@ import {
   ProviderForm,
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
-import { providersApi, vscodeApi, type AppId } from "@/lib/api";
+import { openclawApi, providersApi, vscodeApi, type AppId } from "@/lib/api";
 
 interface EditProviderDialogProps {
   open: boolean;
   provider: Provider | null;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (provider: Provider) => Promise<void> | void;
+  onSubmit: (payload: {
+    provider: Provider;
+    originalId?: string;
+  }) => Promise<void> | void;
   appId: AppId;
   isProxyTakeover?: boolean; // 代理接管模式下不读取 live（避免显示被接管后的代理配置）
 }
@@ -28,6 +31,7 @@ export function EditProviderDialog({
   isProxyTakeover = false,
 }: EditProviderDialogProps) {
   const { t } = useTranslation();
+  const [isFormSubmitting, setIsFormSubmitting] = useState(false);
 
   // 默认使用传入的 provider.settingsConfig，若当前编辑对象是"当前生效供应商"，则尝试读取实时配置替换初始值
   const [liveSettings, setLiveSettings] = useState<Record<
@@ -73,6 +77,26 @@ export function EditProviderDialog({
         return;
       }
 
+      if (appId === "openclaw") {
+        try {
+          const live = await openclawApi.getLiveProvider(provider.id);
+          if (!cancelled && live && typeof live === "object") {
+            setLiveSettings(live);
+          } else if (!cancelled) {
+            setLiveSettings(null);
+          }
+        } catch {
+          if (!cancelled) {
+            setLiveSettings(null);
+          }
+        } finally {
+          if (!cancelled) {
+            setHasLoadedLive(true);
+          }
+        }
+        return;
+      }
+
       try {
         const currentId = await providersApi.getCurrent(appId);
         if (currentId && provider.id === currentId) {
@@ -108,11 +132,31 @@ export function EditProviderDialog({
   }, [open, provider?.id, appId, hasLoadedLive, isProxyTakeover]); // 只依赖 provider.id，不依赖整个 provider 对象
 
   const initialSettingsConfig = useMemo(() => {
-    return (liveSettings ?? provider?.settingsConfig ?? {}) as Record<
+    const base = (liveSettings ?? provider?.settingsConfig ?? {}) as Record<
       string,
       unknown
     >;
-  }, [liveSettings, provider?.settingsConfig]); // 只依赖 settingsConfig，不依赖整个 provider
+
+    // Codex 的 modelCatalog 是 cc-switch 私有字段，SSOT 在数据库。Live 的 config.toml
+    // 仅在写入时投影出 model_catalog_json 指针；Codex.app 改写配置、代理接管/恢复周期、
+    // 来回切换供应商都可能让 Live 丢失该投影，从而 read_live_settings 反解为空。
+    // 若放任 Live 覆盖，编辑界面会显示空映射表，保存后连同数据库里的映射一起清空（数据丢失）。
+    // 因此始终以数据库 SSOT 的 modelCatalog 为准，仅在数据库确实没有时才回退到 Live 反解结果。
+    if (
+      appId === "codex" &&
+      liveSettings &&
+      provider?.settingsConfig &&
+      typeof provider.settingsConfig === "object"
+    ) {
+      const dbCatalog = (provider.settingsConfig as Record<string, unknown>)
+        .modelCatalog;
+      if (dbCatalog !== undefined) {
+        return { ...base, modelCatalog: dbCatalog };
+      }
+    }
+
+    return base;
+  }, [liveSettings, provider?.settingsConfig, appId]); // 只依赖 settingsConfig，不依赖整个 provider
 
   // 固定 initialData，防止 provider 对象更新时重置表单
   const initialData = useMemo(() => {
@@ -130,7 +174,7 @@ export function EditProviderDialog({
   }, [
     open, // 修复：编辑保存后再次打开显示旧数据，依赖 open 确保每次打开时重新读取最新 provider 数据
     provider?.id, // 只依赖 ID，provider 对象更新不会触发重新计算
-    provider?.meta, // 需要依赖 meta 以便正确初始化 testConfig 和 proxyConfig
+    provider?.meta, // 需要依赖 meta 以便正确初始化 testConfig
     initialSettingsConfig,
   ]);
 
@@ -144,9 +188,15 @@ export function EditProviderDialog({
         string,
         unknown
       >;
+      const nextProviderId =
+        (appId === "opencode" || appId === "openclaw") &&
+        values.providerKey?.trim()
+          ? values.providerKey.trim()
+          : provider.id;
 
       const updatedProvider: Provider = {
         ...provider,
+        id: nextProviderId,
         name: values.name.trim(),
         notes: values.notes?.trim() || undefined,
         websiteUrl: values.websiteUrl?.trim() || undefined,
@@ -158,10 +208,13 @@ export function EditProviderDialog({
         ...(values.meta ? { meta: values.meta } : {}),
       };
 
-      await onSubmit(updatedProvider);
+      await onSubmit({
+        provider: updatedProvider,
+        originalId: provider.id,
+      });
       onOpenChange(false);
     },
-    [onSubmit, onOpenChange, provider],
+    [appId, onSubmit, onOpenChange, provider],
   );
 
   if (!provider || !initialData) {
@@ -177,6 +230,7 @@ export function EditProviderDialog({
         <Button
           type="submit"
           form="provider-form"
+          disabled={isFormSubmitting}
           className="bg-primary text-primary-foreground hover:bg-primary/90"
         >
           <Save className="h-4 w-4 mr-2" />
@@ -190,8 +244,10 @@ export function EditProviderDialog({
         submitLabel={t("common.save")}
         onSubmit={handleSubmit}
         onCancel={() => onOpenChange(false)}
+        onSubmittingChange={setIsFormSubmitting}
         initialData={initialData}
         showButtons={false}
+        isProxyTakeover={isProxyTakeover}
       />
     </FullScreenPanel>
   );

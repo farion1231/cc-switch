@@ -65,6 +65,150 @@ impl Provider {
             in_failover_queue: false,
         }
     }
+
+    pub fn is_codex_oauth(&self) -> bool {
+        self.provider_type() == Some("codex_oauth")
+    }
+
+    pub fn is_github_copilot(&self) -> bool {
+        self.provider_type() == Some("github_copilot")
+            || self.claude_base_url_contains("githubcopilot.com")
+    }
+
+    pub fn uses_managed_account_auth(&self) -> bool {
+        self.is_github_copilot()
+            || self.is_codex_oauth()
+            || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
+    }
+
+    fn provider_type(&self) -> Option<&str> {
+        self.meta.as_ref().and_then(|m| m.provider_type.as_deref())
+    }
+
+    fn claude_base_url_contains(&self, needle: &str) -> bool {
+        self.settings_config
+            .pointer("/env/ANTHROPIC_BASE_URL")
+            .and_then(|value| value.as_str())
+            .map(|base_url| base_url.contains(needle))
+            .unwrap_or(false)
+    }
+
+    pub fn codex_fast_mode_enabled(&self) -> bool {
+        self.meta
+            .as_ref()
+            .map(|m| m.codex_fast_mode_enabled())
+            .unwrap_or(false)
+    }
+
+    pub fn has_usage_script_enabled(&self) -> bool {
+        self.meta
+            .as_ref()
+            .and_then(|m| m.usage_script.as_ref())
+            .map(|s| s.enabled)
+            .unwrap_or(false)
+    }
+
+    /// Resolve `(base_url, api_key)` for native usage queries (balance /
+    /// coding-plan) from the stored provider config.
+    ///
+    /// Each app persists credentials in a different shape, so callers must pass
+    /// the owning app type. This mirrors the frontend `getProviderCredentials`
+    /// in `UsageScriptModal.tsx`.
+    ///
+    /// TODO: the env-only helpers in `services/provider/usage.rs`
+    /// (`extract_api_key_from_provider` / `extract_base_url_from_provider`)
+    /// duplicate this per-app logic on the JS-script path and could delegate
+    /// here in a follow-up to remove the remaining copy.
+    pub fn resolve_usage_credentials(
+        &self,
+        app_type: &crate::app_config::AppType,
+    ) -> (String, String) {
+        use crate::app_config::AppType;
+
+        let settings = &self.settings_config;
+        let str_at =
+            |value: Option<&Value>| value.and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+        // First present, non-empty string among `keys`, mirroring the frontend's
+        // `a || b || c` — JS `||` skips empty strings, and presets seed fields like
+        // `ANTHROPIC_AUTH_TOKEN` as present-but-empty placeholders, so a plain
+        // `.get().or_else()` chain (which only skips *absent* keys) would stop short.
+        fn first_non_empty(env: Option<&Value>, keys: &[&str]) -> String {
+            let Some(env) = env else {
+                return String::new();
+            };
+            for key in keys {
+                if let Some(s) = env.get(key).and_then(|v| v.as_str()) {
+                    if !s.is_empty() {
+                        return s.to_string();
+                    }
+                }
+            }
+            String::new()
+        }
+
+        let (base_url, api_key) = match app_type {
+            // Codex keeps its key in `auth.OPENAI_API_KEY` and its base URL
+            // inside a TOML `config` string, not in an `env` map.
+            AppType::Codex => {
+                let auth = settings.get("auth");
+                let config_text = settings.get("config").and_then(|v| v.as_str());
+                let api_key = crate::codex_config::extract_codex_api_key(auth, config_text)
+                    .unwrap_or_default();
+                let base_url = config_text
+                    .and_then(crate::codex_config::extract_codex_base_url)
+                    .unwrap_or_default();
+                (base_url, api_key)
+            }
+            // Gemini uses Google-specific env keys (with a legacy GOOGLE_API_KEY fallback).
+            AppType::Gemini => {
+                let env = settings.get("env");
+                let base_url = str_at(env.and_then(|e| e.get("GOOGLE_GEMINI_BASE_URL")));
+                let api_key = first_non_empty(env, &["GEMINI_API_KEY", "GOOGLE_API_KEY"]);
+                (base_url, api_key)
+            }
+            // Hermes (config.yaml) flattens credentials at the top level, snake_case.
+            AppType::Hermes => (
+                str_at(settings.get("base_url")),
+                str_at(settings.get("api_key")),
+            ),
+            // OpenClaw (openclaw.json) flattens credentials at the top level, camelCase.
+            AppType::OpenClaw => (
+                str_at(settings.get("baseUrl")),
+                str_at(settings.get("apiKey")),
+            ),
+            // OpenCode (OMO) nests credentials under `options` (the SDK options object).
+            AppType::OpenCode => {
+                let options = settings.get("options");
+                (
+                    str_at(options.and_then(|o| o.get("baseURL"))),
+                    str_at(options.and_then(|o| o.get("apiKey"))),
+                )
+            }
+            // Claude and Claude Desktop both use the Anthropic-style env map, keeping
+            // the OpenRouter/Google key fallbacks the JS-script path relies on.
+            // Listed explicitly (not `_`) so a new AppType fails to compile here.
+            AppType::Claude | AppType::ClaudeDesktop => {
+                let env = settings.get("env");
+                let base_url = str_at(env.and_then(|e| e.get("ANTHROPIC_BASE_URL")));
+                let api_key = first_non_empty(
+                    env,
+                    &[
+                        "ANTHROPIC_AUTH_TOKEN",
+                        "ANTHROPIC_API_KEY",
+                        "OPENROUTER_API_KEY",
+                        "GOOGLE_API_KEY",
+                    ],
+                );
+                (base_url, api_key)
+            }
+        };
+
+        // Normalize like the JS-script path (extract_base_url_from_provider) so a
+        // future delegation from services/provider/usage.rs is behavior-preserving
+        // and `{{baseUrl}}/path` concatenation never produces a double slash.
+        (base_url.trim_end_matches('/').to_string(), api_key)
+    }
 }
 
 /// 供应商管理器
@@ -106,6 +250,10 @@ pub struct UsageScript {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "autoQueryInterval")]
     pub auto_query_interval: Option<u64>,
+    /// Coding Plan 供应商标识（如 "kimi", "zhipu", "minimax"）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "codingPlanProvider")]
+    pub coding_plan_provider: Option<String>,
 }
 
 /// 用量数据
@@ -168,27 +316,71 @@ pub struct ProviderTestConfig {
     pub max_retries: Option<u32>,
 }
 
-/// 供应商单独的代理配置
+/// 认证绑定来源
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthBindingSource {
+    /// 从 provider 自身配置读取认证信息（默认）
+    #[default]
+    ProviderConfig,
+    /// 使用托管账号认证（如 GitHub Copilot OAuth）
+    ManagedAccount,
+}
+
+/// 通用认证绑定
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ProviderProxyConfig {
-    /// 是否启用单独配置（false 时使用全局/系统代理）
+pub struct AuthBinding {
+    /// 认证来源
     #[serde(default)]
-    pub enabled: bool,
-    /// 代理类型：http, https, socks5
-    #[serde(rename = "proxyType", skip_serializing_if = "Option::is_none")]
-    pub proxy_type: Option<String>,
-    /// 代理主机
-    #[serde(rename = "proxyHost", skip_serializing_if = "Option::is_none")]
-    pub proxy_host: Option<String>,
-    /// 代理端口
-    #[serde(rename = "proxyPort", skip_serializing_if = "Option::is_none")]
-    pub proxy_port: Option<u16>,
-    /// 代理用户名（可选）
-    #[serde(rename = "proxyUsername", skip_serializing_if = "Option::is_none")]
-    pub proxy_username: Option<String>,
-    /// 代理密码（可选）
-    #[serde(rename = "proxyPassword", skip_serializing_if = "Option::is_none")]
-    pub proxy_password: Option<String>,
+    pub source: AuthBindingSource,
+    /// 托管认证供应商标识（如 github_copilot）
+    #[serde(rename = "authProvider", skip_serializing_if = "Option::is_none")]
+    pub auth_provider: Option<String>,
+    /// 托管账号 ID；为空表示跟随该认证供应商的默认账号
+    #[serde(rename = "accountId", skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+}
+
+/// Claude Desktop 3P 写入模式。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ClaudeDesktopMode {
+    Direct,
+    Proxy,
+}
+
+/// Claude Desktop 本地路由模式下暴露给 Desktop 的安全模型路由。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeDesktopModelRoute {
+    /// 真实上游模型名，只保存在 CC Switch 内部，不写入 Claude Desktop profile。
+    pub model: String,
+    /// Claude Desktop 模型菜单显示名；写入 profile 的 `labelOverride`。
+    #[serde(rename = "labelOverride", skip_serializing_if = "Option::is_none")]
+    pub label_override: Option<String>,
+    /// Claude Desktop 3P 识别的 1M 上下文能力标记。
+    #[serde(rename = "supports1m", skip_serializing_if = "Option::is_none")]
+    pub supports_1m: Option<bool>,
+}
+
+/// Codex Responses -> Chat Completions 的 reasoning 能力描述。
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct CodexChatReasoningConfig {
+    #[serde(rename = "supportsThinking", skip_serializing_if = "Option::is_none")]
+    pub supports_thinking: Option<bool>,
+    #[serde(rename = "supportsEffort", skip_serializing_if = "Option::is_none")]
+    pub supports_effort: Option<bool>,
+    #[serde(rename = "thinkingParam", skip_serializing_if = "Option::is_none")]
+    pub thinking_param: Option<String>,
+    #[serde(rename = "effortParam", skip_serializing_if = "Option::is_none")]
+    pub effort_param: Option<String>,
+    #[serde(rename = "effortValueMode", skip_serializing_if = "Option::is_none")]
+    pub effort_value_mode: Option<String>,
+    /// 声明性字段：标注上游 reasoning 的回传位置（reasoning_content / reasoning /
+    /// reasoning_details / think_tags）。当前响应侧 `extract_reasoning_field_text`
+    /// 靠穷举字段提取、并不读取本字段；保留作文档说明与未来按格式分发（如 think_tags）的预留。
+    #[serde(rename = "outputFormat", skip_serializing_if = "Option::is_none")]
+    pub output_format: Option<String>,
 }
 
 /// 供应商元数据
@@ -197,6 +389,22 @@ pub struct ProviderMeta {
     /// 自定义端点列表（按 URL 去重存储）
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub custom_endpoints: HashMap<String, crate::settings::CustomEndpoint>,
+    /// 是否在写入 live 时应用通用配置片段
+    #[serde(
+        rename = "commonConfigEnabled",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub common_config_enabled: Option<bool>,
+    /// Claude Desktop 3P 写入模式：direct（直连）或 proxy（预留）
+    #[serde(rename = "claudeDesktopMode", skip_serializing_if = "Option::is_none")]
+    pub claude_desktop_mode: Option<ClaudeDesktopMode>,
+    /// Claude Desktop proxy 模式的模型路由映射：Claude-safe route -> upstream model。
+    #[serde(
+        default,
+        rename = "claudeDesktopModelRoutes",
+        skip_serializing_if = "HashMap::is_empty"
+    )]
+    pub claude_desktop_model_routes: HashMap<String, ClaudeDesktopModelRoute>,
     /// 用量查询脚本配置
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_script: Option<UsageScript>,
@@ -227,14 +435,74 @@ pub struct ProviderMeta {
     /// 供应商单独的模型测试配置
     #[serde(rename = "testConfig", skip_serializing_if = "Option::is_none")]
     pub test_config: Option<ProviderTestConfig>,
-    /// 供应商单独的代理配置
-    #[serde(rename = "proxyConfig", skip_serializing_if = "Option::is_none")]
-    pub proxy_config: Option<ProviderProxyConfig>,
     /// Claude API 格式（仅 Claude 供应商使用）
     /// - "anthropic": 原生 Anthropic Messages API，直接透传
     /// - "openai_chat": OpenAI Chat Completions 格式，需要转换
+    /// - "openai_responses": OpenAI Responses API 格式，需要转换
     #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
+    /// 通用认证绑定（provider_config / managed_account）
+    ///
+    /// 新代码应只写入该字段；githubAccountId 仅保留兼容读取。
+    #[serde(rename = "authBinding", skip_serializing_if = "Option::is_none")]
+    pub auth_binding: Option<AuthBinding>,
+    /// Claude 认证字段名（"ANTHROPIC_AUTH_TOKEN" 或 "ANTHROPIC_API_KEY"）
+    #[serde(rename = "apiKeyField", skip_serializing_if = "Option::is_none")]
+    pub api_key_field: Option<String>,
+    /// 是否将 base_url 视为完整 API 端点（不拼接 endpoint 路径）
+    #[serde(rename = "isFullUrl", skip_serializing_if = "Option::is_none")]
+    pub is_full_url: Option<bool>,
+    /// Prompt cache key for OpenAI Responses-compatible endpoints.
+    /// When set, injected into converted Responses requests to improve cache hit rate.
+    /// If not set, Claude -> Responses conversions use a client-provided session/thread
+    /// identity when available; generated session IDs are not sent upstream.
+    #[serde(rename = "promptCacheKey", skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_key: Option<String>,
+    /// Codex OAuth FAST mode: inject `service_tier = "priority"` for ChatGPT Codex requests.
+    #[serde(rename = "codexFastMode", skip_serializing_if = "Option::is_none")]
+    pub codex_fast_mode: Option<bool>,
+    /// Codex Responses -> Chat Completions reasoning capability metadata.
+    #[serde(rename = "codexChatReasoning", skip_serializing_if = "Option::is_none")]
+    pub codex_chat_reasoning: Option<CodexChatReasoningConfig>,
+    /// 累加模式应用中，该 provider 是否已写入 live config。
+    /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
+    #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]
+    pub live_config_managed: Option<bool>,
+    /// 供应商类型标识（用于特殊供应商检测）
+    /// - "github_copilot": GitHub Copilot 供应商
+    #[serde(rename = "providerType", skip_serializing_if = "Option::is_none")]
+    pub provider_type: Option<String>,
+    /// GitHub Copilot 关联账号 ID（仅 github_copilot 供应商使用）
+    /// 用于多账号支持，关联到特定的 GitHub 账号
+    #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
+    pub github_account_id: Option<String>,
+}
+
+impl ProviderMeta {
+    /// Codex OAuth FAST mode 是否启用。默认关闭，因为 `service_tier="priority"`
+    /// 会按更高速率消耗 ChatGPT 订阅配额，用户需显式开启以换取更低延迟。
+    pub fn codex_fast_mode_enabled(&self) -> bool {
+        self.codex_fast_mode.unwrap_or(false)
+    }
+
+    /// 解析指定托管认证供应商绑定的账号 ID。
+    ///
+    /// 新版优先读取 authBinding，旧版继续兼容 githubAccountId。
+    pub fn managed_account_id_for(&self, auth_provider: &str) -> Option<String> {
+        if let Some(binding) = self.auth_binding.as_ref() {
+            if binding.source == AuthBindingSource::ManagedAccount
+                && binding.auth_provider.as_deref() == Some(auth_provider)
+            {
+                return binding.account_id.clone();
+            }
+        }
+
+        if auth_provider == "github_copilot" {
+            return self.github_account_id.clone();
+        }
+
+        None
+    }
 }
 
 impl ProviderManager {
@@ -462,12 +730,12 @@ impl UniversalProvider {
 
         // 生成 Codex 的 config.toml 内容
         let config_toml = format!(
-            r#"model_provider = "newapi"
+            r#"model_provider = "custom"
 model = "{model}"
 model_reasoning_effort = "{reasoning_effort}"
 disable_response_storage = true
 
-[model_providers.newapi]
+[model_providers.custom]
 name = "NewAPI"
 base_url = "{codex_base_url}"
 wire_api = "responses"
@@ -640,8 +908,10 @@ mod tests {
 
     #[test]
     fn provider_meta_serializes_pricing_model_source() {
-        let mut meta = ProviderMeta::default();
-        meta.pricing_model_source = Some("response".to_string());
+        let meta = ProviderMeta {
+            pricing_model_source: Some("response".to_string()),
+            ..ProviderMeta::default()
+        };
 
         let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
 
@@ -686,6 +956,53 @@ mod tests {
         assert!(provider.icon.is_none());
         assert!(provider.icon_color.is_none());
         assert!(!provider.in_failover_queue);
+    }
+
+    #[test]
+    fn provider_managed_account_auth_detection_uses_type_or_known_endpoint() {
+        let mut copilot = Provider::with_id(
+            "copilot".to_string(),
+            "Copilot".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
+                }
+            }),
+            None,
+        );
+        assert!(copilot.is_github_copilot());
+        assert!(copilot.uses_managed_account_auth());
+
+        let mut codex = Provider::with_id(
+            "codex".to_string(),
+            "Codex".to_string(),
+            json!({ "env": {} }),
+            None,
+        );
+        codex.meta = Some(ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            ..Default::default()
+        });
+        assert!(codex.is_codex_oauth());
+        assert!(codex.uses_managed_account_auth());
+
+        let codex_endpoint = Provider::with_id(
+            "codex-endpoint".to_string(),
+            "Codex Endpoint".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            None,
+        );
+        assert!(codex_endpoint.uses_managed_account_auth());
+
+        copilot.meta = Some(ProviderMeta {
+            provider_type: Some("github_copilot".to_string()),
+            ..Default::default()
+        });
+        assert!(copilot.is_github_copilot());
     }
 
     #[test]
@@ -934,5 +1251,197 @@ mod tests {
 
         assert!(toml.contains("base_url = \"https://example.com/openai\""));
         assert!(!toml.contains("https://example.com/openai/v1"));
+    }
+
+    // ── resolve_usage_credentials (per-app credential extraction) ──
+
+    use crate::app_config::AppType;
+
+    fn provider_with(settings_config: serde_json::Value) -> Provider {
+        Provider::with_id("p".to_string(), "P".to_string(), settings_config, None)
+    }
+
+    #[test]
+    fn resolve_credentials_claude_env() {
+        let p = provider_with(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+                "ANTHROPIC_AUTH_TOKEN": "sk-claude",
+            }
+        }));
+        assert_eq!(
+            p.resolve_usage_credentials(&AppType::Claude),
+            (
+                "https://api.deepseek.com/anthropic".to_string(),
+                "sk-claude".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_credentials_claude_openrouter_fallback() {
+        // OpenRouter-on-Claude keeps its key in OPENROUTER_API_KEY; the superset
+        // fallback must still find it (regression guard for the per-app refactor).
+        let p = provider_with(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api/v1",
+                "OPENROUTER_API_KEY": "sk-or",
+            }
+        }));
+        let (base_url, api_key) = p.resolve_usage_credentials(&AppType::Claude);
+        assert_eq!(base_url, "https://openrouter.ai/api/v1");
+        assert_eq!(api_key, "sk-or");
+    }
+
+    #[test]
+    fn resolve_credentials_codex_auth_and_toml() {
+        let p = provider_with(json!({
+            "auth": { "OPENAI_API_KEY": "sk-codex" },
+            "config": "model_provider = \"deepseek\"\n\
+                       [model_providers.deepseek]\n\
+                       base_url = \"https://api.deepseek.com\"\n",
+        }));
+        assert_eq!(
+            p.resolve_usage_credentials(&AppType::Codex),
+            (
+                "https://api.deepseek.com".to_string(),
+                "sk-codex".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_credentials_gemini_env_with_google_fallback() {
+        let p = provider_with(json!({
+            "env": {
+                "GOOGLE_GEMINI_BASE_URL": "https://generativelanguage.googleapis.com",
+                "GOOGLE_API_KEY": "g-legacy",
+            }
+        }));
+        let (base_url, api_key) = p.resolve_usage_credentials(&AppType::Gemini);
+        assert_eq!(base_url, "https://generativelanguage.googleapis.com");
+        assert_eq!(api_key, "g-legacy");
+    }
+
+    #[test]
+    fn resolve_credentials_claude_skips_empty_primary_key() {
+        // Presets seed ANTHROPIC_AUTH_TOKEN as a present-but-empty placeholder.
+        // The fallback chain must skip empty values (matching the frontend's
+        // `a || b` semantics), not just absent keys.
+        let p = provider_with(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api/v1",
+                "ANTHROPIC_AUTH_TOKEN": "",
+                "ANTHROPIC_API_KEY": "",
+                "OPENROUTER_API_KEY": "sk-or",
+            }
+        }));
+        let (_, api_key) = p.resolve_usage_credentials(&AppType::Claude);
+        assert_eq!(api_key, "sk-or");
+    }
+
+    #[test]
+    fn resolve_credentials_gemini_skips_empty_primary_key() {
+        let p = provider_with(json!({
+            "env": {
+                "GOOGLE_GEMINI_BASE_URL": "https://generativelanguage.googleapis.com",
+                "GEMINI_API_KEY": "",
+                "GOOGLE_API_KEY": "g-real",
+            }
+        }));
+        let (_, api_key) = p.resolve_usage_credentials(&AppType::Gemini);
+        assert_eq!(api_key, "g-real");
+    }
+
+    #[test]
+    fn resolve_credentials_hermes_snake_case() {
+        let p = provider_with(json!({
+            "base_url": "https://api.deepseek.com",
+            "api_key": "sk-hermes",
+        }));
+        assert_eq!(
+            p.resolve_usage_credentials(&AppType::Hermes),
+            (
+                "https://api.deepseek.com".to_string(),
+                "sk-hermes".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_credentials_openclaw_camel_case() {
+        let p = provider_with(json!({
+            "baseUrl": "https://api.deepseek.com",
+            "apiKey": "sk-openclaw",
+        }));
+        assert_eq!(
+            p.resolve_usage_credentials(&AppType::OpenClaw),
+            (
+                "https://api.deepseek.com".to_string(),
+                "sk-openclaw".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_credentials_opencode_options() {
+        // OpenCode (OMO) nests creds under options.{baseURL,apiKey}; useOpencodeFormState
+        // writes config.options.apiKey, so the stored provider keeps them there.
+        let p = provider_with(json!({
+            "npm": "@ai-sdk/openai-compatible",
+            "options": {
+                "baseURL": "https://api.deepseek.com/v1",
+                "apiKey": "sk-opencode",
+                "setCacheKey": true,
+            }
+        }));
+        assert_eq!(
+            p.resolve_usage_credentials(&AppType::OpenCode),
+            (
+                "https://api.deepseek.com/v1".to_string(),
+                "sk-opencode".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_credentials_claude_desktop_uses_env() {
+        // ClaudeDesktop persists the Anthropic env shape (ClaudeDesktopProviderForm
+        // reads env.ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN), so it resolves via
+        // the default env branch — it is NOT unsupported.
+        let p = provider_with(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+                "ANTHROPIC_AUTH_TOKEN": "sk-desktop",
+            }
+        }));
+        assert_eq!(
+            p.resolve_usage_credentials(&AppType::ClaudeDesktop),
+            (
+                "https://api.deepseek.com/anthropic".to_string(),
+                "sk-desktop".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_credentials_trims_trailing_slash_on_base_url() {
+        let p = provider_with(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic/",
+                "ANTHROPIC_AUTH_TOKEN": "sk-claude",
+            }
+        }));
+        let (base_url, _) = p.resolve_usage_credentials(&AppType::Claude);
+        assert_eq!(base_url, "https://api.deepseek.com/anthropic");
+    }
+
+    #[test]
+    fn resolve_credentials_missing_fields_yield_empty() {
+        let p = provider_with(json!({}));
+        assert_eq!(
+            p.resolve_usage_credentials(&AppType::Claude),
+            (String::new(), String::new())
+        );
     }
 }
