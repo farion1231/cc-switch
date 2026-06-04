@@ -194,6 +194,7 @@ export function WebdavSyncSection({
     remoteRoot: config?.remoteRoot ?? "cc-switch-sync",
     profile: config?.profile ?? "default",
     autoSync: config?.autoSync ?? false,
+    syncCodexData: config?.syncCodexData ?? false,
   }));
 
   // Preset selector — derived from initial URL, updated on user selection
@@ -252,6 +253,7 @@ export function WebdavSyncSection({
         remoteRoot: nextRemoteRoot,
         profile: nextProfile,
         autoSync: config.autoSync ?? false,
+        syncCodexData: config.syncCodexData ?? false,
       };
     });
     setPasswordTouched(false);
@@ -323,6 +325,16 @@ export function WebdavSyncSection({
     }
   }, [onAutoSave]);
 
+  const handleSyncCodexDataChange = useCallback((checked: boolean) => {
+    setForm((prev) => ({ ...prev, syncCodexData: checked }));
+    setDirty(true);
+    setJustSaved(false);
+    if (justSavedTimerRef.current) {
+      clearTimeout(justSavedTimerRef.current);
+      justSavedTimerRef.current = null;
+    }
+  }, []);
+
   const buildSettings = useCallback((): WebDavSyncSettings | null => {
     const baseUrl = form.baseUrl.trim();
     if (!baseUrl) return null;
@@ -335,6 +347,7 @@ export function WebdavSyncSection({
       remoteRoot: form.remoteRoot.trim() || "cc-switch-sync",
       profile: form.profile.trim() || "default",
       autoSync: form.autoSync,
+      syncCodexData: form.syncCodexData,
     };
   }, [form, passwordTouched]);
 
@@ -539,6 +552,8 @@ export function WebdavSyncSection({
     remoteInfo?.dbCompatVersion,
   );
   const remoteIsLegacy = remoteInfo?.layout === "legacy";
+  const remoteHasCodexData =
+    remoteInfo?.artifacts?.includes("codex.zip") ?? false;
 
   // ─── Render ─────────────────────────────────────────────
 
@@ -682,6 +697,30 @@ export function WebdavSyncSection({
               />
             </div>
           </div>
+
+          <div className="flex items-start gap-4">
+            <label className="w-40 text-xs font-medium text-foreground shrink-0">
+              {t("settings.webdavSync.syncCodexData")}
+              <span className="block text-[10px] font-normal text-muted-foreground">
+                {t("settings.webdavSync.syncCodexDataHint")}
+              </span>
+            </label>
+            <div className="pt-1">
+              <Switch
+                checked={form.syncCodexData}
+                onCheckedChange={handleSyncCodexDataChange}
+                aria-label={t("settings.webdavSync.syncCodexData")}
+                disabled={isLoading}
+              />
+            </div>
+          </div>
+
+          {form.syncCodexData && (
+            <div className="flex max-w-3xl items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:text-amber-200">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+              <span>{t("settings.webdavSync.codexDataAuthWarning")}</span>
+            </div>
+          )}
         </div>
 
         {/* Last sync time */}
@@ -804,6 +843,11 @@ export function WebdavSyncSection({
                 <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
                   <li>{t("settings.webdavSync.confirmUpload.dbItem")}</li>
                   <li>{t("settings.webdavSync.confirmUpload.skillsItem")}</li>
+                  {form.syncCodexData && (
+                    <li>
+                      {t("settings.webdavSync.confirmUpload.codexDataItem")}
+                    </li>
+                  )}
                 </ul>
                 <p className="text-muted-foreground">
                   {t("settings.webdavSync.confirmUpload.targetPath")}
@@ -932,6 +976,11 @@ export function WebdavSyncSection({
                 <p className="text-destructive font-medium">
                   {t("settings.webdavSync.confirmDownload.warning")}
                 </p>
+                {form.syncCodexData && remoteHasCodexData && (
+                  <p className="font-medium text-amber-600 dark:text-amber-400">
+                    {t("settings.webdavSync.confirmDownload.codexDataMerge")}
+                  </p>
+                )}
               </div>
             </DialogDescription>
           </DialogHeader>

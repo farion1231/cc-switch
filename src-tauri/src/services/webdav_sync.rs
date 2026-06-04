@@ -1,7 +1,8 @@
 //! WebDAV v2 sync protocol layer with DB compatibility subdirectories.
 //!
 //! Implements manifest-based synchronization on top of the HTTP transport
-//! primitives in [`super::webdav`]. Artifact set: `db.sql` + `skills.zip`.
+//! primitives in [`super::webdav`]. Artifact set: `db.sql` + `skills.zip`,
+//! plus optional `codex.zip`.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -24,7 +25,8 @@ use crate::settings::{update_webdav_sync_status, WebDavSyncSettings, WebDavSyncS
 
 mod archive;
 use archive::{
-    backup_current_skills, restore_skills_from_backup, restore_skills_zip, zip_skills_ssot,
+    backup_current_skills, codex_data_fingerprint, restore_codex_data_zip,
+    restore_skills_from_backup, restore_skills_zip, zip_codex_data, zip_skills_ssot,
 };
 
 // ─── Protocol constants ──────────────────────────────────────
@@ -35,6 +37,7 @@ const DB_COMPAT_VERSION: u32 = 6;
 const LEGACY_DB_COMPAT_VERSION: u32 = 5;
 const REMOTE_DB_SQL: &str = "db.sql";
 const REMOTE_SKILLS_ZIP: &str = "skills.zip";
+const REMOTE_CODEX_ZIP: &str = "codex.zip";
 const REMOTE_MANIFEST: &str = "manifest.json";
 const MAX_DEVICE_NAME_LEN: usize = 64;
 const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
@@ -51,6 +54,10 @@ where
 {
     let _guard = sync_mutex().lock().await;
     operation.await
+}
+
+pub(crate) fn codex_sync_fingerprint() -> Result<Option<String>, AppError> {
+    codex_data_fingerprint()
 }
 
 fn localized(key: &'static str, zh: impl Into<String>, en: impl Into<String>) -> AppError {
@@ -95,6 +102,7 @@ struct ArtifactMeta {
 struct LocalSnapshot {
     db_sql: Vec<u8>,
     skills_zip: Vec<u8>,
+    codex_zip: Option<Vec<u8>>,
     manifest_bytes: Vec<u8>,
     manifest_hash: String,
 }
@@ -151,6 +159,11 @@ pub async fn upload(
 
     let skills_url = remote_file_url(settings, RemoteLayout::Current, REMOTE_SKILLS_ZIP)?;
     put_bytes(&skills_url, &auth, snapshot.skills_zip, "application/zip").await?;
+
+    if let Some(codex_zip) = snapshot.codex_zip {
+        let codex_url = remote_file_url(settings, RemoteLayout::Current, REMOTE_CODEX_ZIP)?;
+        put_bytes(&codex_url, &auth, codex_zip, "application/zip").await?;
+    }
 
     let manifest_url = remote_file_url(settings, RemoteLayout::Current, REMOTE_MANIFEST)?;
     put_bytes(
@@ -215,9 +228,24 @@ pub async fn download(
         &snapshot.manifest.artifacts,
     )
     .await?;
+    let codex_zip =
+        if settings.sync_codex_data && snapshot.manifest.artifacts.contains_key(REMOTE_CODEX_ZIP) {
+            Some(
+                download_and_verify(
+                    settings,
+                    &auth,
+                    snapshot.layout,
+                    REMOTE_CODEX_ZIP,
+                    &snapshot.manifest.artifacts,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
 
     // Apply snapshot
-    apply_snapshot(db, &db_sql, &skills_zip)?;
+    apply_snapshot(db, &db_sql, &skills_zip, codex_zip.as_deref())?;
 
     let manifest_hash = sha256_hex(&snapshot.manifest_bytes);
     let _persisted = persist_sync_success_best_effort(
@@ -300,7 +328,7 @@ where
 
 fn build_local_snapshot(
     db: &crate::database::Database,
-    _settings: &WebDavSyncSettings,
+    settings: &WebDavSyncSettings,
 ) -> Result<LocalSnapshot, AppError> {
     // Export database to SQL string
     let sql_string = db.export_sql_string_for_sync()?;
@@ -318,6 +346,13 @@ fn build_local_snapshot(
     let skills_zip_path = tmp.path().join(REMOTE_SKILLS_ZIP);
     zip_skills_ssot(&skills_zip_path)?;
     let skills_zip = fs::read(&skills_zip_path).map_err(|e| AppError::io(&skills_zip_path, e))?;
+    let codex_zip = if settings.sync_codex_data {
+        let codex_zip_path = tmp.path().join(REMOTE_CODEX_ZIP);
+        zip_codex_data(&codex_zip_path)?;
+        Some(fs::read(&codex_zip_path).map_err(|e| AppError::io(&codex_zip_path, e))?)
+    } else {
+        None
+    };
 
     // Build artifact map and compute hashes
     let mut artifacts = BTreeMap::new();
@@ -335,6 +370,15 @@ fn build_local_snapshot(
             size: skills_zip.len() as u64,
         },
     );
+    if let Some(codex_zip) = codex_zip.as_ref() {
+        artifacts.insert(
+            REMOTE_CODEX_ZIP.to_string(),
+            ArtifactMeta {
+                sha256: sha256_hex(codex_zip),
+                size: codex_zip.len() as u64,
+            },
+        );
+    }
 
     let snapshot_id = compute_snapshot_id(&artifacts);
     let manifest = SyncManifest {
@@ -353,6 +397,7 @@ fn build_local_snapshot(
     Ok(LocalSnapshot {
         db_sql,
         skills_zip,
+        codex_zip,
         manifest_bytes,
         manifest_hash,
     })
@@ -591,6 +636,7 @@ fn apply_snapshot(
     db: &crate::database::Database,
     db_sql: &[u8],
     skills_zip: &[u8],
+    codex_zip: Option<&[u8]>,
 ) -> Result<(), AppError> {
     let sql_str = std::str::from_utf8(db_sql).map_err(|e| {
         localized(
@@ -615,6 +661,10 @@ fn apply_snapshot(
             ));
         }
         return Err(db_err);
+    }
+
+    if let Some(codex_zip) = codex_zip {
+        restore_codex_data_zip(codex_zip)?;
     }
 
     Ok(())

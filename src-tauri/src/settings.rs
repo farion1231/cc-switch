@@ -110,6 +110,8 @@ pub struct WebDavSyncSettings {
     #[serde(default)]
     pub auto_sync: bool,
     #[serde(default)]
+    pub sync_codex_data: bool,
+    #[serde(default)]
     pub base_url: String,
     #[serde(default)]
     pub username: String,
@@ -128,6 +130,7 @@ impl Default for WebDavSyncSettings {
         Self {
             enabled: false,
             auto_sync: false,
+            sync_codex_data: false,
             base_url: String::new(),
             username: String::new(),
             password: String::new(),

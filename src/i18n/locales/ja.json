@@ -466,7 +466,7 @@
     },
     "webdavSync": {
       "title": "WebDAV クラウド同期",
-      "description": "WebDAV を使ってデバイス間でデータベースとスキル設定を同期します。",
+      "description": "WebDAV を使ってデバイス間でデータベース、スキル設定、任意の Codex データを同期します。",
       "baseUrl": "WebDAV サーバー URL",
       "baseUrlPlaceholder": "https://example.com/remote.php/dav/files/user",
       "username": "ユーザー名",
@@ -477,6 +477,9 @@
       "profile": "同期プロファイル名",
       "autoSync": "自動同期",
       "autoSyncHint": "有効にすると、データベース変更のたびに WebDAV へ自動アップロードします。",
+      "syncCodexData": "Codex データを同期",
+      "syncCodexDataHint": "セッション、プロジェクト状態、ゴール、config.toml、auth.json を含めます。",
+      "codexDataAuthWarning": "Codex 同期には auth.json が含まれます。WebDAV ストレージに Codex のログイン認証情報が保存されます。",
       "test": "接続テスト",
       "testing": "テスト中...",
       "testSuccess": "接続成功",
@@ -528,6 +531,7 @@
         "artifacts": "内容",
         "legacyNotice": "旧レイアウトのリモートパスを検出しました。復元後、次回のアップロードは新しい v2/db-v6 パスに書き込まれます。",
         "warning": "ローカルのすべてのデータとスキル設定が上書きされます",
+        "codexDataMerge": "Codex データはローカルセッションとマージされ、競合ファイルは置換前にバックアップされます。",
         "confirm": "復元を実行"
       },
       "confirmUpload": {
@@ -535,6 +539,7 @@
         "content": "以下の内容を WebDAV サーバーに同期します：",
         "dbItem": "データベース（すべてのプロバイダー設定とデータ）",
         "skillsItem": "スキル（すべてのカスタムスキル）",
+        "codexDataItem": "Codex データ（セッション、プロジェクト状態、ゴール、config.toml、auth.json）",
         "targetPath": "保存先パス",
         "existingData": "クラウドの既存データ",
         "deviceName": "アップロード元",
