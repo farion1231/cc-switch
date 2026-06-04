@@ -318,6 +318,15 @@ fn normalize_codex_live_config_model_provider_with_anchors<'a>(
         return Ok(config_text.to_string());
     }
 
+    let has_stable_provider_table = doc
+        .get("model_providers")
+        .and_then(|item| item.as_table())
+        .and_then(|table| table.get(stable_provider_id.as_str()))
+        .is_some();
+    if has_stable_provider_table {
+        return Ok(config_text.to_string());
+    }
+
     if let Some(model_providers) = doc
         .get_mut("model_providers")
         .and_then(|item| item.as_table_mut())
@@ -1803,6 +1812,61 @@ command = "npx"
         assert!(
             parsed.get("mcp_servers").is_some(),
             "unrelated config should be preserved"
+        );
+    }
+
+    #[test]
+    fn normalize_live_config_keeps_target_provider_when_anchor_table_would_collide() {
+        let current = r#"model_provider = "rightcode"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+"#;
+        let target = r#"model_provider = "vendor_alpha"
+
+[model_providers.vendor_alpha]
+name = "Vendor Alpha"
+base_url = "https://vendor-alpha.example/v1"
+wire_api = "responses"
+
+[model_providers.rightcode]
+name = "RightCode Profile"
+base_url = "https://profile-rightcode.example/v1"
+wire_api = "responses"
+
+[profiles.work]
+model_provider = "rightcode"
+"#;
+
+        let result =
+            normalize_codex_live_config_model_provider_with_anchors(target, Some(current)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("vendor_alpha")
+        );
+
+        let model_providers = parsed
+            .get("model_providers")
+            .and_then(|v| v.as_table())
+            .expect("model_providers should exist");
+        assert_eq!(
+            model_providers
+                .get("rightcode")
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("https://profile-rightcode.example/v1"),
+            "existing anchor provider table must not be overwritten"
+        );
+        assert_eq!(
+            model_providers
+                .get("vendor_alpha")
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("https://vendor-alpha.example/v1")
         );
     }
 
