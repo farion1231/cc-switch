@@ -37,7 +37,7 @@ export function BudgetRecommendation({ onApply }: BudgetRecommendationProps) {
   // 取最近 7 天数据推算
   const sevenDaysAgo = useMemo(() => {
     const d = new Date();
- d.setDate(d.getDate() - 7);
+    d.setDate(d.getDate() - 7);
     return Math.floor(d.getTime() / 1000);
   }, []);
 
@@ -49,7 +49,11 @@ export function BudgetRecommendation({ onApply }: BudgetRecommendationProps) {
   });
 
   // 基于最近 7 天数据计算推荐
-  const recommendations = useMemo((): { rows: RecRow[]; dailyTokens: number; dailyUsd: number } => {
+  const recommendations = useMemo((): {
+    rows: RecRow[];
+    dailyTokens: number;
+    dailyUsd: number;
+  } => {
     if (!summary) return { rows: [], dailyTokens: 0, dailyUsd: 0 };
 
     const dailyTokens = Math.ceil(summary.realTotalTokens / 7);
@@ -86,7 +90,9 @@ export function BudgetRecommendation({ onApply }: BudgetRecommendationProps) {
     return (
       <div className="flex items-center gap-2 py-3 text-muted-foreground text-sm">
         <Loader2 className="h-4 w-4 animate-spin" />
-        {t("budget.loadingRecommendation", { defaultValue: "正在分析历史消耗..." })}
+        {t("budget.loadingRecommendation", {
+          defaultValue: "正在分析历史消耗...",
+        })}
       </div>
     );
   }
@@ -109,7 +115,9 @@ export function BudgetRecommendation({ onApply }: BudgetRecommendationProps) {
         className="flex items-center gap-2 text-sm font-medium text-amber-600 dark:text-amber-400 hover:opacity-80 transition-opacity"
       >
         <Lightbulb className="h-4 w-4" />
-        {t("budget.recommendationTitle", { defaultValue: "推荐预算（基于近 7 天消耗）" })}
+        {t("budget.recommendationTitle", {
+          defaultValue: "推荐预算（基于近 7 天消耗）",
+        })}
         <Badge variant="outline" className="text-xs font-normal">
           ~{formatTokens(dailyTokens)}/天 · ${dailyUsd.toFixed(2)}/天
         </Badge>
@@ -118,13 +126,20 @@ export function BudgetRecommendation({ onApply }: BudgetRecommendationProps) {
       {showDetails && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {rows.map((row) => (
-            <Card key={row.period} className="bg-card/40 backdrop-blur-sm border border-border/50">
+            <Card
+              key={row.period}
+              className="bg-card/40 backdrop-blur-sm border border-border/50"
+            >
               <CardContent className="p-3 space-y-2">
-                <p className="text-xs font-medium text-muted-foreground">{row.label}</p>
+                <p className="text-xs font-medium text-muted-foreground">
+                  {row.label}
+                </p>
                 <div className="space-y-0.5">
                   <p className="text-sm">
                     <span className="text-muted-foreground">Tokens: </span>
-                    <span className="font-semibold">{formatTokens(row.tokens)}</span>
+                    <span className="font-semibold">
+                      {formatTokens(row.tokens)}
+                    </span>
                   </p>
                   <p className="text-sm">
                     <span className="text-muted-foreground">USD: </span>

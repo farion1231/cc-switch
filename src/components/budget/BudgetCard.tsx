@@ -6,10 +6,7 @@ import { Switch } from "@/components/ui/switch";
 import { Pencil, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { BudgetStatus } from "@/types/budget";
-import {
-  SCOPE_LABEL_KEYS,
-  PERIOD_LABEL_KEYS,
-} from "@/types/budget";
+import { SCOPE_LABEL_KEYS, PERIOD_LABEL_KEYS } from "@/types/budget";
 
 interface BudgetCardProps {
   status: BudgetStatus;
@@ -47,7 +44,15 @@ export function BudgetCard({
   onToggleEnabled,
 }: BudgetCardProps) {
   const { t } = useTranslation();
-  const { budget, consumedTokens, consumedUsd, pctTokens, pctUsd, remainingTokens, remainingUsd } = status;
+  const {
+    budget,
+    consumedTokens,
+    consumedUsd,
+    pctTokens,
+    pctUsd,
+    remainingTokens,
+    remainingUsd,
+  } = status;
   const isOverTokens = (pctTokens ?? 0) > 1;
   const isOverUsd = (pctUsd ?? 0) > 1;
 
@@ -78,10 +83,20 @@ export function BudgetCard({
             onCheckedChange={onToggleEnabled}
             className="scale-75"
           />
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onEdit}>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={onEdit}
+          >
             <Pencil className="h-3.5 w-3.5" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={onDelete}>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-destructive"
+            onClick={onDelete}
+          >
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
         </div>
@@ -102,17 +117,28 @@ export function BudgetCard({
               Tokens: {t("budget.consumed")} {formatTokens(consumedTokens)}
             </span>
             <span className={cn(isOverTokens && "text-red-500 font-medium")}>
-              {formatTokens(consumedTokens)} / {formatTokens(budget.limitTokens)}
+              {formatTokens(consumedTokens)} /{" "}
+              {formatTokens(budget.limitTokens)}
             </span>
           </div>
           <div className="h-2 rounded-full bg-muted overflow-hidden">
             <div
-              className={cn("h-full rounded-full transition-all duration-500", progressColor(pctTokens))}
+              className={cn(
+                "h-full rounded-full transition-all duration-500",
+                progressColor(pctTokens),
+              )}
               style={{ width: `${Math.min((pctTokens ?? 0) * 100, 100)}%` }}
             />
           </div>
           {remainingTokens !== undefined && (
-            <p className={cn("text-xs", isOverTokens ? "text-red-500 font-medium" : "text-muted-foreground")}>
+            <p
+              className={cn(
+                "text-xs",
+                isOverTokens
+                  ? "text-red-500 font-medium"
+                  : "text-muted-foreground",
+              )}
+            >
               {isOverTokens
                 ? t("budget.overBudget")
                 : `${t("budget.remaining")} ${formatTokens(remainingTokens)}`}
@@ -134,12 +160,22 @@ export function BudgetCard({
           </div>
           <div className="h-2 rounded-full bg-muted overflow-hidden">
             <div
-              className={cn("h-full rounded-full transition-all duration-500", progressColor(pctUsd))}
+              className={cn(
+                "h-full rounded-full transition-all duration-500",
+                progressColor(pctUsd),
+              )}
               style={{ width: `${Math.min((pctUsd ?? 0) * 100, 100)}%` }}
             />
           </div>
           {remainingUsd !== undefined && (
-            <p className={cn("text-xs", isOverUsd ? "text-red-500 font-medium" : "text-muted-foreground")}>
+            <p
+              className={cn(
+                "text-xs",
+                isOverUsd
+                  ? "text-red-500 font-medium"
+                  : "text-muted-foreground",
+              )}
+            >
               {isOverUsd
                 ? t("budget.overBudget")
                 : `${t("budget.remaining")} ${formatUsd(remainingUsd)}`}

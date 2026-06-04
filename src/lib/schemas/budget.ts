@@ -6,9 +6,10 @@ export const budgetSchema = z
     scope: z.enum(["global", "app", "provider", "model"]),
     scopeValue: z.string().optional(),
     period: z.enum(["daily", "weekly", "monthly"]),
-    periodStartDay: z.number().default(1),
+    periodStartDay: z.number().int().default(1),
     limitTokens: z
       .number()
+      .int("budget.validation.tokensInteger")
       .positive("budget.validation.tokensPositive")
       .optional(),
     limitUsd: z
@@ -74,4 +75,4 @@ export const budgetSchema = z
     }
   });
 
-export type BudgetFormData = z.infer<typeof budgetSchema>;
+export type BudgetFormData = z.input<typeof budgetSchema>;

@@ -3,12 +3,19 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Plus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { useBudgetStatuses, useDeleteBudget, useUpdateBudget } from "@/lib/query/budget";
+import {
+  useBudgetStatuses,
+  useDeleteBudget,
+  useUpdateBudget,
+} from "@/lib/query/budget";
 import type { TokenBudget } from "@/types/budget";
 import { BudgetCard } from "./BudgetCard";
 import { BudgetEditor } from "./BudgetEditor";
 import { BudgetDeleteDialog } from "./BudgetDeleteDialog";
-import { BudgetRecommendation, type Recommendation } from "./BudgetRecommendation";
+import {
+  BudgetRecommendation,
+  type Recommendation,
+} from "./BudgetRecommendation";
 
 export function BudgetList() {
   const { t } = useTranslation();
@@ -19,7 +26,9 @@ export function BudgetList() {
   // Editor state
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingBudget, setEditingBudget] = useState<TokenBudget | undefined>();
-  const [recommendation, setRecommendation] = useState<Recommendation | undefined>();
+  const [recommendation, setRecommendation] = useState<
+    Recommendation | undefined
+  >();
 
   // Delete dialog state
   const [deleteTarget, setDeleteTarget] = useState<TokenBudget | null>(null);

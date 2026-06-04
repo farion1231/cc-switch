@@ -22,10 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { budgetSchema, type BudgetFormData } from "@/lib/schemas/budget";
-import {
-  useCreateBudget,
-  useUpdateBudget,
-} from "@/lib/query/budget";
+import { useCreateBudget, useUpdateBudget } from "@/lib/query/budget";
 import { useModelPricing } from "@/lib/query/usage";
 import { useProvidersQuery } from "@/lib/query/queries";
 import { KNOWN_APP_TYPES } from "@/types/usage";
@@ -46,7 +43,12 @@ interface BudgetEditorProps {
   };
 }
 
-export function BudgetEditor({ open, onOpenChange, budget, recommendation }: BudgetEditorProps) {
+export function BudgetEditor({
+  open,
+  onOpenChange,
+  budget,
+  recommendation,
+}: BudgetEditorProps) {
   const { t } = useTranslation();
   const isEdit = !!budget;
   const createMutation = useCreateBudget();
@@ -62,12 +64,17 @@ export function BudgetEditor({ open, onOpenChange, budget, recommendation }: Bud
   const providers = useMemo(() => {
     const seen = new Set<string>();
     const list: { id: string; name: string; appType: string }[] = [];
-    for (const data of [claudeProviders, codexProviders, geminiProviders]) {
+    const providerSources = [
+      { data: claudeProviders, appType: "claude" },
+      { data: codexProviders, appType: "codex" },
+      { data: geminiProviders, appType: "gemini" },
+    ];
+    for (const { data, appType } of providerSources) {
       if (!data?.providers) continue;
       for (const [id, p] of Object.entries(data.providers)) {
         if (!seen.has(id)) {
           seen.add(id);
-          list.push({ id, name: p.name || id, appType: data.appType || "" });
+          list.push({ id, name: p.name || id, appType });
         }
       }
     }
@@ -83,7 +90,11 @@ export function BudgetEditor({ open, onOpenChange, budget, recommendation }: Bud
   }, [modelPricing]);
 
   const apps = useMemo(
-    () => KNOWN_APP_TYPES.map((a) => ({ id: a, name: a.charAt(0).toUpperCase() + a.slice(1) })),
+    () =>
+      KNOWN_APP_TYPES.map((a) => ({
+        id: a,
+        name: a.charAt(0).toUpperCase() + a.slice(1),
+      })),
     [],
   );
 
@@ -157,6 +168,9 @@ export function BudgetEditor({ open, onOpenChange, budget, recommendation }: Bud
 
   const onSubmit = async (data: BudgetFormData) => {
     try {
+      // daily 周期一律用 1，避免 hidden input 残留 NaN
+      const periodStartDay =
+        data.period === "daily" ? 1 : (data.periodStartDay ?? 1);
       if (isEdit && budget) {
         await updateMutation.mutateAsync({
           id: budget.id,
@@ -164,11 +178,9 @@ export function BudgetEditor({ open, onOpenChange, budget, recommendation }: Bud
             name: data.name,
             scope: data.scope,
             scopeValue:
-              data.scope === "global"
-                ? null
-                : data.scopeValue || null,
+              data.scope === "global" ? null : data.scopeValue || null,
             period: data.period,
-            periodStartDay: data.periodStartDay,
+            periodStartDay,
             limitTokens: data.limitTokens ?? null,
             limitUsd: data.limitUsd || null,
             enabled: data.enabled,
@@ -183,7 +195,7 @@ export function BudgetEditor({ open, onOpenChange, budget, recommendation }: Bud
               ? data.scopeValue
               : undefined,
           period: data.period,
-          periodStartDay: data.periodStartDay,
+          periodStartDay,
           limitTokens: data.limitTokens,
           limitUsd: data.limitUsd || undefined,
           enabled: data.enabled,
@@ -192,9 +204,7 @@ export function BudgetEditor({ open, onOpenChange, budget, recommendation }: Bud
       toast.success(t("budget.saved"));
       onOpenChange(false);
     } catch (e: unknown) {
-      toast.error(
-        e instanceof Error ? e.message : String(e),
-      );
+      toast.error(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -220,9 +230,10 @@ export function BudgetEditor({ open, onOpenChange, budget, recommendation }: Bud
             </SelectTrigger>
             <SelectContent className="max-h-48">
               {items.map((item) => {
-                const itemValue = scope === "provider" && item.appType
-                  ? `${item.appType}:${item.id}`
-                  : item.id;
+                const itemValue =
+                  scope === "provider" && item.appType
+                    ? `${item.appType}:${item.id}`
+                    : item.id;
                 return (
                   <SelectItem key={item.id} value={itemValue}>
                     {scope === "provider" && item.appType
@@ -278,18 +289,21 @@ export function BudgetEditor({ open, onOpenChange, budget, recommendation }: Bud
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>{t("budget.scope")}</Label>
-              <Select
-                value={scope}
-                onValueChange={handleScopeChange}
-              >
+              <Select value={scope} onValueChange={handleScopeChange}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="global">{t("budget.scopeGlobal")}</SelectItem>
+                  <SelectItem value="global">
+                    {t("budget.scopeGlobal")}
+                  </SelectItem>
                   <SelectItem value="app">{t("budget.scopeApp")}</SelectItem>
-                  <SelectItem value="provider">{t("budget.scopeProvider")}</SelectItem>
-                  <SelectItem value="model">{t("budget.scopeModel")}</SelectItem>
+                  <SelectItem value="provider">
+                    {t("budget.scopeProvider")}
+                  </SelectItem>
+                  <SelectItem value="model">
+                    {t("budget.scopeModel")}
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -298,15 +312,23 @@ export function BudgetEditor({ open, onOpenChange, budget, recommendation }: Bud
               <Label>{t("budget.period")}</Label>
               <Select
                 value={period}
-                onValueChange={(v) => setValue("period", v as BudgetFormData["period"])}
+                onValueChange={(v) =>
+                  setValue("period", v as BudgetFormData["period"])
+                }
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="daily">{t("budget.periodDaily")}</SelectItem>
-                  <SelectItem value="weekly">{t("budget.periodWeekly")}</SelectItem>
-                  <SelectItem value="monthly">{t("budget.periodMonthly")}</SelectItem>
+                  <SelectItem value="daily">
+                    {t("budget.periodDaily")}
+                  </SelectItem>
+                  <SelectItem value="weekly">
+                    {t("budget.periodWeekly")}
+                  </SelectItem>
+                  <SelectItem value="monthly">
+                    {t("budget.periodMonthly")}
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>
