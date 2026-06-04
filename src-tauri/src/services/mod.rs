@@ -31,6 +31,7 @@ pub mod webdav_sync;
 
 pub use config::ConfigService;
 pub use mcp::McpService;
+pub use model_fetch::ModelFetchStrategy;
 pub use omo::OmoService;
 pub use prompt::PromptService;
 pub use provider::{ProviderService, ProviderSortUpdate, SwitchResult};
