@@ -265,6 +265,7 @@ export interface RectifierConfig {
   enabled: boolean;
   requestThinkingSignature: boolean;
   requestThinkingBudget: boolean;
+  normalizeSystemMessages: boolean;
 }
 
 export interface OptimizerConfig {

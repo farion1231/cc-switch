@@ -1156,6 +1156,52 @@ impl RequestForwarder {
             adapter.build_url(&base_url, &effective_endpoint)
         };
 
+        // Claude Code >= 2.1.154 ("Lean system prompt") may send the system prompt
+        // as `role: "system"` messages inside `messages` instead of the top-level
+        // `system` field. Normalize to the top-level field so all transform paths
+        // and passthrough upstream providers handle it correctly.
+        let mapped_body = if self.rectifier_config.enabled && self.rectifier_config.normalize_system_messages {
+            let before = mapped_body.clone();
+            let normalized = super::providers::transform::normalize_system_messages(mapped_body);
+
+            // Log if normalization actually happened
+            if before != normalized {
+                let system_count = before
+                    .get("messages")
+                    .and_then(|m| m.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter(|msg| msg.get("role").and_then(|r| r.as_str()) == Some("system"))
+                            .count()
+                    })
+                    .unwrap_or(0);
+
+                let system_type = match normalized.get("system") {
+                    Some(serde_json::Value::String(_)) => "string",
+                    Some(serde_json::Value::Array(_)) => "array",
+                    _ => "none",
+                };
+
+                log::info!(
+                    "[Rectifier] System messages normalized: moved {} system message(s) from messages array to top-level system field (system type: {})",
+                    system_count,
+                    system_type
+                );
+
+                // DEBUG: Log the actual system field structure
+                if let Some(system) = normalized.get("system") {
+                    log::debug!(
+                        "[Rectifier] Normalized system field: {}",
+                        serde_json::to_string_pretty(system).unwrap_or_else(|_| format!("{:?}", system))
+                    );
+                }
+            }
+
+            normalized
+        } else {
+            mapped_body
+        };
+
         // 转换请求体（如果需要）
         let request_body = if codex_responses_to_chat {
             let mut mapped_body = mapped_body;

@@ -15,6 +15,7 @@ export function RectifierConfigPanel() {
     enabled: true,
     requestThinkingSignature: true,
     requestThinkingBudget: true,
+    normalizeSystemMessages: true,
   });
   const [optimizerConfig, setOptimizerConfig] = useState<OptimizerConfig>({
     enabled: false,
@@ -108,6 +109,25 @@ export function RectifierConfigPanel() {
             disabled={!config.enabled}
             onCheckedChange={(checked) =>
               handleChange({ requestThinkingBudget: checked })
+            }
+          />
+        </div>
+        <div className="flex items-center justify-between pl-4">
+          <div className="space-y-0.5">
+            <Label>
+              {t("settings.advanced.rectifier.normalizeSystemMessages")}
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              {t(
+                "settings.advanced.rectifier.normalizeSystemMessagesDescription",
+              )}
+            </p>
+          </div>
+          <Switch
+            checked={config.normalizeSystemMessages}
+            disabled={!config.enabled}
+            onCheckedChange={(checked) =>
+              handleChange({ normalizeSystemMessages: checked })
             }
           />
         </div>

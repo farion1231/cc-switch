@@ -367,7 +367,9 @@
         "thinkingSignature": "Thinking 署名整流",
         "thinkingSignatureDescription": "Anthropic タイプのプロバイダーが thinking 署名の非互換性や不正なリクエストエラーを返した場合、互換性のない thinking 関連ブロックを自動削除し、同じプロバイダーで 1 回リトライします",
         "thinkingBudget": "Thinking Budget 整流",
-        "thinkingBudgetDescription": "Anthropic タイプのプロバイダーが budget_tokens 制約エラー（例: 1024 以上）を返した場合、thinking を enabled に正規化し、thinking 予算を 32000 に設定し、必要に応じて max_tokens を 64000 に引き上げて 1 回リトライします"
+        "thinkingBudgetDescription": "Anthropic タイプのプロバイダーが budget_tokens 制約エラー（例: 1024 以上）を返した場合、thinking を enabled に正規化し、thinking 予算を 32000 に設定し、必要に応じて max_tokens を 64000 に引き上げて 1 回リトライします",
+        "normalizeSystemMessages": "System メッセージ正規化",
+        "normalizeSystemMessagesDescription": "Claude Code ≥ 2.1.154 の role:system メッセージをトップレベルの system フィールドに昇格させ、この形式をサポートしないサードパーティ Provider との互換性を確保"
       },
       "optimizer": {
         "title": "Bedrock リクエストオプティマイザー",

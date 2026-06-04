@@ -498,6 +498,118 @@ fn convert_message_to_openai(
     Ok(result)
 }
 
+/// Extract `role: "system"` messages from the `messages` array and promote them
+/// to the top-level `system` field.
+///
+/// Claude Code >= 2.1.154 ("Lean system prompt becomes default") may send the
+/// system prompt as `role: "system"` messages inside `messages` instead of the
+/// top-level `system` field. Most third-party providers — and the Anthropic API
+/// spec itself — do not support `role: "system"` in the messages array. This
+/// function extracts such messages and merges them into the standard top-level
+/// `system` field so that all downstream transform paths (anthropic passthrough,
+/// openai_chat, openai_responses, gemini_native) handle them correctly.
+///
+/// The function is a no-op when no `role: "system"` messages are present.
+pub fn normalize_system_messages(mut body: Value) -> Value {
+    // Quick check: are there any system messages in the array?
+    let has_system_in_messages = body
+        .get("messages")
+        .and_then(|m| m.as_array())
+        .is_some_and(|msgs| {
+            msgs.iter()
+                .any(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+        });
+
+    if !has_system_in_messages {
+        return body;
+    }
+
+    // Extract system message contents from the messages array
+    let mut extracted_parts: Vec<Value> = Vec::new();
+    if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
+        messages.retain(|msg| {
+            if msg.get("role").and_then(|r| r.as_str()) != Some("system") {
+                return true;
+            }
+
+            // Extract content from this system message
+            if let Some(content) = msg.get("content") {
+                match content {
+                    Value::String(text) => {
+                        let text = strip_leading_anthropic_billing_header(text);
+                        if !text.is_empty() {
+                            extracted_parts.push(json!({"text": text}));
+                        }
+                    }
+                    Value::Array(blocks) => {
+                        for block in blocks {
+                            if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                                let text = strip_leading_anthropic_billing_header(text);
+                                if !text.is_empty() {
+                                    let mut part = json!({"text": text});
+                                    // Preserve cache_control for proxy cache compatibility
+                                    if let Some(cc) = block.get("cache_control") {
+                                        part["cache_control"] = cc.clone();
+                                    }
+                                    extracted_parts.push(part);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            false // remove from messages array
+        });
+    }
+
+    if extracted_parts.is_empty() {
+        return body;
+    }
+
+    // Merge extracted parts with existing top-level system
+    // Always produce a string format for maximum provider compatibility
+    let existing_system = body.get("system").cloned();
+
+    // Collect all text parts (existing + extracted)
+    let mut all_texts: Vec<String> = Vec::new();
+
+    // Add existing system text
+    match existing_system {
+        Some(Value::String(text)) => {
+            if !text.is_empty() {
+                all_texts.push(text);
+            }
+        }
+        Some(Value::Array(arr)) => {
+            for part in arr {
+                if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                    if !text.is_empty() {
+                        all_texts.push(text.to_string());
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    // Add extracted text parts
+    for part in &extracted_parts {
+        if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+            if !text.is_empty() {
+                all_texts.push(text.to_string());
+            }
+        }
+    }
+
+    // Always use string format for maximum compatibility
+    if !all_texts.is_empty() {
+        body["system"] = json!(all_texts.join("\n\n"));
+    }
+
+    body
+}
+
 /// 清理 JSON schema（移除不支持的 format）
 pub fn clean_schema(mut schema: Value) -> Value {
     if let Some(obj) = schema.as_object_mut() {
@@ -1621,5 +1733,122 @@ mod tests {
             run_tool_choice(json!({"type": "tool", "name": "search"})),
             json!({"type": "function", "function": {"name": "search"}}),
         );
+    }
+
+    // --- normalize_system_messages tests ---
+
+    #[test]
+    fn normalize_system_messages_noop_when_no_system_in_messages() {
+        let body = json!({
+            "model": "claude-3-opus",
+            "system": "You are helpful.",
+            "messages": [
+                {"role": "user", "content": "Hello"}
+            ]
+        });
+        let result = normalize_system_messages(body.clone());
+        assert_eq!(result, body);
+    }
+
+    #[test]
+    fn normalize_system_messages_extracts_string_system_to_top_level() {
+        let body = json!({
+            "model": "claude-3-opus",
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "Hello"}
+            ]
+        });
+        let result = normalize_system_messages(body);
+        assert_eq!(result["system"], "You are a helpful assistant.");
+        assert_eq!(result["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(result["messages"][0]["role"], "user");
+    }
+
+    #[test]
+    fn normalize_system_messages_extracts_array_system_to_top_level() {
+        let body = json!({
+            "model": "claude-3-opus",
+            "messages": [
+                {"role": "system", "content": [
+                    {"type": "text", "text": "You are a helpful assistant."}
+                ]},
+                {"role": "user", "content": "Hello"}
+            ]
+        });
+        let result = normalize_system_messages(body);
+        // Single part without cache_control → promoted to string
+        assert_eq!(result["system"], "You are a helpful assistant.");
+        assert_eq!(result["messages"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn normalize_system_messages_merges_with_existing_string_system() {
+        let body = json!({
+            "model": "claude-3-opus",
+            "system": "Existing system prompt.",
+            "messages": [
+                {"role": "system", "content": "Additional system prompt."},
+                {"role": "user", "content": "Hello"}
+            ]
+        });
+        let result = normalize_system_messages(body);
+        // Both should be joined as a string
+        assert_eq!(
+            result["system"],
+            "Existing system prompt.\n\nAdditional system prompt."
+        );
+        assert_eq!(result["messages"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn normalize_system_messages_extracts_cache_control_as_string() {
+        let body = json!({
+            "model": "claude-3-opus",
+            "messages": [
+                {"role": "system", "content": [
+                    {"type": "text", "text": "Cached system prompt.", "cache_control": {"type": "ephemeral"}}
+                ]},
+                {"role": "user", "content": "Hello"}
+            ]
+        });
+        let result = normalize_system_messages(body);
+        // cache_control is dropped for maximum compatibility
+        assert_eq!(result["system"], "Cached system prompt.");
+    }
+
+    #[test]
+    fn normalize_system_messages_strips_billing_header() {
+        let body = json!({
+            "model": "claude-3-opus",
+            "messages": [
+                {"role": "system", "content": "x-anthropic-billing-header: cc_version=2.1.154; cch=abc;\n\nYou are helpful."},
+                {"role": "user", "content": "Hello"}
+            ]
+        });
+        let result = normalize_system_messages(body);
+        assert_eq!(result["system"], "You are helpful.");
+    }
+
+    #[test]
+    fn normalize_system_messages_multiple_system_messages_merged() {
+        let body = json!({
+            "model": "claude-3-opus",
+            "messages": [
+                {"role": "system", "content": "Part 1."},
+                {"role": "system", "content": "Part 2."},
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi"},
+                {"role": "system", "content": "Part 3."}
+            ]
+        });
+        let result = normalize_system_messages(body);
+        // All parts joined as a string
+        assert_eq!(result["system"], "Part 1.\n\nPart 2.\n\nPart 3.");
+        // Only user and assistant messages remain
+        let messages = result["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[1]["role"], "assistant");
     }
 }
