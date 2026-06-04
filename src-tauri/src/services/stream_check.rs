@@ -376,7 +376,8 @@ impl StreamCheckService {
             anthropic_to_gemini(anthropic_body)
                 .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
         } else if is_openai_chat {
-            anthropic_to_openai(anthropic_body)
+            let stream_include_usage = provider.stream_include_usage();
+            anthropic_to_openai(anthropic_body, stream_include_usage)
                 .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
         } else {
             anthropic_body
