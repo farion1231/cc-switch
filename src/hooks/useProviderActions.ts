@@ -8,6 +8,7 @@ import type {
   UsageScript,
   OpenClawProviderConfig,
   OpenClawDefaultModel,
+  ProviderMeta,
 } from "@/types";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import { injectCodingPlanUsageScript } from "@/config/codingPlanProviders";
@@ -292,14 +293,57 @@ export function useProviderActions(
 
   // 保存用量脚本
   const saveUsageScript = useCallback(
-    async (provider: Provider, script: UsageScript) => {
+    async (
+      provider: Provider,
+      script: UsageScript,
+      opencodeGoMeta?: {
+        workspaceId?: string;
+        authCookie?: string;
+        showRolling?: boolean;
+        showWeekly?: boolean;
+        showMonthly?: boolean;
+      },
+    ) => {
       try {
+        const nextMeta: ProviderMeta = {
+          ...provider.meta,
+          usage_script: script,
+        };
+
+        if (script.enabled && script.templateType === "opencode_go") {
+          nextMeta.opencodeGoWorkspaceId =
+            opencodeGoMeta?.workspaceId?.trim() || undefined;
+          const showRolling =
+            opencodeGoMeta?.showRolling ?? provider.meta?.opencodeGoShowRolling;
+          const showWeekly =
+            opencodeGoMeta?.showWeekly ?? provider.meta?.opencodeGoShowWeekly;
+          const showMonthly =
+            opencodeGoMeta?.showMonthly ?? provider.meta?.opencodeGoShowMonthly;
+
+          if (showRolling !== undefined) {
+            nextMeta.opencodeGoShowRolling = showRolling;
+          }
+          if (showWeekly !== undefined) {
+            nextMeta.opencodeGoShowWeekly = showWeekly;
+          }
+          if (showMonthly !== undefined) {
+            nextMeta.opencodeGoShowMonthly = showMonthly;
+          }
+          const authCookie = opencodeGoMeta?.authCookie?.trim();
+          if (authCookie) {
+            nextMeta.opencodeGoAuthCookie = authCookie;
+          }
+        } else {
+          delete nextMeta.opencodeGoWorkspaceId;
+          delete nextMeta.opencodeGoAuthCookie;
+          delete nextMeta.opencodeGoShowRolling;
+          delete nextMeta.opencodeGoShowWeekly;
+          delete nextMeta.opencodeGoShowMonthly;
+        }
+
         const updatedProvider: Provider = {
           ...provider,
-          meta: {
-            ...provider.meta,
-            usage_script: script,
-          },
+          meta: nextMeta,
         };
 
         await providersApi.update(updatedProvider, activeApp);

@@ -419,6 +419,86 @@ describe("useProviderActions", () => {
     expect(toastSuccessMock).toHaveBeenCalledTimes(1);
   });
 
+  it("should clear stale OpenCode Go credentials when saving a different template", async () => {
+    providersApiUpdateMock.mockResolvedValueOnce(true);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      meta: {
+        usage_script: {
+          enabled: true,
+          language: "javascript",
+          code: "",
+          templateType: "opencode_go",
+        },
+        opencodeGoWorkspaceId: "workspace_123",
+        opencodeGoAuthCookie: "session=secret",
+      },
+    });
+    const script: UsageScript = {
+      enabled: true,
+      language: "javascript",
+      code: "return { success: true };",
+      templateType: "general",
+    };
+
+    const { result } = renderHook(() => useProviderActions("claude"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.saveUsageScript(provider, script);
+    });
+
+    expect(providersApiUpdateMock).toHaveBeenCalledWith(
+      {
+        ...provider,
+        meta: {
+          usage_script: script,
+        },
+      },
+      "claude",
+    );
+  });
+
+  it("should preserve saved OpenCode Go auth cookie when the input is empty", async () => {
+    providersApiUpdateMock.mockResolvedValueOnce(true);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      meta: {
+        opencodeGoAuthCookie: "__cc_switch_saved_opencode_go_auth_cookie__",
+      },
+    });
+    const script: UsageScript = {
+      enabled: true,
+      language: "javascript",
+      code: "",
+      templateType: "opencode_go",
+    };
+
+    const { result } = renderHook(() => useProviderActions("claude"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.saveUsageScript(provider, script, {
+        workspaceId: " workspace_123 ",
+        authCookie: "   ",
+      });
+    });
+
+    expect(providersApiUpdateMock).toHaveBeenCalledWith(
+      {
+        ...provider,
+        meta: {
+          ...provider.meta,
+          usage_script: script,
+          opencodeGoWorkspaceId: "workspace_123",
+        },
+      },
+      "claude",
+    );
+  });
+
   it("should show error toast when saveUsageScript fails with error message", async () => {
     providersApiUpdateMock.mockRejectedValueOnce(new Error("Save failed"));
     const { wrapper } = createWrapper();

@@ -42,6 +42,28 @@ function toQuotaTier(data: UsageData): QuotaTier {
   };
 }
 
+function filterOpenCodeGoUsage(
+  data: UsageData[],
+  provider: Provider,
+): UsageData[] {
+  if (provider.meta?.usage_script?.templateType !== "opencode_go") {
+    return data;
+  }
+
+  return data.filter((item) => {
+    if (item.planName === "5h Rolling") {
+      return provider.meta?.opencodeGoShowRolling !== false;
+    }
+    if (item.planName === "Weekly") {
+      return provider.meta?.opencodeGoShowWeekly !== false;
+    }
+    if (item.planName === "Monthly") {
+      return provider.meta?.opencodeGoShowMonthly !== false;
+    }
+    return true;
+  });
+}
+
 const UsageFooter: React.FC<UsageFooterProps> = ({
   provider,
   providerId,
@@ -52,8 +74,9 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   inline = false,
 }) => {
   const { t } = useTranslation();
-  const isTokenPlan =
-    provider.meta?.usage_script?.templateType === "token_plan";
+  const isPercentageQuota = ["token_plan", "opencode_go"].includes(
+    provider.meta?.usage_script?.templateType || "",
+  );
 
   // 统一的用量查询（自动查询仅对当前激活的供应商启用）
   // OpenCode（累加模式）：使用 isInConfig 代替 isCurrent
@@ -132,13 +155,13 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
     );
   }
 
-  const usageDataList = usage.data || [];
+  const usageDataList = filterOpenCodeGoUsage(usage.data || [], provider);
 
   // 无数据时不显示
   if (usageDataList.length === 0) return null;
 
-  // ── Token Plan：订阅风格内联渲染（百分比徽章 + 倒计时） ──
-  if (isTokenPlan && inline) {
+  // ── 百分比配额：订阅风格内联渲染（百分比徽章 + 倒计时） ──
+  if (isPercentageQuota && inline) {
     return (
       <div className="flex flex-col items-end gap-1 text-xs whitespace-nowrap flex-shrink-0">
         {/* 第一行：查询时间 + 刷新 */}

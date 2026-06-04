@@ -235,10 +235,11 @@ export function ProviderCard({
     autoQueryInterval,
   });
 
-  const isTokenPlan =
-    provider.meta?.usage_script?.templateType === "token_plan";
+  const isPercentageQuota = ["token_plan", "opencode_go"].includes(
+    provider.meta?.usage_script?.templateType || "",
+  );
   const hasMultiplePlans =
-    usage?.success && usage.data && usage.data.length > 1 && !isTokenPlan;
+    usage?.success && usage.data && usage.data.length > 1 && !isPercentageQuota;
 
   const [isExpanded, setIsExpanded] = useState(false);
 

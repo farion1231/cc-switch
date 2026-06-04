@@ -476,6 +476,36 @@ pub struct ProviderMeta {
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
+    /// OpenCode Go 工作區 ID（用於用量查詢）
+    #[serde(
+        rename = "opencodeGoWorkspaceId",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub opencode_go_workspace_id: Option<String>,
+    /// OpenCode Go 認證 Cookie（用於用量查詢，僅在 Rust 端使用）
+    #[serde(
+        rename = "opencodeGoAuthCookie",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub opencode_go_auth_cookie: Option<String>,
+    /// OpenCode Go 顯示 5h Rolling 用量（預設顯示）
+    #[serde(
+        rename = "opencodeGoShowRolling",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub opencode_go_show_rolling: Option<bool>,
+    /// OpenCode Go 顯示 Weekly 用量（預設顯示）
+    #[serde(
+        rename = "opencodeGoShowWeekly",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub opencode_go_show_weekly: Option<bool>,
+    /// OpenCode Go 顯示 Monthly 用量（預設顯示）
+    #[serde(
+        rename = "opencodeGoShowMonthly",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub opencode_go_show_monthly: Option<bool>,
 }
 
 impl ProviderMeta {
@@ -930,6 +960,68 @@ mod tests {
         let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
 
         assert!(value.get("pricingModelSource").is_none());
+    }
+
+    #[test]
+    fn provider_meta_serializes_opencode_go_credentials() {
+        let meta = ProviderMeta {
+            opencode_go_workspace_id: Some("ws_123".to_string()),
+            opencode_go_auth_cookie: Some("session=secret".to_string()),
+            opencode_go_show_rolling: Some(true),
+            opencode_go_show_weekly: Some(false),
+            opencode_go_show_monthly: Some(true),
+            ..ProviderMeta::default()
+        };
+
+        let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
+
+        assert_eq!(
+            value
+                .get("opencodeGoWorkspaceId")
+                .and_then(|item| item.as_str()),
+            Some("ws_123")
+        );
+        assert_eq!(
+            value
+                .get("opencodeGoAuthCookie")
+                .and_then(|item| item.as_str()),
+            Some("session=secret")
+        );
+        assert_eq!(
+            value
+                .get("opencodeGoShowRolling")
+                .and_then(|item| item.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            value
+                .get("opencodeGoShowWeekly")
+                .and_then(|item| item.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            value
+                .get("opencodeGoShowMonthly")
+                .and_then(|item| item.as_bool()),
+            Some(true)
+        );
+        assert!(value.get("opencode_go_workspace_id").is_none());
+        assert!(value.get("opencode_go_auth_cookie").is_none());
+        assert!(value.get("opencode_go_show_rolling").is_none());
+        assert!(value.get("opencode_go_show_weekly").is_none());
+        assert!(value.get("opencode_go_show_monthly").is_none());
+    }
+
+    #[test]
+    fn provider_meta_omits_opencode_go_credentials_when_none() {
+        let meta = ProviderMeta::default();
+        let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
+
+        assert!(value.get("opencodeGoWorkspaceId").is_none());
+        assert!(value.get("opencodeGoAuthCookie").is_none());
+        assert!(value.get("opencodeGoShowRolling").is_none());
+        assert!(value.get("opencodeGoShowWeekly").is_none());
+        assert!(value.get("opencodeGoShowMonthly").is_none());
     }
 
     #[test]

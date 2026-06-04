@@ -50,6 +50,7 @@ import { useLastValidValue } from "@/hooks/useLastValidValue";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { deepClone } from "@/utils/deepClone";
+import { sanitizeProviderMetaForDuplicate } from "@/utils/providerMetaUtils";
 import { cn } from "@/lib/utils";
 import {
   isWindows,
@@ -691,7 +692,7 @@ function App() {
       websiteUrl: provider.websiteUrl,
       category: provider.category,
       sortIndex: newSortIndex, // 复制原 sortIndex + 1
-      meta: provider.meta ? deepClone(provider.meta) : undefined,
+      meta: sanitizeProviderMetaForDuplicate(provider.meta),
       icon: provider.icon,
       iconColor: provider.iconColor,
     };
@@ -1559,9 +1560,9 @@ function App() {
           appId={activeApp}
           isOpen={Boolean(usageProvider)}
           onClose={() => setUsageProvider(null)}
-          onSave={(script) => {
+          onSave={(script, opencodeGoMeta) => {
             if (usageProvider) {
-              void saveUsageScript(usageProvider, script);
+              void saveUsageScript(usageProvider, script, opencodeGoMeta);
             }
           }}
         />

@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { cn } from "@/lib/utils";
@@ -35,7 +36,16 @@ interface UsageScriptModalProps {
   appId: AppId;
   isOpen: boolean;
   onClose: () => void;
-  onSave: (script: UsageScript) => void;
+  onSave: (
+    script: UsageScript,
+    opencodeGoMeta?: {
+      workspaceId?: string;
+      authCookie?: string;
+      showRolling?: boolean;
+      showWeekly?: boolean;
+      showMonthly?: boolean;
+    },
+  ) => void;
 }
 
 // 生成预设模板的函数（支持国际化）
@@ -108,6 +118,9 @@ const generatePresetTemplates = (
   // Coding Plan 模板不需要脚本，使用专用 Rust 查询
   [TEMPLATE_TYPES.TOKEN_PLAN]: "",
 
+  // OpenCode Go 模板不需要脚本，使用专用 Rust 查询
+  [TEMPLATE_TYPES.OPENCODE_GO]: "",
+
   // 官方余额查询模板不需要脚本，使用专用 Rust 查询
   [TEMPLATE_TYPES.BALANCE]: "",
 });
@@ -119,6 +132,7 @@ const TEMPLATE_NAME_KEYS: Record<string, string> = {
   [TEMPLATE_TYPES.NEW_API]: "usageScript.templateNewAPI",
   [TEMPLATE_TYPES.GITHUB_COPILOT]: "usageScript.templateCopilot",
   [TEMPLATE_TYPES.TOKEN_PLAN]: "usageScript.templateTokenPlan",
+  [TEMPLATE_TYPES.OPENCODE_GO]: "usageScript.templateOpenCodeGo",
   [TEMPLATE_TYPES.BALANCE]: "usageScript.templateBalance",
 };
 
@@ -272,6 +286,35 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
   const [testing, setTesting] = useState(false);
 
+  // OpenCode Go credential state
+  const [opencodeGoWorkspaceId, setOpenCodeGoWorkspaceId] = useState(
+    () => provider.meta?.opencodeGoWorkspaceId || "",
+  );
+  const [opencodeGoAuthCookie, setOpenCodeGoAuthCookie] = useState("");
+  const [showOpenCodeGoCookie, setShowOpenCodeGoCookie] = useState(false);
+
+  // 關閉 modal 時清除敏感 state，避免 reopen 時殘留上次輸入的 cookie
+  // （因為 effectiveUsageProvider + useLastValidValue 導致元件不會 unmount）
+  React.useEffect(() => {
+    if (!isOpen) {
+      setOpenCodeGoAuthCookie("");
+      setShowOpenCodeGoCookie(false);
+      setShowApiKey(false);
+      setShowAccessToken(false);
+    }
+  }, [isOpen]);
+
+  // OpenCode Go window visibility toggles (default all shown)
+  const [showRolling, setShowRolling] = useState(
+    () => provider.meta?.opencodeGoShowRolling !== false,
+  );
+  const [showWeekly, setShowWeekly] = useState(
+    () => provider.meta?.opencodeGoShowWeekly !== false,
+  );
+  const [showMonthly, setShowMonthly] = useState(
+    () => provider.meta?.opencodeGoShowMonthly !== false,
+  );
+
   // 🔧 失焦时的验证（严格）- 仅确保有效整数
   const validateTimeout = (value: string): number => {
     const num = Number(value);
@@ -355,6 +398,26 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const [showApiKey, setShowApiKey] = useState(false);
   const [showAccessToken, setShowAccessToken] = useState(false);
 
+  const getOpenCodeGoInputs = () => ({
+    workspaceId: opencodeGoWorkspaceId.trim(),
+    authCookie: opencodeGoAuthCookie.trim(),
+  });
+
+  const hasSavedOpenCodeGoCookie = Boolean(provider.meta?.opencodeGoAuthCookie);
+
+  const validateOpenCodeGoCredentials = () => {
+    const inputs = getOpenCodeGoInputs();
+    if (!inputs.workspaceId) {
+      toast.error(t("usageScript.openCodeGoWorkspaceRequired"));
+      return null;
+    }
+    if (!inputs.authCookie && !hasSavedOpenCodeGoCookie) {
+      toast.error(t("usageScript.openCodeGoAuthCookieRequired"));
+      return null;
+    }
+    return inputs;
+  };
+
   const handleEnableToggle = (checked: boolean) => {
     if (checked && !settingsData?.usageConfirmed) {
       setShowUsageConfirm(true);
@@ -378,11 +441,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   };
 
   const handleSave = () => {
-    // Copilot、Coding Plan、Balance 模板不需要脚本验证
+    // Copilot、Coding Plan、Balance、OpenCode Go 模板不需要脚本验证
     if (
       selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT &&
       selectedTemplate !== TEMPLATE_TYPES.TOKEN_PLAN &&
-      selectedTemplate !== TEMPLATE_TYPES.BALANCE
+      selectedTemplate !== TEMPLATE_TYPES.BALANCE &&
+      selectedTemplate !== TEMPLATE_TYPES.OPENCODE_GO
     ) {
       if (script.enabled && !script.code.trim()) {
         toast.error(t("usageScript.scriptEmpty"));
@@ -393,6 +457,13 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         return;
       }
     }
+    if (selectedTemplate === TEMPLATE_TYPES.OPENCODE_GO && script.enabled) {
+      const inputs = validateOpenCodeGoCredentials();
+      if (!inputs) {
+        return;
+      }
+    }
+
     // 保存时记录当前选择的模板类型
     const scriptWithTemplate = {
       ...script,
@@ -403,9 +474,22 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         | "github_copilot"
         | "token_plan"
         | "balance"
+        | "opencode_go"
         | undefined,
     };
-    onSave(scriptWithTemplate);
+
+    const opencodeGoMeta =
+      selectedTemplate === TEMPLATE_TYPES.OPENCODE_GO
+        ? {
+            workspaceId: opencodeGoWorkspaceId.trim(),
+            authCookie: opencodeGoAuthCookie.trim(),
+            showRolling,
+            showWeekly,
+            showMonthly,
+          }
+        : undefined;
+
+    onSave(scriptWithTemplate, opencodeGoMeta);
     onClose();
   };
 
@@ -477,6 +561,50 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         } else {
           toast.error(
             `${t("usageScript.testFailed")}: ${quota.error || t("endpointTest.noResult")}`,
+            { duration: 5000 },
+          );
+        }
+        return;
+      }
+
+      // OpenCode Go 模板使用原生配额查询，并测试当前表单输入
+      if (selectedTemplate === TEMPLATE_TYPES.OPENCODE_GO) {
+        const inputs = validateOpenCodeGoCredentials();
+        if (!inputs) {
+          return;
+        }
+
+        const result = await usageApi.testScript(
+          provider.id,
+          appId,
+          "",
+          script.timeout,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          TEMPLATE_TYPES.OPENCODE_GO,
+          inputs.workspaceId,
+          inputs.authCookie || undefined,
+        );
+        if (result.success && result.data && result.data.length > 0) {
+          const summary = result.data
+            .map((plan: UsageData) =>
+              formatUsageDataSummary(plan, {
+                invalid: t("usage.invalid"),
+                remaining: t("usage.remaining"),
+                used: t("usage.used"),
+              }),
+            )
+            .join(", ");
+          toast.success(`${t("usageScript.testSuccess")}${summary}`, {
+            duration: 3000,
+            closeButton: true,
+          });
+          queryClient.setQueryData(["usage", provider.id, appId], result);
+        } else {
+          toast.error(
+            `${t("usageScript.testFailed")}: ${result.error || t("endpointTest.noResult")}`,
             { duration: 5000 },
           );
         }
@@ -654,6 +782,16 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           accessToken: undefined,
           userId: undefined,
         });
+      } else if (presetName === TEMPLATE_TYPES.OPENCODE_GO) {
+        // OpenCode Go 模板不需要脚本，使用 Rust 原生查询
+        setScript({
+          ...script,
+          code: "",
+          apiKey: undefined,
+          baseUrl: undefined,
+          accessToken: undefined,
+          userId: undefined,
+        });
       }
       setSelectedTemplate(presetName);
     }
@@ -664,6 +802,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     selectedTemplate === TEMPLATE_TYPES.NEW_API ||
     (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
       script.codingPlanProvider === "zenmux");
+
+  const usesNativeTemplate =
+    selectedTemplate === TEMPLATE_TYPES.GITHUB_COPILOT ||
+    selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN ||
+    selectedTemplate === TEMPLATE_TYPES.BALANCE ||
+    selectedTemplate === TEMPLATE_TYPES.OPENCODE_GO;
 
   const footer = (
     <>
@@ -898,6 +1042,109 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                       {cp.label}
                     </Button>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {/* OpenCode Go 模式：工作区凭证 */}
+            {selectedTemplate === TEMPLATE_TYPES.OPENCODE_GO && (
+              <div className="space-y-4 border-t border-white/10 pt-3">
+                <p className="text-sm text-muted-foreground">
+                  {t("usageScript.openCodeGoHint")}
+                </p>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="opencode-go-workspace-id">
+                      {t("usageScript.openCodeGoWorkspaceId")}
+                    </Label>
+                    <Input
+                      id="opencode-go-workspace-id"
+                      type="text"
+                      value={opencodeGoWorkspaceId}
+                      onChange={(e) => setOpenCodeGoWorkspaceId(e.target.value)}
+                      placeholder={t(
+                        "usageScript.openCodeGoWorkspaceIdPlaceholder",
+                      )}
+                      autoComplete="off"
+                      className="border-white/10"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="opencode-go-auth-cookie">
+                      {t("usageScript.openCodeGoAuthCookie")}
+                    </Label>
+                    <div className="relative">
+                      <Input
+                        id="opencode-go-auth-cookie"
+                        type={showOpenCodeGoCookie ? "text" : "password"}
+                        value={opencodeGoAuthCookie}
+                        onChange={(e) =>
+                          setOpenCodeGoAuthCookie(e.target.value)
+                        }
+                        placeholder={
+                          provider.meta?.opencodeGoAuthCookie
+                            ? t("usageScript.openCodeGoAuthCookieSaved")
+                            : t("usageScript.openCodeGoAuthCookiePlaceholder")
+                        }
+                        autoComplete="off"
+                        className="border-white/10"
+                      />
+                      {opencodeGoAuthCookie && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setShowOpenCodeGoCookie(!showOpenCodeGoCookie)
+                          }
+                          className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
+                          aria-label={
+                            showOpenCodeGoCookie
+                              ? t("apiKeyInput.hide")
+                              : t("apiKeyInput.show")
+                          }
+                        >
+                          {showOpenCodeGoCookie ? (
+                            <EyeOff size={16} />
+                          ) : (
+                            <Eye size={16} />
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <Label>{t("usageScript.openCodeGoVisibleWindows")}</Label>
+                  <div className="flex flex-wrap gap-4">
+                    <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Checkbox
+                        checked={showRolling}
+                        onCheckedChange={(checked) =>
+                          setShowRolling(checked === true)
+                        }
+                      />
+                      {t("usageScript.openCodeGoShowRolling")}
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Checkbox
+                        checked={showWeekly}
+                        onCheckedChange={(checked) =>
+                          setShowWeekly(checked === true)
+                        }
+                      />
+                      {t("usageScript.openCodeGoShowWeekly")}
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Checkbox
+                        checked={showMonthly}
+                        onCheckedChange={(checked) =>
+                          setShowMonthly(checked === true)
+                        }
+                      />
+                      {t("usageScript.openCodeGoShowMonthly")}
+                    </label>
+                  </div>
                 </div>
               </div>
             )}
@@ -1191,43 +1438,41 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             </div>
           </div>
 
-          {/* 提取器代码 - Copilot 模板不需要 */}
-          {selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT &&
-            selectedTemplate !== TEMPLATE_TYPES.TOKEN_PLAN && (
-              <div className="space-y-4 glass rounded-xl border border-white/10 p-6">
-                <div className="flex items-center justify-between">
-                  <Label className="text-base font-medium">
-                    {t("usageScript.extractorCode")}
-                  </Label>
-                  <div className="text-xs text-muted-foreground">
-                    {t("usageScript.extractorHint")}
-                  </div>
+          {/* 提取器代码 - 原生模板不需要 */}
+          {!usesNativeTemplate && (
+            <div className="space-y-4 glass rounded-xl border border-white/10 p-6">
+              <div className="flex items-center justify-between">
+                <Label className="text-base font-medium">
+                  {t("usageScript.extractorCode")}
+                </Label>
+                <div className="text-xs text-muted-foreground">
+                  {t("usageScript.extractorHint")}
                 </div>
-                <JsonEditor
-                  id="usage-code"
-                  value={script.code || ""}
-                  onChange={(value) =>
-                    setScript((prev) => ({ ...prev, code: value }))
-                  }
-                  height={480}
-                  language="javascript"
-                  showMinimap={false}
-                />
               </div>
-            )}
+              <JsonEditor
+                id="usage-code"
+                value={script.code || ""}
+                onChange={(value) =>
+                  setScript((prev) => ({ ...prev, code: value }))
+                }
+                height={480}
+                language="javascript"
+                showMinimap={false}
+              />
+            </div>
+          )}
 
-          {/* 帮助信息 - Copilot 模板不需要 */}
-          {selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT &&
-            selectedTemplate !== TEMPLATE_TYPES.TOKEN_PLAN && (
-              <div className="glass rounded-xl border border-white/10 p-6 text-sm text-foreground/90">
-                <h4 className="font-medium mb-2">
-                  {t("usageScript.scriptHelp")}
-                </h4>
-                <div className="space-y-3 text-xs">
-                  <div>
-                    <strong>{t("usageScript.configFormat")}</strong>
-                    <pre className="mt-1 p-2 bg-black/20 text-foreground rounded border border-white/10 text-[10px] overflow-x-auto">
-                      {`({
+          {/* 帮助信息 - 原生模板不需要 */}
+          {!usesNativeTemplate && (
+            <div className="glass rounded-xl border border-white/10 p-6 text-sm text-foreground/90">
+              <h4 className="font-medium mb-2">
+                {t("usageScript.scriptHelp")}
+              </h4>
+              <div className="space-y-3 text-xs">
+                <div>
+                  <strong>{t("usageScript.configFormat")}</strong>
+                  <pre className="mt-1 p-2 bg-black/20 text-foreground rounded border border-white/10 text-[10px] overflow-x-auto">
+                    {`({
   request: {
     url: "{{baseUrl}}/api/usage",
     method: "POST",
@@ -1244,39 +1489,39 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     };
   }
 })`}
-                    </pre>
-                  </div>
+                  </pre>
+                </div>
 
-                  <div>
-                    <strong>{t("usageScript.extractorFormat")}</strong>
-                    <ul className="mt-1 space-y-0.5 ml-2">
-                      <li>{t("usageScript.fieldIsValid")}</li>
-                      <li>{t("usageScript.fieldInvalidMessage")}</li>
-                      <li>{t("usageScript.fieldRemaining")}</li>
-                      <li>{t("usageScript.fieldUnit")}</li>
-                      <li>{t("usageScript.fieldPlanName")}</li>
-                      <li>{t("usageScript.fieldTotal")}</li>
-                      <li>{t("usageScript.fieldUsed")}</li>
-                      <li>{t("usageScript.fieldExtra")}</li>
-                    </ul>
-                  </div>
+                <div>
+                  <strong>{t("usageScript.extractorFormat")}</strong>
+                  <ul className="mt-1 space-y-0.5 ml-2">
+                    <li>{t("usageScript.fieldIsValid")}</li>
+                    <li>{t("usageScript.fieldInvalidMessage")}</li>
+                    <li>{t("usageScript.fieldRemaining")}</li>
+                    <li>{t("usageScript.fieldUnit")}</li>
+                    <li>{t("usageScript.fieldPlanName")}</li>
+                    <li>{t("usageScript.fieldTotal")}</li>
+                    <li>{t("usageScript.fieldUsed")}</li>
+                    <li>{t("usageScript.fieldExtra")}</li>
+                  </ul>
+                </div>
 
-                  <div className="text-muted-foreground">
-                    <strong>{t("usageScript.tips")}</strong>
-                    <ul className="mt-1 space-y-0.5 ml-2">
-                      <li>
-                        {t("usageScript.tip1", {
-                          apiKey: "{{apiKey}}",
-                          baseUrl: "{{baseUrl}}",
-                        })}
-                      </li>
-                      <li>{t("usageScript.tip2")}</li>
-                      <li>{t("usageScript.tip3")}</li>
-                    </ul>
-                  </div>
+                <div className="text-muted-foreground">
+                  <strong>{t("usageScript.tips")}</strong>
+                  <ul className="mt-1 space-y-0.5 ml-2">
+                    <li>
+                      {t("usageScript.tip1", {
+                        apiKey: "{{apiKey}}",
+                        baseUrl: "{{baseUrl}}",
+                      })}
+                    </li>
+                    <li>{t("usageScript.tip2")}</li>
+                    <li>{t("usageScript.tip3")}</li>
+                  </ul>
                 </div>
               </div>
-            )}
+            </div>
+          )}
         </div>
       )}
 
