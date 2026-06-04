@@ -444,6 +444,9 @@ mod tests {
             ),
         )
         .expect("write session");
+        let session_path_str = session_path.to_string_lossy().replace('\\', "/");
+        let sessions_dir_str = sessions_dir.to_string_lossy().replace('\\', "/");
+
         std::fs::write(
             sessions_dir.join("sessions.json"),
             format!(
@@ -457,8 +460,7 @@ mod tests {
                     "sessionFile": "{}/session-456.jsonl"
                   }}
                 }}"#,
-                session_path.display(),
-                sessions_dir.display()
+                session_path_str, sessions_dir_str
             ),
         )
         .expect("write index");
