@@ -215,6 +215,11 @@ fn query_assistant_messages(
             continue;
         }
 
+        // 跳过未完成的消息：进行中只有半截 token，且因 INSERT OR IGNORE 无法回填
+        if value.get("time").and_then(|t| t.get("completed")).is_none() {
+            continue;
+        }
+
         if let Some(msg_data) = parse_message_data(&value) {
             messages.push((message_id, msg_data));
         }
@@ -485,5 +490,40 @@ mod tests {
         });
         let data = parse_message_data(&json).unwrap();
         assert_eq!(data.input_tokens, 100);
+    }
+
+    #[test]
+    fn test_query_assistant_messages_skips_incomplete() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT);",
+        )
+        .unwrap();
+
+        let done = serde_json::json!({
+            "role": "assistant",
+            "tokens": { "input": 1000, "output": 200 },
+            "modelID": "m",
+            "time": { "created": 1, "completed": 2 }
+        })
+        .to_string();
+        let in_progress = serde_json::json!({
+            "role": "assistant",
+            "tokens": { "input": 500, "output": 0 },
+            "modelID": "m",
+            "time": { "created": 3 }
+        })
+        .to_string();
+
+        conn.execute(
+            "INSERT INTO message VALUES ('done', 's1', 1, ?1), ('wip', 's1', 2, ?2)",
+            rusqlite::params![done, in_progress],
+        )
+        .unwrap();
+
+        let messages = query_assistant_messages(&conn, "s1").unwrap();
+        // 只返回已完成（带 time.completed）的消息，半截的被跳过
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].0, "done");
     }
 }
