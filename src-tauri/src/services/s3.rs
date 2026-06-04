@@ -36,15 +36,6 @@ fn is_aws_endpoint(endpoint: &str) -> bool {
     endpoint.is_empty() || endpoint.contains("amazonaws.com")
 }
 
-/// Strip an optional scheme prefix and trailing slash from an endpoint string.
-fn normalize_endpoint(endpoint: &str) -> &str {
-    endpoint
-        .strip_prefix("https://")
-        .or_else(|| endpoint.strip_prefix("http://"))
-        .unwrap_or(endpoint)
-        .trim_end_matches('/')
-}
-
 /// Split an endpoint into its scheme and host-with-port parts.
 ///
 /// Preserves the original scheme when one is provided, defaulting to `"https"`

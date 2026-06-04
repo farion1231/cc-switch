@@ -942,6 +942,7 @@ export function WebdavSyncSection({
   const showAutoSyncError =
     !!lastError && config?.status?.lastErrorSource === "auto";
   const currentRemotePath = `/${form.remoteRoot.trim() || "cc-switch-sync"}/v2/db-v6/${form.profile.trim() || "default"}`;
+  const currentS3RemotePath = `${s3Bucket.trim() || "bucket"}/${s3RemoteRoot.trim() || "cc-switch-sync"}/v2/db-v6/${s3Profile.trim() || "default"}`;
   const remoteDbCompatDisplay = formatDbCompatVersion(
     remoteInfo?.dbCompatVersion,
   );
@@ -1723,9 +1724,7 @@ export function WebdavSyncSection({
                   {t("settings.s3Sync.confirmUpload.targetPath")}
                   {": "}
                   <code className="ml-1 text-xs bg-muted px-1.5 py-0.5 rounded">
-                    {s3Bucket.trim() || "bucket"}/
-                    {s3RemoteRoot.trim() || "cc-switch-sync"}/v2/
-                    {s3Profile.trim() || "default"}
+                    {currentS3RemotePath}
                   </code>
                 </p>
                 {s3RemoteInfo && (
