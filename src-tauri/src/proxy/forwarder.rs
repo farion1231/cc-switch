@@ -4,7 +4,7 @@
 
 use super::hyper_client::ProxyResponse;
 use super::{
-    body_filter::filter_private_params_with_whitelist,
+    body_filter::{filter_private_params_with_whitelist, filter_unsupported_response_tools},
     error::*,
     failover_switch::FailoverSwitchManager,
     json_canonical::{canonicalize_value, short_value_hash},
@@ -119,6 +119,8 @@ pub struct RequestForwarder {
     /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
     /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
     max_attempts: usize,
+    /// 是否过滤 Codex Responses 请求中上游不支持的原生工具
+    filter_unsupported_response_tools: bool,
 }
 
 impl RequestForwarder {
@@ -141,6 +143,7 @@ impl RequestForwarder {
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
         max_retries: u32,
+        filter_unsupported_response_tools: bool,
     ) -> Self {
         // max_retries 是「失败后重试次数」语义，attempt 上限 = retries + 1。
         // saturating_add 防止 u32::MAX + 1 溢出。
@@ -164,6 +167,7 @@ impl RequestForwarder {
                 streaming_first_byte_timeout,
             ),
             max_attempts,
+            filter_unsupported_response_tools,
         }
     }
 
@@ -1195,6 +1199,13 @@ impl RequestForwarder {
             mapped_body
         };
 
+        let request_body = filter_unsupported_response_tools_for_request(
+            request_body,
+            app_type,
+            endpoint,
+            self.filter_unsupported_response_tools,
+        );
+
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段
         let filtered_body = prepare_upstream_request_body(request_body);
@@ -2077,6 +2088,21 @@ fn is_claude_messages_path(path: &str) -> bool {
     matches!(path, "/v1/messages" | "/claude/v1/messages")
 }
 
+fn is_responses_endpoint(endpoint: &str) -> bool {
+    let (path, _) = split_endpoint_and_query(endpoint);
+    matches!(
+        path,
+        "/responses"
+            | "/v1/responses"
+            | "/v1/v1/responses"
+            | "/codex/v1/responses"
+            | "/responses/compact"
+            | "/v1/responses/compact"
+            | "/v1/v1/responses/compact"
+            | "/codex/v1/responses/compact"
+    )
+}
+
 fn rewrite_codex_responses_endpoint_to_chat(endpoint: &str) -> (String, Option<String>) {
     let (_path, query) = split_endpoint_and_query(endpoint);
     let passthrough_query = query.map(ToString::to_string);
@@ -2319,6 +2345,19 @@ fn prepare_upstream_request_body(request_body: Value) -> Value {
     canonicalize_value(filter_private_params_with_whitelist(request_body, &[]))
 }
 
+fn filter_unsupported_response_tools_for_request(
+    request_body: Value,
+    app_type: &AppType,
+    endpoint: &str,
+    enabled: bool,
+) -> Value {
+    if enabled && matches!(app_type, AppType::Codex) && is_responses_endpoint(endpoint) {
+        filter_unsupported_response_tools(request_body, &["image_generation"])
+    } else {
+        request_body
+    }
+}
+
 fn log_prompt_cache_trace(
     app_type: &AppType,
     provider: &Provider,
@@ -2429,6 +2468,7 @@ mod tests {
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,
+            filter_unsupported_response_tools: true,
         }
     }
 
@@ -2575,6 +2615,51 @@ mod tests {
             serde_json::to_string(&prepared).unwrap(),
             r#"{"a":2,"tools":[{"name":"lookup","parameters":{"properties":{"_id":{"type":"string"},"a":{"type":"string"},"b":{"type":"number"}},"type":"object"}}],"z":1}"#
         );
+    }
+
+    #[test]
+    fn unsupported_response_tool_filter_only_applies_to_enabled_codex_responses() {
+        let body = json!({
+            "tools": [
+                {"type": "function", "name": "read_file"},
+                {"type": "image_generation", "output_format": "png"}
+            ]
+        });
+
+        let filtered = filter_unsupported_response_tools_for_request(
+            body.clone(),
+            &AppType::Codex,
+            "/v1/responses",
+            true,
+        );
+        assert_eq!(filtered["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(filtered["tools"][0]["type"], "function");
+
+        assert_eq!(
+            filter_unsupported_response_tools_for_request(
+                body.clone(),
+                &AppType::Codex,
+                "/v1/responses",
+                false,
+            ),
+            body
+        );
+
+        let non_codex = filter_unsupported_response_tools_for_request(
+            body.clone(),
+            &AppType::Claude,
+            "/v1/responses",
+            true,
+        );
+        assert_eq!(non_codex, body);
+
+        let non_responses = filter_unsupported_response_tools_for_request(
+            body.clone(),
+            &AppType::Codex,
+            "/v1/chat/completions",
+            true,
+        );
+        assert_eq!(non_responses, body);
     }
 
     #[tokio::test]

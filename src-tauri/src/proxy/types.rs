@@ -192,6 +192,9 @@ pub struct AppProxyConfig {
     pub circuit_error_rate_threshold: f64,
     /// 计算错误率的最小请求数
     pub circuit_min_requests: u32,
+    /// 是否过滤 Responses API 中上游不支持的工具
+    #[serde(default = "default_true")]
+    pub filter_unsupported_response_tools: bool,
 }
 
 /// 整流器配置

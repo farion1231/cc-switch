@@ -50,6 +50,147 @@ pub struct ProxyState {
     pub failover_manager: Arc<FailoverSwitchManager>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provider::Provider;
+    use serde_json::{json, Value};
+    use std::sync::Arc;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        sync::oneshot,
+    };
+
+    async fn run_single_capture_upstream() -> (String, oneshot::Receiver<Value>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock upstream");
+        let addr = listener.local_addr().expect("mock upstream addr");
+        let (tx, rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept mock request");
+            let mut buffer = Vec::new();
+            let mut chunk = [0_u8; 4096];
+            let header_end;
+            loop {
+                let read = stream.read(&mut chunk).await.expect("read mock request");
+                assert!(read > 0, "mock upstream connection closed before headers");
+                buffer.extend_from_slice(&chunk[..read]);
+                if let Some(pos) = buffer.windows(4).position(|w| w == b"\r\n\r\n") {
+                    header_end = pos + 4;
+                    break;
+                }
+            }
+
+            let headers = String::from_utf8_lossy(&buffer[..header_end]);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or(0);
+
+            while buffer.len() < header_end + content_length {
+                let read = stream.read(&mut chunk).await.expect("read mock body");
+                assert!(read > 0, "mock upstream connection closed before body");
+                buffer.extend_from_slice(&chunk[..read]);
+            }
+
+            let body = &buffer[header_end..header_end + content_length];
+            let body_json: Value = serde_json::from_slice(body).expect("parse upstream body");
+            let _ = tx.send(body_json);
+
+            let response = br#"{"id":"resp_mock","object":"response","output":[]}"#;
+            let header = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                response.len()
+            );
+            stream
+                .write_all(header.as_bytes())
+                .await
+                .expect("write mock response headers");
+            stream
+                .write_all(response)
+                .await
+                .expect("write mock response body");
+        });
+
+        (format!("http://{addr}/v1"), rx)
+    }
+
+    #[tokio::test]
+    async fn codex_responses_route_filters_unsupported_tools_before_upstream() {
+        let (base_url, received_body) = run_single_capture_upstream().await;
+        let proxy_port = {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("reserve proxy port");
+            let port = listener.local_addr().expect("reserved proxy addr").port();
+            drop(listener);
+            port
+        };
+
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let provider = Provider::with_id(
+            "mock-codex".to_string(),
+            "Mock Codex".to_string(),
+            json!({
+                "base_url": base_url,
+                "api_key": "test-key"
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider)
+            .expect("save mock provider");
+        db.set_current_provider("codex", "mock-codex")
+            .expect("select mock provider");
+
+        let proxy_config = ProxyConfig {
+            listen_address: "127.0.0.1".to_string(),
+            listen_port: proxy_port,
+            ..ProxyConfig::default()
+        };
+        let server = ProxyServer::new(proxy_config, db, None);
+        let proxy_info = server.start().await.expect("start proxy");
+
+        let client = reqwest::Client::new();
+        let response = client
+            .post(format!(
+                "http://{}:{}/v1/responses",
+                proxy_info.address, proxy_info.port
+            ))
+            .json(&json!({
+                "model": "gpt-5",
+                "input": "test",
+                "tools": [
+                    {"type": "image_generation", "output_format": "png"},
+                    {"type": "function", "name": "ok", "parameters": {"type": "object", "properties": {}}}
+                ]
+            }))
+            .send()
+            .await
+            .expect("send proxy request");
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let _ = response.bytes().await.expect("read proxy response");
+        server.stop().await.expect("stop proxy");
+
+        let upstream_body = received_body.await.expect("mock received request");
+        let tools = upstream_body["tools"].as_array().expect("tools array");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["type"], "function");
+        assert!(
+            !serde_json::to_string(&upstream_body)
+                .expect("serialize upstream body")
+                .contains("image_generation"),
+            "upstream body must not contain image_generation: {upstream_body}"
+        );
+    }
+}
+
 /// 代理HTTP服务器
 pub struct ProxyServer {
     config: ProxyConfig,

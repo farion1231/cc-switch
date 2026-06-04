@@ -273,6 +273,14 @@ fn schema_create_tables_include_pricing_model_columns() {
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
 
+    let tool_filter = get_column_info(&conn, "proxy_config", "filter_unsupported_response_tools");
+    assert_eq!(tool_filter.r#type, "INTEGER");
+    assert_eq!(tool_filter.notnull, 1);
+    assert_eq!(
+        normalize_default(&tool_filter.default).as_deref(),
+        Some("1")
+    );
+
     let multiplier = get_column_info(&conn, "proxy_config", "default_cost_multiplier");
     assert_eq!(multiplier.r#type, "TEXT");
     assert_eq!(multiplier.notnull, 1);
@@ -338,6 +346,39 @@ fn schema_migration_v4_adds_pricing_model_columns() {
     let request_model = get_column_info(&conn, "proxy_request_logs", "request_model");
     assert_eq!(request_model.r#type, "TEXT");
     assert_eq!(request_model.notnull, 0);
+
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after migration"),
+        SCHEMA_VERSION
+    );
+}
+
+#[test]
+fn schema_migration_v10_adds_response_tool_filter_column() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE proxy_config (app_type TEXT PRIMARY KEY);
+        CREATE TABLE mcp_servers (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            server_config TEXT NOT NULL,
+            enabled_hermes BOOLEAN NOT NULL DEFAULT 0
+        );
+        "#,
+    )
+    .expect("seed v10 schema");
+
+    Database::set_user_version(&conn, 10).expect("set user_version=10");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    let tool_filter = get_column_info(&conn, "proxy_config", "filter_unsupported_response_tools");
+    assert_eq!(tool_filter.r#type, "INTEGER");
+    assert_eq!(tool_filter.notnull, 1);
+    assert_eq!(
+        normalize_default(&tool_filter.default).as_deref(),
+        Some("1")
+    );
 
     assert_eq!(
         Database::get_user_version(&conn).expect("version after migration"),

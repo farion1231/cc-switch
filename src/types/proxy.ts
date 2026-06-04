@@ -137,4 +137,5 @@ export interface AppProxyConfig {
   circuitTimeoutSeconds: number;
   circuitErrorRateThreshold: number;
   circuitMinRequests: number;
+  filterUnsupportedResponseTools: boolean;
 }
