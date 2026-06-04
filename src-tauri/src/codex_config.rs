@@ -1037,6 +1037,63 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
     Ok(json!({ "auth": auth, "config": cfg_text }))
 }
 
+/// Ensure the `[model_providers.<provider>]` TOML table exists when
+/// `model_provider` is set to a non-reserved (custom) provider ID.
+///
+/// Codex CLI requires this section to route requests to the custom provider;
+/// without it, Codex falls back to `model_provider: openai` and all API calls go
+/// directly to `api.openai.com`.  The section can be lost when:
+///
+/// - Codex Desktop App rewrites `config.toml`, stripping unknown tables
+/// - CC-Switch imports a pre-existing flat-format config
+/// - A backup/restore cycle drops the section
+///
+/// This function is a defensive normalization: if the top-level key is present
+/// but the corresponding table is missing, it creates an empty table so that
+/// subsequent `update_codex_toml_field` calls have a valid target.
+pub fn ensure_codex_model_provider_section(config_text: &str) -> String {
+    if config_text.trim().is_empty() {
+        return config_text.to_string();
+    }
+
+    let Ok(mut doc) = config_text.parse::<DocumentMut>() else {
+        return config_text.to_string();
+    };
+
+    let Some(provider_id) = active_codex_model_provider_id(&doc) else {
+        return config_text.to_string();
+    };
+
+    if !is_custom_codex_model_provider_id(&provider_id) {
+        return config_text.to_string();
+    }
+
+    // Already has the section — nothing to do.
+    if doc
+        .get("model_providers")
+        .and_then(|mp| mp.as_table())
+        .is_some_and(|t| t.contains_key(&provider_id))
+    {
+        return config_text.to_string();
+    }
+
+    // Create [model_providers.<id>] table.
+    if doc.get("model_providers").is_none() {
+        doc["model_providers"] = toml_edit::table();
+    }
+
+    if let Some(mp) = doc.get_mut("model_providers").and_then(|item| item.as_table_mut())
+    {
+        if !mp.contains_key(&provider_id) {
+            let mut table = toml_edit::Table::new();
+            table.set_implicit(true);
+            mp.insert(&provider_id, toml_edit::Item::Table(table));
+        }
+    }
+
+    doc.to_string()
+}
+
 /// Route a Codex live write between full auth+config or config-only.
 ///
 /// Official providers with usable login material own `auth.json`. Third-party
@@ -1047,14 +1104,18 @@ pub fn write_codex_live_for_provider(
     auth: &Value,
     config_text: Option<&str>,
 ) -> Result<(), AppError> {
+    let normalized = config_text
+        .map(|t| ensure_codex_model_provider_section(t))
+        .unwrap_or_default();
+
     let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
         || (category != Some("official")
             && !crate::settings::preserve_codex_official_auth_on_switch());
 
     if should_write_auth {
-        write_codex_live_atomic(auth, config_text)
+        write_codex_live_atomic(auth, Some(&normalized))
     } else {
-        let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
+        let live_config = prepare_codex_provider_live_config(auth, &normalized)?;
         write_codex_live_config_atomic(Some(&live_config))
     }
 }
@@ -1065,16 +1126,21 @@ pub fn write_codex_live_for_provider(
 /// requests can use a provider-scoped `experimental_bearer_token`, so switching
 /// providers only needs to update `config.toml`; `auth.json` stays as the user's
 /// long-lived ChatGPT login cache.
+///
+/// As a defensive measure, this also ensures the `[model_providers.<id>]` TOML
+/// table exists when `model_provider` points at a custom provider — see
+/// `ensure_codex_model_provider_section` for rationale.
 pub fn prepare_codex_provider_live_config(
     auth: &Value,
     config_text: &str,
 ) -> Result<String, AppError> {
+    let normalized = ensure_codex_model_provider_section(config_text);
     let token = extract_codex_auth_api_key(auth)
-        .or_else(|| extract_codex_experimental_bearer_token(config_text));
+        .or_else(|| extract_codex_experimental_bearer_token(&normalized));
 
     Ok(match token {
-        Some(token) => set_codex_experimental_bearer_token(config_text, &token)?,
-        None => config_text.to_string(),
+        Some(token) => set_codex_experimental_bearer_token(&normalized, &token)?,
+        None => normalized,
     })
 }
 
@@ -2127,6 +2193,124 @@ model_catalog_json = "cc-switch-model-catalog.json"
         assert!(
             parsed.get("model_catalog_json").is_none(),
             "None arm should remove relative cc-switch-owned field"
+        );
+    }
+
+    #[test]
+    fn ensure_model_provider_section_creates_missing_section() {
+        // Simulates a config that Codex Desktop App rewrote to a flat format,
+        // stripping the [model_providers.custom] table.  Codex CLI needs that
+        // table to route requests to the custom provider.
+        let input = r#"model_provider = "custom"
+model = "deepseek-v4-flash"
+model_reasoning_effort = "high"
+disable_response_storage = true
+"#;
+        let result = ensure_codex_model_provider_section(input);
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed
+                .get("model_provider")
+                .and_then(|v| v.as_str()),
+            Some("custom"),
+            "model_provider top-level key must be preserved"
+        );
+        let section = parsed
+            .get("model_providers")
+            .and_then(|v| v.get("custom"))
+            .expect("[model_providers.custom] table must be created");
+        assert!(
+            section.is_table(),
+            "[model_providers.custom] must be a TOML table"
+        );
+    }
+
+    #[test]
+    fn ensure_model_provider_section_preserves_existing_section() {
+        let input = r#"model_provider = "vendor_x"
+model = "gpt-5"
+
+[model_providers.vendor_x]
+name = "Vendor X"
+base_url = "https://vendor.example/v1"
+wire_api = "responses"
+"#;
+        let result = ensure_codex_model_provider_section(input);
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        // Original table must be left untouched.
+        let section = parsed
+            .get("model_providers")
+            .and_then(|v| v.get("vendor_x"))
+            .expect("[model_providers.vendor_x] must be preserved");
+        assert_eq!(
+            section.get("base_url").and_then(|v| v.as_str()),
+            Some("https://vendor.example/v1"),
+            "existing [model_providers.vendor_x] fields must be preserved"
+        );
+    }
+
+    #[test]
+    fn ensure_model_provider_section_ignores_reserved_providers() {
+        // Reserved providers (openai, ollama, etc.) don't need a custom table.
+        let input = r#"model_provider = "openai"
+model = "gpt-4"
+"#;
+        let result = ensure_codex_model_provider_section(input);
+        assert_eq!(
+            result.lines().find(|l| l.trim() == "[model_providers.openai]"),
+            None,
+            "reserved provider openai must not get a [model_providers.openai] table"
+        );
+    }
+
+    #[test]
+    fn ensure_model_provider_section_noops_on_empty_config() {
+        assert_eq!(ensure_codex_model_provider_section(""), "");
+        assert_eq!(ensure_codex_model_provider_section("   "), "   ");
+    }
+
+    #[test]
+    fn ensure_model_provider_section_noops_without_model_provider() {
+        // No model_provider key at all — nothing to do.
+        let input = r#"model = "gpt-4"
+wire_api = "responses"
+"#;
+        let result = ensure_codex_model_provider_section(input);
+        assert!(
+            result
+                .lines()
+                .find(|l| l.trim() == "[model_providers.")
+                .is_none(),
+            "no [model_providers.*] section should be created without model_provider"
+        );
+    }
+
+    #[test]
+    fn prepare_live_config_injects_section_when_missing() {
+        // This is the core fix: when prepare_codex_provider_live_config receives
+        // a flat config, it must normalize it so the written TOML has the table.
+        let input = r#"model_provider = "deepseek"
+model = "deepseek-v4-pro"
+"#;
+        let auth = json!({ "OPENAI_API_KEY": "sk-deepseek" });
+        let result = prepare_codex_provider_live_config(&auth, input).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("deepseek"))
+                .is_some(),
+            "prepare_codex_provider_live_config must add [model_providers.deepseek] table"
+        );
+        assert_eq!(
+            parsed
+                .get("experimental_bearer_token")
+                .and_then(|v| v.as_str()),
+            Some("sk-deepseek"),
+            "API key must be moved to experimental_bearer_token"
         );
     }
 }
