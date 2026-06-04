@@ -31,6 +31,7 @@ mod services;
 mod session_manager;
 mod settings;
 mod store;
+mod token_budget;
 
 mod tray;
 mod usage_events;
@@ -1295,6 +1296,13 @@ pub fn run() {
             // Session usage sync
             commands::sync_session_usage,
             commands::get_usage_data_sources,
+            // Token budgets (L0+L1)
+            commands::list_token_budgets,
+            commands::create_token_budget,
+            commands::update_token_budget,
+            commands::delete_token_budget,
+            commands::get_token_budget_status,
+            commands::get_all_token_budget_statuses,
             // Stream health check
             commands::stream_check_provider,
             commands::stream_check_all_providers,

@@ -29,6 +29,7 @@ mod subscription;
 mod sync_support;
 
 mod lightweight;
+mod token_budget;
 mod usage;
 mod webdav_sync;
 mod workspace;
@@ -61,6 +62,7 @@ pub use stream_check::*;
 pub use subscription::*;
 
 pub use lightweight::*;
+pub use token_budget::*;
 pub use usage::*;
 pub use webdav_sync::*;
 pub use workspace::*;
