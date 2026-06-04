@@ -566,6 +566,22 @@ mod tests {
     }
 
     #[test]
+    fn codex_desktop_provider_key_normalizes_openai_case() {
+        let provider = codex_provider(
+            "codex-official",
+            "OpenAI Official",
+            "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n",
+        );
+
+        let provider_key =
+            ProviderService::codex_desktop_provider_key(&provider).expect("provider key");
+        assert_eq!(
+            provider_key, "openai",
+            "OpenAI aliases must match Codex Desktop's lowercase history provider"
+        );
+    }
+
+    #[test]
     #[serial]
     fn switch_codex_to_official_relabels_dangling_ccswitch_history_to_openai() {
         with_test_home(|state, home| {
@@ -4930,6 +4946,9 @@ impl ProviderService {
         }
         if provider_key.eq_ignore_ascii_case("openai") && config.contains("[model_providers.") {
             return Ok(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
+        }
+        if provider_key.eq_ignore_ascii_case("openai") {
+            return Ok("openai".to_string());
         }
 
         Ok(provider_key)
