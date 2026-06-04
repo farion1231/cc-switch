@@ -36,6 +36,11 @@ struct OpenCodeMessageData {
     timestamp_ms: i64,
 }
 
+struct OpenCodeMessageQueryResult {
+    messages: Vec<(String, OpenCodeMessageData)>,
+    has_incomplete_usage: bool,
+}
+
 /// 同步 OpenCode 使用数据
 pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let db_path = get_opencode_db_path();
@@ -103,9 +108,11 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
         let mut session_had_error = false;
 
         // 查询该会话的所有 assistant 消息
+        let mut session_has_incomplete_usage = false;
         match query_assistant_messages(&opencode_conn, session_id) {
-            Ok(messages) => {
-                for (message_id, msg_data) in &messages {
+            Ok(query_result) => {
+                session_has_incomplete_usage = query_result.has_incomplete_usage;
+                for (message_id, msg_data) in &query_result.messages {
                     let request_id = format!("opencode_session:{session_id}:{message_id}");
 
                     match insert_opencode_message(db, &request_id, msg_data, session_id) {
@@ -131,6 +138,10 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
 
         if session_had_error {
             has_sync_errors = true;
+            continue;
+        }
+
+        if session_has_incomplete_usage {
             continue;
         }
 
@@ -160,10 +171,17 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
     Ok(result)
 }
 
-/// 查询所有会话的 (id, time_updated)
+/// 查询所有会话的 (id, sync_watermark)
 fn query_sessions(conn: &rusqlite::Connection) -> Result<Vec<(String, i64)>, AppError> {
     let mut stmt = conn
-        .prepare("SELECT id, time_updated FROM session ORDER BY time_updated")
+        .prepare(
+            "SELECT s.id,
+                    MAX(s.time_updated, COALESCE(MAX(m.time_updated), s.time_updated)) AS sync_watermark
+             FROM session s
+             LEFT JOIN message m ON m.session_id = s.id
+             GROUP BY s.id
+             ORDER BY sync_watermark",
+        )
         .map_err(|e| AppError::Database(format!("准备会话查询失败: {e}")))?;
 
     let rows = stmt
@@ -180,11 +198,11 @@ fn query_sessions(conn: &rusqlite::Connection) -> Result<Vec<(String, i64)>, App
     Ok(sessions)
 }
 
-/// 查询某会话的所有 assistant 消息，返回 (message_id, parsed_data)
+/// 查询某会话的已完成 assistant 消息，并标记是否还有未完成 usage 消息。
 fn query_assistant_messages(
     conn: &rusqlite::Connection,
     session_id: &str,
-) -> Result<Vec<(String, OpenCodeMessageData)>, AppError> {
+) -> Result<OpenCodeMessageQueryResult, AppError> {
     let mut stmt = conn
         .prepare("SELECT id, data FROM message WHERE session_id = ?1 ORDER BY time_created")
         .map_err(|e| AppError::Database(format!("准备消息查询失败: {e}")))?;
@@ -196,6 +214,7 @@ fn query_assistant_messages(
         .map_err(|e| AppError::Database(format!("查询消息失败: {e}")))?;
 
     let mut messages = Vec::new();
+    let mut has_incomplete_usage = false;
     for row in rows {
         let (message_id, data_json) =
             row.map_err(|e| AppError::Database(format!("读取消息行失败: {e}")))?;
@@ -217,6 +236,7 @@ fn query_assistant_messages(
 
         // 跳过未完成的消息：进行中只有半截 token，且因 INSERT OR IGNORE 无法回填
         if value.get("time").and_then(|t| t.get("completed")).is_none() {
+            has_incomplete_usage = true;
             continue;
         }
 
@@ -225,7 +245,10 @@ fn query_assistant_messages(
         }
     }
 
-    Ok(messages)
+    Ok(OpenCodeMessageQueryResult {
+        messages,
+        has_incomplete_usage,
+    })
 }
 
 /// 解析 opencode message.data JSON 为结构化数据
@@ -521,9 +544,31 @@ mod tests {
         )
         .unwrap();
 
-        let messages = query_assistant_messages(&conn, "s1").unwrap();
+        let result = query_assistant_messages(&conn, "s1").unwrap();
         // 只返回已完成（带 time.completed）的消息，半截的被跳过
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].0, "done");
+        assert_eq!(result.messages.len(), 1);
+        assert_eq!(result.messages[0].0, "done");
+        assert!(result.has_incomplete_usage);
+    }
+
+    #[test]
+    fn test_query_sessions_uses_message_update_watermark() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session (id TEXT, time_updated INTEGER);
+             CREATE TABLE message (
+                 id TEXT,
+                 session_id TEXT,
+                 time_created INTEGER,
+                 time_updated INTEGER,
+                 data TEXT
+             );
+             INSERT INTO session VALUES ('s1', 100);
+             INSERT INTO message VALUES ('m1', 's1', 90, 200, '{}');",
+        )
+        .unwrap();
+
+        let sessions = query_sessions(&conn).unwrap();
+        assert_eq!(sessions, vec![("s1".to_string(), 200)]);
     }
 }
