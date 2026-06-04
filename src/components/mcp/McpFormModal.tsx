@@ -68,9 +68,10 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     opencode: boolean;
     openclaw: boolean;
     hermes: boolean;
+    pi: boolean;
   }>(() => {
     if (initialData?.apps) {
-      return { ...initialData.apps };
+      return { ...initialData.apps, pi: initialData.apps.pi ?? false };
     }
     return {
       claude: defaultEnabledApps.includes("claude"),
@@ -79,6 +80,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       opencode: defaultEnabledApps.includes("opencode"),
       openclaw: defaultEnabledApps.includes("openclaw"),
       hermes: defaultEnabledApps.includes("hermes"),
+      pi: defaultEnabledApps.includes("pi"),
     };
   });
 
@@ -595,6 +597,22 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     className="text-sm text-foreground cursor-pointer select-none"
                   >
                     {t("mcp.unifiedPanel.apps.hermes")}
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="enable-pi"
+                    checked={enabledApps.pi}
+                    onCheckedChange={(checked: boolean) =>
+                      setEnabledApps({ ...enabledApps, pi: checked })
+                    }
+                  />
+                  <label
+                    htmlFor="enable-pi"
+                    className="text-sm text-foreground cursor-pointer select-none"
+                  >
+                    {t("mcp.unifiedPanel.apps.pi")}
                   </label>
                 </div>
               </div>

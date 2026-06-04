@@ -199,8 +199,10 @@ fn schema_migration_adds_missing_columns_for_providers() {
         ("providers", "is_current"),
         ("provider_endpoints", "added_at"),
         ("mcp_servers", "enabled_gemini"),
+        ("mcp_servers", "enabled_pi"),
         ("prompts", "updated_at"),
         ("skills", "installed_at"),
+        ("skills", "enabled_pi"),
         ("skill_repos", "enabled"),
     ] {
         assert!(

@@ -126,6 +126,15 @@ pub async fn get_config_status(
 
             Ok(ConfigStatus { exists, path })
         }
+        AppType::Pi => {
+            let config_dir = crate::pi_config::get_pi_dir();
+            let models_path = crate::pi_config::get_pi_models_path();
+            let sessions_dir = crate::pi_config::get_pi_sessions_dir();
+            Ok(ConfigStatus {
+                exists: models_path.exists() || sessions_dir.exists(),
+                path: config_dir.to_string_lossy().to_string(),
+            })
+        }
     }
 }
 
@@ -146,6 +155,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
+        AppType::Pi => crate::pi_config::get_pi_dir(),
     };
 
     Ok(dir.to_string_lossy().to_string())
@@ -163,6 +173,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
+        AppType::Pi => crate::pi_config::get_pi_dir(),
     };
 
     if !config_dir.exists() {

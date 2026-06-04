@@ -97,6 +97,26 @@ export function EditProviderDialog({
         return;
       }
 
+      if (appId === "pi") {
+        try {
+          const live = await providersApi.getPiLiveProvider(provider.id);
+          if (!cancelled && live && typeof live === "object") {
+            setLiveSettings(live);
+          } else if (!cancelled) {
+            setLiveSettings(null);
+          }
+        } catch {
+          if (!cancelled) {
+            setLiveSettings(null);
+          }
+        } finally {
+          if (!cancelled) {
+            setHasLoadedLive(true);
+          }
+        }
+        return;
+      }
+
       try {
         const currentId = await providersApi.getCurrent(appId);
         if (currentId && provider.id === currentId) {
@@ -189,7 +209,7 @@ export function EditProviderDialog({
         unknown
       >;
       const nextProviderId =
-        (appId === "opencode" || appId === "openclaw") &&
+        (appId === "opencode" || appId === "openclaw" || appId === "pi") &&
         values.providerKey?.trim()
           ? values.providerKey.trim()
           : provider.id;

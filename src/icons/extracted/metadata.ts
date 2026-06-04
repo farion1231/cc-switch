@@ -481,6 +481,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["openrouter", "router", "aggregator"],
     defaultColor: "#6566F1",
   },
+  pi: {
+    name: "pi",
+    displayName: "Pi Agent",
+    category: "tool",
+    keywords: ["pi", "agent", "coding"],
+    defaultColor: "#64748B",
+  },
   pipellm: {
     name: "pipellm",
     displayName: "PIPELLM",

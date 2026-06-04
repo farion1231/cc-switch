@@ -44,6 +44,9 @@ pub(crate) fn provider_exists_in_live_config(
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::Pi => {
+            crate::pi_config::get_providers().map(|providers| providers.contains_key(provider_id))
+        }
         _ => Ok(false),
     }
 }
@@ -347,7 +350,11 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
             }
             _ => false,
         },
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => false,
+        AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::Pi
+        | AppType::ClaudeDesktop => false,
     }
 }
 
@@ -417,9 +424,11 @@ pub(crate) fn remove_common_config_from_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
-            Ok(settings.clone())
-        }
+        AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::Pi
+        | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
 
@@ -474,9 +483,11 @@ fn apply_common_config_to_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
-            Ok(settings.clone())
-        }
+        AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::Pi
+        | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
 
@@ -862,6 +873,20 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
+        AppType::Pi => {
+            if provider.settings_config.get("baseUrl").is_some()
+                || provider.settings_config.get("api").is_some()
+                || provider.settings_config.get("models").is_some()
+            {
+                crate::pi_config::set_provider(&provider.id, provider.settings_config.clone())?;
+                log::info!("Pi Agent provider '{}' written to live config", provider.id);
+            } else {
+                return Err(AppError::Message(format!(
+                    "Pi Agent provider '{}' has invalid config structure for live config (must contain 'baseUrl', 'api', or 'models')",
+                    provider.id
+                )));
+            }
+        }
     }
     Ok(())
 }
@@ -1111,6 +1136,17 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = crate::hermes_config::yaml_to_json(&yaml_config)?;
             Ok(config)
         }
+        AppType::Pi => {
+            let config_path = crate::pi_config::get_pi_models_path();
+            if !config_path.exists() {
+                return Err(AppError::localized(
+                    "pi.config.missing",
+                    "Pi Agent models.json 配置文件不存在",
+                    "Pi Agent models.json configuration file not found",
+                ));
+            }
+            crate::pi_config::read_pi_models_config()
+        }
     }
 }
 
@@ -1189,7 +1225,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             })
         }
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -1528,6 +1564,64 @@ pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppE
     Ok(imported)
 }
 
+/// Import all providers from Pi Agent live config to database.
+///
+/// Pi Agent stores provider fragments under `~/.pi/agent/models.json`.
+pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    let providers = crate::pi_config::get_providers()?;
+    if providers.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0;
+    let existing_ids = state.db.get_provider_ids("pi")?;
+
+    for (id, config) in providers {
+        if id.trim().is_empty() {
+            log::warn!("Skipping Pi Agent provider with empty id");
+            continue;
+        }
+
+        if existing_ids.contains(&id) {
+            log::debug!("Pi Agent provider '{id}' already exists in database, skipping");
+            continue;
+        }
+
+        let display_name = config
+            .get("models")
+            .and_then(Value::as_array)
+            .and_then(|models| models.first())
+            .and_then(|model| match model {
+                Value::Object(obj) => obj
+                    .get("name")
+                    .or_else(|| obj.get("id"))
+                    .and_then(Value::as_str),
+                Value::String(value) => Some(value.as_str()),
+                _ => None,
+            })
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(id.as_str())
+            .to_string();
+
+        let mut provider = Provider::with_id(id.clone(), display_name, config, None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+
+        if let Err(e) = state.db.save_provider("pi", &provider) {
+            log::warn!("Failed to import Pi Agent provider '{id}': {e}");
+            continue;
+        }
+
+        imported += 1;
+        log::info!("Imported Pi Agent provider '{id}' from live config");
+    }
+
+    Ok(imported)
+}
+
 /// Remove a Hermes provider from live config
 ///
 /// This removes a specific provider from ~/.hermes/config.yaml
@@ -1562,6 +1656,19 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 
     openclaw_config::remove_provider(provider_id)?;
     log::info!("OpenClaw provider '{provider_id}' removed from live config");
+
+    Ok(())
+}
+
+/// Remove a Pi Agent provider from live config.
+pub fn remove_pi_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+    if !crate::pi_config::get_pi_dir().exists() {
+        log::debug!("Pi Agent config directory doesn't exist, skipping removal of '{provider_id}'");
+        return Ok(());
+    }
+
+    crate::pi_config::remove_provider(provider_id)?;
+    log::info!("Pi Agent provider '{provider_id}' removed from live config");
 
     Ok(())
 }

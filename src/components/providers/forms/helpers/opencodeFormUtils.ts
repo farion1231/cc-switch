@@ -62,6 +62,19 @@ export const OPENCLAW_DEFAULT_CONFIG = JSON.stringify(
   2,
 );
 
+export const PI_DEFAULT_CONFIG = JSON.stringify(
+  {
+    baseUrl: "",
+    apiKey: "",
+    api: "anthropic-messages",
+    authHeader: true,
+    headers: {},
+    models: [],
+  },
+  null,
+  2,
+);
+
 // ── Pure functions ───────────────────────────────────────────────────
 
 export function isKnownOpencodeOptionKey(key: string): boolean {

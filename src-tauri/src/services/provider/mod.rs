@@ -23,7 +23,7 @@ use crate::store::AppState;
 // Re-export sub-module functions for external access
 pub use live::{
     import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, read_live_settings,
+    import_opencode_providers_from_live, import_pi_providers_from_live, read_live_settings,
     should_import_default_config_on_startup, sync_current_to_live,
 };
 
@@ -38,7 +38,7 @@ pub(crate) use live::{
 // Internal re-exports
 use live::{
     remove_hermes_provider_from_live, remove_openclaw_provider_from_live,
-    remove_opencode_provider_from_live, write_gemini_live,
+    remove_opencode_provider_from_live, remove_pi_provider_from_live, write_gemini_live,
 };
 use usage::validate_usage_script;
 
@@ -1477,6 +1477,7 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(id)?,
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
+                    AppType::Pi => remove_pi_provider_from_live(id)?,
                     _ => {}
                 }
             }
@@ -1541,6 +1542,9 @@ impl ProviderService {
             }
             AppType::Hermes => {
                 remove_hermes_provider_from_live(id)?;
+            }
+            AppType::Pi => {
+                remove_pi_provider_from_live(id)?;
             }
             _ => {
                 return Err(AppError::Message(format!(
@@ -1733,11 +1737,8 @@ impl ProviderService {
         // Sync to live (write_gemini_live handles security flag internally for Gemini)
         write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
 
-        // Hermes is additive, so "switching" doesn't overwrite a live config file
-        // — we instead update the top-level `model:` section to point at this
-        // provider's first declared model. Without this, clicking "switch" would
-        // only shuffle entries in custom_providers[] while Hermes keeps using
-        // whatever `model.provider` was set before.
+        // Hermes/Pi are additive, so "switching" also updates their default
+        // provider/model pointer after ensuring the provider fragment exists.
         if matches!(app_type, AppType::Hermes) {
             if let Err(e) =
                 crate::hermes_config::apply_switch_defaults(&provider.id, &provider.settings_config)
@@ -1749,6 +1750,19 @@ impl ProviderService {
                 result
                     .warnings
                     .push(format!("hermes_model_defaults_failed:{}", provider.id));
+            }
+        }
+        if matches!(app_type, AppType::Pi) {
+            if let Err(e) =
+                crate::pi_config::apply_switch_defaults(&provider.id, &provider.settings_config)
+            {
+                log::warn!(
+                    "Failed to update Pi Agent model defaults after switching to '{}': {e}",
+                    provider.id
+                );
+                result
+                    .warnings
+                    .push(format!("pi_model_defaults_failed:{}", provider.id));
             }
         }
 
@@ -1767,6 +1781,7 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(&provider.id),
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
+                    AppType::Pi => remove_pi_provider_from_live(&provider.id),
                     _ => Ok(()),
                 };
 
@@ -1947,6 +1962,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::Pi => Ok(String::new()),     // Pi Agent doesn't use common config snippets
         }
     }
 
@@ -1963,6 +1979,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::Pi => Ok(String::new()),     // Pi Agent doesn't use common config snippets
         }
     }
 
@@ -2351,6 +2368,15 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::Pi => {
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.pi.settings.not_object",
+                        "Pi Agent 配置必须是 JSON 对象",
+                        "Pi Agent configuration must be a JSON object",
+                    ));
+                }
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -2533,8 +2559,8 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
-            AppType::OpenClaw | AppType::Hermes => {
-                // OpenClaw/Hermes use apiKey and baseUrl directly on the object
+            AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
+                // OpenClaw/Hermes/Pi use apiKey and baseUrl directly on the object
                 let api_key = provider
                     .settings_config
                     .get("apiKey")

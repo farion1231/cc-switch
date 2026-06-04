@@ -63,6 +63,7 @@ type ProviderFilter =
   | "opencode"
   | "openclaw"
   | "gemini"
+  | "pi"
   | "hermes";
 
 export function SessionManagerPage({ appId }: { appId: string }) {
@@ -577,7 +578,6 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                             {t("sessionManager.searchSessions")}
                           </TooltipContent>
                         </Tooltip>
-
                         <Select
                           value={providerFilter}
                           onValueChange={(value) =>
@@ -665,6 +665,22 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                   size={14}
                                 />
                                 <span>Gemini CLI</span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="pi">
+                              <div className="flex items-center gap-2">
+                                <ProviderIcon icon="pi" name="pi" size={14} />
+                                <span>Pi Agent</span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="hermes">
+                              <div className="flex items-center gap-2">
+                                <ProviderIcon
+                                  icon="hermes"
+                                  name="hermes"
+                                  size={14}
+                                />
+                                <span>Hermes</span>
                               </div>
                             </SelectItem>
                           </SelectContent>

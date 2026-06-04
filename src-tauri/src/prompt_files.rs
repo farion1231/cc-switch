@@ -7,14 +7,15 @@ use crate::error::AppError;
 use crate::gemini_config::get_gemini_dir;
 use crate::openclaw_config::get_openclaw_dir;
 use crate::opencode_config::get_opencode_dir;
+use crate::pi_config::get_pi_managed_prompt_path;
 
 /// 返回指定应用所使用的提示词文件路径。
 pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
     if matches!(app, AppType::ClaudeDesktop) {
         return Err(AppError::localized(
-            "claude_desktop.prompts_unsupported",
-            "Claude Desktop 暂不支持 Prompts",
-            "Claude Desktop does not support Prompts",
+            "prompts.unsupported_app",
+            "当前应用暂不支持 Prompts",
+            "The current app does not support Prompts",
         ));
     }
 
@@ -25,6 +26,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::OpenCode => get_opencode_dir(),
         AppType::OpenClaw => get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
+        AppType::Pi => return Ok(get_pi_managed_prompt_path()),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -33,6 +35,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Codex => "AGENTS.md",
         AppType::Gemini => "GEMINI.md",
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => "AGENTS.md",
+        AppType::Pi => unreachable!("handled above"),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
