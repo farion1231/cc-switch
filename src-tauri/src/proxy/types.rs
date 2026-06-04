@@ -162,6 +162,8 @@ pub struct GlobalProxyConfig {
     pub listen_port: u16,
     /// 是否启用日志
     pub enable_logging: bool,
+    /// 写回 Live 配置用的上游 URL（origin，仅 http/https://host:port；为空则使用 listen_address/listen_port）
+    pub upstream_url: Option<String>,
 }
 
 /// 应用级代理配置（每个 app 独立）

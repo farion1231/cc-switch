@@ -121,6 +121,7 @@ export interface GlobalProxyConfig {
   listenAddress: string;
   listenPort: number;
   enableLogging: boolean;
+  upstreamUrl?: string | null;
 }
 
 // 应用级代理配置（每个 app 独立）
