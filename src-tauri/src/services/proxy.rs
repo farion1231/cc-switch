@@ -848,13 +848,15 @@ impl ProxyService {
                     if let Ok(Some(mut provider)) =
                         self.db.get_provider_by_id(&provider_id, "codex")
                     {
-                        if let Some(token) = live_config
-                            .get("auth")
-                            .and_then(|v| v.get("OPENAI_API_KEY"))
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.trim())
-                            .filter(|s| !s.is_empty() && *s != PROXY_TOKEN_PLACEHOLDER)
-                        {
+                        let live_auth = live_config.get("auth");
+                        let live_config_text = live_config.get("config").and_then(|v| v.as_str());
+                        let token_from_config = live_config_text
+                            .and_then(crate::codex_config::extract_codex_experimental_bearer_token)
+                            .filter(|token| token != PROXY_TOKEN_PLACEHOLDER);
+                        let token_from_auth = live_auth
+                            .and_then(crate::codex_config::extract_codex_auth_api_key)
+                            .filter(|token| token != PROXY_TOKEN_PLACEHOLDER);
+                        if let Some(token) = token_from_config.or(token_from_auth) {
                             if let Some(auth_obj) = provider
                                 .settings_config
                                 .get_mut("auth")
@@ -4103,6 +4105,190 @@ model = "gpt-5.1-codex"
         assert!(
             !env.contains_key("ANTHROPIC_AUTH_TOKEN"),
             "should not add ANTHROPIC_AUTH_TOKEN when absent"
+        );
+    }
+
+    async fn sync_codex_live_config_and_get_stored_auth(live_config: Value) -> Value {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let mut provider = Provider::with_id(
+            "deepseek".to_string(),
+            "DeepSeek".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "stored-old-key",
+                    "tokens": {
+                        "access_token": "oauth-access"
+                    }
+                },
+                "config": r#"model_provider = "deepseek"
+model = "deepseek-v4-flash"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "https://api.deepseek.com/v1"
+wire_api = "responses"
+"#
+            }),
+            None,
+        );
+        provider.category = Some("custom".to_string());
+        db.save_provider("codex", &provider).expect("save provider");
+        db.set_current_provider("codex", "deepseek")
+            .expect("set current provider");
+
+        service
+            .sync_live_config_to_provider(&AppType::Codex, &live_config)
+            .await
+            .expect("sync");
+
+        db.get_provider_by_id("deepseek", "codex")
+            .expect("get provider")
+            .expect("provider exists")
+            .settings_config
+            .get("auth")
+            .expect("stored auth")
+            .clone()
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn sync_codex_token_reads_provider_scoped_config_bearer() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let mut provider = Provider::with_id(
+            "deepseek".to_string(),
+            "DeepSeek".to_string(),
+            json!({
+                "auth": {
+                    "auth_mode": "chatgpt",
+                    "tokens": {
+                        "access_token": "oauth-access"
+                    }
+                },
+                "config": r#"model_provider = "deepseek"
+model = "deepseek-v4-flash"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "https://api.deepseek.com/v1"
+wire_api = "responses"
+"#
+            }),
+            None,
+        );
+        provider.category = Some("custom".to_string());
+        db.save_provider("codex", &provider).expect("save provider");
+        db.set_current_provider("codex", "deepseek")
+            .expect("set current provider");
+
+        let live_config = json!({
+            "auth": {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": "oauth-access"
+                }
+            },
+            "config": r#"model_provider = "deepseek"
+model = "deepseek-v4-flash"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "https://api.deepseek.com/v1"
+wire_api = "responses"
+experimental_bearer_token = "fresh-deepseek-key"
+"#
+        });
+
+        service
+            .sync_live_config_to_provider(&AppType::Codex, &live_config)
+            .await
+            .expect("sync");
+
+        let updated = db
+            .get_provider_by_id("deepseek", "codex")
+            .expect("get provider")
+            .expect("provider exists");
+        assert_eq!(
+            updated
+                .settings_config
+                .get("auth")
+                .and_then(|auth| auth.get("OPENAI_API_KEY"))
+                .and_then(|v| v.as_str()),
+            Some("fresh-deepseek-key"),
+            "Codex app enhancement stores third-party keys in provider-scoped config.toml"
+        );
+        assert_eq!(
+            updated
+                .settings_config
+                .get("auth")
+                .and_then(|auth| auth.get("tokens"))
+                .and_then(|tokens| tokens.get("access_token"))
+                .and_then(|v| v.as_str()),
+            Some("oauth-access"),
+            "sync should preserve existing OAuth login material in the stored provider"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn sync_codex_token_falls_through_proxy_placeholder_auth_to_config_bearer() {
+        let live_config = json!({
+            "auth": {
+                "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER
+            },
+            "config": r#"model_provider = "deepseek"
+model = "deepseek-v4-flash"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "https://api.deepseek.com/v1"
+wire_api = "responses"
+experimental_bearer_token = "fresh-deepseek-key"
+"#
+        });
+
+        let auth = sync_codex_live_config_and_get_stored_auth(live_config).await;
+
+        assert_eq!(
+            auth.get("OPENAI_API_KEY").and_then(|v| v.as_str()),
+            Some("fresh-deepseek-key"),
+            "placeholder auth should not block fallback to provider-scoped config token"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn sync_codex_token_prefers_config_bearer_over_preserved_official_auth_key() {
+        let live_config = json!({
+            "auth": {
+                "OPENAI_API_KEY": "sk-official-openai-key"
+            },
+            "config": r#"model_provider = "deepseek"
+model = "deepseek-v4-flash"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "https://api.deepseek.com/v1"
+wire_api = "responses"
+experimental_bearer_token = "fresh-deepseek-key"
+"#
+        });
+
+        let auth = sync_codex_live_config_and_get_stored_auth(live_config).await;
+
+        assert_eq!(
+            auth.get("OPENAI_API_KEY").and_then(|v| v.as_str()),
+            Some("fresh-deepseek-key"),
+            "provider-scoped config token should not be overwritten by preserved official auth"
         );
     }
 
