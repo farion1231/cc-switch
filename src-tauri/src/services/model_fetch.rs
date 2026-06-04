@@ -22,10 +22,22 @@ struct ModelsResponse {
     data: Option<Vec<ModelEntry>>,
 }
 
+/// gemini 兼容的 /v1/models 或/v1beta/models响应格式
+#[derive(Debug, Deserialize)]
+struct GoogModelsResponse {
+    models: Option<Vec<GoogModelEntry>>,
+}
+
 #[derive(Debug, Deserialize)]
 struct ModelEntry {
     id: String,
     owned_by: Option<String>,
+}
+
+/// gemini native没有owned_by字段，无法区分来源
+#[derive(Debug, Deserialize)]
+struct GoogModelEntry {
+    name: String,
 }
 
 const FETCH_TIMEOUT_SECS: u64 = 15;
@@ -94,6 +106,43 @@ pub async fn fetch_models(
                 .map(|m| FetchedModel {
                     id: m.id,
                     owned_by: m.owned_by,
+                })
+                .collect();
+
+            models.sort_by(|a, b| a.id.cmp(&b.id));
+            return Ok(models);
+        }
+
+        // 尝试google格式
+        log::debug!("[ModelFetch] Trying endpoint: {url} with google's Header");
+        let goog_response = match client
+            .get(url)
+            .header("X-goog-api-key", api_key)
+            .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                return Err(format!("Request failed: {e}"));
+            }
+        };
+
+        let goog_status = goog_response.status();
+
+        if goog_status.is_success() {
+            let resp: GoogModelsResponse = goog_response
+                .json()
+                .await
+                .map_err(|e| format!("Failed to parse response: {e}"))?;
+
+            let mut models: Vec<FetchedModel> = resp
+                .models
+                .unwrap_or_default()
+                .into_iter()
+                .map(|m| FetchedModel {
+                    id: m.name,
+                    owned_by: Some("".to_string()),
                 })
                 .collect();
 
@@ -220,10 +269,25 @@ fn strip_compat_suffix(base_url: &str) -> Option<&str> {
 /// 判断 baseURL 是否以 OpenAI 风格的版本段 `/v{N}` 结尾（`N` 为一个或多个数字），
 /// 例如 `/v1`、`.../paas/v4`。这类 URL 版本号已在路径中，模型端点应为
 /// `{base}/models`，不能再补 `/v1`（智谱 Coding Plan 即 `.../coding/paas/v4`）。
+/// 兼容谷歌的v1beta结尾
 fn ends_with_version_segment(url: &str) -> bool {
     let last = url.rsplit('/').next().unwrap_or("");
-    last.strip_prefix('v')
-        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+    if let Some(rest) = last.strip_prefix('v') {
+        if rest.is_empty() {
+            return false;
+        }
+        // 允许纯数字
+        if rest.bytes().all(|b| b.is_ascii_digit()) {
+            return true;
+        }
+        // 允许数字后跟 "beta"
+        if let Some(num_part) = rest.strip_suffix("beta") {
+            if !num_part.is_empty() && num_part.bytes().all(|b| b.is_ascii_digit()) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 #[cfg(test)]
