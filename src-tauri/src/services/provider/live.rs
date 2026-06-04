@@ -592,6 +592,7 @@ fn extract_codex_live_common_config(config_toml: &str) -> Result<String, AppErro
         "model",
         "model_provider",
         "base_url",
+        "experimental_bearer_token",
         "model_catalog_json",
     ] {
         root.remove(key);

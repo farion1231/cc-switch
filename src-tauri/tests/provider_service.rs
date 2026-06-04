@@ -256,6 +256,7 @@ fn provider_service_switch_codex_preserves_live_ui_settings() {
     let legacy_config = r##"model_provider = "legacy"
 model = "gpt-5.4"
 personality = "pragmatic"
+experimental_bearer_token = "stale-live-token"
 
 [desktop]
 appearanceLightCodeThemeId = "raycast"
@@ -292,14 +293,12 @@ requires_openai_auth = true
                 None,
             ),
         );
-        manager.providers.insert(
+        let mut new_provider = Provider::with_id(
             "new-provider".to_string(),
-            Provider::with_id(
-                "new-provider".to_string(),
-                "Latest".to_string(),
-                json!({
-                    "auth": {"OPENAI_API_KEY": "fresh-key"},
-                    "config": r#"model_provider = "latest"
+            "Latest".to_string(),
+            json!({
+                "auth": {},
+                "config": r#"model_provider = "latest"
 model = "gpt-5.5"
 
 [model_providers.latest]
@@ -308,10 +307,13 @@ base_url = "https://latest.example/v1"
 wire_api = "responses"
 requires_openai_auth = true
 "#
-                }),
-                None,
-            ),
+            }),
+            None,
         );
+        new_provider.category = Some("official".to_string());
+        manager
+            .providers
+            .insert("new-provider".to_string(), new_provider);
     }
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
@@ -356,6 +358,14 @@ requires_openai_auth = true
             .and_then(|v| v.as_str()),
         Some("https://latest.example/v1"),
         "provider-specific endpoint should come from the selected provider"
+    );
+    assert!(
+        !config_text.contains("stale-live-token"),
+        "stale top-level bearer tokens from live config should not be preserved as common config"
+    );
+    assert!(
+        !config_text.contains("experimental_bearer_token"),
+        "official provider writes without auth material should not inherit stale live bearer tokens"
     );
 }
 
