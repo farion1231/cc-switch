@@ -646,7 +646,7 @@
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
     "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
-    "browsePlaceholderKimi": "e.g., /home/<your-username>/.kimi",
+    "browsePlaceholderKimi": "e.g., /home/<your-username>/.kimi-code",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",

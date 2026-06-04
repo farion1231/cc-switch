@@ -558,7 +558,7 @@ impl SkillService {
             AppType::OpenCode => home.join(".config").join("opencode").join("skills"),
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
-            AppType::Kimi => home.join(".kimi").join("skills"),
+            AppType::Kimi => home.join(".kimi-code").join("skills"),
         })
     }
 

@@ -35,7 +35,7 @@ const APP_DIRECTORY_META: Record<
   claude: { key: "claude", defaultFolder: ".claude" },
   codex: { key: "codex", defaultFolder: ".codex" },
   gemini: { key: "gemini", defaultFolder: ".gemini" },
-  kimi: { key: "kimi", defaultFolder: ".kimi" },
+  kimi: { key: "kimi", defaultFolder: ".kimi-code" },
   opencode: { key: "opencode", defaultFolder: ".config/opencode" },
   openclaw: { key: "openclaw", defaultFolder: ".openclaw" },
   hermes: { key: "hermes", defaultFolder: ".hermes" },

@@ -646,7 +646,7 @@
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
     "browsePlaceholderOpencode": "例: /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
-    "browsePlaceholderKimi": "例: /home/<your-username>/.kimi",
+    "browsePlaceholderKimi": "例: /home/<your-username>/.kimi-code",
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",

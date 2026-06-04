@@ -2,13 +2,13 @@
 
 ## 背景
 
-在 cc-switch 中新增对 Kimi Code CLI 的 API Key 切换支持。Kimi Code CLI 是 Moonshot AI 推出的命令行 AI 助手，配置文件位于 `~/.kimi/config.toml`。
+在 cc-switch 中新增对 Kimi Code CLI 的 API Key 切换支持。Kimi Code CLI 是 Moonshot AI 推出的命令行 AI 助手，配置文件位于 `~/.kimi-code/config.toml`。
 
 ## 目标
 
 - 在 cc-switch 的 App 切换栏中新增 "Kimi Code"
 - 支持添加、切换多个 Kimi API provider
-- 切换后影响 Kimi Code CLI 的 `~/.kimi/config.toml`
+- 切换后影响 Kimi Code CLI 的 `~/.kimi-code/config.toml`
 - 重新启动 Kimi Code CLI 时使用新的账号配置
 
 ## 非目标
@@ -21,10 +21,10 @@
 
 采用**固定 Provider 名称 + `toml_edit` 精准修改**方案：
 
-1. 在 `~/.kimi/config.toml` 中固定使用 provider 名称 `ccswitch`
+1. 在 `~/.kimi-code/config.toml` 中固定使用 provider 名称 `ccswitch`
 2. 切换时只修改 `[providers.ccswitch]` 中的 `base_url` 和 `api_key`
 3. 保留 `default_model`、`models`、`mcp`、`services` 等用户原有配置完全不变
-4. 首次切换且 `~/.kimi/config.toml` 不存在时，生成最小默认配置
+4. 首次切换且 `~/.kimi-code/config.toml` 不存在时，生成最小默认配置
 
 ## 数据模型
 
@@ -74,7 +74,7 @@ AppSwitcher 显示 Kimi  ───────────────→  Provi
 Provider Presets       ───────────────→  Database (providers 表)
 切换 Provider          ───────────────→  kimi_config::write_kimi_live()
                                          ↓
-                                    ~/.kimi/config.toml
+                                    ~/.kimi-code/config.toml
                                     [providers.ccswitch]
                                     base_url / api_key 更新
 ```
@@ -83,8 +83,8 @@ Provider Presets       ───────────────→  Databas
 
 新建 `src-tauri/src/kimi_config.rs`，职责：
 
-- `get_kimi_dir()` → `~/.kimi`（支持 `KIMI_CONFIG_DIR` 覆盖）
-- `get_kimi_config_path()` → `~/.kimi/config.toml`
+- `get_kimi_dir()` → `~/.kimi-code`（支持 `KIMI_CONFIG_DIR` 覆盖）
+- `get_kimi_config_path()` → `~/.kimi-code/config.toml`
 - `read_kimi_config()` → 读取并解析 TOML (`toml_edit::DocumentMut`)
 - `write_kimi_config(doc)` → 原子写入
 - `write_kimi_live(base_url, api_key)` → 核心：修改 `[providers.ccswitch]`
@@ -119,7 +119,7 @@ Provider Presets       ───────────────→  Databas
 
 | 场景 | 行为 |
 |------|------|
-| `~/.kimi/config.toml` 不存在 | 自动生成最小默认配置 |
+| `~/.kimi-code/config.toml` 不存在 | 自动生成最小默认配置 |
 | TOML 解析失败 | 备份为 `config.toml.bak`，报错提示用户 |
 | `KIMI_BASE_URL` 为空 | 切换前校验失败，提示填写 |
 | 文件写入权限不足 | 返回 `AppError::io`，前端友好提示 |
@@ -128,7 +128,7 @@ Provider Presets       ───────────────→  Databas
 
 - 后端：为 `kimi_config.rs` 添加单元测试（TOML 读写、provider 更新、默认配置生成）
 - 前端：验证 `AppSwitcher` 正确显示 Kimi 图标和名称
-- 集成：手动验证切换 provider 后 `~/.kimi/config.toml` 内容正确
+- 集成：手动验证切换 provider 后 `~/.kimi-code/config.toml` 内容正确
 
 ## 文件清单
 

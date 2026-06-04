@@ -12,7 +12,7 @@ pub fn get_kimi_dir() -> PathBuf {
     if let Some(custom) = crate::settings::get_kimi_override_dir() {
         return custom;
     }
-    get_home_dir().join(".kimi")
+    get_home_dir().join(".kimi-code")
 }
 
 /// 获取 Kimi config.toml 路径

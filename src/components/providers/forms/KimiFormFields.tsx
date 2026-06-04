@@ -53,7 +53,7 @@ export function KimiFormFields({
         />
         <p className="text-xs text-muted-foreground">
           {t("providerForm.providerNameHint", {
-            defaultValue: "对应 ~/.kimi/config.toml 中的 [providers.{名字}]",
+            defaultValue: "对应 ~/.kimi-code/config.toml 中的 [providers.{名字}]",
           })}
         </p>
       </div>
