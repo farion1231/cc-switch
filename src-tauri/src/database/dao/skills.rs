@@ -198,7 +198,9 @@ impl Database {
         let repo_iter = stmt
             .query_map([], |row| {
                 Ok(SkillRepo {
-                    host: row.get::<_, String>(0).unwrap_or_else(|_| "github.com".to_string()),
+                    host: row
+                        .get::<_, String>(0)
+                        .unwrap_or_else(|_| "github.com".to_string()),
                     owner: row.get(1)?,
                     name: row.get(2)?,
                     branch: row.get(3)?,

@@ -75,7 +75,9 @@ export function RepoManager({
 
   const handleOpenRepo = async (repo: SkillRepo) => {
     try {
-      await settingsApi.openExternal(`https://${repo.host}/${repo.owner}/${repo.name}`);
+      await settingsApi.openExternal(
+        `https://${repo.host}/${repo.owner}/${repo.name}`,
+      );
     } catch (error) {
       console.error("Failed to open URL:", error);
     }
@@ -151,7 +153,9 @@ export function RepoManager({
                       <div>
                         <div className="text-sm font-medium text-foreground">
                           {repo.host !== "github.com" && (
-                            <span className="text-xs text-muted-foreground mr-1">[{repo.host}]</span>
+                            <span className="text-xs text-muted-foreground mr-1">
+                              [{repo.host}]
+                            </span>
                           )}
                           {repo.owner}/{repo.name}
                         </div>
@@ -178,7 +182,9 @@ export function RepoManager({
                           variant="ghost"
                           size="icon"
                           type="button"
-                          onClick={() => onRemove(repo.host, repo.owner, repo.name)}
+                          onClick={() =>
+                            onRemove(repo.host, repo.owner, repo.name)
+                          }
                           title={t("common.delete")}
                           className="hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
                         >

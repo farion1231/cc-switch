@@ -54,7 +54,10 @@ fn save_skill_repo_without_token_stores_none() {
         .find(|r| r.owner == "public-org" && r.name == "public-skills")
         .expect("should find repo");
 
-    assert!(saved.token.is_none(), "token should be None for public repo");
+    assert!(
+        saved.token.is_none(),
+        "token should be None for public repo"
+    );
 }
 
 // ── DAO: 多 host 共存 ─────────────────────────────────────────────────────────
@@ -96,9 +99,7 @@ fn same_owner_name_different_hosts_coexist() {
     );
 
     let has_github = acme_repos.iter().any(|r| r.host == "github.com");
-    let has_ghes = acme_repos
-        .iter()
-        .any(|r| r.host == "ghes.internal.corp");
+    let has_ghes = acme_repos.iter().any(|r| r.host == "ghes.internal.corp");
     assert!(has_github, "github.com entry should exist");
     assert!(has_ghes, "ghes.internal.corp entry should exist");
 }

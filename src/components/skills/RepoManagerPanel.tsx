@@ -67,7 +67,9 @@ export function RepoManagerPanel({
 
   const handleOpenRepo = async (repo: SkillRepo) => {
     try {
-      await settingsApi.openExternal(`https://${repo.host}/${repo.owner}/${repo.name}`);
+      await settingsApi.openExternal(
+        `https://${repo.host}/${repo.owner}/${repo.name}`,
+      );
     } catch (error) {
       console.error("Failed to open URL:", error);
     }
@@ -157,7 +159,9 @@ export function RepoManagerPanel({
                 <div>
                   <div className="text-sm font-medium text-foreground">
                     {repo.host !== "github.com" && (
-                      <span className="text-xs text-muted-foreground mr-1">[{repo.host}]</span>
+                      <span className="text-xs text-muted-foreground mr-1">
+                        [{repo.host}]
+                      </span>
                     )}
                     {repo.owner}/{repo.name}
                   </div>

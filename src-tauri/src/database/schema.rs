@@ -1243,15 +1243,12 @@ impl Database {
 
         // skills 表添加 repo_host 列
         if Self::table_exists(conn, "skills")? {
-            Self::add_column_if_missing(
-                conn,
-                "skills",
-                "repo_host",
-                "TEXT DEFAULT 'github.com'",
-            )?;
+            Self::add_column_if_missing(conn, "skills", "repo_host", "TEXT DEFAULT 'github.com'")?;
         }
 
-        log::info!("v10 -> v11 迁移完成：已添加 GitHub Enterprise 支持（host, token 列，主键已重建）");
+        log::info!(
+            "v10 -> v11 迁移完成：已添加 GitHub Enterprise 支持（host, token 列，主键已重建）"
+        );
         Ok(())
     }
 

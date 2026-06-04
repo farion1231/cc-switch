@@ -476,7 +476,13 @@ impl SkillService {
     }
 
     /// 构建 Skill 文档 URL（指向仓库中的 SKILL.md 文件）
-    fn build_skill_doc_url(host: &str, owner: &str, repo: &str, branch: &str, doc_path: &str) -> String {
+    fn build_skill_doc_url(
+        host: &str,
+        owner: &str,
+        repo: &str,
+        branch: &str,
+        doc_path: &str,
+    ) -> String {
         format!("https://{host}/{owner}/{repo}/blob/{branch}/{doc_path}")
     }
 
@@ -2300,7 +2306,10 @@ impl SkillService {
                 repo.host, repo.owner, repo.name, branch
             );
 
-            match self.download_and_extract(&url, repo.token.as_deref(), &temp_path).await {
+            match self
+                .download_and_extract(&url, repo.token.as_deref(), &temp_path)
+                .await
+            {
                 Ok(_) => {
                     return Ok((temp_path, branch.to_string()));
                 }
@@ -2315,7 +2324,12 @@ impl SkillService {
     }
 
     /// 下载并解压 ZIP
-    async fn download_and_extract(&self, url: &str, token: Option<&str>, dest: &Path) -> Result<()> {
+    async fn download_and_extract(
+        &self,
+        url: &str,
+        token: Option<&str>,
+        dest: &Path,
+    ) -> Result<()> {
         let client = crate::proxy::http_client::get();
         let mut request = client.get(url);
         if let Some(token) = token {

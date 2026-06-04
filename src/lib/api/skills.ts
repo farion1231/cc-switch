@@ -267,7 +267,11 @@ export const skillsApi = {
   },
 
   /** 删除仓库 */
-  async removeRepo(host: string, owner: string, name: string): Promise<boolean> {
+  async removeRepo(
+    host: string,
+    owner: string,
+    name: string,
+  ): Promise<boolean> {
     return await invoke("remove_skill_repo", { host, owner, name });
   },
 
