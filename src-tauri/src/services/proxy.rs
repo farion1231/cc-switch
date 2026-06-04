@@ -2014,6 +2014,7 @@ impl ProxyService {
                 provider.category.as_deref(),
                 auth,
                 config_str,
+                true,
             )
             .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
         }
@@ -2280,6 +2281,7 @@ impl ProxyService {
             provider.category.as_deref(),
             auth,
             config_str,
+            true,
         )
         .map_err(|e| format!("写入 Codex 配置失败: {e}"))
     }

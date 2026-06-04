@@ -781,6 +781,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 provider.category.as_deref(),
                 auth,
                 config_str,
+                true,
             )?;
         }
         AppType::Gemini => {

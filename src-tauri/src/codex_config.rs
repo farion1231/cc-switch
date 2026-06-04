@@ -1137,26 +1137,31 @@ pub fn write_codex_provider_live_with_catalog(
     category: Option<&str>,
     auth: &Value,
     config_text: Option<&str>,
+    preserve_active_model_provider_id: bool,
 ) -> Result<(), AppError> {
     let prepared_config = config_text
         .map(|text| prepare_codex_config_text_with_model_catalog(settings, text))
         .transpose()?;
-    let normalized_config = prepared_config
-        .as_deref()
-        .map(|text| {
-            let mut settings = json!({ "config": text });
-            normalize_codex_settings_config_model_provider(&mut settings, None)?;
-            Ok::<_, AppError>(
-                settings
-                    .get("config")
-                    .and_then(Value::as_str)
-                    .unwrap_or(text)
-                    .to_string(),
-            )
-        })
-        .transpose()?;
+    let live_config = if preserve_active_model_provider_id {
+        prepared_config
+            .as_deref()
+            .map(|text| {
+                let mut settings = json!({ "config": text });
+                normalize_codex_settings_config_model_provider(&mut settings, None)?;
+                Ok::<_, AppError>(
+                    settings
+                        .get("config")
+                        .and_then(Value::as_str)
+                        .unwrap_or(text)
+                        .to_string(),
+                )
+            })
+            .transpose()?
+    } else {
+        prepared_config
+    };
 
-    write_codex_live_for_provider(category, auth, normalized_config.as_deref())
+    write_codex_live_for_provider(category, auth, live_config.as_deref())
 }
 
 fn restore_codex_backfill_model_provider_id(
