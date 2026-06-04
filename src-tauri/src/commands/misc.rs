@@ -2509,6 +2509,7 @@ fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
 
 /// 创建临时配置文件并启动 claude 终端
 /// 使用 --settings 参数传入提供商特定的 API 配置
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 fn launch_terminal_with_env(
     env_vars: Vec<(String, String)>,
     provider_id: &str,
