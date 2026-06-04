@@ -362,9 +362,22 @@ pub(crate) fn provider_uses_common_config(
         .and_then(|meta| meta.common_config_enabled)
     {
         Some(explicit) => explicit && snippet.is_some_and(|value| !value.trim().is_empty()),
-        None => snippet.is_some_and(|value| {
-            settings_contain_common_config(app_type, &provider.settings_config, value)
-        }),
+        None => {
+            // For exclusive-mode apps (Claude/Codex/Gemini), settings.json is fully
+            // overwritten on provider switch. Not merging common config means all
+            // common fields (statusLine, enabledPlugins, model, etc.) are lost.
+            // Default to applying common config as long as a non-empty snippet exists.
+            //
+            // For additive-mode apps (Hermes/OpenClaw), multiple providers coexist
+            // in the same config file — keep the existing subset heuristic.
+            if !app_type.is_additive_mode() {
+                snippet.is_some_and(|v| !v.trim().is_empty())
+            } else {
+                snippet.is_some_and(|value| {
+                    settings_contain_common_config(app_type, &provider.settings_config, value)
+                })
+            }
+        }
     }
 }
 
@@ -526,6 +539,31 @@ pub(crate) fn write_live_with_common_config(
     }
 
     write_live_snapshot(app_type, &effective_provider)
+}
+
+/// Re-extract common config from the current live settings and persist it to the database.
+/// This ensures the common config snippet stays up-to-date (e.g. when plugins like
+/// claude-hud update their cache paths between versions).
+pub(crate) fn sync_common_config_from_live(
+    db: &Database,
+    app_type: &AppType,
+) -> Result<(), AppError> {
+    let live_settings = read_live_settings(app_type.clone())?;
+
+    let snippet = crate::services::provider::ProviderService::extract_common_config_snippet_from_settings(
+        app_type.clone(),
+        &live_settings,
+    )?;
+
+    if !snippet.is_empty() && snippet != "{}" {
+        db.set_config_snippet(app_type.as_str(), Some(snippet))?;
+        log::info!(
+            "✓ Synced common config snippet for {} from live settings",
+            app_type.as_str()
+        );
+    }
+
+    Ok(())
 }
 
 pub(crate) fn strip_common_config_from_live_settings(

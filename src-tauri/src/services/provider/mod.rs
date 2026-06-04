@@ -32,7 +32,8 @@ pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::{
     build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
     provider_exists_in_live_config, strip_common_config_from_live_settings,
-    sync_current_provider_for_app_to_live, write_live_with_common_config,
+    sync_common_config_from_live, sync_current_provider_for_app_to_live,
+    write_live_with_common_config,
 };
 
 // Internal re-exports
@@ -1718,6 +1719,18 @@ impl ProviderService {
                         }
                     }
                 }
+            }
+        }
+
+        // Sync common config from live settings before switching.
+        // This ensures the common config snippet in the DB stays up-to-date
+        // (e.g. when plugins like claude-hud update their cache paths).
+        if !app_type.is_additive_mode() {
+            if let Err(e) = sync_common_config_from_live(
+                state.db.as_ref(),
+                &app_type,
+            ) {
+                log::warn!("Failed to sync common config from live: {e}");
             }
         }
 
