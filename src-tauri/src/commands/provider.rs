@@ -1063,7 +1063,7 @@ pub struct ClaudeShortcutCommandResult {
     pub error: Option<String>,
 }
 
-fn get_claude_provider<'a>(state: &'a AppState, provider_id: &str) -> Result<Provider, String> {
+fn get_claude_provider(state: &AppState, provider_id: &str) -> Result<Provider, String> {
     state
         .db
         .get_provider_by_id(provider_id, "claude")

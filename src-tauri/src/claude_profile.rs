@@ -177,7 +177,7 @@ pub fn resolve_target(_db: &Database, provider: &Provider) -> ClaudeConfigTarget
         .meta
         .as_ref()
         .and_then(|m| m.managed_profile_path.as_ref())
-        .map(|p| PathBuf::from(p));
+        .map(PathBuf::from);
 
     ClaudeConfigTarget::ManagedProfile {
         slug,
@@ -536,6 +536,7 @@ pub fn get_profile_status(provider: &Provider) -> ProfileStatus {
 }
 
 /// Remove a managed profile directory and all its contents.
+#[allow(dead_code)]
 pub fn remove_profile(provider: &Provider) -> Result<bool, AppError> {
     let slug = derive_provider_slug(&provider.id);
     let path_override = provider

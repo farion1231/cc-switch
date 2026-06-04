@@ -15,6 +15,7 @@ use crate::error::AppError;
 /// - `Default` writes to the global Claude config path (`~/.claude/`).
 /// - `ManagedProfile` writes to an isolated provider profile directory
 ///   under the managed profile root (`~/.claude-cc-switch/<slug>/`).
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum ClaudeConfigTarget {
     /// The default/global Claude Code configuration directory.
@@ -77,11 +78,13 @@ impl ClaudeConfigTarget {
     }
 
     /// Returns the `projects` directory path for session scanning.
+    #[allow(dead_code)]
     pub fn projects_dir(&self) -> PathBuf {
         self.config_dir().join("projects")
     }
 
     /// Returns the `CLAUDE_CONFIG_DIR` value for launching this target.
+    #[allow(dead_code)]
     pub fn claude_config_dir_value(&self) -> PathBuf {
         self.config_dir()
     }

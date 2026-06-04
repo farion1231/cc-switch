@@ -273,13 +273,11 @@ pub fn install_shortcut(
     let slug = crate::config::derive_provider_slug(&provider.id);
 
     // If file exists, check ownership
-    if path.exists() {
-        if !is_managed_shortcut(&path, &slug)? {
-            return Err(AppError::Config(format!(
-                "Cannot overwrite unmanaged command: {}",
-                path.display()
-            )));
-        }
+    if path.exists() && !is_managed_shortcut(&path, &slug)? {
+        return Err(AppError::Config(format!(
+            "Cannot overwrite unmanaged command: {}",
+            path.display()
+        )));
     }
 
     // Ensure target directory exists
@@ -310,7 +308,7 @@ pub fn remove_shortcut_by_name(
     target_dir: &Path,
 ) -> Result<bool, AppError> {
     validate_shortcut_name(name)?;
-    let path = shortcut_path(&name, target_dir);
+    let path = shortcut_path(name, target_dir);
     if !path.exists() {
         return Ok(false);
     }
