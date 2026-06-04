@@ -1266,7 +1266,8 @@
       "session_log": "Session Log",
       "codex_db": "Codex DB",
       "codex_session": "Codex Session",
-      "gemini_session": "Gemini Session"
+      "gemini_session": "Gemini Session",
+      "opencode_session": "OpenCode Session"
     },
     "sessionSync": {
       "trigger": "Sync session logs",

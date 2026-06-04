@@ -1266,7 +1266,8 @@
       "session_log": "会话日志",
       "codex_db": "Codex 数据库",
       "codex_session": "Codex 会话日志",
-      "gemini_session": "Gemini 会话日志"
+      "gemini_session": "Gemini 会话日志",
+      "opencode_session": "OpenCode 会话日志"
     },
     "sessionSync": {
       "trigger": "同步会话日志",

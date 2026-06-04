@@ -87,6 +87,7 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
         files_scanned: 1,
         errors: vec![],
     };
+    let mut has_sync_errors = false;
 
     // 查询所有会话
     let sessions = query_sessions(&opencode_conn)?;
@@ -99,6 +100,8 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
             continue; // 会话未更新，跳过
         }
 
+        let mut session_had_error = false;
+
         // 查询该会话的所有 assistant 消息
         match query_assistant_messages(&opencode_conn, session_id) {
             Ok(messages) => {
@@ -109,8 +112,11 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
                         Ok(true) => result.imported += 1,
                         Ok(false) => result.skipped += 1,
                         Err(e) => {
-                            log::warn!("[OPENCODE-SYNC] 插入失败 ({}): {e}", request_id);
+                            let msg = format!("OpenCode 消息插入失败 {request_id}: {e}");
+                            log::warn!("[OPENCODE-SYNC] {msg}");
+                            result.errors.push(msg);
                             result.skipped += 1;
+                            session_had_error = true;
                         }
                     }
                 }
@@ -119,15 +125,28 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
                 let msg = format!("OpenCode 会话消息查询失败 {session_id}: {e}");
                 log::warn!("[OPENCODE-SYNC] {msg}");
                 result.errors.push(msg);
+                session_had_error = true;
             }
         }
 
-        // 更新会话级同步状态
-        let _ = update_sync_state(db, &sync_key, *time_updated, 0);
+        if session_had_error {
+            has_sync_errors = true;
+            continue;
+        }
+
+        // 更新会话级同步状态。失败时不要推进文件级状态，确保下次可重试。
+        if let Err(e) = update_sync_state(db, &sync_key, *time_updated, 0) {
+            let msg = format!("OpenCode 会话同步状态更新失败 {session_id}: {e}");
+            log::warn!("[OPENCODE-SYNC] {msg}");
+            result.errors.push(msg);
+            has_sync_errors = true;
+        }
     }
 
-    // 更新文件级同步状态
-    update_sync_state(db, &db_path_str, file_modified, 0)?;
+    // 仅在本轮完全成功时推进文件级状态；否则保留下次重试入口。
+    if !has_sync_errors {
+        update_sync_state(db, &db_path_str, file_modified, 0)?;
+    }
 
     if result.imported > 0 {
         log::info!(
@@ -345,7 +364,7 @@ fn insert_opencode_message(
             }
         };
 
-    conn.execute(
+    let inserted_rows = conn.execute(
         "INSERT OR IGNORE INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
@@ -382,7 +401,7 @@ fn insert_opencode_message(
     )
     .map_err(|e| AppError::Database(format!("插入 OpenCode 会话日志失败: {e}")))?;
 
-    Ok(true)
+    Ok(inserted_rows > 0)
 }
 
 #[cfg(test)]
