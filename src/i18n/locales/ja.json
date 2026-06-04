@@ -462,7 +462,7 @@
     },
     "webdavSync": {
       "title": "WebDAV クラウド同期",
-      "description": "WebDAV を使ってデバイス間でデータベースとスキル設定を同期します。",
+      "description": "WebDAV を使って選択したモジュールをデバイス間で同期します。",
       "baseUrl": "WebDAV サーバー URL",
       "baseUrlPlaceholder": "https://example.com/remote.php/dav/files/user",
       "username": "ユーザー名",
@@ -505,10 +505,20 @@
       },
       "remoteRootDefault": "デフォルト: cc-switch-sync",
       "profileDefault": "デフォルト: default",
+      "uploadModulesTitle": "アップロード既定モジュール",
+      "downloadModulesTitle": "ダウンロード既定モジュール",
+      "noUploadModules": "少なくとも1つのアップロードモジュールを選択してください",
+      "noDownloadModules": "少なくとも1つのダウンロードモジュールを選択してください",
+      "modules": {
+        "api": "API プロバイダー",
+        "mcp": "MCP",
+        "prompts": "プロンプト",
+        "skills": "Skills"
+      },
       "saveAndTestSuccess": "設定を保存しました。接続正常です",
       "saveAndTestFailed": "設定を保存しましたが、接続テストに失敗しました：{{error}}",
       "noRemoteData": "クラウドに同期データが見つかりません",
-      "incompatibleVersion": "リモートデータに互換性がありません（プロトコル v{{protocolVersion}}、データベース {{dbCompatVersion}}）。このクライアントは protocol v2 / db-v6 をサポートしています。",
+      "incompatibleVersion": "リモートデータに互換性がありません（プロトコル v{{protocolVersion}}、データベース {{dbCompatVersion}}）。このクライアントは protocol v3 / db-v6 をサポートしています。",
       "unsaved": "未保存",
       "saved": "保存済み",
       "unsavedChanges": "先に設定を保存してください",
@@ -522,7 +532,9 @@
         "path": "リモートパス",
         "dbCompat": "DB 互換レイヤー",
         "artifacts": "内容",
-        "legacyNotice": "旧レイアウトのリモートパスを検出しました。復元後、次回のアップロードは新しい v2/db-v6 パスに書き込まれます。",
+        "selectedModules": "今回のダウンロード対象",
+        "availableModules": "リモートで利用可能なモジュール",
+        "legacyNotice": "旧レイアウトのリモートパスを検出しました。復元後、次回のアップロードは新しい v3/db-v6 パスに書き込まれます。",
         "warning": "ローカルのすべてのデータとスキル設定が上書きされます",
         "confirm": "復元を実行"
       },
@@ -537,8 +549,9 @@
         "createdAt": "アップロード日時",
         "path": "リモートパス",
         "dbCompat": "DB 互換レイヤー",
+        "availableModules": "リモートで利用可能なモジュール",
         "warning": "リモートの既存同期データが上書きされます",
-        "legacyNotice": "旧レイアウトのリモートデータを検出しました。今回のアップロードは新しい v2/db-v6 パスに書き込み、旧パスは上書きしません。",
+        "legacyNotice": "旧レイアウトのリモートデータを検出しました。今回のアップロードは新しい v3/db-v6 パスに書き込み、旧パスは上書きしません。",
         "confirm": "アップロードを実行"
       }
     },

@@ -7,6 +7,15 @@ const directorySchema = z
   .optional()
   .or(z.literal(""));
 
+const webdavModulesSchema = z
+  .object({
+    api: z.boolean().optional(),
+    mcp: z.boolean().optional(),
+    prompts: z.boolean().optional(),
+    skills: z.boolean().optional(),
+  })
+  .partial();
+
 export const settingsSchema = z.object({
   // 设备级 UI 设置
   showInTray: z.boolean(),
@@ -45,6 +54,8 @@ export const settingsSchema = z.object({
       password: z.string().optional(),
       remoteRoot: z.string().trim().optional().or(z.literal("")),
       profile: z.string().trim().optional().or(z.literal("")),
+      uploadModules: webdavModulesSchema.optional(),
+      downloadModules: webdavModulesSchema.optional(),
       status: z
         .object({
           lastSyncAt: z.number().nullable().optional(),

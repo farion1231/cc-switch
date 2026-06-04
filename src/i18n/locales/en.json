@@ -462,7 +462,7 @@
     },
     "webdavSync": {
       "title": "WebDAV Cloud Sync",
-      "description": "Sync database and skill configurations across devices via WebDAV.",
+      "description": "Sync selected modules across devices via WebDAV.",
       "baseUrl": "WebDAV Server URL",
       "baseUrlPlaceholder": "https://dav.example.com/dav/",
       "username": "WebDAV Account",
@@ -505,10 +505,20 @@
       },
       "remoteRootDefault": "Default: cc-switch-sync",
       "profileDefault": "Default: default",
+      "uploadModulesTitle": "Default upload modules",
+      "downloadModulesTitle": "Default download modules",
+      "noUploadModules": "Select at least one upload module",
+      "noDownloadModules": "Select at least one download module",
+      "modules": {
+        "api": "API providers",
+        "mcp": "MCP",
+        "prompts": "Prompts",
+        "skills": "Skills"
+      },
       "saveAndTestSuccess": "Config saved, connection OK",
       "saveAndTestFailed": "Config saved, but connection test failed: {{error}}",
       "noRemoteData": "No sync data found on the remote server",
-      "incompatibleVersion": "Remote data is incompatible (protocol v{{protocolVersion}}, database {{dbCompatVersion}}). This client supports protocol v2 / db-v6.",
+      "incompatibleVersion": "Remote data is incompatible (protocol v{{protocolVersion}}, database {{dbCompatVersion}}). This client supports protocol v3 / db-v6.",
       "unsaved": "Unsaved",
       "saved": "Saved",
       "unsavedChanges": "Please save config first",
@@ -522,7 +532,9 @@
         "path": "Remote path",
         "dbCompat": "DB compatibility",
         "artifacts": "Contents",
-        "legacyNotice": "A legacy remote path was detected. After restoring, the next upload will write to the new v2/db-v6 path.",
+        "selectedModules": "Selected modules",
+        "availableModules": "Remote available modules",
+        "legacyNotice": "A legacy remote path was detected. After restoring, the next upload will write to the new v3/db-v6 path.",
         "warning": "This will overwrite all local data and skill configurations",
         "confirm": "Confirm Restore"
       },
@@ -537,8 +549,9 @@
         "createdAt": "Uploaded at",
         "path": "Remote path",
         "dbCompat": "DB compatibility",
+        "availableModules": "Remote available modules",
         "warning": "This will overwrite existing sync data on the remote server",
-        "legacyNotice": "Legacy remote data was detected. This upload will write to the new v2/db-v6 path and will not overwrite the legacy path.",
+        "legacyNotice": "Legacy remote data was detected. This upload will write to the new v3/db-v6 path and will not overwrite the legacy path.",
         "confirm": "Confirm Upload"
       }
     },

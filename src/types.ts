@@ -278,6 +278,13 @@ export interface WebDavSyncStatus {
 }
 
 // WebDAV 同步配置
+export interface WebDavSyncModules {
+  api: boolean;
+  mcp: boolean;
+  prompts: boolean;
+  skills: boolean;
+}
+
 export interface WebDavSyncSettings {
   enabled?: boolean;
   autoSync?: boolean;
@@ -286,6 +293,8 @@ export interface WebDavSyncSettings {
   password?: string;
   remoteRoot?: string;
   profile?: string;
+  uploadModules?: WebDavSyncModules;
+  downloadModules?: WebDavSyncModules;
   status?: WebDavSyncStatus;
 }
 
@@ -303,6 +312,7 @@ export interface RemoteSnapshotInfo {
   artifacts: string[];
   layout: RemoteSnapshotLayout;
   remotePath: string;
+  availableModules: WebDavSyncModules;
 }
 
 // 应用设置类型（用于设置对话框与 Tauri API）
