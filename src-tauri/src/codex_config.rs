@@ -1085,9 +1085,9 @@ pub fn ensure_codex_model_provider_section(config_text: &str) -> String {
     if let Some(mp) = doc.get_mut("model_providers").and_then(|item| item.as_table_mut())
     {
         if !mp.contains_key(&provider_id) {
-            let mut table = toml_edit::Table::new();
-            table.set_implicit(true);
-            mp.insert(&provider_id, toml_edit::Item::Table(table));
+            let mut t = toml_edit::Table::new();
+            t.set_implicit(false);
+            mp.insert(&provider_id, toml_edit::Item::Table(t));
         }
     }
 
@@ -1397,7 +1397,7 @@ experimental_bearer_token = "stale-table-key"
     }
 
     #[test]
-    fn prepare_provider_live_config_does_not_create_incomplete_provider_table() {
+    fn prepare_provider_live_config_synthesizes_missing_provider_table() {
         let input = r#"model_provider = "vendor_x"
 model = "gpt-5"
 "#;
@@ -1407,15 +1407,24 @@ model = "gpt-5"
                 .expect("prepare live config");
         let parsed: toml::Value = toml::from_str(&output).expect("parse output");
 
+        // The bearer token is written into the scoped provider table, not at top level.
         assert_eq!(
             parsed
-                .get("experimental_bearer_token")
+                .get("model_providers")
+                .and_then(|v| v.get("vendor_x"))
+                .and_then(|v| v.get("experimental_bearer_token"))
                 .and_then(|v| v.as_str()),
-            Some("sk-test")
+            Some("sk-test"),
+            "API key must be written to [model_providers.vendor_x].experimental_bearer_token"
         );
+        // The defensive normalization now ensures [model_providers.<id>]
+        // exists so Codex CLI can route to the custom provider.
         assert!(
-            parsed.get("model_providers").is_none(),
-            "missing provider tables should not be synthesized without endpoint fields"
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("vendor_x"))
+                .is_some(),
+            "[model_providers.vendor_x] table must be synthesized even without endpoint fields"
         );
     }
 
@@ -2307,10 +2316,12 @@ model = "deepseek-v4-pro"
         );
         assert_eq!(
             parsed
-                .get("experimental_bearer_token")
+                .get("model_providers")
+                .and_then(|v| v.get("deepseek"))
+                .and_then(|v| v.get("experimental_bearer_token"))
                 .and_then(|v| v.as_str()),
             Some("sk-deepseek"),
-            "API key must be moved to experimental_bearer_token"
+            "API key must be written to [model_providers.deepseek].experimental_bearer_token"
         );
     }
 }
