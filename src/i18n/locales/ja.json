@@ -1237,7 +1237,6 @@
     "cacheTokens": "キャッシュトークン",
     "realTotal": "実消費トークン",
     "realTotalHint": "Input + Output + キャッシュ書込 + キャッシュ命中",
-    "tokensSuffix": "tokens",
     "freshInput": "新規入力",
     "cacheHitRate": "キャッシュヒット率",
     "requestLogs": "リクエストログ",

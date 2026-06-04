@@ -1237,7 +1237,6 @@
     "cacheTokens": "Cache Tokens",
     "realTotal": "Tokens Processed",
     "realTotalHint": "Input + Output + Cache Write + Cache Read",
-    "tokensSuffix": "tokens",
     "freshInput": "Fresh Input",
     "cacheHitRate": "Cache Hit Rate",
     "requestLogs": "Request Logs",

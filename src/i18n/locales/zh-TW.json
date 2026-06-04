@@ -1183,7 +1183,6 @@
     "cacheTokens": "快取 Token",
     "realTotal": "真實消耗 Tokens",
     "realTotalHint": "Input + Output + 快取建立 + 快取命中",
-    "tokensSuffix": "Tokens",
     "freshInput": "新增輸入",
     "cacheHitRate": "快取命中率",
     "requestLogs": "請求日誌",

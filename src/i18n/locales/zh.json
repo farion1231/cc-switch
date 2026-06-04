@@ -1237,7 +1237,6 @@
     "cacheTokens": "缓存 Token",
     "realTotal": "真实消耗 Tokens",
     "realTotalHint": "Input + Output + 缓存写入 + 缓存命中",
-    "tokensSuffix": "tokens",
     "freshInput": "新增输入",
     "cacheHitRate": "缓存命中率",
     "requestLogs": "请求日志",
