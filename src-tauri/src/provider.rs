@@ -81,6 +81,37 @@ impl Provider {
             || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
     }
 
+    pub fn is_official_equivalent_for_app(&self, app_type: &crate::app_config::AppType) -> bool {
+        if self.category.as_deref() == Some("official") {
+            return true;
+        }
+
+        match app_type {
+            crate::app_config::AppType::Claude => self
+                .settings_config
+                .pointer("/env/ANTHROPIC_BASE_URL")
+                .is_none_or(value_is_null_or_blank_string),
+            crate::app_config::AppType::Codex => {
+                let api_key = self.settings_config.pointer("/auth/OPENAI_API_KEY");
+                let bearer_token = self
+                    .settings_config
+                    .get("config")
+                    .and_then(Value::as_str)
+                    .and_then(crate::codex_config::extract_codex_experimental_bearer_token);
+
+                bearer_token.is_none() && api_key.is_none_or(value_is_null_or_blank_string)
+            }
+            crate::app_config::AppType::Gemini => {
+                let api_key = self.settings_config.pointer("/env/GEMINI_API_KEY");
+                let base_url = self.settings_config.pointer("/env/GOOGLE_GEMINI_BASE_URL");
+
+                api_key.is_none_or(value_is_null_or_blank_string)
+                    && base_url.is_none_or(value_is_null_or_blank_string)
+            }
+            _ => false,
+        }
+    }
+
     fn provider_type(&self) -> Option<&str> {
         self.meta.as_ref().and_then(|m| m.provider_type.as_deref())
     }
@@ -209,6 +240,10 @@ impl Provider {
         // and `{{baseUrl}}/path` concatenation never produces a double slash.
         (base_url.trim_end_matches('/').to_string(), api_key)
     }
+}
+
+fn value_is_null_or_blank_string(value: &Value) -> bool {
+    value.is_null() || value.as_str().is_some_and(|value| value.trim().is_empty())
 }
 
 /// 供应商管理器
