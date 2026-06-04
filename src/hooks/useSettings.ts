@@ -14,8 +14,6 @@ import {
 } from "./useDirectorySettings";
 import { useSettingsMetadata } from "./useSettingsMetadata";
 
-type Language = "zh" | "en" | "ja";
-
 interface SaveResult {
   requiresRestart: boolean;
 }
@@ -402,11 +400,8 @@ export function useSettings(): UseSettingsResult {
         );
 
         try {
-          if (typeof window !== "undefined") {
-            window.localStorage.setItem(
-              "language",
-              payload.language as Language,
-            );
+          if (typeof window !== "undefined" && payload.language) {
+            window.localStorage.setItem("language", payload.language);
           }
         } catch (error) {
           console.warn(
