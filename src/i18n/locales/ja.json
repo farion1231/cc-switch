@@ -1228,6 +1228,8 @@
     "saveFailed": "保存に失敗しました: {{error}}",
     "modelNameHint": "使用するモデルを指定します。config.toml に自動更新されます",
     "modelName": "モデル名",
+    "websocketToggle": "WebSocket 接続を使用",
+    "websocketHint": "有効にすると現在の model_providers エントリに supports_websockets = true を書き込み、無効にすると false を書き込みます。",
     "localRoutingToggle": "ローカルルーティングが必要",
     "localRoutingOffHint": "プロバイダーがネイティブの OpenAI Responses API でない場合、またはモデル名が Codex デフォルトの GPT 系列でない場合は、このスイッチを有効にしてください。",
     "localRoutingOnHint": "Codex は現在、OpenAI Responses API と GPT 系列モデルのみをネイティブにサポートしています。プロバイダーが Chat Completions プロトコルや非 GPT モデル（DeepSeek、Kimi など）を使用する場合は、このスイッチを有効にし、使用中はローカルルーティングを起動したままにしてください。",

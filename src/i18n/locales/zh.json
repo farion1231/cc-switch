@@ -1228,6 +1228,8 @@
     "saveFailed": "保存失败: {{error}}",
     "modelNameHint": "指定使用的模型，将自动更新到 config.toml 中",
     "modelName": "模型名称",
+    "websocketToggle": "使用 WebSocket 接入",
+    "websocketHint": "开启后会在当前 model_providers 条目写入 supports_websockets = true；关闭则写入 false。",
     "localRoutingToggle": "需要本地路由映射",
     "localRoutingOffHint": "如果您的供应商不是原生 OpenAI Responses API，或者模型名不是 Codex 默认的 GPT 系列，请打开此开关。",
     "localRoutingOnHint": "Codex 目前仅原生支持 OpenAI Responses API 与 GPT 系列模型；如果您的供应商使用 Chat Completions 协议或非 GPT 模型（如 DeepSeek、Kimi），则需要打开本开关，并在使用过程中保持本地路由开启。",

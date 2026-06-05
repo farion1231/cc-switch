@@ -55,7 +55,9 @@ import {
 } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import {
+  extractCodexSupportsWebSockets,
   extractCodexWireApi,
+  setCodexSupportsWebSockets as setCodexSupportsWebSocketsInConfig,
   setCodexWireApi,
   setCodexModelName as setCodexModelNameInConfig,
 } from "@/utils/providerConfigUtils";
@@ -355,6 +357,13 @@ function ProviderFormFull({
       ),
     });
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
+    setCodexSupportsWebSockets(
+      extractCodexSupportsWebSockets(
+        typeof initialData?.settingsConfig?.config === "string"
+          ? initialData.settingsConfig.config
+          : "",
+      ),
+    );
   }, [appId, initialData, supportsFullUrl]);
 
   const defaultValues: ProviderFormData = useMemo(
@@ -544,6 +553,14 @@ function ProviderFormFull({
         ) ?? "openai_responses"
       );
     });
+  const [codexSupportsWebSockets, setCodexSupportsWebSockets] =
+    useState<boolean>(() =>
+      extractCodexSupportsWebSockets(
+        typeof initialData?.settingsConfig?.config === "string"
+          ? initialData.settingsConfig.config
+          : "",
+      ),
+    );
 
   const { configError: codexConfigError, debouncedValidate } =
     useCodexTomlValidation();
@@ -551,9 +568,22 @@ function ProviderFormFull({
   const handleCodexConfigChange = useCallback(
     (value: string) => {
       originalHandleCodexConfigChange(value);
+      setCodexSupportsWebSockets(extractCodexSupportsWebSockets(value));
       debouncedValidate(value);
     },
     [originalHandleCodexConfigChange, debouncedValidate],
+  );
+
+  const handleCodexSupportsWebSocketsChange = useCallback(
+    (enabled: boolean) => {
+      setCodexSupportsWebSockets(enabled);
+      setCodexConfig((prev) => {
+        const updated = setCodexSupportsWebSocketsInConfig(prev, enabled);
+        debouncedValidate(updated);
+        return updated;
+      });
+    },
+    [setCodexConfig, debouncedValidate],
   );
 
   const handleCodexApiFormatChange = useCallback(
@@ -574,6 +604,9 @@ function ProviderFormFull({
       const template = getCodexCustomTemplate();
       resetCodexConfig(template.auth, template.config);
       setCodexChatReasoning({});
+      setCodexSupportsWebSockets(
+        extractCodexSupportsWebSockets(template.config),
+      );
     }
   }, [appId, initialData, selectedPresetId, resetCodexConfig]);
 
@@ -1186,6 +1219,12 @@ function ProviderFormFull({
           category !== "official" && (codexConfig ?? "").trim()
             ? setCodexWireApi(codexConfig ?? "", "responses")
             : (codexConfig ?? "");
+        if (category !== "official" && normalizedCodexConfig.trim()) {
+          normalizedCodexConfig = setCodexSupportsWebSocketsInConfig(
+            normalizedCodexConfig,
+            codexSupportsWebSockets,
+          );
+        }
         const normalizedCatalogModels =
           category !== "official" && localCodexApiFormat === "openai_chat"
             ? normalizeCodexCatalogModelsForSave(codexCatalogModels)
@@ -1524,6 +1563,9 @@ function ProviderFormFull({
         const template = getCodexCustomTemplate();
         resetCodexConfig(template.auth, template.config);
         setCodexChatReasoning({});
+        setCodexSupportsWebSockets(
+          extractCodexSupportsWebSockets(template.config),
+        );
         setLocalCodexApiFormat(
           codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
             "openai_responses",
@@ -1565,6 +1607,7 @@ function ProviderFormFull({
 
       resetCodexConfig(auth, config, preset.modelCatalog ?? []);
       setCodexChatReasoning(preset.codexChatReasoning ?? {});
+      setCodexSupportsWebSockets(extractCodexSupportsWebSockets(config));
       setLocalCodexApiFormat(
         preset.apiFormat ??
           codexApiFormatFromWireApi(extractCodexWireApi(config)) ??
@@ -2036,6 +2079,8 @@ function ProviderFormFull({
               onAutoSelectChange={setEndpointAutoSelect}
               apiFormat={localCodexApiFormat}
               onApiFormatChange={handleCodexApiFormatChange}
+              supportsWebSockets={codexSupportsWebSockets}
+              onSupportsWebSocketsChange={handleCodexSupportsWebSocketsChange}
               codexChatReasoning={codexChatReasoning}
               onCodexChatReasoningChange={setCodexChatReasoning}
               catalogModels={codexCatalogModels}

@@ -408,6 +408,8 @@ const TOML_EXPERIMENTAL_BEARER_TOKEN_REPLACE_PATTERN =
 const TOML_MODEL_PATTERN = /^\s*model\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
 const TOML_WIRE_API_PATTERN =
   /^\s*wire_api\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
+const TOML_SUPPORTS_WEBSOCKETS_PATTERN =
+  /^\s*supports_websockets\s*=\s*(true|false)\s*(?:#.*)?$/;
 const TOML_MODEL_PROVIDER_LINE_PATTERN =
   /^\s*model_provider\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
 const TOML_PROVIDER_NAME_PATTERN =
@@ -801,6 +803,150 @@ export const setCodexWireApi = (
   );
   if (topLevelMatch) {
     lines[topLevelMatch.index] = replacementLine;
+    return finalizeTomlText(lines);
+  }
+
+  const modelProviderIndex = getTopLevelModelProviderLineIndex(lines);
+  if (modelProviderIndex !== -1) {
+    lines.splice(modelProviderIndex + 1, 0, replacementLine);
+    return finalizeTomlText(lines);
+  }
+
+  if (lines.length === 0) {
+    return `${replacementLine}\n`;
+  }
+
+  lines.splice(topLevelEndIndex, 0, replacementLine);
+  return finalizeTomlText(lines);
+};
+
+export const extractCodexSupportsWebSockets = (
+  configText: string | undefined | null,
+): boolean => {
+  try {
+    const raw = typeof configText === "string" ? configText : "";
+    const text = normalizeTomlText(raw);
+    if (!text) return false;
+
+    try {
+      const parsed = parseToml(text) as Record<string, any>;
+      const providerId =
+        typeof parsed.model_provider === "string"
+          ? parsed.model_provider.trim()
+          : "";
+      if (providerId) {
+        const value =
+          parsed.model_providers?.[providerId]?.supports_websockets;
+        if (typeof value === "boolean") return value;
+      }
+      if (typeof parsed.supports_websockets === "boolean") {
+        return parsed.supports_websockets;
+      }
+    } catch {
+      // Fall back to line scanning while the user is editing invalid TOML.
+    }
+
+    const lines = text.split("\n");
+    const targetSectionName = getCodexProviderSectionName(text);
+
+    if (targetSectionName) {
+      const sectionRange = getTomlSectionRange(lines, targetSectionName);
+      if (sectionRange) {
+        const index = findTomlLineInRange(
+          lines,
+          TOML_SUPPORTS_WEBSOCKETS_PATTERN,
+          sectionRange.bodyStartIndex,
+          sectionRange.bodyEndIndex,
+        );
+        if (index !== -1) {
+          return (
+            lines[index].match(TOML_SUPPORTS_WEBSOCKETS_PATTERN)?.[1] ===
+            "true"
+          );
+        }
+      }
+    }
+
+    const topLevelIndex = findTomlLineInRange(
+      lines,
+      TOML_SUPPORTS_WEBSOCKETS_PATTERN,
+      0,
+      getTopLevelEndIndex(lines),
+    );
+    if (topLevelIndex !== -1) {
+      return (
+        lines[topLevelIndex].match(TOML_SUPPORTS_WEBSOCKETS_PATTERN)?.[1] ===
+        "true"
+      );
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+};
+
+export const setCodexSupportsWebSockets = (
+  configText: string,
+  enabled: boolean,
+): string => {
+  const normalizedText = normalizeTomlText(configText);
+  const lines = normalizedText ? normalizedText.split("\n") : [];
+  const targetSectionName = getCodexProviderSectionName(normalizedText);
+  const replacementLine = `supports_websockets = ${enabled ? "true" : "false"}`;
+
+  if (targetSectionName) {
+    let targetSectionRange = getTomlSectionRange(lines, targetSectionName);
+    const targetLine =
+      targetSectionRange &&
+      findTomlLineInRange(
+        lines,
+        TOML_SUPPORTS_WEBSOCKETS_PATTERN,
+        targetSectionRange.bodyStartIndex,
+        targetSectionRange.bodyEndIndex,
+      );
+
+    if (typeof targetLine === "number" && targetLine !== -1) {
+      lines[targetLine] = replacementLine;
+      return finalizeTomlText(lines);
+    }
+
+    const topLevelIndex = findTomlLineInRange(
+      lines,
+      TOML_SUPPORTS_WEBSOCKETS_PATTERN,
+      0,
+      getTopLevelEndIndex(lines),
+    );
+    if (topLevelIndex !== -1) {
+      lines.splice(topLevelIndex, 1);
+      targetSectionRange = getTomlSectionRange(lines, targetSectionName);
+    }
+
+    if (targetSectionRange) {
+      lines.splice(
+        getTomlSectionInsertIndex(lines, targetSectionRange),
+        0,
+        replacementLine,
+      );
+      return finalizeTomlText(lines);
+    }
+
+    if (lines.length > 0 && lines[lines.length - 1].trim() !== "") {
+      lines.push("");
+    }
+    lines.push(`[${targetSectionName}]`, replacementLine);
+    return finalizeTomlText(lines);
+  }
+
+  const topLevelEndIndex = getTopLevelEndIndex(lines);
+  const topLevelIndex = findTomlLineInRange(
+    lines,
+    TOML_SUPPORTS_WEBSOCKETS_PATTERN,
+    0,
+    topLevelEndIndex,
+  );
+  if (topLevelIndex !== -1) {
+    lines[topLevelIndex] = replacementLine;
     return finalizeTomlText(lines);
   }
 
