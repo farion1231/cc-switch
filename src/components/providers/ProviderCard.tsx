@@ -14,6 +14,7 @@ import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
 import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
+import HermesCodexQuotaFooter from "@/components/HermesCodexQuotaFooter";
 import { PROVIDER_TYPES } from "@/config/constants";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
@@ -197,16 +198,21 @@ export function ProviderCard({
   const isCopilot =
     provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
     provider.meta?.usage_script?.templateType === "github_copilot";
+  const settingsConfig = provider.settingsConfig as Record<string, any>;
   // Hermes v12+ overlay entries live under the `providers:` dict and are
   // read-only here — writes have to go through Hermes Web UI.
   const isHermesReadOnly =
     appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
   const isCodexOauth =
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
+  const isHermesCodexOfficial =
+    appId === "hermes" &&
+    settingsConfig?.name === "openai-codex" &&
+    settingsConfig?.api_mode === "codex_responses";
   const codexNeedsRouting = useMemo(() => {
     if (appId !== "codex" || provider.category === "official") return false;
     if (provider.meta?.apiFormat === "openai_chat") return true;
-    const config = (provider.settingsConfig as Record<string, any>)?.config;
+    const config = settingsConfig?.config;
     return (
       typeof config === "string" &&
       isCodexChatWireApi(extractCodexWireApi(config))
@@ -215,7 +221,7 @@ export function ProviderCard({
     appId,
     provider.category,
     provider.meta?.apiFormat,
-    (provider.settingsConfig as Record<string, any>)?.config,
+    settingsConfig?.config,
   ]);
   const isClaudeThirdParty =
     appId === "claude" && provider.category === "third_party";
@@ -468,6 +474,8 @@ export function ProviderCard({
                   inline={true}
                   isCurrent={isCurrent}
                 />
+              ) : isHermesCodexOfficial ? (
+                <HermesCodexQuotaFooter inline={true} isCurrent={isCurrent} />
               ) : isOfficial ? (
                 <SubscriptionQuotaFooter
                   appId={appId}

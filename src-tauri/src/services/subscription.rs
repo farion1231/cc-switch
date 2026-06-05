@@ -13,7 +13,7 @@ use crate::config;
 // ── 数据类型 ──────────────────────────────────────────────
 
 /// 凭据状态
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CredentialStatus {
     Valid,
@@ -584,6 +584,175 @@ fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
     (
         Some(access_token),
         tokens.account_id,
+        CredentialStatus::Valid,
+        None,
+    )
+}
+
+fn read_hermes_codex_credentials() -> CodexCredentials {
+    let auth_path = crate::hermes_config::get_hermes_dir().join("auth.json");
+
+    if !auth_path.exists() {
+        return (None, None, CredentialStatus::NotFound, None);
+    }
+
+    let content = match std::fs::read_to_string(&auth_path) {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                None,
+                None,
+                CredentialStatus::ParseError,
+                Some(format!("Failed to read Hermes auth file: {e}")),
+            );
+        }
+    };
+
+    parse_hermes_codex_credentials_json(&content)
+}
+
+fn parse_hermes_codex_credentials_json(content: &str) -> CodexCredentials {
+    let auth: serde_json::Value = match serde_json::from_str(content) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                None,
+                None,
+                CredentialStatus::ParseError,
+                Some(format!("Failed to parse Hermes auth JSON: {e}")),
+            );
+        }
+    };
+
+    let mut expired_candidate: Option<CodexCredentials> = None;
+
+    if let Some(state) = auth
+        .get("providers")
+        .and_then(|providers| providers.get("openai-codex"))
+    {
+        let candidate = parse_hermes_codex_singleton_state(state);
+        match candidate.2 {
+            CredentialStatus::Valid => return candidate,
+            CredentialStatus::Expired => expired_candidate = Some(candidate),
+            CredentialStatus::NotFound | CredentialStatus::ParseError => {}
+        }
+    }
+
+    if let Some(entries) = auth
+        .get("credential_pool")
+        .and_then(|pool| pool.get("openai-codex"))
+        .and_then(|entries| entries.as_array())
+    {
+        for entry in entries {
+            let candidate = parse_hermes_codex_token_entry(entry, entry);
+            match candidate.2 {
+                CredentialStatus::Valid => return candidate,
+                CredentialStatus::Expired if expired_candidate.is_none() => {
+                    expired_candidate = Some(candidate)
+                }
+                CredentialStatus::Expired
+                | CredentialStatus::NotFound
+                | CredentialStatus::ParseError => {}
+            }
+        }
+    }
+
+    if let Some(candidate) = expired_candidate {
+        return candidate;
+    }
+
+    (
+        None,
+        None,
+        CredentialStatus::NotFound,
+        Some("No usable Hermes openai-codex access token".to_string()),
+    )
+}
+
+fn parse_hermes_codex_singleton_state(state: &serde_json::Value) -> CodexCredentials {
+    let Some(tokens) = state.get("tokens").filter(|tokens| tokens.is_object()) else {
+        return (
+            None,
+            None,
+            CredentialStatus::NotFound,
+            Some("No Hermes openai-codex singleton tokens".to_string()),
+        );
+    };
+
+    parse_hermes_codex_token_entry(tokens, state)
+}
+
+fn parse_hermes_codex_token_entry(
+    token_entry: &serde_json::Value,
+    metadata: &serde_json::Value,
+) -> CodexCredentials {
+    let access_token = token_entry
+        .get("access_token")
+        .and_then(|token| token.as_str())
+        .filter(|token| !token.trim().is_empty())
+        .map(str::to_string);
+
+    let Some(access_token) = access_token else {
+        return (
+            None,
+            None,
+            CredentialStatus::NotFound,
+            Some("No usable Hermes openai-codex access token".to_string()),
+        );
+    };
+
+    let account_id = token_entry
+        .get("account_id")
+        .or_else(|| metadata.get("account_id"))
+        .and_then(|id| id.as_str())
+        .filter(|id| !id.trim().is_empty())
+        .map(str::to_string);
+
+    let expires_at_ms = token_entry
+        .get("expires_at_ms")
+        .or_else(|| metadata.get("expires_at_ms"))
+        .and_then(|value| value.as_i64())
+        .or_else(|| {
+            token_entry
+                .get("expires_at")
+                .or_else(|| metadata.get("expires_at"))
+                .and_then(|value| value.as_str())
+                .and_then(|raw| chrono::DateTime::parse_from_rfc3339(raw).ok())
+                .map(|dt| dt.timestamp_millis())
+        });
+
+    if let Some(expires_at_ms) = expires_at_ms {
+        if expires_at_ms <= now_millis() {
+            return (
+                Some(access_token),
+                account_id,
+                CredentialStatus::Expired,
+                Some("Hermes openai-codex token has expired".to_string()),
+            );
+        }
+    }
+
+    if let Some(last_refresh) = token_entry
+        .get("last_refresh")
+        .or_else(|| metadata.get("last_refresh"))
+        .and_then(|value| value.as_str())
+    {
+        if is_codex_token_stale(last_refresh) {
+            return (
+                Some(access_token),
+                account_id,
+                CredentialStatus::Expired,
+                Some(
+                    "Hermes openai-codex token may be stale (>8 days since last refresh)"
+                        .to_string(),
+                ),
+            );
+        }
+    }
+
+    (
+        Some(access_token),
+        account_id,
         CredentialStatus::Valid,
         None,
     )
@@ -1287,6 +1456,49 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                 }
             }
         }
+        "hermes_codex" => {
+            let (token, account_id, status, message) = read_hermes_codex_credentials();
+
+            match status {
+                CredentialStatus::NotFound => Ok(SubscriptionQuota::not_found("hermes_codex")),
+                CredentialStatus::ParseError => Ok(SubscriptionQuota::error(
+                    "hermes_codex",
+                    CredentialStatus::ParseError,
+                    message.unwrap_or_else(|| "Failed to parse Hermes credentials".to_string()),
+                )),
+                CredentialStatus::Expired => {
+                    if let Some(token) = token {
+                        let result = query_codex_quota(
+                            &token,
+                            account_id.as_deref(),
+                            "hermes_codex",
+                            "Authentication failed. Please re-login with Hermes openai-codex.",
+                        )
+                        .await;
+                        if result.success {
+                            return Ok(result);
+                        }
+                    }
+                    Ok(SubscriptionQuota::error(
+                        "hermes_codex",
+                        CredentialStatus::Expired,
+                        message.unwrap_or_else(|| {
+                            "Hermes openai-codex token may be stale".to_string()
+                        }),
+                    ))
+                }
+                CredentialStatus::Valid => {
+                    let token = token.expect("token must be Some when status is Valid");
+                    Ok(query_codex_quota(
+                        &token,
+                        account_id.as_deref(),
+                        "hermes_codex",
+                        "Authentication failed. Please re-login with Hermes openai-codex.",
+                    )
+                    .await)
+                }
+            }
+        }
         "gemini" => {
             let (token, refresh_token, status, message) = read_gemini_credentials();
 
@@ -1334,4 +1546,86 @@ fn now_millis() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_hermes_codex_credentials_json, CredentialStatus};
+
+    #[test]
+    fn parses_hermes_codex_credential_pool_entry() {
+        let json = r#"{
+          "version": 1,
+          "active_provider": "openai-codex",
+          "credential_pool": {
+            "openai-codex": [
+              {
+                "label": "plus-a",
+                "access_token": "access-token-a",
+                "refresh_token": "refresh-token-a",
+                "account_id": "acct_123",
+                "expires_at_ms": 4102444800000
+              }
+            ]
+          }
+        }"#;
+
+        let (token, account_id, status, message) = parse_hermes_codex_credentials_json(json);
+
+        assert_eq!(token.as_deref(), Some("access-token-a"));
+        assert_eq!(account_id.as_deref(), Some("acct_123"));
+        assert_eq!(status, CredentialStatus::Valid);
+        assert!(message.is_none());
+    }
+
+    #[test]
+    fn prefers_fresh_hermes_codex_singleton_over_stale_pool_entry() {
+        let json = r#"{
+          "version": 1,
+          "active_provider": "openai-codex",
+          "providers": {
+            "openai-codex": {
+              "auth_mode": "chatgpt",
+              "last_refresh": "2099-01-01T00:00:00Z",
+              "tokens": {
+                "access_token": "fresh-singleton-token",
+                "refresh_token": "fresh-refresh-token",
+                "account_id": "acct_fresh"
+              }
+            }
+          },
+          "credential_pool": {
+            "openai-codex": [
+              {
+                "label": "stale-pool",
+                "access_token": "stale-pool-token",
+                "refresh_token": "stale-refresh-token",
+                "account_id": "acct_stale",
+                "expires_at_ms": 1
+              }
+            ]
+          }
+        }"#;
+
+        let (token, account_id, status, message) = parse_hermes_codex_credentials_json(json);
+
+        assert_eq!(token.as_deref(), Some("fresh-singleton-token"));
+        assert_eq!(account_id.as_deref(), Some("acct_fresh"));
+        assert_eq!(status, CredentialStatus::Valid);
+        assert!(message.is_none());
+    }
+
+    #[test]
+    fn hermes_codex_missing_pool_is_not_found() {
+        let json = r#"{"version":1,"credential_pool":{}}"#;
+
+        let (token, account_id, status, message) = parse_hermes_codex_credentials_json(json);
+
+        assert!(token.is_none());
+        assert!(account_id.is_none());
+        assert_eq!(status, CredentialStatus::NotFound);
+        assert!(message
+            .as_deref()
+            .is_some_and(|message| message.contains("access token")));
+    }
 }

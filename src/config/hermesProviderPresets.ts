@@ -101,6 +101,7 @@ export interface HermesProviderPreset {
   nameKey?: string;
   websiteUrl: string;
   apiKeyUrl?: string;
+  providerKey?: string;
   settingsConfig: HermesProviderSettingsConfig;
   isOfficial?: boolean;
   isPartner?: boolean;
@@ -128,6 +129,34 @@ export interface HermesProviderSettingsConfig {
 }
 
 export const hermesProviderPresets: HermesProviderPreset[] = [
+  {
+    name: "OpenAI Official",
+    websiteUrl: "https://chatgpt.com/codex",
+    providerKey: "openai-codex",
+    settingsConfig: {
+      name: "openai-codex",
+      base_url: "https://chatgpt.com/backend-api/codex",
+      api_key: "",
+      api_mode: "codex_responses",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+        },
+        {
+          id: "gpt-5.4-mini",
+          name: "GPT-5.4 Mini",
+        },
+      ],
+    },
+    isOfficial: true,
+    category: "official",
+    icon: "openai",
+    iconColor: "#00A67E",
+    suggestedDefaults: {
+      model: { default: "gpt-5.5", provider: "openai-codex" },
+    },
+  },
   {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",

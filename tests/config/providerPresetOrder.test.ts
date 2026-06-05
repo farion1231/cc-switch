@@ -82,4 +82,20 @@ describe("provider preset order", () => {
       "DouBaoSeed",
     ]);
   });
+
+  it("Hermes 预设包含 OpenAI Official 并映射到 Hermes Codex OAuth", () => {
+    expect(hermesProviderPresets[0]).toMatchObject({
+      name: "OpenAI Official",
+      providerKey: "openai-codex",
+      category: "official",
+      settingsConfig: {
+        name: "openai-codex",
+        base_url: "https://chatgpt.com/backend-api/codex",
+        api_mode: "codex_responses",
+      },
+      suggestedDefaults: {
+        model: { default: "gpt-5.5", provider: "openai-codex" },
+      },
+    });
+  });
 });
