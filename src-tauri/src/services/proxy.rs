@@ -5412,15 +5412,16 @@ requires_openai_auth = true
         .expect("seed generated catalog file");
 
         let pointer = catalog_path.to_string_lossy().to_string();
-        let backup_config = format!(
-            "model_provider = \"custom\"\n\
-             model = \"deepseek-v4-flash\"\n\
-             model_catalog_json = \"{pointer}\"\n\n\
+        let mut backup_doc = "model_provider = \"custom\"\n\
+             model = \"deepseek-v4-flash\"\n\n\
              [model_providers.custom]\n\
              name = \"DeepSeek\"\n\
              base_url = \"https://api.deepseek.example/v1\"\n\
              wire_api = \"responses\"\n"
-        );
+            .parse::<toml_edit::DocumentMut>()
+            .expect("parse backup config");
+        backup_doc["model_catalog_json"] = toml_edit::value(pointer.as_str());
+        let backup_config = backup_doc.to_string();
         let backup_json = serde_json::to_string(&json!({
             "auth": { "OPENAI_API_KEY": "deepseek-key" },
             "config": backup_config,
@@ -5442,8 +5443,12 @@ requires_openai_auth = true
             restored.contains("model_catalog_json"),
             "restore must preserve the model_catalog_json pointer, got:\n{restored}"
         );
-        assert!(
-            restored.contains(pointer.as_str()),
+        let restored_doc: toml::Value = toml::from_str(&restored).expect("parse restored config");
+        assert_eq!(
+            restored_doc
+                .get("model_catalog_json")
+                .and_then(|value| value.as_str()),
+            Some(pointer.as_str()),
             "restored pointer must still reference the cc-switch generated catalog file"
         );
     }

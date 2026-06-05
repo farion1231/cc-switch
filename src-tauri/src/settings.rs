@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
 
@@ -312,6 +311,116 @@ pub struct CodexProviderTemplateMigration {
     pub migrated_provider_ids: Vec<String>,
 }
 
+fn default_management_api_listen_address() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_management_api_port() -> u16 {
+    15722
+}
+
+fn default_management_pairing_enabled() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagementApiSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_management_api_listen_address")]
+    pub listen_address: String,
+    #[serde(default = "default_management_api_port")]
+    pub port: u16,
+    #[serde(default)]
+    pub lan_enabled: bool,
+    #[serde(default)]
+    pub allowed_cidrs: Vec<String>,
+    #[serde(default)]
+    pub cors_origins: Vec<String>,
+    #[serde(default)]
+    pub tls_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub certificate_fingerprint: Option<String>,
+    #[serde(default = "default_management_pairing_enabled")]
+    pub pairing_enabled: bool,
+}
+
+impl Default for ManagementApiSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            listen_address: default_management_api_listen_address(),
+            port: default_management_api_port(),
+            lan_enabled: false,
+            allowed_cidrs: Vec::new(),
+            cors_origins: Vec::new(),
+            tls_enabled: false,
+            certificate_fingerprint: None,
+            pairing_enabled: true,
+        }
+    }
+}
+
+impl ManagementApiSettings {
+    pub fn normalize(&mut self) {
+        self.listen_address = self.listen_address.trim().to_string();
+        if self.listen_address.is_empty() {
+            self.listen_address = default_management_api_listen_address();
+        }
+        if self.port == 0 {
+            self.port = default_management_api_port();
+        }
+        self.allowed_cidrs = self
+            .allowed_cidrs
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .collect();
+        self.cors_origins = self
+            .cors_origins
+            .iter()
+            .map(|value| value.trim().trim_end_matches('/'))
+            .filter(|value| !value.is_empty() && *value != "*")
+            .map(str::to_string)
+            .collect();
+        self.certificate_fingerprint = self
+            .certificate_fingerprint
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        // Management API is HTTP-only. Keep legacy fields deserializable but inert.
+        self.tls_enabled = false;
+        self.certificate_fingerprint = None;
+        if !self.lan_enabled {
+            self.listen_address = default_management_api_listen_address();
+        }
+    }
+
+    pub fn validate_for_start(&self) -> Result<(), AppError> {
+        if self.port == 0 {
+            return Err(AppError::InvalidInput(
+                "Management API port must be between 1 and 65535".to_string(),
+            ));
+        }
+        if self.cors_origins.iter().any(|origin| origin == "*") {
+            return Err(AppError::InvalidInput(
+                "Management API CORS origins must be exact origins; '*' is not allowed".to_string(),
+            ));
+        }
+        if self.lan_enabled {
+            if self.allowed_cidrs.is_empty() {
+                return Err(AppError::InvalidInput(
+                    "LAN Management API mode requires at least one allowed CIDR".to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// 应用设置结构
 ///
 /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
@@ -449,6 +558,9 @@ pub struct AppSettings {
     // ===== 本机自动迁移状态 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_migrations: Option<LocalMigrations>,
+
+    #[serde(default)]
+    pub management_api: ManagementApiSettings,
 }
 
 fn default_show_in_tray() -> bool {
@@ -502,6 +614,7 @@ impl Default for AppSettings {
             backup_retain_count: None,
             preferred_terminal: None,
             local_migrations: None,
+            management_api: ManagementApiSettings::default(),
         }
     }
 }
@@ -579,6 +692,8 @@ impl AppSettings {
                 self.s3_sync = None;
             }
         }
+
+        self.management_api.normalize();
     }
 
     fn load_from_file() -> Self {
@@ -1051,5 +1166,49 @@ mod tests {
         .expect("visible apps");
 
         assert!(!visible.is_visible(&AppType::ClaudeDesktop));
+    }
+
+    #[test]
+    fn management_api_settings_are_http_only_but_allow_lan_with_cidrs() {
+        let mut settings = ManagementApiSettings {
+            enabled: true,
+            listen_address: " 0.0.0.0 ".to_string(),
+            port: 15722,
+            lan_enabled: true,
+            allowed_cidrs: vec![" 192.168.1.0/24 ".to_string()],
+            cors_origins: vec!["http://localhost:3000/".to_string()],
+            tls_enabled: true,
+            certificate_fingerprint: Some(" legacy-fingerprint ".to_string()),
+            pairing_enabled: true,
+        };
+
+        settings.normalize();
+
+        assert_eq!(settings.listen_address, "0.0.0.0");
+        assert_eq!(settings.allowed_cidrs, vec!["192.168.1.0/24".to_string()]);
+        assert_eq!(
+            settings.cors_origins,
+            vec!["http://localhost:3000".to_string()]
+        );
+        assert!(!settings.tls_enabled);
+        assert!(settings.certificate_fingerprint.is_none());
+        assert!(settings.validate_for_start().is_ok());
+    }
+
+    #[test]
+    fn management_api_lan_mode_still_requires_allowed_cidrs() {
+        let settings = ManagementApiSettings {
+            enabled: true,
+            listen_address: "0.0.0.0".to_string(),
+            port: 15722,
+            lan_enabled: true,
+            allowed_cidrs: Vec::new(),
+            cors_origins: Vec::new(),
+            tls_enabled: false,
+            certificate_fingerprint: None,
+            pairing_enabled: true,
+        };
+
+        assert!(settings.validate_for_start().is_err());
     }
 }

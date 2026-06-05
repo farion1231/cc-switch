@@ -3,6 +3,7 @@
 //! Database access operations for each domain
 
 pub mod failover;
+pub mod management_api;
 pub mod mcp;
 pub mod prompts;
 pub mod providers;

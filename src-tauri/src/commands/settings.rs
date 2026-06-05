@@ -2,7 +2,7 @@
 
 use tauri::AppHandle;
 
-fn merge_settings_for_save(
+pub(crate) fn merge_settings_for_save(
     mut incoming: crate::settings::AppSettings,
     existing: &crate::settings::AppSettings,
 ) -> crate::settings::AppSettings {

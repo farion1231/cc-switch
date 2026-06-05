@@ -53,8 +53,8 @@ pub use mcp::{
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
     skill::{migrate_skills_to_ssot, ImportSkillSelection},
-    ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
-    SkillService, SpeedtestService,
+    ConfigService, EndpointLatency, ManagementApiService, McpService, PromptService,
+    ProviderService, ProxyService, SkillService, SpeedtestService,
 };
 pub use settings::{update_settings, AppSettings};
 pub use store::AppState;
@@ -890,6 +890,20 @@ pub fn run() {
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
+            {
+                let state = app.state::<AppState>();
+                let management_api =
+                    ManagementApiService::new(state.db.clone(), state.proxy_service.clone());
+                app.manage(management_api);
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let service = app_handle.state::<ManagementApiService>();
+                    if let Err(e) = service.reconcile_with_settings().await {
+                        log::warn!("Management API startup skipped/failed: {e}");
+                    }
+                });
+            }
+
             // 从数据库加载日志配置并应用
             {
                 let db = &app.state::<AppState>().db;
@@ -1156,6 +1170,16 @@ pub fn run() {
             commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,
+            commands::get_management_api_status,
+            commands::start_management_api,
+            commands::stop_management_api,
+            commands::restart_management_api,
+            commands::list_management_api_tokens,
+            commands::create_management_api_token,
+            commands::revoke_management_api_token,
+            commands::list_management_api_pairing_sessions,
+            commands::approve_management_api_pairing,
+            commands::reject_management_api_pairing,
             commands::get_rectifier_config,
             commands::set_rectifier_config,
             commands::get_optimizer_config,
@@ -1571,6 +1595,12 @@ pub fn run() {
 /// 确保 Claude Code/Codex/Gemini 的配置不会处于损坏状态。
 /// 使用 stop_with_restore_keep_state 保留 settings 表中的代理状态，下次启动时自动恢复。
 pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
+    if let Some(service) = app_handle.try_state::<ManagementApiService>() {
+        if let Err(e) = service.stop().await {
+            log::warn!("退出时停止 Management API 失败: {e}");
+        }
+    }
+
     if let Some(state) = app_handle.try_state::<store::AppState>() {
         let proxy_service = &state.proxy_service;
 
