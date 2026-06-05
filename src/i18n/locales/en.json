@@ -2135,7 +2135,9 @@
       "installed": "Installed",
       "uninstalled": "Not installed",
       "repo": "Filter by repo",
-      "allRepos": "All repos"
+      "allRepos": "All repos",
+      "source": "Filter by source",
+      "allSources": "All sources"
     },
     "noResults": "No matching skills found",
     "noInstalled": "No skills installed",

@@ -198,7 +198,7 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 
 - **統一 MCP パネル** -- Claude、Codex、Gemini、OpenCode、Hermes の MCP サーバーを管理、双方向同期、Deep Link インポート対応
 - **Prompts** -- Markdown エディタ、クロスアプリ同期（CLAUDE.md / AGENTS.md / GEMINI.md）、バックフィル保護
-- **Skills** -- GitHub リポジトリまたは ZIP ファイルからワンクリックインストール、カスタムリポジトリ管理、シンボリックリンクとファイルコピーに対応
+- **Skills** -- GitHub リポジトリまたは ZIP ファイルからワンクリックインストール、カスタムリポジトリ管理、ソース別の絞り込み、シンボリックリンクとファイルコピーに対応
 
 ### 使用量 & コストトラッキング
 
