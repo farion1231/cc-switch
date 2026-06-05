@@ -73,25 +73,24 @@ pub async fn fetch_models(
         return Err("API Key is required to fetch models".to_string());
     }
 
-    let candidates = build_models_url_candidates(base_url, is_full_url, models_url_override, strategy)?;
+    let candidates =
+        build_models_url_candidates(base_url, is_full_url, models_url_override, strategy)?;
     let client = crate::proxy::http_client::get();
     let mut last_err: Option<String> = None;
 
     for url in &candidates {
         log::debug!("[ModelFetch] Trying endpoint: {url}");
-        let mut req = client.get(url).timeout(Duration::from_secs(FETCH_TIMEOUT_SECS));
+        let mut req = client
+            .get(url)
+            .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS));
         req = match strategy {
-            ModelFetchStrategy::Bearer => {
-                req.header("Authorization", format!("Bearer {api_key}"))
-            }
+            ModelFetchStrategy::Bearer => req.header("Authorization", format!("Bearer {api_key}")),
             ModelFetchStrategy::Anthropic => req
-                .header("Authorization", format!("Bearer {api_key}"))
                 .header("x-api-key", api_key)
                 .header("anthropic-version", "2023-06-01"),
             ModelFetchStrategy::GoogleApiKey => req.header("x-goog-api-key", api_key),
         };
-        let response = match req.send().await
-        {
+        let response = match req.send().await {
             Ok(r) => r,
             Err(e) => {
                 return Err(format!("Request failed: {e}"));
@@ -188,20 +187,19 @@ pub fn build_models_url_candidates(
     // baseURL 已以版本段 /v{N} 结尾时（如 `/v1`、智谱 `/api/coding/paas/v4`），
     // OpenAI 惯例的模型端点是 `{base}/models`，不能再补 `/v1`
     // （否则 .../coding/paas/v4/v1/models → 404）。
+    // 但版本段非 /v1 时保留 /v1/models 作为兜底候选。
     let append_models = format!("{trimmed}/models");
-    let append_versioned_models = if ends_with_version_segment(trimmed) {
-        None
-    } else {
-        Some(format!("{trimmed}/v1/models"))
-    };
 
     match strategy {
         ModelFetchStrategy::Anthropic => {
             // Anthropic: 优先 /v1/models
-            if let Some(ref versioned) = append_versioned_models {
-                candidates.push(versioned.clone());
+            if ends_with_version_segment(trimmed) {
+                candidates.push(format!("{trimmed}/models"));
+                if !trimmed.ends_with("/v1") {
+                    candidates.push(format!("{trimmed}/v1/models"));
+                }
             } else {
-                candidates.push(append_models.clone());
+                candidates.push(format!("{trimmed}/v1/models"));
             }
 
             if let Some(stripped) = strip_compat_suffix(trimmed) {
@@ -210,27 +208,32 @@ pub fn build_models_url_candidates(
                     candidates.push(format!("{root}/v1/models"));
                     candidates.push(format!("{root}/models"));
                 }
-            } else if append_versioned_models.is_some() {
+            } else if !ends_with_version_segment(trimmed) {
                 candidates.push(append_models);
             }
         }
         ModelFetchStrategy::Bearer | ModelFetchStrategy::GoogleApiKey => {
-            // OpenAI / Gemini: 优先 /v1/models
             if let Some(stripped) = strip_compat_suffix(trimmed) {
-                if let Some(ref versioned) = append_versioned_models {
-                    candidates.push(versioned.clone());
+                if ends_with_version_segment(trimmed) {
+                    candidates.push(format!("{trimmed}/models"));
+                    if !trimmed.ends_with("/v1") {
+                        candidates.push(format!("{trimmed}/v1/models"));
+                    }
                 } else {
-                    candidates.push(append_models.clone());
+                    candidates.push(format!("{trimmed}/v1/models"));
                 }
                 let root = stripped.trim_end_matches('/');
                 if !root.is_empty() && root.contains("://") {
                     candidates.push(format!("{root}/v1/models"));
                     candidates.push(format!("{root}/models"));
                 }
-            } else {
-                if let Some(versioned) = append_versioned_models {
-                    candidates.push(versioned);
+            } else if ends_with_version_segment(trimmed) {
+                candidates.push(format!("{trimmed}/models"));
+                if !trimmed.ends_with("/v1") {
+                    candidates.push(format!("{trimmed}/v1/models"));
                 }
+            } else {
+                candidates.push(format!("{trimmed}/v1/models"));
                 candidates.push(append_models);
             }
         }
@@ -286,17 +289,25 @@ mod tests {
 
     #[test]
     fn test_candidates_plain_root() {
-        let c =
-            build_models_url_candidates("https://api.siliconflow.cn", false, None, ModelFetchStrategy::Bearer)
-                .unwrap();
+        let c = build_models_url_candidates(
+            "https://api.siliconflow.cn",
+            false,
+            None,
+            ModelFetchStrategy::Bearer,
+        )
+        .unwrap();
         assert_eq!(c, vec!["https://api.siliconflow.cn/v1/models"]);
     }
 
     #[test]
     fn test_candidates_trailing_slash() {
-        let c =
-            build_models_url_candidates("https://api.example.com/", false, None, ModelFetchStrategy::Bearer)
-                .unwrap();
+        let c = build_models_url_candidates(
+            "https://api.example.com/",
+            false,
+            None,
+            ModelFetchStrategy::Bearer,
+        )
+        .unwrap();
         assert_eq!(c, vec!["https://api.example.com/v1/models"]);
     }
 

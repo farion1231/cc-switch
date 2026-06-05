@@ -496,7 +496,13 @@ export function ClaudeDesktopProviderForm({
 
     setIsFetchingModels(true);
     try {
-      const models = await fetchModelsForConfig(baseUrl.trim(), apiKey.trim(), undefined, undefined, "anthropic");
+      const models = await fetchModelsForConfig(
+        baseUrl.trim(),
+        apiKey.trim(),
+        undefined,
+        undefined,
+        "anthropic",
+      );
       setFetchedModels(models);
       toast.success(
         t("providerForm.fetchModelsSuccess", {
