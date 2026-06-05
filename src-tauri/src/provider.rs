@@ -254,6 +254,10 @@ pub struct UsageScript {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "codingPlanProvider")]
     pub coding_plan_provider: Option<String>,
+    /// 官方订阅额度显示口径："used" 或 "remaining"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "quotaDisplayMode")]
+    pub quota_display_mode: Option<String>,
 }
 
 /// 用量数据

@@ -178,6 +178,21 @@ function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
   return false;
 }
 
+type QuotaDisplayMode = NonNullable<UsageScript["quotaDisplayMode"]>;
+
+function normalizeQuotaDisplayMode(
+  mode: UsageScript["quotaDisplayMode"],
+): QuotaDisplayMode {
+  return mode === "remaining" ? "remaining" : "used";
+}
+
+function subscriptionDisplayPercent(
+  utilization: number,
+  mode: QuotaDisplayMode,
+): number {
+  return mode === "remaining" ? Math.max(0, 100 - utilization) : utilization;
+}
+
 const NATIVE_USAGE_TEMPLATES = new Set<string>([
   TEMPLATE_TYPES.GITHUB_COPILOT,
   TEMPLATE_TYPES.TOKEN_PLAN,
@@ -468,6 +483,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         | "balance"
         | "official_subscription"
         | undefined,
+      quotaDisplayMode:
+        selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION
+          ? normalizeQuotaDisplayMode(script.quotaDisplayMode)
+          : script.quotaDisplayMode,
     };
     onSave(scriptWithTemplate);
     onClose();
@@ -481,8 +500,16 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         const { subscriptionApi } = await import("@/lib/api/subscription");
         const quota = await subscriptionApi.getQuota(appId);
         if (quota.success && quota.tiers.length > 0) {
+          const displayMode = normalizeQuotaDisplayMode(
+            script.quotaDisplayMode,
+          );
           const summary = quota.tiers
-            .map((tier) => `${tier.name}: ${Math.round(tier.utilization)}%`)
+            .map(
+              (tier) =>
+                `${tier.name}: ${Math.round(
+                  subscriptionDisplayPercent(tier.utilization, displayMode),
+                )}%`,
+            )
             .join(", ");
           toast.success(`${t("usageScript.testSuccess")}${summary}`, {
             duration: 3000,
@@ -749,6 +776,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           baseUrl: undefined,
           accessToken: undefined,
           userId: undefined,
+          quotaDisplayMode: normalizeQuotaDisplayMode(script.quotaDisplayMode),
         });
       }
       setSelectedTemplate(presetName);
@@ -973,10 +1001,48 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
             {/* 官方订阅额度模式：自动提示 */}
             {selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION && (
-              <div className="space-y-2 border-t border-white/10 pt-3">
+              <div className="space-y-4 border-t border-white/10 pt-4">
                 <p className="text-sm text-muted-foreground">
                   {t("usageScript.officialSubscriptionHint")}
                 </p>
+                <div className="space-y-3 max-w-sm">
+                  <Label className="text-sm font-medium">
+                    {t("usageScript.quotaDisplayMode")}
+                  </Label>
+                  <div className="grid grid-cols-2 gap-1 rounded-md border border-border-default bg-background p-1">
+                    {(["remaining", "used"] as const).map((mode) => {
+                      const active =
+                        normalizeQuotaDisplayMode(script.quotaDisplayMode) ===
+                        mode;
+                      return (
+                        <Button
+                          key={mode}
+                          type="button"
+                          size="sm"
+                          variant={active ? "default" : "ghost"}
+                          className={cn(
+                            "w-full",
+                            active
+                              ? "shadow-sm"
+                              : "text-muted-foreground hover:text-foreground hover:bg-muted",
+                          )}
+                          onClick={() =>
+                            setScript({
+                              ...script,
+                              quotaDisplayMode: mode,
+                            })
+                          }
+                        >
+                          {t(
+                            mode === "remaining"
+                              ? "usageScript.quotaDisplayRemaining"
+                              : "usageScript.quotaDisplayUsed",
+                          )}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             )}
 

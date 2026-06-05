@@ -207,6 +207,8 @@ export function ProviderCard({
   //     并不兑现（绕过 UI 即可切换）→ 属虚保护，却以误伤 category 缺失的自定义供应商为代价。
   //  3) 预设导入的官方一定带 category="official"，category 缺失的「真官方」现实中≈不存在。
   // 真官方就该有显式 category；手动新建官方应引导标注，而不是靠空字段猜。
+  const officialSubscriptionDisplayMode =
+    provider.meta?.usage_script?.quotaDisplayMode;
   const isOfficialBlockedByProxy =
     isProxyTakeover && provider.category === "official";
   const isCopilot =
@@ -253,7 +255,11 @@ export function ProviderCard({
   const isTokenPlan =
     provider.meta?.usage_script?.templateType === "token_plan";
   const hasMultiplePlans =
-    usage?.success && usage.data && usage.data.length > 1 && !isTokenPlan;
+    usage?.success &&
+    usage.data &&
+    usage.data.length > 1 &&
+    !isTokenPlan &&
+    !isOfficialSubscriptionUsage;
 
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -482,6 +488,7 @@ export function ProviderCard({
                   meta={provider.meta}
                   inline={true}
                   isCurrent={isCurrent}
+                  displayMode={officialSubscriptionDisplayMode}
                 />
               ) : isOfficial ? (
                 officialSubscriptionEnabled ? (
@@ -492,6 +499,7 @@ export function ProviderCard({
                     autoQueryInterval={
                       provider.meta?.usage_script?.autoQueryInterval ?? 0
                     }
+                    displayMode={officialSubscriptionDisplayMode}
                   />
                 ) : null
               ) : hasMultiplePlans ? (
