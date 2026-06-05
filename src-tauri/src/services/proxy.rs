@@ -71,6 +71,12 @@ enum ProviderSwitchMode {
     Failover,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexClientOwnedMergeMode {
+    KeepTargetOnConflict,
+    ExistingWinsOnConflict,
+}
+
 impl ProxyService {
     pub fn new(db: Arc<Database>) -> Self {
         Self {
@@ -339,6 +345,7 @@ impl ProxyService {
             Self::preserve_codex_client_owned_tables_from_existing_config(
                 &mut effective_settings,
                 existing_live,
+                CodexClientOwnedMergeMode::ExistingWinsOnConflict,
             )?;
         }
         let (_, proxy_codex_base_url) = self.build_proxy_urls().await?;
@@ -1955,6 +1962,7 @@ impl ProxyService {
                 Self::preserve_codex_client_owned_tables_from_existing_config(
                     &mut effective_settings,
                     existing_value,
+                    CodexClientOwnedMergeMode::KeepTargetOnConflict,
                 )?;
                 Self::preserve_codex_oauth_auth_in_backup(&mut effective_settings, existing_value)?;
             }
@@ -2125,6 +2133,7 @@ impl ProxyService {
     fn preserve_codex_client_owned_tables_from_existing_config(
         target_settings: &mut Value,
         existing_config: &Value,
+        mode: CodexClientOwnedMergeMode,
     ) -> Result<(), String> {
         let target_obj = target_settings
             .as_object_mut()
@@ -2175,8 +2184,15 @@ impl ProxyService {
                         existing_item.as_table_like(),
                     ) {
                         for (entry_key, entry_item) in existing_table.iter() {
-                            if target_table.get(entry_key).is_none() {
-                                target_table.insert(entry_key, entry_item.clone());
+                            match mode {
+                                CodexClientOwnedMergeMode::KeepTargetOnConflict => {
+                                    if target_table.get(entry_key).is_none() {
+                                        target_table.insert(entry_key, entry_item.clone());
+                                    }
+                                }
+                                CodexClientOwnedMergeMode::ExistingWinsOnConflict => {
+                                    target_table.insert(entry_key, entry_item.clone());
+                                }
                             }
                         }
                     } else {
@@ -2210,6 +2226,7 @@ impl ProxyService {
         Self::preserve_codex_client_owned_tables_from_existing_config(
             target_settings,
             &existing_live,
+            CodexClientOwnedMergeMode::ExistingWinsOnConflict,
         )
     }
 
@@ -5223,6 +5240,9 @@ name = "DeepSeek"
 base_url = "https://api.deepseek.com/v1"
 wire_api = "responses"
 requires_openai_auth = true
+
+[features]
+goals = false
 "#
             }),
             None,
@@ -5259,6 +5279,9 @@ name = "Stable"
 base_url = "http://127.0.0.1:15721/v1"
 wire_api = "responses"
 requires_openai_auth = true
+
+[features]
+goals = true
 "#
             }))
             .expect("seed taken-over Codex live config");
@@ -5298,6 +5321,14 @@ requires_openai_auth = true
         assert_eq!(
             parsed_live.get("model").and_then(|v| v.as_str()),
             Some("deepseek-v4-flash")
+        );
+        assert_eq!(
+            parsed_live
+                .get("features")
+                .and_then(|v| v.get("goals"))
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "current live client-owned feature flags should win over provider templates"
         );
         assert_eq!(
             live.get("auth")
@@ -6055,12 +6086,20 @@ wire_api = "responses"
 
 [features]
 remote_connections = true
+goals = false
+
+[projects."/tmp/cc-switch-test/project-alpha"]
+trust_level = "untrusted"
+
+[plugins."sample-plugin@local"]
+enabled = false
+
+[mcp_servers.sample_mcp]
+enabled = false
+command = "stale-mcp"
 
 [projects."/tmp/cc-switch-test/project-beta"]
 trust_level = "trusted"
-
-[plugins."stale-plugin@local"]
-enabled = true
 "#;
         let stale_backup = serde_json::to_string(&json!({
             "auth": {
@@ -6097,6 +6136,15 @@ enabled = true
                 .is_some(),
             "restore must preserve current live MCP config"
         );
+        assert_eq!(
+            parsed
+                .get("mcp_servers")
+                .and_then(|v| v.get("sample_mcp"))
+                .and_then(|v| v.get("command"))
+                .and_then(|v| v.as_str()),
+            Some("sample-mcp"),
+            "restore must let current live MCP config win on conflict"
+        );
         assert!(
             parsed
                 .get("plugins")
@@ -6104,12 +6152,30 @@ enabled = true
                 .is_some(),
             "restore must preserve current live plugin config"
         );
+        assert_eq!(
+            parsed
+                .get("plugins")
+                .and_then(|v| v.get("sample-plugin@local"))
+                .and_then(|v| v.get("enabled"))
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "restore must let current live plugin config win on conflict"
+        );
         assert!(
             parsed
                 .get("projects")
                 .and_then(|v| v.get("/tmp/cc-switch-test/project-alpha"))
                 .is_some(),
             "restore must preserve current live project trust config"
+        );
+        assert_eq!(
+            parsed
+                .get("projects")
+                .and_then(|v| v.get("/tmp/cc-switch-test/project-alpha"))
+                .and_then(|v| v.get("trust_level"))
+                .and_then(|v| v.as_str()),
+            Some("trusted"),
+            "restore must let current live project trust config win on conflict"
         );
         assert_eq!(
             parsed
@@ -6186,6 +6252,19 @@ model = "gpt-5.5"
 name = "Upstream"
 base_url = "https://upstream.example/v1"
 wire_api = "responses"
+
+[features]
+goals = false
+
+[projects."/tmp/cc-switch-test/project-alpha"]
+trust_level = "untrusted"
+
+[plugins."sample-plugin@local"]
+enabled = false
+
+[mcp_servers.sample_mcp]
+enabled = false
+command = "stale-mcp"
 "#;
         let stale_backup = serde_json::to_string(&json!({
             "auth": {
@@ -6241,6 +6320,15 @@ wire_api = "responses"
                 .is_some(),
             "startup should repair stale backup with current live MCP config"
         );
+        assert_eq!(
+            parsed
+                .get("mcp_servers")
+                .and_then(|v| v.get("sample_mcp"))
+                .and_then(|v| v.get("command"))
+                .and_then(|v| v.as_str()),
+            Some("sample-mcp"),
+            "startup backup repair should let current live MCP config win on conflict"
+        );
         assert!(
             parsed
                 .get("plugins")
@@ -6248,12 +6336,30 @@ wire_api = "responses"
                 .is_some(),
             "startup should repair stale backup with current live plugin config"
         );
+        assert_eq!(
+            parsed
+                .get("plugins")
+                .and_then(|v| v.get("sample-plugin@local"))
+                .and_then(|v| v.get("enabled"))
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "startup backup repair should let current live plugin config win on conflict"
+        );
         assert!(
             parsed
                 .get("projects")
                 .and_then(|v| v.get("/tmp/cc-switch-test/project-alpha"))
                 .is_some(),
             "startup should repair stale backup with current live project config"
+        );
+        assert_eq!(
+            parsed
+                .get("projects")
+                .and_then(|v| v.get("/tmp/cc-switch-test/project-alpha"))
+                .and_then(|v| v.get("trust_level"))
+                .and_then(|v| v.as_str()),
+            Some("trusted"),
+            "startup backup repair should let current live project config win on conflict"
         );
         assert_eq!(
             parsed
