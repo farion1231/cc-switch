@@ -9,6 +9,13 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   type ImportSkillSelection,
@@ -102,6 +109,36 @@ const UnifiedSkillsPanel = React.forwardRef<
   } = useCheckSkillUpdates();
   const updateSkillMutation = useUpdateSkill();
   const [isUpdatingAll, setIsUpdatingAll] = useState(false);
+  const [filterSource, setFilterSource] = useState<string>("all");
+
+  const sourceOptions = useMemo(() => {
+    if (!skills) return [];
+    const sources = new Map<string, string>();
+    for (const skill of skills) {
+      if (skill.repoOwner && skill.repoName) {
+        const key = `${skill.repoOwner}/${skill.repoName}`;
+        if (!sources.has(key)) sources.set(key, key);
+      } else {
+        if (!sources.has("__local__"))
+          sources.set("__local__", t("skills.local"));
+      }
+    }
+    return Array.from(sources.entries()).map(([key, label]) => ({
+      key,
+      label,
+    }));
+  }, [skills, t]);
+
+  const filteredSkills = useMemo(() => {
+    if (!skills || filterSource === "all") return skills;
+    return skills.filter((skill) => {
+      const key =
+        skill.repoOwner && skill.repoName
+          ? `${skill.repoOwner}/${skill.repoName}`
+          : "__local__";
+      return key === filterSource;
+    });
+  }, [skills, filterSource]);
 
   const updatesMap = useMemo(() => {
     const map: Record<string, SkillUpdateInfo> = {};
@@ -123,14 +160,14 @@ const UnifiedSkillsPanel = React.forwardRef<
       openclaw: 0,
       hermes: 0,
     };
-    if (!skills) return counts;
-    skills.forEach((skill) => {
+    if (!filteredSkills) return counts;
+    filteredSkills.forEach((skill) => {
       for (const app of SKILLS_APP_IDS) {
         if (skill.apps[app]) counts[app]++;
       }
     });
     return counts;
-  }, [skills]);
+  }, [filteredSkills]);
 
   const handleToggleApp = async (id: string, app: AppId, enabled: boolean) => {
     try {
@@ -349,11 +386,30 @@ const UnifiedSkillsPanel = React.forwardRef<
     <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
       <div className="flex items-center justify-between">
         <AppCountBar
-          totalLabel={t("skills.installed", { count: skills?.length || 0 })}
+          totalLabel={t("skills.installed", {
+            count: filteredSkills?.length || 0,
+          })}
           counts={enabledCounts}
           appIds={SKILLS_APP_IDS}
         />
         <div className="flex items-center gap-1.5">
+          {sourceOptions.length > 1 && (
+            <Select value={filterSource} onValueChange={setFilterSource}>
+              <SelectTrigger className="h-7 w-auto text-xs gap-1 pr-6 min-w-0">
+                <SelectValue placeholder={t("skills.filter.allSources")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">
+                  {t("skills.filter.allSources")}
+                </SelectItem>
+                {sourceOptions.map((opt) => (
+                  <SelectItem key={opt.key} value={opt.key}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           <div
             className="transition-all duration-300 ease-out overflow-hidden"
             style={{
@@ -417,10 +473,14 @@ const UnifiedSkillsPanel = React.forwardRef<
               {t("skills.noInstalledDescription")}
             </p>
           </div>
+        ) : !filteredSkills || filteredSkills.length === 0 ? (
+          <div className="text-center py-12 text-muted-foreground text-sm">
+            {t("skills.noResults")}
+          </div>
         ) : (
           <TooltipProvider delayDuration={300}>
             <div className="rounded-xl border border-border-default overflow-hidden">
-              {skills.map((skill, index) => (
+              {filteredSkills.map((skill, index) => (
                 <InstalledSkillListItem
                   key={skill.id}
                   skill={skill}
@@ -432,7 +492,7 @@ const UnifiedSkillsPanel = React.forwardRef<
                   onToggleApp={handleToggleApp}
                   onUninstall={() => handleUninstall(skill)}
                   onUpdate={() => handleUpdateSkill(skill)}
-                  isLast={index === skills.length - 1}
+                  isLast={index === filteredSkills.length - 1}
                 />
               ))}
             </div>

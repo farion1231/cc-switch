@@ -222,7 +222,7 @@ Modernes KI-gestütztes Programmieren stützt sich auf Werkzeuge wie Claude Code
 
 - **Einheitliches MCP-Panel** — Verwalten Sie MCP-Server für Claude, Codex, Gemini, OpenCode und Hermes mit bidirektionaler Synchronisierung und Deep-Link-Import
 - **Prompts** — Markdown-Editor mit App-übergreifender Synchronisierung (CLAUDE.md / AGENTS.md / GEMINI.md) und Backfill-Schutz
-- **Skills** — Installation mit einem Klick aus GitHub-Repositorys oder ZIP-Dateien, Verwaltung eigener Repositorys, mit Unterstützung für Symlinks und Dateikopien
+- **Skills** — Installation mit einem Klick aus GitHub-Repositorys oder ZIP-Dateien, Verwaltung eigener Repositorys, Filtern installierter Skills nach Quelle, mit Unterstützung für Symlinks und Dateikopien
 
 ### Nutzungs- & Kostenverfolgung
 
