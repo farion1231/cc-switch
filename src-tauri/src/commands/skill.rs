@@ -97,6 +97,29 @@ pub fn toggle_skill_app(
     Ok(true)
 }
 
+/// 批量更新 Skills 的来源（仓库信息）
+///
+/// 将选中的 Skills 关联到指定的仓库。
+#[tauri::command]
+pub fn batch_update_skill_source(
+    ids: Vec<String>,
+    repo_owner: String,
+    repo_name: String,
+    repo_branch: String,
+    subdirectory: Option<String>,
+    app_state: State<'_, AppState>,
+) -> Result<usize, String> {
+    SkillService::batch_update_source(
+        &app_state.db,
+        &ids,
+        &repo_owner,
+        &repo_name,
+        &repo_branch,
+        subdirectory.as_deref(),
+    )
+    .map_err(|e| e.to_string())
+}
+
 /// 扫描未管理的 Skills
 #[tauri::command]
 pub fn scan_unmanaged_skills(
