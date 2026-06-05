@@ -81,6 +81,44 @@ export const formatSessionTitle = (session: SessionMeta) => {
   );
 };
 
+export const extractCodexPromptPreview = (content: string) => {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim();
+    const lowered = trimmed.toLowerCase();
+    const markerPos = lowered.indexOf("my request for codex");
+    if (markerPos === -1) {
+      continue;
+    }
+
+    const afterMarker = trimmed
+      .slice(markerPos + "my request for codex".length)
+      .trimStart();
+    const afterColon = afterMarker.startsWith(":")
+      ? afterMarker.slice(1).trim()
+      : afterMarker;
+    if (afterColon) {
+      return afterColon;
+    }
+
+    const prompt = lines
+      .slice(index + 1)
+      .join("\n")
+      .trim();
+    return prompt || content;
+  }
+
+  return content;
+};
+
+export const isCodexInjectedContext = (content: string) => {
+  const trimmed = content.trim();
+  return (
+    trimmed.startsWith("# AGENTS.md instructions for ") ||
+    trimmed.startsWith("<environment_context>")
+  );
+};
+
 export const highlightText = (text: string, query: string): ReactNode => {
   if (!query) return text;
   const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

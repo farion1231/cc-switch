@@ -50,6 +50,8 @@ import { SessionTocDialog, SessionTocSidebar } from "./SessionToc";
 import {
   formatSessionTitle,
   formatTimestamp,
+  extractCodexPromptPreview,
+  isCodexInjectedContext,
   getBaseName,
   getProviderIconName,
   getProviderLabel,
@@ -171,13 +173,22 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const userMessagesToc = useMemo(() => {
     return messages
       .map((msg, index) => ({ msg, index }))
-      .filter(({ msg }) => msg.role.toLowerCase() === "user")
-      .map(({ msg, index }) => ({
-        index,
-        preview:
-          msg.content.slice(0, 50) + (msg.content.length > 50 ? "..." : ""),
-        ts: msg.ts,
-      }));
+      .filter(
+        ({ msg }) =>
+          msg.role.toLowerCase() === "user" &&
+          !isCodexInjectedContext(msg.content),
+      )
+      .map(({ msg, index }) => {
+        const previewSource = extractCodexPromptPreview(msg.content);
+
+        return {
+          index,
+          preview:
+            previewSource.slice(0, 50) +
+            (previewSource.length > 50 ? "..." : ""),
+          ts: msg.ts,
+        };
+      });
   }, [messages]);
 
   const scrollToMessage = (index: number) => {
