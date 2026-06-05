@@ -1180,6 +1180,8 @@ pub fn run() {
             commands::list_management_api_pairing_sessions,
             commands::approve_management_api_pairing,
             commands::reject_management_api_pairing,
+            commands::list_management_api_audit_logs,
+            commands::clear_management_api_audit_logs,
             commands::get_rectifier_config,
             commands::set_rectifier_config,
             commands::get_optimizer_config,

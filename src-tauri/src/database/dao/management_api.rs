@@ -42,6 +42,20 @@ pub struct ApiPairingSessionLookup {
     pub poll_secret_hash: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiAuditLogRecord {
+    pub id: i64,
+    pub token_id: Option<String>,
+    pub scope: Option<String>,
+    pub method: String,
+    pub path: String,
+    pub status: i64,
+    pub request_id: String,
+    pub remote_ip: Option<String>,
+    pub created_at: i64,
+}
+
 #[derive(Debug, Clone)]
 pub struct ConsumedPairingToken {
     pub token: String,
@@ -517,6 +531,42 @@ impl Database {
         )?;
         Ok(())
     }
+
+    pub fn list_api_audit_logs(&self, limit: i64) -> Result<Vec<ApiAuditLogRecord>, AppError> {
+        let limit = limit.clamp(1, 500);
+        let conn = lock_conn!(self.conn);
+        let mut stmt = conn.prepare(
+            "SELECT id, token_id, scope, method, path, status, request_id, remote_ip, created_at
+             FROM api_audit_logs
+             ORDER BY created_at DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            Ok(ApiAuditLogRecord {
+                id: row.get(0)?,
+                token_id: row.get(1)?,
+                scope: row.get(2)?,
+                method: row.get(3)?,
+                path: row.get(4)?,
+                status: row.get(5)?,
+                request_id: row.get(6)?,
+                remote_ip: row.get(7)?,
+                created_at: row.get(8)?,
+            })
+        })?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    pub fn clear_api_audit_logs(&self) -> Result<usize, AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute("DELETE FROM api_audit_logs", [])
+            .map_err(Into::into)
+    }
 }
 
 #[cfg(test)]
@@ -755,5 +805,31 @@ mod tests {
                 "127.0.0.1".to_string(),
             )
         );
+    }
+
+    #[test]
+    fn audit_logs_can_be_listed_and_cleared() {
+        let db = Database::memory().expect("memory db");
+        db.insert_api_audit_log(
+            Some("token-1"),
+            Some("api:read"),
+            "GET",
+            "/v1/me",
+            200,
+            "request-1",
+            Some("127.0.0.1"),
+        )
+        .expect("insert audit log");
+
+        let logs = db.list_api_audit_logs(50).expect("list audit logs");
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].path, "/v1/me");
+        assert_eq!(logs[0].request_id, "request-1");
+
+        assert_eq!(db.clear_api_audit_logs().expect("clear logs"), 1);
+        assert!(db
+            .list_api_audit_logs(50)
+            .expect("list after clear")
+            .is_empty());
     }
 }

@@ -330,6 +330,14 @@ export const settingsApi = {
   async rejectManagementApiPairing(pairingId: string): Promise<boolean> {
     return await invoke("reject_management_api_pairing", { pairingId });
   },
+
+  async listManagementApiAuditLogs(limit = 100): Promise<ApiAuditLogRecord[]> {
+    return await invoke("list_management_api_audit_logs", { limit });
+  },
+
+  async clearManagementApiAuditLogs(): Promise<number> {
+    return await invoke("clear_management_api_audit_logs");
+  },
 };
 
 /** 单处工具安装的诊断信息（多处安装冲突检测）。字段对应后端 ToolInstallation。 */
@@ -405,6 +413,18 @@ export interface ApiPairingSessionRecord {
   expiresAt: number;
   approvedTokenId?: string | null;
   tokenDeliveredAt?: number | null;
+}
+
+export interface ApiAuditLogRecord {
+  id: number;
+  tokenId?: string | null;
+  scope?: string | null;
+  method: string;
+  path: string;
+  status: number;
+  requestId: string;
+  remoteIp?: string | null;
+  createdAt: number;
 }
 
 export interface CreateApiTokenRequest {

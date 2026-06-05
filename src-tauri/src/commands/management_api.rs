@@ -1,4 +1,4 @@
-use crate::database::{ApiPairingSessionRecord, ApiTokenRecord};
+use crate::database::{ApiAuditLogRecord, ApiPairingSessionRecord, ApiTokenRecord};
 use crate::services::management_api::{
     approve_pairing, CreateApiTokenRequest, CreateApiTokenResponse, ManagementApiStatus,
 };
@@ -117,4 +117,22 @@ pub async fn reject_management_api_pairing(
         .db
         .reject_api_pairing_session(&pairing_id)
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn list_management_api_audit_logs(
+    state: tauri::State<'_, AppState>,
+    limit: Option<i64>,
+) -> Result<Vec<ApiAuditLogRecord>, String> {
+    state
+        .db
+        .list_api_audit_logs(limit.unwrap_or(100))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn clear_management_api_audit_logs(
+    state: tauri::State<'_, AppState>,
+) -> Result<usize, String> {
+    state.db.clear_api_audit_logs().map_err(|e| e.to_string())
 }

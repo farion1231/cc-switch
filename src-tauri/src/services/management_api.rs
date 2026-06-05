@@ -16,7 +16,7 @@ use crate::store::AppState;
 use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::response::sse::{Event, Sse};
-use axum::response::{IntoResponse, Response};
+use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use hmac::{Hmac, Mac};
@@ -117,11 +117,17 @@ pub struct CreateApiTokenResponse {
     pub record: crate::database::ApiTokenRecord,
 }
 
+#[derive(Debug, Deserialize)]
+struct AuditLogQuery {
+    limit: Option<i64>,
+}
+
 #[derive(Clone)]
 struct HttpState {
     db: Arc<Database>,
     proxy_service: ProxyService,
     token_secret: Arc<Vec<u8>>,
+    management_api_service: ManagementApiService,
     settings: ManagementApiSettings,
 }
 
@@ -212,6 +218,7 @@ impl ManagementApiService {
             db: self.db.clone(),
             proxy_service: self.proxy_service.clone(),
             token_secret: self.token_secret.clone(),
+            management_api_service: self.clone(),
             settings: settings.clone(),
         };
         let app = build_router(state, &settings);
@@ -295,6 +302,7 @@ impl ManagementApiService {
 
 fn build_router(state: HttpState, settings: &ManagementApiSettings) -> Router {
     let mut router = Router::new()
+        .route("/", get(api_docs))
         .route("/health", get(health))
         .route("/v1/health", get(health))
         .route("/v1/openapi.json", get(openapi))
@@ -474,6 +482,10 @@ fn build_router(state: HttpState, settings: &ManagementApiSettings) -> Router {
         )
         .route("/v1/mcp/import", post(import_mcp_http))
         .route("/v1/mcp/sync", post(sync_mcp_http))
+        .route(
+            "/v1/api-logs",
+            get(api_logs_http).delete(clear_api_logs_http),
+        )
         .route("/v1/events", get(events))
         .with_state(state);
 
@@ -496,6 +508,142 @@ fn build_router(state: HttpState, settings: &ManagementApiSettings) -> Router {
         }
     }
     router
+}
+
+async fn api_docs() -> Html<&'static str> {
+    Html(
+        r#"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CC Switch Management API</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #0f172a; --panel: #111827; --muted: #94a3b8; --text: #e5e7eb; --line: #334155; --accent: #10b981; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0b1120; color: var(--text); }
+    header { padding: 28px 32px 20px; border-bottom: 1px solid var(--line); background: linear-gradient(180deg, #111827, #0b1120); }
+    main { max-width: 1180px; margin: 0 auto; padding: 24px 20px 48px; }
+    h1 { margin: 0 0 8px; font-size: 28px; letter-spacing: 0; }
+    p { color: var(--muted); margin: 0; line-height: 1.6; }
+    .toolbar, .endpoint { border: 1px solid var(--line); background: rgba(15, 23, 42, .78); border-radius: 8px; }
+    .toolbar { display: grid; gap: 12px; padding: 16px; margin-bottom: 18px; grid-template-columns: 1fr auto auto; align-items: end; }
+    label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+    input { width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; background: #020617; color: var(--text); font: inherit; }
+    button, a.button { border: 1px solid #059669; background: #059669; color: white; border-radius: 6px; padding: 10px 14px; font-weight: 600; cursor: pointer; text-decoration: none; text-align: center; }
+    a.button.secondary { border-color: var(--line); background: transparent; color: var(--text); }
+    .status { margin: 0 0 16px; color: var(--muted); font-size: 13px; min-height: 20px; }
+    .endpoint { margin: 10px 0; overflow: hidden; }
+    .row { display: grid; grid-template-columns: 88px 1fr; gap: 12px; align-items: center; padding: 12px 14px; border-top: 1px solid rgba(51, 65, 85, .65); }
+    .row:first-child { border-top: 0; }
+    .method { display: inline-flex; justify-content: center; min-width: 64px; border-radius: 5px; padding: 5px 8px; font: 700 12px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .get { background: #0369a1; } .post { background: #047857; } .put { background: #7c3aed; } .delete { background: #b91c1c; }
+    .path { font: 13px ui-monospace, SFMono-Regular, Consolas, monospace; color: #e2e8f0; word-break: break-all; }
+    .summary { margin-top: 3px; color: var(--muted); font-size: 13px; }
+    details { margin-top: 10px; }
+    summary { cursor: pointer; color: #bfdbfe; font-size: 12px; font-weight: 700; }
+    .demo-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin-top: 10px; }
+    .demo { min-width: 0; border: 1px solid rgba(51, 65, 85, .8); border-radius: 6px; background: #020617; overflow: hidden; }
+    .demo-title { padding: 8px 10px; border-bottom: 1px solid rgba(51, 65, 85, .8); color: var(--muted); font-size: 12px; font-weight: 700; }
+    pre { margin: 0; padding: 10px; overflow: auto; color: #dbeafe; font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+    .hint { margin-bottom: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .pill { border: 1px solid var(--line); border-radius: 999px; padding: 5px 9px; color: var(--muted); font-size: 12px; }
+    @media (max-width: 760px) { header { padding: 22px 18px 16px; } .toolbar { grid-template-columns: 1fr; } .row { grid-template-columns: 1fr; } .demo-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>CC Switch Management API</h1>
+    <p>Interactive local API documentation. Root docs are public; protected OpenAPI metadata requires a bearer token with api:read.</p>
+  </header>
+  <main>
+    <div class="hint">
+      <span class="pill">Base path: /v1</span>
+      <span class="pill">Auth: Bearer token</span>
+      <span class="pill">Health: /health</span>
+      <span class="pill">OpenAPI: /v1/openapi.json</span>
+    </div>
+    <section class="toolbar">
+      <label>API token
+        <input id="token" type="password" placeholder="ccs_..." autocomplete="off" />
+      </label>
+      <button id="load">Load full docs</button>
+      <a class="button secondary" href="/health">Health</a>
+    </section>
+    <div id="status" class="status">Enter a token and load the OpenAPI schema.</div>
+    <section id="docs"></section>
+  </main>
+  <script>
+    const docs = document.getElementById("docs");
+    const status = document.getElementById("status");
+    const token = document.getElementById("token");
+    const params = new URLSearchParams(location.search);
+    token.value = params.get("token") || "";
+    function codeBlock(title, text) {
+      const box = document.createElement("div");
+      box.className = "demo";
+      const heading = document.createElement("div");
+      heading.className = "demo-title";
+      heading.textContent = title;
+      const pre = document.createElement("pre");
+      pre.textContent = text;
+      box.append(heading, pre);
+      return box;
+    }
+    function render(schema) {
+      const paths = schema?.data?.paths || schema?.paths || {};
+      const entries = Object.entries(paths).sort(([a], [b]) => a.localeCompare(b));
+      docs.innerHTML = "";
+      for (const [path, methods] of entries) {
+        const box = document.createElement("article");
+        box.className = "endpoint";
+        for (const [method, operation] of Object.entries(methods)) {
+          const row = document.createElement("div");
+          row.className = "row";
+          const content = document.createElement("div");
+          content.innerHTML = `<div class="path">/v1${path}</div><div class="summary">${operation.summary || ""}</div>`;
+          const details = document.createElement("details");
+          const summary = document.createElement("summary");
+          summary.textContent = "Request / response demo";
+          const demos = document.createElement("div");
+          demos.className = "demo-grid";
+          const requestDemo = String(operation["x-request-demo"] || "").replaceAll("{{origin}}", location.origin);
+          const responseDemo = JSON.stringify(operation["x-response-demo"] || {
+            data: {},
+            meta: { requestId: "00000000-0000-4000-8000-000000000000" }
+          }, null, 2);
+          demos.append(codeBlock("Request", requestDemo), codeBlock("Response", responseDemo));
+          details.append(summary, demos);
+          content.appendChild(details);
+          const methodBadge = document.createElement("span");
+          methodBadge.className = `method ${method}`;
+          methodBadge.textContent = method.toUpperCase();
+          row.append(methodBadge, content);
+          box.appendChild(row);
+        }
+        docs.appendChild(box);
+      }
+      status.textContent = `${entries.length} paths loaded.`;
+    }
+    async function loadDocs() {
+      status.textContent = "Loading OpenAPI schema...";
+      try {
+        const headers = token.value.trim() ? { Authorization: `Bearer ${token.value.trim()}` } : {};
+        const response = await fetch("/v1/openapi.json", { headers });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body?.error?.message || response.statusText);
+        render(body);
+      } catch (error) {
+        docs.innerHTML = "";
+        status.textContent = `Failed to load docs: ${error.message}`;
+      }
+    }
+    document.getElementById("load").addEventListener("click", loadDocs);
+    if (token.value) loadDocs();
+  </script>
+</body>
+</html>"#,
+    )
 }
 
 async fn health(State(state): State<HttpState>) -> Response {
@@ -874,15 +1022,18 @@ async fn openapi(
                 ("put", "Update common config snippet", false),
             ],
         ),
+        (
+            "/api-logs",
+            vec![
+                ("get", "List Management API audit logs", false),
+                ("delete", "Clear Management API audit logs", false),
+            ],
+        ),
         ("/events", vec![("get", "Management events stream", false)]),
     ] {
         let mut path_item = Map::new();
         for (method, summary, no_auth) in methods {
-            let mut operation = Map::new();
-            operation.insert("summary".to_string(), Value::String(summary.to_string()));
-            if no_auth {
-                operation.insert("security".to_string(), Value::Array(Vec::new()));
-            }
+            let operation = operation_object(path, method, summary, no_auth);
             path_item.insert(method.to_string(), Value::Object(operation));
         }
         paths.insert(path.to_string(), Value::Object(path_item));
@@ -909,6 +1060,181 @@ async fn openapi(
         None,
     );
     ok(doc)
+}
+
+fn operation_object(path: &str, method: &str, summary: &str, no_auth: bool) -> Map<String, Value> {
+    let mut operation = Map::new();
+    operation.insert("summary".to_string(), Value::String(summary.to_string()));
+    if no_auth {
+        operation.insert("security".to_string(), Value::Array(Vec::new()));
+    }
+    operation.insert(
+        "x-request-demo".to_string(),
+        Value::String(request_demo(path, method, no_auth)),
+    );
+    operation.insert("x-response-demo".to_string(), response_demo(path, method));
+    if let Some(body) = request_body_demo(path, method) {
+        operation.insert("x-request-body-demo".to_string(), body);
+    }
+    operation
+}
+
+fn request_demo(path: &str, method: &str, no_auth: bool) -> String {
+    let url = format!("{{{{origin}}}}/v1{}", demo_path(path));
+    let auth = if no_auth {
+        String::new()
+    } else {
+        " \\\n  -H \"Authorization: Bearer <token>\"".to_string()
+    };
+    match method {
+        "get" => format!("curl -s{auth} \\\n  \"{url}\""),
+        "delete" => format!("curl -s -X DELETE{auth} \\\n  \"{url}\""),
+        "post" | "put" => {
+            let body = request_body_demo(path, method).unwrap_or_else(|| json!({}));
+            let body = serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string());
+            format!(
+                "curl -s -X {}{} \\\n  -H \"Content-Type: application/json\" \\\n  -d '{}' \\\n  \"{}\"",
+                method.to_ascii_uppercase(),
+                auth,
+                body,
+                url
+            )
+        }
+        _ => format!("curl -s{auth} \\\n  \"{url}\""),
+    }
+}
+
+fn demo_path(path: &str) -> String {
+    path.replace("{providerId}", "provider-id")
+        .replace("{pairingId}", "pairing-id")
+        .replace("{filename}", "daily.md")
+        .replace("{provider}", "codex")
+        .replace("{owner}", "owner")
+        .replace("{name}", "repo")
+        .replace("{app}", "codex")
+        .replace("{id}", "example-id")
+}
+
+fn request_body_demo(path: &str, method: &str) -> Option<Value> {
+    match (method, path) {
+        ("post", "/auth/tokens") => Some(json!({
+            "name": "Local automation",
+            "scopes": ["api:read", "providers:read"],
+            "expiresAt": null
+        })),
+        ("post", "/auth/pairing/request") => Some(json!({
+            "clientName": "Local client",
+            "requestedScopes": ["api:read", "providers:read"]
+        })),
+        ("post", "/apps/{app}/providers") | ("put", "/apps/{app}/providers/{id}") => Some(json!({
+            "id": "provider-id",
+            "name": "Example provider",
+            "apiUrl": "https://api.example.com",
+            "apiKey": "sk-..."
+        })),
+        ("post", "/apps/{app}/providers/{id}/custom-endpoints")
+        | ("delete", "/apps/{app}/providers/{id}/custom-endpoints") => Some(json!({
+            "endpoint": "https://api.example.com/v1"
+        })),
+        ("post", "/universal-providers") | ("put", "/universal-providers/{id}") => Some(json!({
+            "id": "universal-id",
+            "name": "Shared provider",
+            "apps": { "claude": true, "codex": true, "gemini": false }
+        })),
+        ("post", "/mcp/servers") | ("put", "/mcp/servers/{id}") => Some(json!({
+            "id": "server-id",
+            "name": "Example MCP",
+            "server": { "type": "stdio", "command": "npx", "args": ["-y", "example-mcp"] },
+            "apps": { "claude": true, "codex": false, "gemini": false, "opencode": false, "openclaw": false, "hermes": false }
+        })),
+        ("put", "/mcp/servers/{id}/apps/{app}") | ("put", "/skills/{id}/apps/{app}") => {
+            Some(json!({ "enabled": true }))
+        }
+        ("post", "/apps/{app}/prompts") | ("put", "/apps/{app}/prompts/{id}") => {
+            Some(json!({ "name": "Example prompt", "content": "Use concise answers." }))
+        }
+        ("post", "/skills/install") => Some(json!({
+            "owner": "example",
+            "repo": "skills",
+            "path": "my-skill"
+        })),
+        ("post", "/skills/install-zip") => Some(json!({ "zipPath": "C:/path/to/skills.zip" })),
+        ("post", "/skills/repos") => Some(json!({ "owner": "example", "name": "skills" })),
+        ("put", "/proxy/config")
+        | ("put", "/proxy/global-config")
+        | ("put", "/proxy/apps/{app}/config")
+        | ("put", "/proxy/circuit-breaker/config")
+        | ("put", "/proxy/log-config")
+        | ("put", "/proxy/optimizer-config")
+        | ("put", "/proxy/copilot-optimizer-config")
+        | ("put", "/proxy/rectifier-config") => Some(json!({ "enabled": true })),
+        ("put", "/proxy/takeover/{app}") => Some(json!({ "enabled": true })),
+        ("put", "/proxy/apps/{app}/cost-multiplier") => Some(json!({ "value": 1.0 })),
+        ("put", "/proxy/apps/{app}/pricing-source") => Some(json!({ "source": "default" })),
+        ("post", "/usage/session-sync") => Some(json!({ "app": "codex" })),
+        ("put", "/workspace/files/{filename}") | ("put", "/workspace/memory/{filename}") => {
+            Some(json!({ "content": "Example content" }))
+        }
+        ("put", "/settings") => Some(json!({ "managementApi": { "enabled": true } })),
+        ("put", "/settings/config-snippets/{app}") => Some(json!({
+            "value": "{\n  \"env\": {}\n}",
+            "cleared": false
+        })),
+        _ if method == "post" || method == "put" => Some(json!({})),
+        _ => None,
+    }
+}
+
+fn response_demo(path: &str, method: &str) -> Value {
+    let data = match (method, path) {
+        ("get", "/health") => json!({
+            "status": "ok",
+            "service": "management-api",
+            "lanEnabled": false,
+            "tlsEnabled": false
+        }),
+        ("get", "/me") => json!({
+            "tokenId": "token-id",
+            "scopes": ["api:read", "providers:read"],
+            "expiresAt": null
+        }),
+        ("get", "/auth/tokens") => json!([]),
+        ("post", "/auth/tokens") => json!({
+            "token": "ccs_example_secret",
+            "record": {
+                "id": "token-id",
+                "name": "Local automation",
+                "scopes": ["api:read", "providers:read"],
+                "createdAt": 1780660800000_i64,
+                "expiresAt": null,
+                "lastUsedAt": null,
+                "revokedAt": null,
+                "source": "api"
+            }
+        }),
+        ("delete", "/auth/tokens/{id}") => json!({ "revoked": true }),
+        ("post", "/auth/pairing/request") => json!({
+            "pairingId": "pairing-id",
+            "userCode": "A1B2C3D4",
+            "pollToken": "poll_example_secret",
+            "expiresAt": 1780661400000_i64
+        }),
+        ("get", "/auth/pairing/{pairingId}") => json!({
+            "status": "approved",
+            "token": "ccs_example_secret",
+            "scopes": ["api:read", "providers:read"]
+        }),
+        ("get", "/api-logs") => json!([]),
+        ("delete", "/api-logs") => json!({ "cleared": 1 }),
+        ("get", "/events") => json!({ "event": "ready", "data": { "service": "management-api" } }),
+        _ if method == "get" => json!([]),
+        _ if method == "delete" => json!({ "deleted": true }),
+        _ => json!({ "ok": true }),
+    };
+    json!({
+        "data": data,
+        "meta": { "requestId": "00000000-0000-4000-8000-000000000000" }
+    })
 }
 
 async fn me(
@@ -991,14 +1317,12 @@ async fn create_token_http(
         Ok(auth) => auth,
         Err(resp) => return resp,
     };
-    match (ManagementApiService {
-        db: state.db.clone(),
-        proxy_service: state.proxy_service.clone(),
-        token_secret: state.token_secret.clone(),
-        running: Arc::new(RwLock::new(None)),
-    })
-    .create_token(&req.name, req.scopes, req.expires_at, Some("api"))
-    {
+    match state.management_api_service.create_token(
+        &req.name,
+        req.scopes,
+        req.expires_at,
+        Some("api"),
+    ) {
         Ok(created) => {
             audit(
                 &state,
@@ -1072,8 +1396,21 @@ struct PairingRequest {
 
 async fn pairing_request(
     State(state): State<HttpState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(req): Json<PairingRequest>,
 ) -> Response {
+    if let Err(message) = check_remote_allowed(&state.settings, addr.ip()) {
+        audit(
+            &state,
+            None,
+            None,
+            "POST",
+            "/v1/auth/pairing/request",
+            403,
+            Some(addr.ip()),
+        );
+        return api_error(StatusCode::FORBIDDEN, "ip_not_allowed", message, None);
+    }
     if !state.settings.pairing_enabled {
         return api_error(
             StatusCode::FORBIDDEN,
@@ -1163,9 +1500,22 @@ struct PollQuery {
 
 async fn pairing_poll(
     State(state): State<HttpState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Path(id): Path<String>,
     Query(query): Query<PollQuery>,
 ) -> Response {
+    if let Err(message) = check_remote_allowed(&state.settings, addr.ip()) {
+        audit(
+            &state,
+            None,
+            None,
+            "GET",
+            "/v1/auth/pairing/:id",
+            403,
+            Some(addr.ip()),
+        );
+        return api_error(StatusCode::FORBIDDEN, "ip_not_allowed", message, None);
+    }
     let session = match state.db.get_api_pairing_session(&id) {
         Ok(Some(session)) => session,
         Ok(None) => {
@@ -5242,9 +5592,43 @@ async fn update_settings_http(
         Err(resp) => return resp,
     };
     let existing = crate::settings::get_settings();
-    let merged = crate::commands::merge_settings_for_save(settings, &existing);
+    let mut merged = crate::commands::merge_settings_for_save(settings, &existing);
+    merged.management_api.normalize();
+    let management_api_changed = existing.management_api != merged.management_api;
+    if merged.management_api.enabled {
+        if let Err(e) = merged.management_api.validate_for_start() {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "management_api_settings_invalid",
+                e.to_string(),
+                None,
+            );
+        }
+        match state.db.active_api_token_count() {
+            Ok(count) if merged.management_api.lan_enabled && count < 1 => {
+                return api_error(
+                    StatusCode::BAD_REQUEST,
+                    "management_api_settings_invalid",
+                    "LAN Management API mode requires at least one active token",
+                    None,
+                )
+            }
+            Ok(_) => {}
+            Err(e) => {
+                return api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "database_error",
+                    e.to_string(),
+                    None,
+                )
+            }
+        }
+    }
     match crate::settings::update_settings(merged) {
         Ok(()) => {
+            if management_api_changed {
+                schedule_management_api_reconcile(state.management_api_service.clone());
+            }
             audit(
                 &state,
                 Some(&auth),
@@ -5459,6 +5843,81 @@ async fn sync_mcp_http(
     }
 }
 
+async fn api_logs_http(
+    State(state): State<HttpState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Query(query): Query<AuditLogQuery>,
+) -> Response {
+    let auth = match require_auth(
+        &state,
+        &headers,
+        addr.ip(),
+        "api:read",
+        "GET",
+        "/v1/api-logs",
+    ) {
+        Ok(auth) => auth,
+        Err(resp) => return resp,
+    };
+    match state.db.list_api_audit_logs(query.limit.unwrap_or(100)) {
+        Ok(logs) => {
+            audit(
+                &state,
+                Some(&auth),
+                Some("api:read"),
+                "GET",
+                "/v1/api-logs",
+                200,
+                None,
+            );
+            ok(logs)
+        }
+        Err(e) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "database_error",
+            e.to_string(),
+            None,
+        ),
+    }
+}
+
+async fn clear_api_logs_http(
+    State(state): State<HttpState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let auth = match require_auth(
+        &state,
+        &headers,
+        addr.ip(),
+        "auth:admin",
+        "DELETE",
+        "/v1/api-logs",
+    ) {
+        Ok(auth) => auth,
+        Err(resp) => return resp,
+    };
+    audit(
+        &state,
+        Some(&auth),
+        Some("auth:admin"),
+        "DELETE",
+        "/v1/api-logs",
+        200,
+        None,
+    );
+    match state.db.clear_api_audit_logs() {
+        Ok(deleted) => ok(json!({ "deleted": deleted })),
+        Err(e) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "database_error",
+            e.to_string(),
+            None,
+        ),
+    }
+}
+
 async fn events(
     State(state): State<HttpState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -5665,6 +6124,15 @@ fn check_remote_allowed(settings: &ManagementApiSettings, ip: IpAddr) -> Result<
         return Ok(());
     }
     Err("Remote IP is not in the Management API allow-list".to_string())
+}
+
+fn schedule_management_api_reconcile(service: ManagementApiService) {
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        if let Err(e) = service.reconcile_with_settings().await {
+            log::error!("Failed to reconcile Management API after settings update: {e}");
+        }
+    });
 }
 
 fn ip_matches_cidr(ip: IpAddr, cidr: &str) -> bool {
@@ -5874,10 +6342,18 @@ mod tests {
         token_secret: Arc<Vec<u8>>,
         settings: ManagementApiSettings,
     ) -> HttpState {
+        let proxy_service = ProxyService::new(db.clone());
+        let management_api_service = ManagementApiService {
+            db: db.clone(),
+            proxy_service: proxy_service.clone(),
+            token_secret: token_secret.clone(),
+            running: Arc::new(RwLock::new(None)),
+        };
         HttpState {
             db: db.clone(),
-            proxy_service: ProxyService::new(db),
+            proxy_service,
             token_secret,
+            management_api_service,
             settings,
         }
     }
@@ -6113,9 +6589,25 @@ mod tests {
             "/sessions/{provider}/{id}",
             "/workspace/memory/{filename}",
             "/settings/config-snippets/{app}",
+            "/api-logs",
             "/events",
         ] {
             assert!(paths.get(path).is_some(), "missing OpenAPI path {path}");
+        }
+
+        let paths = paths.as_object().expect("OpenAPI paths object");
+        for (path, methods) in paths {
+            let methods = methods.as_object().expect("OpenAPI path item");
+            for (method, operation) in methods {
+                assert!(
+                    operation.get("x-request-demo").is_some(),
+                    "missing request demo for {method} {path}"
+                );
+                assert!(
+                    operation.get("x-response-demo").is_some(),
+                    "missing response demo for {method} {path}"
+                );
+            }
         }
     }
 
@@ -6162,6 +6654,7 @@ mod tests {
 
         let invalid = pairing_request(
             State(state.clone()),
+            ConnectInfo(SocketAddr::from((Ipv4Addr::LOCALHOST, 12345))),
             Json(PairingRequest {
                 client_name: "   ".to_string(),
                 requested_scopes: vec!["api:read".to_string()],
@@ -6173,6 +6666,7 @@ mod tests {
         for i in 0..MAX_RECENT_PAIRING_REQUESTS {
             let response = pairing_request(
                 State(state.clone()),
+                ConnectInfo(SocketAddr::from((Ipv4Addr::LOCALHOST, 12345))),
                 Json(PairingRequest {
                     client_name: format!("client-{i}"),
                     requested_scopes: vec!["api:read".to_string()],
@@ -6184,6 +6678,7 @@ mod tests {
 
         let limited = pairing_request(
             State(state),
+            ConnectInfo(SocketAddr::from((Ipv4Addr::LOCALHOST, 12345))),
             Json(PairingRequest {
                 client_name: "client-limited".to_string(),
                 requested_scopes: vec!["api:read".to_string()],
@@ -6191,6 +6686,54 @@ mod tests {
         )
         .await;
         assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn pairing_endpoints_enforce_remote_allow_list() {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let secret = Arc::new(b"test-management-secret".to_vec());
+        let state = test_state(
+            db.clone(),
+            secret.clone(),
+            ManagementApiSettings {
+                lan_enabled: true,
+                allowed_cidrs: vec!["10.0.0.0/24".to_string()],
+                ..ManagementApiSettings::default()
+            },
+        );
+        let blocked_addr = ConnectInfo(SocketAddr::from((Ipv4Addr::new(192, 168, 1, 10), 12345)));
+
+        let request = pairing_request(
+            State(state.clone()),
+            blocked_addr,
+            Json(PairingRequest {
+                client_name: "client".to_string(),
+                requested_scopes: vec!["api:read".to_string()],
+            }),
+        )
+        .await;
+        assert_eq!(request.status(), StatusCode::FORBIDDEN);
+
+        let poll_token = "poll_test_token";
+        db.create_api_pairing_session(
+            "pairing-blocked",
+            "client",
+            &hash_token(&secret, poll_token),
+            &["api:read".to_string()],
+            chrono::Utc::now().timestamp_millis() + 60_000,
+        )
+        .expect("create pairing");
+
+        let poll = pairing_poll(
+            State(state),
+            ConnectInfo(SocketAddr::from((Ipv4Addr::new(192, 168, 1, 10), 12345))),
+            Path("pairing-blocked".to_string()),
+            Query(PollQuery {
+                poll_token: poll_token.to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(poll.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
@@ -6218,6 +6761,7 @@ mod tests {
 
         let first = pairing_poll(
             State(state.clone()),
+            ConnectInfo(SocketAddr::from((Ipv4Addr::LOCALHOST, 12345))),
             Path(pairing_id.to_string()),
             Query(PollQuery {
                 poll_token: poll_token.to_string(),
@@ -6234,6 +6778,7 @@ mod tests {
 
         let second = pairing_poll(
             State(state),
+            ConnectInfo(SocketAddr::from((Ipv4Addr::LOCALHOST, 12345))),
             Path(pairing_id.to_string()),
             Query(PollQuery {
                 poll_token: poll_token.to_string(),

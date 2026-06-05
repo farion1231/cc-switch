@@ -433,10 +433,12 @@ export function SettingsPage({
                             <ShieldCheck className="h-5 w-5 text-emerald-500" />
                             <div className="text-left">
                               <h3 className="text-base font-semibold">
-                                Management API
+                                {t("settings.advanced.managementApi.title")}
                               </h3>
                               <p className="text-sm text-muted-foreground font-normal">
-                                Local HTTP API, tokens, and pairing requests
+                                {t(
+                                  "settings.advanced.managementApi.description",
+                                )}
                               </p>
                             </div>
                           </div>
