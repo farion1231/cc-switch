@@ -184,8 +184,8 @@ impl ProxyService {
                 }
             }
             ClaudeTakeoverAuthPolicy::ManagedAccount => {
-                let should_preserve_auth_token = preserve_auth_token_for_codex
-                    && env.contains_key("ANTHROPIC_AUTH_TOKEN");
+                let should_preserve_auth_token =
+                    preserve_auth_token_for_codex && env.contains_key("ANTHROPIC_AUTH_TOKEN");
                 for key in token_keys {
                     if should_preserve_auth_token && key == "ANTHROPIC_AUTH_TOKEN" {
                         env.insert(key.to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
