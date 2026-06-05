@@ -2207,7 +2207,9 @@
       "installed": "已安装",
       "uninstalled": "未安装",
       "repo": "仓库筛选",
-      "allRepos": "全部仓库"
+      "allRepos": "全部仓库",
+      "source": "来源筛选",
+      "allSources": "全部来源"
     },
     "noResults": "未找到匹配的技能",
     "noInstalled": "暂无已安装的技能",

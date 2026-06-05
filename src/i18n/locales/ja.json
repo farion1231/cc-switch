@@ -2207,7 +2207,9 @@
       "installed": "インストール済み",
       "uninstalled": "未インストール",
       "repo": "リポジトリで絞り込み",
-      "allRepos": "すべてのリポジトリ"
+      "allRepos": "すべてのリポジトリ",
+      "source": "ソースで絞り込み",
+      "allSources": "すべてのソース"
     },
     "noResults": "一致するスキルが見つかりませんでした",
     "noInstalled": "インストールされたスキルがありません",

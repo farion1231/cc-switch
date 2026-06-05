@@ -2179,7 +2179,9 @@
       "installed": "已安裝",
       "uninstalled": "未安裝",
       "repo": "儲存庫篩選",
-      "allRepos": "全部儲存庫"
+      "allRepos": "全部儲存庫",
+      "source": "來源篩選",
+      "allSources": "全部來源"
     },
     "noResults": "未找到相符的技能",
     "noInstalled": "暫無已安裝的技能",
