@@ -85,7 +85,7 @@ fn set_windows_app_user_model_id(app: &tauri::AppHandle) {
     }
 }
 
-fn redact_url_for_log(url_str: &str) -> String {
+pub(crate) fn redact_url_for_log(url_str: &str) -> String {
     match url::Url::parse(url_str) {
         Ok(url) => {
             let mut output = format!("{}://", url.scheme());
@@ -133,7 +133,7 @@ fn handle_deeplink_url(
 
     let redacted_url = redact_url_for_log(url_str);
     log::info!("✓ Deep link URL detected from {source}: {redacted_url}");
-    log::debug!("Deep link URL (raw) from {source}: {url_str}");
+    log::debug!("Deep link URL from {source}: {redacted_url}");
 
     match crate::deeplink::parse_deeplink_url(url_str) {
         Ok(request) => {
@@ -169,7 +169,7 @@ fn handle_deeplink_url(
             if let Err(emit_err) = app.emit(
                 "deeplink-error",
                 serde_json::json!({
-                    "url": url_str,
+                    "url": redacted_url,
                     "error": e.to_string()
                 }),
             ) {
@@ -1493,9 +1493,8 @@ pub fn run() {
                 }
                 // 处理通过自定义 URL 协议触发的打开事件（例如 ccswitch://...）
                 RunEvent::Opened { urls } => {
-                    if let Some(url) = urls.first() {
+                    for url in urls {
                         let url_str = url.to_string();
-                        log::info!("RunEvent::Opened with URL: {url_str}");
 
                         if url_str.starts_with("ccswitch://") {
                             if crate::lightweight::is_lightweight_mode() {
@@ -1505,48 +1504,8 @@ pub fn run() {
                                 }
                             }
 
-                            // 解析并广播深链接事件，复用与 single_instance 相同的逻辑
-                            match crate::deeplink::parse_deeplink_url(&url_str) {
-                                Ok(request) => {
-                                    log::info!(
-                                        "Successfully parsed deep link from RunEvent::Opened: resource={}, app={:?}",
-                                        request.resource,
-                                        request.app
-                                    );
-
-                                    if let Err(e) =
-                                        app_handle.emit("deeplink-import", &request)
-                                    {
-                                        log::error!(
-                                            "Failed to emit deep link event from RunEvent::Opened: {e}"
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    log::error!(
-                                        "Failed to parse deep link URL from RunEvent::Opened: {e}"
-                                    );
-
-                                    if let Err(emit_err) = app_handle.emit(
-                                        "deeplink-error",
-                                        serde_json::json!({
-                                            "url": url_str,
-                                            "error": e.to_string()
-                                        }),
-                                    ) {
-                                        log::error!(
-                                            "Failed to emit deep link error event from RunEvent::Opened: {emit_err}"
-                                        );
-                                    }
-                                }
-                            }
-
-                            // 确保主窗口可见
-                            if let Some(window) = app_handle.get_webview_window("main") {
-                                let _ = window.unminimize();
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
+                            handle_deeplink_url(app_handle, &url_str, true, "RunEvent::Opened");
+                            break;
                         }
                     }
                 }

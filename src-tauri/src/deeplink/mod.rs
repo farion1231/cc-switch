@@ -40,7 +40,7 @@ pub struct DeepLinkImportRequest {
     pub resource: String,
 
     // ============ Common fields ============
-    /// Target application (claude/codex/gemini) - for provider, prompt, skill
+    /// Target application - for provider, prompt, skill
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app: Option<String>,
     /// Resource name
