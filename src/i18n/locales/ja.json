@@ -2117,7 +2117,54 @@
       "installed": "インストール済み",
       "uninstalled": "未インストール",
       "repo": "リポジトリで絞り込み",
-      "allRepos": "すべてのリポジトリ"
+      "allRepos": "すべてのリポジトリ",
+      "source": "ソース",
+      "app": "アプリ",
+      "local": "ローカル",
+      "updateOnly": "更新あり ({{count}})"
+    },
+    "toolbar": {
+      "searchPlaceholder": "名前・説明・ディレクトリ・ソースで検索",
+      "sortBy": "並び替え",
+      "groupBy": "グループ化",
+      "multiSelectMode": "複数選択",
+      "exitMultiSelect": "複数選択を終了",
+      "clearFilters": "フィルターをクリア",
+      "showing": "{{filtered}}/{{total}}"
+    },
+    "sort": {
+      "nameAsc": "名前 A→Z",
+      "nameDesc": "名前 Z→A",
+      "installedNewest": "新しい順",
+      "installedOldest": "古い順",
+      "sourceAsc": "ソース A→Z"
+    },
+    "group": {
+      "none": "グループ化しない",
+      "source": "ソース別",
+      "app": "アプリ別",
+      "appHint": "（同じスキルが複数のグループに表示されることがあります）",
+      "unassigned": "未割り当て"
+    },
+    "bulk": {
+      "selected": "{{count}} 件選択中",
+      "selectAll": "すべて選択 ({{count}})",
+      "selectNone": "選択を解除",
+      "uninstall": "アンインストール",
+      "enableIn": "有効化",
+      "disableIn": "無効化",
+      "updateAvailable": "更新 ({{count}})",
+      "cancel": "キャンセル",
+      "select": "スキルを選択",
+      "confirmUninstallTitle": "{{count}} 件のスキルをアンインストール？",
+      "confirmUninstallMessage": "選択した {{count}} 件のスキルをアンインストールします。よろしいですか？",
+      "uninstallSuccess": "{{count}} 件のスキルをアンインストールしました",
+      "enableSuccess": "{{app}} で {{count}} 件のスキルを有効化しました",
+      "disableSuccess": "{{app}} で {{count}} 件のスキルを無効化しました"
+    },
+    "pin": {
+      "pin": "上にピン留め",
+      "unpin": "ピン留めを解除"
     },
     "noResults": "一致するスキルが見つかりませんでした",
     "noInstalled": "インストールされたスキルがありません",
@@ -2167,6 +2214,34 @@
       "successSingle": "スキル {{name}} をインストールしました",
       "successMultiple": "{{count}} 件のスキルをインストールしました",
       "noSkillsFound": "ZIP ファイルにスキルが見つかりません（SKILL.md が必要です）"
+    },
+    "loadMode": {
+      "on": "フル",
+      "onDesc": "Claude Code のシステムプロンプトに name + description を読み込む（デフォルト）",
+      "nameOnly": "名前のみ",
+      "nameOnlyDesc": "name だけを公開し、description は呼び出すまで隠す",
+      "userInvocableOnly": "/コマンドのみ",
+      "userInvocableOnlyDesc": "スラッシュコマンドを明示的に入力したときだけ有効になる",
+      "off": "オフ",
+      "offDesc": "スキルファイルは残るが、Claude Code は読み込まない",
+      "ariaLabel": "読み込みモード：{{mode}}",
+      "disabledClaude": "このスキルは Claude で無効です — 読み込みモードは効果がありません"
+    },
+    "runtime": {
+      "title": "スキル読み込み設定",
+      "subtitle": "セッション開始時に Claude Code がスキル一覧をどう表示するかを調整します",
+      "budgetFraction": "一覧予算比率",
+      "budgetHelp": "スキル一覧が総コンテキストに占める比率。予算を超えたスキルは自動で name-only に折りたたまれます。",
+      "maxDescChars": "Description 文字上限",
+      "maxDescHelp": "各スキルの description をこの文字数で切り詰めます。",
+      "useDefault": "Claude Code のデフォルトを使用",
+      "default": "デフォルト {{value}}",
+      "reset": "デフォルトにリセット"
+    },
+    "discoveredOnly": {
+      "title": "プラグイン・ユーザーレベル",
+      "userLevel": "ユーザーレベル",
+      "agentsDir": "~/.agents/skills"
     }
   },
   "deeplink": {

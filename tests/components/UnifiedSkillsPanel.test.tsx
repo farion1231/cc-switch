@@ -1,18 +1,28 @@
 import { createRef } from "react";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import UnifiedSkillsPanel, {
   type UnifiedSkillsPanelHandle,
 } from "@/components/skills/UnifiedSkillsPanel";
+import type { InstalledSkill, SkillUpdateInfo } from "@/lib/api/skills";
 
-const scanUnmanagedMock = vi.fn();
-const toggleSkillAppMock = vi.fn();
-const uninstallSkillMock = vi.fn();
-const importSkillsMock = vi.fn();
-const installFromZipMock = vi.fn();
-const deleteSkillBackupMock = vi.fn();
-const restoreSkillBackupMock = vi.fn();
+// Hoisted mock state so vi.mock factories can reference it.
+const mocks = vi.hoisted(() => {
+  return {
+    installed: [] as InstalledSkill[],
+    updates: [] as SkillUpdateInfo[],
+    scanUnmanagedMock: vi.fn(),
+    toggleSkillAppMock: vi.fn(),
+    uninstallSkillMock: vi.fn(),
+    importSkillsMock: vi.fn(),
+    installFromZipMock: vi.fn(),
+    deleteSkillBackupMock: vi.fn(),
+    restoreSkillBackupMock: vi.fn(),
+    setPinMutateMock: vi.fn(),
+    updateSkillMock: vi.fn(),
+  };
+});
 
 vi.mock("sonner", () => ({
   toast: {
@@ -22,9 +32,27 @@ vi.mock("sonner", () => ({
   },
 }));
 
+vi.mock("@/hooks/useSkillLoadMode", () => ({
+  useClaudeRuntimeConfig: () => ({
+    data: { skillLoadModes: {} },
+  }),
+  useDiscoverAllSkills: () => ({
+    data: [],
+  }),
+  useSetSkillLoadMode: () => ({
+    mutateAsync: vi.fn(),
+  }),
+  useSetSkillListingBudget: () => ({
+    mutateAsync: vi.fn(),
+  }),
+  useSetMaxSkillDescriptionChars: () => ({
+    mutateAsync: vi.fn(),
+  }),
+}));
+
 vi.mock("@/hooks/useSkills", () => ({
   useInstalledSkills: () => ({
-    data: [],
+    data: mocks.installed,
     isLoading: false,
   }),
   useSkillBackups: () => ({
@@ -33,18 +61,18 @@ vi.mock("@/hooks/useSkills", () => ({
     isFetching: false,
   }),
   useDeleteSkillBackup: () => ({
-    mutateAsync: deleteSkillBackupMock,
+    mutateAsync: mocks.deleteSkillBackupMock,
     isPending: false,
   }),
   useToggleSkillApp: () => ({
-    mutateAsync: toggleSkillAppMock,
+    mutateAsync: mocks.toggleSkillAppMock,
   }),
   useRestoreSkillBackup: () => ({
-    mutateAsync: restoreSkillBackupMock,
+    mutateAsync: mocks.restoreSkillBackupMock,
     isPending: false,
   }),
   useUninstallSkill: () => ({
-    mutateAsync: uninstallSkillMock,
+    mutateAsync: mocks.uninstallSkillMock,
   }),
   useScanUnmanagedSkills: () => ({
     data: [
@@ -56,28 +84,68 @@ vi.mock("@/hooks/useSkills", () => ({
         path: "/tmp/shared-skill",
       },
     ],
-    refetch: scanUnmanagedMock,
+    refetch: mocks.scanUnmanagedMock,
   }),
   useImportSkillsFromApps: () => ({
-    mutateAsync: importSkillsMock,
+    mutateAsync: mocks.importSkillsMock,
   }),
   useInstallSkillsFromZip: () => ({
-    mutateAsync: installFromZipMock,
+    mutateAsync: mocks.installFromZipMock,
   }),
   useCheckSkillUpdates: () => ({
-    data: [],
+    data: mocks.updates,
     refetch: vi.fn(),
     isFetching: false,
   }),
   useUpdateSkill: () => ({
+    mutateAsync: mocks.updateSkillMock,
+    isPending: false,
+  }),
+  useSetSkillPin: () => ({
+    mutate: mocks.setPinMutateMock,
     mutateAsync: vi.fn(),
     isPending: false,
   }),
 }));
 
+function skill(overrides: Partial<InstalledSkill> = {}): InstalledSkill {
+  return {
+    id: "s1",
+    name: "Skill 1",
+    directory: "skill-1",
+    repoOwner: "forrest",
+    repoName: "kit",
+    apps: {
+      claude: true,
+      codex: false,
+      gemini: false,
+      opencode: false,
+      openclaw: false,
+      hermes: false,
+    },
+    installedAt: 1000,
+    updatedAt: 0,
+    ...overrides,
+  };
+}
+
+function renderPanel() {
+  const ref = createRef<UnifiedSkillsPanelHandle>();
+  const utils = render(
+    <UnifiedSkillsPanel
+      ref={ref}
+      onOpenDiscovery={() => {}}
+      currentApp="claude"
+    />,
+  );
+  return { ref, ...utils };
+}
+
 describe("UnifiedSkillsPanel", () => {
   beforeEach(() => {
-    scanUnmanagedMock.mockResolvedValue({
+    mocks.installed = [];
+    mocks.updates = [];
+    mocks.scanUnmanagedMock.mockResolvedValue({
       data: [
         {
           directory: "shared-skill",
@@ -88,24 +156,18 @@ describe("UnifiedSkillsPanel", () => {
         },
       ],
     });
-    toggleSkillAppMock.mockReset();
-    uninstallSkillMock.mockReset();
-    importSkillsMock.mockReset();
-    installFromZipMock.mockReset();
-    deleteSkillBackupMock.mockReset();
-    restoreSkillBackupMock.mockReset();
+    mocks.toggleSkillAppMock.mockReset();
+    mocks.uninstallSkillMock.mockReset();
+    mocks.importSkillsMock.mockReset();
+    mocks.installFromZipMock.mockReset();
+    mocks.deleteSkillBackupMock.mockReset();
+    mocks.restoreSkillBackupMock.mockReset();
+    mocks.setPinMutateMock.mockReset();
+    mocks.updateSkillMock.mockReset();
   });
 
   it("opens the import dialog without crashing when app toggles render", async () => {
-    const ref = createRef<UnifiedSkillsPanelHandle>();
-
-    render(
-      <UnifiedSkillsPanel
-        ref={ref}
-        onOpenDiscovery={() => {}}
-        currentApp="claude"
-      />,
-    );
+    const { ref } = renderPanel();
 
     await act(async () => {
       await ref.current?.openImport();
@@ -116,5 +178,171 @@ describe("UnifiedSkillsPanel", () => {
       expect(screen.getByText("Shared Skill")).toBeInTheDocument();
       expect(screen.getByText("/tmp/shared-skill")).toBeInTheDocument();
     });
+  });
+
+  it("renders the empty state when no skills are installed", () => {
+    mocks.installed = [];
+    renderPanel();
+    expect(screen.getByText("skills.noInstalled")).toBeInTheDocument();
+  });
+
+  it("renders installed skills in the list", () => {
+    mocks.installed = [
+      skill({ id: "a", name: "Apple", description: "First skill" }),
+      skill({ id: "b", name: "Banana", description: "Second skill" }),
+    ];
+    renderPanel();
+    expect(screen.getByText("Apple")).toBeInTheDocument();
+    expect(screen.getByText("Banana")).toBeInTheDocument();
+  });
+
+  it("filters skills by search query", () => {
+    mocks.installed = [
+      skill({ id: "a", name: "Apple" }),
+      skill({ id: "b", name: "Banana" }),
+    ];
+    renderPanel();
+    const input = screen.getByPlaceholderText(
+      "skills.toolbar.searchPlaceholder",
+    );
+    fireEvent.change(input, { target: { value: "Apple" } });
+    expect(screen.getByText("Apple")).toBeInTheDocument();
+    expect(screen.queryByText("Banana")).not.toBeInTheDocument();
+  });
+
+  it("clicking the Star button calls setPin via the mocked hook", () => {
+    mocks.installed = [skill({ id: "a", name: "Apple" })];
+    renderPanel();
+    const pinBtn = screen.getByTitle("skills.pin.pin");
+    fireEvent.click(pinBtn);
+    expect(mocks.setPinMutateMock).toHaveBeenCalledWith({
+      id: "a",
+      pinned: true,
+    });
+  });
+
+  it("when pinned, clicking the star unpins", () => {
+    mocks.installed = [
+      skill({ id: "a", name: "Apple", pinnedAt: 1234 }),
+    ];
+    renderPanel();
+    const unpinBtn = screen.getByTitle("skills.pin.unpin");
+    fireEvent.click(unpinBtn);
+    expect(mocks.setPinMutateMock).toHaveBeenCalledWith({
+      id: "a",
+      pinned: false,
+    });
+  });
+
+  it("enters selection mode and renders checkboxes", () => {
+    mocks.installed = [
+      skill({ id: "a", name: "Apple" }),
+      skill({ id: "b", name: "Banana" }),
+    ];
+    renderPanel();
+    const multiSelectBtn = screen.getByTitle("skills.toolbar.multiSelectMode");
+    fireEvent.click(multiSelectBtn);
+    // After entering selection mode, two checkboxes (one per row) appear with
+    // aria-label = "skills.bulk.select".
+    const checkboxes = screen.getAllByLabelText("skills.bulk.select");
+    expect(checkboxes).toHaveLength(2);
+  });
+
+  it("App chip in header acts as a filter (toggles filterApps)", () => {
+    mocks.installed = [
+      skill({
+        id: "claude-only",
+        name: "ClaudeOnly",
+        apps: {
+          claude: true,
+          codex: false,
+          gemini: false,
+          opencode: false,
+          openclaw: false,
+          hermes: false,
+        },
+      }),
+      skill({
+        id: "codex-only",
+        name: "CodexOnly",
+        apps: {
+          claude: false,
+          codex: true,
+          gemini: false,
+          opencode: false,
+          openclaw: false,
+          hermes: false,
+        },
+      }),
+    ];
+    renderPanel();
+    // Initially both visible.
+    expect(screen.getByText("ClaudeOnly")).toBeInTheDocument();
+    expect(screen.getByText("CodexOnly")).toBeInTheDocument();
+
+    // Find the App chip "Claude" in the header (aria-pressed="false" initially).
+    // Multiple "Claude" texts may exist (header chip + app toggle row icons),
+    // pick the chip by its aria-pressed attribute.
+    const claudeChip = screen
+      .getAllByRole("button")
+      .find(
+        (b) =>
+          b.getAttribute("aria-pressed") === "false" &&
+          b.textContent?.includes("Claude"),
+      );
+    expect(claudeChip).toBeDefined();
+    fireEvent.click(claudeChip!);
+
+    // After clicking, only Claude-enabled skill remains.
+    expect(screen.getByText("ClaudeOnly")).toBeInTheDocument();
+    expect(screen.queryByText("CodexOnly")).not.toBeInTheDocument();
+  });
+
+  it("noResults state shows when filters yield empty list", () => {
+    mocks.installed = [skill({ id: "a", name: "Apple" })];
+    renderPanel();
+    const input = screen.getByPlaceholderText(
+      "skills.toolbar.searchPlaceholder",
+    );
+    fireEvent.change(input, { target: { value: "ZZZNotMatching" } });
+    expect(screen.getByText("skills.noResults")).toBeInTheDocument();
+  });
+
+  it("bulk uninstall only acts on currently visible selections", async () => {
+    mocks.installed = [
+      skill({ id: "a", name: "Apple" }),
+      skill({ id: "b", name: "Banana" }),
+    ];
+    mocks.uninstallSkillMock.mockResolvedValue({ backupPath: null });
+
+    renderPanel();
+
+    // Enter multi-select and select both rows.
+    fireEvent.click(screen.getByTitle("skills.toolbar.multiSelectMode"));
+    const checkboxes = screen.getAllByLabelText("skills.bulk.select");
+    fireEvent.click(checkboxes[0]);
+    fireEvent.click(checkboxes[1]);
+
+    // Filter to hide Banana so only Apple is visible.
+    const input = screen.getByPlaceholderText(
+      "skills.toolbar.searchPlaceholder",
+    );
+    fireEvent.change(input, { target: { value: "Apple" } });
+
+    // Trigger bulk uninstall and confirm.
+    fireEvent.click(screen.getByText("skills.bulk.uninstall"));
+    await waitFor(() => {
+      expect(
+        screen.getByText("skills.bulk.confirmUninstallTitle"),
+      ).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("skills.uninstall"));
+
+    await waitFor(() => {
+      expect(mocks.uninstallSkillMock).toHaveBeenCalledTimes(1);
+    });
+    expect(mocks.uninstallSkillMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "a" }),
+    );
   });
 });

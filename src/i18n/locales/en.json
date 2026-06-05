@@ -2117,7 +2117,54 @@
       "installed": "Installed",
       "uninstalled": "Not installed",
       "repo": "Filter by repo",
-      "allRepos": "All repos"
+      "allRepos": "All repos",
+      "source": "Source",
+      "app": "App",
+      "local": "Local",
+      "updateOnly": "Updates available ({{count}})"
+    },
+    "toolbar": {
+      "searchPlaceholder": "Search skills by name, description, directory, or source",
+      "sortBy": "Sort by",
+      "groupBy": "Group by",
+      "multiSelectMode": "Multi-select",
+      "exitMultiSelect": "Exit multi-select",
+      "clearFilters": "Clear filters",
+      "showing": "{{filtered}}/{{total}}"
+    },
+    "sort": {
+      "nameAsc": "Name A→Z",
+      "nameDesc": "Name Z→A",
+      "installedNewest": "Newest installed",
+      "installedOldest": "Oldest installed",
+      "sourceAsc": "Source A→Z"
+    },
+    "group": {
+      "none": "No grouping",
+      "source": "By source",
+      "app": "By app",
+      "appHint": "(a skill may appear in multiple groups)",
+      "unassigned": "Unassigned"
+    },
+    "bulk": {
+      "selected": "{{count}} selected",
+      "selectAll": "Select all ({{count}})",
+      "selectNone": "Select none",
+      "uninstall": "Uninstall",
+      "enableIn": "Enable in",
+      "disableIn": "Disable in",
+      "updateAvailable": "Update ({{count}})",
+      "cancel": "Cancel",
+      "select": "Select skill",
+      "confirmUninstallTitle": "Uninstall {{count}} skills?",
+      "confirmUninstallMessage": "This will uninstall {{count}} selected skills. Are you sure?",
+      "uninstallSuccess": "Uninstalled {{count}} skills",
+      "enableSuccess": "Enabled {{count}} skills in {{app}}",
+      "disableSuccess": "Disabled {{count}} skills in {{app}}"
+    },
+    "pin": {
+      "pin": "Pin to top",
+      "unpin": "Remove from pinned"
     },
     "noResults": "No matching skills found",
     "noInstalled": "No skills installed",
@@ -2167,6 +2214,34 @@
       "successSingle": "Skill {{name}} installed",
       "successMultiple": "Successfully installed {{count}} skills",
       "noSkillsFound": "No skills found in ZIP file (requires SKILL.md file)"
+    },
+    "loadMode": {
+      "on": "Full",
+      "onDesc": "Name + description loaded into Claude Code system prompt (default)",
+      "nameOnly": "Name only",
+      "nameOnlyDesc": "Only the name is exposed; description is hidden until you invoke it",
+      "userInvocableOnly": "Only on /command",
+      "userInvocableOnlyDesc": "Skill is only triggered when you explicitly type its slash command",
+      "off": "Off",
+      "offDesc": "Skill files remain but Claude Code skips loading them",
+      "ariaLabel": "Load mode: {{mode}}",
+      "disabledClaude": "Skill is not enabled for Claude — load mode has no effect"
+    },
+    "runtime": {
+      "title": "Skill loading settings",
+      "subtitle": "Tune how Claude Code displays the skill list at session start",
+      "budgetFraction": "Listing budget fraction",
+      "budgetHelp": "Portion of total context allocated to the skill list. Skills beyond the budget are collapsed to name-only automatically.",
+      "maxDescChars": "Max description chars",
+      "maxDescHelp": "Truncate each skill description to at most this many characters.",
+      "useDefault": "Use Claude Code default",
+      "default": "Default {{value}}",
+      "reset": "Reset to default"
+    },
+    "discoveredOnly": {
+      "title": "From plugins & user-level",
+      "userLevel": "User-level",
+      "agentsDir": "~/.agents/skills"
     }
   },
   "deeplink": {

@@ -6,9 +6,13 @@ import {
   ExternalLink,
   RefreshCw,
   Loader2,
+  Star,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   type ImportSkillSelection,
@@ -24,6 +28,7 @@ import {
   useInstallSkillsFromZip,
   useCheckSkillUpdates,
   useUpdateSkill,
+  useSetSkillPin,
   type InstalledSkill,
   type SkillUpdateInfo,
 } from "@/hooks/useSkills";
@@ -31,10 +36,26 @@ import type { AppId } from "@/lib/api/types";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
-import { SKILLS_APP_IDS } from "@/config/appConfig";
-import { AppCountBar } from "@/components/common/AppCountBar";
+import { SKILLS_APP_IDS, APP_ICON_MAP } from "@/config/appConfig";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
+import { cn } from "@/lib/utils";
+import { SkillsToolbar } from "./SkillsToolbar";
+import { SkillsBulkActionBar } from "./SkillsBulkActionBar";
+import { SkillLoadModeChip } from "./SkillLoadModeChip";
+import { SkillRuntimeSettings } from "./SkillRuntimeSettings";
+import {
+  useClaudeRuntimeConfig,
+  useDiscoverAllSkills,
+  useSetSkillLoadMode,
+} from "@/hooks/useSkillLoadMode";
+import type { DiscoveredSkill, SkillLoadMode } from "@/lib/api/skills";
+import {
+  useSkillsFilterSort,
+  LOCAL_SOURCE_KEY,
+  ALL_GROUP_KEY,
+  UNASSIGNED_GROUP_KEY,
+} from "./useSkillsFilterSort";
 import {
   Dialog,
   DialogContent,
@@ -100,7 +121,25 @@ const UnifiedSkillsPanel = React.forwardRef<
     isFetching: isCheckingUpdates,
   } = useCheckSkillUpdates();
   const updateSkillMutation = useUpdateSkill();
+  const setPinMutation = useSetSkillPin();
   const [isUpdatingAll, setIsUpdatingAll] = useState(false);
+  const [isBulkWorking, setIsBulkWorking] = useState(false);
+
+  // Claude Code 运行时（skill 加载模式）
+  const { data: runtimeConfig } = useClaudeRuntimeConfig();
+  const { data: discoveredSkills } = useDiscoverAllSkills();
+  const setLoadModeMutation = useSetSkillLoadMode();
+
+  const loadModeFor = (name: string): SkillLoadMode =>
+    runtimeConfig?.skillLoadModes[name] ?? "on";
+
+  const handleChangeLoadMode = async (name: string, mode: SkillLoadMode) => {
+    try {
+      await setLoadModeMutation.mutateAsync({ name, mode });
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    }
+  };
 
   const updatesMap = useMemo(() => {
     const map: Record<string, SkillUpdateInfo> = {};
@@ -111,6 +150,9 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
     return map;
   }, [skillUpdates]);
+
+  // Skills 工具栏：搜索/过滤/排序/分组/多选状态
+  const toolbar = useSkillsFilterSort(skills ?? [], updatesMap, SKILLS_APP_IDS);
 
   const enabledCounts = useMemo(() => {
     const counts = {
@@ -276,6 +318,128 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
   };
 
+  const handleTogglePin = (skill: InstalledSkill) => {
+    setPinMutation.mutate({ id: skill.id, pinned: !skill.pinnedAt });
+  };
+
+  const buildSkillKey = (skill: InstalledSkill): string => {
+    const installName =
+      skill.directory.split(/[/\\]/).pop()?.toLowerCase() ||
+      skill.directory.toLowerCase();
+    return `${installName}:${skill.repoOwner?.toLowerCase() || ""}:${skill.repoName?.toLowerCase() || ""}`;
+  };
+
+  // 批量操作只能作用在“当前可见”的选中项上：用户改变过滤器后，
+  // 不可见但仍记录在 selectedIds 中的 skill 不能被静默卸载/切换/更新。
+  // 清除过滤器后选中状态会重新出现，符合用户预期。
+  const getSelectedSkills = (): InstalledSkill[] => {
+    return toolbar.filtered.filter((s) => toolbar.state.selectedIds.has(s.id));
+  };
+
+  const visibleSelectedCount = useMemo(
+    () => getSelectedSkills().length,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [toolbar.filtered, toolbar.state.selectedIds],
+  );
+
+  const handleBulkUninstall = () => {
+    const selected = getSelectedSkills();
+    if (selected.length === 0) return;
+    setConfirmDialog({
+      isOpen: true,
+      title: t("skills.bulk.confirmUninstallTitle"),
+      message: t("skills.bulk.confirmUninstallMessage", {
+        count: selected.length,
+      }),
+      variant: "destructive",
+      confirmText: t("skills.uninstall"),
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setIsBulkWorking(true);
+        let okCount = 0;
+        for (const skill of selected) {
+          try {
+            await uninstallMutation.mutateAsync({
+              id: skill.id,
+              skillKey: buildSkillKey(skill),
+            });
+            okCount++;
+          } catch (error) {
+            toast.error(t("skills.uninstallFailed"), {
+              description: `${skill.name}: ${String(error)}`,
+            });
+          }
+        }
+        setIsBulkWorking(false);
+        toolbar.exitSelectionMode();
+        if (okCount > 0) {
+          toast.success(t("skills.bulk.uninstallSuccess", { count: okCount }), {
+            closeButton: true,
+          });
+        }
+      },
+    });
+  };
+
+  const handleBulkToggleApp = async (app: AppId, enabled: boolean) => {
+    const selected = getSelectedSkills();
+    if (selected.length === 0) return;
+    setIsBulkWorking(true);
+    let okCount = 0;
+    for (const skill of selected) {
+      try {
+        await toggleAppMutation.mutateAsync({ id: skill.id, app, enabled });
+        okCount++;
+      } catch (error) {
+        toast.error(t("common.error"), {
+          description: `${skill.name}: ${String(error)}`,
+        });
+      }
+    }
+    setIsBulkWorking(false);
+    if (okCount > 0) {
+      toast.success(
+        t(
+          enabled ? "skills.bulk.enableSuccess" : "skills.bulk.disableSuccess",
+          {
+            count: okCount,
+            app: APP_ICON_MAP[app]?.label ?? app,
+          },
+        ),
+        { closeButton: true },
+      );
+    }
+  };
+
+  const handleBulkUpdateAvailable = async () => {
+    const selected = getSelectedSkills().filter((s) => updatesMap[s.id]);
+    if (selected.length === 0) return;
+    setIsBulkWorking(true);
+    let okCount = 0;
+    for (const skill of selected) {
+      try {
+        await updateSkillMutation.mutateAsync(skill.id);
+        okCount++;
+      } catch (error) {
+        toast.error(t("skills.updateFailed"), {
+          description: `${skill.name}: ${String(error)}`,
+        });
+      }
+    }
+    setIsBulkWorking(false);
+    toolbar.exitSelectionMode();
+    if (okCount > 0) {
+      toast.success(t("skills.updateAllSuccess", { count: okCount }), {
+        closeButton: true,
+      });
+    }
+  };
+
+  const selectedHasUpdate = useMemo(() => {
+    return getSelectedSkills().filter((s) => updatesMap[s.id]).length;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toolbar.state.selectedIds, toolbar.filtered, updatesMap]);
+
   const handleOpenRestoreFromBackup = async () => {
     setRestoreDialogOpen(true);
     try {
@@ -345,61 +509,138 @@ const UnifiedSkillsPanel = React.forwardRef<
   }));
 
   return (
-    <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
-      <div className="flex items-center justify-between">
-        <AppCountBar
-          totalLabel={t("skills.installed", { count: skills?.length || 0 })}
-          counts={enabledCounts}
-          appIds={SKILLS_APP_IDS}
-        />
-        <div className="flex items-center gap-1.5">
-          <div
-            className="transition-all duration-300 ease-out overflow-hidden"
-            style={{
-              maxWidth:
-                skillUpdates && skillUpdates.length > 0 ? "200px" : "0px",
-              opacity: skillUpdates && skillUpdates.length > 0 ? 1 : 0,
-            }}
-          >
+    <div className="px-6 flex flex-col flex-1 min-h-0">
+      {/* 粘性顶部：标题/计数 chips/更新操作 + 工具栏 + 多选条 */}
+      <div className="sticky top-0 z-20 -mx-6 px-6 border-b border-border-default bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        {/* 紧凑 header：标题 + App 计数 chips（点击切换过滤）+ 更新操作 */}
+        <div className="flex items-center justify-between gap-3 py-3">
+          <div className="flex items-center gap-2 flex-wrap min-w-0">
+            <span className="text-sm font-medium whitespace-nowrap text-foreground">
+              {t("skills.installed", { count: skills?.length || 0 })}
+            </span>
+            {SKILLS_APP_IDS.length > 0 && (
+              <span className="h-4 w-px bg-border" />
+            )}
+            {SKILLS_APP_IDS.map((app) => {
+              const active = toolbar.state.filterApps.has(app);
+              const cfg = APP_ICON_MAP[app];
+              return (
+                <button
+                  key={app}
+                  type="button"
+                  onClick={() => toolbar.toggleApp(app)}
+                  aria-pressed={active}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    cfg.badgeClass,
+                    active
+                      ? "ring-2 ring-primary ring-offset-1 ring-offset-background"
+                      : "opacity-80 hover:opacity-100",
+                  )}
+                >
+                  <span className="opacity-75">{cfg.label}:</span>
+                  <span className="font-bold">{enabledCounts[app] ?? 0}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {skillUpdates && skillUpdates.length > 0 && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs gap-1 whitespace-nowrap"
+                onClick={handleUpdateAll}
+                disabled={isUpdatingAll || updateSkillMutation.isPending}
+              >
+                {isUpdatingAll ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <RefreshCw size={12} />
+                )}
+                {isUpdatingAll
+                  ? t("skills.updatingAll")
+                  : t("skills.updateAll", { count: skillUpdates.length })}
+              </Button>
+            )}
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               size="sm"
-              className="h-7 text-xs gap-1 whitespace-nowrap"
-              onClick={handleUpdateAll}
-              disabled={isUpdatingAll || updateSkillMutation.isPending}
+              className="h-7 text-xs gap-1"
+              onClick={handleCheckUpdates}
+              disabled={isCheckingUpdates || !skills || skills.length === 0}
             >
-              {isUpdatingAll ? (
+              {isCheckingUpdates ? (
                 <Loader2 size={12} className="animate-spin" />
               ) : (
                 <RefreshCw size={12} />
               )}
-              {isUpdatingAll
-                ? t("skills.updatingAll")
-                : t("skills.updateAll", { count: skillUpdates?.length ?? 0 })}
+              {isCheckingUpdates
+                ? t("skills.checkingUpdates")
+                : t("skills.checkUpdates")}
             </Button>
+            <SkillRuntimeSettings />
           </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs gap-1"
-            onClick={handleCheckUpdates}
-            disabled={isCheckingUpdates || !skills || skills.length === 0}
-          >
-            {isCheckingUpdates ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <RefreshCw size={12} />
-            )}
-            {isCheckingUpdates
-              ? t("skills.checkingUpdates")
-              : t("skills.checkUpdates")}
-          </Button>
         </div>
-      </div>
 
-      <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
+        {skills && skills.length > 0 && (
+          <SkillsToolbar
+            searchQuery={toolbar.state.searchQuery}
+            onSearchChange={toolbar.setSearchQuery}
+            sourceOptions={toolbar.sourceOptions}
+            filterSources={toolbar.state.filterSources}
+            onToggleSource={toolbar.toggleSource}
+            filterUpdateOnly={toolbar.state.filterUpdateOnly}
+            onToggleUpdateOnly={() =>
+              toolbar.setFilterUpdateOnly(!toolbar.state.filterUpdateOnly)
+            }
+            updateAvailableCount={skillUpdates?.length ?? 0}
+            sortKey={toolbar.state.sortKey}
+            onSortChange={toolbar.setSortKey}
+            groupKey={toolbar.state.groupKey}
+            onGroupChange={toolbar.setGroupKey}
+            selectionMode={toolbar.state.selectionMode}
+            onToggleSelectionMode={() =>
+              toolbar.state.selectionMode
+                ? toolbar.exitSelectionMode()
+                : toolbar.enterSelectionMode()
+            }
+            hasFilters={toolbar.hasFilters}
+            onClearFilters={toolbar.clearFilters}
+            total={toolbar.total}
+            filteredCount={toolbar.filteredCount}
+          />
+        )}
+
+        {/* 多选条：与 toolbar 同处 sticky 顶部组合，避免 top-offset 计算 */}
+        {toolbar.state.selectionMode && (
+          <SkillsBulkActionBar
+            selectedCount={visibleSelectedCount}
+            selectedHasUpdate={selectedHasUpdate}
+            appIds={SKILLS_APP_IDS}
+            onUninstall={handleBulkUninstall}
+            onToggleApp={handleBulkToggleApp}
+            onUpdateAvailable={handleBulkUpdateAvailable}
+            onCancel={toolbar.exitSelectionMode}
+            onSelectAll={() => {
+              if (
+                visibleSelectedCount === toolbar.filteredCount &&
+                toolbar.filteredCount > 0
+              ) {
+                toolbar.clearSelection();
+              } else {
+                toolbar.selectAllVisible();
+              }
+            }}
+            totalVisible={toolbar.filteredCount}
+            isWorking={isBulkWorking}
+          />
+        )}
+      </div>
+      {/* 列表区（main 是 scroll container，此处不再独立滚动） */}
+      <div className="pt-3 pb-24">
         {isLoading ? (
           <div className="text-center py-12 text-muted-foreground">
             {t("skills.loading")}
@@ -416,24 +657,90 @@ const UnifiedSkillsPanel = React.forwardRef<
               {t("skills.noInstalledDescription")}
             </p>
           </div>
+        ) : toolbar.filteredCount === 0 ? (
+          <div className="text-center py-12">
+            <p className="text-sm text-muted-foreground">
+              {t("skills.noResults")}
+            </p>
+            {toolbar.hasFilters && (
+              <Button
+                type="button"
+                variant="link"
+                onClick={toolbar.clearFilters}
+                className="mt-2 h-auto p-0 text-sm"
+              >
+                {t("skills.toolbar.clearFilters")}
+              </Button>
+            )}
+          </div>
         ) : (
           <TooltipProvider delayDuration={300}>
-            <div className="rounded-xl border border-border-default overflow-hidden">
-              {skills.map((skill, index) => (
-                <InstalledSkillListItem
-                  key={skill.id}
-                  skill={skill}
-                  hasUpdate={!!updatesMap[skill.id]}
-                  isUpdating={
-                    updateSkillMutation.isPending &&
-                    updateSkillMutation.variables === skill.id
-                  }
-                  onToggleApp={handleToggleApp}
-                  onUninstall={() => handleUninstall(skill)}
-                  onUpdate={() => handleUpdateSkill(skill)}
-                  isLast={index === skills.length - 1}
-                />
-              ))}
+            <div className="flex flex-col gap-3">
+              {toolbar.groups.map((group) => {
+                if (group.items.length === 0) return null;
+                const showHeader =
+                  toolbar.state.groupKey !== "none" &&
+                  group.key !== ALL_GROUP_KEY;
+                const collapsed = toolbar.state.collapsed.has(group.key);
+                const groupLabel =
+                  toolbar.state.groupKey === "app"
+                    ? group.key === UNASSIGNED_GROUP_KEY
+                      ? t("skills.group.unassigned")
+                      : (APP_ICON_MAP[group.key as AppId]?.label ?? group.label)
+                    : group.key === LOCAL_SOURCE_KEY
+                      ? t("skills.local")
+                      : group.label;
+                return (
+                  <div key={group.key}>
+                    {showHeader && (
+                      <button
+                        type="button"
+                        onClick={() => toolbar.toggleCollapsed(group.key)}
+                        className="w-full flex items-center gap-1.5 px-2 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+                      >
+                        {collapsed ? (
+                          <ChevronRight size={14} />
+                        ) : (
+                          <ChevronDown size={14} />
+                        )}
+                        <span>{groupLabel}</span>
+                        <span className="text-muted-foreground/60">
+                          ({group.items.length})
+                        </span>
+                      </button>
+                    )}
+                    {!collapsed && (
+                      <div className="rounded-xl border border-border-default overflow-hidden">
+                        {group.items.map((skill, index) => (
+                          <InstalledSkillListItem
+                            key={`${group.key}:${skill.id}`}
+                            skill={skill}
+                            hasUpdate={!!updatesMap[skill.id]}
+                            isUpdating={
+                              updateSkillMutation.isPending &&
+                              updateSkillMutation.variables === skill.id
+                            }
+                            onToggleApp={handleToggleApp}
+                            onUninstall={() => handleUninstall(skill)}
+                            onUpdate={() => handleUpdateSkill(skill)}
+                            onTogglePin={() => handleTogglePin(skill)}
+                            isLast={index === group.items.length - 1}
+                            selectionMode={toolbar.state.selectionMode}
+                            isSelected={toolbar.state.selectedIds.has(skill.id)}
+                            onToggleSelect={() =>
+                              toolbar.toggleSelected(skill.id)
+                            }
+                            loadMode={loadModeFor(skill.name)}
+                            onChangeLoadMode={(mode) =>
+                              handleChangeLoadMode(skill.name, mode)
+                            }
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </TooltipProvider>
         )}
@@ -461,6 +768,12 @@ const UnifiedSkillsPanel = React.forwardRef<
         />
       )}
 
+      <DiscoveredOnlySection
+        skills={discoveredSkills ?? []}
+        managedNames={new Set((skills ?? []).map((s) => s.name))}
+        onChangeLoadMode={handleChangeLoadMode}
+      />
+
       <RestoreSkillsDialog
         backups={skillBackups}
         isDeleting={deleteBackupMutation.isPending}
@@ -477,6 +790,104 @@ const UnifiedSkillsPanel = React.forwardRef<
 
 UnifiedSkillsPanel.displayName = "UnifiedSkillsPanel";
 
+/**
+ * 列出非 cc-switch 管理的 skill（plugin、用户级、`~/.agents/skills/`），
+ * 仅暴露加载模式控制；不提供安装/卸载/置顶。
+ */
+const DiscoveredOnlySection: React.FC<{
+  skills: DiscoveredSkill[];
+  /** cc-switch 已经在主列表里渲染过的 skill name，本 section 跳过这些 */
+  managedNames: Set<string>;
+  onChangeLoadMode: (name: string, mode: SkillLoadMode) => void;
+}> = ({ skills, managedNames, onChangeLoadMode }) => {
+  const { t } = useTranslation();
+  const [collapsed, setCollapsed] = useState(false);
+
+  const filtered = useMemo(
+    () =>
+      skills.filter(
+        (s) => s.source.kind !== "cc-switch" && !managedNames.has(s.name),
+      ),
+    [skills, managedNames],
+  );
+
+  if (filtered.length === 0) return null;
+
+  return (
+    <div className="mt-4 mb-6">
+      <button
+        type="button"
+        onClick={() => setCollapsed((c) => !c)}
+        className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
+      >
+        {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+        <span>{t("skills.discoveredOnly.title")}</span>
+        <span className="text-muted-foreground/60">({filtered.length})</span>
+      </button>
+      {!collapsed && (
+        <div className="mt-2 rounded-xl border border-border-default overflow-hidden">
+          {filtered.map((s, idx) => (
+            <DiscoveredOnlyRow
+              key={`${s.name}:${s.sourcePath}`}
+              skill={s}
+              isLast={idx === filtered.length - 1}
+              onChangeLoadMode={(mode) => onChangeLoadMode(s.name, mode)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const DiscoveredOnlyRow: React.FC<{
+  skill: DiscoveredSkill;
+  isLast: boolean;
+  onChangeLoadMode: (mode: SkillLoadMode) => void;
+}> = ({ skill, isLast, onChangeLoadMode }) => {
+  const { t } = useTranslation();
+
+  const sourceLabel = useMemo(() => {
+    switch (skill.source.kind) {
+      case "plugin":
+        return `${skill.source.marketplace}/${skill.source.plugin}`;
+      case "user-level":
+        return t("skills.discoveredOnly.userLevel");
+      case "agents-dir":
+        return t("skills.discoveredOnly.agentsDir");
+      default:
+        return "";
+    }
+  }, [skill.source, t]);
+
+  return (
+    <ListItemRow isLast={isLast}>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium text-sm text-foreground truncate">
+            {skill.name}
+          </span>
+          <Badge
+            variant="outline"
+            className="shrink-0 text-[10px] px-1.5 py-0 h-4"
+          >
+            {sourceLabel}
+          </Badge>
+        </div>
+        {skill.description && (
+          <p
+            className="text-xs text-muted-foreground truncate"
+            title={skill.description}
+          >
+            {skill.description}
+          </p>
+        )}
+      </div>
+      <SkillLoadModeChip value={skill.loadMode} onChange={onChangeLoadMode} />
+    </ListItemRow>
+  );
+};
+
 interface InstalledSkillListItemProps {
   skill: InstalledSkill;
   hasUpdate?: boolean;
@@ -484,7 +895,13 @@ interface InstalledSkillListItemProps {
   onToggleApp: (id: string, app: AppId, enabled: boolean) => void;
   onUninstall: () => void;
   onUpdate?: () => void;
+  onTogglePin?: () => void;
   isLast?: boolean;
+  selectionMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: () => void;
+  loadMode: SkillLoadMode;
+  onChangeLoadMode: (mode: SkillLoadMode) => void;
 }
 
 const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
@@ -494,9 +911,16 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   onToggleApp,
   onUninstall,
   onUpdate,
+  onTogglePin,
   isLast,
+  selectionMode,
+  isSelected,
+  onToggleSelect,
+  loadMode,
+  onChangeLoadMode,
 }) => {
   const { t } = useTranslation();
+  const isPinned = !!skill.pinnedAt;
 
   const openDocs = async () => {
     if (!skill.readmeUrl) return;
@@ -516,6 +940,29 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
 
   return (
     <ListItemRow isLast={isLast}>
+      {selectionMode ? (
+        <Checkbox
+          checked={!!isSelected}
+          onCheckedChange={() => onToggleSelect?.()}
+          aria-label={t("skills.bulk.select")}
+          className="shrink-0"
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={onTogglePin}
+          title={isPinned ? t("skills.pin.unpin") : t("skills.pin.pin")}
+          className={cn(
+            "shrink-0 grid place-content-center w-6 h-6 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-opacity",
+            isPinned
+              ? "opacity-100 text-amber-500 hover:text-amber-600"
+              : "opacity-0 group-hover:opacity-100",
+          )}
+        >
+          <Star size={14} className={isPinned ? "fill-current" : ""} />
+        </button>
+      )}
+
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           <span className="font-medium text-sm text-foreground truncate">
@@ -552,44 +999,55 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
         )}
       </div>
 
+      <SkillLoadModeChip
+        value={loadMode}
+        onChange={onChangeLoadMode}
+        disabled={!skill.apps.claude}
+        disabledReason={
+          !skill.apps.claude ? t("skills.loadMode.disabledClaude") : undefined
+        }
+      />
+
       <AppToggleGroup
         apps={skill.apps}
         onToggle={(app, enabled) => onToggleApp(skill.id, app, enabled)}
         appIds={SKILLS_APP_IDS}
       />
 
-      <div
-        className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-        style={hasUpdate ? { opacity: 1 } : undefined}
-      >
-        {hasUpdate && onUpdate && (
+      {!selectionMode && (
+        <div
+          className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+          style={hasUpdate ? { opacity: 1 } : undefined}
+        >
+          {hasUpdate && onUpdate && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 hover:text-blue-500 hover:bg-blue-100 dark:hover:text-blue-400 dark:hover:bg-blue-500/10"
+              onClick={onUpdate}
+              disabled={isUpdating}
+              title={t("skills.update")}
+            >
+              {isUpdating ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <RefreshCw size={14} />
+              )}
+            </Button>
+          )}
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            className="h-7 w-7 hover:text-blue-500 hover:bg-blue-100 dark:hover:text-blue-400 dark:hover:bg-blue-500/10"
-            onClick={onUpdate}
-            disabled={isUpdating}
-            title={t("skills.update")}
+            className="h-7 w-7 hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
+            onClick={onUninstall}
+            title={t("skills.uninstall")}
           >
-            {isUpdating ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
-              <RefreshCw size={14} />
-            )}
+            <Trash2 size={14} />
           </Button>
-        )}
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
-          onClick={onUninstall}
-          title={t("skills.uninstall")}
-        >
-          <Trash2 size={14} />
-        </Button>
-      </div>
+        </div>
+      )}
     </ListItemRow>
   );
 };
@@ -780,25 +1238,33 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
   };
 
   return (
-    <TooltipProvider delayDuration={300}>
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-        <div className="bg-background rounded-xl p-6 max-w-lg w-full mx-4 shadow-xl max-h-[80vh] flex flex-col">
-          <h2 className="text-lg font-semibold mb-2">{t("skills.import")}</h2>
-          <p className="text-sm text-muted-foreground mb-4">
-            {t("skills.importDescription")}
-          </p>
+    <Dialog
+      open
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && !isImporting) onClose();
+      }}
+    >
+      <DialogContent
+        className="max-w-2xl max-h-[85vh] flex flex-col"
+        zIndex="alert"
+      >
+        <DialogHeader>
+          <DialogTitle>{t("skills.import")}</DialogTitle>
+          <DialogDescription>{t("skills.importDescription")}</DialogDescription>
+        </DialogHeader>
 
-          <div className="flex-1 overflow-y-auto space-y-2 mb-4">
+        <TooltipProvider delayDuration={300}>
+          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-2">
             {skills.map((skill) => (
               <div
                 key={skill.directory}
                 className="flex items-start gap-3 p-3 rounded-lg border hover:bg-muted"
               >
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={selected.has(skill.directory)}
-                  onChange={() => toggleSelect(skill.directory)}
-                  className="mt-1"
+                  onCheckedChange={() => toggleSelect(skill.directory)}
+                  aria-label={skill.name}
+                  className="mt-1 shrink-0"
                 />
                 <div className="flex-1 min-w-0">
                   <div className="font-medium">{skill.name}</div>
@@ -848,21 +1314,21 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
               </div>
             ))}
           </div>
+        </TooltipProvider>
 
-          <div className="flex justify-end gap-3">
-            <Button variant="outline" onClick={onClose} disabled={isImporting}>
-              {t("common.cancel")}
-            </Button>
-            <Button
-              onClick={handleImport}
-              disabled={selected.size === 0 || isImporting}
-            >
-              {t("skills.importSelected", { count: selected.size })}
-            </Button>
-          </div>
-        </div>
-      </div>
-    </TooltipProvider>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={isImporting}>
+            {t("common.cancel")}
+          </Button>
+          <Button
+            onClick={handleImport}
+            disabled={selected.size === 0 || isImporting}
+          >
+            {t("skills.importSelected", { count: selected.size })}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };
 

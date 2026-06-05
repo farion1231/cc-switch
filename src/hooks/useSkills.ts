@@ -165,6 +165,28 @@ export function useRestoreSkillBackup() {
 }
 
 /**
+ * 设置 Skill 置顶状态
+ * 成功后用 setQueryData 同步更新缓存，无需 invalidate
+ */
+export function useSetSkillPin() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, pinned }: { id: string; pinned: boolean }) =>
+      skillsApi.setPin(id, pinned),
+    onSuccess: (_result, { id, pinned }) => {
+      queryClient.setQueryData<InstalledSkill[]>(
+        ["skills", "installed"],
+        (oldData) => {
+          if (!oldData) return oldData;
+          const ts = pinned ? Math.floor(Date.now() / 1000) : undefined;
+          return oldData.map((s) => (s.id === id ? { ...s, pinnedAt: ts } : s));
+        },
+      );
+    },
+  });
+}
+
+/**
  * 切换 Skill 在特定应用的启用状态
  */
 export function useToggleSkillApp() {

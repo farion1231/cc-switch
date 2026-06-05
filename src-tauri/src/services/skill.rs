@@ -762,6 +762,7 @@ impl SkillService {
             installed_at: chrono::Utc::now().timestamp(),
             content_hash,
             updated_at: 0,
+            pinned_at: None,
         };
 
         // 保存到数据库
@@ -1100,6 +1101,8 @@ impl SkillService {
             installed_at: skill.installed_at,
             content_hash: new_hash,
             updated_at: chrono::Utc::now().timestamp(),
+            // 保留原置顶状态（update_skill 不应清除用户的置顶）
+            pinned_at: skill.pinned_at,
         };
 
         db.save_skill(&updated_skill)?;
@@ -1378,6 +1381,38 @@ impl SkillService {
         Ok(())
     }
 
+    /// 设置 Skill 置顶状态
+    ///
+    /// `pinned = true`：以当前 Unix 时间戳置顶；`false`：取消置顶。
+    pub fn set_pin(db: &Arc<Database>, id: &str, pinned: bool) -> Result<()> {
+        let pinned_at = if pinned {
+            Some(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|e| anyhow!("获取系统时间失败: {e}"))?
+                    .as_secs() as i64,
+            )
+        } else {
+            None
+        };
+
+        let affected = db
+            .update_skill_pin(id, pinned_at)
+            .map_err(|e| anyhow!("更新置顶状态失败: {e}"))?;
+
+        if !affected {
+            return Err(anyhow!("Skill not found: {id}"));
+        }
+
+        log::info!(
+            "Skill {} 置顶状态已更新为 {}",
+            id,
+            if pinned { "已置顶" } else { "未置顶" }
+        );
+
+        Ok(())
+    }
+
     /// 扫描未管理的 Skills
     ///
     /// 扫描各应用目录，找出未被 CC Switch 管理的 Skills
@@ -1534,6 +1569,7 @@ impl SkillService {
                 installed_at: chrono::Utc::now().timestamp(),
                 content_hash,
                 updated_at: 0,
+                pinned_at: None,
             };
 
             // 保存到数据库
@@ -2655,6 +2691,7 @@ impl SkillService {
                 installed_at: chrono::Utc::now().timestamp(),
                 content_hash,
                 updated_at: 0,
+                pinned_at: None,
             };
 
             // 保存到数据库
@@ -3042,6 +3079,8 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
             installed_at: chrono::Utc::now().timestamp(),
             content_hash,
             updated_at: 0,
+            // 重建路径无法恢复 pin（DB 已 clear），用户重新安装后须重新置顶
+            pinned_at: None,
         };
 
         db.save_skill(&skill)?;
