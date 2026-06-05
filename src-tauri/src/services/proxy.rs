@@ -106,6 +106,7 @@ impl ProxyService {
             proxy_url,
             auth_policy,
             takeover_model_fields,
+            provider.is_codex_oauth(),
         );
     }
 
@@ -122,6 +123,7 @@ impl ProxyService {
             proxy_url,
             auth_policy,
             takeover_model_fields,
+            false,
         );
     }
 
@@ -130,6 +132,7 @@ impl ProxyService {
         proxy_url: &str,
         auth_policy: ClaudeTakeoverAuthPolicy,
         takeover_model_fields: Vec<(&'static str, String)>,
+        preserve_auth_token_for_codex: bool,
     ) {
         if !config.is_object() {
             *config = json!({});
@@ -181,8 +184,14 @@ impl ProxyService {
                 }
             }
             ClaudeTakeoverAuthPolicy::ManagedAccount => {
+                let should_preserve_auth_token = preserve_auth_token_for_codex
+                    && env.contains_key("ANTHROPIC_AUTH_TOKEN");
                 for key in token_keys {
-                    env.remove(key);
+                    if should_preserve_auth_token && key == "ANTHROPIC_AUTH_TOKEN" {
+                        env.insert(key.to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                    } else {
+                        env.remove(key);
+                    }
                 }
                 env.insert(
                     "ANTHROPIC_API_KEY".to_string(),
@@ -2845,7 +2854,7 @@ mod tests {
         assert_env_str(env, "ANTHROPIC_DEFAULT_OPUS_MODEL", Some("claude-opus-4-8"));
         assert_env_str(env, "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME", Some("gpt-5.4"));
         assert_env_str(env, "ANTHROPIC_API_KEY", Some(PROXY_TOKEN_PLACEHOLDER));
-        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", None);
+        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
     }
 
     #[test]
