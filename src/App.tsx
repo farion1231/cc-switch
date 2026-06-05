@@ -266,6 +266,15 @@ function App() {
   });
   const providers = useMemo(() => data?.providers ?? {}, [data]);
   const currentProviderId = data?.currentProviderId ?? "";
+  const currentProvider = currentProviderId
+    ? providers[currentProviderId]
+    : undefined;
+  const shouldShowProxyToggle =
+    activeApp === "claude"
+      ? Boolean(
+          isCurrentAppTakeoverActive || currentProvider?.meta?.imageModel?.trim(),
+        )
+      : Boolean(settingsData?.enableLocalProxy || isCurrentAppTakeoverActive);
   const isOpenClawView =
     activeApp === "openclaw" &&
     (currentView === "providers" ||
@@ -1222,10 +1231,10 @@ function App() {
                 >
                   {activeApp === "claude-desktop" ? (
                     <ClaudeDesktopRouteToggle />
+                  ) : shouldShowProxyToggle ? (
+                    <ProxyToggle activeApp={activeApp} />
                   ) : (
-                    settingsData?.enableLocalProxy && (
-                      <ProxyToggle activeApp={activeApp} />
-                    )
+                    <></>
                   )}
                   {activeApp !== "claude-desktop" &&
                     settingsData?.enableFailoverToggle && (

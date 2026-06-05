@@ -305,6 +305,9 @@ function ProviderFormFull({
     if (!supportsFullUrl) return false;
     return initialData?.meta?.isFullUrl ?? false;
   });
+  const [localImageModel, setLocalImageModel] = useState<string>(
+    () => initialData?.meta?.imageModel ?? "",
+  );
 
   const [testConfig, setTestConfig] = useState<ProviderTestConfig>(
     () => initialData?.meta?.testConfig ?? { enabled: false },
@@ -344,6 +347,7 @@ function ProviderFormFull({
     setLocalIsFullUrl(
       supportsFullUrl ? (initialData?.meta?.isFullUrl ?? false) : false,
     );
+    setLocalImageModel(initialData?.meta?.imageModel ?? "");
     setTestConfig(initialData?.meta?.testConfig ?? { enabled: false });
     setPricingConfig({
       enabled:
@@ -1418,6 +1422,10 @@ function ProviderFormFull({
         supportsFullUrl && category !== "official" && localIsFullUrl
           ? true
           : undefined,
+      imageModel:
+        appId === "claude" && category !== "official" && localImageModel.trim()
+          ? localImageModel.trim()
+          : undefined,
     };
 
     if (!isCodexOauthProvider && "codexFastMode" in nextMeta) {
@@ -1539,6 +1547,9 @@ function ProviderFormFull({
       }
       if (appId === "gemini") {
         resetGeminiConfig({}, {});
+      }
+      if (appId === "claude") {
+        setLocalImageModel("");
       }
       if (appId === "opencode") {
         opencodeForm.resetOpencodeState();
@@ -2009,7 +2020,9 @@ function ProviderFormFull({
               defaultSonnetModelName={defaultSonnetModelName}
               defaultOpusModel={defaultOpusModel}
               defaultOpusModelName={defaultOpusModelName}
+              imageModel={localImageModel}
               onModelChange={handleModelChange}
+              onImageModelChange={setLocalImageModel}
               speedTestEndpoints={speedTestEndpoints}
               apiFormat={localApiFormat}
               onApiFormatChange={handleApiFormatChange}
