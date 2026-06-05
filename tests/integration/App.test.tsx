@@ -230,10 +230,31 @@ describe("App integration with MSW", () => {
       ),
     );
 
+    expect(() => {
+      emitTauriEvent("webdav-sync-status-updated", null);
+    }).not.toThrow();
+    expect(toastErrorMock).not.toHaveBeenCalled();
+
     emitTauriEvent("webdav-sync-status-updated", {
       source: "auto",
       status: "error",
       error: "network timeout",
+    });
+
+    await waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalled();
+    });
+
+    toastErrorMock.mockReset();
+    expect(() => {
+      emitTauriEvent("s3-sync-status-updated", null);
+    }).not.toThrow();
+    expect(toastErrorMock).not.toHaveBeenCalled();
+
+    emitTauriEvent("s3-sync-status-updated", {
+      source: "auto",
+      status: "error",
+      error: "s3 timeout",
     });
 
     await waitFor(() => {
