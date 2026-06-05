@@ -1726,10 +1726,7 @@ impl ProviderService {
         // This ensures the common config snippet in the DB stays up-to-date
         // (e.g. when plugins like claude-hud update their cache paths).
         if !app_type.is_additive_mode() {
-            if let Err(e) = sync_common_config_from_live(
-                state.db.as_ref(),
-                &app_type,
-            ) {
+            if let Err(e) = sync_common_config_from_live(state.db.as_ref(), &app_type) {
                 log::warn!("Failed to sync common config from live: {e}");
             }
         }
