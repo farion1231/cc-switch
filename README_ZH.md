@@ -240,7 +240,7 @@ TeamoRouter 还提供企业级功能，包括集中账单、团队管理、BYOK�
 
 - **统一 MCP 面板** — 管理 Claude、Codex、Gemini、Grok Build、OpenCode 和 Hermes 的 MCP 服务器，双向同步，支持 Deep Link 导入
 - **Prompts** — Markdown 编辑器，跨应用同步（CLAUDE.md / AGENTS.md / GEMINI.md），回填保护
-- **Skills** — 从 GitHub 仓库或 ZIP 文件一键安装，自定义仓库管理，支持软连接和文件复制
+- **Skills** — 从 GitHub 仓库或 ZIP 文件一键安装，自定义仓库管理，按来源筛选、搜索、批量操作（启用/禁用、卸载、更改来源）和技能详情查看，支持软连接和文件复制
 
 ### 用量与成本追踪
 
