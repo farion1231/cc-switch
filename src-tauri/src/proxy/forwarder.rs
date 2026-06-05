@@ -1272,7 +1272,7 @@ impl RequestForwarder {
         };
         if adapter.name() == "Claude" {
             if let Some(api_format) = resolved_claude_api_format.as_deref() {
-                super::providers::normalize_anthropic_tool_thinking_history_for_provider(
+                super::providers::normalize_anthropic_messages_for_provider(
                     &mut mapped_body,
                     provider,
                     api_format,

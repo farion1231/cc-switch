@@ -56,12 +56,6 @@ pub struct ApiAuditLogRecord {
     pub created_at: i64,
 }
 
-#[derive(Debug, Clone)]
-pub struct ConsumedPairingToken {
-    pub token: String,
-    pub approved_scopes: Vec<String>,
-}
-
 impl Database {
     pub(crate) fn create_management_api_tables_on_conn(
         conn: &rusqlite::Connection,
@@ -104,6 +98,11 @@ impl Database {
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_api_pairing_status
              ON api_pairing_sessions(status, expires_at)",
+            [],
+        )?;
+        conn.execute(
+            "UPDATE api_pairing_sessions SET approved_token_secret = NULL
+             WHERE approved_token_secret IS NOT NULL",
             [],
         )?;
 
@@ -382,81 +381,20 @@ impl Database {
         pairing_id: &str,
         approved_scopes: &[String],
         token_id: &str,
-        raw_token: &str,
     ) -> Result<bool, AppError> {
         let scopes_json = serde_json::to_string(approved_scopes).map_err(|e| {
             AppError::Database(format!("Failed to serialize approved pairing scopes: {e}"))
         })?;
+        let now = chrono::Utc::now().timestamp_millis();
         let conn = lock_conn!(self.conn);
         let changed = conn.execute(
             "UPDATE api_pairing_sessions
              SET status = 'approved', approved_scopes = ?1, approved_token_id = ?2,
-                 approved_token_secret = ?3
-             WHERE id = ?4 AND status = 'pending'",
-            params![scopes_json, token_id, raw_token, pairing_id],
+                 approved_token_secret = NULL
+             WHERE id = ?3 AND status = 'pending' AND expires_at > ?4",
+            params![scopes_json, token_id, pairing_id, now],
         )?;
         Ok(changed > 0)
-    }
-
-    pub fn get_approved_pairing_token_secret(
-        &self,
-        pairing_id: &str,
-    ) -> Result<Option<String>, AppError> {
-        let conn = lock_conn!(self.conn);
-        conn.query_row(
-            "SELECT approved_token_secret FROM api_pairing_sessions
-             WHERE id = ?1 AND status = 'approved' AND token_delivered_at IS NULL",
-            params![pairing_id],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(Into::into)
-    }
-
-    pub fn consume_approved_pairing_token(
-        &self,
-        pairing_id: &str,
-    ) -> Result<Option<ConsumedPairingToken>, AppError> {
-        let now = chrono::Utc::now().timestamp_millis();
-        let mut conn = lock_conn!(self.conn);
-        let tx = conn.transaction()?;
-        let token = tx
-            .query_row(
-                "SELECT approved_token_secret, approved_scopes FROM api_pairing_sessions
-                 WHERE id = ?1 AND status = 'approved' AND token_delivered_at IS NULL",
-                params![pairing_id],
-                |row| {
-                    let token: String = row.get(0)?;
-                    let scopes_json: Option<String> = row.get(1)?;
-                    let approved_scopes = scopes_json
-                        .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
-                        .unwrap_or_default();
-                    Ok(ConsumedPairingToken {
-                        token,
-                        approved_scopes,
-                    })
-                },
-            )
-            .optional()?;
-
-        if token.is_none() {
-            tx.commit()?;
-            return Ok(None);
-        }
-
-        let changed = tx.execute(
-            "UPDATE api_pairing_sessions
-             SET status = 'consumed', token_delivered_at = ?1, approved_token_secret = NULL
-             WHERE id = ?2 AND status = 'approved' AND token_delivered_at IS NULL",
-            params![now, pairing_id],
-        )?;
-        tx.commit()?;
-
-        if changed == 1 {
-            Ok(token)
-        } else {
-            Ok(None)
-        }
     }
 
     pub fn reject_api_pairing_session(&self, pairing_id: &str) -> Result<bool, AppError> {
@@ -573,6 +511,16 @@ impl Database {
 mod tests {
     use super::*;
 
+    fn approved_token_secret(db: &Database, pairing_id: &str) -> Option<String> {
+        let conn = db.conn.lock().expect("lock connection");
+        conn.query_row(
+            "SELECT approved_token_secret FROM api_pairing_sessions WHERE id = ?1",
+            params![pairing_id],
+            |row| row.get(0),
+        )
+        .expect("query pairing token secret")
+    }
+
     #[test]
     fn management_api_tables_exist_on_memory_database() {
         let db = Database::memory().expect("memory db");
@@ -642,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn pairing_lifecycle_approves_delivers_once_and_hides_consumed_by_default() {
+    fn pairing_lifecycle_approves_consumes_once_and_hides_consumed_by_default() {
         let db = Database::memory().expect("memory db");
         let expires_at = chrono::Utc::now().timestamp_millis() + 60_000;
         let requested = vec!["api:read".to_string(), "providers:read".to_string()];
@@ -660,28 +608,20 @@ mod tests {
 
         let approved = vec!["api:read".to_string()];
         assert!(db
-            .approve_api_pairing_session("pairing-1", &approved, "token-1", "raw-token")
+            .approve_api_pairing_session("pairing-1", &approved, "token-1")
             .expect("approve pairing"));
         assert!(!db
             .reject_api_pairing_session("pairing-1")
             .expect("cannot reject approved session"));
 
-        let secret = db
-            .get_approved_pairing_token_secret("pairing-1")
-            .expect("get approved token")
-            .expect("approved token secret");
-        assert_eq!(secret, "raw-token");
+        assert_eq!(approved_token_secret(&db, "pairing-1"), None);
 
-        let consumed = db
-            .consume_approved_pairing_token("pairing-1")
-            .expect("consume approved token")
-            .expect("token should be delivered once");
-        assert_eq!(consumed.token, "raw-token");
-        assert_eq!(consumed.approved_scopes, approved);
         assert!(db
-            .consume_approved_pairing_token("pairing-1")
-            .expect("second consume should not fail")
-            .is_none());
+            .consume_api_pairing_session("pairing-1")
+            .expect("consume approved session"));
+        assert!(!db
+            .consume_api_pairing_session("pairing-1")
+            .expect("second consume should not fail"));
 
         assert!(db
             .list_api_pairing_sessions(false)
@@ -707,6 +647,13 @@ mod tests {
             now - 1,
         )
         .expect("create expired pairing");
+        assert!(!db
+            .approve_api_pairing_session(
+                "expired-pairing",
+                &["api:read".to_string()],
+                "token-expired"
+            )
+            .expect("expired pairing should not be approved"));
         db.create_api_pairing_session(
             "fresh-pairing",
             "client",
@@ -746,21 +693,12 @@ mod tests {
         )
         .expect("create pairing");
         assert!(db
-            .approve_api_pairing_session(
-                "pairing-1",
-                &["api:read".to_string()],
-                "token-1",
-                "raw-token"
-            )
+            .approve_api_pairing_session("pairing-1", &["api:read".to_string()], "token-1")
             .expect("approve pairing"));
         assert!(db
             .consume_api_pairing_session("pairing-1")
             .expect("consume approved session"));
-        assert_eq!(
-            db.get_approved_pairing_token_secret("pairing-1")
-                .expect("get consumed token"),
-            None
-        );
+        assert_eq!(approved_token_secret(&db, "pairing-1"), None);
         assert!(db
             .list_api_pairing_sessions(false)
             .expect("list unconsumed sessions")

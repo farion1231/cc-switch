@@ -99,16 +99,62 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         return hermes::load_messages_sqlite(source_path);
     }
 
-    let path = Path::new(source_path);
+    let roots = provider_roots(provider_id)?;
+    load_messages_with_roots(provider_id, Path::new(source_path), &roots)
+}
+
+fn load_messages_with_roots(
+    provider_id: &str,
+    source_path: &Path,
+    roots: &[PathBuf],
+) -> Result<Vec<SessionMessage>, String> {
+    let validated_source = source_under_roots(provider_id, source_path, roots)?;
+
     match provider_id {
-        "codex" => codex::load_messages(path),
-        "claude" => claude::load_messages(path),
-        "opencode" => opencode::load_messages(path),
-        "openclaw" => openclaw::load_messages(path),
-        "gemini" => gemini::load_messages(path),
-        "hermes" => hermes::load_messages(path),
+        "codex" => codex::load_messages(&validated_source),
+        "claude" => claude::load_messages(&validated_source),
+        "opencode" => opencode::load_messages(&validated_source),
+        "openclaw" => openclaw::load_messages(&validated_source),
+        "gemini" => gemini::load_messages(&validated_source),
+        "hermes" => hermes::load_messages(&validated_source),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
+}
+
+fn source_under_roots(
+    provider_id: &str,
+    source_path: &Path,
+    roots: &[PathBuf],
+) -> Result<PathBuf, String> {
+    let validated_source = canonicalize_existing_path(source_path, "session source")?;
+
+    let mut saw_existing_root = false;
+    for root in roots {
+        if !root.exists() {
+            continue;
+        }
+
+        saw_existing_root = true;
+        let validated_root = canonicalize_existing_path(root, "session root")?;
+        if validated_source.starts_with(&validated_root) {
+            return Ok(validated_source);
+        }
+    }
+
+    if !saw_existing_root {
+        return Err(format!(
+            "Session root not found for provider {provider_id}: {}",
+            roots
+                .first()
+                .map(|root| root.display().to_string())
+                .unwrap_or_else(|| "<none>".to_string())
+        ));
+    }
+
+    Err(format!(
+        "Session source path is outside provider roots: {}",
+        source_path.display()
+    ))
 }
 
 pub fn delete_session(
@@ -144,47 +190,28 @@ fn delete_session_with_roots(
     source_path: &Path,
     roots: &[PathBuf],
 ) -> Result<bool, String> {
-    let validated_source = canonicalize_existing_path(source_path, "session source")?;
+    let validated_source = source_under_roots(provider_id, source_path, roots)?;
+    let validated_root = roots
+        .iter()
+        .filter(|root| root.exists())
+        .filter_map(|root| canonicalize_existing_path(root, "session root").ok())
+        .find(|root| validated_source.starts_with(root))
+        .ok_or_else(|| {
+            format!(
+                "Session source path is outside provider roots: {}",
+                source_path.display()
+            )
+        })?;
 
-    let mut saw_existing_root = false;
-    for root in roots {
-        if !root.exists() {
-            continue;
-        }
-
-        saw_existing_root = true;
-        let validated_root = canonicalize_existing_path(root, "session root")?;
-        if validated_source.starts_with(&validated_root) {
-            return match provider_id {
-                "codex" => codex::delete_session(&validated_root, &validated_source, session_id),
-                "claude" => claude::delete_session(&validated_root, &validated_source, session_id),
-                "opencode" => {
-                    opencode::delete_session(&validated_root, &validated_source, session_id)
-                }
-                "openclaw" => {
-                    openclaw::delete_session(&validated_root, &validated_source, session_id)
-                }
-                "gemini" => gemini::delete_session(&validated_root, &validated_source, session_id),
-                "hermes" => hermes::delete_session(&validated_root, &validated_source, session_id),
-                _ => Err(format!("Unsupported provider: {provider_id}")),
-            };
-        }
+    match provider_id {
+        "codex" => codex::delete_session(&validated_root, &validated_source, session_id),
+        "claude" => claude::delete_session(&validated_root, &validated_source, session_id),
+        "opencode" => opencode::delete_session(&validated_root, &validated_source, session_id),
+        "openclaw" => openclaw::delete_session(&validated_root, &validated_source, session_id),
+        "gemini" => gemini::delete_session(&validated_root, &validated_source, session_id),
+        "hermes" => hermes::delete_session(&validated_root, &validated_source, session_id),
+        _ => Err(format!("Unsupported provider: {provider_id}")),
     }
-
-    if !saw_existing_root {
-        return Err(format!(
-            "Session root not found for provider {provider_id}: {}",
-            roots
-                .first()
-                .map(|root| root.display().to_string())
-                .unwrap_or_else(|| "<none>".to_string())
-        ));
-    }
-
-    Err(format!(
-        "Session source path is outside provider roots: {}",
-        source_path.display()
-    ))
 }
 
 fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
@@ -284,6 +311,20 @@ mod tests {
     }
 
     #[test]
+    fn loads_messages_from_allowed_provider_root() {
+        let root = tempdir().expect("tempdir");
+        let source = root.path().join("session.jsonl");
+        write_codex_session(&source, "session-1");
+
+        let messages = load_messages_with_roots("codex", &source, &[root.path().to_path_buf()])
+            .expect("load session messages");
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].content, "hello");
+    }
+
+    #[test]
     fn rejects_source_path_outside_provider_root() {
         let root = tempdir().expect("tempdir");
         let outside = tempdir().expect("tempdir");
@@ -293,6 +334,19 @@ mod tests {
         let err =
             delete_session_with_roots("codex", "session-1", &source, &[root.path().to_path_buf()])
                 .expect_err("expected outside-root path to be rejected");
+
+        assert!(err.contains("outside provider roots"));
+    }
+
+    #[test]
+    fn rejects_message_source_path_outside_provider_root() {
+        let root = tempdir().expect("tempdir");
+        let outside = tempdir().expect("tempdir");
+        let source = outside.path().join("session.jsonl");
+        write_codex_session(&source, "session-1");
+
+        let err = load_messages_with_roots("codex", &source, &[root.path().to_path_buf()])
+            .expect_err("expected outside-root path to be rejected");
 
         assert!(err.contains("outside provider roots"));
     }

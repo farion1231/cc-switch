@@ -893,7 +893,7 @@ pub fn run() {
             {
                 let state = app.state::<AppState>();
                 let management_api =
-                    ManagementApiService::new(state.db.clone(), state.proxy_service.clone());
+                    ManagementApiService::new(state.db.clone(), state.proxy_service.clone())?;
                 app.manage(management_api);
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {

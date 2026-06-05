@@ -5411,17 +5411,16 @@ requires_openai_auth = true
         )
         .expect("seed generated catalog file");
 
-        let pointer = catalog_path.to_string_lossy().to_string();
-        let mut backup_doc = "model_provider = \"custom\"\n\
-             model = \"deepseek-v4-flash\"\n\n\
+        let pointer = catalog_path.to_string_lossy().replace('\\', "/");
+        let backup_config = format!(
+            "model_provider = \"custom\"\n\
+             model = \"deepseek-v4-flash\"\n\
+             model_catalog_json = \"{pointer}\"\n\n\
              [model_providers.custom]\n\
              name = \"DeepSeek\"\n\
              base_url = \"https://api.deepseek.example/v1\"\n\
              wire_api = \"responses\"\n"
-            .parse::<toml_edit::DocumentMut>()
-            .expect("parse backup config");
-        backup_doc["model_catalog_json"] = toml_edit::value(pointer.as_str());
-        let backup_config = backup_doc.to_string();
+        );
         let backup_json = serde_json::to_string(&json!({
             "auth": { "OPENAI_API_KEY": "deepseek-key" },
             "config": backup_config,

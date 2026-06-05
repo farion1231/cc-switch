@@ -28,7 +28,7 @@ use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{oneshot, RwLock};
 use tokio::task::JoinHandle;
@@ -78,7 +78,14 @@ pub struct ManagementApiService {
     db: Arc<Database>,
     proxy_service: ProxyService,
     token_secret: Arc<Vec<u8>>,
+    pending_pairing_tokens: Arc<Mutex<HashMap<String, PendingPairingToken>>>,
     running: Arc<RwLock<Option<RunningServer>>>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingPairingToken {
+    token: String,
+    approved_scopes: Vec<String>,
 }
 
 struct RunningServer {
@@ -165,13 +172,14 @@ struct ApiMeta {
 }
 
 impl ManagementApiService {
-    pub fn new(db: Arc<Database>, proxy_service: ProxyService) -> Self {
-        Self {
+    pub fn new(db: Arc<Database>, proxy_service: ProxyService) -> Result<Self, AppError> {
+        Ok(Self {
             db,
             proxy_service,
-            token_secret: Arc::new(load_or_create_secret()),
+            token_secret: Arc::new(load_or_create_secret()?),
+            pending_pairing_tokens: Arc::new(Mutex::new(HashMap::new())),
             running: Arc::new(RwLock::new(None)),
-        }
+        })
     }
 
     pub async fn reconcile_with_settings(&self) -> Result<ManagementApiStatus, String> {
@@ -297,6 +305,29 @@ impl ManagementApiService {
             self.db
                 .create_api_token(&id, &hash, name.trim(), &normalized, expires_at, source)?;
         Ok(CreateApiTokenResponse { token: raw, record })
+    }
+
+    fn store_pairing_token(
+        &self,
+        pairing_id: &str,
+        token: String,
+        approved_scopes: Vec<String>,
+    ) -> Result<(), AppError> {
+        self.pending_pairing_tokens.lock()?.insert(
+            pairing_id.to_string(),
+            PendingPairingToken {
+                token,
+                approved_scopes,
+            },
+        );
+        Ok(())
+    }
+
+    fn take_pairing_token(
+        &self,
+        pairing_id: &str,
+    ) -> Result<Option<PendingPairingToken>, AppError> {
+        Ok(self.pending_pairing_tokens.lock()?.remove(pairing_id))
     }
 }
 
@@ -1057,7 +1088,7 @@ async fn openapi(
         "GET",
         "/v1/openapi.json",
         200,
-        None,
+        Some(addr.ip()),
     );
     ok(doc)
 }
@@ -1253,7 +1284,7 @@ async fn me(
         "GET",
         "/v1/me",
         200,
-        None,
+        Some(addr.ip()),
     );
     ok(json!({
         "tokenId": auth.token_id,
@@ -1287,7 +1318,7 @@ async fn list_tokens(
                 "GET",
                 "/v1/auth/tokens",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(tokens)
         }
@@ -1331,7 +1362,7 @@ async fn create_token_http(
                 "POST",
                 "/v1/auth/tokens",
                 201,
-                None,
+                Some(addr.ip()),
             );
             (StatusCode::CREATED, Json(envelope(created))).into_response()
         }
@@ -1370,7 +1401,7 @@ async fn revoke_token(
                 "DELETE",
                 "/v1/auth/tokens/:id",
                 if found { 200 } else { 404 },
-                None,
+                Some(addr.ip()),
             );
             if found {
                 ok(json!({ "revoked": true }))
@@ -1550,9 +1581,8 @@ async fn pairing_poll(
     if session.record.status != "approved" {
         return ok(json!({ "status": session.record.status }));
     }
-    let consumed = match state.db.consume_approved_pairing_token(&id) {
-        Ok(Some(consumed)) => consumed,
-        Ok(None) => return ok(json!({ "status": "consumed" })),
+    let consumed = match state.db.consume_api_pairing_session(&id) {
+        Ok(consumed) => consumed,
         Err(e) => {
             return api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1562,10 +1592,30 @@ async fn pairing_poll(
             )
         }
     };
+    if !consumed {
+        return ok(json!({ "status": "consumed" }));
+    }
+    let pending_token = match state.management_api_service.take_pairing_token(&id) {
+        Ok(Some(token)) => token,
+        Ok(None) => {
+            if let Some(token_id) = session.record.approved_token_id.as_deref() {
+                let _ = state.db.revoke_api_token(token_id);
+            }
+            return ok(json!({ "status": "consumed" }));
+        }
+        Err(e) => {
+            return api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "pairing_token_unavailable",
+                e.to_string(),
+                None,
+            )
+        }
+    };
     ok(json!({
         "status": "approved",
-        "token": consumed.token,
-        "scopes": consumed.approved_scopes,
+        "token": pending_token.token,
+        "scopes": pending_token.approved_scopes,
     }))
 }
 
@@ -1615,7 +1665,7 @@ async fn list_providers(
                 "GET",
                 "/v1/apps/:app/providers",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(value)
         }
@@ -1665,7 +1715,7 @@ async fn current_provider(
                 "GET",
                 "/v1/apps/:app/providers/current",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "id": id }))
         }
@@ -1729,7 +1779,7 @@ async fn switch_provider(
         "POST",
         "/v1/apps/:app/providers/:id/switch",
         200,
-        None,
+        Some(addr.ip()),
     );
     ok(json!({ "switched": true, "id": id, "result": result }))
 }
@@ -1803,7 +1853,7 @@ async fn get_provider(
                 "GET",
                 "/v1/apps/:app/providers/:id",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(safe_json(provider, include_secrets_allowed(&query, &auth)))
         }
@@ -1861,7 +1911,7 @@ async fn create_provider(
                 "POST",
                 "/v1/apps/:app/providers",
                 201,
-                None,
+                Some(addr.ip()),
             );
             (
                 StatusCode::CREATED,
@@ -1910,7 +1960,7 @@ async fn upsert_provider(
                 "PUT",
                 "/v1/apps/:app/providers/:id",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(safe_json(provider, false))
         }
@@ -1953,7 +2003,7 @@ async fn delete_provider(
                 "DELETE",
                 "/v1/apps/:app/providers/:id",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "deleted": true }))
         }
@@ -2003,7 +2053,7 @@ async fn add_custom_endpoint_http(
                 "POST",
                 "/v1/apps/:app/providers/:id/custom-endpoints",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "updated": true }))
         }
@@ -2047,7 +2097,7 @@ async fn remove_custom_endpoint_http(
                 "DELETE",
                 "/v1/apps/:app/providers/:id/custom-endpoints",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "updated": true }))
         }
@@ -2086,7 +2136,7 @@ async fn list_universal_providers(
                 "GET",
                 "/v1/universal-providers",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(safe_json(providers, include_secrets_allowed(&query, &auth)))
         }
@@ -2126,7 +2176,7 @@ async fn get_universal_provider_http(
                 "GET",
                 "/v1/universal-providers/:id",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(safe_json(provider, include_secrets_allowed(&query, &auth)))
         }
@@ -2171,7 +2221,7 @@ async fn create_universal_provider_http(
                 "POST",
                 "/v1/universal-providers",
                 201,
-                None,
+                Some(addr.ip()),
             );
             (
                 StatusCode::CREATED,
@@ -2216,7 +2266,7 @@ async fn update_universal_provider_http(
                 "PUT",
                 "/v1/universal-providers/:id",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(safe_json(provider, false))
         }
@@ -2255,7 +2305,7 @@ async fn delete_universal_provider_http(
                 "DELETE",
                 "/v1/universal-providers/:id",
                 if deleted { 200 } else { 404 },
-                None,
+                Some(addr.ip()),
             );
             if deleted {
                 ok(json!({ "deleted": true }))
@@ -2303,7 +2353,7 @@ async fn sync_universal_provider_http(
                 "POST",
                 "/v1/universal-providers/:id/sync",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "synced": synced }))
         }
@@ -2341,7 +2391,7 @@ async fn list_mcp_servers(
                 "GET",
                 "/v1/mcp/servers",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(servers)
         }
@@ -2381,7 +2431,7 @@ async fn get_mcp_server(
                     "GET",
                     "/v1/mcp/servers/:id",
                     200,
-                    None,
+                    Some(addr.ip()),
                 );
                 ok(server)
             }
@@ -2435,7 +2485,7 @@ async fn create_mcp_server(
                 "POST",
                 "/v1/mcp/servers",
                 201,
-                None,
+                Some(addr.ip()),
             );
             (StatusCode::CREATED, Json(envelope(server))).into_response()
         }
@@ -2476,7 +2526,7 @@ async fn update_mcp_server(
                 "PUT",
                 "/v1/mcp/servers/:id",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(server)
         }
@@ -2515,7 +2565,7 @@ async fn delete_mcp_server_http(
                 "DELETE",
                 "/v1/mcp/servers/:id",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "deleted": true }))
         }
@@ -2576,7 +2626,7 @@ async fn set_mcp_server_app(
                     "PUT",
                     "/v1/mcp/servers/:id/apps/:app",
                     200,
-                    None,
+                    Some(addr.ip()),
                 );
                 ok(server)
             }
@@ -2626,7 +2676,7 @@ async fn list_prompts(
                 "GET",
                 "/v1/apps/:app/prompts",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(prompts)
         }
@@ -2670,7 +2720,7 @@ async fn get_prompt(
                     "GET",
                     "/v1/apps/:app/prompts/:id",
                     200,
-                    None,
+                    Some(addr.ip()),
                 );
                 ok(prompt)
             }
@@ -2722,7 +2772,7 @@ async fn create_prompt(
                 "POST",
                 "/v1/apps/:app/prompts",
                 201,
-                None,
+                Some(addr.ip()),
             );
             (StatusCode::CREATED, Json(envelope(prompt))).into_response()
         }
@@ -2768,7 +2818,7 @@ async fn update_prompt(
                 "PUT",
                 "/v1/apps/:app/prompts/:id",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(prompt)
         }
@@ -2811,7 +2861,7 @@ async fn delete_prompt_http(
                 "DELETE",
                 "/v1/apps/:app/prompts/:id",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "deleted": true }))
         }
@@ -2827,6 +2877,7 @@ async fn delete_prompt_http(
 async fn set_prompt_enabled(
     state: HttpState,
     auth: AuthContext,
+    remote_ip: IpAddr,
     app: String,
     id: String,
     enabled: bool,
@@ -2853,14 +2904,19 @@ async fn set_prompt_enabled(
     prompt.updated_at = Some(chrono::Utc::now().timestamp_millis());
     match state.db.save_prompt(app_type.as_str(), &prompt) {
         Ok(()) => {
+            let audit_path = if enabled {
+                "/v1/apps/:app/prompts/:id/enable"
+            } else {
+                "/v1/apps/:app/prompts/:id/disable"
+            };
             audit(
                 &state,
                 Some(&auth),
                 Some("prompts:write"),
                 "POST",
-                "/v1/apps/:app/prompts/:id/enable",
+                audit_path,
                 200,
-                None,
+                Some(remote_ip),
             );
             ok(prompt)
         }
@@ -2890,7 +2946,7 @@ async fn enable_prompt(
         Ok(auth) => auth,
         Err(resp) => return resp,
     };
-    set_prompt_enabled(state, auth, app, id, true).await
+    set_prompt_enabled(state, auth, addr.ip(), app, id, true).await
 }
 
 async fn disable_prompt(
@@ -2910,7 +2966,7 @@ async fn disable_prompt(
         Ok(auth) => auth,
         Err(resp) => return resp,
     };
-    set_prompt_enabled(state, auth, app, id, false).await
+    set_prompt_enabled(state, auth, addr.ip(), app, id, false).await
 }
 
 async fn list_installed_skills(
@@ -2938,7 +2994,7 @@ async fn list_installed_skills(
                 "GET",
                 "/v1/skills/installed",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(skills)
         }
@@ -2977,7 +3033,7 @@ async fn get_installed_skill(
                 "GET",
                 "/v1/skills/:id",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(skill)
         }
@@ -3017,7 +3073,7 @@ async fn delete_skill_http(
                 "DELETE",
                 "/v1/skills/:id",
                 if deleted { 200 } else { 404 },
-                None,
+                Some(addr.ip()),
             );
             if deleted {
                 ok(json!({ "deleted": true }))
@@ -3080,7 +3136,7 @@ async fn set_skill_app(
                 "PUT",
                 "/v1/skills/:id/apps/:app",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(skill)
         }
@@ -3119,7 +3175,7 @@ async fn list_skill_repos(
                 "GET",
                 "/v1/skills/repos",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(repos)
         }
@@ -3158,7 +3214,7 @@ async fn upsert_skill_repo(
                 "POST",
                 "/v1/skills/repos",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(repo)
         }
@@ -3197,7 +3253,7 @@ async fn delete_skill_repo_http(
                 "DELETE",
                 "/v1/skills/repos/:owner/:name",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "deleted": true }))
         }
@@ -3246,7 +3302,7 @@ async fn discover_skills(
                 "GET",
                 "/v1/skills/discover",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(skills)
         }
@@ -3284,7 +3340,7 @@ async fn check_skill_updates_http(
                 "GET",
                 "/v1/skills/updates",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(updates)
         }
@@ -3383,7 +3439,7 @@ async fn install_skill_http(
                 "POST",
                 "/v1/skills/install",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(installed)
         }
@@ -3433,7 +3489,7 @@ async fn install_skills_from_zip_http(
                 "POST",
                 "/v1/skills/install-zip",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(installed)
         }
@@ -3472,7 +3528,7 @@ async fn update_skill_http(
                 "POST",
                 "/v1/skills/:id/update",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(skill)
         }
@@ -3510,7 +3566,7 @@ async fn list_skill_backups_http(
                 "GET",
                 "/v1/skills/backups",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(backups)
         }
@@ -3560,7 +3616,7 @@ async fn restore_skill_backup_http(
                 "POST",
                 "/v1/skills/backups/:id",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(skill)
         }
@@ -3599,7 +3655,7 @@ async fn delete_skill_backup_http(
                 "DELETE",
                 "/v1/skills/backups/:id",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "deleted": true }))
         }
@@ -3637,7 +3693,7 @@ async fn proxy_status(
                 "GET",
                 "/v1/proxy/status",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(status)
         }
@@ -3670,7 +3726,7 @@ async fn proxy_start(
                 "POST",
                 "/v1/proxy/start",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(info)
         }
@@ -3703,7 +3759,7 @@ async fn proxy_stop_with_restore(
                 "POST",
                 "/v1/proxy/stop-with-restore",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "stopped": true }))
         }
@@ -3736,7 +3792,7 @@ async fn proxy_config(
                 "GET",
                 "/v1/proxy/config",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(config)
         }
@@ -3775,7 +3831,7 @@ async fn update_proxy_config_http(
                 "PUT",
                 "/v1/proxy/config",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(config)
         }
@@ -3813,7 +3869,7 @@ async fn global_proxy_config(
                 "GET",
                 "/v1/proxy/global-config",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(config)
         }
@@ -3852,7 +3908,7 @@ async fn update_global_proxy_config_http(
                 "PUT",
                 "/v1/proxy/global-config",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(config)
         }
@@ -3890,7 +3946,7 @@ async fn proxy_takeover_status(
                 "GET",
                 "/v1/proxy/takeover",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(status)
         }
@@ -3932,7 +3988,7 @@ async fn set_proxy_takeover_http(
                 "PUT",
                 "/v1/proxy/takeover/:app",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "updated": true }))
         }
@@ -3970,7 +4026,7 @@ async fn app_proxy_config(
                 "GET",
                 "/v1/proxy/apps/:app/config",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(config)
         }
@@ -4020,7 +4076,7 @@ async fn update_app_proxy_config_http(
                 "PUT",
                 "/v1/proxy/apps/:app/config",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(config)
         }
@@ -4068,7 +4124,7 @@ async fn default_cost_multiplier_http(
                 "GET",
                 "/v1/proxy/apps/:app/cost-multiplier",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "value": value }))
         }
@@ -4116,7 +4172,7 @@ async fn set_default_cost_multiplier_http(
                 "PUT",
                 "/v1/proxy/apps/:app/cost-multiplier",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "value": req.value }))
         }
@@ -4159,7 +4215,7 @@ async fn pricing_model_source_http(
                 "GET",
                 "/v1/proxy/apps/:app/pricing-source",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "value": value }))
         }
@@ -4207,7 +4263,7 @@ async fn set_pricing_model_source_http(
                 "PUT",
                 "/v1/proxy/apps/:app/pricing-source",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "value": req.value }))
         }
@@ -4250,7 +4306,7 @@ async fn failover_queue_http(
                 "GET",
                 "/v1/proxy/apps/:app/failover-queue",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(queue)
         }
@@ -4293,7 +4349,7 @@ async fn add_failover_queue_http(
                 "POST",
                 "/v1/proxy/apps/:app/failover-queue/:provider_id",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "updated": true }))
         }
@@ -4339,7 +4395,7 @@ async fn remove_failover_queue_http(
                 "DELETE",
                 "/v1/proxy/apps/:app/failover-queue/:provider_id",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "updated": true }))
         }
@@ -4382,7 +4438,7 @@ async fn clear_failover_queue_http(
                 "DELETE",
                 "/v1/proxy/apps/:app/failover-queue",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "cleared": true }))
         }
@@ -4429,7 +4485,7 @@ async fn provider_health_http(
                 "GET",
                 "/v1/proxy/apps/:app/providers/:provider_id/health",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(health)
         }
@@ -4488,7 +4544,7 @@ async fn reset_circuit_breaker_http(
                 "POST",
                 "/v1/proxy/apps/:app/providers/:provider_id/circuit-breaker/reset",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "reset": true }))
         }
@@ -4526,7 +4582,7 @@ async fn circuit_breaker_config_http(
                 "GET",
                 "/v1/proxy/circuit-breaker/config",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(config)
         }
@@ -4575,7 +4631,7 @@ async fn update_circuit_breaker_config_http(
         "PUT",
         "/v1/proxy/circuit-breaker/config",
         200,
-        None,
+        Some(addr.ip()),
     );
     ok(config)
 }
@@ -4593,7 +4649,15 @@ macro_rules! simple_config_handlers {
             };
             match state.db.$db_get() {
                 Ok(config) => {
-                    audit(&state, Some(&auth), Some($scope), "GET", $path, 200, None);
+                    audit(
+                        &state,
+                        Some(&auth),
+                        Some($scope),
+                        "GET",
+                        $path,
+                        200,
+                        Some(addr.ip()),
+                    );
                     ok(config)
                 }
                 Err(e) => api_error(
@@ -4617,7 +4681,15 @@ macro_rules! simple_config_handlers {
             };
             match state.db.$db_set(&config) {
                 Ok(()) => {
-                    audit(&state, Some(&auth), Some($scope), "PUT", $path, 200, None);
+                    audit(
+                        &state,
+                        Some(&auth),
+                        Some($scope),
+                        "PUT",
+                        $path,
+                        200,
+                        Some(addr.ip()),
+                    );
                     ok(config)
                 }
                 Err(e) => api_error(
@@ -4705,7 +4777,7 @@ async fn usage_summary(
                 "GET",
                 "/v1/usage/summary",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(summary)
         }
@@ -4747,7 +4819,7 @@ async fn usage_summary_by_app(
                 "GET",
                 "/v1/usage/summary-by-app",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(summary)
         }
@@ -4789,7 +4861,7 @@ async fn usage_trends(
                 "GET",
                 "/v1/usage/trends",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(trends)
         }
@@ -4831,7 +4903,7 @@ async fn usage_provider_stats(
                 "GET",
                 "/v1/usage/providers",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(stats)
         }
@@ -4873,7 +4945,7 @@ async fn usage_model_stats(
                 "GET",
                 "/v1/usage/models",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(stats)
         }
@@ -4937,7 +5009,7 @@ async fn usage_request_logs(
                 "GET",
                 "/v1/usage/request-logs",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(logs)
         }
@@ -4976,7 +5048,7 @@ async fn usage_request_detail(
                 "GET",
                 "/v1/usage/request-logs/:id",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(detail)
         }
@@ -5087,7 +5159,7 @@ async fn usage_pricing(
         "GET",
         "/v1/usage/pricing",
         200,
-        None,
+        Some(addr.ip()),
     );
     ok(pricing)
 }
@@ -5141,7 +5213,7 @@ async fn sync_session_usage_http(
                 "POST",
                 "/v1/usage/session-sync",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(result)
         }
@@ -5185,7 +5257,7 @@ async fn list_sessions_http(
                 "GET",
                 "/v1/sessions",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(sessions)
         }
@@ -5235,7 +5307,7 @@ async fn get_session_messages_http(
                 "GET",
                 "/v1/sessions/:provider/:id",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "sessionId": id, "messages": messages }))
         }
@@ -5280,7 +5352,7 @@ async fn delete_session_http(
                 "DELETE",
                 "/v1/sessions/:provider/:id",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "deleted": deleted }))
         }
@@ -5325,7 +5397,7 @@ async fn read_workspace_file_http(
                 "GET",
                 "/v1/workspace/files/:filename",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "content": content }))
         }
@@ -5360,7 +5432,7 @@ async fn write_workspace_file_http(
                 "PUT",
                 "/v1/workspace/files/:filename",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "written": true }))
         }
@@ -5393,7 +5465,7 @@ async fn list_daily_memory_http(
                 "GET",
                 "/v1/workspace/memory",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(files)
         }
@@ -5432,7 +5504,7 @@ async fn search_daily_memory_http(
                 "GET",
                 "/v1/workspace/memory/search",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(results)
         }
@@ -5466,7 +5538,7 @@ async fn read_daily_memory_http(
                 "GET",
                 "/v1/workspace/memory/:filename",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "content": content }))
         }
@@ -5501,7 +5573,7 @@ async fn write_daily_memory_http(
                 "PUT",
                 "/v1/workspace/memory/:filename",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "written": true }))
         }
@@ -5535,7 +5607,7 @@ async fn delete_daily_memory_http(
                 "DELETE",
                 "/v1/workspace/memory/:filename",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "deleted": true }))
         }
@@ -5567,7 +5639,7 @@ async fn safe_settings(
         "GET",
         "/v1/settings",
         200,
-        None,
+        Some(addr.ip()),
     );
     ok(redact_value(
         serde_json::to_value(settings).unwrap_or_else(|_| json!({})),
@@ -5636,7 +5708,7 @@ async fn update_settings_http(
                 "PUT",
                 "/v1/settings",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(redact_value(
                 serde_json::to_value(crate::settings::get_settings_for_frontend())
@@ -5709,7 +5781,7 @@ async fn config_snippet_http(
         "GET",
         "/v1/settings/config-snippets/:app",
         200,
-        None,
+        Some(addr.ip()),
     );
     ok(json!({ "app": app.as_str(), "value": snippet, "cleared": cleared }))
 }
@@ -5761,7 +5833,7 @@ async fn update_config_snippet_http(
         "PUT",
         "/v1/settings/config-snippets/:app",
         200,
-        None,
+        Some(addr.ip()),
     );
     ok(json!({ "updated": true }))
 }
@@ -5800,7 +5872,7 @@ async fn import_mcp_http(
         "POST",
         "/v1/mcp/import",
         200,
-        None,
+        Some(addr.ip()),
     );
     ok(json!({ "imported": total }))
 }
@@ -5830,7 +5902,7 @@ async fn sync_mcp_http(
                 "POST",
                 "/v1/mcp/sync",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(json!({ "synced": true }))
         }
@@ -5869,7 +5941,7 @@ async fn api_logs_http(
                 "GET",
                 "/v1/api-logs",
                 200,
-                None,
+                Some(addr.ip()),
             );
             ok(logs)
         }
@@ -5905,7 +5977,7 @@ async fn clear_api_logs_http(
         "DELETE",
         "/v1/api-logs",
         200,
-        None,
+        Some(addr.ip()),
     );
     match state.db.clear_api_audit_logs() {
         Ok(deleted) => ok(json!({ "deleted": deleted })),
@@ -5941,7 +6013,7 @@ async fn events(
         "GET",
         "/v1/events",
         200,
-        None,
+        Some(addr.ip()),
     );
     let stream = async_stream::stream! {
         yield Ok::<Event, Infallible>(
@@ -6189,13 +6261,19 @@ fn hash_token(secret: &[u8], raw: &str) -> String {
     hex_lower(&bytes)
 }
 
-fn load_or_create_secret() -> Vec<u8> {
+fn load_or_create_secret() -> Result<Vec<u8>, AppError> {
     let path = management_secret_path();
-    if let Ok(bytes) = std::fs::read(&path) {
-        if bytes.len() >= 32 {
-            return bytes;
-        }
+    match std::fs::read(&path) {
+        Ok(bytes) if bytes.len() >= 32 => return Ok(bytes),
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(AppError::io(&path, e)),
     }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+    }
+
     let seed = format!(
         "{}{}{}",
         Uuid::new_v4(),
@@ -6203,11 +6281,16 @@ fn load_or_create_secret() -> Vec<u8> {
         chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
     );
     let secret = Sha256::digest(seed.as_bytes()).to_vec();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+
+    std::fs::write(&path, &secret).map_err(|e| AppError::io(&path, e))?;
+    match std::fs::read(&path) {
+        Ok(bytes) if bytes.len() >= 32 => Ok(bytes),
+        Ok(_) => Err(AppError::InvalidInput(format!(
+            "Management API secret file is too short after write: {}",
+            path.display()
+        ))),
+        Err(e) => Err(AppError::io(&path, e)),
     }
-    let _ = std::fs::write(path, &secret);
-    secret
 }
 
 fn management_secret_path() -> PathBuf {
@@ -6314,18 +6397,38 @@ pub fn approve_pairing(
     scopes: Vec<String>,
     expires_at: Option<i64>,
 ) -> Result<CreateApiTokenResponse, AppError> {
+    let session = db.get_api_pairing_session(pairing_id)?.ok_or_else(|| {
+        AppError::InvalidInput("Pairing session is not pending or does not exist".to_string())
+    })?;
+    if session.record.status != "pending" {
+        return Err(AppError::InvalidInput(
+            "Pairing session is not pending or does not exist".to_string(),
+        ));
+    }
+    if session.record.expires_at <= chrono::Utc::now().timestamp_millis() {
+        let _ = db.cleanup_expired_api_pairing_sessions(chrono::Utc::now().timestamp_millis());
+        return Err(AppError::InvalidInput(
+            "Pairing session has expired".to_string(),
+        ));
+    }
+
     let created = service.create_token(name, scopes.clone(), expires_at, Some("pairing"))?;
-    let approved = db.approve_api_pairing_session(
-        pairing_id,
-        &created.record.scopes,
-        &created.record.id,
-        &created.token,
-    )?;
+    let approved =
+        db.approve_api_pairing_session(pairing_id, &created.record.scopes, &created.record.id)?;
     if !approved {
         let _ = db.revoke_api_token(&created.record.id);
         return Err(AppError::InvalidInput(
             "Pairing session is not pending or does not exist".to_string(),
         ));
+    }
+    if let Err(e) = service.store_pairing_token(
+        pairing_id,
+        created.token.clone(),
+        created.record.scopes.clone(),
+    ) {
+        let _ = db.revoke_api_token(&created.record.id);
+        let _ = db.consume_api_pairing_session(pairing_id);
+        return Err(e);
     }
     Ok(created)
 }
@@ -6347,6 +6450,7 @@ mod tests {
             db: db.clone(),
             proxy_service: proxy_service.clone(),
             token_secret: token_secret.clone(),
+            pending_pairing_tokens: Arc::new(Mutex::new(HashMap::new())),
             running: Arc::new(RwLock::new(None)),
         };
         HttpState {
@@ -6365,6 +6469,16 @@ mod tests {
             HeaderValue::from_str(&format!("Bearer {token}")).expect("valid bearer header"),
         );
         headers
+    }
+
+    fn approved_pairing_secret(db: &Database, pairing_id: &str) -> Option<String> {
+        let conn = db.conn.lock().expect("lock connection");
+        conn.query_row(
+            "SELECT approved_token_secret FROM api_pairing_sessions WHERE id = ?1",
+            rusqlite::params![pairing_id],
+            |row| row.get(0),
+        )
+        .expect("query approved token secret")
     }
 
     #[test]
@@ -6614,7 +6728,8 @@ mod tests {
     #[tokio::test]
     async fn start_rebuilds_when_security_settings_change_on_same_address() {
         let db = Arc::new(Database::memory().expect("memory db"));
-        let service = ManagementApiService::new(db.clone(), ProxyService::new(db));
+        let service =
+            ManagementApiService::new(db.clone(), ProxyService::new(db)).expect("service");
         let listener =
             std::net::TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -6751,13 +6866,16 @@ mod tests {
             chrono::Utc::now().timestamp_millis() + 60_000,
         )
         .expect("create pairing");
-        db.approve_api_pairing_session(
+        let created = approve_pairing(
+            &db,
+            &state.management_api_service,
             pairing_id,
-            &["api:read".to_string()],
-            "token-1",
-            "raw-token",
+            "client token",
+            vec!["api:read".to_string()],
+            None,
         )
         .expect("approve pairing");
+        assert_eq!(approved_pairing_secret(&db, pairing_id), None);
 
         let first = pairing_poll(
             State(state.clone()),
@@ -6774,7 +6892,7 @@ mod tests {
             .expect("first body");
         let body: Value = serde_json::from_slice(&bytes).expect("first json");
         assert_eq!(body["data"]["status"], "approved");
-        assert_eq!(body["data"]["token"], "raw-token");
+        assert_eq!(body["data"]["token"], created.token);
 
         let second = pairing_poll(
             State(state),
@@ -6790,5 +6908,33 @@ mod tests {
             .expect("second body");
         let body: Value = serde_json::from_slice(&bytes).expect("second json");
         assert_eq!(body["data"]["status"], "consumed");
+    }
+
+    #[test]
+    fn approve_pairing_rejects_expired_session_without_creating_token() {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let secret = Arc::new(b"test-management-secret".to_vec());
+        let state = test_state(db.clone(), secret.clone(), ManagementApiSettings::default());
+        db.create_api_pairing_session(
+            "expired-pairing",
+            "client",
+            &hash_token(&secret, "poll_test_token"),
+            &["api:read".to_string()],
+            chrono::Utc::now().timestamp_millis() - 1,
+        )
+        .expect("create expired pairing");
+
+        let err = approve_pairing(
+            &db,
+            &state.management_api_service,
+            "expired-pairing",
+            "expired token",
+            vec!["api:read".to_string()],
+            None,
+        )
+        .expect_err("expired pairing should not approve");
+
+        assert!(err.to_string().contains("expired"));
+        assert_eq!(db.active_api_token_count().expect("active token count"), 0);
     }
 }

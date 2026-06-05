@@ -447,11 +447,11 @@ mod tests {
         let index = serde_json::json!({
             "agent:main:main": {
                 "sessionId": "session-123",
-                "sessionFile": session_path,
+                "sessionFile": session_path.to_string_lossy(),
             },
             "agent:main:other": {
                 "sessionId": "session-456",
-                "sessionFile": sessions_dir.join("session-456.jsonl"),
+                "sessionFile": sessions_dir.join("session-456.jsonl").to_string_lossy(),
             },
         });
         std::fs::write(

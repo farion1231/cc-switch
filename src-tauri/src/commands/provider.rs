@@ -15,6 +15,7 @@ use std::str::FromStr;
 const TEMPLATE_TYPE_GITHUB_COPILOT: &str = "github_copilot";
 const TEMPLATE_TYPE_TOKEN_PLAN: &str = "token_plan";
 const TEMPLATE_TYPE_BALANCE: &str = "balance";
+const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
 const COPILOT_UNIT_PREMIUM: &str = "requests";
 
 /// 获取所有供应商
@@ -594,6 +595,50 @@ async fn query_provider_usage_inner(
         return crate::services::balance::get_balance(&base_url, &api_key)
             .await
             .map_err(|e| format!("Failed to query balance: {e}"));
+    }
+
+    // ── 官方订阅额度查询路径 ──
+    if template_type == TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION {
+        if !usage_script.map(|s| s.enabled).unwrap_or(false) {
+            return Ok(crate::provider::UsageResult {
+                success: false,
+                data: None,
+                error: Some("Usage query is disabled".to_string()),
+            });
+        }
+
+        let quota = crate::services::subscription::get_subscription_quota(app_type.as_str())
+            .await
+            .map_err(|e| format!("Failed to query subscription quota: {e}"))?;
+
+        if !quota.success {
+            return Ok(crate::provider::UsageResult {
+                success: false,
+                data: None,
+                error: quota.error.or(quota.credential_message),
+            });
+        }
+
+        let data: Vec<crate::provider::UsageData> = quota
+            .tiers
+            .iter()
+            .map(|tier| crate::provider::UsageData {
+                plan_name: Some(tier.name.clone()),
+                remaining: Some(100.0 - tier.utilization),
+                total: Some(100.0),
+                used: Some(tier.utilization),
+                unit: Some("%".to_string()),
+                is_valid: Some(true),
+                invalid_message: None,
+                extra: tier.resets_at.clone(),
+            })
+            .collect();
+
+        return Ok(crate::provider::UsageResult {
+            success: true,
+            data: if data.is_empty() { None } else { Some(data) },
+            error: None,
+        });
     }
 
     // ── 通用 JS 脚本路径 ──

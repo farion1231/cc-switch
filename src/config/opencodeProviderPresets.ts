@@ -1250,7 +1250,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     websiteUrl: "https://apinebula.com",
     apiKeyUrl: "https://apinebula.com/02rw5X",
     settingsConfig: {
-      npm: "@ai-sdk/openai",
+      npm: "@ai-sdk/openai-compatible",
       name: "APINebula",
       options: {
         baseURL: "https://apinebula.com/v1",
