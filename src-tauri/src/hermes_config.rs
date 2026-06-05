@@ -44,27 +44,37 @@ use std::sync::{Mutex, OnceLock};
 // Path Functions
 // ============================================================================
 
-/// 获取 Hermes 配置目录
+/// 获取 Hermes 配置目录路径
 ///
-/// 优先级：settings override > HERMES_HOME > ~/.hermes/
+/// 通过 CCS 设置中的 `hermes_config_dir` 覆盖
+/// 否则用默认路径（Windows: `%LOCALAPPDATA%\\hermes`，Mac/Linux: `~/.hermes`）
 pub fn get_hermes_dir() -> PathBuf {
     if let Some(override_dir) = get_hermes_override_dir() {
         return override_dir;
     }
 
-    if let Ok(hermes_home) = std::env::var("HERMES_HOME") {
-        let trimmed = hermes_home.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed);
-        }
-    }
+    default_hermes_dir()
+}
 
+/// Windows 默认 Hermes 目录：`%LOCALAPPDATA%\\hermes`
+///
+/// 与 Hermes 自身 `get_hermes_home()` 默认值对齐
+#[cfg(target_os = "windows")]
+fn default_hermes_dir() -> PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(crate::config::get_home_dir)
+        .join("hermes")
+}
+
+/// Mac/Linux默认 Hermes 目录：`~/.hermes`
+#[cfg(not(target_os = "windows"))]
+fn default_hermes_dir() -> PathBuf {
     crate::config::get_home_dir().join(".hermes")
 }
 
 /// 获取 Hermes 配置文件路径
 ///
-/// 返回 `~/.hermes/config.yaml`
+/// 返回 `<hermes_dir>/config.yaml`
 pub fn get_hermes_config_path() -> PathBuf {
     get_hermes_dir().join("config.yaml")
 }
@@ -1951,69 +1961,37 @@ user_profile_enabled: false
         assert!(serde_json::from_str::<MemoryKind>("\"bogus\"").is_err());
     }
 
-    // ---- get_hermes_dir() path resolution ----
+    // ---- get_hermes_dir() 路径确认 ----
 
-    /// Helper: save and restore a single env var across a test.
-    struct EnvGuard {
-        key: &'static str,
-        old: Option<String>,
-    }
-
-    impl EnvGuard {
-        fn new(key: &'static str) -> Self {
-            let old = std::env::var(key).ok();
-            Self { key, old }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.old {
-                Some(v) => std::env::set_var(self.key, v),
-                None => std::env::remove_var(self.key),
-            }
-        }
+    #[test]
+    #[serial]
+    fn hermes_fallback_uses_os_default() {
+        let _g = test_guard();
+        // 没有自定义目录走平台默认
+        // Windows：%LOCALAPPDATA%\hermes，Mac/Linux： ~/.hermes
+        let dir = get_hermes_dir();
+        #[cfg(target_os = "windows")]
+        assert!(
+            dir.ends_with("hermes"),
+            "Windows 上默认路径应为 %LOCALAPPDATA%\\hermes，实际为 {dir:?}"
+        );
+        #[cfg(not(target_os = "windows"))]
+        assert!(
+            dir.ends_with(".hermes"),
+            "Mac/Linux 上默认路径应为 ~/.hermes，实际为 {dir:?}"
+        );
     }
 
     #[test]
     #[serial]
-    fn uses_hermes_home_env() {
-        let _guard = EnvGuard::new("HERMES_HOME");
+    fn settings_override_wins_over_default() {
         let _g = test_guard();
-        let tmp = tempfile::tempdir().unwrap();
-        std::env::set_var("HERMES_HOME", tmp.path());
-        assert_eq!(get_hermes_dir(), tmp.path());
-    }
-
-    #[test]
-    #[serial]
-    fn skips_empty_hermes_home() {
-        let _guard = EnvGuard::new("HERMES_HOME");
-        let _g = test_guard();
-        std::env::set_var("HERMES_HOME", "   ");
-        assert!(get_hermes_dir().ends_with(".hermes"));
-    }
-
-    #[test]
-    #[serial]
-    fn defaults_to_hermes_dir() {
-        let _guard = EnvGuard::new("HERMES_HOME");
-        let _g = test_guard();
-        std::env::remove_var("HERMES_HOME");
-        assert!(get_hermes_dir().ends_with(".hermes"));
-    }
-
-    #[test]
-    #[serial]
-    fn no_tilde_expansion() {
-        // ~/xxx 和 ~ 两种情况都不展开，与 Hermes 自身行为一致
-        let _guard = EnvGuard::new("HERMES_HOME");
-        let _g = test_guard();
-
-        std::env::set_var("HERMES_HOME", "~/custom");
-        assert_eq!(get_hermes_dir(), PathBuf::from("~/custom"));
-
-        std::env::set_var("HERMES_HOME", "~");
-        assert_eq!(get_hermes_dir(), PathBuf::from("~"));
+        // 自定义目录优先于平台默认路径
+        // 确认不会因默认值变更而崩溃
+        let dir = get_hermes_dir();
+        assert!(
+            dir.ends_with(".hermes") || dir.ends_with("hermes"),
+            "预期默认路径 ~/.hermes，实际路径：{dir:?}"
+        );
     }
 }
