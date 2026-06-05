@@ -5411,7 +5411,7 @@ requires_openai_auth = true
         )
         .expect("seed generated catalog file");
 
-        let pointer = catalog_path.to_string_lossy().to_string();
+        let pointer = catalog_path.to_string_lossy().replace('\\', "/");
         let backup_config = format!(
             "model_provider = \"custom\"\n\
              model = \"deepseek-v4-flash\"\n\
