@@ -1077,17 +1077,45 @@ pub fn ensure_codex_model_provider_section(config_text: &str) -> String {
         return config_text.to_string();
     }
 
-    // Create [model_providers.<id>] table.
+    // Create [model_providers.<id>] table, migrating legacy flat-format endpoint
+    // fields so the provider table has everything Codex CLI needs to route requests.
     if doc.get("model_providers").is_none() {
         doc["model_providers"] = toml_edit::table();
     }
 
-    if let Some(mp) = doc.get_mut("model_providers").and_then(|item| item.as_table_mut())
+    // Extract top-level endpoint fields before taking a mutable borrow of the doc.
+    // We collect them into a Vec so we can clone into the new table without
+    // borrowing `doc` while `mp` holds a mutable reference.
+    let flat_fields: Vec<(String, toml_edit::Item)> = ["base_url", "wire_api"]
+        .iter()
+        .filter_map(|field| {
+            doc.as_table()
+                .get(field)
+                .map(|v| (field.to_string(), v.clone()))
+        })
+        .collect();
+
+    if let Some(mp) = doc
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_mut())
     {
         if !mp.contains_key(&provider_id) {
             let mut t = toml_edit::Table::new();
             t.set_implicit(false);
+
+            // Migrate legacy top-level endpoint fields into the synthesized table so
+            // Codex CLI finds everything it needs when it reads [model_providers.<id>].
+            for (field, val) in &flat_fields {
+                t.insert(field, val.clone());
+            }
+
             mp.insert(&provider_id, toml_edit::Item::Table(t));
+
+            // Clean up the top-level copies so the written config is clean and
+            // consistent (Codex CLI reads from the provider table, not top level).
+            for (field, _) in &flat_fields {
+                doc.remove(field.as_str());
+            }
         }
     }
 
@@ -2219,9 +2247,7 @@ disable_response_storage = true
         let parsed: toml::Value = toml::from_str(&result).unwrap();
 
         assert_eq!(
-            parsed
-                .get("model_provider")
-                .and_then(|v| v.as_str()),
+            parsed.get("model_provider").and_then(|v| v.as_str()),
             Some("custom"),
             "model_provider top-level key must be preserved"
         );
@@ -2268,7 +2294,9 @@ model = "gpt-4"
 "#;
         let result = ensure_codex_model_provider_section(input);
         assert_eq!(
-            result.lines().find(|l| l.trim() == "[model_providers.openai]"),
+            result
+                .lines()
+                .find(|l| l.trim() == "[model_providers.openai]"),
             None,
             "reserved provider openai must not get a [model_providers.openai] table"
         );
@@ -2322,6 +2350,81 @@ model = "deepseek-v4-pro"
                 .and_then(|v| v.as_str()),
             Some("sk-deepseek"),
             "API key must be written to [model_providers.deepseek].experimental_bearer_token"
+        );
+    }
+
+    #[test]
+    fn ensure_model_provider_section_migrates_flat_endpoint_fields() {
+        // When a config has model_provider set with top-level base_url / wire_api
+        // (the "flat" layout that Codex Desktop App can leave behind), the
+        // synthesized [model_providers.<id>] table must inherit those fields so
+        // that Codex CLI can resolve the third-party endpoint.
+        let input = r#"model_provider = "vendor"
+model = "gpt-5"
+base_url = "https://vendor.example/v1"
+wire_api = "responses"
+"#;
+        let result = ensure_codex_model_provider_section(input);
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        // Endpoint fields must now live inside the provider table, not at top level.
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("vendor"))
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("https://vendor.example/v1"),
+            "base_url must be migrated into [model_providers.vendor]"
+        );
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("vendor"))
+                .and_then(|v| v.get("wire_api"))
+                .and_then(|v| v.as_str()),
+            Some("responses"),
+            "wire_api must be migrated into [model_providers.vendor]"
+        );
+        // Top-level copies must be removed to avoid ambiguity.
+        assert!(
+            parsed.get("base_url").is_none(),
+            "top-level base_url must be removed after migration"
+        );
+        assert!(
+            parsed.get("wire_api").is_none(),
+            "top-level wire_api must be removed after migration"
+        );
+    }
+
+    #[test]
+    fn ensure_model_provider_section_skips_migration_when_table_exists() {
+        // If the provider table already exists (even partially), migration must
+        // NOT overwrite existing scoped fields with stale top-level copies.
+        let input = r#"model_provider = "vendor"
+base_url = "https://stale.example/v1"
+
+[model_providers.vendor]
+base_url = "https://correct.example/v1"
+"#;
+        let result = ensure_codex_model_provider_section(input);
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        // Existing scoped value must be preserved; top-level stale value ignored.
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("vendor"))
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("https://correct.example/v1"),
+            "existing scoped base_url must not be overwritten by top-level copy"
+        );
+        // Top-level value must remain untouched when the table already existed.
+        assert_eq!(
+            parsed.get("base_url").and_then(|v| v.as_str()),
+            Some("https://stale.example/v1"),
+            "top-level base_url must remain when provider table already existed"
         );
     }
 }
