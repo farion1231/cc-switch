@@ -350,7 +350,11 @@ fn insert_gemini_session_entry(
     .map_err(|e| AppError::Database(format!("插入 Gemini 会话日志失败: {e}")))?;
 
     // changes() > 0 表示新插入或已更新，== 0 表示值完全相同（无实际变更）
-    Ok(conn.changes() > 0)
+    let changed = conn.changes() > 0;
+    if changed {
+        crate::usage_events::notify_log_recorded();
+    }
+    Ok(changed)
 }
 
 /// 查找 Gemini 模型定价

@@ -15,6 +15,8 @@ import type {
   ProviderTestConfig,
   ClaudeApiFormat,
   CodexApiFormat,
+  CodexCatalogModel,
+  CodexChatReasoning,
   ClaudeApiKeyField,
 } from "@/types";
 import {
@@ -55,6 +57,7 @@ import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import {
   extractCodexWireApi,
   setCodexWireApi,
+  setCodexModelName as setCodexModelNameInConfig,
 } from "@/utils/providerConfigUtils";
 import { isNonNegativeDecimalString } from "@/types/usage";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
@@ -142,6 +145,71 @@ const codexApiFormatFromWireApi = (
   }
 };
 
+export const normalizeCodexCatalogModelsForSave = (
+  models: CodexCatalogModel[],
+): CodexCatalogModel[] => {
+  const seen = new Set<string>();
+  const normalized: CodexCatalogModel[] = [];
+
+  for (const item of models) {
+    const model = item.model.trim();
+    if (!model || seen.has(model)) continue;
+    seen.add(model);
+
+    const displayName = item.displayName?.trim();
+    const rawContextWindow = String(item.contextWindow ?? "").replace(
+      /[^\d]/g,
+      "",
+    );
+    const contextWindow = rawContextWindow
+      ? Number.parseInt(rawContextWindow, 10)
+      : undefined;
+
+    normalized.push({
+      model,
+      ...(displayName ? { displayName } : {}),
+      ...(contextWindow && contextWindow > 0 ? { contextWindow } : {}),
+    });
+  }
+
+  return normalized;
+};
+
+const normalizeCodexChatReasoningForSave = (
+  value?: CodexChatReasoning,
+): CodexChatReasoning | undefined => {
+  const supportsEffort = value?.supportsEffort === true;
+  const supportsThinking = value?.supportsThinking === true || supportsEffort;
+  const hasExplicitConfig = value && Object.keys(value).length > 0;
+
+  if (!supportsThinking && !supportsEffort) {
+    return hasExplicitConfig
+      ? {
+          supportsThinking: false,
+          supportsEffort: false,
+          thinkingParam: "none",
+          effortParam: "none",
+          outputFormat: value?.outputFormat ?? "auto",
+        }
+      : undefined;
+  }
+
+  return {
+    supportsThinking,
+    supportsEffort,
+    thinkingParam: supportsThinking
+      ? (value?.thinkingParam ?? "thinking")
+      : "none",
+    effortParam: supportsEffort
+      ? (value?.effortParam ?? "reasoning_effort")
+      : "none",
+    effortValueMode: supportsEffort
+      ? (value?.effortValueMode ?? "passthrough")
+      : undefined,
+    outputFormat: value?.outputFormat ?? "auto",
+  };
+};
+
 export interface ProviderFormProps {
   appId: AppId;
   providerId?: string;
@@ -162,6 +230,7 @@ export interface ProviderFormProps {
     iconColor?: string;
   };
   showButtons?: boolean;
+  isProxyTakeover?: boolean;
 }
 
 export function ProviderForm(props: ProviderFormProps) {
@@ -183,6 +252,7 @@ function ProviderFormFull({
   onSubmittingChange,
   initialData,
   showButtons = true,
+  isProxyTakeover = false,
 }: ProviderFormProps) {
   if (appId === "claude-desktop") {
     throw new Error("ProviderFormFull should not receive claude-desktop");
@@ -288,6 +358,7 @@ function ProviderFormFull({
       ),
     });
     setCustomCliArgs(initialData?.meta?.customCliArgs ?? "");
+    setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
   }, [appId, initialData, supportsFullUrl]);
 
   const defaultValues: ProviderFormData = useMemo(
@@ -438,19 +509,23 @@ function ProviderFormFull({
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
   );
+  const [codexChatReasoning, setCodexChatReasoning] =
+    useState<CodexChatReasoning>(
+      () => initialData?.meta?.codexChatReasoning ?? {},
+    );
 
   const {
     codexAuth,
     codexConfig,
     codexApiKey,
     codexBaseUrl,
-    codexModelName,
+    codexCatalogModels,
     codexAuthError,
     setCodexAuth,
     setCodexConfig,
+    setCodexCatalogModels,
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
-    handleCodexModelNameChange,
     handleCodexConfigChange: originalHandleCodexConfigChange,
     resetCodexConfig,
   } = useCodexConfigState({ initialData });
@@ -480,10 +555,6 @@ function ProviderFormFull({
   const handleCodexConfigChange = useCallback(
     (value: string) => {
       originalHandleCodexConfigChange(value);
-      const nextFormat = codexApiFormatFromWireApi(extractCodexWireApi(value));
-      if (nextFormat) {
-        setLocalCodexApiFormat(nextFormat);
-      }
       debouncedValidate(value);
     },
     [originalHandleCodexConfigChange, debouncedValidate],
@@ -492,6 +563,7 @@ function ProviderFormFull({
   const handleCodexApiFormatChange = useCallback(
     (format: CodexApiFormat) => {
       setLocalCodexApiFormat(format);
+      // wire_api is always "responses" for Codex; format controls proxy-layer conversion
       setCodexConfig((prev) => {
         const updated = setCodexWireApi(prev, "responses");
         debouncedValidate(updated);
@@ -505,6 +577,7 @@ function ProviderFormFull({
     if (appId === "codex" && !initialData && selectedPresetId === "custom") {
       const template = getCodexCustomTemplate();
       resetCodexConfig(template.auth, template.config);
+      setCodexChatReasoning({});
     }
   }, [appId, initialData, selectedPresetId, resetCodexConfig]);
 
@@ -1113,14 +1186,32 @@ function ProviderFormFull({
     if (appId === "codex") {
       try {
         const authJson = JSON.parse(codexAuth);
-        const normalizedCodexConfig =
+        let normalizedCodexConfig =
           category !== "official" && (codexConfig ?? "").trim()
             ? setCodexWireApi(codexConfig ?? "", "responses")
             : (codexConfig ?? "");
+        const normalizedCatalogModels =
+          category !== "official" && localCodexApiFormat === "openai_chat"
+            ? normalizeCodexCatalogModelsForSave(codexCatalogModels)
+            : [];
+        // Sync first catalog row's model into config.toml so Codex uses it as default
+        if (normalizedCatalogModels.length > 0) {
+          normalizedCodexConfig = setCodexModelNameInConfig(
+            normalizedCodexConfig,
+            normalizedCatalogModels[0].model,
+          );
+        }
         const configObj = {
           auth: authJson,
           config: normalizedCodexConfig,
+        } as {
+          auth: unknown;
+          config: string;
+          modelCatalog?: { models: CodexCatalogModel[] };
         };
+        if (normalizedCatalogModels.length > 0) {
+          configObj.modelCatalog = { models: normalizedCatalogModels };
+        }
         settingsConfig = JSON.stringify(configObj);
       } catch (err) {
         settingsConfig = values.settingsConfig.trim();
@@ -1293,6 +1384,12 @@ function ProviderFormFull({
           ? selectedGitHubAccountId
           : undefined,
       codexFastMode: isCodexOauthProvider ? codexFastMode : undefined,
+      codexChatReasoning:
+        appId === "codex" &&
+        category !== "official" &&
+        localCodexApiFormat === "openai_chat"
+          ? normalizeCodexChatReasoningForSave(codexChatReasoning)
+          : undefined,
       testConfig: testConfig.enabled ? testConfig : undefined,
       costMultiplier: pricingConfig.enabled
         ? pricingConfig.costMultiplier
@@ -1431,6 +1528,7 @@ function ProviderFormFull({
       if (appId === "codex") {
         const template = getCodexCustomTemplate();
         resetCodexConfig(template.auth, template.config);
+        setCodexChatReasoning({});
         setLocalCodexApiFormat(
           codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
             "openai_responses",
@@ -1470,7 +1568,8 @@ function ProviderFormFull({
       const auth = preset.auth ?? {};
       const config = preset.config ?? "";
 
-      resetCodexConfig(auth, config);
+      resetCodexConfig(auth, config, preset.modelCatalog ?? []);
+      setCodexChatReasoning(preset.codexChatReasoning ?? {});
       setLocalCodexApiFormat(
         preset.apiFormat ??
           codexApiFormatFromWireApi(extractCodexWireApi(config)) ??
@@ -1942,9 +2041,10 @@ function ProviderFormFull({
               onAutoSelectChange={setEndpointAutoSelect}
               apiFormat={localCodexApiFormat}
               onApiFormatChange={handleCodexApiFormatChange}
-              shouldShowModelField={category !== "official"}
-              modelName={codexModelName}
-              onModelNameChange={handleCodexModelNameChange}
+              codexChatReasoning={codexChatReasoning}
+              onCodexChatReasoningChange={setCodexChatReasoning}
+              catalogModels={codexCatalogModels}
+              onCatalogModelsChange={setCodexCatalogModels}
               speedTestEndpoints={speedTestEndpoints}
             />
           )}
@@ -2070,6 +2170,9 @@ function ProviderFormFull({
               <CodexConfigEditor
                 authValue={codexAuth}
                 configValue={codexConfig}
+                providerName={form.watch("name")}
+                showRemoteCompaction={category !== "official"}
+                isProxyTakeover={isProxyTakeover}
                 onAuthChange={setCodexAuth}
                 onConfigChange={handleCodexConfigChange}
                 useCommonConfig={useCodexCommonConfigFlag}

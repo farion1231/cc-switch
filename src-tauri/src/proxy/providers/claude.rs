@@ -17,6 +17,12 @@
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
+use serde_json::{json, Value};
+
+const ANTHROPIC_THINKING_PLACEHOLDER: &str = "tool call";
+const ANTHROPIC_REDACTED_THINKING_PLACEHOLDER: &str = "[redacted thinking]";
+// Keep hints lowercase; matching lowercases only the input value.
+const REASONING_VENDOR_HINTS: &[&str] = &["moonshot", "kimi", "deepseek", "mimo", "xiaomimimo"];
 
 /// 获取 Claude 供应商的 API 格式
 ///
@@ -82,19 +88,138 @@ pub fn claude_api_format_needs_transform(api_format: &str) -> bool {
     )
 }
 
-fn is_reasoning_content_compatible_identifier(value: &str) -> bool {
+fn is_reasoning_vendor_identifier(value: &str) -> bool {
     let value = value.to_ascii_lowercase();
-    value.contains("moonshot") || value.contains("kimi") || value.contains("deepseek")
+    REASONING_VENDOR_HINTS
+        .iter()
+        .any(|hint| value.contains(hint))
 }
 
-fn should_preserve_reasoning_content_for_openai_chat(
+fn should_normalize_anthropic_tool_thinking_history(
     provider: &Provider,
-    body: &serde_json::Value,
+    body: &Value,
+    api_format: &str,
 ) -> bool {
+    if api_format.trim() != "anthropic" {
+        return false;
+    }
+
     if body
         .get("model")
         .and_then(|m| m.as_str())
-        .is_some_and(is_reasoning_content_compatible_identifier)
+        .is_some_and(is_reasoning_vendor_identifier)
+    {
+        return true;
+    }
+
+    let settings = &provider.settings_config;
+    [
+        settings
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+            .and_then(|v| v.as_str()),
+        settings.get("base_url").and_then(|v| v.as_str()),
+        settings.get("baseURL").and_then(|v| v.as_str()),
+        settings.get("apiEndpoint").and_then(|v| v.as_str()),
+    ]
+    .into_iter()
+    .flatten()
+    .any(is_reasoning_vendor_identifier)
+}
+
+/// DeepSeek's Anthropic-compatible endpoint requires thinking history to be
+/// replayed on every assistant turn that contains tool_use. Some Anthropic SDK
+/// clients keep the tool history but drop or redact the thinking block, which
+/// makes DeepSeek reject the next request with `content[].thinking ... must be
+/// passed back`. Normalize only the narrow tool-call history shape for
+/// providers known to require plain `thinking` blocks.
+pub fn normalize_anthropic_tool_thinking_history_for_provider(
+    body: &mut Value,
+    provider: &Provider,
+    api_format: &str,
+) -> bool {
+    if !should_normalize_anthropic_tool_thinking_history(provider, body, api_format) {
+        return false;
+    }
+
+    normalize_anthropic_tool_thinking_history(body)
+}
+
+fn normalize_anthropic_tool_thinking_history(body: &mut Value) -> bool {
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return false;
+    };
+
+    let mut changed = false;
+    for message in messages {
+        if message.get("role").and_then(Value::as_str) != Some("assistant") {
+            continue;
+        }
+
+        let Some(content) = message.get_mut("content").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        if !content
+            .iter()
+            .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"))
+        {
+            continue;
+        }
+
+        let mut has_thinking = false;
+        for block in content.iter_mut() {
+            match block.get("type").and_then(Value::as_str) {
+                Some("thinking") => {
+                    let has_non_empty_thinking = block
+                        .get("thinking")
+                        .and_then(Value::as_str)
+                        .is_some_and(|text| !text.trim().is_empty());
+                    if let Some(obj) = block.as_object_mut() {
+                        if obj.remove("signature").is_some() {
+                            changed = true;
+                        }
+                        if !has_non_empty_thinking {
+                            obj.insert(
+                                "thinking".to_string(),
+                                json!(ANTHROPIC_THINKING_PLACEHOLDER),
+                            );
+                            changed = true;
+                        }
+                    }
+                    has_thinking = true;
+                }
+                Some("redacted_thinking") => {
+                    *block = json!({
+                        "type": "thinking",
+                        "thinking": ANTHROPIC_REDACTED_THINKING_PLACEHOLDER
+                    });
+                    has_thinking = true;
+                    changed = true;
+                }
+                _ => {}
+            }
+        }
+
+        if !has_thinking {
+            content.insert(
+                0,
+                json!({
+                    "type": "thinking",
+                    "thinking": ANTHROPIC_THINKING_PLACEHOLDER
+                }),
+            );
+            changed = true;
+        }
+    }
+
+    changed
+}
+
+fn should_preserve_reasoning_content_for_openai_chat(provider: &Provider, body: &Value) -> bool {
+    if body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .is_some_and(is_reasoning_vendor_identifier)
     {
         return true;
     }
@@ -113,7 +238,7 @@ fn should_preserve_reasoning_content_for_openai_chat(
     base_urls
         .into_iter()
         .flatten()
-        .any(is_reasoning_content_compatible_identifier)
+        .any(is_reasoning_vendor_identifier)
 }
 
 pub fn transform_claude_request_for_api_format(
@@ -1800,5 +1925,200 @@ mod tests {
         let msg = &transformed["messages"][0];
         assert_eq!(msg["reasoning_content"], "I should call the tool.");
         assert!(msg.get("tool_calls").is_some());
+    }
+
+    #[test]
+    fn test_transform_openai_chat_preserves_reasoning_content_for_mimo_provider() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.xiaomimimo.com/v1",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "mimo-v2.5-pro",
+            "max_tokens": 64,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I should call the tool."},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        let msg = &transformed["messages"][0];
+        assert_eq!(msg["reasoning_content"], "I should call the tool.");
+        assert!(msg.get("tool_calls").is_some());
+    }
+
+    #[test]
+    fn test_deepseek_anthropic_tool_history_injects_missing_thinking() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "I will inspect the repo."},
+                    {"type": "tool_use", "id": "call_123", "name": "read_file", "input": {"path": "README.md"}}
+                ]
+            }]
+        });
+
+        let changed = normalize_anthropic_tool_thinking_history_for_provider(
+            &mut body,
+            &provider,
+            "anthropic",
+        );
+
+        assert!(changed);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(content[0]["thinking"], ANTHROPIC_THINKING_PLACEHOLDER);
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[2]["type"], "tool_use");
+    }
+
+    #[test]
+    fn test_kimi_anthropic_tool_history_injects_missing_thinking() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "model": "kimi-for-coding",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "call_123", "name": "read_file", "input": {"path": "README.md"}}
+                ]
+            }]
+        });
+
+        let changed = normalize_anthropic_tool_thinking_history_for_provider(
+            &mut body,
+            &provider,
+            "anthropic",
+        );
+
+        assert!(changed);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(content[0]["thinking"], ANTHROPIC_THINKING_PLACEHOLDER);
+        assert_eq!(content[1]["type"], "tool_use");
+    }
+
+    #[test]
+    fn test_deepseek_anthropic_tool_history_rewrites_redacted_thinking() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "redacted_thinking", "data": "opaque"},
+                    {"type": "tool_use", "id": "call_123", "name": "read_file", "input": {"path": "README.md"}}
+                ]
+            }]
+        });
+
+        let changed = normalize_anthropic_tool_thinking_history_for_provider(
+            &mut body,
+            &provider,
+            "anthropic",
+        );
+
+        assert!(changed);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(
+            content[0]["thinking"],
+            ANTHROPIC_REDACTED_THINKING_PLACEHOLDER
+        );
+        assert!(content[0].get("data").is_none());
+    }
+
+    #[test]
+    fn test_deepseek_anthropic_tool_history_keeps_thinking_text_but_drops_signature() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "Need to inspect the file.", "signature": "anthropic-signature"},
+                    {"type": "tool_use", "id": "call_123", "name": "read_file", "input": {"path": "README.md"}}
+                ]
+            }]
+        });
+
+        let changed = normalize_anthropic_tool_thinking_history_for_provider(
+            &mut body,
+            &provider,
+            "anthropic",
+        );
+
+        assert!(changed);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(content[0]["thinking"], "Need to inspect the file.");
+        assert!(content[0].get("signature").is_none());
+    }
+
+    #[test]
+    fn test_generic_anthropic_tool_history_is_not_modified() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.example.com/anthropic",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "model": "claude-sonnet-4.6",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "call_123", "name": "read_file", "input": {"path": "README.md"}}
+                ]
+            }]
+        });
+        let original = body.clone();
+
+        let changed = normalize_anthropic_tool_thinking_history_for_provider(
+            &mut body,
+            &provider,
+            "anthropic",
+        );
+
+        assert!(!changed);
+        assert_eq!(body, original);
     }
 }

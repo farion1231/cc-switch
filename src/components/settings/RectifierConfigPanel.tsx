@@ -15,6 +15,8 @@ export function RectifierConfigPanel() {
     enabled: true,
     requestThinkingSignature: true,
     requestThinkingBudget: true,
+    requestMediaFallback: true,
+    requestMediaHeuristic: true,
   });
   const [optimizerConfig, setOptimizerConfig] = useState<OptimizerConfig>({
     enabled: false,
@@ -108,6 +110,36 @@ export function RectifierConfigPanel() {
             disabled={!config.enabled}
             onCheckedChange={(checked) =>
               handleChange({ requestThinkingBudget: checked })
+            }
+          />
+        </div>
+        <div className="flex items-center justify-between pl-4">
+          <div className="space-y-0.5">
+            <Label>{t("settings.advanced.rectifier.mediaFallback")}</Label>
+            <p className="text-xs text-muted-foreground">
+              {t("settings.advanced.rectifier.mediaFallbackDescription")}
+            </p>
+          </div>
+          <Switch
+            checked={config.requestMediaFallback}
+            disabled={!config.enabled}
+            onCheckedChange={(checked) =>
+              handleChange({ requestMediaFallback: checked })
+            }
+          />
+        </div>
+        <div className="flex items-center justify-between pl-8">
+          <div className="space-y-0.5">
+            <Label>{t("settings.advanced.rectifier.mediaHeuristic")}</Label>
+            <p className="text-xs text-muted-foreground">
+              {t("settings.advanced.rectifier.mediaHeuristicDescription")}
+            </p>
+          </div>
+          <Switch
+            checked={config.requestMediaHeuristic}
+            disabled={!config.enabled || !config.requestMediaFallback}
+            onCheckedChange={(checked) =>
+              handleChange({ requestMediaHeuristic: checked })
             }
           />
         </div>
