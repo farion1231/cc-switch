@@ -105,7 +105,10 @@ fn resolve_cmux_socket_path() -> Option<PathBuf> {
     if let Ok(custom) = std::env::var("CMUX_SOCKET_PATH") {
         let trimmed = custom.trim();
         if !trimmed.is_empty() {
-            return Some(PathBuf::from(trimmed));
+            let socket = PathBuf::from(trimmed);
+            if socket.exists() {
+                return Some(socket);
+            }
         }
     }
     let mut path_files = Vec::new();
@@ -117,7 +120,11 @@ fn resolve_cmux_socket_path() -> Option<PathBuf> {
         if let Ok(content) = std::fs::read_to_string(&path_file) {
             let socket = content.trim();
             if !socket.is_empty() {
-                return Some(PathBuf::from(socket));
+                let socket_path = PathBuf::from(socket);
+                // last-socket-path 可能在 cmux 重启后滞留；不存在时让 CLI 自己发现 socket。
+                if socket_path.exists() {
+                    return Some(socket_path);
+                }
             }
         }
     }

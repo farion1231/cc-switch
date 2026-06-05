@@ -2393,6 +2393,9 @@ pub async fn open_provider_terminal(
     cwd: Option<String>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    if !matches!(app_type, AppType::Claude) {
+        return Err("open_provider_terminal is only supported for Claude providers".to_string());
+    }
     let launch_cwd = resolve_launch_cwd(cwd)?;
 
     // 获取提供商配置
@@ -2407,6 +2410,7 @@ pub async fn open_provider_terminal(
     let config = &provider.settings_config;
     let env_vars = extract_env_vars_from_config(config, &app_type);
 
+    // Provider terminal 目前只对 Claude 暴露；这里启动的是 `claude --settings`。
     // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
     launch_terminal_with_env(
         env_vars,
@@ -2518,10 +2522,12 @@ fn launch_terminal_with_env(
     cwd: Option<&Path>,
 ) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
+    let launch_id = uuid::Uuid::new_v4();
     let config_file = temp_dir.join(format!(
-        "claude_{}_{}.json",
+        "claude_{}_{}_{}.json",
         provider_id,
-        std::process::id()
+        std::process::id(),
+        launch_id
     ));
 
     // 创建并写入配置文件
@@ -2588,7 +2594,11 @@ fn launch_macos_terminal(
     let terminal = preferred.as_deref().unwrap_or("terminal");
 
     let temp_dir = std::env::temp_dir();
-    let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
+    let script_file = temp_dir.join(format!(
+        "cc_switch_launcher_{}_{}.sh",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ));
     let config_path = config_file.to_string_lossy();
 
     // Write the shell script to a temp file
@@ -2597,6 +2607,8 @@ fn launch_macos_terminal(
             .filter(|m| !m.is_empty())
             .map(|m| format!(" --model {}", shell_single_quote(m)))
             .unwrap_or_default();
+        // cmux autoResume 可能复用旧 agent session；显式传 model 和新 session，
+        // 避免快速打开不同 Provider 时模型或会话串档。
         format!(
             r#"#!/bin/bash
 trap 'rm -f "{config_path}" "{script_file}"' EXIT
@@ -3153,13 +3165,22 @@ fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), S
 ///
 /// **Security**：`command_line` 会被原样拼进 shell/batch 脚本，调用方必须
 /// 保证它是可信字符串（当前只由后端硬编码调用）。
-pub(crate) fn launch_terminal_running(command_line: &str, label: &str) -> Result<(), String> {
+pub(crate) fn launch_terminal_running(
+    command_line: &str,
+    label: &str,
+    cmux_title: Option<&str>,
+) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
     let pid = std::process::id();
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let (script_file, script_content) = {
-        let file = temp_dir.join(format!("cc_switch_{}_{}.sh", label, pid));
+        let file = temp_dir.join(format!(
+            "cc_switch_{}_{}_{}.sh",
+            label,
+            pid,
+            uuid::Uuid::new_v4()
+        ));
         let content = format!(
             r#"#!/bin/bash
 trap 'rm -f "{script_path}"' EXIT
@@ -3198,10 +3219,8 @@ read -n 1 -s
             "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
             "kaku" => launch_macos_open_app("Kaku", &script_file, true),
             "cmux" => {
-                // 工具栏「在终端中运行」路径：无 provider 名，用 label 拼 workspace 标题
-                let title = crate::session_manager::terminal::cmux::format_cmux_workspace_title(
-                    label, "claude",
-                );
+                // 工具栏「在终端中运行」路径没有 provider/app 语义，调用方传入可读标题。
+                let title = cmux_title.unwrap_or(label).to_string();
                 let command = format!(
                     "bash {}",
                     shell_single_quote(&script_file.to_string_lossy())

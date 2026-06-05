@@ -107,12 +107,13 @@ export function TerminalSettings({ value, onChange }: TerminalSettingsProps) {
           ))}
         </SelectContent>
       </Select>
-      <p className="text-xs text-muted-foreground">
-        {t("settings.terminal.fallbackHint")}
-      </p>
-      {currentValue === "cmux" && (
+      {currentValue === "cmux" ? (
         <p className="text-xs text-muted-foreground">
           {t("settings.terminal.cmuxAutomationHint")}
+        </p>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          {t("settings.terminal.fallbackHint")}
         </p>
       )}
     </section>
