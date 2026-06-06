@@ -1995,6 +1995,45 @@ impl ProxyService {
         Ok(())
     }
 
+    async fn update_codex_live_backup_from_failover_provider(
+        &self,
+        provider: &Provider,
+    ) -> Result<(), String> {
+        let mut effective_settings = build_effective_settings_with_common_config(
+            self.db.as_ref(),
+            &AppType::Codex,
+            provider,
+        )
+        .map_err(|e| format!("构建 codex 有效配置失败: {e}"))?;
+
+        self.preserve_codex_client_owned_tables_from_current_live(&mut effective_settings)?;
+
+        let existing_backup_value = self
+            .db
+            .get_live_backup("codex")
+            .await
+            .map_err(|e| format!("读取 codex 现有备份失败: {e}"))?
+            .map(|backup| {
+                serde_json::from_str::<Value>(&backup.original_config)
+                    .map_err(|e| format!("解析 codex 现有备份失败: {e}"))
+            })
+            .transpose()?;
+
+        if let Some(existing_value) = existing_backup_value.as_ref() {
+            Self::preserve_codex_oauth_auth_in_backup(&mut effective_settings, existing_value)?;
+        }
+
+        let backup_json = serde_json::to_string(&effective_settings)
+            .map_err(|e| format!("序列化 Codex 配置失败: {e}"))?;
+        self.db
+            .save_live_backup("codex", &backup_json)
+            .await
+            .map_err(|e| format!("更新 codex 备份失败: {e}"))?;
+
+        log::info!("已更新 codex Live 备份（故障转移）");
+        Ok(())
+    }
+
     pub async fn hot_switch_provider(
         &self,
         app_type: &str,
@@ -2087,6 +2126,9 @@ impl ProxyService {
                 self.sync_codex_live_from_provider_while_proxy_active(&provider)
                     .await?;
             }
+        } else if is_codex_failover && (has_backup || live_taken_over) {
+            self.update_codex_live_backup_from_failover_provider(&provider)
+                .await?;
         }
 
         if allow_codex_live_write
@@ -5499,6 +5541,13 @@ wire_api = "responses"
             .await
             .expect("enable Codex proxy failover");
 
+        let oauth_auth = json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "id_token": "oauth-id",
+                "access_token": "oauth-access"
+            }
+        });
         let live_config = r#"model_provider = "custom"
 model = "gpt-5"
 
@@ -5526,12 +5575,12 @@ use_memories = true
 [desktop]
 enabled = true
 "#;
-        crate::codex_config::write_codex_live_config_atomic(Some(live_config))
+        crate::codex_config::write_codex_live_atomic(&oauth_auth, Some(live_config))
             .expect("seed Codex live config");
         db.save_live_backup(
             "codex",
             &serde_json::to_string(&json!({
-                "auth": {},
+                "auth": oauth_auth,
                 "config": live_config
             }))
             .expect("serialize live backup"),
@@ -5559,14 +5608,56 @@ enabled = true
             .await
             .expect("get live backup")
             .expect("backup exists");
+        let backup_value: Value =
+            serde_json::from_str(&backup.original_config).expect("parse live backup");
+        let backup_config = backup_value
+            .get("config")
+            .and_then(|value| value.as_str())
+            .expect("backup config");
+        let parsed_backup: toml::Value =
+            toml::from_str(backup_config).expect("parse backup config");
         assert_eq!(
-            backup.original_config,
-            serde_json::to_string(&json!({
-                "auth": {},
-                "config": live_config
-            }))
-            .expect("serialize expected backup"),
-            "Codex failover must not rebuild proxy_live_backup from provider templates"
+            backup_value.get("auth"),
+            Some(&oauth_auth),
+            "Codex failover backup should preserve OAuth auth material"
+        );
+        assert!(
+            backup_config.contains("provider-b-key"),
+            "Codex failover backup should carry the failover provider token in config.toml"
+        );
+        assert_eq!(
+            parsed_backup
+                .get("model_providers")
+                .and_then(|value| value.get("custom"))
+                .and_then(|value| value.get("base_url"))
+                .and_then(|value| value.as_str()),
+            Some("https://provider-b.example/v1"),
+            "Codex failover should keep the restore backup aligned with the current provider"
+        );
+        assert_eq!(
+            parsed_backup
+                .get("mcp_servers")
+                .and_then(|value| value.get("sample_mcp"))
+                .and_then(|value| value.get("command"))
+                .and_then(|value| value.as_str()),
+            Some("sample-mcp"),
+            "Codex failover backup should preserve live-owned MCP config"
+        );
+        assert!(
+            parsed_backup
+                .get("plugins")
+                .and_then(|value| value.get("sample-plugin@local"))
+                .is_some(),
+            "Codex failover backup should preserve live-owned plugin config"
+        );
+        assert_eq!(
+            parsed_backup
+                .get("projects")
+                .and_then(|value| value.get("/tmp/cc-switch-test/project-demo"))
+                .and_then(|value| value.get("trust_level"))
+                .and_then(|value| value.as_str()),
+            Some("trusted"),
+            "Codex failover backup should preserve live-owned project config"
         );
 
         let after =
@@ -5578,6 +5669,45 @@ enabled = true
         assert!(
             !after.contains("https://provider-b.example/v1"),
             "upstream provider endpoint must remain internal to CC Switch during failover"
+        );
+
+        service
+            .set_takeover_for_app("codex", false)
+            .await
+            .expect("disable Codex takeover");
+
+        let restored = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read restored Codex config");
+        let parsed_restored: toml::Value =
+            toml::from_str(&restored).expect("parse restored config");
+        assert_eq!(
+            parsed_restored
+                .get("model_providers")
+                .and_then(|value| value.get("custom"))
+                .and_then(|value| value.get("base_url"))
+                .and_then(|value| value.as_str()),
+            Some("https://provider-b.example/v1"),
+            "disabling takeover after failover should restore the failover provider"
+        );
+        assert_eq!(
+            parsed_restored
+                .get("mcp_servers")
+                .and_then(|value| value.get("sample_mcp"))
+                .and_then(|value| value.get("command"))
+                .and_then(|value| value.as_str()),
+            Some("sample-mcp"),
+            "disabling takeover after failover should preserve live-owned MCP config"
+        );
+        assert!(
+            restored.contains("provider-b-key"),
+            "disabling takeover after failover should restore the failover provider token"
+        );
+        let restored_auth: Value =
+            crate::config::read_json_file(&crate::codex_config::get_codex_auth_path())
+                .expect("read restored Codex auth");
+        assert_eq!(
+            restored_auth, oauth_auth,
+            "disabling takeover after failover should preserve OAuth auth material"
         );
     }
 
