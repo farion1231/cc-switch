@@ -415,6 +415,7 @@ export function SettingsPage({
                         <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
                           <WebdavSyncSection
                             config={settings?.webdavSync}
+                            s3Config={settings?.s3Sync}
                             settings={settings}
                             onAutoSave={handleAutoSave}
                           />

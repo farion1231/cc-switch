@@ -2,7 +2,7 @@
 
 # CC Switch
 
-### Der All-in-One-Manager für Claude Code, Codex, Gemini CLI, OpenCode, OpenClaw & Hermes Agent
+### Der All-in-One-Manager für Claude Code, Claude Desktop, Codex, Gemini CLI, OpenCode, OpenClaw & Hermes Agent
 
 [![Version](https://img.shields.io/github/v/release/farion1231/cc-switch?color=blue&label=version)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
@@ -152,13 +152,13 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 
 ## Warum CC Switch?
 
-Modernes KI-gestütztes Programmieren stützt sich auf CLI-Werkzeuge wie Claude Code, Codex, Gemini CLI, OpenCode und OpenClaw — doch jedes hat sein eigenes Konfigurationsformat. Der Wechsel des API-Anbieters bedeutet, JSON-, TOML- oder `.env`-Dateien von Hand zu bearbeiten, und es gibt keine einheitliche Möglichkeit, MCP und Skills über mehrere Werkzeuge hinweg zu verwalten.
+Modernes KI-gestütztes Programmieren stützt sich auf Werkzeuge wie Claude Code, Claude Desktop, Codex, Gemini CLI, OpenCode, OpenClaw und Hermes — doch jedes hat sein eigenes Konfigurationsformat. Der Wechsel des API-Anbieters bedeutet, JSON-, TOML- oder `.env`-Dateien von Hand zu bearbeiten, und es gibt keine einheitliche Möglichkeit, MCP und Skills über mehrere Werkzeuge hinweg zu verwalten.
 
-**CC Switch** gibt Ihnen eine einzige Desktop-App, um alle fünf CLI-Werkzeuge zu verwalten. Statt Konfigurationsdateien von Hand zu bearbeiten, erhalten Sie eine visuelle Oberfläche, um Anbieter mit einem Klick zu importieren und sofort zwischen ihnen zu wechseln — mit 50+ integrierten Anbieter-Presets, einheitlicher MCP- und Skills-Verwaltung und schnellem Umschalten über das System-Tray. Das Ganze gestützt auf eine zuverlässige SQLite-Datenbank mit atomaren Schreibvorgängen, die Ihre Konfigurationen vor Beschädigung schützen.
+**CC Switch** gibt Ihnen eine einzige Desktop-App, um alle unterstützten KI-Werkzeuge zu verwalten. Statt Konfigurationsdateien von Hand zu bearbeiten, erhalten Sie eine visuelle Oberfläche, um Anbieter mit einem Klick zu importieren und sofort zwischen ihnen zu wechseln — mit 50+ integrierten Anbieter-Presets, einheitlicher MCP- und Skills-Verwaltung und schnellem Umschalten über das System-Tray. Das Ganze gestützt auf eine zuverlässige SQLite-Datenbank mit atomaren Schreibvorgängen, die Ihre Konfigurationen vor Beschädigung schützen.
 
-- **Eine App, fünf CLI-Werkzeuge** — Verwalten Sie Claude Code, Codex, Gemini CLI, OpenCode und OpenClaw über eine einzige Oberfläche
+- **Eine App, sieben Werkzeuge** — Verwalten Sie Claude Code, Claude Desktop, Codex, Gemini CLI, OpenCode, OpenClaw und Hermes über eine einzige Oberfläche
 - **Kein manuelles Bearbeiten mehr** — 50+ Anbieter-Presets einschließlich AWS Bedrock, NVIDIA NIM und Community-Relays; einfach auswählen und umschalten
-- **Einheitliche MCP- & Skills-Verwaltung** — Ein Panel zur Verwaltung von MCP-Servern und Skills über vier Apps hinweg mit bidirektionaler Synchronisierung
+- **Einheitliche MCP- & Skills-Verwaltung** — Ein Panel zur Verwaltung von MCP-Servern und Skills für Claude, Codex, Gemini, OpenCode und Hermes mit bidirektionaler Synchronisierung
 - **Schnellumschaltung über System-Tray** — Wechseln Sie Anbieter sofort über das Tray-Menü, ohne die vollständige App öffnen zu müssen
 - **Cloud-Synchronisierung** — Synchronisieren Sie Anbieterdaten geräteübergreifend über Dropbox, OneDrive, iCloud oder WebDAV-Server
 - **Plattformübergreifend** — Native Desktop-App für Windows, macOS und Linux, gebaut mit Tauri 2
@@ -172,12 +172,12 @@ Modernes KI-gestütztes Programmieren stützt sich auf CLI-Werkzeuge wie Claude 
 
 ## Funktionen
 
-[Vollständiges Changelog](CHANGELOG.md) | [Release Notes](docs/release-notes/v3.15.0-en.md)
+[Vollständiges Changelog](CHANGELOG.md) | [Release Notes](docs/release-notes/v3.16.1-en.md)
 
 ### Anbieterverwaltung
 
-- **5 CLI-Werkzeuge, 50+ Presets** — Claude Code, Codex, Gemini CLI, OpenCode, OpenClaw; Schlüssel kopieren und mit einem Klick importieren
-- **Universelle Anbieter** — Eine Konfiguration synchronisiert sich mit mehreren Apps (OpenCode, OpenClaw)
+- **7 unterstützte Werkzeuge, 50+ Presets** — Claude Code, Claude Desktop, Codex, Gemini CLI, OpenCode, OpenClaw, Hermes; Schlüssel kopieren und mit einem Klick importieren
+- **Universelle Anbieter** — Eine Konfiguration synchronisiert sich mit Claude Code, Codex und Gemini CLI
 - Umschaltung mit einem Klick, Schnellzugriff über System-Tray, Sortierung per Drag-and-drop, Import/Export
 
 ### Proxy & Failover
@@ -187,7 +187,7 @@ Modernes KI-gestütztes Programmieren stützt sich auf CLI-Werkzeuge wie Claude 
 
 ### MCP, Prompts & Skills
 
-- **Einheitliches MCP-Panel** — Verwalten Sie MCP-Server über 4 Apps hinweg mit bidirektionaler Synchronisierung und Deep-Link-Import
+- **Einheitliches MCP-Panel** — Verwalten Sie MCP-Server für Claude, Codex, Gemini, OpenCode und Hermes mit bidirektionaler Synchronisierung und Deep-Link-Import
 - **Prompts** — Markdown-Editor mit App-übergreifender Synchronisierung (CLAUDE.md / AGENTS.md / GEMINI.md) und Backfill-Schutz
 - **Skills** — Installation mit einem Klick aus GitHub-Repositorys oder ZIP-Dateien, Verwaltung eigener Repositorys, mit Unterstützung für Symlinks und Dateikopien
 
@@ -197,21 +197,21 @@ Modernes KI-gestütztes Programmieren stützt sich auf CLI-Werkzeuge wie Claude 
 
 ### Session Manager & Workspace
 
-- Durchsuchen, suchen und stellen Sie den Gesprächsverlauf über alle Apps hinweg wieder her
+- Gesprächsverlauf aus unterstützten Sitzungsquellen durchsuchen, suchen und wiederherstellen
 - **Workspace-Editor** (OpenClaw) — Bearbeiten Sie Agent-Dateien (AGENTS.md, SOUL.md usw.) mit Markdown-Vorschau
 
 ### System & Plattform
 
 - **Cloud-Synchronisierung** — Eigenes Konfigurationsverzeichnis (Dropbox, OneDrive, iCloud, NAS) und WebDAV-Server-Synchronisierung
 - **Deep Link** (`ccswitch://`) — Importieren Sie Anbieter, MCP-Server, Prompts und Skills per URL
-- Dunkles / Helles / System-Theme, automatischer Start, automatischer Updater, atomare Schreibvorgänge, automatische Backups, i18n (zh/en/ja)
+- Dunkles / Helles / System-Theme, automatischer Start, automatischer Updater, atomare Schreibvorgänge, automatische Backups, i18n (zh/zh-TW/en/ja)
 
 ## FAQ
 
 <details>
-<summary><strong>Welche KI-CLI-Werkzeuge unterstützt CC Switch?</strong></summary>
+<summary><strong>Welche KI-Werkzeuge unterstützt CC Switch?</strong></summary>
 
-CC Switch unterstützt fünf Werkzeuge: **Claude Code**, **Codex**, **Gemini CLI**, **OpenCode** und **OpenClaw**. Jedes Werkzeug verfügt über dedizierte Anbieter-Presets und Konfigurationsverwaltung.
+CC Switch unterstützt sieben Werkzeuge: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **OpenCode**, **OpenClaw** und **Hermes**. Jedes Werkzeug verfügt über dedizierte Anbieter-Presets und Konfigurationsverwaltung.
 
 </details>
 
@@ -280,8 +280,8 @@ Ausführliche Anleitungen zu jeder Funktion finden Sie im **[Benutzerhandbuch](d
 
 - **MCP**: Klicken Sie auf die Schaltfläche „MCP" → Server über Vorlagen oder eigene Konfiguration hinzufügen → Synchronisierung pro App umschalten
 - **Prompts**: Klicken Sie auf „Prompts" → Presets mit dem Markdown-Editor erstellen → Aktivieren, um mit den Live-Dateien zu synchronisieren
-- **Skills**: Klicken Sie auf „Skills" → GitHub-Repositorys durchsuchen → mit einem Klick in allen Apps installieren
-- **Sessions**: Klicken Sie auf „Sessions" → Gesprächsverlauf über alle Apps hinweg durchsuchen, suchen und wiederherstellen
+- **Skills**: Klicken Sie auf „Skills" → GitHub-Repositorys durchsuchen → mit einem Klick in unterstützte Apps installieren
+- **Sessions**: Klicken Sie auf „Sessions" → Gesprächsverlauf aus unterstützten Sitzungsquellen durchsuchen, suchen und wiederherstellen
 
 > **Hinweis**: Beim Erststart können Sie bestehende CLI-Werkzeug-Konfigurationen manuell als Standardanbieter importieren.
 
@@ -494,7 +494,7 @@ pnpm test:unit --coverage
 │   ├── lib/
 │   │   ├── api/                # Tauri-API-Wrapper (typsicher)
 │   │   └── query/              # TanStack-Query-Konfiguration
-│   ├── locales/                # Übersetzungen (zh/en/ja)
+│   ├── locales/                # Übersetzungen (zh/zh-TW/en/ja)
 │   ├── config/                 # Presets (providers/mcp)
 │   └── types/                  # TypeScript-Definitionen
 ├── src-tauri/                  # Backend (Rust)

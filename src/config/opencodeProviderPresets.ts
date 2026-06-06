@@ -442,7 +442,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       npm: "@ai-sdk/openai-compatible",
       name: "Zhipu GLM",
       options: {
-        baseURL: "https://open.bigmodel.cn/api/paas/v4",
+        baseURL: "https://open.bigmodel.cn/api/coding/paas/v4",
         apiKey: "",
         setCacheKey: true,
       },
@@ -456,8 +456,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     templateValues: {
       baseURL: {
         label: "Base URL",
-        placeholder: "https://open.bigmodel.cn/api/paas/v4",
-        defaultValue: "https://open.bigmodel.cn/api/paas/v4",
+        placeholder: "https://open.bigmodel.cn/api/coding/paas/v4",
+        defaultValue: "https://open.bigmodel.cn/api/coding/paas/v4",
         editorValue: "",
       },
       apiKey: {
@@ -475,7 +475,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       npm: "@ai-sdk/openai-compatible",
       name: "Zhipu GLM en",
       options: {
-        baseURL: "https://api.z.ai/v1",
+        baseURL: "https://api.z.ai/api/coding/paas/v4",
         apiKey: "",
         setCacheKey: true,
       },
@@ -489,8 +489,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     templateValues: {
       baseURL: {
         label: "Base URL",
-        placeholder: "https://api.z.ai/v1",
-        defaultValue: "https://api.z.ai/v1",
+        placeholder: "https://api.z.ai/api/coding/paas/v4",
+        defaultValue: "https://api.z.ai/api/coding/paas/v4",
         editorValue: "",
       },
       apiKey: {
@@ -990,6 +990,33 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "CherryIN",
+    websiteUrl: "https://open.cherryin.ai",
+    apiKeyUrl: "https://open.cherryin.ai/console/token",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "CherryIN",
+      options: {
+        baseURL: "https://open.cherryin.net/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "anthropic/claude-sonnet-4.6": { name: "Claude Sonnet 4.6" },
+        "anthropic/claude-opus-4.8": { name: "Claude Opus 4.8" },
+      },
+    },
+    category: "aggregator",
+    icon: "cherryin",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "DMXAPI",
     websiteUrl: "https://www.dmxapi.cn",
     apiKeyUrl: "https://www.dmxapi.cn",
@@ -1223,7 +1250,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     websiteUrl: "https://apinebula.com",
     apiKeyUrl: "https://apinebula.com/02rw5X",
     settingsConfig: {
-      npm: "@ai-sdk/openai",
+      npm: "@ai-sdk/openai-compatible",
       name: "APINebula",
       options: {
         baseURL: "https://apinebula.com/v1",

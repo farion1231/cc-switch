@@ -14,7 +14,7 @@ import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
 import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
-import { PROVIDER_TYPES } from "@/config/constants";
+import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
@@ -158,7 +158,13 @@ export function ProviderCard({
 
   const usageEnabled = provider.meta?.usage_script?.enabled ?? false;
   const isOfficial = isOfficialProvider(provider, appId);
-  // 注意：isOfficialBlockedByProxy 已去除（不再硬禁用「已拦截」按钮；守卫弹窗接管了这一职责）。
+  const supportsOfficialSubscription =
+    isOfficial && ["claude", "codex", "gemini"].includes(appId);
+  const isOfficialSubscriptionUsage =
+    provider.meta?.usage_script?.templateType ===
+    TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
+  const officialSubscriptionEnabled =
+    supportsOfficialSubscription && usageEnabled && isOfficialSubscriptionUsage;
   const isCopilot =
     provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
     provider.meta?.usage_script?.templateType === "github_copilot";
@@ -186,7 +192,7 @@ export function ProviderCard({
     : 0;
 
   const { data: usage } = useUsageQuery(provider.id, appId, {
-    enabled: usageEnabled,
+    enabled: usageEnabled && !isOfficial && !isOfficialSubscriptionUsage,
     autoQueryInterval,
   });
 
@@ -403,11 +409,16 @@ export function ProviderCard({
                   isCurrent={isCurrent}
                 />
               ) : isOfficial ? (
-                <SubscriptionQuotaFooter
-                  appId={appId}
-                  inline={true}
-                  isCurrent={isCurrent}
-                />
+                officialSubscriptionEnabled ? (
+                  <SubscriptionQuotaFooter
+                    appId={appId}
+                    inline={true}
+                    isCurrent={isCurrent}
+                    autoQueryInterval={
+                      provider.meta?.usage_script?.autoQueryInterval ?? 0
+                    }
+                  />
+                ) : null
               ) : hasMultiplePlans ? (
                 <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
                   <span className="font-medium">
@@ -474,7 +485,9 @@ export function ProviderCard({
                   : undefined
               }
               onConfigureUsage={
-                isOfficial || isCopilot || isCodexOauth
+                (isOfficial && !supportsOfficialSubscription) ||
+                isCopilot ||
+                isCodexOauth
                   ? undefined
                   : () => onConfigureUsage(provider)
               }

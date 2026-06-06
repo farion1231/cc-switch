@@ -69,6 +69,22 @@ use tauri::RunEvent;
 use tauri::{Emitter, Manager};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
+#[cfg(target_os = "windows")]
+fn set_windows_app_user_model_id(app: &tauri::AppHandle) {
+    let app_id = app.config().identifier.clone();
+    let wide_app_id: Vec<u16> = app_id.encode_utf16().chain(std::iter::once(0)).collect();
+
+    let result = unsafe {
+        windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(wide_app_id.as_ptr())
+    };
+
+    if result < 0 {
+        log::warn!("设置 Windows AppUserModelID 失败: 0x{result:08X}");
+    } else {
+        log::debug!("Windows AppUserModelID 已设置为 {app_id}");
+    }
+}
+
 fn redact_url_for_log(url_str: &str) -> String {
     match url::Url::parse(url_str) {
         Ok(url) => {
@@ -288,6 +304,8 @@ pub fn run() {
             // 预先刷新 Store 覆盖配置，确保后续路径读取正确（日志/数据库等）
             app_store::refresh_app_config_dir_override(app.handle());
             panic_hook::init_app_config_dir(crate::config::get_app_config_dir());
+            #[cfg(target_os = "windows")]
+            set_windows_app_user_model_id(app.handle());
 
             // 注册 Updater 插件（桌面端）
             #[cfg(desktop)]
@@ -865,6 +883,10 @@ pub fn run() {
                 app_state.db.clone(),
                 app.handle().clone(),
             );
+            crate::services::s3_auto_sync::start_worker(
+                app_state.db.clone(),
+                app.handle().clone(),
+            );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
@@ -1021,6 +1043,10 @@ pub fn run() {
                         "Gemini usage initial sync",
                         crate::services::session_usage_gemini::sync_gemini_usage(db),
                     );
+                    run_step(
+                        "OpenCode usage initial sync",
+                        crate::services::session_usage_opencode::sync_opencode_usage(db),
+                    );
 
                     // 定期同步
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
@@ -1040,6 +1066,10 @@ pub fn run() {
                         run_step(
                             "Gemini usage periodic sync",
                             crate::services::session_usage_gemini::sync_gemini_usage(db),
+                        );
+                        run_step(
+                            "OpenCode usage periodic sync",
+                            crate::services::session_usage_opencode::sync_opencode_usage(db),
                         );
                     }
                 });
@@ -1105,6 +1135,7 @@ pub fn run() {
             commands::get_claude_desktop_status,
             commands::get_claude_desktop_default_routes,
             commands::import_claude_desktop_providers_from_claude,
+            commands::ensure_claude_desktop_official_provider,
             commands::get_claude_config_status,
             commands::get_config_status,
             commands::get_claude_code_config_path,
@@ -1197,6 +1228,11 @@ pub fn run() {
             commands::webdav_sync_download,
             commands::webdav_sync_save_settings,
             commands::webdav_sync_fetch_remote_info,
+            commands::s3_test_connection,
+            commands::s3_sync_upload,
+            commands::s3_sync_download,
+            commands::s3_sync_save_settings,
+            commands::s3_sync_fetch_remote_info,
             commands::save_file_dialog,
             commands::open_file_dialog,
             commands::open_zip_file_dialog,

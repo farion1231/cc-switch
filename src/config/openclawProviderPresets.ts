@@ -306,7 +306,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
     settingsConfig: {
-      baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+      baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
       apiKey: "",
       api: "openai-completions",
       models: [
@@ -324,8 +324,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     templateValues: {
       baseUrl: {
         label: "Base URL",
-        placeholder: "https://open.bigmodel.cn/api/paas/v4",
-        defaultValue: "https://open.bigmodel.cn/api/paas/v4",
+        placeholder: "https://open.bigmodel.cn/api/coding/paas/v4",
+        defaultValue: "https://open.bigmodel.cn/api/coding/paas/v4",
         editorValue: "",
       },
       apiKey: {
@@ -344,7 +344,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     websiteUrl: "https://z.ai",
     apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
     settingsConfig: {
-      baseUrl: "https://api.z.ai/v1",
+      baseUrl: "https://api.z.ai/api/coding/paas/v4",
       apiKey: "",
       api: "openai-completions",
       models: [
@@ -362,8 +362,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     templateValues: {
       baseUrl: {
         label: "Base URL",
-        placeholder: "https://api.z.ai/v1",
-        defaultValue: "https://api.z.ai/v1",
+        placeholder: "https://api.z.ai/api/coding/paas/v4",
+        defaultValue: "https://api.z.ai/api/coding/paas/v4",
         editorValue: "",
       },
       apiKey: {
@@ -897,6 +897,47 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       modelCatalog: {
         "aihubmix/claude-opus-4-8": { alias: "Opus" },
         "aihubmix/claude-sonnet-4-6": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
+    name: "CherryIN",
+    websiteUrl: "https://open.cherryin.ai",
+    apiKeyUrl: "https://open.cherryin.ai/console/token",
+    settingsConfig: {
+      baseUrl: "https://open.cherryin.net",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "anthropic/claude-opus-4.8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+        },
+        {
+          id: "anthropic/claude-sonnet-4.6",
+          name: "Claude Sonnet 4.6",
+          contextWindow: 1000000,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "cherryin",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "cherryin/anthropic/claude-opus-4.8",
+        fallbacks: ["cherryin/anthropic/claude-sonnet-4.6"],
+      },
+      modelCatalog: {
+        "cherryin/anthropic/claude-opus-4.8": { alias: "Opus" },
+        "cherryin/anthropic/claude-sonnet-4.6": { alias: "Sonnet" },
       },
     },
   },
