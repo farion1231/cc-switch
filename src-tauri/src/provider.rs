@@ -92,24 +92,19 @@ impl Provider {
                 .pointer("/env/ANTHROPIC_BASE_URL")
                 .is_none_or(value_is_null_or_blank_string),
             crate::app_config::AppType::Codex => {
-                let api_key = self.settings_config.pointer("/auth/OPENAI_API_KEY");
                 let config_text = self.settings_config.get("config").and_then(Value::as_str);
-                let bearer_token = config_text
-                    .and_then(crate::codex_config::extract_codex_experimental_bearer_token);
                 let custom_base_url = config_text
                     .and_then(crate::codex_config::extract_codex_base_url)
                     .is_some_and(|base_url| !codex_base_url_is_official_equivalent(&base_url));
 
-                bearer_token.is_none()
-                    && api_key.is_none_or(value_is_null_or_blank_string)
-                    && !custom_base_url
+                !custom_base_url
             }
             crate::app_config::AppType::Gemini => {
-                let api_key = self.settings_config.pointer("/env/GEMINI_API_KEY");
                 let base_url = self.settings_config.pointer("/env/GOOGLE_GEMINI_BASE_URL");
 
-                api_key.is_none_or(value_is_null_or_blank_string)
-                    && base_url.is_none_or(value_is_null_or_blank_string)
+                base_url
+                    .and_then(Value::as_str)
+                    .is_none_or(gemini_base_url_is_official_equivalent)
             }
             _ => false,
         }
@@ -255,6 +250,19 @@ fn codex_base_url_is_official_equivalent(base_url: &str) -> bool {
     };
 
     matches!(url.host_str(), Some("api.openai.com") | Some("chatgpt.com"))
+}
+
+fn gemini_base_url_is_official_equivalent(base_url: &str) -> bool {
+    let Ok(url) = url::Url::parse(base_url.trim()) else {
+        return false;
+    };
+
+    matches!(
+        url.host_str(),
+        Some("generativelanguage.googleapis.com")
+            | Some("aiplatform.googleapis.com")
+            | Some("vertexai.googleapis.com")
+    )
 }
 
 /// 供应商管理器
@@ -1112,6 +1120,39 @@ wire_api = "responses""#
     }
 
     #[test]
+    fn codex_keyed_default_endpoint_is_official_equivalent() {
+        let provider = Provider::with_id(
+            "keyed-openai-codex".to_string(),
+            "Keyed OpenAI Codex".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-test" },
+                "config": r#"model_provider = "openai"
+            model = "gpt-5.4""#
+            }),
+            None,
+        );
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Codex));
+    }
+
+    #[test]
+    fn codex_bearer_token_default_endpoint_is_official_equivalent() {
+        let provider = Provider::with_id(
+            "bearer-openai-codex".to_string(),
+            "Bearer OpenAI Codex".to_string(),
+            json!({
+                "auth": {},
+                "config": r#"model_provider = "openai"
+experimental_bearer_token = "ey-token"
+model = "gpt-5.4""#
+            }),
+            None,
+        );
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Codex));
+    }
+
+    #[test]
     fn codex_official_category_overrides_custom_base_url() {
         let mut provider = Provider::with_id(
             "official-codex".to_string(),
@@ -1125,6 +1166,54 @@ wire_api = "responses""#
         provider.category = Some("official".to_string());
 
         assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Codex));
+    }
+
+    #[test]
+    fn gemini_keyed_default_endpoint_is_official_equivalent() {
+        let provider = Provider::with_id(
+            "keyed-google-gemini".to_string(),
+            "Keyed Google Gemini".to_string(),
+            json!({
+                "env": { "GEMINI_API_KEY": "gemini-key" }
+            }),
+            None,
+        );
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Gemini));
+    }
+
+    #[test]
+    fn gemini_keyed_google_endpoint_is_official_equivalent() {
+        let provider = Provider::with_id(
+            "keyed-google-gemini-url".to_string(),
+            "Keyed Google Gemini URL".to_string(),
+            json!({
+                "env": {
+                    "GEMINI_API_KEY": "gemini-key",
+                    "GOOGLE_GEMINI_BASE_URL": "https://generativelanguage.googleapis.com"
+                }
+            }),
+            None,
+        );
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Gemini));
+    }
+
+    #[test]
+    fn gemini_keyed_custom_base_url_is_not_official_equivalent() {
+        let provider = Provider::with_id(
+            "keyed-packy-gemini".to_string(),
+            "Keyed Packy Gemini".to_string(),
+            json!({
+                "env": {
+                    "GEMINI_API_KEY": "gemini-key",
+                    "GOOGLE_GEMINI_BASE_URL": "https://www.packyapi.com"
+                }
+            }),
+            None,
+        );
+
+        assert!(!provider.is_official_equivalent_for_app(&crate::app_config::AppType::Gemini));
     }
 
     #[test]
