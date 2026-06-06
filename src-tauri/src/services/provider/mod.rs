@@ -582,6 +582,38 @@ mod tests {
     }
 
     #[test]
+    fn codex_desktop_provider_key_keeps_openai_when_only_inactive_tables_exist() {
+        let provider = codex_provider(
+            "codex-official",
+            "OpenAI Official",
+            "model_provider = \"openai\"\nmodel = \"gpt-5.4\"\n[model_providers.rightcode]\nname = \"RightCode\"\nbase_url = \"http://127.0.0.1:12345/v1\"\n",
+        );
+
+        let provider_key =
+            ProviderService::codex_desktop_provider_key(&provider).expect("provider key");
+        assert_eq!(
+            provider_key, "openai",
+            "inactive custom provider tables must not change the active OpenAI history key"
+        );
+    }
+
+    #[test]
+    fn codex_desktop_provider_key_maps_active_openai_custom_override_to_stable_key() {
+        let provider = codex_provider(
+            "codex-api",
+            "Codex API",
+            "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n[model_providers.OpenAI]\nname = \"OpenAI\"\nbase_url = \"http://127.0.0.1:12345/v1\"\n[model_providers.rightcode]\nname = \"RightCode\"\nbase_url = \"http://127.0.0.1:23456/v1\"\n",
+        );
+
+        let provider_key =
+            ProviderService::codex_desktop_provider_key(&provider).expect("provider key");
+        assert_eq!(
+            provider_key, CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+            "only an active OpenAI provider table with a custom endpoint should use the stable custom key"
+        );
+    }
+
+    #[test]
     #[serial]
     fn switch_codex_to_official_relabels_dangling_ccswitch_history_to_openai() {
         with_test_home(|state, home| {
@@ -4969,7 +5001,9 @@ impl ProviderService {
             }
             return Ok(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
         }
-        if provider_key.eq_ignore_ascii_case("openai") && config.contains("[model_providers.") {
+        if provider_key.eq_ignore_ascii_case("openai")
+            && codex_config_has_model_provider_table(config, &provider_key)
+        {
             return Ok(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
         }
         if provider_key.eq_ignore_ascii_case("openai") {
