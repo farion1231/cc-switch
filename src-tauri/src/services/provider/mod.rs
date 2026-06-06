@@ -1918,6 +1918,91 @@ mod tests {
 
     #[test]
     #[serial]
+    fn sync_current_claude_profile_only_preserves_profile_mcp_file() {
+        let _env_guard = UserEnvVarGuard::new("CLAUDE_CONFIG_DIR");
+        with_test_home(|state, home| {
+            let profile_dir = home.join(".claude-profiles").join("official");
+            fs::create_dir_all(&profile_dir).expect("create official profile dir");
+            write_json_file(
+                &profile_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "official-live-token",
+                        "ANTHROPIC_BASE_URL": "https://official-live.example"
+                    }
+                }),
+            )
+            .expect("seed official profile settings");
+            let profile_mcp_path = profile_dir.with_extension("json");
+            let existing_profile_mcp = json!({
+                "mcpServers": {
+                    "external": {
+                        "type": "stdio",
+                        "command": "external-tool"
+                    }
+                },
+                "profileOwned": true
+            });
+            write_json_file(&profile_mcp_path, &existing_profile_mcp)
+                .expect("seed profile-owned mcp file");
+
+            let profile_provider = claude_provider(
+                "claude-official",
+                "Claude Official",
+                "provider-token-should-not-write",
+                "https://provider-should-not-write.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(profile_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &profile_provider)
+                .expect("save profile-only provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "claude-official")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("claude-official"))
+                .expect("set local current provider");
+            state
+                .db
+                .save_mcp_server(&McpServer {
+                    id: "managed-mcp".to_string(),
+                    name: "Managed MCP".to_string(),
+                    server: json!({
+                        "type": "stdio",
+                        "command": "python",
+                        "args": ["-m", "managed_mcp"]
+                    }),
+                    apps: McpApps {
+                        claude: true,
+                        ..Default::default()
+                    },
+                    description: None,
+                    homepage: None,
+                    docs: None,
+                    tags: Vec::new(),
+                })
+                .expect("save managed mcp server");
+
+            ProviderService::sync_current_provider_for_app(state, AppType::Claude)
+                .expect("sync current profile-only provider");
+
+            let profile_mcp: Value =
+                read_json_file(&profile_mcp_path).expect("read profile mcp file");
+            assert_eq!(
+                profile_mcp, existing_profile_mcp,
+                "profile-only current sync must not rewrite the selected profile's MCP file"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn sync_current_claude_profile_only_preserves_takeover_backup() {
         with_test_home(|state, home| {
             let official_dir = home.join(".claude-profiles").join("official");

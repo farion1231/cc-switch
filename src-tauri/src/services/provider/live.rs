@@ -933,6 +933,8 @@ pub(crate) fn sync_current_provider_for_app_to_live(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<(), AppError> {
+    let mut preserve_claude_profile_mcp = false;
+
     if app_type.is_additive_mode() {
         sync_all_providers_to_live(state, app_type)?;
     } else {
@@ -944,13 +946,14 @@ pub(crate) fn sync_current_provider_for_app_to_live(
 
         let providers = state.db.get_all_providers(app_type.as_str())?;
         if let Some(provider) = providers.get(&current_id) {
-            if !is_claude_profile_only(app_type, provider) {
+            preserve_claude_profile_mcp = is_claude_profile_only(app_type, provider);
+            if !preserve_claude_profile_mcp {
                 write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
             }
         }
     }
 
-    McpService::sync_all_enabled(state)?;
+    sync_mcp_preserving_claude_profile_only(state, preserve_claude_profile_mcp)?;
 
     Ok(())
 }
@@ -1023,7 +1026,10 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     }
 
     // MCP sync
-    McpService::sync_all_enabled(state)?;
+    sync_mcp_preserving_claude_profile_only(
+        state,
+        current_claude_provider_is_profile_only(state)?,
+    )?;
 
     // Skill sync
     for app_type in AppType::all() {
@@ -1034,6 +1040,30 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     }
 
     Ok(())
+}
+
+fn sync_mcp_preserving_claude_profile_only(
+    state: &AppState,
+    preserve_claude_profile_mcp: bool,
+) -> Result<(), AppError> {
+    if preserve_claude_profile_mcp {
+        McpService::sync_all_enabled_without_claude(state)
+    } else {
+        McpService::sync_all_enabled(state)
+    }
+}
+
+fn current_claude_provider_is_profile_only(state: &AppState) -> Result<bool, AppError> {
+    let Some(current_id) =
+        crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)?
+    else {
+        return Ok(false);
+    };
+
+    let providers = state.db.get_all_providers(AppType::Claude.as_str())?;
+    Ok(providers
+        .get(&current_id)
+        .is_some_and(|provider| is_claude_profile_only(&AppType::Claude, provider)))
 }
 
 fn is_claude_profile_only(app_type: &AppType, provider: &Provider) -> bool {
