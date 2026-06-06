@@ -272,7 +272,8 @@ function App() {
   const shouldShowProxyToggle =
     activeApp === "claude"
       ? Boolean(
-          isCurrentAppTakeoverActive || currentProvider?.meta?.imageModel?.trim(),
+          isCurrentAppTakeoverActive ||
+            currentProvider?.meta?.imageModel?.trim(),
         )
       : Boolean(settingsData?.enableLocalProxy || isCurrentAppTakeoverActive);
   const isOpenClawView =

@@ -1006,9 +1006,7 @@ export function ClaudeDesktopProviderForm({
                       <Input
                         id="claudeDesktopImageModel"
                         value={imageModel}
-                        onChange={(event) =>
-                          setImageModel(event.target.value)
-                        }
+                        onChange={(event) => setImageModel(event.target.value)}
                         placeholder={t("providerForm.imageModelPlaceholder", {
                           defaultValue: "例如 qwen3.7-plus",
                         })}

@@ -61,7 +61,9 @@ export function useProviderActions(
 
       await proxyApi.setProxyTakeoverForApp("claude", true);
       await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
-      await queryClient.invalidateQueries({ queryKey: ["proxyTakeoverStatus"] });
+      await queryClient.invalidateQueries({
+        queryKey: ["proxyTakeoverStatus"],
+      });
       toast.success(
         t("notifications.claudeProxyTakeoverEnabled", {
           defaultValue: "已接管 Claude Code 配置，请重启 Claude Code 后生效",
@@ -174,11 +176,17 @@ export function useProviderActions(
           await ensureClaudeProxyTakeover(provider);
         }
       } else if (activeApp === "claude" && isProxyTakeover) {
-        await proxyApi.setProxyTakeoverForApp("claude", false);
-        await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
-        await queryClient.invalidateQueries({
-          queryKey: ["proxyTakeoverStatus"],
-        });
+        const currentProviderId = await providersApi.getCurrent(activeApp);
+        if (
+          currentProviderId === provider.id ||
+          (originalId && currentProviderId === originalId)
+        ) {
+          await proxyApi.setProxyTakeoverForApp("claude", false);
+          await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
+          await queryClient.invalidateQueries({
+            queryKey: ["proxyTakeoverStatus"],
+          });
+        }
       }
 
       // 更新托盘菜单（失败不影响主操作）
