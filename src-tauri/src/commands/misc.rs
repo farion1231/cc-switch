@@ -3165,6 +3165,7 @@ fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), S
 ///
 /// **Security**：`command_line` 会被原样拼进 shell/batch 脚本，调用方必须
 /// 保证它是可信字符串（当前只由后端硬编码调用）。
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 pub(crate) fn launch_terminal_running(
     command_line: &str,
     label: &str,
