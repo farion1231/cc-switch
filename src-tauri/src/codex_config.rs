@@ -1141,6 +1141,8 @@ pub fn restore_codex_settings_for_backfill(
 ///   otherwise falls back to top-level `base_url`.
 /// - `"wire_api"`: writes to `[model_providers.<current>].wire_api` if `model_provider` exists,
 ///   otherwise falls back to top-level `wire_api`.
+/// - `"supports_websockets"`: writes to `[model_providers.<current>].supports_websockets` as a
+///   TOML boolean if `model_provider` exists, otherwise falls back to top-level.
 /// - `"model"` / `"model_catalog_json"`: writes to top-level field.
 ///
 /// Empty value removes the field.
@@ -1152,7 +1154,7 @@ pub fn update_codex_toml_field(toml_str: &str, field: &str, value: &str) -> Resu
     let trimmed = value.trim();
 
     match field {
-        "base_url" | "wire_api" => {
+        "base_url" | "wire_api" | "supports_websockets" => {
             let model_provider = doc
                 .get("model_provider")
                 .and_then(|item| item.as_str())
@@ -1173,6 +1175,12 @@ pub fn update_codex_toml_field(toml_str: &str, field: &str, value: &str) -> Resu
                     if let Some(provider_table) = model_providers[&provider_key].as_table_mut() {
                         if trimmed.is_empty() {
                             provider_table.remove(field);
+                        } else if field == "supports_websockets" {
+                            let value = trimmed
+                                .parse::<bool>()
+                                .map_err(|_| format!("{field} must be true or false"))?;
+                            provider_table[field] = toml_edit::value(value);
+                            doc.as_table_mut().remove(field);
                         } else {
                             provider_table[field] = toml_edit::value(trimmed);
                         }
@@ -1184,6 +1192,11 @@ pub fn update_codex_toml_field(toml_str: &str, field: &str, value: &str) -> Resu
             // Fallback: no model_provider or structure mismatch → top-level field
             if trimmed.is_empty() {
                 doc.as_table_mut().remove(field);
+            } else if field == "supports_websockets" {
+                let value = trimmed
+                    .parse::<bool>()
+                    .map_err(|_| format!("{field} must be true or false"))?;
+                doc[field] = toml_edit::value(value);
             } else {
                 doc[field] = toml_edit::value(trimmed);
             }
@@ -1451,6 +1464,7 @@ wire_api = "responses"
     fn base_url_writes_into_correct_model_provider_section() {
         let input = r#"model_provider = "any"
 model = "gpt-5.1-codex"
+supports_websockets = false
 
 [model_providers.any]
 name = "any"
@@ -1458,6 +1472,7 @@ wire_api = "responses"
 "#;
 
         let result = update_codex_toml_field(input, "base_url", "https://example.com/v1").unwrap();
+        let result = update_codex_toml_field(&result, "supports_websockets", "true").unwrap();
         let parsed: toml::Value = toml::from_str(&result).unwrap();
 
         let base_url = parsed
@@ -1468,8 +1483,17 @@ wire_api = "responses"
             .expect("base_url should be in model_providers.any");
         assert_eq!(base_url, "https://example.com/v1");
 
+        let supports_websockets = parsed
+            .get("model_providers")
+            .and_then(|v| v.get("any"))
+            .and_then(|v| v.get("supports_websockets"))
+            .and_then(|v| v.as_bool())
+            .expect("supports_websockets should be in model_providers.any");
+        assert_eq!(supports_websockets, true);
+
         // Should NOT have top-level base_url
         assert!(parsed.get("base_url").is_none());
+        assert!(parsed.get("supports_websockets").is_none());
 
         // wire_api preserved
         let wire_api = parsed
@@ -1511,12 +1535,27 @@ wire_api = "chat"
     }
 
     #[test]
+    fn supports_websockets_rejects_non_boolean_values() {
+        let input = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Custom"
+"#;
+
+        let error =
+            update_codex_toml_field(input, "supports_websockets", "yes").expect_err("should fail");
+
+        assert_eq!(error, "supports_websockets must be true or false");
+    }
+
+    #[test]
     fn base_url_creates_section_when_missing() {
         let input = r#"model_provider = "custom"
 model = "gpt-4"
 "#;
 
         let result = update_codex_toml_field(input, "base_url", "https://custom.api/v1").unwrap();
+        let result = update_codex_toml_field(&result, "supports_websockets", "true").unwrap();
         let parsed: toml::Value = toml::from_str(&result).unwrap();
 
         let base_url = parsed
@@ -1526,6 +1565,15 @@ model = "gpt-4"
             .and_then(|v| v.as_str())
             .expect("should create section and set base_url");
         assert_eq!(base_url, "https://custom.api/v1");
+
+        let supports_websockets = parsed
+            .get("model_providers")
+            .and_then(|v| v.get("custom"))
+            .and_then(|v| v.get("supports_websockets"))
+            .and_then(|v| v.as_bool())
+            .expect("should set supports_websockets");
+        assert_eq!(supports_websockets, true);
+        assert!(parsed.get("supports_websockets").is_none());
     }
 
     #[test]
@@ -1534,13 +1582,20 @@ model = "gpt-4"
 "#;
 
         let result = update_codex_toml_field(input, "base_url", "https://fallback.api/v1").unwrap();
+        let result = update_codex_toml_field(&result, "supports_websockets", "false").unwrap();
         let parsed: toml::Value = toml::from_str(&result).unwrap();
 
         let base_url = parsed
             .get("base_url")
             .and_then(|v| v.as_str())
             .expect("should set top-level base_url");
+        let supports_websockets = parsed
+            .get("supports_websockets")
+            .and_then(|v| v.as_bool())
+            .expect("should set top-level supports_websockets");
         assert_eq!(base_url, "https://fallback.api/v1");
+        assert_eq!(supports_websockets, false);
+        assert!(parsed.get("model_providers").is_none());
     }
 
     #[test]
@@ -1550,6 +1605,7 @@ model = "gpt-4"
 [model_providers.any]
 name = "any"
 base_url = "https://old.api/v1"
+supports_websockets = true
 wire_api = "responses"
 
 [mcp_servers.context7]
@@ -1557,14 +1613,16 @@ command = "npx"
 "#;
 
         let result = update_codex_toml_field(input, "base_url", "").unwrap();
+        let result = update_codex_toml_field(&result, "supports_websockets", "").unwrap();
         let parsed: toml::Value = toml::from_str(&result).unwrap();
 
-        // base_url removed from model_providers.any
+        // base_url and supports_websockets removed from model_providers.any
         let any_section = parsed
             .get("model_providers")
             .and_then(|v| v.get("any"))
             .expect("model_providers.any should exist");
         assert!(any_section.get("base_url").is_none());
+        assert!(any_section.get("supports_websockets").is_none());
 
         // wire_api preserved
         assert_eq!(
