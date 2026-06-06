@@ -548,6 +548,12 @@ pub(crate) fn sync_common_config_from_live(
     db: &Database,
     app_type: &AppType,
 ) -> Result<(), AppError> {
+    // Skip sync if the user explicitly cleared common config — don't
+    // re-enable it automatically from stale live fields.
+    if db.is_config_snippet_cleared(app_type.as_str())? {
+        return Ok(());
+    }
+
     let live_settings = read_live_settings(app_type.clone())?;
 
     let snippet =
