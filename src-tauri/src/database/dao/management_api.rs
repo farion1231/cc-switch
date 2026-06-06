@@ -440,6 +440,7 @@ impl Database {
         .map_err(Into::into)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_api_audit_log(
         &self,
         token_id: Option<&str>,

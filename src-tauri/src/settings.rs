@@ -410,12 +410,10 @@ impl ManagementApiSettings {
                 "Management API CORS origins must be exact origins; '*' is not allowed".to_string(),
             ));
         }
-        if self.lan_enabled {
-            if self.allowed_cidrs.is_empty() {
-                return Err(AppError::InvalidInput(
-                    "LAN Management API mode requires at least one allowed CIDR".to_string(),
-                ));
-            }
+        if self.lan_enabled && self.allowed_cidrs.is_empty() {
+            return Err(AppError::InvalidInput(
+                "LAN Management API mode requires at least one allowed CIDR".to_string(),
+            ));
         }
         Ok(())
     }
@@ -737,6 +735,7 @@ fn save_settings_file(settings: &AppSettings) -> Result<(), AppError> {
     #[cfg(unix)]
     {
         use std::fs::OpenOptions;
+        use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
 
         let mut file = OpenOptions::new()

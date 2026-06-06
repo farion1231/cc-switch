@@ -1802,6 +1802,7 @@ fn api_app_state(state: &HttpState) -> AppState {
     }
 }
 
+#[allow(clippy::result_large_err)]
 fn parse_app_param(app: &str) -> Result<AppType, Response> {
     AppType::from_str(app).map_err(|e| {
         api_error(
@@ -6036,6 +6037,7 @@ async fn events(
     Sse::new(stream).into_response()
 }
 
+#[allow(clippy::result_large_err)]
 fn require_auth(
     state: &HttpState,
     headers: &HeaderMap,
