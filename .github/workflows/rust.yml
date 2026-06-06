@@ -1,0 +1,66 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # 推送tag时自动发布
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+    - name: 运行测试
+      run: cargo test --verbose
+  
+  build:
+    needs: test
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        target: [x86_64-pc-windows-msvc, i686-pc-windows-msvc]
+    
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        target: ${{ matrix.target }}
+    
+    - name: 编译
+      run: cargo build --release --target ${{ matrix.target }}
+    
+    - name: 压缩exe文件
+      run: |
+        cd target/${{ matrix.target }}/release
+        Compress-Archive -Path *.exe -DestinationPath myapp-${{ matrix.target }}.zip
+    
+    - name: 上传产物
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.target }}
+        path: target/${{ matrix.target }}/release/*.zip
+  
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+    - name: 下载所有产物
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+    
+    - name: 创建Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: artifacts/**/*.zip
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
