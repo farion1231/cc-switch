@@ -283,6 +283,10 @@ fn collect_source_model_provider_ids(
     if include_standard_history_buckets {
         ids.insert(OPENAI_CODEX_MODEL_PROVIDER_ID.to_string());
         ids.insert(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
+        ids.insert(LEGACY_CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
+        for provider_id in CC_SWITCH_LEGACY_CODEX_MODEL_PROVIDER_IDS {
+            ids.insert((*provider_id).to_string());
+        }
     }
 
     for provider in providers.values() {
@@ -1603,7 +1607,22 @@ base_url = "https://proxy.example/v1"
         assert!(manual_repair_ids.contains("openai"));
         assert!(manual_repair_ids.contains("rightcode"));
         assert!(manual_repair_ids.contains("aihubmix"));
+        assert!(manual_repair_ids.contains("ccswitch"));
         assert!(!manual_repair_ids.contains("codex-official"));
+    }
+
+    #[test]
+    fn manual_repair_seeds_known_legacy_provider_ids_without_saved_providers() {
+        let db = Database::memory().expect("memory db");
+
+        let ids = collect_source_model_provider_ids(&db, true, CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+            .expect("collect manual repair ids");
+
+        assert!(ids.contains("openai"));
+        assert!(ids.contains("ccswitch"));
+        assert!(ids.contains("aihubmix"));
+        assert!(ids.contains("deepseek"));
+        assert!(!ids.contains(CC_SWITCH_CODEX_MODEL_PROVIDER_ID));
     }
 
     #[test]
