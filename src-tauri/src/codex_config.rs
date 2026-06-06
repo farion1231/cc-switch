@@ -252,17 +252,6 @@ fn codex_model_provider_id_and_table_from_config(
     Ok(Some((provider_id, provider_table)))
 }
 
-pub fn codex_config_has_model_provider_table(config_text: &str, provider_id: &str) -> bool {
-    let Ok(doc) = config_text.parse::<DocumentMut>() else {
-        return false;
-    };
-
-    doc.get("model_providers")
-        .and_then(|item| item.as_table())
-        .and_then(|table| table.get(provider_id))
-        .is_some()
-}
-
 fn normalize_codex_live_config_model_provider_with_anchors<'a>(
     config_text: &str,
     anchor_config_texts: impl IntoIterator<Item = &'a str>,

@@ -16,8 +16,7 @@ use std::path::{Path, PathBuf};
 
 use crate::app_config::AppType;
 use crate::codex_config::{
-    codex_config_has_model_provider_table, is_cc_switch_codex_model_provider_id,
-    CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+    is_cc_switch_codex_model_provider_id, CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
 };
 use crate::config::{get_claude_settings_path, write_json_file};
 use crate::database::{validate_cost_multiplier, validate_pricing_source};
@@ -610,6 +609,22 @@ mod tests {
         assert_eq!(
             provider_key, CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
             "only an active OpenAI provider table with a custom endpoint should use the stable custom key"
+        );
+    }
+
+    #[test]
+    fn codex_desktop_provider_key_keeps_builtin_openai_table_under_openai() {
+        let provider = codex_provider(
+            "codex-official",
+            "OpenAI Official",
+            "model_provider = \"openai\"\nmodel = \"gpt-5.4\"\n[model_providers.openai]\nname = \"OpenAI\"\nwire_api = \"responses\"\n",
+        );
+
+        let provider_key =
+            ProviderService::codex_desktop_provider_key(&provider).expect("provider key");
+        assert_eq!(
+            provider_key, "openai",
+            "an explicit built-in OpenAI table without a custom endpoint should remain under openai"
         );
     }
 
@@ -4993,17 +5008,17 @@ impl ProviderService {
             return Ok("openai".to_string());
         }
 
+        let custom_codex_base_url = crate::codex_config::extract_codex_base_url(config)
+            .filter(|base_url| !Self::codex_base_url_is_openai_official(base_url));
         let provider_key = crate::codex_config::extract_codex_model_provider(config)
             .unwrap_or_else(|| "openai".to_string());
         if is_cc_switch_codex_model_provider_id(&provider_key) {
-            if !codex_config_has_model_provider_table(config, &provider_key) {
+            if custom_codex_base_url.is_none() {
                 return Ok("openai".to_string());
             }
             return Ok(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
         }
-        if provider_key.eq_ignore_ascii_case("openai")
-            && codex_config_has_model_provider_table(config, &provider_key)
-        {
+        if provider_key.eq_ignore_ascii_case("openai") && custom_codex_base_url.is_some() {
             return Ok(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
         }
         if provider_key.eq_ignore_ascii_case("openai") {
@@ -5011,6 +5026,15 @@ impl ProviderService {
         }
 
         Ok(provider_key)
+    }
+
+    fn codex_base_url_is_openai_official(base_url: &str) -> bool {
+        let Ok(url) = url::Url::parse(base_url.trim()) else {
+            return false;
+        };
+
+        url.host_str()
+            .is_some_and(|host| host.eq_ignore_ascii_case("api.openai.com"))
     }
 
     fn codex_provider_where_clause(column: &str) -> String {
