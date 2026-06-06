@@ -5,6 +5,12 @@
 //! `promptTokenCount` both include the cached portion. Any aggregation
 //! summing `input_tokens` across providers must route through
 //! [`fresh_input_sql`] to recover a consistent semantics.
+//!
+//! ## API 格式支持
+//!
+//! OpenCode 可能使用不同的 API 格式（OpenAI/Anthropic/Gemini），
+//! 默认假设使用 OpenAI 兼容格式。如果用户配置 OpenCode 使用 Anthropic API，
+//! 需要手动调整 `CACHE_INCLUSIVE_APP_TYPES` 或使用 `fresh_input_sql_for_api_format`。
 
 /// Set of `app_type` values whose stored `input_tokens` already includes
 /// `cache_read_tokens`. Aggregations subtract cache reads from these rows
@@ -16,7 +22,19 @@
 /// style provider not added here) shows up loudly as a too-low cache hit
 /// rate, which is easier to catch than the silent over-deduction that
 /// would happen with the opposite default.
-const CACHE_INCLUSIVE_APP_TYPES: &[&str] = &["codex", "gemini"];
+const CACHE_INCLUSIVE_APP_TYPES: &[&str] = &["codex", "gemini", "opencode"];
+
+/// 判断 API 格式的 input_tokens 是否包含 cache_read_tokens
+///
+/// - OpenAI/Gemini: 包含（需要减去）
+/// - Anthropic: 不包含（直接使用）
+#[allow(dead_code)]
+pub fn input_includes_cache_read_for_api_format(api_format: &str) -> bool {
+    match api_format {
+        "anthropic" => false,
+        "openai" | "gemini" | _ => true,
+    }
+}
 
 /// Build an SQL expression that returns the cache-normalized `input_tokens`
 /// for a single row in `proxy_request_logs` or `usage_daily_rollups`.
@@ -44,6 +62,29 @@ pub fn fresh_input_sql(alias: &str) -> String {
               THEN ({prefix}input_tokens - {prefix}cache_read_tokens) \
               ELSE {prefix}input_tokens END"
     )
+}
+
+/// Build an SQL expression for fresh input based on API format.
+///
+/// This is a more flexible version that supports different API formats.
+/// Use this when you have access to the API format information.
+#[allow(dead_code)]
+pub fn fresh_input_sql_for_api_format(alias: &str, api_format: &str) -> String {
+    let prefix = if alias.is_empty() {
+        String::new()
+    } else {
+        format!("{alias}.")
+    };
+
+    if input_includes_cache_read_for_api_format(api_format) {
+        format!(
+            "CASE WHEN {prefix}input_tokens >= {prefix}cache_read_tokens \
+                  THEN ({prefix}input_tokens - {prefix}cache_read_tokens) \
+                  ELSE {prefix}input_tokens END"
+        )
+    } else {
+        format!("{prefix}input_tokens")
+    }
 }
 
 #[cfg(test)]

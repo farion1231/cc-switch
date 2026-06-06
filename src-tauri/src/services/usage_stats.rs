@@ -432,6 +432,21 @@ fn local_day_start_rfc3339(day: NaiveDate) -> String {
 }
 
 impl Database {
+    /// 判断 app_type 的 input_tokens 是否包含 cache_read_tokens
+    ///
+    /// - OpenAI/Gemini 格式: 包含（需要减去）
+    /// - Anthropic 格式: 不包含（直接使用）
+    ///
+    /// 对于 OpenCode，默认假设使用 OpenAI 兼容格式（最常见）
+    /// 如果用户配置 OpenCode 使用 Anthropic API，需要手动调整
+    pub fn input_includes_cache_read_for_app(app_type: &str) -> bool {
+        match app_type {
+            "codex" | "gemini" | "opencode" => true,
+            "claude" | "claude-desktop" => false,
+            _ => true,  // 默认假设包含缓存（兼容性最好）
+        }
+    }
+
     /// 获取使用量汇总
     pub fn get_usage_summary(
         &self,
@@ -1562,10 +1577,14 @@ impl Database {
         let million = rust_decimal::Decimal::from(1_000_000u64);
 
         // 与 CostCalculator::calculate_for_app 保持一致的计算逻辑：
-        // 1. Codex/Gemini 的 input_tokens 包含 cache_read_tokens，需要扣除后按输入价计费
+        // 1. Codex/Gemini/OpenCode 的 input_tokens 包含 cache_read_tokens，需要扣除后按输入价计费
         // 2. Claude/Anthropic 的 input_tokens 已经是 fresh input，不能再次扣减
         // 3. 各项成本是基础成本（不含倍率），倍率只作用于最终总价
-        let input_includes_cache_read = matches!(log.app_type.as_str(), "codex" | "gemini");
+        //
+        // 注意：OpenCode 可能使用不同的 API 格式（OpenAI/Anthropic/Gemini）
+        // 这里使用 app_type 判断，因为历史日志中没有 API 格式信息
+        // 对于 OpenCode，默认假设使用 OpenAI 兼容格式（最常见）
+        let input_includes_cache_read = Self::input_includes_cache_read_for_app(&log.app_type);
         let billable_input_tokens = if input_includes_cache_read {
             (log.input_tokens as u64).saturating_sub(log.cache_read_tokens as u64)
         } else {

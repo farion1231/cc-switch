@@ -16,7 +16,7 @@ export function ProviderEmptyState({
 }: ProviderEmptyStateProps) {
   const { t } = useTranslation();
   const showSnippetHint =
-    appId === "claude" || appId === "codex" || appId === "gemini";
+    appId === "claude" || appId === "codex" || appId === "gemini" || appId === "opencode";
 
   return (
     <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border p-10 text-center">

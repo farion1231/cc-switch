@@ -42,7 +42,7 @@ export async function restoreEnvBackup(backupPath: string): Promise<void> {
 export async function checkAllEnvConflicts(): Promise<
   Record<string, EnvConflict[]>
 > {
-  const apps = ["claude", "codex", "gemini"];
+  const apps = ["claude", "codex", "gemini", "opencode"];
   const results: Record<string, EnvConflict[]> = {};
 
   await Promise.all(

@@ -28,6 +28,67 @@ pub struct ModelPricing {
 /// 成本计算器
 pub struct CostCalculator;
 
+/// 从 Provider 配置中提取 API 格式
+///
+/// 支持的配置位置：
+/// 1. settings_config.api_format
+/// 2. settings_config.provider.api_format
+/// 3. 根据 URL 自动推断
+///
+/// 返回值：`"openai"`, `"anthropic"`, `"gemini"` 或默认 `"openai"`
+#[allow(dead_code)]
+pub fn extract_api_format(provider_config: &serde_json::Value) -> String {
+    // 1. 直接从 api_format 字段获取
+    if let Some(format) = provider_config
+        .get("api_format")
+        .and_then(|v| v.as_str())
+    {
+        return format.to_lowercase();
+    }
+
+    // 2. 从 provider 子对象获取
+    if let Some(provider) = provider_config.get("provider") {
+        if let Some(format) = provider.get("api_format").and_then(|v| v.as_str()) {
+            return format.to_lowercase();
+        }
+    }
+
+    // 3. 根据 URL 自动推断
+    if let Some(base_url) = provider_config
+        .get("base_url")
+        .or_else(|| provider_config.get("baseURL"))
+        .or_else(|| {
+            provider_config
+                .get("provider")
+                .and_then(|p| p.get("baseUrl").or_else(|| p.get("base_url")))
+        })
+        .and_then(|v| v.as_str())
+    {
+        let url_lower = base_url.to_lowercase();
+        if url_lower.contains("anthropic") || url_lower.contains("/v1/messages") {
+            return "anthropic".to_string();
+        }
+        if url_lower.contains("googleapis") || url_lower.contains("gemini") {
+            return "gemini".to_string();
+        }
+    }
+
+    // 4. 默认使用 OpenAI 兼容格式
+    "openai".to_string()
+}
+
+/// 判断 API 格式的 input_tokens 是否包含 cache_read_tokens
+///
+/// - OpenAI/Gemini: 包含（需要减去）
+/// - Anthropic: 不包含（直接使用）
+#[allow(dead_code)]
+pub fn input_includes_cache_read_for_api_format(api_format: &str) -> bool {
+    match api_format {
+        "anthropic" => false,
+        "openai" | "gemini" | _ => true,
+    }
+}
+
 impl CostCalculator {
     /// 计算请求成本
     ///
@@ -59,7 +120,33 @@ impl CostCalculator {
         pricing: &ModelPricing,
         cost_multiplier: Decimal,
     ) -> CostBreakdown {
-        let input_includes_cache_read = matches!(app_type, "codex" | "gemini");
+        let input_includes_cache_read = matches!(app_type, "codex" | "gemini" | "opencode");
+        Self::calculate_with_cache_semantics(
+            usage,
+            pricing,
+            cost_multiplier,
+            input_includes_cache_read,
+        )
+    }
+
+    /// 按 API 格式选择输入 token 语义后计算成本。
+    ///
+    /// 支持的 API 格式：
+    /// - `openai` / `gemini`: input_tokens 包含 cache_read_tokens
+    /// - `anthropic`: input_tokens 已经是 fresh input
+    ///
+    /// 默认使用 `openai` 格式（兼容性最好）
+    #[allow(dead_code)]
+    pub fn calculate_for_api_format(
+        api_format: &str,
+        usage: &TokenUsage,
+        pricing: &ModelPricing,
+        cost_multiplier: Decimal,
+    ) -> CostBreakdown {
+        let input_includes_cache_read = match api_format {
+            "anthropic" => false,
+            "openai" | "gemini" | _ => true,  // 默认假设包含缓存
+        };
         Self::calculate_with_cache_semantics(
             usage,
             pricing,

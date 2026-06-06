@@ -21,6 +21,7 @@ pub mod codex_oauth_auth;
 pub mod copilot_auth;
 pub mod copilot_model_map;
 mod gemini;
+mod opencode;
 pub(crate) mod gemini_schema;
 pub mod gemini_shadow;
 pub mod models;
@@ -52,6 +53,7 @@ pub use codex::{
     should_convert_codex_responses_to_chat,
 };
 pub use gemini::GeminiAdapter;
+pub use opencode::OpenCodeAdapter;
 
 /// 供应商类型枚举
 ///
@@ -76,6 +78,8 @@ pub enum ProviderType {
     GitHubCopilot,
     /// OpenAI Codex (ChatGPT Plus/Pro OAuth，需要 Anthropic ↔ Responses API 转换)
     CodexOAuth,
+    /// OpenCode (OpenAI 兼容 API，如 OMO、DeepSeek 等)
+    OpenCode,
 }
 
 impl ProviderType {
@@ -106,6 +110,7 @@ impl ProviderType {
             ProviderType::OpenRouter => "https://openrouter.ai/api",
             ProviderType::GitHubCopilot => "https://api.githubcopilot.com",
             ProviderType::CodexOAuth => "https://chatgpt.com/backend-api/codex",
+            ProviderType::OpenCode => "",
         }
     }
 
@@ -185,7 +190,8 @@ impl ProviderType {
                 }
                 ProviderType::Gemini
             }
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+            AppType::OpenCode => ProviderType::OpenCode,
+            AppType::OpenClaw | AppType::Hermes => {
                 // These apps don't support proxy, fallback to Codex-like type
                 ProviderType::Codex
             }
@@ -203,6 +209,7 @@ impl ProviderType {
             ProviderType::OpenRouter => "openrouter",
             ProviderType::GitHubCopilot => "github_copilot",
             ProviderType::CodexOAuth => "codex_oauth",
+            ProviderType::OpenCode => "opencode",
         }
     }
 }
@@ -228,6 +235,7 @@ impl std::str::FromStr for ProviderType {
                 Ok(ProviderType::GitHubCopilot)
             }
             "codex_oauth" | "codex-oauth" | "codexoauth" => Ok(ProviderType::CodexOAuth),
+            "opencode" | "open-code" => Ok(ProviderType::OpenCode),
             _ => Err(format!("Invalid provider type: {s}")),
         }
     }
@@ -239,7 +247,8 @@ pub fn get_adapter(app_type: &AppType) -> Box<dyn ProviderAdapter> {
         AppType::Claude | AppType::ClaudeDesktop => Box::new(ClaudeAdapter::new()),
         AppType::Codex => Box::new(CodexAdapter::new()),
         AppType::Gemini => Box::new(GeminiAdapter::new()),
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+        AppType::OpenCode => Box::new(OpenCodeAdapter::new()),
+        AppType::OpenClaw | AppType::Hermes => {
             // These apps don't support proxy, fallback to Codex adapter
             Box::new(CodexAdapter::new())
         }
@@ -257,6 +266,7 @@ pub fn get_adapter_for_provider_type(provider_type: &ProviderType) -> Box<dyn Pr
         | ProviderType::CodexOAuth => Box::new(ClaudeAdapter::new()),
         ProviderType::Codex => Box::new(CodexAdapter::new()),
         ProviderType::Gemini | ProviderType::GeminiCli => Box::new(GeminiAdapter::new()),
+        ProviderType::OpenCode => Box::new(OpenCodeAdapter::new()),
     }
 }
 
