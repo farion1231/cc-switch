@@ -93,13 +93,16 @@ impl Provider {
                 .is_none_or(value_is_null_or_blank_string),
             crate::app_config::AppType::Codex => {
                 let api_key = self.settings_config.pointer("/auth/OPENAI_API_KEY");
-                let bearer_token = self
-                    .settings_config
-                    .get("config")
-                    .and_then(Value::as_str)
+                let config_text = self.settings_config.get("config").and_then(Value::as_str);
+                let bearer_token = config_text
                     .and_then(crate::codex_config::extract_codex_experimental_bearer_token);
+                let custom_base_url = config_text
+                    .and_then(crate::codex_config::extract_codex_base_url)
+                    .is_some_and(|base_url| !codex_base_url_is_official_equivalent(&base_url));
 
-                bearer_token.is_none() && api_key.is_none_or(value_is_null_or_blank_string)
+                bearer_token.is_none()
+                    && api_key.is_none_or(value_is_null_or_blank_string)
+                    && !custom_base_url
             }
             crate::app_config::AppType::Gemini => {
                 let api_key = self.settings_config.pointer("/env/GEMINI_API_KEY");
@@ -244,6 +247,14 @@ impl Provider {
 
 fn value_is_null_or_blank_string(value: &Value) -> bool {
     value.is_null() || value.as_str().is_some_and(|value| value.trim().is_empty())
+}
+
+fn codex_base_url_is_official_equivalent(base_url: &str) -> bool {
+    let Ok(url) = url::Url::parse(base_url.trim()) else {
+        return false;
+    };
+
+    matches!(url.host_str(), Some("api.openai.com") | Some("chatgpt.com"))
 }
 
 /// 供应商管理器
@@ -1045,6 +1056,75 @@ mod tests {
             ..Default::default()
         });
         assert!(copilot.is_github_copilot());
+    }
+
+    #[test]
+    fn codex_no_auth_custom_base_url_is_not_official_equivalent() {
+        let provider = Provider::with_id(
+            "local-codex".to_string(),
+            "Local Codex".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": null },
+                "config": r#"model_provider = "ollama"
+
+[model_providers.ollama]
+base_url = "http://localhost:11434/v1"
+wire_api = "responses""#
+            }),
+            None,
+        );
+
+        assert!(!provider.is_official_equivalent_for_app(&crate::app_config::AppType::Codex));
+    }
+
+    #[test]
+    fn codex_no_auth_top_level_custom_base_url_is_not_official_equivalent() {
+        let provider = Provider::with_id(
+            "vllm-codex".to_string(),
+            "vLLM Codex".to_string(),
+            json!({
+                "auth": {},
+                "config": r#"base_url = "http://127.0.0.1:8000/v1""#
+            }),
+            None,
+        );
+
+        assert!(!provider.is_official_equivalent_for_app(&crate::app_config::AppType::Codex));
+    }
+
+    #[test]
+    fn codex_no_auth_openai_base_url_remains_official_equivalent() {
+        let provider = Provider::with_id(
+            "openai-codex".to_string(),
+            "OpenAI Codex".to_string(),
+            json!({
+                "auth": {},
+                "config": r#"model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "responses""#
+            }),
+            None,
+        );
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Codex));
+    }
+
+    #[test]
+    fn codex_official_category_overrides_custom_base_url() {
+        let mut provider = Provider::with_id(
+            "official-codex".to_string(),
+            "Official Codex".to_string(),
+            json!({
+                "auth": {},
+                "config": r#"base_url = "http://localhost:11434/v1""#
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Codex));
     }
 
     #[test]
