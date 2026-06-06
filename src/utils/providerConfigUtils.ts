@@ -835,8 +835,7 @@ export const extractCodexSupportsWebSockets = (
           ? parsed.model_provider.trim()
           : "";
       if (providerId) {
-        const value =
-          parsed.model_providers?.[providerId]?.supports_websockets;
+        const value = parsed.model_providers?.[providerId]?.supports_websockets;
         if (typeof value === "boolean") return value;
       }
       if (typeof parsed.supports_websockets === "boolean") {
@@ -860,8 +859,7 @@ export const extractCodexSupportsWebSockets = (
         );
         if (index !== -1) {
           return (
-            lines[index].match(TOML_SUPPORTS_WEBSOCKETS_PATTERN)?.[1] ===
-            "true"
+            lines[index].match(TOML_SUPPORTS_WEBSOCKETS_PATTERN)?.[1] === "true"
           );
         }
       }
