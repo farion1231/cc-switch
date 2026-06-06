@@ -773,14 +773,14 @@ mod tests {
 
             assert_eq!(
                 codex_thread_providers(home),
-                vec![("OpenAI".to_string(), 2), ("azure".to_string(), 1)],
+                vec![("azure".to_string(), 1), ("openai".to_string(), 2)],
                 "switching from official to API should not relabel unrelated provider history"
             );
             assert_eq!(
                 codex_rollout_providers(home),
                 vec![
-                    ("api-thread".to_string(), Some("OpenAI".to_string())),
-                    ("official-thread".to_string(), Some("OpenAI".to_string())),
+                    ("api-thread".to_string(), Some("openai".to_string())),
+                    ("official-thread".to_string(), Some("openai".to_string())),
                     ("other-thread".to_string(), Some("azure".to_string())),
                 ],
                 "rollout metadata should only move previous-provider sessions"
@@ -909,7 +909,7 @@ mod tests {
             let api_provider = codex_provider(
                 "codex-api",
                 "Codex API",
-                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n",
+                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n[model_providers.OpenAI]\nname = \"OpenAI\"\nbase_url = \"http://127.0.0.1:12345/v1\"\n",
             );
 
             state
@@ -943,14 +943,20 @@ mod tests {
 
             assert_eq!(
                 codex_thread_providers(home),
-                vec![("OpenAI".to_string(), 2)],
+                vec![(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string(), 2)],
                 "switch should settle stale writes from the previous Codex provider"
             );
             assert_eq!(
                 codex_rollout_providers(home),
                 vec![
-                    ("official-thread".to_string(), Some("OpenAI".to_string())),
-                    ("racing-thread".to_string(), Some("OpenAI".to_string())),
+                    (
+                        "official-thread".to_string(),
+                        Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string()),
+                    ),
+                    (
+                        "racing-thread".to_string(),
+                        Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string()),
+                    ),
                 ],
                 "rollout metadata should also settle stale previous-provider writes"
             );
@@ -1005,14 +1011,14 @@ mod tests {
 
             assert_eq!(
                 codex_thread_providers(home),
-                vec![("OpenAI".to_string(), 2), ("azure".to_string(), 1)],
+                vec![("azure".to_string(), 1), ("openai".to_string(), 2)],
                 "null provider rows selected by the scoped SQL should move to the target provider"
             );
             assert_eq!(
                 codex_rollout_providers(home),
                 vec![
-                    ("official-thread".to_string(), Some("OpenAI".to_string())),
-                    ("old-null-thread".to_string(), Some("OpenAI".to_string())),
+                    ("official-thread".to_string(), Some("openai".to_string())),
+                    ("old-null-thread".to_string(), Some("openai".to_string())),
                     ("other-thread".to_string(), Some("azure".to_string())),
                 ],
                 "rollout metadata with a missing provider should stay consistent with relabeled null rows"
@@ -1057,14 +1063,18 @@ mod tests {
 
             assert_eq!(
                 codex_thread_providers(home),
-                vec![("OpenAI".to_string(), 2), ("azure".to_string(), 1)],
+                vec![
+                    ("OpenAI".to_string(), 1),
+                    ("azure".to_string(), 1),
+                    ("openai".to_string(), 1),
+                ],
                 "source-less switches should not relabel unrelated provider history"
             );
             assert_eq!(
                 codex_rollout_providers(home),
                 vec![
                     ("api-thread".to_string(), Some("OpenAI".to_string())),
-                    ("missing-thread".to_string(), Some("OpenAI".to_string())),
+                    ("missing-thread".to_string(), Some("openai".to_string())),
                     ("other-thread".to_string(), Some("azure".to_string())),
                 ],
                 "source-less rollout sync should only repair rows with missing provider metadata"
@@ -1580,11 +1590,12 @@ mod tests {
         let home = PathBuf::from(std::env::var("CC_SWITCH_TEST_HOME").expect("test home"));
 
         let official_provider = codex_provider("codex-official", "OpenAI Official", "");
-        let api_provider = codex_provider(
+        let mut api_provider = codex_provider(
             "codex-api",
             "Codex API",
-            "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n",
+            "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n[model_providers.OpenAI]\nname = \"OpenAI\"\nbase_url = \"http://127.0.0.1:12345/v1\"\n",
         );
+        api_provider.settings_config["auth"]["OPENAI_API_KEY"] = json!("test-key");
         let other_provider = codex_provider(
             "codex-other",
             "Codex Other",
@@ -1612,6 +1623,11 @@ mod tests {
         db.save_live_backup("codex", "{}")
             .await
             .expect("seed codex takeover backup");
+        let mut proxy_config = crate::proxy::types::ProxyConfig::default();
+        proxy_config.listen_port = 0;
+        db.update_proxy_config(proxy_config)
+            .await
+            .expect("set test proxy config");
         state
             .proxy_service
             .start()
@@ -1623,14 +1639,23 @@ mod tests {
 
         assert_eq!(
             codex_thread_providers(&home),
-            vec![("OpenAI".to_string(), 2), ("azure".to_string(), 1)],
+            vec![
+                ("azure".to_string(), 1),
+                (CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string(), 2),
+            ],
             "hot-switching from official to API should not relabel unrelated provider history"
         );
         assert_eq!(
             codex_rollout_providers(&home),
             vec![
-                ("api-thread".to_string(), Some("OpenAI".to_string())),
-                ("official-thread".to_string(), Some("OpenAI".to_string())),
+                (
+                    "api-thread".to_string(),
+                    Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string()),
+                ),
+                (
+                    "official-thread".to_string(),
+                    Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string()),
+                ),
                 ("other-thread".to_string(), Some("azure".to_string())),
             ],
             "hot-switch rollout metadata should only move previous-provider sessions"

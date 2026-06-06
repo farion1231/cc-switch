@@ -110,7 +110,14 @@
         <Directory Id="TARGETDIR" Name="SourceDir">
             <Directory Id="DesktopFolder" Name="Desktop">
                 <Component Id="ApplicationShortcutDesktop" Guid="*">
-                    <Shortcut Id="ApplicationDesktopShortcut" Name="{{product_name}}" Description="Runs {{product_name}}" Target="[!Path]" WorkingDirectory="INSTALLDIR" />
+                    <Shortcut Id="ApplicationDesktopShortcut"
+                        Name="{{product_name}}"
+                        Description="Runs {{product_name}}"
+                        Target="[!Path]"
+                        Icon="ProductIcon"
+                        WorkingDirectory="INSTALLDIR">
+                        <ShortcutProperty Key="System.AppUserModel.ID" Value="{{bundle_id}}"/>
+                    </Shortcut>
                     <RemoveFolder Id="DesktopFolder" On="uninstall" />
                     <RegistryValue Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}" Name="Desktop Shortcut" Type="integer" Value="1" KeyPath="yes" />
                 </Component>

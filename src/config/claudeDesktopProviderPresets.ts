@@ -530,6 +530,22 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#006FFB",
   },
   {
+    name: "CherryIN",
+    websiteUrl: "https://open.cherryin.ai",
+    apiKeyUrl: "https://open.cherryin.ai/console/token",
+    category: "aggregator",
+    baseUrl: "https://open.cherryin.net",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: mappedRoutes(
+      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-opus-4.8",
+      "anthropic/claude-haiku-4.5",
+    ),
+    endpointCandidates: ["https://open.cherryin.net"],
+    icon: "cherryin",
+  },
+  {
     name: "SiliconFlow",
     websiteUrl: "https://siliconflow.cn",
     apiKeyUrl: "https://cloud.siliconflow.cn/i/drGuwc9k",

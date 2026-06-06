@@ -40,6 +40,8 @@ const EXTRA_CHAT_PASSTHROUGH_FIELDS: &[&str] = &[
 const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
 const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
 const CHAT_TOOL_NAME_MAX_LEN: usize = 64;
+const CUSTOM_TOOL_INPUT_DESCRIPTION: &str = "Raw string input for the original custom tool. Preserve formatting exactly and follow the original tool definition embedded in the description.";
+const CUSTOM_TOOL_PRESERVED_METADATA_HEADING: &str = "Original tool definition:";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CodexToolKind {
@@ -132,10 +134,7 @@ impl CodexToolContext {
         let Some(name) = responses_tool_name(tool) else {
             return;
         };
-        let description = tool
-            .get("description")
-            .cloned()
-            .unwrap_or_else(|| json!("Custom Codex tool."));
+        let description = json!(responses_custom_tool_description(tool));
         let chat_tool = json!({
             "type": "function",
             "function": {
@@ -146,7 +145,7 @@ impl CodexToolContext {
                     "properties": {
                         CUSTOM_TOOL_INPUT_FIELD: {
                             "type": "string",
-                            "description": "Input to pass to the custom Codex tool."
+                            "description": CUSTOM_TOOL_INPUT_DESCRIPTION
                         }
                     },
                     "required": [CUSTOM_TOOL_INPUT_FIELD]
@@ -320,6 +319,19 @@ pub fn responses_to_chat_completions_with_reasoning(
         }
     }
 
+    // Strict OpenAI-compatible upstreams (vLLM, enterprise gateways) reject
+    // requests that carry tool_choice or parallel_tool_calls without a non-empty
+    // tools array. Drop both fields when tools ended up absent or empty after
+    // conversion to avoid 503/400 from such providers.
+    let has_tools = result
+        .get("tools")
+        .is_some_and(|v| v.as_array().is_some_and(|a| !a.is_empty()));
+    if !has_tools {
+        if let Some(obj) = result.as_object_mut() {
+            obj.remove("tool_choice");
+            obj.remove("parallel_tool_calls");
+        }
+    }
     // OpenAI 兼容上游在流式下默认不在 SSE 里返回 usage，必须显式声明
     // include_usage 才会在末尾吐 usage chunk。Codex CLI 用 Responses 协议、
     // 自身不带 stream_options，缺这一注入会导致 kimi/MiniMax 等第三方流式请求的
@@ -1016,6 +1028,22 @@ fn responses_tool_name(tool: &Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn responses_custom_tool_description(tool: &Value) -> String {
+    let mut description = String::new();
+    description.push_str(CUSTOM_TOOL_PRESERVED_METADATA_HEADING);
+    description.push_str("\n```json\n");
+    description.push_str(&serialize_tool_definition_for_description(tool));
+    description.push_str("\n```");
+    description
+}
+
+fn serialize_tool_definition_for_description(tool: &Value) -> String {
+    // Keep the embedded definition compact to reduce tool-description token
+    // overhead for chat-only upstreams, while remaining stable across map
+    // storage order.
+    canonical_json_string(tool)
+}
+
 fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option<Value> {
     if tool.get("type").and_then(|v| v.as_str()) != Some("function") {
         return None;
@@ -1507,7 +1535,8 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
         return json!({
             "input_tokens": 0,
             "output_tokens": 0,
-            "total_tokens": 0
+            "total_tokens": 0,
+            "output_tokens_details": { "reasoning_tokens": 0 }
         });
     };
 
@@ -1540,8 +1569,17 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
         result["input_tokens_details"] = json!({ "cached_tokens": cached });
     }
 
-    if let Some(details) = usage.get("completion_tokens_details") {
-        result["output_tokens_details"] = details.clone();
+    if let Some(details) = usage
+        .get("completion_tokens_details")
+        .filter(|v| v.is_object())
+    {
+        let mut details = details.clone();
+        if details.get("reasoning_tokens").is_none() {
+            details["reasoning_tokens"] = json!(0);
+        }
+        result["output_tokens_details"] = details;
+    } else {
+        result["output_tokens_details"] = json!({ "reasoning_tokens": 0 });
     }
 
     if let Some(cache_read) = usage.get("cache_read_input_tokens") {
@@ -1845,6 +1883,34 @@ mod tests {
             result["messages"][0]["tool_calls"][0]["function"]["arguments"],
             r#"{"input":"*** Begin Patch\n*** End Patch"}"#
         );
+    }
+
+    #[test]
+    fn responses_request_to_chat_preserves_custom_tool_metadata_in_description() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "custom",
+                "name": "apply_patch",
+                "description": "Use the `apply_patch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.",
+                "format": {
+                    "type": "grammar",
+                    "syntax": "lark",
+                    "definition": "start: begin_patch hunk+ end_patch"
+                }
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let description = result["tools"][0]["function"]["description"]
+            .as_str()
+            .unwrap();
+
+        assert!(description.starts_with("Original tool definition:"));
+        assert!(!description.contains("Original Codex tool definition"));
+        assert!(description.contains("\"type\":\"custom\""));
+        assert!(description.contains("\"format\":"));
+        assert!(description.contains("\"syntax\":\"lark\""));
     }
 
     #[test]
@@ -2814,5 +2880,239 @@ mod tests {
 
         assert_eq!(result["error"]["message"], "rate limit exceeded");
         assert_eq!(result["error"]["type"], "upstream_error");
+    }
+    // Regression tests for tool_choice without tools guard
+    // https://github.com/farion1231/cc-switch/issues/3557
+
+    #[test]
+    fn responses_request_to_chat_drops_tool_choice_when_no_tools() {
+        // When tools is absent from the request, tool_choice must be dropped
+        // to avoid 503/400 from strict OpenAI-compatible upstreams.
+        let input = json!({
+            "model": "qwen3-7-max",
+            "tool_choice": "auto",
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert!(
+            result.get("tool_choice").is_none(),
+            "tool_choice should be dropped when tools is absent"
+        );
+        assert!(result.get("tools").is_none(), "tools should be absent");
+        assert_eq!(result["model"], "qwen3-7-max");
+    }
+
+    #[test]
+    fn responses_request_to_chat_drops_tool_choice_when_tools_empty_array() {
+        // When tools is an empty array, tool_choice must be dropped.
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [],
+            "tool_choice": "auto",
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert!(
+            result.get("tool_choice").is_none(),
+            "tool_choice should be dropped when tools is empty"
+        );
+        assert!(
+            result.get("tools").is_none(),
+            "tools should be absent when input tools was empty"
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_drops_parallel_tool_calls_when_no_tools() {
+        // parallel_tool_calls must also be dropped when tools is absent,
+        // as it is part of EXTRA_CHAT_PASSTHROUGH_FIELDS.
+        let input = json!({
+            "model": "gpt-5.4",
+            "tool_choice": "auto",
+            "parallel_tool_calls": true,
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert!(
+            result.get("tool_choice").is_none(),
+            "tool_choice should be dropped"
+        );
+        assert!(
+            result.get("parallel_tool_calls").is_none(),
+            "parallel_tool_calls should be dropped"
+        );
+        assert!(result.get("tools").is_none(), "tools should be absent");
+    }
+
+    #[test]
+    fn responses_request_to_chat_drops_tool_choice_when_all_tools_filtered() {
+        // When all tools are filtered out (e.g., missing name), tool_choice must be dropped.
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [
+                {"type": "function"}
+            ],
+            "tool_choice": "auto",
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert!(
+            result.get("tool_choice").is_none(),
+            "tool_choice should be dropped when all tools filtered"
+        );
+        assert!(
+            result.get("tools").is_none(),
+            "tools should be absent when all filtered"
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_keeps_tool_choice_when_tools_present() {
+        // When tools is present and non-empty, tool_choice must be preserved.
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "get_weather",
+                "description": "Get weather",
+                "parameters": {"type": "object"}
+            }],
+            "tool_choice": "auto",
+            "parallel_tool_calls": true,
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert!(
+            result.get("tool_choice").is_some(),
+            "tool_choice should be kept when tools present"
+        );
+        assert_eq!(result["tool_choice"], "auto");
+        assert!(
+            result.get("parallel_tool_calls").is_some(),
+            "parallel_tool_calls should be kept"
+        );
+        assert_eq!(result["parallel_tool_calls"], true);
+        assert!(
+            result
+                .get("tools")
+                .is_some_and(|v| v.as_array().is_some_and(|a| !a.is_empty())),
+            "tools should be present"
+        );
+        assert_eq!(result["tools"][0]["function"]["name"], "get_weather");
+    }
+
+    #[test]
+    fn responses_request_to_chat_keeps_tool_choice_function_when_tools_present() {
+        // When tools is present, function-type tool_choice must be preserved and mapped.
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "get_weather",
+                "description": "Get weather",
+                "parameters": {"type": "object"}
+            }],
+            "tool_choice": {"type": "function", "name": "get_weather"},
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert!(
+            result.get("tool_choice").is_some(),
+            "tool_choice should be kept"
+        );
+        assert_eq!(result["tool_choice"]["type"], "function");
+        assert_eq!(result["tool_choice"]["function"]["name"], "get_weather");
+    }
+
+    #[test]
+    fn responses_request_to_chat_no_tool_choice_no_tools_stays_clean() {
+        // When neither tool_choice nor tools are present, the output should be clean.
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert!(
+            result.get("tool_choice").is_none(),
+            "tool_choice should be absent"
+        );
+        assert!(result.get("tools").is_none(), "tools should be absent");
+        assert!(
+            result.get("parallel_tool_calls").is_none(),
+            "parallel_tool_calls should be absent"
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_tool_choice_none_dropped_when_no_tools() {
+        // Even tool_choice: "none" should be dropped when tools is absent,
+        // because strict upstreams reject the combination regardless of value.
+        let input = json!({
+            "model": "gpt-5.4",
+            "tool_choice": "none",
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert!(
+            result.get("tool_choice").is_none(),
+            "tool_choice 'none' should be dropped when no tools"
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_tool_search_output_provides_tools_keeps_tool_choice() {
+        // When tool_search_output in input provides tools, tool_choice should be kept.
+        let input = json!({
+            "model": "gpt-5.4",
+            "tool_choice": "auto",
+            "input": [{
+                "type": "tool_search_output",
+                "call_id": "call_ts_1",
+                "status": "completed",
+                "execution": "client",
+                "tools": [{
+                    "type": "function",
+                    "name": "search_docs",
+                    "description": "Search documentation.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"}
+                        }
+                    }
+                }]
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert!(
+            result.get("tool_choice").is_some(),
+            "tool_choice should be kept when tool_search_output provides tools"
+        );
+        assert_eq!(result["tool_choice"], "auto");
+        assert!(
+            result
+                .get("tools")
+                .is_some_and(|v| v.as_array().is_some_and(|a| !a.is_empty())),
+            "tools should be present from tool_search_output"
+        );
+        assert_eq!(result["tools"][0]["function"]["name"], "search_docs");
     }
 }

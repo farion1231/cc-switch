@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 
 use crate::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
-use crate::config::get_app_config_dir;
+use crate::config::{get_app_config_dir, get_home_dir};
 use crate::database::Database;
 use crate::error::format_skill_error;
 
@@ -481,14 +481,7 @@ impl SkillService {
         let location = crate::settings::get_skill_storage_location();
         let dir = match location {
             SkillStorageLocation::CcSwitch => get_app_config_dir().join("skills"),
-            SkillStorageLocation::Unified => {
-                let home = dirs::home_dir().context(format_skill_error(
-                    "GET_HOME_DIR_FAILED",
-                    &[],
-                    Some("checkPermission"),
-                ))?;
-                home.join(".agents").join("skills")
-            }
+            SkillStorageLocation::Unified => get_home_dir().join(".agents").join("skills"),
         };
         fs::create_dir_all(&dir)?;
         Ok(dir)
@@ -539,11 +532,7 @@ impl SkillService {
         }
 
         // 默认路径：回退到用户主目录下的标准位置
-        let home = dirs::home_dir().context(format_skill_error(
-            "GET_HOME_DIR_FAILED",
-            &[],
-            Some("checkPermission"),
-        ))?;
+        let home = get_home_dir();
 
         Ok(match app {
             AppType::Claude => home.join(".claude").join("skills"),
