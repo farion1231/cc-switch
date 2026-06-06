@@ -1,6 +1,8 @@
 #![allow(non_snake_case)]
 
 use crate::session_manager;
+use crate::store::AppState;
+use tauri::State;
 
 #[tauri::command]
 pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, String> {
@@ -82,4 +84,21 @@ pub async fn delete_sessions(
     tauri::async_runtime::spawn_blocking(move || session_manager::delete_sessions(&items))
         .await
         .map_err(|e| format!("Failed to delete sessions: {e}"))
+}
+
+#[tauri::command]
+pub async fn repair_codex_history_visibility(
+    state: State<'_, AppState>,
+    #[allow(non_snake_case)] targetProviderId: Option<String>,
+) -> Result<crate::codex_history_migration::CodexHistoryProviderBucketMigrationOutcome, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::codex_history_migration::repair_codex_third_party_history_provider_bucket(
+            &db,
+            targetProviderId.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("Failed to repair Codex history visibility: {e}"))?
+    .map_err(|e| e.to_string())
 }

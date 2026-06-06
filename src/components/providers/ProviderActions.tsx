@@ -11,6 +11,7 @@ import {
   Terminal,
   TestTube2,
   Trash2,
+  Wrench,
   Zap,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -34,6 +35,8 @@ interface ProviderActionsProps {
   onRemoveFromConfig?: () => void;
   onDisableOmo?: () => void;
   onOpenTerminal?: () => void;
+  onRepairCodexHistory?: () => void;
+  isRepairingCodexHistory?: boolean;
   isAutoFailoverEnabled?: boolean;
   isInFailoverQueue?: boolean;
   onToggleFailover?: (enabled: boolean) => void;
@@ -61,6 +64,8 @@ export function ProviderActions({
   onRemoveFromConfig,
   onDisableOmo,
   onOpenTerminal,
+  onRepairCodexHistory,
+  isRepairingCodexHistory = false,
   isAutoFailoverEnabled = false,
   isInFailoverQueue = false,
   onToggleFailover,
@@ -327,6 +332,26 @@ export function ProviderActions({
             )}
           >
             <Terminal className="h-4 w-4" />
+          </Button>
+        )}
+
+        {onRepairCodexHistory && (
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onRepairCodexHistory}
+            disabled={isRepairingCodexHistory}
+            title={t("provider.repairCodexHistoryVisibility")}
+            className={cn(
+              iconButtonClass,
+              "hover:text-blue-600 dark:hover:text-blue-400",
+            )}
+          >
+            {isRepairingCodexHistory ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Wrench className="h-4 w-4" />
+            )}
           </Button>
         )}
 
