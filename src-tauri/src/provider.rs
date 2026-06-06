@@ -90,7 +90,12 @@ impl Provider {
             crate::app_config::AppType::Claude => self
                 .settings_config
                 .pointer("/env/ANTHROPIC_BASE_URL")
-                .is_none_or(value_is_null_or_blank_string),
+                .is_none_or(|base_url| {
+                    value_is_null_or_blank_string(base_url)
+                        || base_url
+                            .as_str()
+                            .is_some_and(claude_base_url_is_official_equivalent)
+                }),
             crate::app_config::AppType::Codex => {
                 let config_text = self.settings_config.get("config").and_then(Value::as_str);
                 let custom_base_url = config_text
@@ -242,6 +247,15 @@ impl Provider {
 
 fn value_is_null_or_blank_string(value: &Value) -> bool {
     value.is_null() || value.as_str().is_some_and(|value| value.trim().is_empty())
+}
+
+fn claude_base_url_is_official_equivalent(base_url: &str) -> bool {
+    let Ok(url) = url::Url::parse(base_url.trim()) else {
+        return false;
+    };
+
+    url.host_str()
+        .is_some_and(|host| host.eq_ignore_ascii_case("api.anthropic.com"))
 }
 
 fn codex_base_url_is_official_equivalent(base_url: &str) -> bool {
@@ -1064,6 +1078,40 @@ mod tests {
             ..Default::default()
         });
         assert!(copilot.is_github_copilot());
+    }
+
+    #[test]
+    fn claude_anthropic_base_url_is_official_equivalent() {
+        let provider = Provider::with_id(
+            "keyed-anthropic-claude".to_string(),
+            "Keyed Anthropic Claude".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-ant-test",
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+                }
+            }),
+            None,
+        );
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Claude));
+    }
+
+    #[test]
+    fn claude_custom_base_url_is_not_official_equivalent() {
+        let provider = Provider::with_id(
+            "third-party-claude".to_string(),
+            "Third Party Claude".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-third-party",
+                    "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic"
+                }
+            }),
+            None,
+        );
+
+        assert!(!provider.is_official_equivalent_for_app(&crate::app_config::AppType::Claude));
     }
 
     #[test]
