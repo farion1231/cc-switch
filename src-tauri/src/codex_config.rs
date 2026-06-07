@@ -331,6 +331,45 @@ fn codex_catalog_model_entry(
     entry_obj.insert("availability_nux".to_string(), Value::Null);
     entry_obj.insert("upgrade".to_string(), Value::Null);
 
+    // Explicitly override fields that might be missing or invalid in dynamic templates
+    entry_obj.insert("visibility".to_string(), json!("list"));
+    if !entry_obj.contains_key("supported_reasoning_levels") {
+        entry_obj.insert("supported_reasoning_levels".to_string(), json!([]));
+    }
+    if !entry_obj.contains_key("supports_reasoning_summaries") {
+        entry_obj.insert("supports_reasoning_summaries".to_string(), json!(false));
+    }
+    if !entry_obj.contains_key("shell_type") {
+        entry_obj.insert("shell_type".to_string(), json!("default"));
+    }
+    if !entry_obj.contains_key("input_modalities") {
+        entry_obj.insert("input_modalities".to_string(), json!(["text"]));
+    }
+    if !entry_obj.contains_key("supports_parallel_tool_calls") {
+        entry_obj.insert("supports_parallel_tool_calls".to_string(), json!(false));
+    }
+    if !entry_obj.contains_key("support_verbosity") {
+        entry_obj.insert("support_verbosity".to_string(), json!(true));
+    }
+    if !entry_obj.contains_key("supported_in_api") {
+        entry_obj.insert("supported_in_api".to_string(), json!(true));
+    }
+    if !entry_obj.contains_key("default_verbosity") {
+        entry_obj.insert("default_verbosity".to_string(), json!("low"));
+    }
+    if !entry_obj.contains_key("truncation_policy") {
+        entry_obj.insert("truncation_policy".to_string(), json!({
+            "limit": 10000,
+            "mode": "bytes"
+        }));
+    }
+    if !entry_obj.contains_key("experimental_supported_tools") {
+        entry_obj.insert("experimental_supported_tools".to_string(), json!([]));
+    }
+    if !entry_obj.contains_key("base_instructions") {
+        entry_obj.insert("base_instructions".to_string(), json!(""));
+    }
+
     entry
 }
 
