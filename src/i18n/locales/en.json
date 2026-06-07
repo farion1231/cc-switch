@@ -1645,6 +1645,7 @@
       "typeHttp": "http",
       "typeSse": "sse",
       "typeStreamableHttp": "streamable-http",
+      "command": "Command",
       "commandPlaceholder": "npx or uvx",
       "args": "Arguments",
       "argsPlaceholder": "arg1\narg2",

@@ -1645,6 +1645,7 @@
       "typeHttp": "http",
       "typeSse": "sse",
       "typeStreamableHttp": "streamable-http",
+      "command": "コマンド",
       "commandPlaceholder": "npx または uvx",
       "args": "引数",
       "argsPlaceholder": "arg1\narg2",
