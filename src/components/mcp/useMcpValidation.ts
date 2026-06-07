@@ -42,7 +42,7 @@ export function useMcpValidation() {
           return t("mcp.error.commandRequired");
         }
         if (
-          (server.type === "http" || server.type === "sse") &&
+          (server.type === "http" || server.type === "sse" || server.type === "streamable-http") &&
           !server.url?.trim()
         ) {
           return t("mcp.wizard.urlRequired");
@@ -76,7 +76,7 @@ export function useMcpValidation() {
           if (typ === "stdio" && !(obj as any)?.command?.trim()) {
             return t("mcp.error.commandRequired");
           }
-          if ((typ === "http" || typ === "sse") && !(obj as any)?.url?.trim()) {
+          if ((typ === "http" || typ === "sse" || typ === "streamable-http") && !(obj as any)?.url?.trim()) {
             return t("mcp.wizard.urlRequired");
           }
         }

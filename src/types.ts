@@ -445,7 +445,7 @@ export interface SessionMessage {
 // MCP 服务器连接参数（宽松：允许扩展字段）
 export interface McpServerSpec {
   // 可选：社区常见 .mcp.json 中 stdio 配置可不写 type
-  type?: "stdio" | "http" | "sse";
+  type?: "stdio" | "http" | "sse" | "streamable-http";
   // stdio 字段
   command?: string;
   args?: string[];

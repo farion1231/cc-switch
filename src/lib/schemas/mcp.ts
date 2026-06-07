@@ -2,7 +2,7 @@ import { z } from "zod";
 
 const mcpServerSpecSchema = z
   .object({
-    type: z.enum(["stdio", "http", "sse"]).optional(),
+    type: z.enum(["stdio", "http", "sse", "streamable-http"]).optional(),
     command: z.string().trim().optional(),
     args: z.array(z.string()).optional(),
     env: z.record(z.string(), z.string()).optional(),
@@ -19,7 +19,7 @@ const mcpServerSpecSchema = z
         path: ["command"],
       });
     }
-    if ((type === "http" || type === "sse") && !server.url?.trim()) {
+    if ((type === "http" || type === "sse" || type === "streamable-http") && !server.url?.trim()) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: `${type} 类型需填写 url`,

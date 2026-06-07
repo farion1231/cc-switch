@@ -345,7 +345,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       return;
     }
     if (
-      (serverSpec?.type === "http" || serverSpec?.type === "sse") &&
+      (serverSpec?.type === "http" || serverSpec?.type === "sse" || serverSpec?.type === "streamable-http") &&
       !serverSpec?.url?.trim()
     ) {
       toast.error(t("mcp.wizard.urlRequired"), { duration: 3000 });

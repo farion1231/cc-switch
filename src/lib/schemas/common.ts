@@ -81,7 +81,7 @@ export const tomlConfigSchema = z.string().superRefine((value, ctx) => {
       });
     }
     if (
-      (server.type === "http" || server.type === "sse") &&
+      (server.type === "http" || server.type === "sse" || server.type === "streamable-http") &&
       !server.url?.trim()
     ) {
       ctx.addIssue({

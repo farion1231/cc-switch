@@ -81,7 +81,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
   initialServer,
 }) => {
   const { t } = useTranslation();
-  const [wizardType, setWizardType] = useState<"stdio" | "http" | "sse">(
+  const [wizardType, setWizardType] = useState<"stdio" | "http" | "sse" | "streamable-http" | "streamable-http">(
     "stdio",
   );
   const [wizardTitle, setWizardTitle] = useState("");
@@ -142,7 +142,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
       toast.error(t("mcp.error.commandRequired"), { duration: 3000 });
       return;
     }
-    if ((wizardType === "http" || wizardType === "sse") && !wizardUrl.trim()) {
+    if ((wizardType === "http" || wizardType === "sse" || wizardType === "streamable-http") && !wizardUrl.trim()) {
       toast.error(t("mcp.wizard.urlRequired"), { duration: 3000 });
       return;
     }
@@ -182,7 +182,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
 
     setWizardType(resolvedType);
 
-    if (resolvedType === "http" || resolvedType === "sse") {
+    if (resolvedType === "http" || resolvedType === "sse" || resolvedType === "streamable-http") {
       setWizardUrl(initialServer?.url ?? "");
       const headersCandidate = initialServer?.headers;
       const headers =
@@ -258,7 +258,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
                     value="stdio"
                     checked={wizardType === "stdio"}
                     onChange={(e) =>
-                      setWizardType(e.target.value as "stdio" | "http" | "sse")
+                      setWizardType(e.target.value as "stdio" | "http" | "sse" | "streamable-http")
                     }
                     className="w-4 h-4 accent-blue-500"
                   />
@@ -272,7 +272,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
                     value="http"
                     checked={wizardType === "http"}
                     onChange={(e) =>
-                      setWizardType(e.target.value as "stdio" | "http" | "sse")
+                      setWizardType(e.target.value as "stdio" | "http" | "sse" | "streamable-http")
                     }
                     className="w-4 h-4 accent-blue-500"
                   />
@@ -286,12 +286,26 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
                     value="sse"
                     checked={wizardType === "sse"}
                     onChange={(e) =>
-                      setWizardType(e.target.value as "stdio" | "http" | "sse")
+                      setWizardType(e.target.value as "stdio" | "http" | "sse" | "streamable-http")
                     }
                     className="w-4 h-4 accent-blue-500"
                   />
                   <span className="text-sm text-foreground">
                     {t("mcp.wizard.typeSse")}
+                  </span>
+                </label>
+                <label className="inline-flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    value="streamable-http"
+                    checked={wizardType === "streamable-http"}
+                    onChange={(e) =>
+                      setWizardType(e.target.value as "stdio" | "http" | "sse" | "streamable-http")
+                    }
+                    className="w-4 h-4 accent-blue-500"
+                  />
+                  <span className="text-sm text-foreground">
+                    Streamable HTTP
                   </span>
                 </label>
               </div>
@@ -362,7 +376,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
             )}
 
             {/* HTTP 和 SSE 类型字段 */}
-            {(wizardType === "http" || wizardType === "sse") && (
+            {(wizardType === "http" || wizardType === "sse" || wizardType === "streamable-http") && (
               <>
                 {/* URL */}
                 <div>
