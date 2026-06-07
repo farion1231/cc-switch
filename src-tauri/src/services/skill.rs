@@ -1700,7 +1700,7 @@ impl SkillService {
     }
 
     fn antigravity_native_skills_from(plugins_dir: &Path) -> Vec<(String, PathBuf, String)> {
-        let Ok(entries) = fs::read_dir(&plugins_dir) else {
+        let Ok(entries) = fs::read_dir(plugins_dir) else {
             return Vec::new();
         };
 
