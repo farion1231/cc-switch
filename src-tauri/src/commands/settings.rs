@@ -1,11 +1,13 @@
 #![allow(non_snake_case)]
 
+use crate::services::ManagementApiService;
+use crate::settings::{AppSettings, ManagementApiSettings};
 use tauri::AppHandle;
 
 pub(crate) fn merge_settings_for_save(
-    mut incoming: crate::settings::AppSettings,
-    existing: &crate::settings::AppSettings,
-) -> crate::settings::AppSettings {
+    mut incoming: AppSettings,
+    existing: &AppSettings,
+) -> AppSettings {
     match (&mut incoming.webdav_sync, &existing.webdav_sync) {
         // incoming 没有 webdav → 保留现有
         (None, _) => {
@@ -56,18 +58,43 @@ pub(crate) fn merge_settings_for_save(
     incoming
 }
 
+fn normalized_management_api_runtime_settings(
+    settings: &ManagementApiSettings,
+) -> ManagementApiSettings {
+    let mut normalized = settings.clone();
+    normalized.normalize();
+    normalized.enabled = false;
+    normalized
+}
+
+pub(crate) fn management_api_runtime_settings_changed(
+    existing: &AppSettings,
+    next: &AppSettings,
+) -> bool {
+    normalized_management_api_runtime_settings(&existing.management_api)
+        != normalized_management_api_runtime_settings(&next.management_api)
+}
+
 /// 获取设置
 #[tauri::command]
-pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
+pub async fn get_settings() -> Result<AppSettings, String> {
     Ok(crate::settings::get_settings_for_frontend())
 }
 
 /// 保存设置
 #[tauri::command]
-pub async fn save_settings(settings: crate::settings::AppSettings) -> Result<bool, String> {
+pub async fn save_settings(
+    settings: AppSettings,
+    service: tauri::State<'_, ManagementApiService>,
+) -> Result<bool, String> {
     let existing = crate::settings::get_settings();
     let merged = merge_settings_for_save(settings, &existing);
+    let management_api_runtime_changed =
+        management_api_runtime_settings_changed(&existing, &merged);
     crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
+    if management_api_runtime_changed {
+        service.schedule_apply_saved_runtime_settings_if_running();
+    }
     Ok(true)
 }
 
@@ -114,10 +141,10 @@ pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::merge_settings_for_save;
+    use super::{management_api_runtime_settings_changed, merge_settings_for_save};
     use crate::settings::{
         AppSettings, CodexProviderTemplateMigration, CodexThirdPartyHistoryProviderBucketMigration,
-        LocalMigrations, S3SyncSettings, WebDavSyncSettings,
+        LocalMigrations, ManagementApiSettings, S3SyncSettings, WebDavSyncSettings,
     };
 
     #[test]
@@ -345,6 +372,50 @@ mod tests {
             template_migration.migrated_provider_ids,
             vec!["legacy".to_string()]
         );
+    }
+
+    #[test]
+    fn management_api_runtime_settings_changed_ignores_autostart_only() {
+        let existing = AppSettings {
+            management_api: ManagementApiSettings {
+                enabled: false,
+                ..ManagementApiSettings::default()
+            },
+            ..AppSettings::default()
+        };
+        let next = AppSettings {
+            management_api: ManagementApiSettings {
+                enabled: true,
+                ..ManagementApiSettings::default()
+            },
+            ..AppSettings::default()
+        };
+
+        assert!(!management_api_runtime_settings_changed(&existing, &next));
+    }
+
+    #[test]
+    fn management_api_runtime_settings_changed_detects_live_policy_edits() {
+        let existing = AppSettings {
+            management_api: ManagementApiSettings {
+                enabled: false,
+                pairing_enabled: true,
+                cors_origins: vec!["http://localhost:3000".to_string()],
+                ..ManagementApiSettings::default()
+            },
+            ..AppSettings::default()
+        };
+        let next = AppSettings {
+            management_api: ManagementApiSettings {
+                enabled: false,
+                pairing_enabled: false,
+                cors_origins: vec!["http://localhost:4173".to_string()],
+                ..ManagementApiSettings::default()
+            },
+            ..AppSettings::default()
+        };
+
+        assert!(management_api_runtime_settings_changed(&existing, &next));
     }
 }
 

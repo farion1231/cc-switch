@@ -192,6 +192,28 @@ impl ManagementApiService {
         self.status().await.map_err(|e| e.to_string())
     }
 
+    pub async fn apply_runtime_settings_if_running(
+        &self,
+        settings: ManagementApiSettings,
+    ) -> Result<bool, String> {
+        if self.running.read().await.is_none() {
+            return Ok(false);
+        }
+        self.start(settings).await?;
+        Ok(true)
+    }
+
+    pub fn schedule_apply_saved_runtime_settings_if_running(&self) {
+        let service = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let settings = crate::settings::get_settings().management_api;
+            if let Err(e) = service.apply_runtime_settings_if_running(settings).await {
+                log::error!("Failed to apply Management API settings update: {e}");
+            }
+        });
+    }
+
     pub async fn start(
         &self,
         mut settings: ManagementApiSettings,
@@ -6751,13 +6773,55 @@ mod tests {
             .expect("restart with changed settings");
 
         let running = service.running.read().await;
-        assert_eq!(
-            running
+        assert!(
+            !running
                 .as_ref()
                 .expect("running server")
                 .settings
-                .pairing_enabled,
-            false
+                .pairing_enabled
+        );
+        drop(running);
+        service.stop().await.expect("stop api");
+    }
+
+    #[tokio::test]
+    async fn apply_runtime_settings_if_running_restarts_without_enabling_autostart() {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let service =
+            ManagementApiService::new(db.clone(), ProxyService::new(db)).expect("service");
+        let listener =
+            std::net::TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let settings = ManagementApiSettings {
+            enabled: true,
+            port,
+            pairing_enabled: true,
+            ..ManagementApiSettings::default()
+        };
+        service.start(settings).await.expect("start api");
+
+        let next = ManagementApiSettings {
+            enabled: false,
+            port,
+            pairing_enabled: false,
+            cors_origins: vec!["http://localhost:4173".to_string()],
+            ..ManagementApiSettings::default()
+        };
+        let applied = service
+            .apply_runtime_settings_if_running(next)
+            .await
+            .expect("apply runtime settings");
+
+        assert!(applied);
+        let running = service.running.read().await;
+        let running_settings = &running.as_ref().expect("running server").settings;
+        assert!(!running_settings.enabled);
+        assert!(!running_settings.pairing_enabled);
+        assert_eq!(
+            running_settings.cors_origins,
+            vec!["http://localhost:4173".to_string()]
         );
         drop(running);
         service.stop().await.expect("stop api");
