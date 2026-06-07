@@ -31,6 +31,8 @@ interface CodexOAuthSectionProps {
   selectedAccountId?: string | null;
   /** 账号选择回调 */
   onAccountSelect?: (accountId: string | null) => void;
+  /** 空选择项文案；默认表示使用托管认证的默认账号 */
+  noneOptionLabel?: string;
   /** 是否开启 Codex FAST mode */
   fastModeEnabled?: boolean;
   /** FAST mode 切换回调 */
@@ -47,6 +49,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   className,
   selectedAccountId,
   onAccountSelect,
+  noneOptionLabel,
   fastModeEnabled = false,
   onFastModeChange,
 }) => {
@@ -111,7 +114,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
       </div>
 
       {/* 账号选择器 */}
-      {hasAnyAccount && onAccountSelect && (
+      {onAccountSelect && (hasAnyAccount || noneOptionLabel) && (
         <div className="space-y-2">
           <Label className="text-sm text-muted-foreground">
             {t("codexOauth.selectAccount", "选择账号")}
@@ -131,7 +134,8 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
             <SelectContent>
               <SelectItem value="none">
                 <span className="text-muted-foreground">
-                  {t("codexOauth.useDefaultAccount", "使用默认账号")}
+                  {noneOptionLabel ??
+                    t("codexOauth.useDefaultAccount", "使用默认账号")}
                 </span>
               </SelectItem>
               {accounts.map((account) => (

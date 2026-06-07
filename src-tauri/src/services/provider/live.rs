@@ -3,8 +3,10 @@
 //! Handles reading and writing live configuration files for Claude, Codex, and Gemini.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use serde_json::{json, Value};
+use tokio::sync::RwLock;
 use toml_edit::{DocumentMut, Item, TableLike};
 
 use crate::app_config::AppType;
@@ -13,6 +15,7 @@ use crate::config::{delete_file, get_claude_settings_path, read_json_file, write
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
+use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::services::mcp::McpService;
 use crate::store::AppState;
 
@@ -506,14 +509,31 @@ pub(crate) fn build_effective_settings_with_common_config(
     Ok(effective_settings)
 }
 
-pub(crate) fn write_live_with_common_config(
-    db: &Database,
+pub(crate) fn write_live_with_common_config_for_state(
+    state: &AppState,
     app_type: &AppType,
     provider: &Provider,
 ) -> Result<(), AppError> {
-    let mut effective_provider = provider.clone();
-    effective_provider.settings_config =
-        build_effective_settings_with_common_config(db, app_type, provider)?;
+    write_live_with_common_config_for_codex_oauth_manager(
+        state.db.as_ref(),
+        app_type,
+        provider,
+        &state.codex_oauth_manager,
+    )
+}
+
+pub(crate) fn write_live_with_common_config_for_codex_oauth_manager(
+    db: &Database,
+    app_type: &AppType,
+    provider: &Provider,
+    codex_oauth_manager: &Arc<RwLock<CodexOAuthManager>>,
+) -> Result<(), AppError> {
+    let effective_provider = build_effective_provider_for_live_with_codex_oauth_manager(
+        db,
+        app_type,
+        provider,
+        codex_oauth_manager,
+    )?;
 
     if matches!(app_type, AppType::ClaudeDesktop) {
         crate::claude_desktop_config::apply_provider(db, &effective_provider)?;
@@ -526,6 +546,92 @@ pub(crate) fn write_live_with_common_config(
     }
 
     write_live_snapshot(app_type, &effective_provider)
+}
+
+pub(crate) fn build_effective_provider_for_live_with_codex_oauth_manager(
+    db: &Database,
+    app_type: &AppType,
+    provider: &Provider,
+    codex_oauth_manager: &Arc<RwLock<CodexOAuthManager>>,
+) -> Result<Provider, AppError> {
+    let mut effective_provider = provider.clone();
+    effective_provider.settings_config =
+        build_effective_settings_with_common_config(db, app_type, provider)?;
+    apply_codex_managed_oauth_auth(app_type, &mut effective_provider, Some(codex_oauth_manager))?;
+    Ok(effective_provider)
+}
+
+fn apply_codex_managed_oauth_auth(
+    app_type: &AppType,
+    provider: &mut Provider,
+    codex_oauth_manager: Option<&Arc<RwLock<CodexOAuthManager>>>,
+) -> Result<(), AppError> {
+    if !matches!(app_type, AppType::Codex) || provider.category.as_deref() != Some("official") {
+        return Ok(());
+    }
+
+    let Some(account_id) = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+    else {
+        return Ok(());
+    };
+
+    let Some(manager) = codex_oauth_manager else {
+        return Err(AppError::Message(
+            "Codex OAuth 托管账号不可用，请重启应用后重试".to_string(),
+        ));
+    };
+
+    let access_token = get_codex_managed_oauth_token(manager.clone(), account_id.clone())?;
+    let auth = codex_managed_oauth_live_auth(&account_id, &access_token);
+
+    let Some(settings_obj) = provider.settings_config.as_object_mut() else {
+        return Err(AppError::Config(
+            "Codex 供应商配置必须是 JSON 对象".to_string(),
+        ));
+    };
+
+    settings_obj.insert("auth".to_string(), auth);
+    Ok(())
+}
+
+fn get_codex_managed_oauth_token(
+    manager: Arc<RwLock<CodexOAuthManager>>,
+    account_id: String,
+) -> Result<String, AppError> {
+    let result = std::thread::spawn(move || {
+        tauri::async_runtime::block_on(async move {
+            let error_account_id = account_id.clone();
+            let manager = manager.read().await;
+            manager
+                .get_valid_token_for_account(&account_id)
+                .await
+                .map_err(|err| {
+                    format!(
+                    "Codex OAuth 账号 {error_account_id} 认证失败，请重新登录 ChatGPT 账号: {err}"
+                )
+                })
+        })
+    })
+    .join()
+    .map_err(|_| AppError::Message("Codex OAuth token 获取线程异常退出".to_string()))?;
+
+    result.map_err(AppError::Message)
+}
+
+pub(crate) fn codex_managed_oauth_live_auth(account_id: &str, access_token: &str) -> Value {
+    json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": {
+            "access_token": access_token,
+            "account_id": account_id,
+        },
+    })
 }
 
 pub(crate) fn strip_common_config_from_live_settings(
@@ -596,6 +702,8 @@ fn restore_live_settings_for_provider_backfill(
         );
     }
 
+    strip_codex_managed_oauth_auth_for_backfill(provider, &mut settings);
+
     // `modelCatalog` is a cc-switch–private field whose SSOT is the DB. Live's
     // `config.toml` only carries a lossy projection (`model_catalog_json` →
     // generated catalog file) that proxy takeover/restore cycles and Codex.app
@@ -610,6 +718,41 @@ fn restore_live_settings_for_provider_backfill(
     }
 
     settings
+}
+
+fn strip_codex_managed_oauth_auth_for_backfill(provider: &Provider, settings: &mut Value) {
+    let Some(account_id) = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+    else {
+        return;
+    };
+
+    let Some(auth) = settings.get("auth") else {
+        return;
+    };
+
+    match crate::codex_config::codex_auth_matches_recorded_managed_oauth(auth, &account_id) {
+        Ok(true) => {
+            let stored_auth = provider
+                .settings_config
+                .get("auth")
+                .filter(|auth| auth.is_object())
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            if let Some(obj) = settings.as_object_mut() {
+                obj.insert("auth".to_string(), stored_auth);
+            }
+        }
+        Ok(false) => {}
+        Err(err) => {
+            log::warn!(
+                "Failed to check Codex managed OAuth marker while backfilling '{}': {err}",
+                provider.id
+            );
+        }
+    }
 }
 
 pub(crate) fn normalize_provider_common_config_for_storage(
@@ -753,6 +896,14 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 auth,
                 config_str,
             )?;
+            if provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+                .is_some()
+            {
+                crate::codex_config::record_codex_managed_oauth_live_auth(auth)?;
+            }
         }
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly
@@ -884,7 +1035,7 @@ fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<()
             continue;
         }
 
-        if let Err(e) = write_live_with_common_config(state.db.as_ref(), app_type, provider) {
+        if let Err(e) = write_live_with_common_config_for_state(state, app_type, provider) {
             log::warn!(
                 "Failed to sync {:?} provider '{}' to live: {e}",
                 app_type,
@@ -914,7 +1065,7 @@ pub(crate) fn sync_current_provider_for_app_to_live(
 
         let providers = state.db.get_all_providers(app_type.as_str())?;
         if let Some(provider) = providers.get(&current_id) {
-            write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
+            write_live_with_common_config_for_state(state, app_type, provider)?;
         }
     }
 
@@ -950,7 +1101,7 @@ fn sync_current_provider_for_app_respecting_takeover(
     // that normal provider sync must not rewrite the managed live file.
     if has_live_backup || live_taken_over {
         if matches!(app_type, AppType::ClaudeDesktop) {
-            write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
+            write_live_with_common_config_for_state(state, app_type, provider)?;
         } else {
             futures::executor::block_on(
                 state
@@ -962,7 +1113,7 @@ fn sync_current_provider_for_app_respecting_takeover(
         return Ok(());
     }
 
-    write_live_with_common_config(state.db.as_ref(), app_type, provider)
+    write_live_with_common_config_for_state(state, app_type, provider)
 }
 
 /// Sync current provider to live configuration
@@ -1569,6 +1720,7 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::{AuthBinding, AuthBindingSource, ProviderMeta};
     use serde_json::json;
 
     #[test]
@@ -1613,6 +1765,114 @@ mod tests {
         let stripped =
             remove_common_config_from_settings(&AppType::Codex, &applied, snippet).unwrap();
         assert_eq!(stripped, settings);
+    }
+
+    #[test]
+    fn codex_managed_oauth_live_auth_matches_codex_cli_shape() {
+        assert_eq!(
+            codex_managed_oauth_live_auth("acct-managed", "access-token"),
+            json!({
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": null,
+                "tokens": {
+                    "access_token": "access-token",
+                    "account_id": "acct-managed"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn codex_official_managed_oauth_binding_replaces_auth_with_selected_account_token() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(RwLock::new(CodexOAuthManager::new(
+            temp.path().to_path_buf(),
+        )));
+        tauri::async_runtime::block_on(async {
+            manager
+                .read()
+                .await
+                .add_test_account_with_access_token("acct-managed", "managed-token")
+                .await
+                .expect("seed managed account");
+        });
+
+        let mut provider = Provider::with_id(
+            "openai-official".to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "stale-key"
+                },
+                "config": ""
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+        provider.meta = Some(ProviderMeta {
+            auth_binding: Some(AuthBinding {
+                source: AuthBindingSource::ManagedAccount,
+                auth_provider: Some("codex_oauth".to_string()),
+                account_id: Some("acct-managed".to_string()),
+            }),
+            ..Default::default()
+        });
+
+        apply_codex_managed_oauth_auth(&AppType::Codex, &mut provider, Some(&manager))
+            .expect("apply managed OAuth auth");
+
+        assert_eq!(
+            provider.settings_config.get("auth"),
+            Some(&codex_managed_oauth_live_auth(
+                "acct-managed",
+                "managed-token"
+            )),
+            "explicit account binding should write the managed ChatGPT token to Codex live auth"
+        );
+    }
+
+    #[test]
+    fn codex_official_without_binding_does_not_fall_back_to_managed_default_account() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(RwLock::new(CodexOAuthManager::new(
+            temp.path().to_path_buf(),
+        )));
+        tauri::async_runtime::block_on(async {
+            manager
+                .read()
+                .await
+                .add_test_account_with_access_token("acct-managed", "managed-token")
+                .await
+                .expect("seed managed account");
+        });
+
+        let original_auth = json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": {
+                "access_token": "native-codex-token",
+                "account_id": "acct-native"
+            }
+        });
+        let mut provider = Provider::with_id(
+            "openai-official".to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": original_auth.clone(),
+                "config": ""
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+
+        apply_codex_managed_oauth_auth(&AppType::Codex, &mut provider, Some(&manager))
+            .expect("no binding should be a no-op");
+
+        assert_eq!(
+            provider.settings_config.get("auth"),
+            Some(&original_auth),
+            "unbound official providers must keep native Codex auth instead of using the managed default account"
+        );
     }
 
     #[test]
