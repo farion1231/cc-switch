@@ -1185,10 +1185,7 @@ mod tests {
         // System message: no cache_control
         assert!(result["messages"][0].get("cache_control").is_none());
         // User message: content simplified to string (no cache_control → flat string)
-        assert_eq!(
-            result["messages"][1]["content"],
-            "Hello"
-        );
+        assert_eq!(result["messages"][1]["content"], "Hello");
         // Tool: no cache_control
         assert!(result["tools"][0].get("cache_control").is_none());
     }
@@ -1230,7 +1227,12 @@ mod tests {
         for (i, msg) in result["messages"].as_array().unwrap().iter().enumerate() {
             if let Some(content) = msg.get("content") {
                 assert!(
-                    !content.is_array() || content.as_array().unwrap().iter().all(|part| part.get("cache_control").is_none()),
+                    !content.is_array()
+                        || content
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .all(|part| part.get("cache_control").is_none()),
                     "messages[{i}] content parts must not have cache_control"
                 );
             }
