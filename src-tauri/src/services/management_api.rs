@@ -6462,7 +6462,65 @@ mod tests {
     use super::*;
     use axum::body::to_bytes;
     use axum::http::header::AUTHORIZATION;
+    use serial_test::serial;
+    use std::env;
     use std::net::{Ipv4Addr, Ipv6Addr};
+    use tempfile::TempDir;
+
+    struct TempHome {
+        #[allow(dead_code)]
+        dir: TempDir,
+        original_home: Option<String>,
+        original_userprofile: Option<String>,
+        original_test_home: Option<String>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = TempDir::new().expect("failed to create temp home");
+            let original_home = env::var("HOME").ok();
+            let original_userprofile = env::var("USERPROFILE").ok();
+            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
+
+            env::set_var("HOME", dir.path());
+            env::set_var("USERPROFILE", dir.path());
+            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+
+            Self {
+                dir,
+                original_home,
+                original_userprofile,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            match &self.original_home {
+                Some(value) => env::set_var("HOME", value),
+                None => env::remove_var("HOME"),
+            }
+
+            match &self.original_userprofile {
+                Some(value) => env::set_var("USERPROFILE", value),
+                None => env::remove_var("USERPROFILE"),
+            }
+
+            match &self.original_test_home {
+                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+
+    fn free_loopback_port() -> u16 {
+        let listener =
+            std::net::TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        port
+    }
 
     fn test_state(
         db: Arc<Database>,
@@ -6789,10 +6847,7 @@ mod tests {
         let db = Arc::new(Database::memory().expect("memory db"));
         let service =
             ManagementApiService::new(db.clone(), ProxyService::new(db)).expect("service");
-        let listener =
-            std::net::TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
+        let port = free_loopback_port();
 
         let settings = ManagementApiSettings {
             enabled: true,
@@ -6825,6 +6880,157 @@ mod tests {
         );
         drop(running);
         service.stop().await.expect("stop api");
+    }
+
+    #[tokio::test]
+    async fn apply_runtime_settings_if_running_rebinds_to_new_port() {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let service =
+            ManagementApiService::new(db.clone(), ProxyService::new(db)).expect("service");
+        let old_port = free_loopback_port();
+        let new_port = free_loopback_port();
+
+        service
+            .start(ManagementApiSettings {
+                enabled: true,
+                port: old_port,
+                pairing_enabled: true,
+                ..ManagementApiSettings::default()
+            })
+            .await
+            .expect("start api on old port");
+
+        assert!(
+            tokio::net::TcpStream::connect(SocketAddr::from((Ipv4Addr::LOCALHOST, old_port)))
+                .await
+                .is_ok(),
+            "old listener should accept connections before settings apply"
+        );
+
+        let applied = service
+            .apply_runtime_settings_if_running(ManagementApiSettings {
+                enabled: true,
+                port: new_port,
+                pairing_enabled: true,
+                ..ManagementApiSettings::default()
+            })
+            .await
+            .expect("apply new port");
+
+        assert!(applied);
+        assert!(
+            tokio::net::TcpStream::connect(SocketAddr::from((Ipv4Addr::LOCALHOST, new_port)))
+                .await
+                .is_ok(),
+            "new listener should accept connections after settings apply"
+        );
+        assert!(
+            tokio::net::TcpStream::connect(SocketAddr::from((Ipv4Addr::LOCALHOST, old_port)))
+                .await
+                .is_err(),
+            "old listener should be closed after rebinding"
+        );
+
+        let running = service.running.read().await;
+        assert_eq!(
+            running.as_ref().expect("running server").settings.port,
+            new_port
+        );
+        drop(running);
+        service.stop().await.expect("stop api");
+    }
+
+    #[tokio::test]
+    async fn apply_runtime_settings_if_running_does_not_start_stopped_service() {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let service =
+            ManagementApiService::new(db.clone(), ProxyService::new(db)).expect("service");
+
+        let applied = service
+            .apply_runtime_settings_if_running(ManagementApiSettings {
+                enabled: true,
+                port: free_loopback_port(),
+                ..ManagementApiSettings::default()
+            })
+            .await
+            .expect("apply settings while stopped");
+
+        assert!(!applied);
+        assert!(service.running.read().await.is_none());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn schedule_apply_saved_runtime_settings_if_running_uses_persisted_settings() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let service =
+            ManagementApiService::new(db.clone(), ProxyService::new(db)).expect("service");
+        let port = free_loopback_port();
+
+        crate::settings::update_settings(crate::settings::AppSettings {
+            management_api: ManagementApiSettings {
+                enabled: true,
+                port,
+                pairing_enabled: true,
+                cors_origins: vec!["http://localhost:3000".to_string()],
+                ..ManagementApiSettings::default()
+            },
+            ..crate::settings::AppSettings::default()
+        })
+        .expect("seed settings");
+        service
+            .start(crate::settings::get_settings().management_api)
+            .await
+            .expect("start api");
+
+        crate::settings::update_settings(crate::settings::AppSettings {
+            management_api: ManagementApiSettings {
+                enabled: false,
+                port,
+                pairing_enabled: false,
+                cors_origins: vec!["http://localhost:4173".to_string()],
+                ..ManagementApiSettings::default()
+            },
+            ..crate::settings::AppSettings::default()
+        })
+        .expect("save updated settings");
+        service.schedule_apply_saved_runtime_settings_if_running();
+
+        let mut applied = false;
+        for _ in 0..20 {
+            {
+                let running = service.running.read().await;
+                if let Some(server) = running.as_ref() {
+                    if !server.settings.pairing_enabled
+                        && server.settings.cors_origins == vec!["http://localhost:4173".to_string()]
+                    {
+                        applied = true;
+                        break;
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+
+        assert!(
+            applied,
+            "running API should apply persisted runtime settings"
+        );
+        let running = service.running.read().await;
+        let settings = &running.as_ref().expect("running server").settings;
+        assert!(!settings.enabled);
+        assert!(!settings.pairing_enabled);
+        assert_eq!(
+            settings.cors_origins,
+            vec!["http://localhost:4173".to_string()]
+        );
+        drop(running);
+        service.stop().await.expect("stop api");
+        crate::settings::update_settings(crate::settings::AppSettings::default())
+            .expect("reset settings");
     }
 
     #[tokio::test]
