@@ -145,6 +145,13 @@ pub(crate) fn build_provider_from_request(
         AppType::Claude | AppType::ClaudeDesktop => build_claude_settings(request),
         AppType::Codex => build_codex_settings(request),
         AppType::Gemini => build_gemini_settings(request),
+        AppType::Antigravity => {
+            return Err(AppError::localized(
+                "deeplink.antigravity.unsupported",
+                "Antigravity 2.0 账号凭证不能通过深度链接导入",
+                "Antigravity 2.0 account credentials cannot be imported through deep links",
+            ));
+        }
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),

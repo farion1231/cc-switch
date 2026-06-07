@@ -155,6 +155,19 @@ export function EditProviderDialog({
       }
     }
 
+    // Antigravity 的 live 配置只包含系统凭证；env/config 仍以数据库为准。
+    if (
+      appId === "antigravity" &&
+      liveSettings &&
+      provider?.settingsConfig &&
+      typeof provider.settingsConfig === "object"
+    ) {
+      const liveCredential = liveSettings.credential;
+      return liveCredential === undefined
+        ? base
+        : { ...provider.settingsConfig, credential: liveCredential };
+    }
+
     return base;
   }, [liveSettings, provider?.settingsConfig, appId]); // 只依赖 settingsConfig，不依赖整个 provider
 

@@ -55,8 +55,16 @@ vi.mock("@/hooks/useSkills", () => ({
         foundIn: ["claude"],
         path: "/tmp/shared-skill",
       },
+      {
+        directory: "science-skill",
+        name: "Science Skill",
+        description: "Provided by an Antigravity plugin",
+        foundIn: ["antigravity:science"],
+        path: "/tmp/science/skills/science-skill",
+      },
     ],
     refetch: scanUnmanagedMock,
+    isLoading: false,
   }),
   useImportSkillsFromApps: () => ({
     mutateAsync: importSkillsMock,
@@ -116,5 +124,18 @@ describe("UnifiedSkillsPanel", () => {
       expect(screen.getByText("Shared Skill")).toBeInTheDocument();
       expect(screen.getByText("/tmp/shared-skill")).toBeInTheDocument();
     });
+  });
+
+  it("shows native Antigravity plugin skills before import", () => {
+    render(
+      <UnifiedSkillsPanel
+        onOpenDiscovery={() => {}}
+        currentApp="antigravity"
+      />,
+    );
+
+    expect(screen.getByText("Antigravity 2.0 Plugins (1)")).toBeInTheDocument();
+    expect(screen.getByText("Science Skill")).toBeInTheDocument();
+    expect(screen.getByText("Antigravity 2.0 Plugin")).toBeInTheDocument();
   });
 });

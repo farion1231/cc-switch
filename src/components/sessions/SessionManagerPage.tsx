@@ -66,6 +66,7 @@ type ProviderFilter =
   | "opencode"
   | "openclaw"
   | "gemini"
+  | "antigravity"
   | "hermes";
 
 export function SessionManagerPage({ appId }: { appId: string }) {
@@ -678,6 +679,16 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                   size={14}
                                 />
                                 <span>Gemini CLI</span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="antigravity">
+                              <div className="flex items-center gap-2">
+                                <ProviderIcon
+                                  icon="antigravity"
+                                  name="antigravity"
+                                  size={14}
+                                />
+                                <span>Antigravity 2.0</span>
                               </div>
                             </SelectItem>
                           </SelectContent>

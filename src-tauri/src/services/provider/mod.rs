@@ -1185,8 +1185,17 @@ impl ProviderService {
         add_to_live: bool,
     ) -> Result<bool, AppError> {
         let mut provider = provider;
+        let current = crate::settings::get_effective_current_provider(&state.db, &app_type)?;
+        let is_unbound_antigravity = matches!(app_type, AppType::Antigravity)
+            && provider.settings_config.get("credential").is_none();
+        let capture_initial_antigravity = is_unbound_antigravity && current.is_none();
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
+        if capture_initial_antigravity {
+            crate::antigravity_config::capture_antigravity_credential(
+                &mut provider.settings_config,
+            )?;
+        }
         Self::validate_provider_settings(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
         if app_type.is_additive_mode() {
@@ -1214,13 +1223,36 @@ impl ProviderService {
         }
 
         // For other apps: Check if sync is needed (if this is current provider, or no current provider)
-        let current = state.db.get_current_provider(app_type.as_str())?;
         if current.is_none() {
             // No current provider, set as current and sync
             state
                 .db
                 .set_current_provider(app_type.as_str(), &provider.id)?;
             write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
+        } else if is_unbound_antigravity && add_to_live {
+            if let Some(current_id) = current {
+                if let Ok(live_settings) = read_live_settings(app_type.clone()) {
+                    if let Some(mut current_provider) = state
+                        .db
+                        .get_provider_by_id(&current_id, app_type.as_str())?
+                    {
+                        current_provider.settings_config =
+                            crate::antigravity_config::merge_live_settings(
+                                &current_provider.settings_config,
+                                &live_settings,
+                            );
+                        state
+                            .db
+                            .save_provider(app_type.as_str(), &current_provider)?;
+                    }
+                }
+            }
+
+            write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
+            crate::settings::set_current_provider(&app_type, Some(&provider.id))?;
+            state
+                .db
+                .set_current_provider(app_type.as_str(), &provider.id)?;
         }
 
         Ok(true)
@@ -1944,6 +1976,7 @@ impl ProviderService {
             AppType::ClaudeDesktop => Ok(String::new()),
             AppType::Codex => Self::extract_codex_common_config(&provider.settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
+            AppType::Antigravity => Ok(String::new()),
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
@@ -1960,6 +1993,7 @@ impl ProviderService {
             AppType::ClaudeDesktop => Ok(String::new()),
             AppType::Codex => Self::extract_codex_common_config(settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
+            AppType::Antigravity => Ok(String::new()),
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
@@ -2319,6 +2353,11 @@ impl ProviderService {
                 use crate::gemini_config::validate_gemini_settings;
                 validate_gemini_settings(&provider.settings_config)?
             }
+            AppType::Antigravity => {
+                crate::antigravity_config::validate_antigravity_settings(
+                    &provider.settings_config,
+                )?;
+            }
             AppType::OpenCode => {
                 // OpenCode uses a different config structure: { npm, options, models }
                 // Basic validation - must be an object
@@ -2499,6 +2538,11 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
+            AppType::Antigravity => Err(AppError::localized(
+                "provider.antigravity.usage_unsupported",
+                "Antigravity 2.0 账号配置不支持 API 用量查询",
+                "Antigravity 2.0 account providers do not support API usage queries",
+            )),
             AppType::OpenCode => {
                 // OpenCode uses options.apiKey and options.baseURL
                 let options = provider

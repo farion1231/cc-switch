@@ -127,8 +127,8 @@ impl Database {
                 tx.execute(
                     "INSERT OR REPLACE INTO mcp_servers (
                         id, name, server_config, description, homepage, docs, tags,
-                        enabled_claude, enabled_codex, enabled_gemini
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                        enabled_claude, enabled_codex, enabled_gemini, enabled_antigravity
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                     params![
                         id,
                         server.name,
@@ -140,6 +140,7 @@ impl Database {
                         server.apps.claude,
                         server.apps.codex,
                         server.apps.gemini,
+                        server.apps.antigravity,
                     ],
                 )
                 .map_err(|e| AppError::Database(format!("Migrate mcp server failed: {e}")))?;
@@ -183,6 +184,7 @@ impl Database {
         migrate_app_prompts(&config.prompts.claude.prompts, "claude")?;
         migrate_app_prompts(&config.prompts.codex.prompts, "codex")?;
         migrate_app_prompts(&config.prompts.gemini.prompts, "gemini")?;
+        migrate_app_prompts(&config.prompts.antigravity.prompts, "antigravity")?;
 
         Ok(())
     }

@@ -2,6 +2,13 @@
 import { IconMetadata } from "@/types/icon";
 
 export const iconMetadata: Record<string, IconMetadata> = {
+  antigravity: {
+    name: "antigravity",
+    displayName: "Antigravity 2.0",
+    category: "ai-provider",
+    keywords: ["antigravity", "google", "gemini"],
+    defaultColor: "#4285F4",
+  },
   aigocode: {
     name: "aigocode",
     displayName: "AIGoCode",

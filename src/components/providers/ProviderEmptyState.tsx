@@ -25,7 +25,9 @@ export function ProviderEmptyState({
       </div>
       <h3 className="text-lg font-semibold">{t("provider.noProviders")}</h3>
       <p className="mt-2 max-w-lg text-sm text-muted-foreground">
-        {t("provider.noProvidersDescription")}
+        {appId === "antigravity"
+          ? t("antigravity.emptyDescription")
+          : t("provider.noProvidersDescription")}
       </p>
       {showSnippetHint && (
         <p className="mt-1 max-w-lg text-sm text-muted-foreground">

@@ -2,6 +2,7 @@
 // Do not edit manually
 
 import _apikeyfun from "./apikeyfun.png";
+import _antigravity from "./antigravity.png";
 import _apinebula from "./apinebula_icon.png";
 import _atlascloud from "./atlascloud_icon.png";
 import _claudeapi from "./ClaudeApi.png";
@@ -93,6 +94,7 @@ export const icons: Record<string, string> = {
 };
 
 export const iconUrls: Record<string, string> = {
+  antigravity: _antigravity,
   apikeyfun: _apikeyfun,
   apinebula: _apinebula,
   atlascloud: _atlascloud,

@@ -115,6 +115,16 @@ const VALID_TOOLS: [&str; 6] = [
     "claude", "codex", "gemini", "opencode", "openclaw", "hermes",
 ];
 
+const VERSION_TOOLS: [&str; 7] = [
+    "claude",
+    "codex",
+    "gemini",
+    "antigravity",
+    "opencode",
+    "openclaw",
+    "hermes",
+];
+
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WslShellPreferenceInput {
@@ -156,13 +166,13 @@ pub async fn get_tool_versions(
 ) -> Result<Vec<ToolVersion>, String> {
     let requested: Vec<&str> = if let Some(tools) = tools.as_ref() {
         let set: std::collections::HashSet<&str> = tools.iter().map(|s| s.as_str()).collect();
-        VALID_TOOLS
+        VERSION_TOOLS
             .iter()
             .copied()
             .filter(|t| set.contains(t))
             .collect()
     } else {
-        VALID_TOOLS.to_vec()
+        VERSION_TOOLS.to_vec()
     };
     let mut results = Vec::new();
 
@@ -638,7 +648,7 @@ fn build_tool_action_line(
         // (npm/pnpm)或 .exe(volta),静态命令头部是 `npm`(也是 .cmd)、`py` 等——
         // 全部加 `call ` 前缀,风格统一且语义正确。含空格的头部已被 `win_quote_path_for_batch`
         // 加上双引号,call 对带引号的路径解析正常。
-        return Ok(format!("call {command}"));
+        Ok(format!("call {command}"))
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -717,9 +727,13 @@ async fn get_single_tool_version_impl(
     wsl_shell_flag: Option<&str>,
 ) -> ToolVersion {
     debug_assert!(
-        VALID_TOOLS.contains(&tool),
+        VERSION_TOOLS.contains(&tool),
         "unexpected tool name in get_single_tool_version_impl: {tool}"
     );
+
+    if tool == "antigravity" {
+        return get_antigravity_v2_version().await;
+    }
 
     // 判断该工具的运行环境 & WSL distro（如有）
     let (env_type, wsl_distro) = tool_env_type_and_wsl_distro(tool);
@@ -784,6 +798,131 @@ async fn get_single_tool_version_impl(
         installed_but_broken,
         env_type,
         wsl_distro,
+    }
+}
+
+const ANTIGRAVITY_V2_UPDATE_MANIFEST_BASE: &str =
+    "https://antigravity-hub-auto-updater-974169037036.us-central1.run.app/manifest";
+
+fn parse_antigravity_v2_manifest_version(manifest: &str) -> Option<String> {
+    manifest.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        if key.trim() != "version" {
+            return None;
+        }
+        let version = value.trim().trim_matches(['\'', '"']);
+        (!version.is_empty()).then(|| version.to_string())
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn antigravity_v2_executable_path() -> Option<PathBuf> {
+    dirs::data_local_dir().map(|dir| {
+        dir.join("Programs")
+            .join("Antigravity")
+            .join("Antigravity.exe")
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn antigravity_v2_executable_path() -> Option<PathBuf> {
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn read_windows_file_version(path: &Path) -> Result<String, String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW, VS_FIXEDFILEINFO,
+    };
+
+    let wide_path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let size = unsafe { GetFileVersionInfoSizeW(wide_path.as_ptr(), std::ptr::null_mut()) };
+    if size == 0 {
+        return Err("failed to read executable version size".to_string());
+    }
+
+    let mut buffer = vec![0_u8; size as usize];
+    let ok =
+        unsafe { GetFileVersionInfoW(wide_path.as_ptr(), 0, size, buffer.as_mut_ptr().cast()) };
+    if ok == 0 {
+        return Err("failed to read executable version info".to_string());
+    }
+
+    let root = [b'\\' as u16, 0];
+    let mut version_ptr = std::ptr::null_mut();
+    let mut version_len = 0_u32;
+    let ok = unsafe {
+        VerQueryValueW(
+            buffer.as_ptr().cast(),
+            root.as_ptr(),
+            &mut version_ptr,
+            &mut version_len,
+        )
+    };
+    if ok == 0 || version_ptr.is_null() || version_len < size_of::<VS_FIXEDFILEINFO>() as u32 {
+        return Err("failed to query executable version info".to_string());
+    }
+
+    let info = unsafe { &*(version_ptr.cast::<VS_FIXEDFILEINFO>()) };
+    let major = info.dwFileVersionMS >> 16;
+    let minor = info.dwFileVersionMS & 0xffff;
+    let patch = info.dwFileVersionLS >> 16;
+    Ok(format!("{major}.{minor}.{patch}"))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn read_windows_file_version(_path: &Path) -> Result<String, String> {
+    Err("Antigravity 2.0 version detection is currently supported on Windows".to_string())
+}
+
+fn antigravity_v2_manifest_url() -> String {
+    #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+    let channel = "latest-arm64-win.yml";
+    #[cfg(all(target_os = "windows", not(target_arch = "aarch64")))]
+    let channel = "latest-x64-win.yml";
+    #[cfg(not(target_os = "windows"))]
+    let channel = "latest.yml";
+
+    format!("{ANTIGRAVITY_V2_UPDATE_MANIFEST_BASE}/{channel}")
+}
+
+async fn fetch_antigravity_v2_latest_version(client: &reqwest::Client) -> Option<String> {
+    let response = client
+        .get(antigravity_v2_manifest_url())
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?;
+    let manifest = response.text().await.ok()?;
+    parse_antigravity_v2_manifest_version(&manifest)
+}
+
+async fn get_antigravity_v2_version() -> ToolVersion {
+    let executable = antigravity_v2_executable_path();
+    let (version, error) = match executable {
+        Some(path) if path.is_file() => match read_windows_file_version(&path) {
+            Ok(version) => (Some(version), None),
+            Err(error) => (None, Some(error)),
+        },
+        _ => (None, Some(NOT_INSTALLED.to_string())),
+    };
+    let latest_version =
+        fetch_antigravity_v2_latest_version(&crate::proxy::http_client::get()).await;
+
+    ToolVersion {
+        name: "antigravity".to_string(),
+        version,
+        latest_version,
+        error,
+        installed_but_broken: false,
+        env_type: if cfg!(target_os = "windows") {
+            "windows".to_string()
+        } else {
+            "unknown".to_string()
+        },
+        wsl_distro: None,
     }
 }
 
@@ -2533,7 +2672,7 @@ fn launch_terminal_with_env(
     #[cfg(target_os = "windows")]
     {
         launch_windows_terminal(&temp_dir, &config_file, cwd)?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -2995,6 +3134,7 @@ del \"%~f0\" >nul 2>&1
     result
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn build_shell_cd_command(cwd: Option<&Path>) -> String {
     cwd.map(|dir| {
         format!(
@@ -3005,6 +3145,7 @@ fn build_shell_cd_command(cwd: Option<&Path>) -> String {
     .unwrap_or_default()
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
@@ -3362,6 +3503,21 @@ mod tests {
             pick_latest_version(map, &["beta"], Some("0.200.0")),
             Some("0.135.0".to_string())
         );
+    }
+
+    #[test]
+    fn test_parse_antigravity_v2_manifest_version() {
+        let manifest = r#"version: 2.0.11
+files:
+  - url: https://storage.googleapis.com/antigravity/2.0.11/Antigravity-x64.exe
+releaseDate: '2026-06-03T18:46:33.590Z'
+"#;
+
+        assert_eq!(
+            parse_antigravity_v2_manifest_version(manifest),
+            Some("2.0.11".to_string())
+        );
+        assert_eq!(parse_antigravity_v2_manifest_version("files: []"), None);
     }
 
     /// `parent_dir` 是锚定层"由 bin 路径推导同目录绝对路径"的基石,跨平台共用——

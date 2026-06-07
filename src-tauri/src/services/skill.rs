@@ -521,6 +521,15 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
+            AppType::Antigravity => {
+                if let Some(custom) = crate::settings::get_antigravity_override_dir() {
+                    return Ok(custom
+                        .join("config")
+                        .join("plugins")
+                        .join("cc-switch")
+                        .join("skills"));
+                }
+            }
             AppType::OpenCode => {
                 if let Some(custom) = crate::settings::get_opencode_override_dir() {
                     return Ok(custom.join("skills"));
@@ -550,6 +559,12 @@ impl SkillService {
             AppType::ClaudeDesktop => home.join(".claude-desktop").join("skills"),
             AppType::Codex => home.join(".codex").join("skills"),
             AppType::Gemini => home.join(".gemini").join("skills"),
+            AppType::Antigravity => home
+                .join(".gemini")
+                .join("config")
+                .join("plugins")
+                .join("cc-switch")
+                .join("skills"),
             AppType::OpenCode => home.join(".config").join("opencode").join("skills"),
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
@@ -1387,13 +1402,33 @@ impl SkillService {
             .values()
             .map(|s| s.directory.clone())
             .collect();
+        let mut unmanaged: HashMap<String, UnmanagedSkill> = HashMap::new();
 
         // 收集所有待扫描的目录及其来源标签
         let mut scan_sources: Vec<(PathBuf, String)> = Vec::new();
         for app in AppType::all() {
-            if let Ok(d) = Self::get_app_skills_dir(&app) {
-                scan_sources.push((d, app.as_str().to_string()));
+            if !matches!(app, AppType::Antigravity) {
+                if let Ok(d) = Self::get_app_skills_dir(&app) {
+                    scan_sources.push((d, app.as_str().to_string()));
+                }
             }
+        }
+        for (directory, path, label) in Self::antigravity_native_skills() {
+            if managed_dirs.contains(&directory) {
+                continue;
+            }
+            let skill_md = path.join("SKILL.md");
+            let (name, description) = Self::read_skill_name_desc(&skill_md, &directory);
+            unmanaged
+                .entry(directory.clone())
+                .and_modify(|skill| skill.found_in.push(label.clone()))
+                .or_insert(UnmanagedSkill {
+                    directory,
+                    name,
+                    description,
+                    found_in: vec![label],
+                    path: path.display().to_string(),
+                });
         }
         if let Some(agents_dir) = get_agents_skills_dir() {
             scan_sources.push((agents_dir, "agents".to_string()));
@@ -1401,8 +1436,6 @@ impl SkillService {
         if let Ok(ssot_dir) = Self::get_ssot_dir() {
             scan_sources.push((ssot_dir, "cc-switch".to_string()));
         }
-
-        let mut unmanaged: HashMap<String, UnmanagedSkill> = HashMap::new();
 
         for (scan_dir, label) in &scan_sources {
             let entries = match fs::read_dir(scan_dir) {
@@ -1462,10 +1495,13 @@ impl SkillService {
         // 收集所有候选搜索目录
         let mut search_sources: Vec<(PathBuf, String)> = Vec::new();
         for app in AppType::all() {
-            if let Ok(d) = Self::get_app_skills_dir(&app) {
-                search_sources.push((d, app.as_str().to_string()));
+            if !matches!(app, AppType::Antigravity) {
+                if let Ok(d) = Self::get_app_skills_dir(&app) {
+                    search_sources.push((d, app.as_str().to_string()));
+                }
             }
         }
+        let antigravity_sources = Self::antigravity_native_skills();
         if let Some(agents_dir) = get_agents_skills_dir() {
             search_sources.push((agents_dir, "agents".to_string()));
         }
@@ -1475,6 +1511,13 @@ impl SkillService {
             let dir_name = selection.directory;
             // 在所有候选目录中查找
             let mut source_path: Option<PathBuf> = None;
+
+            if let Some((_, path, _)) = antigravity_sources
+                .iter()
+                .find(|(directory, _, _)| directory == &dir_name)
+            {
+                source_path = Some(path.clone());
+            }
 
             for (base, label) in &search_sources {
                 let skill_path = base.join(&dir_name);
@@ -1594,6 +1637,9 @@ impl SkillService {
         Self::validate_sync_source_dir(&source, directory)?;
 
         let app_dir = Self::get_app_skills_dir(app)?;
+        if matches!(app, AppType::Antigravity) {
+            Self::ensure_antigravity_cc_switch_plugin(&app_dir)?;
+        }
         fs::create_dir_all(&app_dir)?;
 
         let dest = app_dir.join(directory);
@@ -1643,6 +1689,76 @@ impl SkillService {
             }
         }
 
+        Ok(())
+    }
+
+    fn antigravity_native_skills() -> Vec<(String, PathBuf, String)> {
+        let plugins_dir = crate::antigravity_config::get_antigravity_dir()
+            .join("config")
+            .join("plugins");
+        Self::antigravity_native_skills_from(&plugins_dir)
+    }
+
+    fn antigravity_native_skills_from(plugins_dir: &Path) -> Vec<(String, PathBuf, String)> {
+        let Ok(entries) = fs::read_dir(&plugins_dir) else {
+            return Vec::new();
+        };
+
+        let mut skills = Vec::new();
+        for entry in entries.flatten() {
+            let plugin_dir = entry.path();
+            let plugin_name = entry.file_name().to_string_lossy().to_string();
+            if plugin_name == "cc-switch" {
+                continue;
+            }
+            let skills_dir = plugin_dir.join("skills");
+            if !skills_dir.is_dir() {
+                continue;
+            }
+
+            let label = format!("antigravity:{plugin_name}");
+            if skills_dir.join("SKILL.md").is_file() {
+                skills.push((plugin_name, skills_dir, label));
+                continue;
+            }
+            if let Ok(skill_dirs) = Self::scan_skills_in_dir(&skills_dir) {
+                for skill_dir in skill_dirs {
+                    let Some(directory) = skill_dir
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .map(str::to_string)
+                    else {
+                        continue;
+                    };
+                    skills.push((directory, skill_dir, label.clone()));
+                }
+            }
+        }
+        skills
+    }
+
+    fn ensure_antigravity_cc_switch_plugin(skills_dir: &Path) -> Result<()> {
+        let plugin_dir = skills_dir.parent().ok_or_else(|| {
+            anyhow!(
+                "Invalid Antigravity managed skills directory: {}",
+                skills_dir.display()
+            )
+        })?;
+        fs::create_dir_all(plugin_dir)?;
+
+        let manifest = plugin_dir.join("plugin.json");
+        if !manifest.exists() {
+            fs::write(
+                &manifest,
+                concat!(
+                    "{\n",
+                    "  \"name\": \"cc-switch\",\n",
+                    "  \"version\": \"1.0.0\",\n",
+                    "  \"description\": \"Skills managed by CC Switch\"\n",
+                    "}\n"
+                ),
+            )?;
+        }
         Ok(())
     }
 
@@ -3102,6 +3218,45 @@ mod tests {
             .expect("install name should fall back to the matching discovered skill directory");
 
         assert_eq!(resolved, nested);
+    }
+
+    #[test]
+    fn discovers_antigravity_plugin_skill_layouts() {
+        let temp = tempdir().expect("tempdir");
+        let plugins = temp.path().join("config").join("plugins");
+        let single_plugin = plugins.join("single-plugin");
+        let collection_skills = plugins.join("collection-plugin").join("skills");
+        write_skill(&single_plugin.join("skills"), "Single Skill");
+        write_skill(&collection_skills.join("nested-skill"), "Nested Skill");
+
+        let sources = SkillService::antigravity_native_skills_from(&plugins);
+
+        assert!(sources.iter().any(|(directory, path, _)| {
+            directory == "single-plugin" && path == &single_plugin.join("skills")
+        }));
+        assert!(sources.iter().any(|(directory, path, _)| {
+            directory == "nested-skill" && path == &collection_skills.join("nested-skill")
+        }));
+    }
+
+    #[test]
+    fn creates_antigravity_managed_plugin_manifest() {
+        let temp = tempdir().expect("tempdir");
+        let skills_dir = temp
+            .path()
+            .join("config")
+            .join("plugins")
+            .join("cc-switch")
+            .join("skills");
+
+        SkillService::ensure_antigravity_cc_switch_plugin(&skills_dir)
+            .expect("create plugin manifest");
+
+        let manifest = skills_dir.parent().expect("plugin dir").join("plugin.json");
+        let value: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(manifest).expect("read manifest"))
+                .expect("parse manifest");
+        assert_eq!(value["name"], "cc-switch");
     }
 
     #[test]

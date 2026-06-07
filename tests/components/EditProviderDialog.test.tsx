@@ -202,4 +202,51 @@ describe("EditProviderDialog", () => {
       JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
     ).toEqual(provider.settingsConfig);
   });
+
+  it("编辑当前 Antigravity 配置时只从 live 更新凭证", async () => {
+    const provider: Provider = {
+      id: "antigravity-account",
+      name: "Antigravity Account",
+      category: "custom",
+      settingsConfig: {
+        env: {
+          GOOGLE_GEMINI_BASE_URL: "https://example.com",
+          GEMINI_API_KEY: "db-key",
+        },
+        config: {
+          timeout: 30000,
+        },
+        credential: {
+          account: "old@example.com",
+        },
+      },
+    };
+    const liveCredential = {
+      account: "current@example.com",
+    };
+
+    apiMocks.getCurrent.mockResolvedValue(provider.id);
+    apiMocks.getLiveProviderSettings.mockResolvedValue({
+      credential: liveCredential,
+    });
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        appId="antigravity"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+      ).toEqual({
+        ...provider.settingsConfig,
+        credential: liveCredential,
+      });
+    });
+  });
 });

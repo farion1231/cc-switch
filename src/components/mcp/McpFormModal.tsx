@@ -65,6 +65,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     claude: boolean;
     codex: boolean;
     gemini: boolean;
+    antigravity: boolean;
     opencode: boolean;
     openclaw: boolean;
     hermes: boolean;
@@ -76,6 +77,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       claude: defaultEnabledApps.includes("claude"),
       codex: defaultEnabledApps.includes("codex"),
       gemini: defaultEnabledApps.includes("gemini"),
+      antigravity: defaultEnabledApps.includes("antigravity"),
       opencode: defaultEnabledApps.includes("opencode"),
       openclaw: defaultEnabledApps.includes("openclaw"),
       hermes: defaultEnabledApps.includes("hermes"),
@@ -563,6 +565,25 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     className="text-sm text-foreground cursor-pointer select-none"
                   >
                     {t("mcp.unifiedPanel.apps.gemini")}
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="enable-antigravity"
+                    checked={enabledApps.antigravity}
+                    onCheckedChange={(checked: boolean) =>
+                      setEnabledApps({
+                        ...enabledApps,
+                        antigravity: checked,
+                      })
+                    }
+                  />
+                  <label
+                    htmlFor="enable-antigravity"
+                    className="text-sm text-foreground cursor-pointer select-none"
+                  >
+                    {t("mcp.unifiedPanel.apps.antigravity")}
                   </label>
                 </div>
 

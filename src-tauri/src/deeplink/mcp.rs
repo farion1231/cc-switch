@@ -166,6 +166,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
         claude: false,
         codex: false,
         gemini: false,
+        antigravity: false,
         opencode: false,
         hermes: false,
     };
@@ -175,6 +176,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
             "claude" => apps.claude = true,
             "codex" => apps.codex = true,
             "gemini" => apps.gemini = true,
+            "antigravity" => apps.antigravity = true,
             "opencode" => apps.opencode = true,
             "openclaw" => {
                 // OpenClaw doesn't support MCP, ignore silently

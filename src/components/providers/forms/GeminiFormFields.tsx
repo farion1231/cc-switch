@@ -12,12 +12,14 @@ import {
   type FetchedModel,
 } from "@/lib/api/model-fetch";
 import type { ProviderCategory } from "@/types";
+import type { AppId } from "@/lib/api";
 
 interface EndpointCandidate {
   url: string;
 }
 
 interface GeminiFormFieldsProps {
+  appId: Extract<AppId, "gemini" | "antigravity">;
   providerId?: string;
   // API Key
   shouldShowApiKey: boolean;
@@ -49,6 +51,7 @@ interface GeminiFormFieldsProps {
 }
 
 export function GeminiFormFields({
+  appId,
   providerId,
   shouldShowApiKey,
   apiKey,
@@ -195,7 +198,7 @@ export function GeminiFormFields({
       {/* 端点测速弹窗 */}
       {shouldShowSpeedTest && isEndpointModalOpen && (
         <EndpointSpeedTest
-          appId="gemini"
+          appId={appId}
           providerId={providerId}
           value={baseUrl}
           onChange={onBaseUrlChange}

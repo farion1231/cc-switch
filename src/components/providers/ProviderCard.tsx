@@ -179,7 +179,6 @@ export function ProviderCard({
   const displayUrl = useMemo(() => {
     return extractApiUrl(provider, fallbackUrlText);
   }, [provider, fallbackUrlText]);
-
   const isClickableUrl = useMemo(() => {
     if (provider.notes?.trim()) {
       return false;
