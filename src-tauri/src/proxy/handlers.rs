@@ -69,37 +69,25 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// catalog file directly so the format always matches what the current version
 /// of Codex expects.
 ///
-/// Only serves the catalog when the live config.toml still references it via
-/// `model_catalog_json`.  cc-switch writes a relative path (just the filename)
-/// so we match on the filename rather than the full path.
+/// Only serves the catalog when the live config.toml still references the
+/// cc-switch–owned `model_catalog_json`, using the same path ownership rules as
+/// Codex live-setting import.
 pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
-    let catalog_path = crate::codex_config::get_codex_model_catalog_path();
-
-    // Guard: parse config.toml and inspect the actual model_catalog_json
-    // field so a commented-out line or stray mention of the filename in
-    // another field does not trick the check.  Use exact filename match to
-    // stay consistent with resolve_cc_switch_catalog_path in codex_config.rs.
-    let catalog_still_active = match crate::codex_config::read_codex_config_text() {
-        Ok(config_text) => match config_text.parse::<toml_edit::DocumentMut>() {
-            Ok(doc) => doc
-                .get("model_catalog_json")
-                .and_then(|item| item.as_str())
-                .is_some_and(|val| {
-                    std::path::Path::new(val).file_name()
-                        == Some(std::ffi::OsStr::new(
-                            crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME,
-                        ))
-                }),
-            Err(_) => false,
-        },
-        Err(_) => false,
+    let generated_path = crate::codex_config::get_codex_model_catalog_path();
+    let active_catalog_path = match crate::codex_config::read_codex_config_text() {
+        Ok(config_text) => {
+            crate::codex_config::resolve_cc_switch_catalog_path(&config_text, &generated_path)
+        }
+        Err(_) => None,
     };
 
-    let catalog = if catalog_still_active && catalog_path.exists() {
-        let text = std::fs::read_to_string(&catalog_path).unwrap_or_default();
+    let catalog = if let Some(catalog_path) =
+        active_catalog_path.as_ref().filter(|path| path.exists())
+    {
+        let text = std::fs::read_to_string(catalog_path).unwrap_or_default();
         serde_json::from_str(&text).unwrap_or(json!({"models": []}))
     } else {
-        if !catalog_still_active {
+        if active_catalog_path.is_none() {
             log::debug!(
                 "[models] stale guard: catalog not served (model_catalog_json not set to cc-switch catalog)"
             );
