@@ -73,14 +73,25 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// `model_catalog_json`.  cc-switch writes a relative path (just the filename)
 /// so we match on the filename rather than the full path.
 pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
-    use crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME;
-
     let catalog_path = crate::codex_config::get_codex_model_catalog_path();
 
-    // Guard: cc-switch writes model_catalog_json as a relative filename
-    // (e.g. "cc-switch-model-catalog.json"), so match on the filename.
+    // Guard: parse config.toml and inspect the actual model_catalog_json
+    // field so a commented-out line or stray mention of the filename in
+    // another field does not trick the check.  Use exact filename match to
+    // stay consistent with resolve_cc_switch_catalog_path in codex_config.rs.
     let catalog_still_active = match crate::codex_config::read_codex_config_text() {
-        Ok(config_text) => config_text.contains(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME),
+        Ok(config_text) => match config_text.parse::<toml_edit::DocumentMut>() {
+            Ok(doc) => doc
+                .get("model_catalog_json")
+                .and_then(|item| item.as_str())
+                .is_some_and(|val| {
+                    std::path::Path::new(val).file_name()
+                        == Some(std::ffi::OsStr::new(
+                            crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME,
+                        ))
+                }),
+            Err(_) => false,
+        },
         Err(_) => false,
     };
 
@@ -88,6 +99,11 @@ pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
         let text = std::fs::read_to_string(&catalog_path).unwrap_or_default();
         serde_json::from_str(&text).unwrap_or(json!({"models": []}))
     } else {
+        if !catalog_still_active {
+            log::debug!(
+                "[models] stale guard: catalog not served (model_catalog_json not set to cc-switch catalog)"
+            );
+        }
         json!({"models": []})
     };
     Ok(Json(catalog))
