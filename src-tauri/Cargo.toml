@@ -62,6 +62,7 @@ rustls = "0.23"
 webpki-roots = "0.26"
 rustls-native-certs = "0.8"
 regex = "1.10"
+same-file = "1.0"
 rquickjs = { version = "0.8", features = ["array-buffer", "classes"] }
 thiserror = "2.0"
 anyhow = "1.0"

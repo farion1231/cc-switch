@@ -15,6 +15,7 @@ import {
   FolderOpen,
   X,
   CheckSquare,
+  Download,
 } from "lucide-react";
 import {
   useDeleteSessionMutation,
@@ -22,6 +23,7 @@ import {
   useSessionsQuery,
 } from "@/lib/query";
 import { sessionsApi } from "@/lib/api";
+import type { SessionExportFormat } from "@/lib/api/sessions";
 import type { SessionMeta } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +38,13 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -43,16 +52,19 @@ import {
 } from "@/components/ui/tooltip";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isMac } from "@/lib/platform";
+import { copyText } from "@/lib/clipboard";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { SessionItem } from "./SessionItem";
 import { SessionMessageItem } from "./SessionMessageItem";
 import { SessionTocDialog, SessionTocSidebar } from "./SessionToc";
 import {
+  buildSessionExportFilename,
   formatSessionTitle,
   formatTimestamp,
   getBaseName,
   getProviderIconName,
   getProviderLabel,
+  getRawExportExtension,
   getSessionKey,
 } from "./utils";
 
@@ -133,6 +145,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       selectedSession?.sourcePath,
     );
   const deleteSessionMutation = useDeleteSessionMutation();
+  const [isExporting, setIsExporting] = useState(false);
   const isDeleting = deleteSessionMutation.isPending || isBatchDeleting;
 
   const virtualizer = useVirtualizer({
@@ -190,7 +203,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const handleCopy = useCallback(
     async (text: string, successMessage: string) => {
       try {
-        await navigator.clipboard.writeText(text);
+        await copyText(text);
         toast.success(successMessage);
       } catch (error) {
         toast.error(
@@ -233,6 +246,93 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       const fallback = selectedSession.resumeCommand;
       await handleCopy(fallback, t("sessionManager.resumeFallbackCopied"));
       toast.error(extractErrorMessage(error) || t("sessionManager.openFailed"));
+    }
+  };
+
+  const getExportExtension = (format: SessionExportFormat) => {
+    if (format === "markdown") return "md";
+    if (format === "html") return "html";
+    if (format === "text") return "txt";
+    return getRawExportExtension(selectedSession?.sourcePath) ?? "jsonl";
+  };
+
+  const getExportFilterName = (format: SessionExportFormat) => {
+    if (format === "markdown") return "Markdown";
+    if (format === "html") return "HTML";
+    if (format === "text") return "Plain Text";
+    return "Original Session File";
+  };
+
+  const handleExportSession = async (format: SessionExportFormat) => {
+    if (!selectedSession?.sourcePath || isExporting) return;
+
+    const extension = getExportExtension(format);
+    const defaultName = buildSessionExportFilename(
+      selectedSession,
+      extension,
+      format === "raw",
+    );
+
+    try {
+      const outputPath = await sessionsApi.saveExportFileDialog({
+        defaultName,
+        filterName: getExportFilterName(format),
+        extensions: [extension],
+      });
+      if (!outputPath) return;
+
+      setIsExporting(true);
+      await sessionsApi.export({
+        providerId: selectedSession.providerId,
+        sessionId: selectedSession.sessionId,
+        sourcePath: selectedSession.sourcePath,
+        format,
+        outputPath,
+      });
+      toast.success(
+        t("sessionManager.sessionExported", {
+          defaultValue: "Session exported to: {{path}}",
+          path: outputPath,
+        }),
+      );
+    } catch (error) {
+      toast.error(
+        t("sessionManager.exportFailed", {
+          defaultValue: "Failed to export session: {{error}}",
+          error: extractErrorMessage(error),
+        }),
+      );
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleCopyAsMarkdown = async () => {
+    if (!selectedSession?.sourcePath || isExporting) return;
+
+    try {
+      setIsExporting(true);
+      const content = await sessionsApi.renderExport({
+        providerId: selectedSession.providerId,
+        sessionId: selectedSession.sessionId,
+        sourcePath: selectedSession.sourcePath,
+        format: "markdown",
+      });
+      await copyText(content);
+      toast.success(
+        t("sessionManager.markdownCopied", {
+          defaultValue: "Markdown copied",
+        }),
+      );
+    } catch (error) {
+      toast.error(
+        t("sessionManager.copyMarkdownFailed", {
+          defaultValue: "Failed to copy Markdown: {{error}}",
+          error: extractErrorMessage(error),
+        }),
+      );
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -427,6 +527,23 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     setSelectionMode(false);
     setSelectedSessionKeys(new Set());
   };
+
+  const rawExportExtension = getRawExportExtension(selectedSession?.sourcePath);
+  const rawExportDisabledReason = !selectedSession?.sourcePath
+    ? t("sessionManager.exportUnavailableNoSource", {
+        defaultValue:
+          "This session has no local source path and cannot be exported.",
+      })
+    : selectedSession.sourcePath.startsWith("sqlite:")
+      ? t("sessionManager.rawExportUnavailableSqlite", {
+          defaultValue: "Stored in SQLite. Raw export is not supported yet.",
+        })
+      : !rawExportExtension
+        ? t("sessionManager.rawExportUnavailableUnsupported", {
+            defaultValue:
+              "Raw export is only available for JSON/JSONL session files.",
+          })
+        : null;
 
   return (
     <TooltipProvider>
@@ -917,6 +1034,100 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                             </TooltipContent>
                           </Tooltip>
                         )}
+                        <Tooltip>
+                          <DropdownMenu>
+                            <TooltipTrigger asChild>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="gap-1.5"
+                                  disabled={
+                                    !selectedSession.sourcePath || isExporting
+                                  }
+                                >
+                                  <Download className="size-3.5" />
+                                  <span className="hidden sm:inline">
+                                    {isExporting
+                                      ? t("sessionManager.exporting", {
+                                          defaultValue: "Exporting...",
+                                        })
+                                      : t("sessionManager.export", {
+                                          defaultValue: "Export",
+                                        })}
+                                  </span>
+                                </Button>
+                              </DropdownMenuTrigger>
+                            </TooltipTrigger>
+                            <DropdownMenuContent align="end" className="w-56">
+                              <DropdownMenuItem
+                                onSelect={() =>
+                                  void handleExportSession("markdown")
+                                }
+                              >
+                                {t("sessionManager.exportAsMarkdown", {
+                                  defaultValue: "Export as Markdown (.md)",
+                                })}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onSelect={() =>
+                                  void handleExportSession("html")
+                                }
+                              >
+                                {t("sessionManager.exportAsHtml", {
+                                  defaultValue: "Export as HTML (.html)",
+                                })}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onSelect={() =>
+                                  void handleExportSession("text")
+                                }
+                              >
+                                {t("sessionManager.exportAsText", {
+                                  defaultValue: "Export as Plain Text (.txt)",
+                                })}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={Boolean(rawExportDisabledReason)}
+                                title={rawExportDisabledReason ?? undefined}
+                                onSelect={() => void handleExportSession("raw")}
+                              >
+                                <span className="flex flex-col items-start">
+                                  <span>
+                                    {t("sessionManager.exportOriginal", {
+                                      defaultValue:
+                                        "Export Original Session File",
+                                    })}
+                                  </span>
+                                  {rawExportDisabledReason && (
+                                    <span className="text-xs text-muted-foreground font-normal">
+                                      {rawExportDisabledReason}
+                                    </span>
+                                  )}
+                                </span>
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onSelect={() => void handleCopyAsMarkdown()}
+                              >
+                                <Copy className="size-3.5" />
+                                {t("sessionManager.copyAsMarkdown", {
+                                  defaultValue: "Copy as Markdown",
+                                })}
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                          <TooltipContent>
+                            {selectedSession.sourcePath
+                              ? t("sessionManager.exportTooltip", {
+                                  defaultValue: "Export this session",
+                                })
+                              : t("sessionManager.exportUnavailableNoSource", {
+                                  defaultValue:
+                                    "This session has no local source path and cannot be exported.",
+                                })}
+                          </TooltipContent>
+                        </Tooltip>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button

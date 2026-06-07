@@ -93,6 +93,25 @@ pub async fn save_file_dialog<R: tauri::Runtime>(
     Ok(result.map(|p| p.to_string()))
 }
 
+/// 保存文件对话框（自定义过滤器）
+#[tauri::command]
+pub async fn save_file_dialog_with_filter<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    #[allow(non_snake_case)] defaultName: String,
+    #[allow(non_snake_case)] filterName: String,
+    extensions: Vec<String>,
+) -> Result<Option<String>, String> {
+    let dialog = app.dialog();
+    let ext_refs: Vec<&str> = extensions.iter().map(String::as_str).collect();
+    let result = dialog
+        .file()
+        .add_filter(&filterName, &ext_refs)
+        .set_file_name(&defaultName)
+        .blocking_save_file();
+
+    Ok(result.map(|p| p.to_string()))
+}
+
 /// 打开文件对话框
 #[tauri::command]
 pub async fn open_file_dialog<R: tauri::Runtime>(
