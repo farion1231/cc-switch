@@ -1,7 +1,9 @@
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 import { ClaudeIcon, CodexIcon, GeminiIcon } from "@/components/BrandIcons";
-import { Zap, Star, Layers, Settings2 } from "lucide-react";
+import { Search, Zap, Star, Layers, Settings2 } from "lucide-react";
 import type { ProviderPreset } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
 import type { GeminiProviderPreset } from "@/config/geminiProviderPresets";
@@ -50,6 +52,43 @@ export function ProviderPresetSelector({
   category,
 }: ProviderPresetSelectorProps) {
   const { t } = useTranslation();
+
+  const [presetSearchQuery, setPresetSearchQuery] = useState("");
+  const [isSortedByName, setIsSortedByName] = useState(false);
+
+  const filteredPresetEntries = useMemo(() => {
+    const trimmedQuery = presetSearchQuery.trim().toLowerCase();
+    let entries = [...presetEntries];
+
+    // AZ 排序
+    if (isSortedByName) {
+      entries.sort((a, b) => {
+        const labelA = (
+          a.preset.nameKey ? t(a.preset.nameKey) : a.preset.name
+        ).toLowerCase();
+        const labelB = (
+          b.preset.nameKey ? t(b.preset.nameKey) : b.preset.name
+        ).toLowerCase();
+        return labelA.localeCompare(labelB, undefined, { sensitivity: "base" });
+      });
+    }
+
+    if (!trimmedQuery) {
+      return entries;
+    }
+
+    const tokens = trimmedQuery.split(/\s+/).filter(Boolean);
+
+    return entries.filter((entry) => {
+      const label = (
+        entry.preset.nameKey ? t(entry.preset.nameKey) : entry.preset.name
+      ).toLowerCase();
+      const id = entry.id.toLowerCase();
+      return tokens.some(
+        (token) => label.includes(token) || id.includes(token),
+      );
+    });
+  }, [presetEntries, presetSearchQuery, t, isSortedByName]);
 
   const getCategoryHint = (): React.ReactNode => {
     switch (category) {
@@ -131,6 +170,38 @@ export function ProviderPresetSelector({
   return (
     <div className="space-y-3">
       <FormLabel>{t("providerPreset.label")}</FormLabel>
+      <div className="relative flex items-center gap-2">
+        <Search className="absolute w-4 h-4 -translate-y-1/2 pointer-events-none left-3 top-1/2 text-muted-foreground" />
+        <Input
+          type="search"
+          value={presetSearchQuery}
+          onChange={(event) => setPresetSearchQuery(event.target.value)}
+          placeholder={t("providerPreset.searchPlaceholder", {
+            defaultValue: "搜索预设供应商",
+          })}
+          className="flex-1 pl-9"
+          maxLength={100}
+          aria-label={t("providerPreset.searchAriaLabel", {
+            defaultValue: "搜索预设供应商",
+          })}
+        />
+        <button
+          type="button"
+          onClick={() => setIsSortedByName(!isSortedByName)}
+          className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors shrink-0 ${
+            isSortedByName
+              ? "bg-blue-500 text-white dark:bg-blue-600"
+              : "bg-accent text-muted-foreground hover:bg-accent/80"
+          }`}
+          title={t("providerPreset.sortByName", {
+            defaultValue: "按首字母 A-Z 排序",
+          })}
+        >
+          {t("providerPreset.sortByNameShort", {
+            defaultValue: "按首字母排序",
+          })}
+        </button>
+      </div>
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
@@ -144,7 +215,7 @@ export function ProviderPresetSelector({
           {t("providerPreset.custom")}
         </button>
 
-        {presetEntries.map((entry) => {
+        {filteredPresetEntries.map((entry) => {
           const isSelected = selectedPresetId === entry.id;
           const isPartner = entry.preset.isPartner;
           const presetCategory = entry.preset.category ?? "others";

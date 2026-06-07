@@ -1320,7 +1320,11 @@
     "label": "预设供应商",
     "custom": "自定义配置",
     "other": "其他",
-    "hint": "选择预设后可继续调整下方字段。"
+    "hint": "选择预设后可继续调整下方字段。",
+    "searchPlaceholder": "搜索预设供应商",
+    "searchAriaLabel": "搜索预设供应商",
+    "sortByName": "按首字母 A-Z 排序",
+    "sortByNameShort": "按首字母排序"
   },
   "usage": {
     "title": "使用统计",

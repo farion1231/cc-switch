@@ -1320,7 +1320,11 @@
     "label": "Provider Preset",
     "custom": "Custom Configuration",
     "other": "Other",
-    "hint": "You can continue to adjust the fields below after selecting a preset."
+    "hint": "You can continue to adjust the fields below after selecting a preset.",
+    "searchPlaceholder": "Search provider presets",
+    "searchAriaLabel": "Search provider presets",
+    "sortByName": "Sort by name A-Z",
+    "sortByNameShort": "A-Z Sort"
   },
   "usage": {
     "title": "Usage Statistics",
