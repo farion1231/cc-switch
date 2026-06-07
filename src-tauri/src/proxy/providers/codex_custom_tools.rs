@@ -248,11 +248,7 @@ fn apply_patch_candidate_from_command_array(value: &Value) -> Option<String> {
     let Value::Array(items) = value else {
         return None;
     };
-    if !items
-        .first()
-        .and_then(Value::as_str)
-        .is_some_and(|name| name == APPLY_PATCH_TOOL_NAME)
-    {
+    if items.first().and_then(Value::as_str) != Some(APPLY_PATCH_TOOL_NAME) {
         return None;
     }
 
