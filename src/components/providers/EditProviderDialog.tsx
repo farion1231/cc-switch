@@ -177,11 +177,7 @@ export function EditProviderDialog({
     // 来回切换供应商都可能让 Live 丢失该投影，从而 read_live_settings 反解为空。
     // 若放任 Live 覆盖，编辑界面会显示空映射表，保存后连同数据库里的映射一起清空（数据丢失）。
     // 因此始终以数据库 SSOT 的 modelCatalog 为准，仅在数据库确实没有时才回退到 Live 反解结果。
-    if (
-      appId === "codex" &&
-      liveSettings &&
-      dbSettings
-    ) {
+    if (appId === "codex" && liveSettings && dbSettings) {
       const dbCatalog = dbSettings.modelCatalog;
       if (dbCatalog !== undefined) {
         return { ...base, modelCatalog: dbCatalog };
