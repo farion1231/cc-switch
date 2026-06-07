@@ -308,11 +308,115 @@ fn extract_codex_top_level_u64(config_text: &str, field: &str) -> Option<u64> {
         .filter(|value| *value > 0)
 }
 
+/// 判断模型是否只能按文本模型写入 Codex catalog。
+///
+/// Spark 和 DeepSeek V4 兼容 Responses 文本工具调用，但 Codex 会根据
+/// `input_modalities` 里的 `image` 自动注入 hosted `image_generation` 工具；
+/// 这些模型不支持该工具，所以生成 catalog 时必须覆盖模板里的图片模态。
+fn codex_catalog_model_name_is_text_only(model: &str) -> bool {
+    model.eq_ignore_ascii_case("gpt-5.3-codex-spark")
+        || model.eq_ignore_ascii_case("deepseek-v4-flash")
+        || model.eq_ignore_ascii_case("deepseek-v4-pro")
+}
+
+/// 从 `codexRouting.routes` 中读取指定模型的能力声明。
+///
+/// route 能力优先于历史模型名兜底；这样用户新增任意上游时，可以通过 UI 声明 text-only /
+/// image capability，而不需要把模型名写死进后端。
+fn codex_routing_capabilities_for_model<'a>(settings: &'a Value, model: &str) -> Option<&'a Value> {
+    let routing = settings.get("codexRouting")?;
+    if routing
+        .get("enabled")
+        .and_then(|value| value.as_bool())
+        .is_some_and(|enabled| !enabled)
+    {
+        return None;
+    }
+
+    let routes = routing.get("routes").and_then(|value| value.as_array())?;
+    routes
+        .iter()
+        .find(|route| codex_catalog_route_matches_model(route, model))
+        .or_else(|| {
+            routing
+                .get("defaultRouteId")
+                .or_else(|| routing.get("default_route_id"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .and_then(|default_id| {
+                    routes.iter().find(|route| {
+                        route
+                            .get("id")
+                            .and_then(|value| value.as_str())
+                            .is_some_and(|id| id.eq_ignore_ascii_case(default_id))
+                    })
+                })
+        })
+        .and_then(|route| route.get("capabilities"))
+}
+
+/// 判断 catalog 里的模型是否命中 route 的 model/prefix 匹配规则。
+fn codex_catalog_route_matches_model(route: &Value, model: &str) -> bool {
+    if route
+        .get("enabled")
+        .and_then(|value| value.as_bool())
+        .is_some_and(|enabled| !enabled)
+    {
+        return false;
+    }
+
+    let match_config = route.get("match").unwrap_or(route);
+    if match_config
+        .get("models")
+        .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|value| value.as_str())
+        .any(|candidate| candidate.trim().eq_ignore_ascii_case(model))
+    {
+        return true;
+    }
+
+    let lower_model = model.to_ascii_lowercase();
+    match_config
+        .get("prefixes")
+        .or_else(|| match_config.get("modelPrefixes"))
+        .or_else(|| match_config.get("model_prefixes"))
+        .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|value| value.as_str())
+        .map(str::trim)
+        .filter(|prefix| !prefix.is_empty())
+        .any(|prefix| lower_model.starts_with(&prefix.to_ascii_lowercase()))
+}
+
+/// 根据 route capability 判断 catalog 是否应写成 text-only。
+fn codex_catalog_capabilities_are_text_only(capabilities: &Value) -> Option<bool> {
+    if let Some(text_only) = capabilities
+        .get("textOnly")
+        .or_else(|| capabilities.get("text_only"))
+        .and_then(|value| value.as_bool())
+    {
+        return Some(text_only);
+    }
+
+    capabilities
+        .get("inputModalities")
+        .or_else(|| capabilities.get("input_modalities"))
+        .and_then(|value| value.as_array())
+        .map(|modalities| {
+            !modalities
+                .iter()
+                .filter_map(|value| value.as_str())
+                .any(|modality| modality.eq_ignore_ascii_case("image"))
+        })
+}
+
 fn codex_catalog_model_entry(
     template: &Value,
-    model: &str,
-    display_name: &str,
-    context_window: u64,
+    spec: &CodexCatalogModelSpec,
     priority: usize,
 ) -> Value {
     let mut entry = template.clone();
@@ -320,16 +424,21 @@ fn codex_catalog_model_entry(
         return json!({});
     };
 
-    entry_obj.insert("slug".to_string(), json!(model));
-    entry_obj.insert("display_name".to_string(), json!(display_name));
-    entry_obj.insert("description".to_string(), json!(display_name));
-    entry_obj.insert("context_window".to_string(), json!(context_window));
-    entry_obj.insert("max_context_window".to_string(), json!(context_window));
+    entry_obj.insert("slug".to_string(), json!(spec.model));
+    entry_obj.insert("display_name".to_string(), json!(spec.display_name));
+    entry_obj.insert("description".to_string(), json!(spec.display_name));
+    entry_obj.insert("context_window".to_string(), json!(spec.context_window));
+    entry_obj.insert("max_context_window".to_string(), json!(spec.context_window));
     entry_obj.insert("priority".to_string(), json!(1000 + priority));
     entry_obj.insert("additional_speed_tiers".to_string(), json!([]));
     entry_obj.insert("service_tiers".to_string(), json!([]));
     entry_obj.insert("availability_nux".to_string(), Value::Null);
     entry_obj.insert("upgrade".to_string(), Value::Null);
+    if spec.text_only {
+        entry_obj.insert("input_modalities".to_string(), json!(["text"]));
+        entry_obj.insert("supports_image_detail_original".to_string(), json!(false));
+        entry_obj.insert("web_search_tool_type".to_string(), json!("text"));
+    }
 
     entry
 }
@@ -339,6 +448,7 @@ struct CodexCatalogModelSpec {
     model: String,
     display_name: String,
     context_window: u64,
+    text_only: bool,
 }
 
 fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCatalogModelSpec> {
@@ -383,10 +493,15 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
         )
         .unwrap_or(default_context_window);
 
+        let text_only = codex_routing_capabilities_for_model(settings, model)
+            .and_then(codex_catalog_capabilities_are_text_only)
+            .unwrap_or_else(|| codex_catalog_model_name_is_text_only(model));
+
         specs.push(CodexCatalogModelSpec {
             model: model.to_string(),
             display_name: display_name.to_string(),
             context_window,
+            text_only,
         });
     }
 
@@ -648,15 +763,7 @@ fn codex_model_catalog_from_specs(specs: &[CodexCatalogModelSpec], template: &Va
     let entries: Vec<Value> = specs
         .iter()
         .enumerate()
-        .map(|(index, spec)| {
-            codex_catalog_model_entry(
-                template,
-                &spec.model,
-                &spec.display_name,
-                spec.context_window,
-                index,
-            )
-        })
+        .map(|(index, spec)| codex_catalog_model_entry(template, spec, index))
         .collect();
 
     json!({ "models": entries })
@@ -1721,7 +1828,10 @@ base_url = "https://production.api/v1"
                 "target": "gpt-5.5"
             },
             "context_window": 272000,
-            "max_context_window": 272000
+            "max_context_window": 272000,
+            "supports_image_detail_original": true,
+            "input_modalities": ["text", "image"],
+            "web_search_tool_type": "text_and_image"
         });
         let settings = json!({
             "modelCatalog": {
@@ -1757,10 +1867,32 @@ base_url = "https://production.api/v1"
             Some(64_000)
         );
         assert_eq!(
+            models[0].get("input_modalities"),
+            Some(&json!(["text"])),
+            "DeepSeek V4 must stay text-only so Codex does not inject image_generation"
+        );
+        assert_eq!(
+            models[0]
+                .get("supports_image_detail_original")
+                .and_then(|value| value.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            models[0]
+                .get("web_search_tool_type")
+                .and_then(|value| value.as_str()),
+            Some("text")
+        );
+        assert_eq!(
             models[1]
                 .get("context_window")
                 .and_then(|value| value.as_u64()),
             Some(128_000)
+        );
+        assert_eq!(
+            models[1].get("input_modalities"),
+            Some(&json!(["text", "image"])),
+            "models without a text-only override should keep the template modalities"
         );
         assert!(
             models[0].get("model_messages").is_some(),
@@ -1788,6 +1920,109 @@ base_url = "https://production.api/v1"
                 .is_some_and(|value| value.is_null()),
             "generated third-party entries should not inherit GPT-5.5 launch messaging"
         );
+    }
+
+    #[test]
+    fn codex_model_catalog_keeps_spark_text_only() {
+        let template = json!({
+            "slug": "gpt-5.5",
+            "display_name": "GPT-5.5",
+            "context_window": 272000,
+            "max_context_window": 272000,
+            "supports_image_detail_original": true,
+            "input_modalities": ["text", "image"],
+            "web_search_tool_type": "text_and_image"
+        });
+        let spec = CodexCatalogModelSpec {
+            model: "gpt-5.3-codex-spark".to_string(),
+            display_name: "Codex Spark".to_string(),
+            context_window: 128_000,
+            text_only: true,
+        };
+        let entry = codex_catalog_model_entry(&template, &spec, 0);
+
+        assert_eq!(
+            entry.get("input_modalities"),
+            Some(&json!(["text"])),
+            "Spark rejects hosted image_generation, so it must not inherit image modality"
+        );
+        assert_eq!(
+            entry
+                .get("supports_image_detail_original")
+                .and_then(|value| value.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            entry
+                .get("web_search_tool_type")
+                .and_then(|value| value.as_str()),
+            Some("text")
+        );
+    }
+
+    #[test]
+    fn codex_catalog_text_only_capabilities_override_hardcoded_name() {
+        let template = json!({
+            "slug": "gpt-5.5",
+            "display_name": "GPT-5.5",
+            "context_window": 272000,
+            "max_context_window": 272000,
+            "supports_image_detail_original": true,
+            "input_modalities": ["text", "image"],
+            "web_search_tool_type": "text_and_image",
+            "model_messages": []
+        });
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "deepseek-v4-flash",
+                        "displayName": "DeepSeek Flash"
+                    }
+                ]
+            },
+            "codexRouting": {
+                "routes": [{
+                    "id": "openai",
+                    "match": { "models": ["deepseek-v4-flash"] },
+                    "capabilities": {
+                        "inputModalities": ["text"]
+                    }
+                }]
+            }
+        });
+        let specs = codex_catalog_model_specs(&settings, r#"model_context_window = 64000"#);
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].model, "deepseek-v4-flash");
+        assert!(specs[0].text_only);
+
+        let catalog = codex_model_catalog_from_specs(&specs, &template);
+        let models = catalog
+            .get("models")
+            .and_then(|value| value.as_array())
+            .expect("models should be an array");
+        assert_eq!(
+            models[0].get("slug").and_then(|value| value.as_str()),
+            Some("deepseek-v4-flash")
+        );
+        assert_eq!(models[0].get("input_modalities"), Some(&json!(["text"])));
+
+        let settings_without_capability = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "gpt-5.3-codex-spark",
+                        "displayName": "Codex Spark"
+                    }
+                ]
+            }
+        });
+        let fallback = codex_catalog_model_specs(
+            &settings_without_capability,
+            r#"model_context_window = 64000"#,
+        );
+        assert_eq!(fallback.len(), 1);
+        assert!(fallback[0].text_only);
     }
 
     #[test]
