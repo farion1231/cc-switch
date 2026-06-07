@@ -1,8 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import {
   Collapsible,
@@ -15,6 +30,7 @@ import {
   ChevronRight,
   Download,
   Loader2,
+  Pencil,
   Plus,
   Trash2,
 } from "lucide-react";
@@ -29,6 +45,9 @@ import type {
   CodexApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
+  CodexRoutingConfig,
+  CodexRoutingRoute,
+  CodexRoutingAuthSource,
   ProviderCategory,
 } from "@/types";
 
@@ -69,12 +88,16 @@ interface CodexFormFieldsProps {
   // Model Catalog
   catalogModels?: CodexCatalogModel[];
   onCatalogModelsChange?: (models: CodexCatalogModel[]) => void;
+  codexRouting?: CodexRoutingConfig;
+  onCodexRoutingChange?: (routing: CodexRoutingConfig) => void;
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
 }
 
 type CodexCatalogRow = CodexCatalogModel & { rowId: string };
+
+type CodexRoutingRow = CodexRoutingRoute & { rowId: string };
 
 function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
   return {
@@ -83,6 +106,67 @@ function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
     displayName: seed?.displayName ?? "",
     contextWindow: seed?.contextWindow ?? "",
   };
+}
+
+// 将逗号或换行分隔的字符串整理成 route 匹配列表。
+function parseRoutingList(value: string): string[] {
+  return value
+    .split(/[,\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+// 将 modelMap 的轻量文本编辑格式转成对象；格式为 `codexModel=upstreamModel`。
+function parseModelMap(value: string): Record<string, string> | undefined {
+  const entries = parseRoutingList(value)
+    .map((item) => item.split("="))
+    .map(([from, to]) => [from?.trim(), to?.trim()] as const)
+    .filter(([from, to]) => from && to);
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+// 将 modelMap 对象转成表单里便于扫描和编辑的单行文本。
+function formatModelMap(modelMap?: Record<string, string>): string {
+  return modelMap
+    ? Object.entries(modelMap)
+        .map(([from, to]) => `${from}=${to}`)
+        .join(", ")
+    : "";
+}
+
+function createRoutingRow(seed?: Partial<CodexRoutingRoute>): CodexRoutingRow {
+  return {
+    rowId: crypto.randomUUID(),
+    id: seed?.id ?? `route-${Math.random().toString(36).slice(2, 8)}`,
+    label: seed?.label ?? "",
+    enabled: seed?.enabled ?? true,
+    match: {
+      models: seed?.match?.models ?? [],
+      prefixes: seed?.match?.prefixes ?? [],
+    },
+    upstream: {
+      baseUrl: seed?.upstream?.baseUrl ?? "",
+      apiFormat: seed?.upstream?.apiFormat ?? "openai_chat",
+      auth: seed?.upstream?.auth ?? { source: "provider_config" },
+      apiKey: seed?.upstream?.apiKey ?? "",
+      modelMap: seed?.upstream?.modelMap,
+    },
+    capabilities: {
+      textOnly: seed?.capabilities?.textOnly ?? false,
+      inputModalities: seed?.capabilities?.inputModalities ?? ["text", "image"],
+      supportsReasoning: seed?.capabilities?.supportsReasoning ?? false,
+    },
+  };
+}
+
+// 比较路由数据时忽略 rowId，避免父子状态同步造成重复刷新。
+function routingRowsMatchConfig(rows: CodexRoutingRow[], config?: CodexRoutingConfig): boolean {
+  const routes = config?.routes ?? [];
+  if (rows.length !== routes.length) return false;
+  return rows.every((row, index) => {
+    const { rowId: _rowId, ...route } = row;
+    return JSON.stringify(route) === JSON.stringify(routes[index]);
+  });
 }
 
 // Compares rows (with rowId) to incoming models (without) by data fields only,
@@ -127,6 +211,8 @@ export function CodexFormFields({
   onCodexChatReasoningChange,
   catalogModels = [],
   onCatalogModelsChange,
+  codexRouting = { enabled: false, defaultRouteId: "", routes: [] },
+  onCodexRoutingChange,
   speedTestEndpoints,
 }: CodexFormFieldsProps) {
   const { t } = useTranslation();
@@ -134,8 +220,12 @@ export function CodexFormFields({
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [reasoningExpanded, setReasoningExpanded] = useState(false);
+  const [editingRouteIndex, setEditingRouteIndex] = useState<number | null>(
+    null,
+  );
   const needsLocalRouting = apiFormat === "openai_chat";
   const canEditCatalog = Boolean(onCatalogModelsChange);
+  const canEditRouting = Boolean(onCodexRoutingChange);
   const canEditReasoning = Boolean(onCodexChatReasoningChange);
   const supportsThinking =
     codexChatReasoning.supportsThinking === true ||
@@ -145,9 +235,13 @@ export function CodexFormFields({
   const [catalogRows, setCatalogRows] = useState<CodexCatalogRow[]>(() =>
     catalogModels.map((m) => createCatalogRow(m)),
   );
+  const [routingRows, setRoutingRows] = useState<CodexRoutingRow[]>(() =>
+    (codexRouting.routes ?? []).map((route) => createRoutingRow(route)),
+  );
 
   // 记录上次发送给父组件的数据，避免重复触发
   const lastSentModelsRef = useRef<CodexCatalogModel[]>(catalogModels);
+  const lastSentRoutingRef = useRef<CodexRoutingConfig>(codexRouting);
 
   // 父 → 子：仅当 prop 数据真的变化（预设切换 / 编辑加载）时才重建 rowId；
   // 同 shape 时保留现有 rowId，避免编辑过程中焦点丢失。
@@ -159,6 +253,33 @@ export function CodexFormFields({
     // 同步更新 ref，避免父组件传入新数据时子→父 effect 误判为本地修改
     lastSentModelsRef.current = catalogModels;
   }, [catalogModels]);
+
+  // 父 → 子：外部加载或 preset 切换时同步 route 列表，保留编辑过程中的 rowId 稳定性。
+  useEffect(() => {
+    setRoutingRows((current) => {
+      if (routingRowsMatchConfig(current, codexRouting)) return current;
+      return (codexRouting.routes ?? []).map((route) => createRoutingRow(route));
+    });
+    lastSentRoutingRef.current = codexRouting;
+  }, [codexRouting]);
+
+  // 子 → 父：route rowId 不进入持久化，只把真正配置写回父组件。
+  useEffect(() => {
+    if (!onCodexRoutingChange) return;
+    const next: CodexRoutingConfig = {
+      enabled: codexRouting.enabled ?? false,
+      defaultRouteId: codexRouting.defaultRouteId ?? "",
+      routes: routingRows.map(({ rowId: _rowId, ...route }) => route),
+    };
+    if (JSON.stringify(next) === JSON.stringify(lastSentRoutingRef.current)) return;
+    lastSentRoutingRef.current = next;
+    onCodexRoutingChange(next);
+  }, [
+    routingRows,
+    codexRouting.enabled,
+    codexRouting.defaultRouteId,
+    onCodexRoutingChange,
+  ]);
 
   // 子 → 父：rowId 是视图层概念，不应进入持久化数据；剥离后再回传。
   // 注意：依赖数组不包含 catalogModels，避免父→子更新触发子→父回调形成循环。
@@ -251,6 +372,57 @@ export function CodexFormFields({
   const handleRemoveCatalogRow = useCallback((index: number) => {
     setCatalogRows((current) => current.filter((_, i) => i !== index));
   }, []);
+
+  const handleRoutingEnabledChange = useCallback(
+    (checked: boolean) => {
+      if (!onCodexRoutingChange) return;
+      onCodexRoutingChange({ ...codexRouting, enabled: checked });
+    },
+    [codexRouting, onCodexRoutingChange],
+  );
+
+  const handleAddRoute = useCallback(() => {
+    setRoutingRows((current) => {
+      setEditingRouteIndex(current.length);
+      return [...current, createRoutingRow()];
+    });
+  }, []);
+
+  const handleUpdateRoute = useCallback(
+    (index: number, patch: Partial<CodexRoutingRoute>) => {
+      setRoutingRows((current) =>
+        current.map((row, i) => (i === index ? { ...row, ...patch } : row)),
+      );
+    },
+    [],
+  );
+
+  const handleRemoveRoute = useCallback((index: number) => {
+    setRoutingRows((current) => current.filter((_, i) => i !== index));
+    setEditingRouteIndex((current) => {
+      if (current === null) return current;
+      if (current === index) return null;
+      return current > index ? current - 1 : current;
+    });
+  }, []);
+
+  const editingRoute =
+    editingRouteIndex !== null ? routingRows[editingRouteIndex] : undefined;
+  const editingRouteModelsText = editingRoute
+    ? (editingRoute.match.models ?? []).join(", ")
+    : "";
+  const editingRoutePrefixesText = editingRoute
+    ? (editingRoute.match.prefixes ?? []).join(", ")
+    : "";
+  const editingRouteModelMapText = editingRoute
+    ? formatModelMap(editingRoute.upstream.modelMap)
+    : "";
+  const editingRouteAuthSource =
+    editingRoute?.upstream.auth.source ?? "provider_config";
+  const editingRouteTextOnly = editingRoute?.capabilities?.textOnly === true;
+  const editingRouteSupportsImage =
+    editingRoute?.capabilities?.inputModalities?.includes("image") ??
+    !editingRouteTextOnly;
 
   const renderCatalogActionButtons = (onAdd: () => void, addLabel: string) => (
     <div className="flex gap-1">
@@ -352,6 +524,415 @@ export function CodexFormFields({
           </div>
         </div>
       )}
+
+      {canEditRouting && (
+        <div className="space-y-4 rounded-lg border border-border-default p-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="space-y-1">
+              <FormLabel>
+                {t("codexConfig.localModelRoutingTitle", {
+                  defaultValue: "Local model routing",
+                })}
+              </FormLabel>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {t("codexConfig.localModelRoutingHint", {
+                  defaultValue:
+                    "Route Codex requests by body.model while Codex keeps one local CC Switch proxy endpoint.",
+                })}
+              </p>
+            </div>
+            <Switch
+              checked={codexRouting.enabled ?? false}
+              onCheckedChange={handleRoutingEnabledChange}
+              aria-label={t("codexConfig.localModelRoutingTitle", {
+                defaultValue: "Local model routing",
+              })}
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-3">
+            <Input
+              value={codexRouting.defaultRouteId ?? ""}
+              onChange={(event) =>
+                onCodexRoutingChange?.({
+                  ...codexRouting,
+                  defaultRouteId: event.target.value.trim(),
+                })
+              }
+              placeholder={t("codexConfig.defaultRoutePlaceholder", {
+                defaultValue: "Default route id",
+              })}
+              className="max-w-xs"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleAddRoute}
+              className="h-8 gap-1"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              {t("codexConfig.addRoute", { defaultValue: "Add route" })}
+            </Button>
+          </div>
+
+          {routingRows.map((route, index) => {
+            const matchedModels = route.match.models?.join(", ") || "-";
+            const matchedPrefixes = route.match.prefixes?.join(", ") || "-";
+            const capabilityLabels = [
+              route.capabilities?.textOnly ? "text-only" : "image",
+              route.capabilities?.supportsReasoning ? "reasoning" : null,
+            ].filter(Boolean);
+
+            return (
+              <div
+                key={route.rowId}
+                className="flex items-center justify-between gap-3 rounded-md border border-border-default bg-muted/10 p-3"
+              >
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-sm">
+                      {route.label || route.id || "route"}
+                    </span>
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                      {route.upstream.apiFormat}
+                    </span>
+                    {route.enabled === false && (
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                        disabled
+                      </span>
+                    )}
+                    {capabilityLabels.map((label) => (
+                      <span
+                        key={label}
+                        className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                      >
+                        {label}
+                      </span>
+                    ))}
+                  </div>
+                  <p className="truncate text-xs text-muted-foreground">
+                    models: {matchedModels} · prefixes: {matchedPrefixes}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {route.upstream.baseUrl || "No upstream base URL"}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <Switch
+                    checked={route.enabled !== false}
+                    onCheckedChange={(checked) =>
+                      handleUpdateRoute(index, { enabled: checked })
+                    }
+                    aria-label={t("codexConfig.routeEnabled", {
+                      defaultValue: "Route enabled",
+                    })}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-9 w-9 text-muted-foreground"
+                    onClick={() => setEditingRouteIndex(index)}
+                    title={t("codexConfig.editRoute", {
+                      defaultValue: "Edit route",
+                    })}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                    onClick={() => handleRemoveRoute(index)}
+                    title={t("common.delete", { defaultValue: "Delete" })}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <Dialog
+        open={Boolean(editingRoute)}
+        onOpenChange={(open) => {
+          if (!open) setEditingRouteIndex(null);
+        }}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>
+              {t("codexConfig.editRoute", { defaultValue: "Edit route" })}
+            </DialogTitle>
+            <DialogDescription>
+              {t("codexConfig.editRouteHint", {
+                defaultValue:
+                  "Configure matching, upstream API format, auth, model mapping, and capabilities for this route.",
+              })}
+            </DialogDescription>
+          </DialogHeader>
+
+          {editingRoute && editingRouteIndex !== null && (
+            <div className="space-y-4 overflow-y-auto px-6 py-5">
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_auto]">
+                <Input
+                  value={editingRoute.id}
+                  onChange={(event) =>
+                    handleUpdateRoute(editingRouteIndex, {
+                      id: event.target.value.trim(),
+                    })
+                  }
+                  placeholder={t("codexConfig.routeIdPlaceholder", {
+                    defaultValue: "route-id",
+                  })}
+                />
+                <Input
+                  value={editingRoute.label ?? ""}
+                  onChange={(event) =>
+                    handleUpdateRoute(editingRouteIndex, {
+                      label: event.target.value,
+                    })
+                  }
+                  placeholder={t("codexConfig.routeLabelPlaceholder", {
+                    defaultValue: "Route label",
+                  })}
+                />
+                <label className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
+                  <Switch
+                    checked={editingRoute.enabled !== false}
+                    onCheckedChange={(checked) =>
+                      handleUpdateRoute(editingRouteIndex, { enabled: checked })
+                    }
+                  />
+                  {t("codexConfig.routeEnabled", {
+                    defaultValue: "Route enabled",
+                  })}
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                <Input
+                  value={editingRouteModelsText}
+                  onChange={(event) =>
+                    handleUpdateRoute(editingRouteIndex, {
+                      match: {
+                        ...editingRoute.match,
+                        models: parseRoutingList(event.target.value),
+                      },
+                    })
+                  }
+                  placeholder={t("codexConfig.matchModelsPlaceholder", {
+                    defaultValue: "Matched models, comma separated",
+                  })}
+                />
+                <Input
+                  value={editingRoutePrefixesText}
+                  onChange={(event) =>
+                    handleUpdateRoute(editingRouteIndex, {
+                      match: {
+                        ...editingRoute.match,
+                        prefixes: parseRoutingList(event.target.value),
+                      },
+                    })
+                  }
+                  placeholder={t("codexConfig.matchPrefixesPlaceholder", {
+                    defaultValue: "Matched prefixes, comma separated",
+                  })}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_180px_180px]">
+                <Input
+                  value={editingRoute.upstream.baseUrl ?? ""}
+                  onChange={(event) =>
+                    handleUpdateRoute(editingRouteIndex, {
+                      upstream: {
+                        ...editingRoute.upstream,
+                        baseUrl: event.target.value.trim(),
+                      },
+                    })
+                  }
+                  placeholder={t("codexConfig.routeBaseUrlPlaceholder", {
+                    defaultValue: "Upstream base URL",
+                  })}
+                />
+                <Select
+                  value={editingRoute.upstream.apiFormat}
+                  onValueChange={(value) =>
+                    handleUpdateRoute(editingRouteIndex, {
+                      upstream: {
+                        ...editingRoute.upstream,
+                        apiFormat: value as CodexApiFormat,
+                      },
+                    })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="openai_responses">responses</SelectItem>
+                    <SelectItem value="openai_chat">chat</SelectItem>
+                    <SelectItem value="openai_messages">messages</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={editingRouteAuthSource}
+                  onValueChange={(value) =>
+                    handleUpdateRoute(editingRouteIndex, {
+                      upstream: {
+                        ...editingRoute.upstream,
+                        apiKey:
+                          value === "provider_config"
+                            ? editingRoute.upstream.apiKey
+                            : "",
+                        auth: {
+                          source: value as CodexRoutingAuthSource,
+                          authProvider:
+                            value === "managed_account" ||
+                            value === "managed_codex_oauth"
+                              ? "codex_oauth"
+                              : undefined,
+                          accountId:
+                            value === "managed_account" ||
+                            value === "managed_codex_oauth"
+                              ? editingRoute.upstream.auth.accountId
+                              : undefined,
+                        },
+                      },
+                    })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="provider_config">provider_config</SelectItem>
+                    <SelectItem value="managed_codex_oauth">
+                      managed_codex_oauth
+                    </SelectItem>
+                    <SelectItem value="managed_account">managed_account</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                {editingRouteAuthSource === "provider_config" ? (
+                  <Input
+                    type="password"
+                    value={editingRoute.upstream.apiKey ?? ""}
+                    onChange={(event) =>
+                      handleUpdateRoute(editingRouteIndex, {
+                        upstream: {
+                          ...editingRoute.upstream,
+                          apiKey: event.target.value.trim(),
+                        },
+                      })
+                    }
+                    placeholder={t("codexConfig.routeApiKeyPlaceholder", {
+                      defaultValue: "Route API key",
+                    })}
+                  />
+                ) : (
+                  <Input
+                    value={editingRoute.upstream.auth.accountId ?? ""}
+                    onChange={(event) =>
+                      handleUpdateRoute(editingRouteIndex, {
+                        upstream: {
+                          ...editingRoute.upstream,
+                          auth: {
+                            ...editingRoute.upstream.auth,
+                            authProvider: "codex_oauth",
+                            accountId: event.target.value.trim(),
+                          },
+                        },
+                      })
+                    }
+                    placeholder={t("codexConfig.routeAccountPlaceholder", {
+                      defaultValue: "Managed account id (optional)",
+                    })}
+                  />
+                )}
+                <Input
+                  value={editingRouteModelMapText}
+                  onChange={(event) =>
+                    handleUpdateRoute(editingRouteIndex, {
+                      upstream: {
+                        ...editingRoute.upstream,
+                        modelMap: parseModelMap(event.target.value),
+                      },
+                    })
+                  }
+                  placeholder={t("codexConfig.modelMapPlaceholder", {
+                    defaultValue: "codex-model=upstream-model",
+                  })}
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-4 border-t border-border-default pt-3">
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Switch
+                    checked={editingRouteTextOnly}
+                    onCheckedChange={(checked) =>
+                      handleUpdateRoute(editingRouteIndex, {
+                        capabilities: {
+                          ...editingRoute.capabilities,
+                          textOnly: checked,
+                          inputModalities: checked ? ["text"] : ["text", "image"],
+                        },
+                      })
+                    }
+                  />
+                  {t("codexConfig.textOnlyCapability", {
+                    defaultValue: "text-only",
+                  })}
+                </label>
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Switch
+                    checked={editingRouteSupportsImage}
+                    onCheckedChange={(checked) =>
+                      handleUpdateRoute(editingRouteIndex, {
+                        capabilities: {
+                          ...editingRoute.capabilities,
+                          textOnly: !checked,
+                          inputModalities: checked ? ["text", "image"] : ["text"],
+                        },
+                      })
+                    }
+                  />
+                  {t("codexConfig.imageCapability", { defaultValue: "image" })}
+                </label>
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Switch
+                    checked={editingRoute.capabilities?.supportsReasoning === true}
+                    onCheckedChange={(checked) =>
+                      handleUpdateRoute(editingRouteIndex, {
+                        capabilities: {
+                          ...editingRoute.capabilities,
+                          supportsReasoning: checked,
+                        },
+                      })
+                    }
+                  />
+                  {t("codexConfig.reasoningCapability", {
+                    defaultValue: "reasoning",
+                  })}
+                </label>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button type="button" onClick={() => setEditingRouteIndex(null)}>
+              {t("common.done", { defaultValue: "Done" })}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {needsLocalRouting && canEditReasoning && (
         <Collapsible

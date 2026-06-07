@@ -1,101 +1,80 @@
-# Codex で DeepSeek などの Chat 形式 API を使う: CC Switch ローカルルーティングガイド
+# Codex ローカルモデルルーティングガイド
 
-> 対象バージョン: CC Switch 3.16.0 およびその前後のバージョン。本記事はリポジトリ内のドキュメントとコードをもとに整理し、OpenAI Chat Completions 互換 API の例として DeepSeek を使用します。スクリーンショットは現在のフロントエンド UI から、実際の API Key やアカウント残高が漏れないよう匿名化したサンプルデータで生成しています。
+> CC Switch 3.16.0+ 向け。
 
-## ローカルルーティングが必要な理由
+このドキュメントは、以前の DeepSeek 専用ガイドを汎用化したものです。Codex は 1 つの CC Switch Rust ローカルプロキシに接続し、CC Switch が `body.model` を見て上流 route を選択します。
 
-新しい Codex CLI は OpenAI Responses API を前提にしています。一方で DeepSeek、Kimi、MiniMax、SiliconFlow など多くのプロバイダーが実際に公開しているのは OpenAI Chat Completions 形式、つまり `/chat/completions` です。この 2 つのプロトコルは、リクエストボディ、ストリーミングイベント、レスポンス構造が異なります。Chat エンドポイントをそのまま Codex 設定に入れると、モデル一覧が合わない、リクエストが 404/400 になる、ストリーミングレスポンスを Codex が正しく解析できない、といった問題が起きがちです。
+## 目的
 
-CC Switch では、Codex が常にローカルルートへ接続し、Responses API のままリクエストを送るようにします。ルート内部で現在のプロバイダーが Chat 形式かどうかを判定し、必要ならリクエストを Chat Completions に書き換えて上流へ送り、最後に Chat レスポンスを Codex が理解できる Responses 形式へ戻します。
+Codex クライアントは OpenAI Responses API を送信します。一方で、多くの上流プロバイダーは Chat Completions または Messages 形式を提供します。上流 URL を直接 `~/.codex/config.toml` に書くと、`/responses` の 404/400、モデル一覧の不一致、ストリーミング解析エラーが起きることがあります。
 
-![Codex プロバイダー一覧のローカルルーティング必須マーク](../images/codex-deepseek-routing/01-codex-providers-require-routing.png)
+ローカルモデルルーティングでは、Codex は `http://127.0.0.1:15721/v1/responses` のような CC Switch ローカルプロキシだけを参照し、実際の上流選択は CC Switch 内で行います。
 
-この経路は主に 4 つのステップに分かれます：
+## 実行フロー
 
-1. Codex ルーティングを有効にすると、ローカル設定は `http://127.0.0.1:15721/v1` に書き換えられ、`wire_api = "responses"` は維持されます。
-2. Provider の `meta.apiFormat = "openai_chat"` が、実際の上流は Chat Completions だとルートに伝えます。
-3. ルートは `/responses` または `/v1/responses` を `/chat/completions` に書き換え、Responses のリクエストボディを Chat のリクエストボディへ変換します。
-4. 上流から返ってきた後、ルートは Chat の JSON または SSE ストリームを Responses JSON/SSE へ変換して返します。
+1. Codex が CC Switch ローカルプロキシにリクエストします。
+2. CC Switch がリクエスト本文の `model` を読みます。
+3. `settings_config.codexRouting.routes[]` の exact model または prefix で route を解決します。
+4. route の base URL、API format、auth、model mapping、capability から effective provider を作ります。
+5. 既存 forwarder でプロトコルを変換します。
+   - `openai_responses`: Responses をそのまま転送。
+   - `openai_chat`: Responses を Chat Completions に変換し、応答を Responses に戻す。
+   - `openai_messages`: route が対応している場合に Messages 形式へ変換。
 
-## 事前準備
+## Route 設定
 
-先に次の 3 つを用意してください：
+Codex provider フォームの **Local model routing** で route を追加します。
 
-- インストール済みで起動できる CC Switch。
-- インストール済みの Codex CLI。少なくとも 1 回は実行し、`~/.codex/config.toml` のディレクトリ構造が存在していること。
-- DeepSeek または同種の Chat Completions プロバイダーの API Key。
+- Match: `match.models`、`match.prefixes`。
+- Upstream: `upstream.baseUrl`、`upstream.apiFormat`。
+- Auth source:
+  - `provider_config`: route または現在の provider の API key を使用。
+  - `managed_codex_oauth`: CC Switch 管理の Codex OAuth を使用。
+  - `managed_account`: 管理アカウントの auth binding。現時点では Codex OAuth として扱います。
+- Model mapping: `upstream.modelMap`。例: `codex-model=upstream-model`。
+- Capability: text-only、image、reasoning。
 
-DeepSeek 公式ドキュメントでは、OpenAI 互換 base URL は現在 `https://api.deepseek.com`（他のプロバイダーでは `/v1` 付きの base URL もよくあります）、Chat API のパスは `/chat/completions` と記載されています。CC Switch の DeepSeek プリセットにはこれらの情報がすでに入っているため、まずはプリセットを使い、エンドポイントパスを手で組み立てる必要はありません。
+初期版では `reuse_provider:<id>` は未対応です。
 
-## Step 1: Codex プロバイダーを追加する
+## Schema
 
-CC Switch を開き、上部の `Codex` タブへ切り替え、右上のプラスボタンからプロバイダーを追加します。
+```json
+{
+  "settings_config": {
+    "codexRouting": {
+      "enabled": true,
+      "defaultRouteId": "openai",
+      "routes": [
+        {
+          "id": "deepseek",
+          "label": "DeepSeek",
+          "enabled": true,
+          "match": {
+            "models": ["deepseek-v4-flash"],
+            "prefixes": ["deepseek-"]
+          },
+          "upstream": {
+            "baseUrl": "https://api.deepseek.com",
+            "apiFormat": "openai_chat",
+            "auth": { "source": "provider_config" },
+            "modelMap": { "deepseek-v4-flash": "deepseek-v4-flash" }
+          },
+          "capabilities": {
+            "textOnly": true,
+            "inputModalities": ["text"],
+            "supportsReasoning": true
+          }
+        }
+      ]
+    }
+  }
+}
+```
 
-内蔵プリセットの `DeepSeek` を選びます。必要なのは次の 2 つだけです：
+`settings_config.codexRouting` が新しい主スキーマです。`settings_config.codexModelRoutes` と `settings_config.modelRoutes` は既存設定を読むためのフォールバックで、UI で保存すると新スキーマへ書き戻されます。
 
-- DeepSeek API Key を入力する。
-- プロバイダーを保存する。
+## 注意
 
-![DeepSeek Codex プロバイダーフォームのローカルルーティング設定](../images/codex-deepseek-routing/02-deepseek-codex-routing-form.png)
-
-プリセットには DeepSeek のリクエスト先、デフォルトモデル、モデルメニュー、thinking/reasoning パラメータがすでに含まれており、`ローカルルーティングが必要` も自動的に有効になります。必要に応じてデフォルトモデルやモデル表示名を調整できますが、プロトコル変換はルーティング層に任せれば十分です。
-
-## Step 2: ローカルルーティングを有効にして Codex をルーティングする
-
-設定の `ルーティング` ページに入り、`ローカルルーティング` を展開して、次の 2 つのスイッチを設定します：
-
-1. `ルーティング総スイッチ` をオンにしてローカルサービスを起動します。デフォルトアドレスは `127.0.0.1:15721` です。
-2. `ルーティング有効` で `Codex` をオンにします。Codex だけをルーティングしたい場合は、Claude と Gemini はオフのままで構いません。
-
-![ローカルルーティング画面で Codex ルーティングを有効化](../images/codex-deepseek-routing/03-local-route-codex-takeover.png)
-
-ルーティングを有効にすると、CC Switch は Codex の live 設定をローカルルートへ向け、認証はプレースホルダーで管理します。実際の DeepSeek Key は CC Switch の Provider 設定内に残り、ローカルルートが転送時に注入します。そのため、Codex の live 設定に Key を露出させる必要はありません。
-
-## Step 3: プロバイダーを切り替えて Codex を再起動する
-
-Codex プロバイダー一覧に戻り、DeepSeek プロバイダーの `有効化` をクリックします。`ルーティングが必要` の表示が見える場合、そのプロバイダーはルーティング実行中に使う必要があります。ルーティングが起動していない場合、CC Switch は「ルーティングサービスが必要」という趣旨のメッセージを表示します。
-
-切り替え後は、現在の Codex ターミナルセッションを再起動することをおすすめします。理由は次のとおりです：
-
-- Codex プロセスがすでに古い `config.toml` を読み込んでいる可能性があります。
-- `model_catalog_json` の生成後、`/model` メニューの更新には通常、新しいプロセスが必要です。
-
-Codex に入ったら、`/model` で現在のモデルが DeepSeek プリセット由来かどうかを確認します。たとえば `DeepSeek V4 Flash` などです。現在の Codex app は複数モデル選択に対応していないため、設定内の最初のモデルをデフォルトで使用します。その後、小さな質問を 1 つ送って、ルーティングパネルのリクエスト数が増えるか、usage / リクエストログに Codex リクエストが出るかを確認します。
-
-## 他の Chat プロバイダーの場合
-
-DeepSeek、Kimi、MiniMax、SiliconFlow など一般的な Chat 形式プロバイダーは CC Switch にプリセットがあるため、まずはプリセットを使ってください。プリセットにないプロバイダーだけ、カスタム設定を選びます。その場合は相手側のドキュメントに従って API Key、base URL、モデルを入力し、`API 形式` を `OpenAI Chat Completions (ルーティングが必要)` に設定します。
-
-上流が OpenAI Responses API を直接サポートしている場合は、`ローカルルーティングが必要` を有効にする必要はありません。その場合、CC Switch は Responses のまま直結でき、Chat 変換は行いません。
-
-## よくある質問
-
-**Codex が 404 を返す、または `/responses` が見つからない**
-
-多くの場合、Codex ルーティングが有効になっていないか、上流 Chat base URL を手動で Codex に直接書いています。`~/.codex/config.toml` が `http://127.0.0.1:15721/v1` を指しているか確認してください。
-
-**DeepSeek 上流が 404 を返す**
-
-内蔵 DeepSeek プリセットを使っている場合は、まず現在のプロバイダーが本当にプリセット由来であること、そして Codex ルーティングが有効であることを確認してください。カスタムプロバイダーを使っている場合だけ、base URL を追加で確認します。base URL はサービスのルートであり、`/chat/completions` 付きの完全なエンドポイントパスではありません。
-
-**`/model` に DeepSeek モデルが表示されない**
-
-プロバイダーを保存した後、Codex を再起動してください。CC Switch は `cc-switch-model-catalog.json` を生成し、そのパスを `model_catalog_json` に書き込みますが、実行中の Codex プロセスがモデルカタログをホットロードするとは限りません。
-現在の Codex app は複数モデル選択に対応していないため、設定内の最初のモデルをデフォルトで使用します。
-
-**ルーティングを有効にしたのに、リクエストが別のプロバイダーへ行く**
-
-次の 3 つの状態が一致しているか確認してください：Codex タブの現在のプロバイダーが DeepSeek であること、ローカルルーティングサービスが実行中であること、`ルーティング有効` で Codex スイッチがオンであること。
-
-**公式 OpenAI Codex アカウントをローカルルーティング経由で使えますか**
-
-おすすめしません。CC Switch はローカルルーティング有効中、公式プロバイダーへの切り替えをブロックします。プロキシ経由で公式 API にアクセスすると、アカウントリスクが発生する可能性があるためです。ルーティングは主にサードパーティ、集約サービス、またはプロトコル変換のための機能です。
-
-## 参考リンク
-
-- [CC Switch ユーザーマニュアル: プロバイダーの追加](../user-manual/ja/2-providers/2.1-add.md)
-- [CC Switch ユーザーマニュアル: プロキシサービス](../user-manual/ja/4-proxy/4.1-service.md)
-- [CC Switch ユーザーマニュアル: アプリケーションルーティング](../user-manual/ja/4-proxy/4.2-routing.md)
-- [DeepSeek API Docs: Your First API Call](https://api-docs.deepseek.com/)
-- [DeepSeek API Docs: Create Chat Completion](https://api-docs.deepseek.com/api/create-chat-completion)
-- [DeepSeek API Docs: Multi-round Conversation](https://api-docs.deepseek.com/guides/multi_round_chat)
+- text-only route は catalog に `input_modalities=["text"]` を生成します。
+- Responses -> Chat 変換は route capability を参照し、text-only 上流に `image_url` を送らないようにします。
+- チャット画面でモデルを切り替えるだけで route が選ばれるため、GUI で先に provider を切り替える必要はありません。

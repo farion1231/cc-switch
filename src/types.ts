@@ -206,6 +206,7 @@ export interface ProviderMeta {
     | "anthropic"
     | "openai_chat"
     | "openai_responses"
+    | "openai_messages"
     | "gemini_native";
   // 通用认证绑定
   authBinding?: AuthBinding;
@@ -245,12 +246,56 @@ export type ClaudeApiFormat =
 // Codex API 格式类型
 // - "openai_responses": OpenAI Responses API 格式，直接透传
 // - "openai_chat": OpenAI Chat Completions 格式，需要本地路由转换
-export type CodexApiFormat = "openai_responses" | "openai_chat";
+export type CodexApiFormat =
+  | "openai_responses"
+  | "openai_chat"
+  | "openai_messages";
 
 export interface CodexCatalogModel {
   model: string;
   displayName?: string;
   contextWindow?: string | number;
+}
+
+export type CodexRoutingAuthSource =
+  | "provider_config"
+  | "managed_account"
+  | "managed_codex_oauth";
+
+export interface CodexRoutingAuth {
+  source: CodexRoutingAuthSource;
+  authProvider?: "codex_oauth";
+  accountId?: string;
+}
+
+export interface CodexRoutingCapabilities {
+  inputModalities?: Array<"text" | "image">;
+  textOnly?: boolean;
+  supportsReasoning?: boolean;
+}
+
+export interface CodexRoutingRoute {
+  id: string;
+  label?: string;
+  enabled?: boolean;
+  match: {
+    models?: string[];
+    prefixes?: string[];
+  };
+  upstream: {
+    baseUrl?: string;
+    apiFormat: CodexApiFormat;
+    auth: CodexRoutingAuth;
+    apiKey?: string;
+    modelMap?: Record<string, string>;
+  };
+  capabilities?: CodexRoutingCapabilities;
+}
+
+export interface CodexRoutingConfig {
+  enabled?: boolean;
+  defaultRouteId?: string;
+  routes?: CodexRoutingRoute[];
 }
 
 // Claude 认证字段类型

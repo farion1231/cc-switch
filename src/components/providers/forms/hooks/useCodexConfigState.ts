@@ -6,7 +6,12 @@ import {
   updateCodexExperimentalBearerToken,
 } from "@/utils/providerConfigUtils";
 import { normalizeTomlText } from "@/utils/textNormalization";
-import type { CodexCatalogModel } from "@/types";
+import type {
+  CodexApiFormat,
+  CodexCatalogModel,
+  CodexRoutingConfig,
+  CodexRoutingRoute,
+} from "@/types";
 
 interface UseCodexConfigStateProps {
   initialData?: {
@@ -27,6 +32,75 @@ function pickCodexApiKey(
   return extractCodexExperimentalBearerToken(configText) || "";
 }
 
+// 将旧版手写 route 数组迁移成新的 codexRouting 结构，供表单展示和保存。
+function normalizeLegacyCodexRoute(route: any, index: number): CodexRoutingRoute {
+  const models = Array.isArray(route?.models)
+    ? route.models.filter((item: unknown): item is string => typeof item === "string")
+    : [];
+  const prefixes = Array.isArray(route?.modelPrefixes)
+    ? route.modelPrefixes
+    : Array.isArray(route?.model_prefixes)
+      ? route.model_prefixes
+      : [];
+  const apiFormat = String(route?.wire_api ?? route?.wireApi ?? route?.apiFormat ?? "openai_chat");
+  const normalizedApiFormat: CodexApiFormat =
+    apiFormat === "responses"
+      ? "openai_responses"
+      : apiFormat === "messages"
+        ? "openai_messages"
+        : apiFormat === "chat"
+          ? "openai_chat"
+          : (apiFormat as CodexApiFormat);
+
+  return {
+    id: String(route?.id || `route-${index + 1}`),
+    label: typeof route?.label === "string" ? route.label : route?.name,
+    enabled: route?.enabled !== false,
+    match: {
+      models,
+      prefixes: prefixes.filter((item: unknown): item is string => typeof item === "string"),
+    },
+    upstream: {
+      baseUrl: route?.baseUrl ?? route?.baseURL ?? route?.base_url ?? "",
+      apiFormat: normalizedApiFormat,
+      auth: route?.auth?.source
+        ? route.auth
+        : {
+            source: route?.providerType === "codex_oauth" ? "managed_codex_oauth" : "provider_config",
+            authProvider: route?.providerType === "codex_oauth" ? "codex_oauth" : undefined,
+          },
+      apiKey: route?.apiKey ?? route?.api_key ?? route?.auth?.OPENAI_API_KEY ?? "",
+      modelMap: route?.modelMap ?? undefined,
+    },
+    capabilities: route?.capabilities ?? undefined,
+  };
+}
+
+// 读取新 schema；没有新 schema 时，把旧字段转换成新结构以便 UI 保存时写回 codexRouting。
+function extractCodexRoutingConfig(config: Record<string, any>): CodexRoutingConfig {
+  const routing = config.codexRouting;
+  if (routing && typeof routing === "object") {
+    return {
+      enabled: routing.enabled !== false,
+      defaultRouteId: typeof routing.defaultRouteId === "string" ? routing.defaultRouteId : "",
+      routes: Array.isArray(routing.routes) ? routing.routes : [],
+    };
+  }
+
+  const legacyRoutes = Array.isArray(config.codexModelRoutes)
+    ? config.codexModelRoutes
+    : Array.isArray(config.modelRoutes)
+      ? config.modelRoutes
+      : [];
+  return legacyRoutes.length > 0
+    ? {
+        enabled: true,
+        defaultRouteId: "",
+        routes: legacyRoutes.map(normalizeLegacyCodexRoute),
+      }
+    : { enabled: false, defaultRouteId: "", routes: [] };
+}
+
 /**
  * 管理 Codex 配置状态
  * Codex 配置包含两部分：auth.json (JSON) 和 config.toml (TOML 字符串)
@@ -39,6 +113,11 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
   const [codexCatalogModels, setCodexCatalogModels] = useState<
     CodexCatalogModel[]
   >([]);
+  const [codexRouting, setCodexRouting] = useState<CodexRoutingConfig>({
+    enabled: false,
+    defaultRouteId: "",
+    routes: [],
+  });
   const [codexAuthError, setCodexAuthError] = useState("");
 
   const isUpdatingCodexBaseUrlRef = useRef(false);
@@ -85,6 +164,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
           }))
           .filter((item: CodexCatalogModel) => item.model.trim()),
       );
+      setCodexRouting(extractCodexRoutingConfig(config as Record<string, any>));
 
       // 提取 Base URL
       const initialBaseUrl = extractCodexBaseUrl(configStr);
@@ -221,11 +301,17 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       auth: Record<string, unknown>,
       config: string,
       modelCatalogModels: CodexCatalogModel[] = [],
+      routingConfig: CodexRoutingConfig = {
+        enabled: false,
+        defaultRouteId: "",
+        routes: [],
+      },
     ) => {
       const authString = JSON.stringify(auth, null, 2);
       setCodexAuth(authString);
       setCodexConfig(config);
       setCodexCatalogModels(modelCatalogModels);
+      setCodexRouting(routingConfig);
 
       const baseUrl = extractCodexBaseUrl(config);
       setCodexBaseUrl(baseUrl || "");
@@ -241,10 +327,12 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     codexApiKey,
     codexBaseUrl,
     codexCatalogModels,
+    codexRouting,
     codexAuthError,
     setCodexAuth,
     setCodexConfig,
     setCodexCatalogModels,
+    setCodexRouting,
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexConfigChange,

@@ -1,101 +1,80 @@
-# 在 Codex 中用 DeepSeek 这类 Chat 格式 API：CC Switch 本地路由攻略
+# Codex 本地模型路由指南
 
-> 适用版本：CC Switch 3.16.0 及附近版本。本文根据仓库内文档与代码整理，并用 DeepSeek 作为 OpenAI Chat Completions 兼容接口的示例。截图来自当前前端界面，使用去敏示例数据生成，避免泄露真实 API Key 或账户余额。
+> 适用于 CC Switch 3.16.0+。
 
-## 为什么需要本地路由
+这份文档替代旧的 DeepSeek 专用说明。Codex 仍然只连接一个 CC Switch Rust 本地代理端点，CC Switch 在代理内部根据 `body.model` 把请求分发到不同上游 route。
 
-新版 Codex CLI 面向的是 OpenAI Responses API，而 DeepSeek、Kimi、MiniMax、SiliconFlow 等很多供应商实际暴露的是 OpenAI Chat Completions 形态，也就是 `/chat/completions`。这两种协议的请求体、流式事件和返回结构不同，直接把 Chat 接口填进 Codex 配置里，常见结果就是模型列表不对、请求 404/400，或者流式响应无法被 Codex 正确解析。
+## 为什么需要它
 
-CC Switch 的做法是让 Codex 始终连本机路由，仍以 Responses API 发送请求；路由在内部识别当前供应商是否是 Chat 格式，再把请求改写成 Chat Completions 发给上游，最后把 Chat 响应转换回 Responses 形态返回给 Codex。
+Codex 客户端发送 OpenAI Responses API 请求，但很多上游只提供 Chat Completions 或 Messages 风格接口。把这些上游地址直接写进 `~/.codex/config.toml` 时，常见问题包括 `/responses` 404/400、模型列表不匹配、流式响应解析失败。
 
-![Codex 供应商列表里的需要路由标记](../images/codex-deepseek-routing/01-codex-providers-require-routing.png)
+启用本地模型路由后，Codex 固定连接 CC Switch 本地代理，例如 `http://127.0.0.1:15721/v1/responses`，真实上游由 CC Switch 按模型选择。
 
-这条链路主要分成四步：
+## 运行链路
 
-1. Codex 接管时，本地配置会被写成 `http://127.0.0.1:15721/v1`，并强制保持 `wire_api = "responses"`。
-2. Provider 的 `meta.apiFormat = "openai_chat"` 会告诉路由：真实上游是 Chat Completions。
-3. 路由把 `/responses` 或 `/v1/responses` 改写到 `/chat/completions`，并把 Responses 请求体转换成 Chat 请求体。
-4. 上游返回后，路由再把 Chat 的 JSON 或 SSE 转回 Codex 能理解的 Responses JSON/SSE。
+1. Codex 请求 CC Switch 本地代理。
+2. CC Switch 读取请求体中的 `model`。
+3. route resolver 按 `settings_config.codexRouting.routes[]` 的精确模型或前缀匹配。
+4. CC Switch 生成 effective provider，写入 route 的 base URL、API format、auth、model mapping 和 capability。
+5. 复用现有 forwarder 执行协议转换：
+   - `openai_responses`：Responses 透传。
+   - `openai_chat`：Responses 转 Chat Completions，再转回 Responses。
+   - `openai_messages`：在 route 支持时转成 Messages 格式。
 
-## 准备工作
+## 配置 route
 
-你需要先准备好三样东西：
+在 Codex provider 表单中打开 **Local model routing**，每条 route 可以配置：
 
-- 已安装并能启动的 CC Switch。
-- 已安装 Codex CLI，并至少运行过一次，让 `~/.codex/config.toml` 目录结构存在。
-- DeepSeek 或同类 Chat Completions 供应商的 API Key。
+- 匹配规则：`match.models`、`match.prefixes`。
+- 上游：`upstream.baseUrl`、`upstream.apiFormat`。
+- 鉴权来源：
+  - `provider_config`：使用 route 或当前 provider 的 API key。
+  - `managed_codex_oauth`：使用 CC Switch 托管的 Codex OAuth。
+  - `managed_account`：托管账号鉴权绑定，当前映射为 Codex OAuth。
+- 模型映射：`upstream.modelMap`，例如 `codex-model=upstream-model`。
+- 能力声明：text-only、image、reasoning。
 
-DeepSeek 官方文档目前写明 OpenAI 兼容 base URL 是 `https://api.deepseek.com`（其他供应商常见的是带 `/v1` 后缀的 base URL），Chat API 路径是 `/chat/completions`；CC Switch 的 DeepSeek 预设已经按这些信息配好，请优先使用预设，不需要手动拼接口路径。
+第一版暂不支持 `reuse_provider:<id>`。
 
-## 第一步：添加 Codex 供应商
+## 配置结构
 
-打开 CC Switch，切到顶部的 `Codex` 标签，点击右上角的加号添加供应商。
+```json
+{
+  "settings_config": {
+    "codexRouting": {
+      "enabled": true,
+      "defaultRouteId": "openai",
+      "routes": [
+        {
+          "id": "deepseek",
+          "label": "DeepSeek",
+          "enabled": true,
+          "match": {
+            "models": ["deepseek-v4-flash"],
+            "prefixes": ["deepseek-"]
+          },
+          "upstream": {
+            "baseUrl": "https://api.deepseek.com",
+            "apiFormat": "openai_chat",
+            "auth": { "source": "provider_config" },
+            "modelMap": { "deepseek-v4-flash": "deepseek-v4-flash" }
+          },
+          "capabilities": {
+            "textOnly": true,
+            "inputModalities": ["text"],
+            "supportsReasoning": true
+          }
+        }
+      ]
+    }
+  }
+}
+```
 
-选择内置预设里的 `DeepSeek`，只需要做两件事：
+`settings_config.codexRouting` 是新主配置。`settings_config.codexModelRoutes` 和 `settings_config.modelRoutes` 只作为旧配置只读兜底；UI 读取旧字段后，保存时会写回新 schema。
 
-- 填入 DeepSeek API Key。
-- 保存供应商。
+## 注意事项
 
-![DeepSeek Codex 供应商表单中的本地路由映射](../images/codex-deepseek-routing/02-deepseek-codex-routing-form.png)
-
-预设已经内置 DeepSeek 的请求地址、默认模型、模型菜单、thinking/reasoning 参数，并会自动打开 `需要本地路由映射`。你可以按需调整默认模型或模型显示名；协议转换交给路由层完成即可。
-
-## 第二步：开启本地路由并接管 Codex
-
-进入设置里的 `路由` 页面，展开 `本地路由`，完成两个开关：
-
-1. 打开 `路由总开关`，启动本地服务。默认地址是 `127.0.0.1:15721`。
-2. 在 `路由启用` 中打开 `Codex`。如果只想让 Codex 走路由，可以保持 Claude、Gemini 关闭。
-
-![本地路由页面中启用 Codex 接管](../images/codex-deepseek-routing/03-local-route-codex-takeover.png)
-
-接管后，CC Switch 会把 Codex 的 live 配置指向本机路由，并用占位符管理认证。真实 DeepSeek Key 仍保存在 CC Switch 的 Provider 配置里，由本地路由在转发时注入，不需要你把 Key 暴露给 Codex live 配置。
-
-## 第三步：切换供应商并重启 Codex
-
-回到 Codex 供应商列表，点击 DeepSeek 供应商的 `启用`。如果看到 `需要路由` 标记，说明这个供应商必须在路由运行时使用；没有启动路由时，CC Switch 会弹出“需要路由服务才能正常使用”的提示。
-
-切换后建议重启当前 Codex 终端会话。原因是：
-
-- Codex 进程可能已经读取过旧的 `config.toml`。
-- `model_catalog_json` 生成后，`/model` 菜单通常需要新进程才能刷新。
-
-进入 Codex 后，可以用 `/model` 查看当前模型是否来自 DeepSeek 预设，例如 `DeepSeek V4 Flash`。目前 Codex app 不支持多模型选择时，会默认使用配置里的第一个模型。随后发一个小问题，确认路由面板的请求数增长，或者在用量/请求日志里看到 Codex 请求即可。
-
-## 其它 Chat 供应商怎么处理
-
-DeepSeek、Kimi、MiniMax、SiliconFlow 等常见 Chat 格式供应商在 CC Switch 里已有预设，优先用预设即可。只有预设里没有的供应商，才需要选择自定义配置；这时按对方文档填 API Key、base URL 和模型，并把 `API 格式` 选为 `OpenAI Chat Completions (需开启路由)`。
-
-如果上游直接支持 OpenAI Responses API，就不需要打开 `需要本地路由映射`；这时 CC Switch 可以按 Responses 直连，不做 Chat 转换。
-
-## 常见问题
-
-**Codex 报 404 或找不到 `/responses`**
-
-通常是没有开启 Codex 接管，或者你手动把上游 Chat base URL 直接写给了 Codex。检查 `~/.codex/config.toml` 是否指向 `http://127.0.0.1:15721/v1`。
-
-**DeepSeek 上游报 404**
-
-如果用的是内置 DeepSeek 预设，先确认当前供应商确实来自预设，并且 Codex 路由已启用。只有在使用自定义供应商时，才需要额外检查 base URL：它应该是服务根地址，而不是带 `/chat/completions` 的完整接口路径。
-
-**`/model` 看不到 DeepSeek 模型**
-
-保存供应商后重启 Codex。CC Switch 会生成 `cc-switch-model-catalog.json` 并把路径写入 `model_catalog_json`，但正在运行的 Codex 进程不一定会热加载模型目录。
-目前 Codex app 不支持多模型选择，默认使用配置的第一个模型。
-
-**开了路由但请求仍走错供应商**
-
-确认三处状态一致：Codex 标签下当前供应商是 DeepSeek；本地路由服务正在运行；`路由启用` 里 Codex 开关已打开。
-
-**可以用官方 OpenAI Codex 账号走本地路由吗**
-
-不建议。CC Switch 会在本地路由接管模式下阻止切到官方供应商，因为用代理访问官方 API 可能带来账号风险。路由主要用于第三方、聚合或协议转换场景。
-
-## 参考链接
-
-- [CC Switch 用户手册：添加供应商](../user-manual/zh/2-providers/2.1-add.md)
-- [CC Switch 用户手册：代理服务](../user-manual/zh/4-proxy/4.1-service.md)
-- [CC Switch 用户手册：应用路由](../user-manual/zh/4-proxy/4.2-routing.md)
-- [DeepSeek API 文档：Your First API Call](https://api-docs.deepseek.com/)
-- [DeepSeek API 文档：Create Chat Completion](https://api-docs.deepseek.com/api/create-chat-completion)
-- [DeepSeek API 文档：Multi-round Conversation](https://api-docs.deepseek.com/guides/multi_round_chat)
+- text-only route 会让 catalog 模型生成 `input_modalities=["text"]`。
+- Responses -> Chat 转换会读取 route capability，避免把 `image_url` 发给 text-only 上游。
+- 聊天窗口切换模型时不需要先在 GUI 切 provider，因为路由依据是请求里的 `body.model`。

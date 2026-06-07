@@ -16,6 +16,7 @@ import type {
   ClaudeApiFormat,
   CodexApiFormat,
   CodexCatalogModel,
+  CodexRoutingConfig,
   CodexChatReasoning,
   ClaudeApiKeyField,
 } from "@/types";
@@ -140,9 +141,25 @@ const codexApiFormatFromWireApi = (
     case "openai_responses":
     case "openai-responses":
       return "openai_responses";
+    case "messages":
+    case "openai_messages":
+    case "openai-messages":
+      return "openai_messages";
     default:
       return undefined;
   }
+};
+
+// Claude 表单只接受 Claude 可用的协议，避免 Codex route 的 messages 格式串入 Claude 状态。
+const normalizeClaudeApiFormat = (
+  apiFormat: unknown,
+): ClaudeApiFormat | undefined => {
+  return apiFormat === "anthropic" ||
+    apiFormat === "openai_chat" ||
+    apiFormat === "openai_responses" ||
+    apiFormat === "gemini_native"
+    ? apiFormat
+    : undefined;
 };
 
 export const normalizeCodexCatalogModelsForSave = (
@@ -456,7 +473,7 @@ function ProviderFormFull({
 
   const [localApiFormat, setLocalApiFormat] = useState<ClaudeApiFormat>(() => {
     if (appId !== "claude") return "anthropic";
-    return initialData?.meta?.apiFormat ?? "anthropic";
+    return normalizeClaudeApiFormat(initialData?.meta?.apiFormat) ?? "anthropic";
   });
 
   const handleApiFormatChange = useCallback((format: ClaudeApiFormat) => {
@@ -516,10 +533,12 @@ function ProviderFormFull({
     codexApiKey,
     codexBaseUrl,
     codexCatalogModels,
+    codexRouting,
     codexAuthError,
     setCodexAuth,
     setCodexConfig,
     setCodexCatalogModels,
+    setCodexRouting,
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexConfigChange: originalHandleCodexConfigChange,
@@ -574,8 +593,9 @@ function ProviderFormFull({
       const template = getCodexCustomTemplate();
       resetCodexConfig(template.auth, template.config);
       setCodexChatReasoning({});
+      setCodexRouting({ enabled: false, defaultRouteId: "", routes: [] });
     }
-  }, [appId, initialData, selectedPresetId, resetCodexConfig]);
+  }, [appId, initialData, selectedPresetId, resetCodexConfig, setCodexRouting]);
 
   useEffect(() => {
     form.reset(defaultValues);
@@ -1204,9 +1224,16 @@ function ProviderFormFull({
           auth: unknown;
           config: string;
           modelCatalog?: { models: CodexCatalogModel[] };
+          codexRouting?: CodexRoutingConfig;
         };
         if (normalizedCatalogModels.length > 0) {
           configObj.modelCatalog = { models: normalizedCatalogModels };
+        }
+        if (
+          category !== "official" &&
+          (codexRouting.enabled || (codexRouting.routes?.length ?? 0) > 0)
+        ) {
+          configObj.codexRouting = codexRouting;
         }
         settingsConfig = JSON.stringify(configObj);
       } catch (err) {
@@ -1523,7 +1550,8 @@ function ProviderFormFull({
       if (appId === "codex") {
         const template = getCodexCustomTemplate();
         resetCodexConfig(template.auth, template.config);
-        setCodexChatReasoning({});
+      setCodexChatReasoning({});
+      setCodexRouting({ enabled: false, defaultRouteId: "", routes: [] });
         setLocalCodexApiFormat(
           codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
             "openai_responses",
@@ -1565,6 +1593,7 @@ function ProviderFormFull({
 
       resetCodexConfig(auth, config, preset.modelCatalog ?? []);
       setCodexChatReasoning(preset.codexChatReasoning ?? {});
+      setCodexRouting({ enabled: false, defaultRouteId: "", routes: [] });
       setLocalCodexApiFormat(
         preset.apiFormat ??
           codexApiFormatFromWireApi(extractCodexWireApi(config)) ??
@@ -2040,6 +2069,8 @@ function ProviderFormFull({
               onCodexChatReasoningChange={setCodexChatReasoning}
               catalogModels={codexCatalogModels}
               onCatalogModelsChange={setCodexCatalogModels}
+              codexRouting={codexRouting}
+              onCodexRoutingChange={setCodexRouting}
               speedTestEndpoints={speedTestEndpoints}
             />
           )}

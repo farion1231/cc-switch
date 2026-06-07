@@ -241,6 +241,18 @@ function defaultRouteRows(
   );
 }
 
+// Claude Desktop 只支持 Claude 表单声明的协议，过滤掉 Codex 专属的 messages route 值。
+const normalizeClaudeDesktopApiFormat = (
+  apiFormat: unknown,
+): ClaudeApiFormat | undefined => {
+  return apiFormat === "anthropic" ||
+    apiFormat === "openai_chat" ||
+    apiFormat === "openai_responses" ||
+    apiFormat === "gemini_native"
+    ? apiFormat
+    : undefined;
+};
+
 export function ClaudeDesktopProviderForm({
   submitLabel,
   onSubmit,
@@ -254,7 +266,8 @@ export function ClaudeDesktopProviderForm({
   const [mode, setMode] = useState<"direct" | "proxy">(initialMode);
   const needsModelMapping = mode === "proxy";
   const [apiFormat, setApiFormat] = useState<ClaudeApiFormat>(
-    initialData?.meta?.apiFormat ?? "anthropic",
+    normalizeClaudeDesktopApiFormat(initialData?.meta?.apiFormat) ??
+      "anthropic",
   );
   const [baseUrl, setBaseUrl] = useState(
     envString(initialData?.settingsConfig, "ANTHROPIC_BASE_URL"),
