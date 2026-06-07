@@ -26,23 +26,30 @@ const extractCodexPromptFromIdeContext = (content: string) => {
     return null;
   }
 
+  // VS Code injects the real prompt as the LAST "## My request for Codex:"
+  // section, so keep the final matching heading. Earlier matches can be
+  // headings that live inside the active selection / open file content.
+  // Trade-off: if the request body itself repeats the heading, the preview
+  // truncates to its trailing part (rare; see sessionUtils.test.ts).
   const lines = trimmed.replace(/\r\n/g, "\n").split("\n");
+  let prompt: string | null = null;
   for (const [index, line] of lines.entries()) {
     const inlinePrompt = getCodexRequestHeadingPayload(line.trim());
     if (inlinePrompt === null) continue;
 
     if (inlinePrompt) {
-      return inlinePrompt;
+      prompt = inlinePrompt;
+      continue;
     }
 
     const followingPrompt = lines
       .slice(index + 1)
       .join("\n")
       .trim();
-    return followingPrompt || null;
+    prompt = followingPrompt || null;
   }
 
-  return null;
+  return prompt;
 };
 
 export const getSessionKey = (session: SessionMeta) =>
