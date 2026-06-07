@@ -32,6 +32,7 @@ import type {
   CodexChatReasoning,
   ProviderCategory,
 } from "@/types";
+import type { ManagedAuthProvider } from "@/lib/api";
 
 interface EndpointCandidate {
   url: string;
@@ -50,6 +51,7 @@ interface CodexFormFieldsProps {
   isCodexOauthPreset?: boolean;
   selectedCodexAccountId?: string | null;
   onCodexAccountSelect?: (accountId: string | null) => void;
+  onManageAuthAccounts?: (target: ManagedAuthProvider) => void;
   codexOauthNoneOptionLabel?: string;
 
   // Base URL
@@ -119,6 +121,7 @@ export function CodexFormFields({
   isCodexOauthPreset = false,
   selectedCodexAccountId,
   onCodexAccountSelect,
+  onManageAuthAccounts,
   codexOauthNoneOptionLabel,
   shouldShowSpeedTest,
   codexBaseUrl,
@@ -296,8 +299,14 @@ export function CodexFormFields({
       {/* Codex OAuth 账号选择 */}
       {isCodexOauthPreset && (
         <CodexOAuthSection
+          mode="select"
           selectedAccountId={selectedCodexAccountId}
           onAccountSelect={onCodexAccountSelect}
+          onManageAccounts={
+            onManageAuthAccounts
+              ? () => onManageAuthAccounts("codex_oauth")
+              : undefined
+          }
           noneOptionLabel={codexOauthNoneOptionLabel}
         />
       )}

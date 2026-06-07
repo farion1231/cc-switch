@@ -8,7 +8,12 @@ import { Button } from "@/components/ui/button";
 import { Form, FormField, FormItem, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
-import { providersApi, settingsApi, type AppId } from "@/lib/api";
+import {
+  providersApi,
+  settingsApi,
+  type AppId,
+  type ManagedAuthProvider,
+} from "@/lib/api";
 import type {
   ProviderCategory,
   ProviderMeta,
@@ -228,6 +233,7 @@ export interface ProviderFormProps {
   onCancel: () => void;
   onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
   onManageUniversalProviders?: () => void;
+  onManageAuthAccounts?: (target: ManagedAuthProvider) => void;
   onSubmittingChange?: (isSubmitting: boolean) => void;
   initialData?: {
     name?: string;
@@ -259,6 +265,7 @@ function ProviderFormFull({
   onCancel,
   onUniversalPresetSelect,
   onManageUniversalProviders,
+  onManageAuthAccounts,
   onSubmittingChange,
   initialData,
   showButtons = true,
@@ -655,8 +662,7 @@ function ProviderFormFull({
   const selectedPresetEntry = useMemo(
     () =>
       selectedPresetId && selectedPresetId !== "custom"
-        ? (presetEntries.find((entry) => entry.id === selectedPresetId) ??
-          null)
+        ? (presetEntries.find((entry) => entry.id === selectedPresetId) ?? null)
         : null,
     [presetEntries, selectedPresetId],
   );
@@ -1162,7 +1168,11 @@ function ProviderFormFull({
             }),
           );
         }
-        if (!isCopilotProvider && !isClaudeCodexOauthProvider && !apiKey.trim()) {
+        if (
+          !isCopilotProvider &&
+          !isClaudeCodexOauthProvider &&
+          !apiKey.trim()
+        ) {
           issues.push(
             t("providerForm.apiKeyRequired", {
               defaultValue: "非官方供应商请填写 API Key",
@@ -1423,7 +1433,7 @@ function ProviderFormFull({
                 authProvider: "codex_oauth",
                 accountId: selectedCodexAccountId ?? undefined,
               }
-          : undefined,
+            : undefined,
       // GitHub Copilot 多账号：保存关联的账号 ID
       githubAccountId:
         isCopilotProvider && selectedGitHubAccountId
@@ -2022,6 +2032,7 @@ function ProviderFormFull({
               isCopilotAuthenticated={isCopilotAuthenticated}
               selectedGitHubAccountId={selectedGitHubAccountId}
               onGitHubAccountSelect={setSelectedGitHubAccountId}
+              onManageAuthAccounts={onManageAuthAccounts}
               isCodexOauthAuthenticated={isCodexOauthAuthenticated}
               selectedCodexAccountId={selectedCodexAccountId}
               onCodexAccountSelect={setSelectedCodexAccountId}
@@ -2074,6 +2085,7 @@ function ProviderFormFull({
               isCodexOauthPreset={isCodexOfficialProvider}
               selectedCodexAccountId={selectedCodexAccountId}
               onCodexAccountSelect={setSelectedCodexAccountId}
+              onManageAuthAccounts={onManageAuthAccounts}
               codexOauthNoneOptionLabel="暂不绑定托管账号"
               shouldShowSpeedTest={shouldShowSpeedTest}
               codexBaseUrl={codexBaseUrl}
