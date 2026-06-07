@@ -62,41 +62,21 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
     Ok(Json(status))
 }
 
-/// GET /v1/models — OpenAI-compatible model list (Codex CLI reachability check)
+/// GET /v1/models — Codex model list (reachability check)
 ///
-/// Codex CLI probes this endpoint at startup. Returns model entries derived
-/// from the cc-switch–managed model catalog file.
+/// Codex CLI probes this endpoint at startup and deserializes the response as a
+/// catalog with a top-level `models` field.  Return the cc-switch–managed model
+/// catalog file directly so the format always matches what the current version
+/// of Codex expects.
 pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
     let catalog_path = crate::codex_config::get_codex_model_catalog_path();
-    let models: Vec<Value> = if catalog_path.exists() {
+    let catalog = if catalog_path.exists() {
         let text = std::fs::read_to_string(&catalog_path).unwrap_or_default();
-        let catalog: Value = serde_json::from_str(&text).unwrap_or_default();
-        catalog
-            .get("models")
-            .and_then(|m| m.as_array())
-            .cloned()
-            .unwrap_or_default()
+        serde_json::from_str(&text).unwrap_or(json!({"models": []}))
     } else {
-        Vec::new()
+        json!({"models": []})
     };
-
-    let data: Vec<Value> = models
-        .iter()
-        .map(|m| {
-            let id = m
-                .get("slug")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            json!({
-                "id": id,
-                "object": "model",
-                "created": 1700000000,
-                "owned_by": "custom"
-            })
-        })
-        .collect();
-
-    Ok(Json(json!({"object": "list", "data": data})))
+    Ok(Json(catalog))
 }
 
 // ============================================================================
