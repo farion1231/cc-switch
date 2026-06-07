@@ -653,6 +653,20 @@ fn snapshot_unmanaged_subtables(
         .collect()
 }
 
+fn remove_unmanaged_subtables(server_tbl: &mut toml_edit::Table) -> bool {
+    let keys: Vec<String> = server_tbl
+        .iter()
+        .filter(|(k, v)| !CC_SWITCH_MANAGED_SUBTABLE_KEYS.contains(k) && v.as_table().is_some())
+        .map(|(k, _)| k.to_string())
+        .collect();
+
+    let removed_any = !keys.is_empty();
+    for key in keys {
+        server_tbl.remove(&key);
+    }
+    removed_any
+}
+
 /// 把 snapshot_unmanaged_subtables 抓到的子表写回 `[mcp_servers.<server_id>]`。
 /// 在 sync 函数把 server 子表整体重写之后调用。
 fn restore_unmanaged_subtables(
@@ -693,13 +707,14 @@ fn restore_unmanaged_subtables(
 ///
 /// 语义：
 /// - "受管子表"（`CC_SWITCH_MANAGED_SUBTABLE_KEYS`）跳过——它们由 cc-switch 自己负责。
-/// - **逐子键深度合并**：旧 live 与新文本同时存在某子表（如 `tools`）时，按叶子键
-///   合并而非整体取舍——旧 `tools.search` 与新 `tools.read` 都保留；同名叶子键冲突时
-///   旧 live 优先，避免 provider 中被 backfill 的 stale runtime 副本覆盖 Codex CLI 最新权限。
+/// - new/provider 文本中已有的非管辖子表视为 stale runtime 副本，先清掉，再以旧 live
+///   当前仍存在的子表作为唯一权威恢复；live 中已删除的 `tools.*` 不会被 provider 重新带回。
+///   恢复时整表写入旧 live 的子表——new 侧同名子表已在上一步清空，旧 live 即唯一
+///   权威，从而避免 provider 中被 backfill 的 stale runtime 副本覆盖 Codex CLI 最新权限。
 /// - **不为新文本中不存在的 server 凭空建父表**：新文本没有的 server 说明切换后的
 ///   provider 配置不含它，且 provider 切换路径之后不会再跑 MCP sync 补全 command/url，
 ///   建一个只有 `tools.*` 的残缺 server 会让 Codex 无法加载——这类孤儿 runtime 子表直接丢弃。
-/// - 解析失败 / 旧文件不可读 / 新旧任一方没有 `[mcp_servers]` 时退回原文本，
+/// - 解析失败 / 旧文件不可读时退回原文本；新文本没有 `[mcp_servers]` 时不创建父表，
 ///   best-effort 不阻塞底层写入。
 pub(crate) fn merge_codex_runtime_subtables(new_text: &str, old_text: &str) -> String {
     use toml_edit::DocumentMut;
@@ -707,28 +722,22 @@ pub(crate) fn merge_codex_runtime_subtables(new_text: &str, old_text: &str) -> S
     let Ok(old_doc) = old_text.parse::<DocumentMut>() else {
         return new_text.to_string();
     };
-    let Some(old_mcp_servers) = old_doc.get("mcp_servers").and_then(|item| item.as_table()) else {
-        return new_text.to_string();
-    };
-
     // server_id, subtable_key, table
     let mut preserved: Vec<(String, String, toml_edit::Table)> = Vec::new();
-    for (server_id, server_item) in old_mcp_servers.iter() {
-        let Some(server_tbl) = server_item.as_table() else {
-            continue;
-        };
-        for (k, v) in server_tbl.iter() {
-            if CC_SWITCH_MANAGED_SUBTABLE_KEYS.contains(&k) {
+    if let Some(old_mcp_servers) = old_doc.get("mcp_servers").and_then(|item| item.as_table()) {
+        for (server_id, server_item) in old_mcp_servers.iter() {
+            let Some(server_tbl) = server_item.as_table() else {
                 continue;
-            }
-            if let Some(tbl) = v.as_table() {
-                preserved.push((server_id.to_string(), k.to_string(), tbl.clone()));
+            };
+            for (k, v) in server_tbl.iter() {
+                if CC_SWITCH_MANAGED_SUBTABLE_KEYS.contains(&k) {
+                    continue;
+                }
+                if let Some(tbl) = v.as_table() {
+                    preserved.push((server_id.to_string(), k.to_string(), tbl.clone()));
+                }
             }
         }
-    }
-
-    if preserved.is_empty() {
-        return new_text.to_string();
     }
 
     let mut new_doc = if new_text.trim().is_empty() {
@@ -748,6 +757,16 @@ pub(crate) fn merge_codex_runtime_subtables(new_text: &str, old_text: &str) -> S
         return new_text.to_string();
     };
 
+    // provider 存储可能已经被旧 backfill 种下 stale runtime 子表。先清掉 new 侧所有
+    // 非管辖子表，再恢复 old live 当前仍存在的 runtime 状态；这样 live 删除的 tools.*
+    // 不会被 stale provider config 重新带回。
+    let mut changed = false;
+    for (_, server_item) in mcp_servers.iter_mut() {
+        if let Some(server_tbl) = server_item.as_table_mut() {
+            changed |= remove_unmanaged_subtables(server_tbl);
+        }
+    }
+
     for (server_id, key, tbl) in preserved {
         let Some(server_tbl) = mcp_servers
             .get_mut(&server_id)
@@ -755,22 +774,59 @@ pub(crate) fn merge_codex_runtime_subtables(new_text: &str, old_text: &str) -> S
         else {
             continue;
         };
-        // P2：逐子键合并——新文本已有同名子表（如 `tools`）时深度合并（旧 live 优先），
-        //     而非整体跳过，从而保住 Codex CLI 最新写入的 per-tool 授权。
-        match server_tbl
-            .get_mut(&key)
-            .and_then(|item| item.as_table_mut())
-        {
-            Some(existing_tbl) => {
-                merge_table_preserving_old(existing_tbl, &tbl);
-            }
-            None => {
-                server_tbl.insert(&key, toml_edit::Item::Table(tbl));
-            }
+        // new 侧的非管辖子表已在上面整体清空，old live 是 runtime 子表的唯一权威，
+        // 直接写入即可：既保住 Codex CLI 最新写入的 per-tool 授权，又不会复活 live
+        // 中已删除、仅残留于 provider stored config 的 stale tools.*。
+        server_tbl.insert(&key, toml_edit::Item::Table(tbl));
+        changed = true;
+    }
+
+    if changed {
+        new_doc.to_string()
+    } else {
+        new_text.to_string()
+    }
+}
+
+/// 剥离 `[mcp_servers.<id>]` 下所有非 cc-switch 管辖的子表（典型为 Codex CLI
+/// 运行时写入的 `tools.*`），返回处理后的 TOML 文本。
+///
+/// 用于 backfill 边界：provider switch 后会把 live config 文本回填进 provider 的
+/// stored config，但 cc-switch 数据库不应持有 Codex runtime 状态。先剥离再回填，
+/// 可确保 stored config 不会种下 stale `tools.*`——live 才是 runtime 子表的唯一权威。
+///
+/// 受管子表（`CC_SWITCH_MANAGED_SUBTABLE_KEYS`，即 `env`/`http_headers`/`headers`）保留。
+/// 空文本 / 解析失败 / 无 `[mcp_servers]` 时原样返回，best-effort 不阻塞回填。
+pub(crate) fn strip_codex_runtime_subtables(config_text: &str) -> String {
+    use toml_edit::DocumentMut;
+
+    if config_text.trim().is_empty() {
+        return config_text.to_string();
+    }
+    let mut doc = match config_text.parse::<DocumentMut>() {
+        Ok(doc) => doc,
+        Err(_) => return config_text.to_string(),
+    };
+
+    let Some(mcp_servers) = doc
+        .get_mut("mcp_servers")
+        .and_then(|item| item.as_table_mut())
+    else {
+        return config_text.to_string();
+    };
+
+    let mut changed = false;
+    for (_, server_item) in mcp_servers.iter_mut() {
+        if let Some(server_tbl) = server_item.as_table_mut() {
+            changed |= remove_unmanaged_subtables(server_tbl);
         }
     }
 
-    new_doc.to_string()
+    if changed {
+        doc.to_string()
+    } else {
+        config_text.to_string()
+    }
 }
 
 /// 深度合并：把 `old` 的键并入 `target`，同名叶子键以 `old`（旧 live/runtime）优先；
@@ -1226,6 +1282,29 @@ approval_mode = "deny"
     }
 
     #[test]
+    fn merge_runtime_strips_provider_stale_tools_when_live_has_no_mcp_servers() {
+        // old live 为空（例如 live 文件不存在）时，provider 存储里残留的 tools.*
+        // 也不能成为新的 authority。
+        let old = "";
+        let new = r#"
+[mcp_servers.x]
+command = "x"
+
+[mcp_servers.x.tools.search]
+approval_mode = "approve"
+"#;
+
+        let merged = merge_codex_runtime_subtables(new, old);
+        let v: toml::Value = toml::from_str(&merged).unwrap();
+
+        assert_eq!(v["mcp_servers"]["x"]["command"].as_str(), Some("x"));
+        assert!(
+            v["mcp_servers"]["x"].get("tools").is_none(),
+            "live 没有 runtime authority 时，应清掉 provider 中残留的 stale tools.*"
+        );
+    }
+
+    #[test]
     fn merge_runtime_returns_unchanged_when_old_unparseable() {
         let old = "this is :: not toml";
         let new = r#"model_provider = "anthropic""#;
@@ -1234,9 +1313,9 @@ approval_mode = "deny"
     }
 
     #[test]
-    fn merge_runtime_merges_tools_per_tool_not_per_parent() {
-        // P2：旧 live 有 tools.search、新文本（用户在 provider config 里）声明了 tools.read，
-        // 两者无键冲突，必须都保留——不能因为新文本已有 `tools` 父表就整体跳过旧表。
+    fn merge_runtime_removes_provider_stale_tool_missing_from_live() {
+        // provider config 可能已经被旧 backfill 种下 stale tools.*。如果用户随后在
+        // Codex live 里撤销某个 tool approval，切回该 provider 时不能把它复活。
         let old = r#"
 [mcp_servers.x]
 command = "x"
@@ -1257,12 +1336,11 @@ approval_mode = "approve"
         assert_eq!(
             v["mcp_servers"]["x"]["tools"]["search"]["approval_mode"].as_str(),
             Some("approve"),
-            "新文本声明了其它工具时，旧 live 的 per-tool 授权仍须逐工具保留"
+            "旧 live 中仍存在的 per-tool 授权必须恢复"
         );
-        assert_eq!(
-            v["mcp_servers"]["x"]["tools"]["read"]["approval_mode"].as_str(),
-            Some("approve"),
-            "新文本声明的工具同样保留"
+        assert!(
+            v["mcp_servers"]["x"]["tools"].get("read").is_none(),
+            "new/provider 中存在但 live 中已删除的 stale tool 不得被带回"
         );
     }
 
@@ -1283,6 +1361,41 @@ model_provider = "anthropic"
         assert!(
             v.get("mcp_servers").is_none(),
             "新文本不含该 server 时，不得为孤儿 tools.* 创建残缺父表"
+        );
+    }
+
+    #[test]
+    fn strip_runtime_subtables_removes_tools_but_keeps_managed_subtables() {
+        let config = r#"
+[mcp_servers.x]
+command = "x"
+
+[mcp_servers.x.env]
+TOKEN = "1"
+
+[mcp_servers.x.http_headers]
+Authorization = "Bearer token"
+
+[mcp_servers.x.headers]
+X-Compat = "1"
+
+[mcp_servers.x.tools.search]
+approval_mode = "approve"
+"#;
+        let stripped = strip_codex_runtime_subtables(config);
+        let v: toml::Value = toml::from_str(&stripped).expect("stripped is valid toml");
+
+        let server = &v["mcp_servers"]["x"];
+        assert_eq!(server["command"].as_str(), Some("x"));
+        assert_eq!(server["env"]["TOKEN"].as_str(), Some("1"));
+        assert_eq!(
+            server["http_headers"]["Authorization"].as_str(),
+            Some("Bearer token")
+        );
+        assert_eq!(server["headers"]["X-Compat"].as_str(), Some("1"));
+        assert!(
+            server.get("tools").is_none(),
+            "backfill 写回 provider 存储前应剥离 Codex runtime tools.*"
         );
     }
 }

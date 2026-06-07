@@ -1477,15 +1477,17 @@ pub fn strip_codex_unified_session_bucket_from_settings(
 /// 运行时子表（典型为 `[mcp_servers.<id>.tools.<tool>]`），把它们合并进即将写入的
 /// 新文本。详细语义见 `mcp::codex::merge_codex_runtime_subtables`。
 ///
-/// 最佳努力（best-effort）：旧文件不存在 / 读失败 / 没有可保留的子表时返回
+/// 最佳努力（best-effort）：旧文件不存在时按空 live 处理，读失败时返回
 /// `new_text` 的拷贝，绝不阻断底层写入。
 fn preserve_runtime_codex_mcp_state(new_text: &str) -> String {
     let live_path = get_codex_config_path();
-    if !live_path.exists() {
-        return new_text.to_string();
-    }
-    let Ok(old_text) = std::fs::read_to_string(&live_path) else {
-        return new_text.to_string();
+    let old_text = if live_path.exists() {
+        match std::fs::read_to_string(&live_path) {
+            Ok(text) => text,
+            Err(_) => return new_text.to_string(),
+        }
+    } else {
+        String::new()
     };
     crate::mcp::merge_codex_runtime_subtables(new_text, &old_text)
 }
