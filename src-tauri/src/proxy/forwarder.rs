@@ -463,7 +463,7 @@ impl RequestForwarder {
                 )
                 .await
             {
-                Ok((response, claude_api_format)) => {
+                Ok((response, claude_api_format, effective_provider)) => {
                     // 成功：普通闭合熔断状态异步记录，避免阻塞流式首包返回；
                     // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
                     self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
@@ -509,7 +509,7 @@ impl RequestForwarder {
 
                     return Ok(ForwardResult {
                         response,
-                        provider: provider.clone(),
+                        provider: effective_provider,
                         claude_api_format,
                         connection_guard: None,
                     });
@@ -561,12 +561,12 @@ impl RequestForwarder {
                                 )
                                 .await
                             {
-                                Ok((response, claude_api_format)) => {
+                                Ok((response, claude_api_format, routed_provider)) => {
                                     log::info!(
                                         "[{app_type_str}] [Media] Unsupported-image retry succeeded"
                                     );
                                     self.record_success_result(
-                                        &provider.id,
+                                        &routed_provider.id,
                                         app_type_str,
                                         used_half_open_permit,
                                     )
@@ -577,7 +577,10 @@ impl RequestForwarder {
                                             self.current_providers.write().await;
                                         current_providers.insert(
                                             app_type_str.to_string(),
-                                            (provider.id.clone(), provider.name.clone()),
+                                            (
+                                                routed_provider.id.clone(),
+                                                routed_provider.name.clone(),
+                                            ),
                                         );
                                     }
 
@@ -587,13 +590,13 @@ impl RequestForwarder {
                                         status.last_error = None;
                                         let should_switch =
                                             self.current_provider_id_at_start.as_str()
-                                                != provider.id.as_str();
+                                                != routed_provider.id.as_str();
                                         if should_switch {
                                             status.failover_count += 1;
                                             let fm = self.failover_manager.clone();
                                             let ah = self.app_handle.clone();
-                                            let pid = provider.id.clone();
-                                            let pname = provider.name.clone();
+                                            let pid = routed_provider.id.clone();
+                                            let pname = routed_provider.name.clone();
                                             let at = app_type_str.to_string();
 
                                             tokio::spawn(async move {
@@ -611,7 +614,7 @@ impl RequestForwarder {
 
                                     return Ok(ForwardResult {
                                         response,
-                                        provider: provider.clone(),
+                                        provider: routed_provider,
                                         claude_api_format,
                                         connection_guard: None,
                                     });
@@ -706,7 +709,7 @@ impl RequestForwarder {
                                     )
                                     .await
                                 {
-                                    Ok((response, claude_api_format)) => {
+                                    Ok((response, claude_api_format, effective_provider)) => {
                                         log::info!("[{app_type_str}] [RECT-002] 整流重试成功");
                                         self.record_success_result(
                                             &provider.id,
@@ -759,7 +762,7 @@ impl RequestForwarder {
 
                                         return Ok(ForwardResult {
                                             response,
-                                            provider: provider.clone(),
+                                            provider: effective_provider,
                                             claude_api_format,
                                             connection_guard: None,
                                         });
@@ -871,7 +874,7 @@ impl RequestForwarder {
                                 )
                                 .await
                             {
-                                Ok((response, claude_api_format)) => {
+                                Ok((response, claude_api_format, effective_provider)) => {
                                     log::info!("[{app_type_str}] [RECT-011] budget 整流重试成功");
                                     self.record_success_result(
                                         &provider.id,
@@ -918,7 +921,7 @@ impl RequestForwarder {
 
                                     return Ok(ForwardResult {
                                         response,
-                                        provider: provider.clone(),
+                                        provider: effective_provider,
                                         claude_api_format,
                                         connection_guard: None,
                                     });
@@ -1088,7 +1091,30 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
-    ) -> Result<(ProxyResponse, Option<String>), ProxyError> {
+    ) -> Result<(ProxyResponse, Option<String>, Provider), ProxyError> {
+        // Codex v2 是一个复合 provider：Codex 客户端只看到一个 provider bucket，
+        // Rust proxy 根据请求模型临时解析真实上游 provider，后续 base_url/auth/转换逻辑
+        // 都使用这个 effective provider。
+        let routed_provider = if matches!(app_type, AppType::Codex) {
+            super::providers::resolve_codex_model_routed_provider(provider, body)
+        } else {
+            None
+        };
+        let provider = routed_provider.as_ref().unwrap_or(provider);
+
+        if let Some(routed_provider) = routed_provider.as_ref() {
+            let request_model = body
+                .get("model")
+                .and_then(|value| value.as_str())
+                .unwrap_or("unknown");
+            log::debug!(
+                "[CodexRouter] model={} routed to provider={} ({})",
+                request_model,
+                routed_provider.id,
+                routed_provider.name
+            );
+        }
+
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
@@ -1286,8 +1312,12 @@ impl RequestForwarder {
         };
         let codex_responses_to_chat = matches!(app_type, AppType::Codex)
             && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
+        let codex_responses_to_messages = matches!(app_type, AppType::Codex)
+            && super::providers::should_convert_codex_responses_to_messages(provider, endpoint);
         let (effective_endpoint, passthrough_query) = if codex_responses_to_chat {
             rewrite_codex_responses_endpoint_to_chat(endpoint)
+        } else if codex_responses_to_messages {
+            rewrite_codex_responses_endpoint_to_messages(endpoint)
         } else if needs_transform && adapter.name() == "Claude" {
             let api_format = resolved_claude_api_format
                 .as_deref()
@@ -1321,7 +1351,7 @@ impl RequestForwarder {
         };
 
         // 转换请求体（如果需要）
-        let request_body = if codex_responses_to_chat {
+        let request_body = if codex_responses_to_chat || codex_responses_to_messages {
             let mut mapped_body = mapped_body;
             let restored = self
                 .codex_chat_history
@@ -1335,9 +1365,11 @@ impl RequestForwarder {
             super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
-            super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+            let text_only_override = super::providers::codex_provider_text_only_input(provider);
+            super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning_and_text_only(
                 mapped_body,
                 reasoning_config.as_ref(),
+                text_only_override,
             )?
         } else if needs_transform {
             if adapter.name() == "Claude" {
@@ -1372,8 +1404,10 @@ impl RequestForwarder {
         );
         let request_is_streaming =
             is_streaming_request(&effective_endpoint, &filtered_body, headers);
-        let force_identity_encoding =
-            needs_transform || codex_responses_to_chat || request_is_streaming;
+        let force_identity_encoding = needs_transform
+            || codex_responses_to_chat
+            || codex_responses_to_messages
+            || request_is_streaming;
 
         // Codex OAuth 需要注入的 ChatGPT-Account-Id（在动态 token 获取期间填充）
         let mut codex_oauth_account_id: Option<String> = None;
@@ -1874,7 +1908,7 @@ impl RequestForwarder {
             let response = self
                 .prepare_success_response_for_failover(response, request_is_streaming)
                 .await?;
-            Ok((response, resolved_claude_api_format))
+            Ok((response, resolved_claude_api_format, provider.clone()))
         } else {
             let status_code = status.as_u16();
             let body_text = String::from_utf8(response.bytes().await?.to_vec()).ok();
@@ -2245,6 +2279,18 @@ fn rewrite_codex_responses_endpoint_to_chat(endpoint: &str) -> (String, Option<S
     let (_path, query) = split_endpoint_and_query(endpoint);
     let passthrough_query = query.map(ToString::to_string);
     let target_path = "/chat/completions";
+    let rewritten = match passthrough_query.as_deref() {
+        Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
+        _ => target_path.to_string(),
+    };
+
+    (rewritten, passthrough_query)
+}
+
+fn rewrite_codex_responses_endpoint_to_messages(endpoint: &str) -> (String, Option<String>) {
+    let (_path, query) = split_endpoint_and_query(endpoint);
+    let passthrough_query = query.map(ToString::to_string);
+    let target_path = "/v1/messages";
     let rewritten = match passthrough_query.as_deref() {
         Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
         _ => target_path.to_string(),

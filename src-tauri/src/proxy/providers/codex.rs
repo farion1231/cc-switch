@@ -6,10 +6,12 @@
 //! 支持检测官方 Codex 客户端 (codex_vscode, codex_cli_rs)
 
 use super::{AuthInfo, AuthStrategy, ProviderAdapter};
-use crate::provider::{CodexChatReasoningConfig, Provider};
+use crate::provider::{
+    AuthBinding, AuthBindingSource, CodexChatReasoningConfig, Provider, ProviderMeta,
+};
 use crate::proxy::error::ProxyError;
 use regex::Regex;
-use serde_json::Value as JsonValue;
+use serde_json::{Map, Value as JsonValue};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 use toml::Value as TomlValue;
@@ -84,6 +86,459 @@ pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &st
     ) && codex_provider_uses_chat_completions(provider)
 }
 
+pub fn should_convert_codex_responses_to_messages(provider: &Provider, endpoint: &str) -> bool {
+    let path = endpoint
+        .split_once('?')
+        .map_or(endpoint, |(path, _query)| path);
+
+    if !matches!(
+        path,
+        "/responses" | "/v1/responses" | "/responses/compact" | "/v1/responses/compact"
+    ) {
+        return false;
+    }
+
+    let wire_api = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.api_format.as_deref())
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("api_format")
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("apiFormat")
+                .and_then(|v| v.as_str())
+        })
+        .map(str::to_string)
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("config")
+                .and_then(|v| v.as_str())
+                .and_then(extract_codex_wire_api_from_toml)
+        })
+        .unwrap_or_else(|| "openai_responses".to_string());
+
+    is_openai_messages_wire_api(&wire_api)
+}
+
+/// 根据 Codex 请求体里的 `model` 字段，把复合 provider 解析成本次真实上游 provider。
+///
+/// 新 schema 使用 `settings_config.codexRouting`；旧的 `codexModelRoutes` / `modelRoutes`
+/// 仍然只读兼容，便于本地旧配置在 UI 保存前继续可用。函数不访问数据库，也不改变当前
+/// CC Switch provider，避免聊天窗口切模型时反向触发 GUI 当前供应商切换。
+pub fn resolve_codex_model_routed_provider(
+    provider: &Provider,
+    body: &JsonValue,
+) -> Option<Provider> {
+    let request_model = body
+        .get("model")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|model| !model.is_empty())?;
+
+    let route = resolve_codex_route(provider, request_model)?;
+
+    Some(build_codex_routed_provider(provider, route, request_model))
+}
+
+/// 判断当前 effective Codex provider 是否声明为 text-only 输入。
+///
+/// 该信息由 route resolver 写入 `codexResolvedCapabilities`，供 Responses -> Chat 转换
+/// 在生成 OpenAI Chat `messages` 时决定是否把图片块降级成文本占位。
+pub fn codex_provider_text_only_input(provider: &Provider) -> Option<bool> {
+    let capabilities = provider.settings_config.get("codexResolvedCapabilities")?;
+    if let Some(text_only) = capabilities
+        .get("textOnly")
+        .or_else(|| capabilities.get("text_only"))
+        .and_then(|value| value.as_bool())
+    {
+        return Some(text_only);
+    }
+
+    capabilities
+        .get("inputModalities")
+        .or_else(|| capabilities.get("input_modalities"))
+        .and_then(|value| value.as_array())
+        .map(|modalities| {
+            !modalities
+                .iter()
+                .filter_map(|value| value.as_str())
+                .any(|modality| modality.eq_ignore_ascii_case("image"))
+        })
+}
+
+/// 从新旧配置中挑出本次请求应该使用的 route。
+///
+/// 新配置允许显式关闭路由，并支持 `defaultRouteId` 兜底；旧配置没有开关语义，只要数组
+/// 存在就按旧规则匹配，保证已有本地数据库不会在升级后突然失效。
+fn resolve_codex_route<'a>(provider: &'a Provider, request_model: &str) -> Option<&'a JsonValue> {
+    if let Some(routing) = provider.settings_config.get("codexRouting") {
+        if routing
+            .get("enabled")
+            .and_then(|value| value.as_bool())
+            .is_some_and(|enabled| !enabled)
+        {
+            return None;
+        }
+
+        let routes = routing.get("routes").and_then(|value| value.as_array())?;
+        if let Some(route) = routes.iter().find(|route| {
+            codex_route_is_enabled(route) && codex_route_matches_model(route, request_model)
+        }) {
+            return Some(route);
+        }
+
+        return routing
+            .get("defaultRouteId")
+            .or_else(|| routing.get("default_route_id"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .and_then(|default_route_id| {
+                routes.iter().find(|route| {
+                    codex_route_is_enabled(route)
+                        && route
+                            .get("id")
+                            .and_then(|value| value.as_str())
+                            .is_some_and(|id| id.eq_ignore_ascii_case(default_route_id))
+                })
+            });
+    }
+
+    provider
+        .settings_config
+        .get("codexModelRoutes")
+        .or_else(|| provider.settings_config.get("modelRoutes"))
+        .and_then(|value| value.as_array())
+        .and_then(|routes| {
+            routes
+                .iter()
+                .find(|route| codex_route_matches_model(route, request_model))
+        })
+}
+
+/// 判断 route 是否启用；字段缺省时按启用处理，减少手写配置的必填项。
+fn codex_route_is_enabled(route: &JsonValue) -> bool {
+    route
+        .get("enabled")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true)
+}
+
+/// 判断单条 Codex route 是否匹配请求模型。
+///
+/// 新 schema 使用 `match.models` / `match.prefixes`；旧 schema 使用顶层 `models` /
+/// `modelPrefixes`。两套字段都按大小写不敏感处理，避免 UI 显示大小写差异导致误路由。
+pub(crate) fn codex_route_matches_model(route: &JsonValue, request_model: &str) -> bool {
+    let request_model_lower = request_model.to_ascii_lowercase();
+
+    let match_config = route.get("match").unwrap_or(route);
+
+    let exact_match = match_config
+        .get("models")
+        .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|model| model.as_str())
+        .any(|model| model.trim().eq_ignore_ascii_case(request_model));
+    if exact_match {
+        return true;
+    }
+
+    match_config
+        .get("prefixes")
+        .or_else(|| match_config.get("modelPrefixes"))
+        .or_else(|| match_config.get("model_prefixes"))
+        .or_else(|| route.get("modelPrefixes"))
+        .or_else(|| route.get("model_prefixes"))
+        .and_then(|prefixes| prefixes.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|prefix| prefix.as_str())
+        .map(str::trim)
+        .filter(|prefix| !prefix.is_empty())
+        .any(|prefix| request_model_lower.starts_with(&prefix.to_ascii_lowercase()))
+}
+
+/// 从 route 配置构造本次请求实际使用的 provider。
+///
+/// 保留原 provider 的 `modelCatalog` 等 UI 元数据，只覆盖上游连接必需字段。这样 Chat
+/// 转换时仍能识别下拉框中的模型，避免把 `deepseek-v4-flash` 覆盖回 provider 默认模型。
+fn build_codex_routed_provider(
+    provider: &Provider,
+    route: &JsonValue,
+    request_model: &str,
+) -> Provider {
+    let mut routed = provider.clone();
+    let upstream = route.get("upstream").unwrap_or(route);
+
+    let route_id = route
+        .get("id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .unwrap_or(request_model);
+    routed.id = format!("{}::route::{}", provider.id, route_id);
+
+    if let Some(name) = route
+        .get("label")
+        .or_else(|| route.get("name"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        routed.name = name.to_string();
+    }
+
+    let mut settings = provider
+        .settings_config
+        .as_object()
+        .cloned()
+        .unwrap_or_else(Map::new);
+
+    if let Some(base_url) = upstream
+        .get("baseUrl")
+        .or_else(|| upstream.get("base_url"))
+        .or_else(|| route.get("baseUrl"))
+        .or_else(|| route.get("baseURL"))
+        .or_else(|| route.get("base_url"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+    {
+        settings.insert(
+            "base_url".to_string(),
+            JsonValue::String(base_url.to_string()),
+        );
+    }
+
+    let upstream_model = upstream
+        .get("modelMap")
+        .or_else(|| upstream.get("model_map"))
+        .and_then(|value| value.as_object())
+        .and_then(|map| map.get(request_model))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .or_else(|| {
+            upstream
+                .get("upstreamModel")
+                .or_else(|| upstream.get("upstream_model"))
+                .or_else(|| upstream.get("model"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|model| !model.is_empty())
+        })
+        .or_else(|| {
+            route
+                .get("upstreamModel")
+                .or_else(|| route.get("upstream_model"))
+                .or_else(|| route.get("model"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|model| !model.is_empty())
+        })
+        .unwrap_or(request_model);
+    settings.insert(
+        "model".to_string(),
+        JsonValue::String(upstream_model.to_string()),
+    );
+
+    if codex_route_uses_managed_codex_oauth(upstream, route) {
+        // 托管 Codex OAuth route 不能继承外层 provider 的 Bearer key，否则会覆盖 managed account 注入链路。
+        settings.remove("auth");
+        settings.remove("apiKey");
+        settings.remove("api_key");
+    }
+    apply_codex_route_auth(upstream, route, &mut settings);
+
+    if let Some(wire_api) = codex_route_api_format(upstream, route) {
+        settings.insert(
+            "apiFormat".to_string(),
+            JsonValue::String(wire_api.to_string()),
+        );
+    }
+    if let Some(capabilities) = route.get("capabilities").cloned() {
+        settings.insert("codexResolvedCapabilities".to_string(), capabilities);
+    }
+    settings.insert(
+        "codexResolvedRouteId".to_string(),
+        JsonValue::String(route_id.to_string()),
+    );
+
+    routed.settings_config = JsonValue::Object(settings);
+
+    let mut meta = routed.meta.clone().unwrap_or_else(ProviderMeta::default);
+    if let Some(wire_api) = codex_route_api_format(upstream, route) {
+        meta.api_format = Some(wire_api.to_string());
+    }
+    if codex_route_uses_managed_codex_oauth(upstream, route) {
+        meta.provider_type = Some("codex_oauth".to_string());
+    } else if let Some(provider_type) = upstream
+        .get("providerType")
+        .or_else(|| upstream.get("provider_type"))
+        .or_else(|| route.get("providerType"))
+        .or_else(|| route.get("provider_type"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|provider_type| !provider_type.is_empty())
+    {
+        meta.provider_type = Some(provider_type.to_string());
+    }
+    if let Some(auth_binding) = codex_route_auth_binding(upstream, route) {
+        meta.auth_binding = Some(auth_binding);
+    } else if let Some(auth_binding) = upstream
+        .get("authBinding")
+        .or_else(|| upstream.get("auth_binding"))
+        .or_else(|| route.get("authBinding"))
+    {
+        if let Ok(binding) = serde_json::from_value(auth_binding.clone()) {
+            meta.auth_binding = Some(binding);
+        }
+    }
+    routed.meta = Some(meta);
+
+    routed
+}
+
+/// 解析 route 的上游 API 格式，并归一化到 provider meta 使用的枚举字符串。
+fn codex_route_api_format<'a>(upstream: &'a JsonValue, route: &'a JsonValue) -> Option<&'a str> {
+    upstream
+        .get("wire_api")
+        .or_else(|| upstream.get("wireApi"))
+        .or_else(|| upstream.get("apiFormat"))
+        .or_else(|| route.get("wire_api"))
+        .or_else(|| route.get("wireApi"))
+        .or_else(|| route.get("apiFormat"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|wire_api| !wire_api.is_empty())
+        .map(|wire_api| match wire_api {
+            "responses" => "openai_responses",
+            "chat" => "openai_chat",
+            "messages" => "openai_messages",
+            other => other,
+        })
+}
+
+/// 根据 route 的 auth source 写入 effective provider 认证信息。
+///
+/// `provider_config` 支持 route 自带 API key；`managed_account` / `managed_codex_oauth`
+/// 只设置 meta，让现有 Codex OAuth adapter 继续负责 token 注入。
+fn apply_codex_route_auth(
+    upstream: &JsonValue,
+    route: &JsonValue,
+    settings: &mut Map<String, JsonValue>,
+) {
+    let auth_source = upstream
+        .get("auth")
+        .or_else(|| route.get("auth"))
+        .and_then(|auth| auth.get("source"))
+        .and_then(|value| value.as_str())
+        .map(str::trim);
+
+    if let Some(auth) = upstream.get("auth").or_else(|| route.get("auth")) {
+        let mut should_insert_auth = true;
+        if let Some(source) = auth_source {
+            if matches!(source, "managed_account" | "managed_codex_oauth") {
+                return;
+            }
+            if source == "provider_config" {
+                let has_inline_key = auth
+                    .get("OPENAI_API_KEY")
+                    .or_else(|| auth.get("apiKey"))
+                    .or_else(|| auth.get("api_key"))
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                    .is_some_and(|key| !key.is_empty());
+                if !has_inline_key {
+                    // provider_config 是 route 对现有 provider 鉴权的引用声明；没有内联 key 时不能覆盖原 auth。
+                    should_insert_auth = false;
+                }
+            }
+        }
+        if should_insert_auth {
+            settings.insert("auth".to_string(), auth.clone());
+        }
+    }
+    if let Some(env) = upstream.get("env").or_else(|| route.get("env")).cloned() {
+        settings.insert("env".to_string(), env);
+    }
+    if auth_source.is_some_and(|source| source != "provider_config") {
+        // 托管账号 route 的鉴权必须由 meta/auth_binding 注入；忽略残留 apiKey，避免 UI 切换 auth source 后误走 Bearer。
+        return;
+    }
+    if let Some(api_key) = upstream
+        .get("apiKey")
+        .or_else(|| upstream.get("api_key"))
+        .or_else(|| route.get("apiKey"))
+        .or_else(|| route.get("api_key"))
+        .cloned()
+    {
+        if api_key
+            .as_str()
+            .map(str::trim)
+            .is_some_and(|key| !key.is_empty())
+        {
+            let mut auth = Map::new();
+            auth.insert(
+                "OPENAI_API_KEY".to_string(),
+                JsonValue::String(api_key.as_str().unwrap_or_default().to_string()),
+            );
+            settings.insert("auth".to_string(), JsonValue::Object(auth));
+        }
+        settings.insert("apiKey".to_string(), api_key);
+    }
+}
+
+/// 判断 route 是否声明使用 CC Switch 托管的 Codex OAuth 账号。
+fn codex_route_uses_managed_codex_oauth(upstream: &JsonValue, route: &JsonValue) -> bool {
+    upstream
+        .get("auth")
+        .or_else(|| route.get("auth"))
+        .and_then(|auth| auth.get("source"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .is_some_and(|source| matches!(source, "managed_account" | "managed_codex_oauth"))
+}
+
+/// 把 route 内联 auth 声明转换成 ProviderMeta 的托管账号绑定。
+///
+/// `managed_account` 使用标准 `AuthBinding` 字段；`managed_codex_oauth` 是 UI 友好的简写，
+/// 自动归一化为 `authProvider = "codex_oauth"`。
+fn codex_route_auth_binding(upstream: &JsonValue, route: &JsonValue) -> Option<AuthBinding> {
+    let auth = upstream.get("auth").or_else(|| route.get("auth"))?;
+    let source = auth
+        .get("source")
+        .and_then(|value| value.as_str())
+        .map(str::trim)?;
+
+    if source == "managed_account" {
+        return serde_json::from_value(auth.clone()).ok();
+    }
+
+    if source == "managed_codex_oauth" {
+        return Some(AuthBinding {
+            source: AuthBindingSource::ManagedAccount,
+            auth_provider: Some("codex_oauth".to_string()),
+            account_id: auth
+                .get("accountId")
+                .or_else(|| auth.get("account_id"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|account_id| !account_id.is_empty())
+                .map(ToString::to_string),
+        });
+    }
+
+    None
+}
 /// Extract the real upstream model configured for a Codex provider.
 pub fn codex_provider_upstream_model(provider: &Provider) -> Option<String> {
     provider
@@ -345,6 +800,15 @@ fn is_chat_wire_api(value: &str) -> bool {
     )
 }
 
+/// 判断是否为 OpenAI 的 Messages 风格 API：
+/// `messages`/`openai_messages` 需要把 Responses 转换为 Chat 请求中的 `messages`。
+fn is_openai_messages_wire_api(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "messages" | "openai_messages" | "openai-messages"
+    )
+}
+
 fn is_chat_completions_url(value: &str) -> bool {
     value
         .trim_end_matches('/')
@@ -480,6 +944,17 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn extract_base_url(&self, provider: &Provider) -> Result<String, ProxyError> {
+        // Codex v2 路由到 ChatGPT OAuth 时仍然固定使用 CodexAdapter；
+        // 这里补齐托管账号 provider 的 base_url 语义，避免走普通 OpenAI 兼容配置解析。
+        if provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.provider_type.as_deref())
+            == Some("codex_oauth")
+        {
+            return Ok("https://chatgpt.com/backend-api/codex".to_string());
+        }
+
         // 1. 尝试直接获取 base_url 字段
         if let Some(url) = provider
             .settings_config
@@ -527,6 +1002,20 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
+        // ChatGPT Codex OAuth 的真实 access_token 由 forwarder 动态换取；
+        // adapter 这里只返回策略占位，保持和 ClaudeAdapter 的托管账号语义一致。
+        if provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.provider_type.as_deref())
+            == Some("codex_oauth")
+        {
+            return Some(AuthInfo::new(
+                "codex_oauth_placeholder".to_string(),
+                AuthStrategy::CodexOAuth,
+            ));
+        }
+
         self.extract_key(provider)
             .map(|key| AuthInfo::new(key, AuthStrategy::Bearer))
     }
@@ -569,10 +1058,22 @@ impl ProviderAdapter for CodexAdapter {
     ) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, ProxyError> {
         use super::adapter::auth_header_value;
         let bearer = format!("Bearer {}", auth.api_key);
-        Ok(vec![(
-            http::HeaderName::from_static("authorization"),
-            auth_header_value(&bearer)?,
-        )])
+        match auth.strategy {
+            AuthStrategy::CodexOAuth => Ok(vec![
+                (
+                    http::HeaderName::from_static("authorization"),
+                    auth_header_value(&bearer)?,
+                ),
+                (
+                    http::HeaderName::from_static("originator"),
+                    http::HeaderValue::from_static("cc-switch"),
+                ),
+            ]),
+            _ => Ok(vec![(
+                http::HeaderName::from_static("authorization"),
+                auth_header_value(&bearer)?,
+            )]),
+        }
     }
 }
 
@@ -596,6 +1097,397 @@ mod tests {
             icon_color: None,
             in_failover_queue: false,
         }
+    }
+
+    #[test]
+    fn test_codex_model_route_resolves_deepseek_chat_provider() {
+        let provider = create_provider(json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-v4-flash" },
+                    { "model": "gpt-5.5" }
+                ]
+            },
+            "codexModelRoutes": [
+                {
+                    "id": "deepseek",
+                    "name": "DeepSeek",
+                    "models": ["deepseek-v4-flash", "deepseek-v4-pro"],
+                    "base_url": "https://api.deepseek.com",
+                    "wire_api": "chat",
+                    "auth": { "OPENAI_API_KEY": "sk-deepseek" }
+                }
+            ]
+        }));
+
+        let routed = resolve_codex_model_routed_provider(
+            &provider,
+            &json!({ "model": "deepseek-v4-flash" }),
+        )
+        .expect("deepseek route");
+
+        assert_eq!(routed.name, "DeepSeek");
+        assert_eq!(
+            routed.settings_config["base_url"],
+            "https://api.deepseek.com"
+        );
+        assert_eq!(
+            routed
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.api_format.as_deref()),
+            Some("openai_chat")
+        );
+        assert!(should_convert_codex_responses_to_chat(
+            &routed,
+            "/responses"
+        ));
+    }
+
+    #[test]
+    fn test_codex_model_route_supports_prefix_matching() {
+        let provider = create_provider(json!({
+            "modelRoutes": [
+                {
+                    "id": "qwen",
+                    "name": "Qwen",
+                    "modelPrefixes": ["qwen3."],
+                    "base_url": "https://www.matrixminecraft.cn:24443/vllm/v1",
+                    "wireApi": "chat",
+                    "auth": { "OPENAI_API_KEY": "vllm-local" }
+                }
+            ]
+        }));
+
+        let routed = resolve_codex_model_routed_provider(&provider, &json!({ "model": "qwen3.6" }))
+            .expect("qwen route");
+
+        assert_eq!(routed.name, "Qwen");
+        assert_eq!(routed.settings_config["model"], "qwen3.6");
+        assert_eq!(
+            routed.settings_config["base_url"],
+            "https://www.matrixminecraft.cn:24443/vllm/v1"
+        );
+    }
+
+    #[test]
+    fn test_codex_model_route_uses_codex_routing_first() {
+        let provider = create_provider(json!({
+            "codexRouting": {
+                "routes": [{
+                    "id": "routing-deepseek",
+                    "match": {
+                        "models": ["deepseek-v4-flash"]
+                    },
+                    "label": "DeepSeek Routing",
+                    "baseUrl": "https://routing.deepseek.example",
+                    "apiFormat": "chat",
+                    "upstream": {
+                        "modelMap": {
+                            "deepseek-v4-flash": "deepseek-upstream-v4-flash"
+                        }
+                    },
+                    "capabilities": {
+                        "textOnly": true,
+                        "image": {
+                            "supported": false
+                        }
+                    }
+                }],
+                "enabled": true
+            },
+            "codexModelRoutes": [{
+                "id": "legacy",
+                "name": "Legacy DeepSeek",
+                "models": ["deepseek-v4-flash"],
+                "base_url": "https://legacy.deepseek.example",
+                "wire_api": "chat"
+            }]
+        }));
+
+        let routed = resolve_codex_model_routed_provider(
+            &provider,
+            &json!({ "model": "deepseek-v4-flash" }),
+        )
+        .expect("routing should resolve");
+
+        assert_eq!(routed.name, "DeepSeek Routing");
+        assert_eq!(routed.id, "test::route::routing-deepseek");
+        assert_eq!(
+            routed.settings_config["base_url"],
+            "https://routing.deepseek.example"
+        );
+        assert_eq!(
+            routed.settings_config["model"],
+            "deepseek-upstream-v4-flash"
+        );
+        assert_eq!(routed.settings_config["apiFormat"], "openai_chat");
+        assert_eq!(
+            codex_provider_text_only_input(&routed),
+            Some(true),
+            "route-level textOnly should be preserved in routed provider settings"
+        );
+        assert_eq!(
+            routed
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.api_format.as_deref()),
+            Some("openai_chat")
+        );
+    }
+
+    #[test]
+    fn test_codex_route_default_route_is_used_when_no_match() {
+        let provider = create_provider(json!({
+            "codexRouting": {
+                "defaultRouteId": "fallback",
+                "routes": [
+                    {
+                        "id": "fallback",
+                        "enabled": true,
+                        "match": { "prefixes": ["qwen"] },
+                        "label": "Qwen Fallback",
+                        "base_url": "https://fallback.example"
+                    },
+                    {
+                        "id": "disabled",
+                        "enabled": false,
+                        "match": { "models": ["does-not-match"] },
+                        "base_url": "https://disabled.example"
+                    }
+                ],
+                "enabled": true
+            }
+        }));
+
+        let routed = resolve_codex_model_routed_provider(
+            &provider,
+            &json!({ "model": "deepseek-v4-flash" }),
+        )
+        .expect("default fallback route");
+
+        assert_eq!(routed.id, "test::route::fallback");
+        assert_eq!(routed.name, "Qwen Fallback");
+        assert_eq!(
+            routed.settings_config["base_url"],
+            "https://fallback.example"
+        );
+    }
+
+    #[test]
+    fn test_codex_route_skips_disabled_matches() {
+        let provider = create_provider(json!({
+            "codexRouting": {
+                "routes": [
+                    {
+                        "id": "disabled",
+                        "enabled": false,
+                        "match": { "models": ["deepseek-v4-flash"] },
+                        "base_url": "https://disabled.example"
+                    },
+                    {
+                        "id": "enabled",
+                        "match": { "models": ["deepseek-v4-flash"] },
+                        "base_url": "https://enabled.example"
+                    }
+                ],
+                "enabled": true
+            }
+        }));
+
+        let routed = resolve_codex_model_routed_provider(
+            &provider,
+            &json!({ "model": "deepseek-v4-flash" }),
+        )
+        .expect("fallback to enabled route");
+
+        assert_eq!(routed.id, "test::route::enabled");
+        assert_eq!(
+            routed.settings_config["base_url"],
+            "https://enabled.example"
+        );
+    }
+
+    #[test]
+    fn test_codex_route_managed_codex_oauth_keeps_auth_in_meta() {
+        let mut provider = create_provider(json!({
+            "codexRouting": {
+                "routes": [{
+                    "id": "codex_oauth",
+                    "label": "ChatGPT OAuth Route",
+                    "match": { "models": ["gpt-5.5"] },
+                    "auth": {
+                        "source": "managed_codex_oauth",
+                        "account_id": "acct_123"
+                    },
+                    "base_url": "https://chatgpt.com/backend-api/codex"
+                }],
+                "enabled": true
+            }
+        }));
+        provider.meta = Some(ProviderMeta::default());
+
+        let routed = resolve_codex_model_routed_provider(&provider, &json!({ "model": "gpt-5.5" }))
+            .expect("managed route");
+
+        let meta = routed.meta.as_ref().expect("meta");
+        assert_eq!(meta.provider_type.as_deref(), Some("codex_oauth"));
+        assert_eq!(
+            meta.auth_binding
+                .as_ref()
+                .and_then(|binding| binding.auth_provider.as_deref()),
+            Some("codex_oauth")
+        );
+        assert!(routed
+            .meta
+            .as_ref()
+            .and_then(|m| m.auth_binding.as_ref())
+            .is_some());
+        assert!(
+            routed.settings_config.get("auth").is_none(),
+            "managed auth route should not inline raw auth into settings"
+        );
+    }
+
+    #[test]
+    fn test_codex_route_managed_auth_ignores_stale_api_key() {
+        let adapter = CodexAdapter::new();
+        let mut provider = create_provider(json!({
+            "auth": {
+                "OPENAI_API_KEY": "sk-provider-key"
+            },
+            "codexRouting": {
+                "routes": [{
+                    "id": "codex_oauth",
+                    "match": { "models": ["gpt-5.5"] },
+                    "upstream": {
+                        "baseUrl": "https://chatgpt.com/backend-api/codex",
+                        "apiFormat": "responses",
+                        "auth": {
+                            "source": "managed_codex_oauth",
+                            "accountId": "acct_123"
+                        },
+                        "apiKey": "sk-stale-route-key"
+                    }
+                }],
+                "enabled": true
+            }
+        }));
+        provider.meta = Some(ProviderMeta::default());
+
+        let routed = resolve_codex_model_routed_provider(&provider, &json!({ "model": "gpt-5.5" }))
+            .expect("managed route");
+        let auth = adapter
+            .extract_auth(&routed)
+            .expect("managed route should use Codex OAuth auth strategy");
+
+        assert_eq!(auth.strategy, AuthStrategy::CodexOAuth);
+        assert_ne!(auth.api_key, "sk-stale-route-key");
+        assert_eq!(routed.settings_config.get("apiKey"), None);
+        assert_eq!(routed.settings_config.get("auth"), None);
+    }
+
+    #[test]
+    fn test_codex_route_provider_config_auth_preserves_provider_key() {
+        let adapter = CodexAdapter::new();
+        let provider = create_provider(json!({
+            "auth": {
+                "OPENAI_API_KEY": "sk-provider-key"
+            },
+            "codexRouting": {
+                "routes": [{
+                    "id": "deepseek",
+                    "match": { "models": ["deepseek-v4-flash"] },
+                    "upstream": {
+                        "baseUrl": "https://api.deepseek.example",
+                        "apiFormat": "chat",
+                        "auth": { "source": "provider_config" }
+                    }
+                }],
+                "enabled": true
+            }
+        }));
+
+        let routed = resolve_codex_model_routed_provider(
+            &provider,
+            &json!({ "model": "deepseek-v4-flash" }),
+        )
+        .expect("provider_config route");
+        let auth = adapter
+            .extract_auth(&routed)
+            .expect("provider auth should remain usable");
+
+        assert_eq!(auth.api_key, "sk-provider-key");
+        assert_eq!(auth.strategy, AuthStrategy::Bearer);
+        assert_eq!(
+            routed.settings_config.get("auth"),
+            provider.settings_config.get("auth")
+        );
+    }
+
+    #[test]
+    fn test_codex_route_provider_config_api_key_overrides_provider_key() {
+        let adapter = CodexAdapter::new();
+        let provider = create_provider(json!({
+            "auth": {
+                "OPENAI_API_KEY": "sk-provider-key"
+            },
+            "codexRouting": {
+                "routes": [{
+                    "id": "deepseek",
+                    "match": { "models": ["deepseek-v4-flash"] },
+                    "upstream": {
+                        "baseUrl": "https://api.deepseek.example",
+                        "apiFormat": "chat",
+                        "auth": { "source": "provider_config" },
+                        "apiKey": "sk-route-key"
+                    }
+                }],
+                "enabled": true
+            }
+        }));
+
+        let routed = resolve_codex_model_routed_provider(
+            &provider,
+            &json!({ "model": "deepseek-v4-flash" }),
+        )
+        .expect("provider_config route");
+        let auth = adapter
+            .extract_auth(&routed)
+            .expect("route api key should be usable");
+
+        assert_eq!(auth.api_key, "sk-route-key");
+        assert_eq!(auth.strategy, AuthStrategy::Bearer);
+    }
+
+    #[test]
+    fn test_codex_adapter_supports_routed_codex_oauth_provider() {
+        let adapter = CodexAdapter::new();
+        let mut provider = create_provider(json!({
+            "codexModelRoutes": [
+                {
+                    "id": "openai",
+                    "models": ["gpt-5.5"],
+                    "wire_api": "openai_responses",
+                    "providerType": "codex_oauth"
+                }
+            ]
+        }));
+        provider.meta = Some(ProviderMeta::default());
+
+        let routed = resolve_codex_model_routed_provider(&provider, &json!({ "model": "gpt-5.5" }))
+            .expect("openai route");
+        let auth = adapter.extract_auth(&routed).expect("codex oauth auth");
+
+        assert_eq!(
+            adapter.extract_base_url(&routed).unwrap(),
+            "https://chatgpt.com/backend-api/codex"
+        );
+        assert_eq!(auth.strategy, AuthStrategy::CodexOAuth);
+        assert!(!should_convert_codex_responses_to_chat(
+            &routed,
+            "/responses"
+        ));
     }
 
     #[test]

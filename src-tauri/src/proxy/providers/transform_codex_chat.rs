@@ -257,8 +257,23 @@ pub fn responses_to_chat_completions_with_reasoning(
     body: Value,
     reasoning_config: Option<&CodexChatReasoningConfig>,
 ) -> Result<Value, ProxyError> {
+    responses_to_chat_completions_with_reasoning_and_text_only(body, reasoning_config, None)
+}
+
+/// Convert an OpenAI Responses request into Chat Completions with an optional
+/// route capability override for text-only upstreams.
+pub fn responses_to_chat_completions_with_reasoning_and_text_only(
+    body: Value,
+    reasoning_config: Option<&CodexChatReasoningConfig>,
+    text_only_override: Option<bool>,
+) -> Result<Value, ProxyError> {
     let mut result = json!({});
     let tool_context = build_codex_tool_context_from_request(&body);
+    let text_only_model = text_only_override.unwrap_or_else(|| {
+        body.get("model")
+            .and_then(|value| value.as_str())
+            .is_some_and(codex_chat_model_is_text_only)
+    });
 
     if let Some(model) = body.get("model") {
         result["model"] = model.clone();
@@ -276,7 +291,12 @@ pub fn responses_to_chat_completions_with_reasoning(
     }
 
     if let Some(input) = body.get("input") {
-        append_responses_input_as_chat_messages(input, &mut messages, &tool_context)?;
+        append_responses_input_as_chat_messages(
+            input,
+            &mut messages,
+            &tool_context,
+            text_only_model,
+        )?;
     }
     let messages = collapse_system_messages_to_head(messages);
     result["messages"] = json!(messages);
@@ -552,6 +572,7 @@ fn append_responses_input_as_chat_messages(
     input: &Value,
     messages: &mut Vec<Value>,
     tool_context: &CodexToolContext,
+    text_only_model: bool,
 ) -> Result<(), ProxyError> {
     let mut pending_tool_calls = Vec::new();
     let mut pending_reasoning: Option<String> = None;
@@ -573,6 +594,7 @@ fn append_responses_input_as_chat_messages(
                     &mut pending_reasoning,
                     &mut last_assistant_index,
                     tool_context,
+                    text_only_model,
                 )?;
             }
         }
@@ -584,6 +606,7 @@ fn append_responses_input_as_chat_messages(
                 &mut pending_reasoning,
                 &mut last_assistant_index,
                 tool_context,
+                text_only_model,
             )?;
         }
         _ => {}
@@ -606,6 +629,7 @@ fn append_responses_item_as_chat_message(
     pending_reasoning: &mut Option<String>,
     last_assistant_index: &mut Option<usize>,
     tool_context: &CodexToolContext,
+    text_only_model: bool,
 ) -> Result<(), ProxyError> {
     let item_type = item.get("type").and_then(|v| v.as_str());
     match item_type {
@@ -680,7 +704,11 @@ fn append_responses_item_as_chat_message(
                 .unwrap_or("user");
             let message = json!({
                 "role": role,
-                "content": responses_content_to_chat_content(role, &Value::Array(vec![item.clone()]))
+                "content": responses_content_to_chat_content(
+                    role,
+                    &Value::Array(vec![item.clone()]),
+                    text_only_model
+                )
             });
             if role == "assistant" {
                 let mut message = message;
@@ -702,7 +730,11 @@ fn append_responses_item_as_chat_message(
                 last_assistant_index,
             );
             if item.get("role").is_some() || item.get("content").is_some() {
-                let message = responses_message_item_to_chat_message(item, pending_reasoning);
+                let message = responses_message_item_to_chat_message(
+                    item,
+                    pending_reasoning,
+                    text_only_model,
+                );
                 update_last_assistant_index(messages, &message, last_assistant_index);
                 messages.push(message);
             }
@@ -715,7 +747,11 @@ fn append_responses_item_as_chat_message(
                 last_assistant_index,
             );
             if item.get("role").is_some() || item.get("content").is_some() {
-                let message = responses_message_item_to_chat_message(item, pending_reasoning);
+                let message = responses_message_item_to_chat_message(
+                    item,
+                    pending_reasoning,
+                    text_only_model,
+                );
                 update_last_assistant_index(messages, &message, last_assistant_index);
                 messages.push(message);
             }
@@ -748,12 +784,13 @@ fn flush_pending_tool_calls(
 fn responses_message_item_to_chat_message(
     item: &Value,
     pending_reasoning: &mut Option<String>,
+    text_only_model: bool,
 ) -> Value {
     let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("user");
     let chat_role = responses_role_to_chat_role(role);
     let content = item
         .get("content")
-        .map(|value| responses_content_to_chat_content(chat_role, value))
+        .map(|value| responses_content_to_chat_content(chat_role, value, text_only_model))
         .unwrap_or(Value::Null);
 
     let mut message = json!({
@@ -934,11 +971,17 @@ fn responses_item_reasoning_text(item: &Value) -> Option<String> {
     extract_reasoning_field_text(item)
 }
 
+fn codex_chat_model_is_text_only(model: &str) -> bool {
+    model.eq_ignore_ascii_case("gpt-5.3-codex-spark")
+        || model.eq_ignore_ascii_case("deepseek-v4-flash")
+        || model.eq_ignore_ascii_case("deepseek-v4-pro")
+}
+
 fn responses_reasoning_item_text(item: &Value) -> Option<String> {
     extract_reasoning_summary_text(item)
 }
 
-fn responses_content_to_chat_content(_role: &str, content: &Value) -> Value {
+fn responses_content_to_chat_content(_role: &str, content: &Value, text_only_model: bool) -> Value {
     if content.is_null() || content.is_string() {
         return content.clone();
     }
@@ -974,6 +1017,15 @@ fn responses_content_to_chat_content(_role: &str, content: &Value) -> Value {
                 }
             }
             "input_image" => {
+                // 文本模型不能接收 Chat Completions 的 image_url 块；保留可读占位，
+                // 避免 DeepSeek V4 这类上游在反序列化 messages 时直接返回 HTTP 400。
+                if text_only_model {
+                    chat_parts.push(json!({
+                        "type": "text",
+                        "text": "[image omitted: current model accepts text-only input]"
+                    }));
+                    continue;
+                }
                 if let Some(image_url) = part.get("image_url") {
                     let image_url = if image_url.is_object() {
                         image_url.clone()
@@ -1960,6 +2012,86 @@ mod tests {
         assert_eq!(result["tool_choice"]["function"]["name"], "get_weather");
         assert_eq!(result["max_tokens"], 100);
         assert_eq!(result["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn responses_request_to_chat_downgrades_images_for_text_only_models() {
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "input": [{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Describe this."},
+                    {"type": "input_image", "image_url": "data:image/png;base64,abc"}
+                ]
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let content = result["messages"][0]["content"].as_str().unwrap();
+
+        assert!(content.contains("Describe this."));
+        assert!(content.contains("text-only"));
+        assert!(!content.contains("image_url"));
+    }
+
+    #[test]
+    fn responses_request_to_chat_downgrades_images_with_text_only_override() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Describe this."},
+                    {"type": "input_image", "image_url": "data:image/png;base64,abc"}
+                ]
+            }]
+        });
+
+        let reasoning = None;
+        let result = responses_to_chat_completions_with_reasoning_and_text_only(
+            input,
+            reasoning.as_ref(),
+            Some(true),
+        )
+        .unwrap();
+        let content = result["messages"][0]["content"].as_str().unwrap();
+
+        assert!(content.contains("Describe this."));
+        assert!(content.contains("text-only"));
+        assert!(!content.contains("image_url"));
+    }
+
+    #[test]
+    fn responses_request_to_chat_keeps_images_without_text_only_override() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Describe this."},
+                    {"type": "input_image", "image_url": "data:image/png;base64,abc"}
+                ]
+            }]
+        });
+
+        let reasoning = None;
+        let result = responses_to_chat_completions_with_reasoning_and_text_only(
+            input,
+            reasoning.as_ref(),
+            Some(false),
+        )
+        .unwrap();
+        let messages = result["messages"].as_array().expect("messages");
+        let message_content = messages[0]["content"].as_array().expect("message content");
+
+        assert_eq!(message_content[1]["type"], "image_url");
+        assert_eq!(
+            message_content[1]["image_url"]["url"]
+                .as_str()
+                .expect("url"),
+            "data:image/png;base64,abc"
+        );
     }
 
     #[test]
