@@ -5,7 +5,7 @@
 use super::log_codes::cb as log_cb;
 use super::types::AppProxyConfig;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
@@ -90,6 +90,8 @@ pub struct CircuitBreaker {
     config: Arc<RwLock<CircuitBreakerConfig>>,
     /// 半开状态已放行的请求数（用于限流）
     half_open_requests: Arc<AtomicU32>,
+    /// 是否曾经进入过 Open（用于判断"真正恢复"而非"从未失败"）
+    ever_tripped: Arc<AtomicBool>,
 }
 
 /// 熔断器放行结果
@@ -114,6 +116,7 @@ impl CircuitBreaker {
             last_opened_at: Arc::new(RwLock::new(None)),
             config: Arc::new(RwLock::new(config)),
             half_open_requests: Arc::new(AtomicU32::new(0)),
+            ever_tripped: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -361,6 +364,7 @@ impl CircuitBreaker {
         *self.last_opened_at.write().await = Some(Instant::now());
         self.consecutive_failures.store(0, Ordering::SeqCst);
         self.consecutive_successes.store(0, Ordering::SeqCst);
+        self.ever_tripped.store(true, Ordering::SeqCst);
     }
 
     /// 转换到半开状态
@@ -384,6 +388,17 @@ impl CircuitBreaker {
         // 重置计数器
         self.total_requests.store(0, Ordering::SeqCst);
         self.failed_requests.store(0, Ordering::SeqCst);
+        // 手动重置时清 ever_tripped（新周期开始）
+        self.ever_tripped.store(false, Ordering::SeqCst);
+    }
+
+    /// 是否曾经进入过 Open 状态
+    ///
+    /// 用于判断"真正从故障中恢复"而非"从未失败过的正常 Closed"。
+    /// 当 P1 刚从 Open/HalfOpen 恢复到 Closed 时返回 true，
+    /// P1 正常运行未触发熔断时返回 false。
+    pub fn has_been_open(&self) -> bool {
+        self.ever_tripped.load(Ordering::SeqCst)
     }
 }
 
