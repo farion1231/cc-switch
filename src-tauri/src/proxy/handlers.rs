@@ -68,9 +68,23 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// catalog with a top-level `models` field.  Return the cc-switch–managed model
 /// catalog file directly so the format always matches what the current version
 /// of Codex expects.
+///
+/// Only serves the catalog when the live config.toml still references it via
+/// `model_catalog_json` — avoids advertising stale models after a provider
+/// switch removes the catalog entry.
 pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
     let catalog_path = crate::codex_config::get_codex_model_catalog_path();
-    let catalog = if catalog_path.exists() {
+
+    // Guard: don't serve a stale catalog if config.toml no longer references it
+    let catalog_still_active = match crate::codex_config::read_codex_config_text() {
+        Ok(config_text) => {
+            let catalog_str = catalog_path.to_string_lossy();
+            config_text.contains(&*catalog_str)
+        }
+        Err(_) => false,
+    };
+
+    let catalog = if catalog_still_active && catalog_path.exists() {
         let text = std::fs::read_to_string(&catalog_path).unwrap_or_default();
         serde_json::from_str(&text).unwrap_or(json!({"models": []}))
     } else {
