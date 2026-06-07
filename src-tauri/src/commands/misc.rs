@@ -1699,7 +1699,10 @@ fn infer_install_source(path: &Path) -> &'static str {
     // Windows 的 `%LOCALAPPDATA%\Volta\bin` / `%VOLTA_HOME%\bin`(无前导点)。
     } else if s.contains("/.volta/") || s.contains("/volta/") {
         "volta"
-    } else if s.contains("fnm_multishells") {
+    } else if s.contains("fnm_multishells")
+        || s.contains("/.local/share/fnm/node-versions/")
+        || s.contains("/.fnm/node-versions/")
+    {
         "fnm"
     } else if s.contains("/mise/") {
         "mise"
@@ -3976,6 +3979,22 @@ mod tests {
                 "scoop"
             );
         }
+
+        #[test]
+        fn fnm_node_versions_are_identified() {
+            assert_eq!(
+                infer_install_source(Path::new(
+                    "/Users/me/.local/share/fnm/node-versions/v25.8.0/installation/bin/gemini"
+                )),
+                "fnm"
+            );
+            assert_eq!(
+                infer_install_source(Path::new(
+                    "/Users/me/.fnm/node-versions/v25.8.0/installation/bin/gemini"
+                )),
+                "fnm"
+            );
+        }
     }
 
     /// 锚定升级命令生成：用真实勘察到的安装路径固化为回归断言——
@@ -4199,6 +4218,21 @@ mod tests {
                 cmd.as_deref(),
                 Some(
                     "/Users/me/.local/share/fnm_multishells/12345_abc/bin/codex update || /Users/me/.local/share/fnm_multishells/12345_abc/bin/npm i -g @openai/codex@latest"
+                )
+            );
+        }
+
+        #[test]
+        fn fnm_node_version_install_anchors_npm_only_tools_to_that_npm() {
+            let cmd = anchored_command_from_paths(
+                "gemini",
+                "/Users/me/.local/share/fnm/node-versions/v25.8.0/installation/bin/gemini",
+                "/Users/me/.local/share/fnm/node-versions/v25.8.0/installation/lib/node_modules/@google/gemini-cli/dist/index.js",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some(
+                    "/Users/me/.local/share/fnm/node-versions/v25.8.0/installation/bin/npm i -g @google/gemini-cli@latest"
                 )
             );
         }
