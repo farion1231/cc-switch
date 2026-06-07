@@ -1590,7 +1590,7 @@
       "typeStdio": "stdio",
       "typeHttp": "http",
       "typeSse": "sse",
-      "command": "命令",
+      "typeStreamableHttp": "streamable-http",
       "commandPlaceholder": "npx 或 uvx",
       "args": "參數",
       "argsPlaceholder": "arg1\narg2",

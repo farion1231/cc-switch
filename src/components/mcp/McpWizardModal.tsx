@@ -81,7 +81,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
   initialServer,
 }) => {
   const { t } = useTranslation();
-  const [wizardType, setWizardType] = useState<"stdio" | "http" | "sse" | "streamable-http" | "streamable-http">(
+  const [wizardType, setWizardType] = useState<"stdio" | "http" | "sse" | "streamable-http">(
     "stdio",
   );
   const [wizardTitle, setWizardTitle] = useState("");
@@ -305,7 +305,7 @@ const McpWizardModal: React.FC<McpWizardModalProps> = ({
                     className="w-4 h-4 accent-blue-500"
                   />
                   <span className="text-sm text-foreground">
-                    Streamable HTTP
+                    {t("mcp.wizard.typeStreamableHttp")}
                   </span>
                 </label>
               </div>

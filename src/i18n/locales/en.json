@@ -1644,7 +1644,7 @@
       "typeStdio": "stdio",
       "typeHttp": "http",
       "typeSse": "sse",
-      "command": "Command",
+      "typeStreamableHttp": "streamable-http",
       "commandPlaceholder": "npx or uvx",
       "args": "Arguments",
       "argsPlaceholder": "arg1\narg2",
