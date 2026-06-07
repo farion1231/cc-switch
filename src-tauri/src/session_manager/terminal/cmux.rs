@@ -150,7 +150,9 @@ fn cmux_external_control_ready(exe: &Path) -> bool {
 /// 用户需在 cmux 中开启的外部 socket 配置说明（错误提示共用）。
 const CMUX_AUTOMATION_MODE_SETUP_HINT: &str =
     "In cmux, go to Settings → Automation and set Socket control mode \
-to Automation mode, then press Cmd+Q to fully quit cmux and reopen it.";
+to Automation mode, then press Cmd+Q to fully quit cmux and reopen it. \
+If cmux is not running, CC Switch temporarily starts it with \
+CMUX_SOCKET_MODE=allowAll, which allows local socket control during startup.";
 
 fn cmux_running_without_external_access_error() -> String {
     format!("CC Switch cannot connect to cmux. {CMUX_AUTOMATION_MODE_SETUP_HINT}")

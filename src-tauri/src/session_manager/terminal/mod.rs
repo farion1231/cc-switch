@@ -253,14 +253,18 @@ fn launch_warp(command: &str, cwd: Option<&str>) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn launch_cmux(command: &str, cwd: Option<&str>) -> Result<(), String> {
-    // Session 恢复：每次新建 workspace；cwd 由 cmux `--cwd` 承担（与 Provider 路径一致）
-    let full_command = build_shell_command(command, cwd);
-    let launch = cmux::CmuxWorkspaceLaunch {
+    let launch = build_cmux_workspace_launch(command, cwd);
+    cmux::run_cmux_workspace(&launch)
+}
+
+#[cfg(target_os = "macos")]
+fn build_cmux_workspace_launch(command: &str, cwd: Option<&str>) -> cmux::CmuxWorkspaceLaunch {
+    // cwd 交给 cmux `--cwd`，不要拼进 shell command，避免路径里的 `$` / 反引号被展开。
+    cmux::CmuxWorkspaceLaunch {
         title: "Claude Session · Claude".to_string(),
         cwd: cwd.map(std::path::PathBuf::from),
-        command: format!("{full_command}\n"),
-    };
-    cmux::run_cmux_workspace(&launch)
+        command: command.to_string(),
+    }
 }
 
 fn launch_alacritty(command: &str, cwd: Option<&str>) -> Result<(), String> {
@@ -352,6 +356,15 @@ mod tests {
             build_shell_command("claude --resume abc-123", None),
             "claude --resume abc-123"
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn cmux_launch_uses_cwd_arg_without_shell_cd_or_trailing_newline() {
+        let launch = build_cmux_workspace_launch("claude --resume abc-123", Some("/tmp/a$`b"));
+
+        assert_eq!(launch.cwd, Some(std::path::PathBuf::from("/tmp/a$`b")));
+        assert_eq!(launch.command, "claude --resume abc-123");
     }
 
     #[test]

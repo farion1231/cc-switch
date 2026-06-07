@@ -2410,15 +2410,21 @@ pub async fn open_provider_terminal(
     let config = &provider.settings_config;
     let env_vars = extract_env_vars_from_config(config, &app_type);
 
+    let provider_name = provider.name.clone();
+
     // Provider terminal 目前只对 Claude 暴露；这里启动的是 `claude --settings`。
-    // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
-    launch_terminal_with_env(
-        env_vars,
-        &providerId,
-        &provider.name,
-        &app,
-        launch_cwd.as_deref(),
-    )
+    // 终端启动可能触发 cmux 冷启动和轮询，放到 blocking 线程避免占用 Tokio worker。
+    tokio::task::spawn_blocking(move || {
+        launch_terminal_with_env(
+            env_vars,
+            &providerId,
+            &provider_name,
+            &app,
+            launch_cwd.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("启动终端任务失败: {e}"))?
     .map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
