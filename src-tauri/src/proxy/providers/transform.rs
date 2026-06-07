@@ -502,6 +502,13 @@ fn convert_message_to_openai(
 pub fn clean_schema(mut schema: Value) -> Value {
     if let Some(obj) = schema.as_object_mut() {
         // 移除 "format": "uri"
+        let has_object_shape = obj.contains_key("properties")
+            || obj.contains_key("required")
+            || obj.contains_key("additionalProperties");
+        if has_object_shape && obj.get("type").is_none_or(Value::is_null) {
+            obj.insert("type".to_string(), json!("object"));
+        }
+
         if obj.get("format").and_then(|v| v.as_str()) == Some("uri") {
             obj.remove("format");
         }
@@ -826,6 +833,37 @@ mod tests {
         let result = anthropic_to_openai(input).unwrap();
         assert_eq!(result["tools"][0]["type"], "function");
         assert_eq!(result["tools"][0]["function"]["name"], "get_weather");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_fills_missing_or_null_object_schema_type() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Use the tools."}],
+            "tools": [
+                {
+                    "name": "missing_type",
+                    "description": "Schema inferred from properties",
+                    "input_schema": {"properties": {"location": {"type": "string"}}}
+                },
+                {
+                    "name": "null_type",
+                    "description": "Schema with explicit null type",
+                    "input_schema": {"type": null, "properties": {"query": {"type": "string"}}}
+                }
+            ]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(
+            result["tools"][0]["function"]["parameters"]["type"],
+            "object"
+        );
+        assert_eq!(
+            result["tools"][1]["function"]["parameters"]["type"],
+            "object"
+        );
     }
 
     #[test]
