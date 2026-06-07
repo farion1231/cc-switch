@@ -1250,7 +1250,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     websiteUrl: "https://apinebula.com",
     apiKeyUrl: "https://apinebula.com/02rw5X",
     settingsConfig: {
-      npm: "@ai-sdk/openai",
+      npm: "@ai-sdk/openai-compatible",
       name: "APINebula",
       options: {
         baseURL: "https://apinebula.com/v1",
@@ -1540,13 +1540,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "SSSAiCode",
-    websiteUrl: "https://www.sssaicode.com",
-    apiKeyUrl: "https://www.sssaicode.com/register?ref=DCP0SM",
+    websiteUrl: "https://sssaicodeapi.com",
+    apiKeyUrl: "https://sssaicodeapi.com/register?ref=DCP0SM",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "SSSAiCode",
       options: {
-        baseURL: "https://node-hk.sssaicode.com/api/v1",
+        baseURL: "https://node-hk.sssaicodeapi.com/api/v1",
         apiKey: "",
         setCacheKey: true,
       },
