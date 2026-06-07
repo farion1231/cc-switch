@@ -9,6 +9,10 @@ import {
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
 import { openclawApi, providersApi, vscodeApi, type AppId } from "@/lib/api";
+import {
+  extractCodexExperimentalBearerToken,
+  updateCodexExperimentalBearerToken,
+} from "@/utils/providerConfigUtils";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -20,6 +24,33 @@ interface EditProviderDialogProps {
   }) => Promise<void> | void;
   appId: AppId;
   isProxyTakeover?: boolean; // 代理接管模式下不读取 live（避免显示被接管后的代理配置）
+}
+
+function restoreCodexLiveProviderSettingsForEdit(
+  liveSettings: Record<string, unknown>,
+  dbSettings?: Record<string, unknown>,
+): Record<string, unknown> {
+  const configText =
+    typeof liveSettings.config === "string" ? liveSettings.config : "";
+  const providerToken = extractCodexExperimentalBearerToken(configText);
+  if (!providerToken) {
+    return liveSettings;
+  }
+
+  const auth =
+    dbSettings?.auth &&
+    typeof dbSettings.auth === "object" &&
+    !Array.isArray(dbSettings.auth)
+      ? { ...(dbSettings.auth as Record<string, unknown>) }
+      : {};
+
+  auth.OPENAI_API_KEY = providerToken;
+
+  return {
+    ...liveSettings,
+    auth,
+    config: updateCodexExperimentalBearerToken(configText, ""),
+  };
 }
 
 export function EditProviderDialog({
@@ -132,10 +163,14 @@ export function EditProviderDialog({
   }, [open, provider?.id, appId, hasLoadedLive, isProxyTakeover]); // 只依赖 provider.id，不依赖整个 provider 对象
 
   const initialSettingsConfig = useMemo(() => {
-    const base = (liveSettings ?? provider?.settingsConfig ?? {}) as Record<
-      string,
-      unknown
-    >;
+    const dbSettings =
+      provider?.settingsConfig && typeof provider.settingsConfig === "object"
+        ? (provider.settingsConfig as Record<string, unknown>)
+        : undefined;
+    const base =
+      appId === "codex" && liveSettings
+        ? restoreCodexLiveProviderSettingsForEdit(liveSettings, dbSettings)
+        : ((liveSettings ?? dbSettings ?? {}) as Record<string, unknown>);
 
     // Codex 的 modelCatalog 是 cc-switch 私有字段，SSOT 在数据库。Live 的 config.toml
     // 仅在写入时投影出 model_catalog_json 指针；Codex.app 改写配置、代理接管/恢复周期、
@@ -145,11 +180,9 @@ export function EditProviderDialog({
     if (
       appId === "codex" &&
       liveSettings &&
-      provider?.settingsConfig &&
-      typeof provider.settingsConfig === "object"
+      dbSettings
     ) {
-      const dbCatalog = (provider.settingsConfig as Record<string, unknown>)
-        .modelCatalog;
+      const dbCatalog = dbSettings.modelCatalog;
       if (dbCatalog !== undefined) {
         return { ...base, modelCatalog: dbCatalog };
       }
