@@ -593,8 +593,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "MiniMax-M3",
           name: "MiniMax M3",
-          contextWindow: 200000,
-          cost: { input: 0.001, output: 0.004 },
+          contextWindow: 524288,
+          cost: { input: 0.002, output: 0.008 },
         },
         {
           id: "MiniMax-M2.7",
@@ -637,8 +637,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "MiniMax-M3",
           name: "MiniMax M3",
-          contextWindow: 200000,
-          cost: { input: 0.001, output: 0.004 },
+          contextWindow: 524288,
+          cost: { input: 0.002, output: 0.008 },
         },
         {
           id: "MiniMax-M2.7",
@@ -1212,8 +1212,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "Pro/MiniMaxAI/MiniMax-M3",
           name: "MiniMax M3",
-          contextWindow: 200000,
-          cost: { input: 0.001, output: 0.004 },
+          contextWindow: 524288,
+          cost: { input: 0.002, output: 0.008 },
         },
         {
           id: "Pro/MiniMaxAI/MiniMax-M2.7",
@@ -1254,8 +1254,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "MiniMaxAI/MiniMax-M3",
           name: "MiniMax M3",
-          contextWindow: 200000,
-          cost: { input: 0.001, output: 0.004 },
+          contextWindow: 524288,
+          cost: { input: 0.002, output: 0.008 },
         },
         {
           id: "MiniMaxAI/MiniMax-M2.7",

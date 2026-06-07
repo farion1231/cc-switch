@@ -537,7 +537,7 @@ requires_openai_auth = true`,
       {
         model: "MiniMax-M3",
         displayName: "MiniMax M3",
-        contextWindow: 200000,
+        contextWindow: 524288,
       },
       {
         model: "MiniMax-M2.7",
@@ -578,7 +578,7 @@ requires_openai_auth = true`,
       {
         model: "MiniMax-M3",
         displayName: "MiniMax M3",
-        contextWindow: 200000,
+        contextWindow: 524288,
       },
       {
         model: "MiniMax-M2.7",
@@ -700,7 +700,7 @@ requires_openai_auth = true`,
       {
         model: "Pro/MiniMaxAI/MiniMax-M3",
         displayName: "Pro / MiniMax M3",
-        contextWindow: 200000,
+        contextWindow: 524288,
       },
       {
         model: "Pro/MiniMaxAI/MiniMax-M2.7",
@@ -730,7 +730,7 @@ requires_openai_auth = true`,
       {
         model: "MiniMaxAI/MiniMax-M3",
         displayName: "MiniMax M3",
-        contextWindow: 200000,
+        contextWindow: 524288,
       },
       {
         model: "MiniMaxAI/MiniMax-M2.7",

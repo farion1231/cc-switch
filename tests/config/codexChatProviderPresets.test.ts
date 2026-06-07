@@ -118,7 +118,7 @@ const expectedChatPresets = new Map<
     {
       baseUrl: "https://api.minimaxi.com/v1",
       contextWindows: {
-        "MiniMax-M3": 200000,
+        "MiniMax-M3": 524288,
         "MiniMax-M2.7": 200000,
       },
     },
@@ -128,7 +128,7 @@ const expectedChatPresets = new Map<
     {
       baseUrl: "https://api.minimax.io/v1",
       contextWindows: {
-        "MiniMax-M3": 200000,
+        "MiniMax-M3": 524288,
         "MiniMax-M2.7": 200000,
       },
     },
@@ -159,7 +159,7 @@ const expectedChatPresets = new Map<
     {
       baseUrl: "https://api.siliconflow.cn/v1",
       contextWindows: {
-        "Pro/MiniMaxAI/MiniMax-M3": 200000,
+        "Pro/MiniMaxAI/MiniMax-M3": 524288,
         "Pro/MiniMaxAI/MiniMax-M2.7": 200000,
       },
     },
@@ -169,7 +169,7 @@ const expectedChatPresets = new Map<
     {
       baseUrl: "https://api.siliconflow.com/v1",
       contextWindows: {
-        "MiniMaxAI/MiniMax-M3": 200000,
+        "MiniMaxAI/MiniMax-M3": 524288,
         "MiniMaxAI/MiniMax-M2.7": 200000,
       },
     },

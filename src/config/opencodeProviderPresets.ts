@@ -44,9 +44,9 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
     {
       id: "MiniMax-M3",
       name: "MiniMax M3",
-      contextLimit: 204800,
+      contextLimit: 524288,
       outputLimit: 131072,
-      modalities: { input: ["text"], output: ["text"] },
+      modalities: { input: ["text", "image"], output: ["text"] },
     },
     {
       id: "MiniMax-M2.7",
