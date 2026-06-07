@@ -175,12 +175,13 @@ impl ConfigService {
         // MCP 的启用/禁用应通过 McpService::toggle_app 进行
 
         let cfg_text_after = crate::codex_config::read_and_validate_codex_config_text()?;
+        let cfg_text_for_backfill = crate::mcp::strip_codex_runtime_subtables(&cfg_text_after);
         if let Some(manager) = config.get_manager_mut(&AppType::Codex) {
             if let Some(target) = manager.providers.get_mut(provider_id) {
                 if let Some(obj) = target.settings_config.as_object_mut() {
                     let mut restored = serde_json::json!({
                         "auth": auth.clone(),
-                        "config": cfg_text_after,
+                        "config": cfg_text_for_backfill,
                     });
                     let restore_provider_token =
                         crate::codex_config::should_restore_codex_provider_token_for_backfill(
