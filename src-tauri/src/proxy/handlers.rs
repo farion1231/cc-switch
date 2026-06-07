@@ -70,17 +70,17 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// of Codex expects.
 ///
 /// Only serves the catalog when the live config.toml still references it via
-/// `model_catalog_json` — avoids advertising stale models after a provider
-/// switch removes the catalog entry.
+/// `model_catalog_json`.  cc-switch writes a relative path (just the filename)
+/// so we match on the filename rather than the full path.
 pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
+    use crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME;
+
     let catalog_path = crate::codex_config::get_codex_model_catalog_path();
 
-    // Guard: don't serve a stale catalog if config.toml no longer references it
+    // Guard: cc-switch writes model_catalog_json as a relative filename
+    // (e.g. "cc-switch-model-catalog.json"), so match on the filename.
     let catalog_still_active = match crate::codex_config::read_codex_config_text() {
-        Ok(config_text) => {
-            let catalog_str = catalog_path.to_string_lossy();
-            config_text.contains(&*catalog_str)
-        }
+        Ok(config_text) => config_text.contains(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME),
         Err(_) => false,
     };
 
