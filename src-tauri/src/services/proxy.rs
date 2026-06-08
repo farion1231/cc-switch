@@ -2562,7 +2562,7 @@ impl ProxyService {
             }
 
             let app_handle = self.app_handle.read().await.clone();
-            let new_server = ProxyServer::new(new_config, self.db.clone(), app_handle, self.request_log_store.clone());
+            let new_server = ProxyServer::new(new_config.clone(), self.db.clone(), app_handle, self.request_log_store.clone());
             let info = new_server
                 .start()
                 .await
