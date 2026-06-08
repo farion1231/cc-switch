@@ -65,7 +65,9 @@ export function DataSourceBar({ refreshIntervalMs }: DataSourceBarProps) {
 
   // 即使 `sources` 为空（首次使用，没有数据），也显示按钮让用户能触发同步。
   // 之前 `return null` 导致同步按钮不可见，用户无法触发首次导入。
-  const hasNonProxy = sources ? sources.some((s) => s.dataSource !== "proxy") : false;
+  const hasNonProxy = sources
+    ? sources.some((s) => s.dataSource !== "proxy")
+    : false;
 
   return (
     <div className="flex items-center gap-3 text-xs text-muted-foreground bg-muted/30 rounded-lg px-4 py-2">

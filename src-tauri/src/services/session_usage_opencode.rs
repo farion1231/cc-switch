@@ -275,7 +275,7 @@ fn query_sessions(conn: &rusqlite::Connection) -> Result<Vec<(String, i64)>, App
 
 /// 兼容 OpenCode 实际存储的嵌套格式 `{ message: { role, tokens, time, ... }, parts: [...] }`。
 /// 老版本/部分自定义 schema 可能把字段放在顶层，这里回退一下。
-fn message_obj<'a>(value: &'a serde_json::Value) -> &'a serde_json::Value {
+fn message_obj(value: &serde_json::Value) -> &serde_json::Value {
     value.get("message").unwrap_or(value)
 }
 
