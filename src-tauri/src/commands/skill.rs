@@ -311,13 +311,14 @@ pub fn add_skill_repo(repo: SkillRepo, app_state: State<'_, AppState>) -> Result
 /// 删除技能仓库
 #[tauri::command]
 pub fn remove_skill_repo(
+    host: String,
     owner: String,
     name: String,
     app_state: State<'_, AppState>,
 ) -> Result<bool, String> {
     app_state
         .db
-        .delete_skill_repo(&owner, &name)
+        .delete_skill_repo(&host, &owner, &name)
         .map_err(|e| e.to_string())?;
     Ok(true)
 }

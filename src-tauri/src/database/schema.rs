@@ -86,6 +86,7 @@ impl Database {
             name TEXT NOT NULL,
             description TEXT,
             directory TEXT NOT NULL,
+            repo_host TEXT DEFAULT 'github.com',
             repo_owner TEXT,
             repo_name TEXT,
             repo_branch TEXT DEFAULT 'main',
@@ -106,8 +107,10 @@ impl Database {
         // 6. Skill Repos 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skill_repos (
+            host TEXT NOT NULL DEFAULT 'github.com',
             owner TEXT NOT NULL, name TEXT NOT NULL, branch TEXT NOT NULL DEFAULT 'main',
-            enabled BOOLEAN NOT NULL DEFAULT 1, PRIMARY KEY (owner, name)
+            enabled BOOLEAN NOT NULL DEFAULT 1, token TEXT,
+            PRIMARY KEY (host, owner, name)
         )",
             [],
         )
@@ -430,6 +433,11 @@ impl Database {
                         log::info!("迁移数据库从 v9 到 v10（添加 Hermes Agent 支持）");
                         Self::migrate_v9_to_v10(conn)?;
                         Self::set_user_version(conn, 10)?;
+                    }
+                    10 => {
+                        log::info!("迁移数据库从 v10 到 v11（GitHub Enterprise 支持）");
+                        Self::migrate_v10_to_v11(conn)?;
+                        Self::set_user_version(conn, 11)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1197,6 +1205,50 @@ impl Database {
         }
 
         log::info!("v9 -> v10 迁移完成：已添加 Hermes Agent 支持");
+        Ok(())
+    }
+
+    /// v10 -> v11 迁移：添加 GitHub Enterprise 支持
+    fn migrate_v10_to_v11(conn: &Connection) -> Result<(), AppError> {
+        // skill_repos 表：重建为 (host, owner, name) 三元主键
+        // SQLite 不支持 ALTER TABLE 修改主键，必须 rename + recreate + copy
+        if Self::table_exists(conn, "skill_repos")? {
+            let needs_rebuild = !Self::has_column(conn, "skill_repos", "host")?;
+            if needs_rebuild {
+                conn.execute_batch(
+                    "ALTER TABLE skill_repos RENAME TO skill_repos_v10_backup;
+
+                    CREATE TABLE skill_repos (
+                        host    TEXT NOT NULL DEFAULT 'github.com',
+                        owner   TEXT NOT NULL,
+                        name    TEXT NOT NULL,
+                        branch  TEXT NOT NULL DEFAULT 'main',
+                        enabled BOOLEAN NOT NULL DEFAULT 1,
+                        token   TEXT,
+                        PRIMARY KEY (host, owner, name)
+                    );
+
+                    INSERT INTO skill_repos (host, owner, name, branch, enabled)
+                    SELECT 'github.com', owner, name, branch, enabled
+                    FROM skill_repos_v10_backup;
+
+                    DROP TABLE skill_repos_v10_backup;",
+                )
+                .map_err(|e| AppError::Database(format!("skill_repos 主键迁移失败: {e}")))?;
+            } else {
+                // host 列已存在（重复迁移场景），只补充 token 列
+                Self::add_column_if_missing(conn, "skill_repos", "token", "TEXT")?;
+            }
+        }
+
+        // skills 表添加 repo_host 列
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(conn, "skills", "repo_host", "TEXT DEFAULT 'github.com'")?;
+        }
+
+        log::info!(
+            "v10 -> v11 迁移完成：已添加 GitHub Enterprise 支持（host, token 列，主键已重建）"
+        );
         Ok(())
     }
 

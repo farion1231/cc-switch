@@ -176,6 +176,9 @@ pub struct InstalledSkill {
     pub description: Option<String>,
     /// 安装目录名（在 SSOT 目录中的子目录名）
     pub directory: String,
+    /// GitHub 域名 (默认 "github.com")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_host: Option<String>,
     /// 仓库所有者（GitHub 用户/组织）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo_owner: Option<String>,

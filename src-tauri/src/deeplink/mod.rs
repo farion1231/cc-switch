@@ -93,6 +93,9 @@ pub struct DeepLinkImportRequest {
     pub apps: Option<String>,
 
     // ============ Skill-specific fields ============
+    /// GitHub host (default: "github.com", for GHES: "ghes.example.com" etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     /// GitHub repository (format: "owner/name")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,

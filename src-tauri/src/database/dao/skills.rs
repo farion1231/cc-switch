@@ -21,7 +21,7 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
+                "SELECT id, name, description, directory, repo_host, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode,
                         enabled_hermes, installed_at, content_hash, updated_at
                  FROM skills ORDER BY name ASC",
@@ -35,20 +35,21 @@ impl Database {
                     name: row.get(1)?,
                     description: row.get(2)?,
                     directory: row.get(3)?,
-                    repo_owner: row.get(4)?,
-                    repo_name: row.get(5)?,
-                    repo_branch: row.get(6)?,
-                    readme_url: row.get(7)?,
+                    repo_host: row.get(4)?,
+                    repo_owner: row.get(5)?,
+                    repo_name: row.get(6)?,
+                    repo_branch: row.get(7)?,
+                    readme_url: row.get(8)?,
                     apps: SkillApps {
-                        claude: row.get(8)?,
-                        codex: row.get(9)?,
-                        gemini: row.get(10)?,
-                        opencode: row.get(11)?,
-                        hermes: row.get(12)?,
+                        claude: row.get(9)?,
+                        codex: row.get(10)?,
+                        gemini: row.get(11)?,
+                        opencode: row.get(12)?,
+                        hermes: row.get(13)?,
                     },
-                    installed_at: row.get(13)?,
-                    content_hash: row.get(14)?,
-                    updated_at: row.get::<_, i64>(15).unwrap_or(0),
+                    installed_at: row.get(14)?,
+                    content_hash: row.get(15)?,
+                    updated_at: row.get::<_, i64>(16).unwrap_or(0),
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -66,7 +67,7 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
+                "SELECT id, name, description, directory, repo_host, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode,
                         enabled_hermes, installed_at, content_hash, updated_at
                  FROM skills WHERE id = ?1",
@@ -79,20 +80,21 @@ impl Database {
                 name: row.get(1)?,
                 description: row.get(2)?,
                 directory: row.get(3)?,
-                repo_owner: row.get(4)?,
-                repo_name: row.get(5)?,
-                repo_branch: row.get(6)?,
-                readme_url: row.get(7)?,
+                repo_host: row.get(4)?,
+                repo_owner: row.get(5)?,
+                repo_name: row.get(6)?,
+                repo_branch: row.get(7)?,
+                readme_url: row.get(8)?,
                 apps: SkillApps {
-                    claude: row.get(8)?,
-                    codex: row.get(9)?,
-                    gemini: row.get(10)?,
-                    opencode: row.get(11)?,
-                    hermes: row.get(12)?,
+                    claude: row.get(9)?,
+                    codex: row.get(10)?,
+                    gemini: row.get(11)?,
+                    opencode: row.get(12)?,
+                    hermes: row.get(13)?,
                 },
-                installed_at: row.get(13)?,
-                content_hash: row.get(14)?,
-                updated_at: row.get::<_, i64>(15).unwrap_or(0),
+                installed_at: row.get(14)?,
+                content_hash: row.get(15)?,
+                updated_at: row.get::<_, i64>(16).unwrap_or(0),
             })
         });
 
@@ -108,15 +110,16 @@ impl Database {
         let conn = lock_conn!(self.conn);
         conn.execute(
             "INSERT OR REPLACE INTO skills
-             (id, name, description, directory, repo_owner, repo_name, repo_branch,
+             (id, name, description, directory, repo_host, repo_owner, repo_name, repo_branch,
               readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_hermes,
               installed_at, content_hash, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 skill.id,
                 skill.name,
                 skill.description,
                 skill.directory,
+                skill.repo_host,
                 skill.repo_owner,
                 skill.repo_name,
                 skill.repo_branch,
@@ -188,17 +191,21 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT owner, name, branch, enabled FROM skill_repos ORDER BY owner ASC, name ASC",
+                "SELECT host, owner, name, branch, enabled, token FROM skill_repos ORDER BY owner ASC, name ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let repo_iter = stmt
             .query_map([], |row| {
                 Ok(SkillRepo {
-                    owner: row.get(0)?,
-                    name: row.get(1)?,
-                    branch: row.get(2)?,
-                    enabled: row.get(3)?,
+                    host: row
+                        .get::<_, String>(0)
+                        .unwrap_or_else(|_| "github.com".to_string()),
+                    owner: row.get(1)?,
+                    name: row.get(2)?,
+                    branch: row.get(3)?,
+                    enabled: row.get(4)?,
+                    token: row.get(5)?,
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -214,19 +221,19 @@ impl Database {
     pub fn save_skill_repo(&self, repo: &SkillRepo) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute(
-            "INSERT OR REPLACE INTO skill_repos (owner, name, branch, enabled) VALUES (?1, ?2, ?3, ?4)",
-            params![repo.owner, repo.name, repo.branch, repo.enabled],
+            "INSERT OR REPLACE INTO skill_repos (host, owner, name, branch, enabled, token) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![repo.host, repo.owner, repo.name, repo.branch, repo.enabled, repo.token],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 
     /// 删除 Skill 仓库
-    pub fn delete_skill_repo(&self, owner: &str, name: &str) -> Result<(), AppError> {
+    pub fn delete_skill_repo(&self, host: &str, owner: &str, name: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute(
-            "DELETE FROM skill_repos WHERE owner = ?1 AND name = ?2",
-            params![owner, name],
+            "DELETE FROM skill_repos WHERE host = ?1 AND owner = ?2 AND name = ?3",
+            params![host, owner, name],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
@@ -236,9 +243,9 @@ impl Database {
     pub fn init_default_skill_repos(&self) -> Result<usize, AppError> {
         // 获取已有仓库列表
         let existing = self.get_skill_repos()?;
-        let existing_keys: std::collections::HashSet<(String, String)> = existing
+        let existing_keys: std::collections::HashSet<(String, String, String)> = existing
             .iter()
-            .map(|r| (r.owner.clone(), r.name.clone()))
+            .map(|r| (r.host.clone(), r.owner.clone(), r.name.clone()))
             .collect();
 
         // 获取默认仓库列表
@@ -247,7 +254,7 @@ impl Database {
 
         // 仅插入缺失的默认仓库
         for repo in &default_store.repos {
-            let key = (repo.owner.clone(), repo.name.clone());
+            let key = (repo.host.clone(), repo.owner.clone(), repo.name.clone());
             if !existing_keys.contains(&key) {
                 self.save_skill_repo(repo)?;
                 count += 1;

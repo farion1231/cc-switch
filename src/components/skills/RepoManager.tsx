@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { parseRepoUrl } from "@/lib/utils/parseRepoUrl";
 import {
   Dialog,
   DialogContent,
@@ -20,7 +21,7 @@ interface RepoManagerProps {
   repos: SkillRepo[];
   skills: DiscoverableSkill[];
   onAdd: (repo: SkillRepo) => Promise<void>;
-  onRemove: (owner: string, name: string) => Promise<void>;
+  onRemove: (host: string, owner: string, name: string) => Promise<void>;
 }
 
 export function RepoManager({
@@ -34,6 +35,7 @@ export function RepoManager({
   const { t } = useTranslation();
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("");
+  const [token, setToken] = useState("");
   const [error, setError] = useState("");
 
   const getSkillCount = (repo: SkillRepo) =>
@@ -43,26 +45,6 @@ export function RepoManager({
         skill.repoName === repo.name &&
         (skill.repoBranch || "main") === (repo.branch || "main"),
     ).length;
-
-  const parseRepoUrl = (
-    url: string,
-  ): { owner: string; name: string } | null => {
-    // 支持格式:
-    // - https://github.com/owner/name
-    // - owner/name
-    // - https://github.com/owner/name.git
-
-    let cleaned = url.trim();
-    cleaned = cleaned.replace(/^https?:\/\/github\.com\//, "");
-    cleaned = cleaned.replace(/\.git$/, "");
-
-    const parts = cleaned.split("/");
-    if (parts.length === 2 && parts[0] && parts[1]) {
-      return { owner: parts[0], name: parts[1] };
-    }
-
-    return null;
-  };
 
   const handleAdd = async () => {
     setError("");
@@ -75,22 +57,27 @@ export function RepoManager({
 
     try {
       await onAdd({
+        host: parsed.host,
         owner: parsed.owner,
         name: parsed.name,
         branch: branch || "main",
         enabled: true,
+        token: token || undefined,
       });
 
       setRepoUrl("");
       setBranch("");
+      setToken("");
     } catch (e) {
       setError(e instanceof Error ? e.message : t("skills.repo.addFailed"));
     }
   };
 
-  const handleOpenRepo = async (owner: string, name: string) => {
+  const handleOpenRepo = async (repo: SkillRepo) => {
     try {
-      await settingsApi.openExternal(`https://github.com/${owner}/${name}`);
+      await settingsApi.openExternal(
+        `https://${repo.host}/${repo.owner}/${repo.name}`,
+      );
     } catch (error) {
       console.error("Failed to open URL:", error);
     }
@@ -127,6 +114,14 @@ export function RepoManager({
                     onChange={(e) => setBranch(e.target.value)}
                     className="flex-1"
                   />
+                  <Input
+                    id="token"
+                    type="password"
+                    placeholder="Token (optional, for private repos)"
+                    value={token}
+                    onChange={(e) => setToken(e.target.value)}
+                    className="flex-1"
+                  />
                   <Button
                     onClick={handleAdd}
                     className="w-full sm:w-auto sm:px-4"
@@ -152,11 +147,16 @@ export function RepoManager({
                 <div className="space-y-3">
                   {repos.map((repo) => (
                     <div
-                      key={`${repo.owner}/${repo.name}`}
+                      key={`${repo.host}/${repo.owner}/${repo.name}`}
                       className="flex items-center justify-between rounded-xl border border-border-default bg-card px-4 py-3"
                     >
                       <div>
                         <div className="text-sm font-medium text-foreground">
+                          {repo.host !== "github.com" && (
+                            <span className="text-xs text-muted-foreground mr-1">
+                              [{repo.host}]
+                            </span>
+                          )}
                           {repo.owner}/{repo.name}
                         </div>
                         <div className="mt-1 text-xs text-muted-foreground">
@@ -173,7 +173,7 @@ export function RepoManager({
                           variant="ghost"
                           size="icon"
                           type="button"
-                          onClick={() => handleOpenRepo(repo.owner, repo.name)}
+                          onClick={() => handleOpenRepo(repo)}
                           title={t("common.view", { defaultValue: "查看" })}
                         >
                           <ExternalLink className="h-4 w-4" />
@@ -182,7 +182,9 @@ export function RepoManager({
                           variant="ghost"
                           size="icon"
                           type="button"
-                          onClick={() => onRemove(repo.owner, repo.name)}
+                          onClick={() =>
+                            onRemove(repo.host, repo.owner, repo.name)
+                          }
                           title={t("common.delete")}
                           className="hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
                         >

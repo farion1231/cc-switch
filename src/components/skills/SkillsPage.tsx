@@ -188,6 +188,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
       name: s.name,
       description: "",
       directory: s.directory,
+      repoHost: "github.com",
       repoOwner: s.repoOwner,
       repoName: s.repoName,
       repoBranch: s.repoBranch,
@@ -267,9 +268,13 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
       }
     };
 
-    const handleRemoveRepo = async (owner: string, name: string) => {
+    const handleRemoveRepo = async (
+      host: string,
+      owner: string,
+      name: string,
+    ) => {
       try {
-        await removeRepoMutation.mutateAsync({ owner, name });
+        await removeRepoMutation.mutateAsync({ host, owner, name });
         toast.success(t("skills.repo.removeSuccess", { owner, name }), {
           closeButton: true,
         });
