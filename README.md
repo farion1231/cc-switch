@@ -200,7 +200,7 @@ Modern AI-powered coding relies on tools like Claude Code, Claude Desktop, Codex
 
 - **Unified MCP panel** — Manage MCP servers across Claude, Codex, Gemini, OpenCode, and Hermes with bidirectional sync and Deep Link import
 - **Prompts** — Markdown editor with cross-app sync (CLAUDE.md / AGENTS.md / GEMINI.md) and backfill protection
-- **Skills** — One-click install from GitHub repos or ZIP files, custom repository management, filter installed skills by source, with symlink and file copy support
+- **Skills** — One-click install from GitHub repos or ZIP files, custom repository management, source filter, search, batch operations (enable/disable, uninstall, change source), and skill detail view, with symlink and file copy support
 
 ### Usage & Cost Tracking
 

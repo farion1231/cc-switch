@@ -2187,7 +2187,7 @@
       "skillCount": "{{count}} 件のスキルを検出"
     },
     "search": "スキルを検索",
-    "searchPlaceholder": "スキル名またはリポジトリで検索...",
+    "searchPlaceholder": "スキル名・リポジトリ、スペース区切り...",
     "searchSource": {
       "repos": "リポジトリ",
       "skillssh": "skills.sh"
@@ -2207,9 +2207,7 @@
       "installed": "インストール済み",
       "uninstalled": "未インストール",
       "repo": "リポジトリで絞り込み",
-      "allRepos": "すべてのリポジトリ",
-      "source": "ソースで絞り込み",
-      "allSources": "すべてのソース"
+      "allRepos": "すべてのリポジトリ"
     },
     "noResults": "一致するスキルが見つかりませんでした",
     "noInstalled": "インストールされたスキルがありません",
@@ -2253,6 +2251,43 @@
       "gemini": "Gemini",
       "opencode": "OpenCode",
       "openclaw": "OpenClaw"
+    },
+    "detail": {
+      "title": "スキル詳細",
+      "description": "説明",
+      "noDescription": "説明なし",
+      "directory": "ディレクトリ",
+      "source": "ソース",
+      "local": "ローカル",
+      "branch": "ブランチ",
+      "installedAt": "インストール日時",
+      "updatedAt": "更新日時",
+      "enabledApps": "有効なアプリ",
+      "viewOnGitHub": "GitHub で表示"
+    },
+    "batch": {
+      "selected": "{{count}} 件選択中",
+      "selectAll": "すべて選択",
+      "enable": "有効化",
+      "disable": "無効化",
+      "toggleApps": "有効/無効",
+      "deleteSelected": "選択を削除",
+      "deleteConfirmTitle": "選択したスキルを削除",
+      "deleteConfirmMessage": "{{count}} 件の選択したスキルを削除しますか？削除前に自動バックアップが作成され、バックアップから復元できます。",
+      "toggleSuccess": "{{count}} 件のスキルを {{app}} で{{action}}しました",
+      "deleteSuccess": "{{count}} 件のスキルを削除しました",
+      "enableAction": "有効化",
+      "disableAction": "無効化",
+      "changeSource": "ソースを変更",
+      "changeSourceTitle": "ソースを変更",
+      "changeSourceDescription": "選択した {{count}} 件のスキルを指定したリポジトリに関連付け、今後の更新を追跡できるようにします。",
+      "selectRepo": "リポジトリを選択",
+      "customRepo": "カスタムリポジトリ",
+      "repoOwner": "オーナー",
+      "repoName": "リポジトリ",
+      "repoBranch": "ブランチ",
+      "subdirectory": "サブディレクトリ（任意、例: skills）",
+      "sourceChangeSuccess": "{{count}} 件のスキルのソースを {{repo}} に変更しました"
     },
     "installFromZip": {
       "button": "ZIP からインストール",
