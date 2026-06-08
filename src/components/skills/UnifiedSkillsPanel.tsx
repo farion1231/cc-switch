@@ -508,6 +508,7 @@ const UnifiedSkillsPanel = React.forwardRef<
         subdirectory: "",
       });
       setSelectedSkills(new Set());
+      setFilterSource("all");
     } catch (error) {
       toast.error(t("common.error"), { description: String(error) });
     } finally {
