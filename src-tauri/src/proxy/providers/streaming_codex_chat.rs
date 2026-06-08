@@ -427,10 +427,14 @@ impl ChatToResponsesState {
         {
             let state = self.tools.entry(chat_index).or_default();
             if let Some(id) = id_delta {
-                state.call_id = id;
+                if !id.is_empty() {
+                    state.call_id = id;
+                }
             }
             if let Some(name) = name_delta {
-                state.name = name;
+                if !name.is_empty() {
+                    state.name = name;
+                }
             }
             if !args_delta.is_empty() {
                 state.arguments.push_str(&args_delta);
@@ -748,6 +752,13 @@ impl ChatToResponsesState {
             let Some(state) = self.tools.get_mut(&key) else {
                 continue;
             };
+            // Defensive fallback: streaming chunk may have overwritten these with empty
+            if state.call_id.is_empty() {
+                state.call_id = format!("call_{key}");
+            }
+            if state.name.is_empty() {
+                state.name = "unknown_tool".to_string();
+            }
             let output_index = state.output_index.unwrap_or(0);
             let arguments = canonicalize_tool_arguments_str(&state.arguments);
             let is_custom_tool = self.tool_context.is_custom_tool_chat_name(&state.name);
