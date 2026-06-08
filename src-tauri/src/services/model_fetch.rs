@@ -30,6 +30,8 @@ struct ModelEntry {
 
 const FETCH_TIMEOUT_SECS: u64 = 15;
 
+const MODEL_FETCH_USER_AGENT: &str = concat!("cc-switch/", env!("CARGO_PKG_VERSION"));
+
 /// 404/405 响应体截断长度：避免把几十 KB HTML 404 页整页保留到错误串里。
 const ERROR_BODY_MAX_CHARS: usize = 512;
 
@@ -66,10 +68,7 @@ pub async fn fetch_models(
 
     for url in &candidates {
         log::debug!("[ModelFetch] Trying endpoint: {url}");
-        let response = match client
-            .get(url)
-            .header("Authorization", format!("Bearer {api_key}"))
-            .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
+        let response = match build_model_fetch_request(&client, url, api_key)
             .send()
             .await
         {
@@ -115,6 +114,19 @@ pub async fn fetch_models(
         "All candidates failed: {}",
         last_err.unwrap_or_else(|| "no candidates".to_string())
     ))
+}
+
+fn build_model_fetch_request(
+    client: &reqwest::Client,
+    url: &str,
+    api_key: &str,
+) -> reqwest::RequestBuilder {
+    client
+        .get(url)
+        .header(reqwest::header::AUTHORIZATION, format!("Bearer {api_key}"))
+        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::USER_AGENT, MODEL_FETCH_USER_AGENT)
+        .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
 }
 
 /// 构造「模型列表端点」的候选 URL 列表
@@ -229,6 +241,34 @@ fn ends_with_version_segment(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_model_fetch_request_headers_include_json_accept_and_user_agent() {
+        let client = reqwest::Client::new();
+        let request =
+            build_model_fetch_request(&client, "https://api.example.com/v1/models", "test-key")
+                .build()
+                .unwrap();
+
+        assert_eq!(
+            request
+                .headers()
+                .get(reqwest::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer test-key")
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get(reqwest::header::ACCEPT)
+                .and_then(|value| value.to_str().ok()),
+            Some("application/json")
+        );
+        assert!(
+            request.headers().contains_key(reqwest::header::USER_AGENT),
+            "model fetch requests should include a User-Agent so CDN/WAF layers do not reject bare requests"
+        );
+    }
 
     #[test]
     fn test_candidates_plain_root() {
