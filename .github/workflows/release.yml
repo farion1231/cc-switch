@@ -274,7 +274,7 @@ jobs:
           if ($env:WINDOWS_RELEASE_ARCH -eq 'arm64') {
             pnpm tauri build --target aarch64-pc-windows-msvc --bundles msi
           } else {
-            pnpm tauri build
+            pnpm tauri build --bundles msi
           }
 
       - name: Build Tauri App (Linux)
