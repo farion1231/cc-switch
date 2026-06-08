@@ -1055,11 +1055,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "SSSAiCode",
-    websiteUrl: "https://www.sssaicode.com",
-    apiKeyUrl: "https://www.sssaicode.com/register?ref=DCP0SM",
+    websiteUrl: "https://sssaicodeapi.com",
+    apiKeyUrl: "https://sssaicodeapi.com/register?ref=DCP0SM",
     settingsConfig: {
       name: "sssaicode",
-      base_url: "https://node-hk.sssaicode.com/api",
+      base_url: "https://node-hk.sssaicodeapi.com/api",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [

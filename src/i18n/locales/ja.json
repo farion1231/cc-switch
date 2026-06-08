@@ -109,7 +109,7 @@
     "currentlyUsing": "現在使用中",
     "enable": "有効化",
     "inUse": "使用中",
-    "blockedByProxy": "ブロック",
+    "blockedByProxyHint": "プロキシ引き継ぎモードでは公式プロバイダーに切り替えできません",
     "editProvider": "プロバイダーを編集",
     "editProviderHint": "保存すると現在のプロバイダーにすぐ反映されます。",
     "deleteProvider": "プロバイダーを削除",

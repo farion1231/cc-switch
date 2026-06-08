@@ -109,7 +109,7 @@
     "currentlyUsing": "目前使用",
     "enable": "啟用",
     "inUse": "使用中",
-    "blockedByProxy": "已攔截",
+    "blockedByProxyHint": "代理接管模式下無法切換至官方供應商",
     "editProvider": "編輯供應商",
     "editProviderHint": "更新設定後將立即套用至目前供應商。",
     "deleteProvider": "刪除供應商",

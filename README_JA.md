@@ -171,7 +171,7 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 
 ## 特長
 
-[完全な更新履歴](CHANGELOG.md) | [リリースノート](docs/release-notes/v3.16.0-ja.md)
+[完全な更新履歴](CHANGELOG.md) | [リリースノート](docs/release-notes/v3.16.1-ja.md)
 
 ### プロバイダ管理
 

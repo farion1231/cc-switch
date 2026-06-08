@@ -109,7 +109,7 @@
     "currentlyUsing": "Currently Using",
     "enable": "Enable",
     "inUse": "In Use",
-    "blockedByProxy": "Blocked",
+    "blockedByProxyHint": "Can't switch to an official provider while proxy takeover is active",
     "editProvider": "Edit Provider",
     "editProviderHint": "Configuration will be applied to the current provider immediately after update.",
     "deleteProvider": "Delete Provider",

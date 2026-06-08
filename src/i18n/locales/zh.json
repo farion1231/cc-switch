@@ -109,7 +109,7 @@
     "currentlyUsing": "当前使用",
     "enable": "启用",
     "inUse": "使用中",
-    "blockedByProxy": "已拦截",
+    "blockedByProxyHint": "代理接管模式下不可切换到官方供应商",
     "editProvider": "编辑供应商",
     "editProviderHint": "更新配置后将立即应用到当前供应商。",
     "deleteProvider": "删除供应商",
