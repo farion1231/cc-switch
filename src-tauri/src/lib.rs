@@ -70,6 +70,22 @@ use tauri::RunEvent;
 use tauri::{Emitter, Manager};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
+#[cfg(target_os = "windows")]
+fn set_windows_app_user_model_id(app: &tauri::AppHandle) {
+    let app_id = app.config().identifier.clone();
+    let wide_app_id: Vec<u16> = app_id.encode_utf16().chain(std::iter::once(0)).collect();
+
+    let result = unsafe {
+        windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(wide_app_id.as_ptr())
+    };
+
+    if result < 0 {
+        log::warn!("设置 Windows AppUserModelID 失败: 0x{result:08X}");
+    } else {
+        log::debug!("Windows AppUserModelID 已设置为 {app_id}");
+    }
+}
+
 fn redact_url_for_log(url_str: &str) -> String {
     match url::Url::parse(url_str) {
         Ok(url) => {
@@ -289,6 +305,8 @@ pub fn run() {
             // 预先刷新 Store 覆盖配置，确保后续路径读取正确（日志/数据库等）
             app_store::refresh_app_config_dir_override(app.handle());
             panic_hook::init_app_config_dir(crate::config::get_app_config_dir());
+            #[cfg(target_os = "windows")]
+            set_windows_app_user_model_id(app.handle());
 
             // 注册 Updater 插件（桌面端）
             #[cfg(desktop)]
@@ -866,6 +884,10 @@ pub fn run() {
                 app_state.db.clone(),
                 app.handle().clone(),
             );
+            crate::services::s3_auto_sync::start_worker(
+                app_state.db.clone(),
+                app.handle().clone(),
+            );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
@@ -1022,6 +1044,10 @@ pub fn run() {
                         "Gemini usage initial sync",
                         crate::services::session_usage_gemini::sync_gemini_usage(db),
                     );
+                    run_step(
+                        "OpenCode usage initial sync",
+                        crate::services::session_usage_opencode::sync_opencode_usage(db),
+                    );
 
                     // 定期同步
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
@@ -1041,6 +1067,10 @@ pub fn run() {
                         run_step(
                             "Gemini usage periodic sync",
                             crate::services::session_usage_gemini::sync_gemini_usage(db),
+                        );
+                        run_step(
+                            "OpenCode usage periodic sync",
+                            crate::services::session_usage_opencode::sync_opencode_usage(db),
                         );
                     }
                 });
@@ -1199,6 +1229,11 @@ pub fn run() {
             commands::webdav_sync_download,
             commands::webdav_sync_save_settings,
             commands::webdav_sync_fetch_remote_info,
+            commands::s3_test_connection,
+            commands::s3_sync_upload,
+            commands::s3_sync_download,
+            commands::s3_sync_save_settings,
+            commands::s3_sync_fetch_remote_info,
             commands::save_file_dialog,
             commands::open_file_dialog,
             commands::open_zip_file_dialog,
@@ -1426,6 +1461,11 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 save_window_state_before_exit(&app_handle);
                 cleanup_before_exit(&app_handle).await;
+                // 先于 std::process::exit 显式移除托盘图标。
+                // 进程直接退出时 Tauri 运行时不走正常 Drop 流程，
+                // 不会向 Windows Shell 发送 NIM_DELETE，导致已退出的进程
+                // 注册的图标仍残留在系统托盘（鼠标悬停 Shell 才会重绘发现进程已死）。
+                remove_tray_icon_before_exit(&app_handle);
                 log::info!("清理完成，退出应用");
 
                 // 短暂等待确保所有 I/O 操作（如数据库写入）刷新到磁盘
@@ -1569,6 +1609,26 @@ pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
                 log::error!("退出时停止代理失败: {e}");
             }
             log::info!("代理服务器清理完成");
+        }
+    }
+}
+
+/// 主动从系统托盘移除托盘图标。
+///
+/// `std::process::exit` 会绕过 Tauri 运行时，触发不了 `TrayIcon::drop()`，
+/// 也就不会向 Windows Shell 发 `NIM_DELETE`。结果是进程退出后托盘里
+/// 仍保留一个死图标的缓存占位（Shell 不会主动重绘，需要鼠标悬停才刷新）。
+///
+/// 通过 `set_visible(false)` 走 `WM_USER_HIDE_TRAYICON` 消息路径，
+/// 触发 tray-icon 内部的 `remove_tray_icon` → `Shell_NotifyIconW(NIM_DELETE)`，
+/// 在进程结束前干净地把图标摘掉。其它平台 `set_visible(false)` 也是
+/// 正常的隐藏/移除语义，作为跨平台兜底也安全。
+fn remove_tray_icon_before_exit(app_handle: &tauri::AppHandle) {
+    if let Some(tray) = app_handle.tray_by_id(tray::TRAY_ID) {
+        if let Err(e) = tray.set_visible(false) {
+            log::warn!("退出时移除托盘图标失败: {e}");
+        } else {
+            log::info!("已显式从系统托盘移除图标");
         }
     }
 }

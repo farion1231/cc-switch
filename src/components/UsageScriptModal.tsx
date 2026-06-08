@@ -110,6 +110,9 @@ const generatePresetTemplates = (
 
   // 官方余额查询模板不需要脚本，使用专用 Rust 查询
   [TEMPLATE_TYPES.BALANCE]: "",
+
+  // 官方订阅额度查询不需要脚本，使用 CLI/OAuth 凭据调用官方 API
+  [TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION]: "",
 });
 
 // 模板名称国际化键映射
@@ -120,6 +123,8 @@ const TEMPLATE_NAME_KEYS: Record<string, string> = {
   [TEMPLATE_TYPES.GITHUB_COPILOT]: "usageScript.templateCopilot",
   [TEMPLATE_TYPES.TOKEN_PLAN]: "usageScript.templateTokenPlan",
   [TEMPLATE_TYPES.BALANCE]: "usageScript.templateBalance",
+  [TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION]:
+    "usageScript.templateOfficialSubscription",
 };
 
 /** 官方余额查询供应商检测 */
@@ -140,6 +145,45 @@ function detectBalanceProvider(baseUrl: string | undefined): boolean {
   if (!baseUrl) return false;
   return BALANCE_PROVIDERS.some((bp) => bp.pattern.test(baseUrl));
 }
+
+function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
+  if (!["claude", "codex", "gemini"].includes(appId)) return false;
+  if (provider.category === "official") return true;
+
+  const config = provider.settingsConfig as Record<string, any>;
+  if (appId === "claude") {
+    const baseUrl = config?.env?.ANTHROPIC_BASE_URL;
+    return !baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === "");
+  }
+  if (appId === "codex") {
+    const apiKey = config?.auth?.OPENAI_API_KEY;
+    const bearerToken =
+      typeof config?.config === "string"
+        ? extractCodexExperimentalBearerToken(config.config)
+        : undefined;
+    return (
+      !bearerToken &&
+      (!apiKey || (typeof apiKey === "string" && apiKey.trim() === ""))
+    );
+  }
+  if (appId === "gemini") {
+    const env = config?.env || {};
+    const apiKey = env.GEMINI_API_KEY;
+    const baseUrl = env.GOOGLE_GEMINI_BASE_URL;
+    return (
+      (!apiKey || (typeof apiKey === "string" && apiKey.trim() === "")) &&
+      (!baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === ""))
+    );
+  }
+  return false;
+}
+
+const NATIVE_USAGE_TEMPLATES = new Set<string>([
+  TEMPLATE_TYPES.GITHUB_COPILOT,
+  TEMPLATE_TYPES.TOKEN_PLAN,
+  TEMPLATE_TYPES.BALANCE,
+  TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION,
+]);
 
 const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   provider,
@@ -238,22 +282,33 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   };
 
   const providerCredentials = getProviderCredentials();
+  const isOfficialSubscription = isOfficialSubscriptionProvider(
+    provider,
+    appId,
+  );
 
   const [script, setScript] = useState<UsageScript>(() => {
     const savedScript = provider.meta?.usage_script;
     if (savedScript) {
+      const normalizedScript = createUsageScript(savedScript);
+      if (
+        isOfficialSubscription &&
+        normalizedScript.templateType !== TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION
+      ) {
+        return createUsageScript();
+      }
       // 已有配置：如果是 coding_plan 但没有 codingPlanProvider，自动检测填充
       if (
-        savedScript.templateType === TEMPLATE_TYPES.TOKEN_PLAN &&
-        !savedScript.codingPlanProvider
+        normalizedScript.templateType === TEMPLATE_TYPES.TOKEN_PLAN &&
+        !normalizedScript.codingPlanProvider
       ) {
         return {
-          ...savedScript,
+          ...normalizedScript,
           codingPlanProvider:
             detectCodingPlanProvider(providerCredentials.baseUrl) || "kimi",
         };
       }
-      return savedScript;
+      return normalizedScript;
     }
 
     const autoDetected = detectCodingPlanProvider(providerCredentials.baseUrl);
@@ -262,6 +317,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     }
 
     if (detectBalanceProvider(providerCredentials.baseUrl)) {
+      return createUsageScript();
+    }
+
+    if (isOfficialSubscription) {
       return createUsageScript();
     }
 
@@ -327,8 +386,16 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         return TEMPLATE_TYPES.GITHUB_COPILOT;
       }
       // 优先使用保存的 templateType
-      if (existingScript?.templateType) {
+      if (
+        existingScript?.templateType &&
+        (!isOfficialSubscription ||
+          existingScript.templateType === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION)
+      ) {
         return existingScript.templateType as string;
+      }
+      // 官方 CLI/OAuth 供应商默认使用官方订阅额度模板，但开关默认关闭
+      if (isOfficialSubscription) {
+        return TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
       }
       // 向后兼容：根据字段推断模板类型
       // 检测 NEW_API 模板（有 accessToken 或 userId）
@@ -378,12 +445,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   };
 
   const handleSave = () => {
-    // Copilot、Coding Plan、Balance 模板不需要脚本验证
-    if (
-      selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT &&
-      selectedTemplate !== TEMPLATE_TYPES.TOKEN_PLAN &&
-      selectedTemplate !== TEMPLATE_TYPES.BALANCE
-    ) {
+    // 专用模板不需要脚本验证
+    if (!NATIVE_USAGE_TEMPLATES.has(selectedTemplate || "")) {
       if (script.enabled && !script.code.trim()) {
         toast.error(t("usageScript.scriptEmpty"));
         return;
@@ -403,6 +466,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         | "github_copilot"
         | "token_plan"
         | "balance"
+        | "official_subscription"
         | undefined,
     };
     onSave(scriptWithTemplate);
@@ -412,6 +476,28 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const handleTest = async () => {
     setTesting(true);
     try {
+      // 官方订阅额度模板使用 CLI/OAuth 凭据和官方 API
+      if (selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION) {
+        const { subscriptionApi } = await import("@/lib/api/subscription");
+        const quota = await subscriptionApi.getQuota(appId);
+        if (quota.success && quota.tiers.length > 0) {
+          const summary = quota.tiers
+            .map((tier) => `${tier.name}: ${Math.round(tier.utilization)}%`)
+            .join(", ");
+          toast.success(`${t("usageScript.testSuccess")}${summary}`, {
+            duration: 3000,
+            closeButton: true,
+          });
+          queryClient.setQueryData(["subscription", "quota", appId], quota);
+        } else {
+          toast.error(
+            `${t("usageScript.testFailed")}: ${quota.error || t("endpointTest.noResult")}`,
+            { duration: 5000 },
+          );
+        }
+        return;
+      }
+
       // 官方余额查询模板使用专用 API
       if (selectedTemplate === TEMPLATE_TYPES.BALANCE) {
         const baseUrl = providerCredentials.baseUrl ?? "";
@@ -654,6 +740,16 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           accessToken: undefined,
           userId: undefined,
         });
+      } else if (presetName === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION) {
+        // 官方订阅额度查询不需要脚本，使用 CLI/OAuth 凭据
+        setScript({
+          ...script,
+          code: "",
+          apiKey: undefined,
+          baseUrl: undefined,
+          accessToken: undefined,
+          userId: undefined,
+        });
       }
       setSelectedTemplate(presetName);
     }
@@ -681,7 +777,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           variant="outline"
           size="sm"
           onClick={handleFormat}
-          disabled={!script.enabled}
+          disabled={
+            !script.enabled ||
+            NATIVE_USAGE_TEMPLATES.has(selectedTemplate || "")
+          }
           title={t("usageScript.format")}
         >
           <Wand2 size={14} className="mr-1" />
@@ -742,8 +841,15 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                   if (isCopilotProvider) {
                     return name === TEMPLATE_TYPES.GITHUB_COPILOT;
                   }
+                  // 官方 CLI/OAuth 供应商只显示官方订阅额度模板
+                  if (isOfficialSubscription) {
+                    return name === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
+                  }
                   // 非 Copilot 供应商不显示 copilot 模板
-                  return name !== TEMPLATE_TYPES.GITHUB_COPILOT;
+                  return (
+                    name !== TEMPLATE_TYPES.GITHUB_COPILOT &&
+                    name !== TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION
+                  );
                 })
                 .map((name) => {
                   const isSelected = selectedTemplate === name;
@@ -862,6 +968,15 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                     </span>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* 官方订阅额度模式：自动提示 */}
+            {selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION && (
+              <div className="space-y-2 border-t border-white/10 pt-3">
+                <p className="text-sm text-muted-foreground">
+                  {t("usageScript.officialSubscriptionHint")}
+                </p>
               </div>
             )}
 
@@ -1191,43 +1306,41 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             </div>
           </div>
 
-          {/* 提取器代码 - Copilot 模板不需要 */}
-          {selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT &&
-            selectedTemplate !== TEMPLATE_TYPES.TOKEN_PLAN && (
-              <div className="space-y-4 glass rounded-xl border border-white/10 p-6">
-                <div className="flex items-center justify-between">
-                  <Label className="text-base font-medium">
-                    {t("usageScript.extractorCode")}
-                  </Label>
-                  <div className="text-xs text-muted-foreground">
-                    {t("usageScript.extractorHint")}
-                  </div>
+          {/* 提取器代码 - 专用模板不需要 */}
+          {!NATIVE_USAGE_TEMPLATES.has(selectedTemplate || "") && (
+            <div className="space-y-4 glass rounded-xl border border-white/10 p-6">
+              <div className="flex items-center justify-between">
+                <Label className="text-base font-medium">
+                  {t("usageScript.extractorCode")}
+                </Label>
+                <div className="text-xs text-muted-foreground">
+                  {t("usageScript.extractorHint")}
                 </div>
-                <JsonEditor
-                  id="usage-code"
-                  value={script.code || ""}
-                  onChange={(value) =>
-                    setScript((prev) => ({ ...prev, code: value }))
-                  }
-                  height={480}
-                  language="javascript"
-                  showMinimap={false}
-                />
               </div>
-            )}
+              <JsonEditor
+                id="usage-code"
+                value={script.code || ""}
+                onChange={(value) =>
+                  setScript((prev) => ({ ...prev, code: value }))
+                }
+                height={480}
+                language="javascript"
+                showMinimap={false}
+              />
+            </div>
+          )}
 
-          {/* 帮助信息 - Copilot 模板不需要 */}
-          {selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT &&
-            selectedTemplate !== TEMPLATE_TYPES.TOKEN_PLAN && (
-              <div className="glass rounded-xl border border-white/10 p-6 text-sm text-foreground/90">
-                <h4 className="font-medium mb-2">
-                  {t("usageScript.scriptHelp")}
-                </h4>
-                <div className="space-y-3 text-xs">
-                  <div>
-                    <strong>{t("usageScript.configFormat")}</strong>
-                    <pre className="mt-1 p-2 bg-black/20 text-foreground rounded border border-white/10 text-[10px] overflow-x-auto">
-                      {`({
+          {/* 帮助信息 - 专用模板不需要 */}
+          {!NATIVE_USAGE_TEMPLATES.has(selectedTemplate || "") && (
+            <div className="glass rounded-xl border border-white/10 p-6 text-sm text-foreground/90">
+              <h4 className="font-medium mb-2">
+                {t("usageScript.scriptHelp")}
+              </h4>
+              <div className="space-y-3 text-xs">
+                <div>
+                  <strong>{t("usageScript.configFormat")}</strong>
+                  <pre className="mt-1 p-2 bg-black/20 text-foreground rounded border border-white/10 text-[10px] overflow-x-auto">
+                    {`({
   request: {
     url: "{{baseUrl}}/api/usage",
     method: "POST",
@@ -1244,39 +1357,39 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     };
   }
 })`}
-                    </pre>
-                  </div>
+                  </pre>
+                </div>
 
-                  <div>
-                    <strong>{t("usageScript.extractorFormat")}</strong>
-                    <ul className="mt-1 space-y-0.5 ml-2">
-                      <li>{t("usageScript.fieldIsValid")}</li>
-                      <li>{t("usageScript.fieldInvalidMessage")}</li>
-                      <li>{t("usageScript.fieldRemaining")}</li>
-                      <li>{t("usageScript.fieldUnit")}</li>
-                      <li>{t("usageScript.fieldPlanName")}</li>
-                      <li>{t("usageScript.fieldTotal")}</li>
-                      <li>{t("usageScript.fieldUsed")}</li>
-                      <li>{t("usageScript.fieldExtra")}</li>
-                    </ul>
-                  </div>
+                <div>
+                  <strong>{t("usageScript.extractorFormat")}</strong>
+                  <ul className="mt-1 space-y-0.5 ml-2">
+                    <li>{t("usageScript.fieldIsValid")}</li>
+                    <li>{t("usageScript.fieldInvalidMessage")}</li>
+                    <li>{t("usageScript.fieldRemaining")}</li>
+                    <li>{t("usageScript.fieldUnit")}</li>
+                    <li>{t("usageScript.fieldPlanName")}</li>
+                    <li>{t("usageScript.fieldTotal")}</li>
+                    <li>{t("usageScript.fieldUsed")}</li>
+                    <li>{t("usageScript.fieldExtra")}</li>
+                  </ul>
+                </div>
 
-                  <div className="text-muted-foreground">
-                    <strong>{t("usageScript.tips")}</strong>
-                    <ul className="mt-1 space-y-0.5 ml-2">
-                      <li>
-                        {t("usageScript.tip1", {
-                          apiKey: "{{apiKey}}",
-                          baseUrl: "{{baseUrl}}",
-                        })}
-                      </li>
-                      <li>{t("usageScript.tip2")}</li>
-                      <li>{t("usageScript.tip3")}</li>
-                    </ul>
-                  </div>
+                <div className="text-muted-foreground">
+                  <strong>{t("usageScript.tips")}</strong>
+                  <ul className="mt-1 space-y-0.5 ml-2">
+                    <li>
+                      {t("usageScript.tip1", {
+                        apiKey: "{{apiKey}}",
+                        baseUrl: "{{baseUrl}}",
+                      })}
+                    </li>
+                    <li>{t("usageScript.tip2")}</li>
+                    <li>{t("usageScript.tip3")}</li>
+                  </ul>
                 </div>
               </div>
-            )}
+            </div>
+          )}
         </div>
       )}
 

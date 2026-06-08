@@ -133,6 +133,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["byteplus", "volcengine", "ark", "modelark"],
     defaultColor: "#3370FF",
   },
+  ccsub: {
+    name: "ccsub",
+    displayName: "CCSub",
+    category: "ai-provider",
+    keywords: ["ccsub", "aggregator", "relay", "claude", "codex", "gateway"],
+    defaultColor: "#1E88E5",
+  },
   chatglm: {
     name: "chatglm",
     displayName: "chatglm",
@@ -146,6 +153,21 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["anthropic"],
     defaultColor: "#D4915D",
+  },
+  cherryin: {
+    name: "cherryin",
+    displayName: "CherryIN",
+    category: "ai-provider",
+    keywords: [
+      "cherryin",
+      "cherry",
+      "gateway",
+      "relay",
+      "newapi",
+      "claude",
+      "codex",
+    ],
+    defaultColor: "#FB6354",
   },
   claudeapi: {
     name: "claudeapi",

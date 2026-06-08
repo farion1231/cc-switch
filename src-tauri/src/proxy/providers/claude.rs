@@ -145,6 +145,86 @@ pub fn normalize_anthropic_tool_thinking_history_for_provider(
     normalize_anthropic_tool_thinking_history(body)
 }
 
+pub fn normalize_anthropic_messages_for_provider(
+    body: &mut Value,
+    provider: &Provider,
+    api_format: &str,
+) -> bool {
+    if api_format.trim() != "anthropic" {
+        return false;
+    }
+
+    let mut changed = normalize_anthropic_system_role_messages(body);
+    changed |= normalize_anthropic_tool_thinking_history_for_provider(body, provider, api_format);
+    changed
+}
+
+fn normalize_anthropic_system_role_messages(body: &mut Value) -> bool {
+    let mut system_parts = Vec::new();
+    let changed = {
+        let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+            return false;
+        };
+
+        let original_len = messages.len();
+        let mut kept_messages = Vec::with_capacity(messages.len());
+        for message in std::mem::take(messages) {
+            if message.get("role").and_then(Value::as_str) == Some("system") {
+                if let Some(content) = message.get("content") {
+                    append_anthropic_system_parts(content, &mut system_parts);
+                }
+            } else {
+                kept_messages.push(message);
+            }
+        }
+
+        let changed = kept_messages.len() != original_len;
+        *messages = kept_messages;
+        changed
+    };
+
+    if !changed || system_parts.is_empty() {
+        return changed;
+    }
+
+    let mut merged_parts = Vec::new();
+    if let Some(existing) = body.get("system") {
+        append_anthropic_system_parts(existing, &mut merged_parts);
+    }
+    merged_parts.extend(system_parts);
+
+    if !merged_parts.is_empty() {
+        body["system"] = Value::Array(merged_parts);
+    }
+
+    true
+}
+
+fn append_anthropic_system_parts(content: &Value, parts: &mut Vec<Value>) {
+    match content {
+        Value::String(text) if !text.trim().is_empty() => {
+            parts.push(json!({
+                "type": "text",
+                "text": text
+            }));
+        }
+        Value::Array(items) => {
+            for item in items {
+                append_anthropic_system_parts(item, parts);
+            }
+        }
+        Value::Object(obj)
+            if obj
+                .get("text")
+                .and_then(Value::as_str)
+                .is_some_and(|text| !text.trim().is_empty()) =>
+        {
+            parts.push(Value::Object(obj.clone()));
+        }
+        _ => {}
+    }
+}
+
 fn normalize_anthropic_tool_thinking_history(body: &mut Value) -> bool {
     let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
         return false;
@@ -1993,6 +2073,64 @@ mod tests {
         assert_eq!(content[0]["thinking"], ANTHROPIC_THINKING_PLACEHOLDER);
         assert_eq!(content[1]["type"], "text");
         assert_eq!(content[2]["type"], "tool_use");
+    }
+
+    #[test]
+    fn test_anthropic_system_role_messages_move_to_top_level_system() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "system": "Existing top-level system.",
+            "model": "deepseek-v4-pro",
+            "messages": [
+                { "role": "system", "content": "Message system one." },
+                { "role": "user", "content": "hello" },
+                {
+                    "role": "system",
+                    "content": [{ "type": "text", "text": "Message system two." }]
+                }
+            ]
+        });
+
+        let changed = normalize_anthropic_messages_for_provider(&mut body, &provider, "anthropic");
+
+        assert!(changed);
+        let messages = body["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
+
+        let system = body["system"].as_array().unwrap();
+        assert_eq!(system[0]["text"], "Existing top-level system.");
+        assert_eq!(system[1]["text"], "Message system one.");
+        assert_eq!(system[2]["text"], "Message system two.");
+    }
+
+    #[test]
+    fn test_anthropic_system_role_messages_skip_non_anthropic_format() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/v1",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [
+                { "role": "system", "content": "Keep in messages." },
+                { "role": "user", "content": "hello" }
+            ]
+        });
+
+        let changed =
+            normalize_anthropic_messages_for_provider(&mut body, &provider, "openai_chat");
+
+        assert!(!changed);
+        assert!(body.get("system").is_none());
+        assert_eq!(body["messages"][0]["role"], "system");
     }
 
     #[test]

@@ -15,6 +15,8 @@ use super::utils::{
 };
 
 const PROVIDER_ID: &str = "codex";
+const VSCODE_CONTEXT_PREFIX: &str = "# Context from my IDE setup:";
+const CODEX_REQUEST_MARKER: &str = "my request for codex";
 
 static UUID_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
@@ -186,12 +188,8 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
                     && payload.get("role").and_then(Value::as_str) == Some("user")
                 {
                     let text = payload.get("content").map(extract_text).unwrap_or_default();
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty()
-                        && !trimmed.starts_with("# AGENTS.md")
-                        && !trimmed.starts_with("<environment_context>")
-                    {
-                        first_user_message = Some(trimmed.to_string());
+                    if let Some(title) = title_candidate_from_user_message(&text) {
+                        first_user_message = Some(title);
                     }
                 }
             }
@@ -264,6 +262,80 @@ fn is_subagent_source(source: Option<&Value>) -> bool {
         .and_then(|value| value.as_object())
         .map(|source| source.contains_key("subagent"))
         .unwrap_or(false)
+}
+
+fn title_candidate_from_user_message(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with("# AGENTS.md")
+        || trimmed.starts_with("<environment_context>")
+    {
+        return None;
+    }
+
+    if trimmed.starts_with(VSCODE_CONTEXT_PREFIX) {
+        return extract_codex_prompt_from_ide_context(trimmed);
+    }
+
+    Some(trimmed.to_string())
+}
+
+fn extract_codex_prompt_from_ide_context(text: &str) -> Option<String> {
+    let normalized = text.replace("\r\n", "\n");
+    let lines = normalized.lines().collect::<Vec<_>>();
+
+    // VS Code injects the real prompt as the LAST "## My request for Codex:"
+    // section, so keep the final matching heading. Earlier matches can be
+    // headings that live inside the active selection / open file content.
+    // Trade-off: if the request body itself repeats the heading, the title
+    // truncates to its trailing part (rare; covered by tests below).
+    let mut prompt: Option<String> = None;
+    for (index, line) in lines.iter().enumerate() {
+        let Some(inline_prompt) = codex_request_heading_payload(line) else {
+            continue;
+        };
+
+        if !inline_prompt.is_empty() {
+            prompt = Some(inline_prompt.to_string());
+            continue;
+        }
+
+        let following_prompt = lines[index + 1..].join("\n").trim().to_string();
+        prompt = (!following_prompt.is_empty()).then_some(following_prompt);
+    }
+
+    prompt
+}
+
+fn codex_request_heading_payload(line: &str) -> Option<&str> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('#') {
+        return None;
+    }
+
+    let heading = trimmed.trim_start_matches('#').trim_start();
+    let lowered = heading.to_ascii_lowercase();
+    if !lowered.starts_with(CODEX_REQUEST_MARKER) {
+        return None;
+    }
+
+    let suffix = heading[CODEX_REQUEST_MARKER.len()..].trim_start();
+    if suffix.is_empty() {
+        return Some("");
+    }
+
+    let Some(separator) = suffix.chars().next() else {
+        return Some("");
+    };
+    if !matches!(separator, ':' | '：' | '-' | '—') {
+        return None;
+    }
+
+    Some(
+        suffix
+            .trim_start_matches(|c: char| c.is_whitespace() || matches!(c, ':' | '：' | '-' | '—'))
+            .trim(),
+    )
 }
 
 fn infer_session_id_from_filename(path: &Path) -> Option<String> {
@@ -423,6 +495,114 @@ mod tests {
 
         let meta = parse_session(&path).unwrap();
         // Should skip environment_context injection and use the real user message
+        assert_eq!(meta.title.as_deref(), Some("Fix the login bug"));
+    }
+
+    #[test]
+    fn parse_session_extracts_vscode_ide_request_as_title() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# Context from my IDE setup:\\n\\n## Active file: src/main.ts\\n\\n## My request for Codex:\\nFix the session title preview\"}}\n"
+            ),
+        )
+        .expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        assert_eq!(meta.title.as_deref(), Some("Fix the session title preview"));
+    }
+
+    #[test]
+    fn parse_session_extracts_inline_vscode_ide_request_as_title() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# Context from my IDE setup:\\n\\n## My request for Codex: Fix the TOC preview\"}}\n"
+            ),
+        )
+        .expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        assert_eq!(meta.title.as_deref(), Some("Fix the TOC preview"));
+    }
+
+    #[test]
+    fn parse_session_ignores_marker_mentions_before_request_heading() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# Context from my IDE setup:\\n\\n## Active selection:\\nMy request for Codex: not the prompt\\n\\n## My request for Codex:\\nUse the real request heading\"}}\n"
+            ),
+        )
+        .expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        assert_eq!(meta.title.as_deref(), Some("Use the real request heading"));
+    }
+
+    #[test]
+    fn parse_session_uses_last_request_heading_when_selection_has_one() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# Context from my IDE setup:\\n\\n## Active selection: docs/codex-format.md\\n## My request for Codex:\\nselected document content, not the real request\\n\\n## My request for Codex:\\nUse the last request heading\"}}\n"
+            ),
+        )
+        .expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        assert_eq!(meta.title.as_deref(), Some("Use the last request heading"));
+    }
+
+    // Known limitation: the IDE marker is matched purely by text, so a
+    // "## My request for Codex:" line inside the real request body is treated as
+    // a new boundary and only the trailing part is kept. This pins the
+    // best-effort behavior; fully fixing it needs structured IDE section data
+    // that the Codex VS Code context does not provide.
+    #[test]
+    fn parse_session_keeps_trailing_part_when_request_body_repeats_heading() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# Context from my IDE setup:\\n\\n## Active file: foo.ts\\n\\n## My request for Codex:\\nDocument the format, for example:\\n## My request for Codex:\\nand the rest follows.\"}}\n"
+            ),
+        )
+        .expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        assert_eq!(meta.title.as_deref(), Some("and the rest follows."));
+    }
+
+    #[test]
+    fn parse_session_skips_vscode_ide_context_without_request() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# Context from my IDE setup:\\n\\n## Active file: src/main.ts\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:14Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"Fix the login bug\"}}\n"
+            ),
+        )
+        .expect("write");
+
+        let meta = parse_session(&path).unwrap();
         assert_eq!(meta.title.as_deref(), Some("Fix the login bug"));
     }
 

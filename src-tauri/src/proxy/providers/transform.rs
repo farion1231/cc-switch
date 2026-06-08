@@ -142,18 +142,13 @@ pub fn anthropic_to_openai_with_reasoning_content(
                 messages.push(json!({"role": "system", "content": text}));
             }
         } else if let Some(arr) = system.as_array() {
-            // 多个 system message — preserve cache_control for compatible proxies
             for msg in arr {
                 if let Some(text) = msg.get("text").and_then(|t| t.as_str()) {
                     let text = strip_leading_anthropic_billing_header(text);
                     if text.is_empty() {
                         continue;
                     }
-                    let mut sys_msg = json!({"role": "system", "content": text});
-                    if let Some(cc) = msg.get("cache_control") {
-                        sys_msg["cache_control"] = cc.clone();
-                    }
-                    messages.push(sys_msg);
+                    messages.push(json!({"role": "system", "content": text}));
                 }
             }
         }
@@ -207,18 +202,14 @@ pub fn anthropic_to_openai_with_reasoning_content(
             .iter()
             .filter(|t| t.get("type").and_then(|v| v.as_str()) != Some("BatchTool"))
             .map(|t| {
-                let mut tool = json!({
+                json!({
                     "type": "function",
                     "function": {
                         "name": t.get("name").and_then(|n| n.as_str()).unwrap_or(""),
                         "description": t.get("description"),
                         "parameters": clean_schema(t.get("input_schema").cloned().unwrap_or(json!({})))
                     }
-                });
-                if let Some(cc) = t.get("cache_control") {
-                    tool["cache_control"] = cc.clone();
-                }
-                tool
+                })
             })
             .collect();
 
@@ -294,10 +285,6 @@ fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
     }
 
     let mut parts = Vec::new();
-    let mut inherited_cache_control: Option<Value> = None;
-    let mut cache_control_conflict = false;
-    let mut saw_cache_control = false;
-    let mut saw_missing_cache_control = false;
     messages.retain(|message| {
         if message.get("role").and_then(|value| value.as_str()) != Some("system") {
             return true;
@@ -318,28 +305,11 @@ fn normalize_openai_system_messages(messages: &mut Vec<Value>) {
             _ => {}
         }
 
-        if let Some(cache_control) = message.get("cache_control") {
-            saw_cache_control = true;
-            match &inherited_cache_control {
-                None => inherited_cache_control = Some(cache_control.clone()),
-                Some(existing) if existing == cache_control => {}
-                Some(_) => cache_control_conflict = true,
-            }
-        } else {
-            saw_missing_cache_control = true;
-        }
-
         false
     });
 
     if !parts.is_empty() {
-        let mut merged = json!({"role": "system", "content": parts.join("\n")});
-        if !(cache_control_conflict || (saw_cache_control && saw_missing_cache_control)) {
-            if let Some(cache_control) = inherited_cache_control {
-                merged["cache_control"] = cache_control;
-            }
-        }
-        messages.insert(0, merged);
+        messages.insert(0, json!({"role": "system", "content": parts.join("\n")}));
     }
 }
 
@@ -379,11 +349,7 @@ fn convert_message_to_openai(
             match block_type {
                 "text" => {
                     if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                        let mut part = json!({"type": "text", "text": text});
-                        if let Some(cc) = block.get("cache_control") {
-                            part["cache_control"] = cc.clone();
-                        }
-                        content_parts.push(part);
+                        content_parts.push(json!({"type": "text", "text": text}));
                     }
                 }
                 "image" => {
@@ -458,14 +424,9 @@ fn convert_message_to_openai(
             if content_parts.is_empty() {
                 msg["content"] = Value::Null;
             } else if content_parts.len() == 1 {
-                // When cache_control is present, keep array format to preserve it
-                let has_cache_control = content_parts[0].get("cache_control").is_some();
-                if !has_cache_control {
-                    if let Some(text) = content_parts[0].get("text") {
-                        msg["content"] = text.clone();
-                    } else {
-                        msg["content"] = json!(content_parts);
-                    }
+                // 单 text block 简化为纯字符串
+                if let Some(text) = content_parts[0].get("text") {
+                    msg["content"] = text.clone();
                 } else {
                     msg["content"] = json!(content_parts);
                 }
@@ -829,7 +790,7 @@ mod tests {
     }
 
     #[test]
-    fn test_anthropic_to_openai_preserves_matching_system_cache_control_when_merging() {
+    fn test_anthropic_to_openai_strips_cache_control_from_merged_system() {
         let input = json!({
             "model": "claude-3-sonnet",
             "max_tokens": 1024,
@@ -847,12 +808,12 @@ mod tests {
             result["messages"][0]["content"],
             "You are Claude Code.\nBe concise."
         );
-        assert_eq!(result["messages"][0]["cache_control"]["type"], "ephemeral");
+        assert!(result["messages"][0].get("cache_control").is_none());
         assert_eq!(result["messages"][1]["role"], "user");
     }
 
     #[test]
-    fn test_anthropic_to_openai_drops_mixed_present_absent_system_cache_control_when_merging() {
+    fn test_anthropic_to_openai_strips_cache_control_from_mixed_system() {
         let input = json!({
             "model": "claude-3-sonnet",
             "max_tokens": 1024,
@@ -873,7 +834,7 @@ mod tests {
     }
 
     #[test]
-    fn test_anthropic_to_openai_drops_conflicting_system_cache_control_when_merging() {
+    fn test_anthropic_to_openai_strips_cache_control_from_conflicting_system() {
         let input = json!({
             "model": "claude-3-sonnet",
             "max_tokens": 1024,
@@ -1199,7 +1160,7 @@ mod tests {
     }
 
     #[test]
-    fn test_anthropic_to_openai_cache_control_preserved() {
+    fn test_anthropic_to_openai_strips_all_cache_control() {
         let input = json!({
             "model": "claude-3-opus",
             "max_tokens": 1024,
@@ -1221,19 +1182,89 @@ mod tests {
         });
 
         let result = anthropic_to_openai(input).unwrap();
-        // System message cache_control preserved
-        assert_eq!(result["messages"][0]["cache_control"]["type"], "ephemeral");
-        // Text block cache_control preserved
-        assert_eq!(
-            result["messages"][1]["content"][0]["cache_control"]["type"],
-            "ephemeral"
+        // System message: no cache_control
+        assert!(result["messages"][0].get("cache_control").is_none());
+        // User message: content simplified to string (no cache_control → flat string)
+        assert_eq!(result["messages"][1]["content"], "Hello");
+        // Tool: no cache_control
+        assert!(result["tools"][0].get("cache_control").is_none());
+    }
+
+    /// 精确复现 Issue #3805 报告的 400 错误场景:
+    /// GLM/Qwen 等严格校验模型拒绝 cache_control 和 content 数组格式
+    #[test]
+    fn test_regression_gh3805_no_cache_control_leak_to_openai() {
+        let input = json!({
+            "model": "glm-5.1",
+            "max_tokens": 1024,
+            "system": [
+                {"type": "text", "text": "You are helpful.", "cache_control": {"type": "ephemeral"}}
+            ],
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "text", "text": "Hello", "cache_control": {"type": "ephemeral"}}
+                ]}
+            ],
+            "tools": [{
+                "name": "search",
+                "description": "Search the web",
+                "input_schema": {"type": "object"},
+                "cache_control": {"type": "ephemeral"}
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+
+        // 验证: messages 中不存在 cache_control
+        for (i, msg) in result["messages"].as_array().unwrap().iter().enumerate() {
+            assert!(
+                msg.get("cache_control").is_none(),
+                "messages[{i}] must not have cache_control"
+            );
+        }
+
+        // 验证: content 中没有 cache_control
+        for (i, msg) in result["messages"].as_array().unwrap().iter().enumerate() {
+            if let Some(content) = msg.get("content") {
+                assert!(
+                    !content.is_array()
+                        || content
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .all(|part| part.get("cache_control").is_none()),
+                    "messages[{i}] content parts must not have cache_control"
+                );
+            }
+        }
+
+        // 验证: system content 为纯字符串格式（不是数组）
+        let sys_msg = &result["messages"][0];
+        assert_eq!(sys_msg["role"], "system");
+        assert!(
+            sys_msg["content"].is_string(),
+            "system content must be string, got: {}",
+            sys_msg["content"]
         );
-        assert_eq!(
-            result["messages"][1]["content"][0]["cache_control"]["ttl"],
-            "5m"
+
+        // 验证: user content 为纯字符串格式（不是数组）
+        let user_msg = &result["messages"][1];
+        assert_eq!(user_msg["role"], "user");
+        assert!(
+            user_msg["content"].is_string(),
+            "user content must be string, got: {}",
+            user_msg["content"]
         );
-        // Tool cache_control preserved
-        assert_eq!(result["tools"][0]["cache_control"]["type"], "ephemeral");
+
+        // 验证: tools 中不存在 cache_control
+        if let Some(tools) = result["tools"].as_array() {
+            for (i, tool) in tools.iter().enumerate() {
+                assert!(
+                    tool.get("cache_control").is_none(),
+                    "tools[{i}] must not have cache_control"
+                );
+            }
+        }
     }
 
     #[test]

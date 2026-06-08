@@ -80,53 +80,51 @@ export function UsageDashboard() {
       transition={{ duration: 0.4 }}
       className="space-y-8 pb-8"
     >
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex flex-col gap-1">
-            <h2 className="text-2xl font-bold">{t("usage.title")}</h2>
-            <p className="text-sm text-muted-foreground">
-              {t("usage.subtitle")}
-            </p>
-          </div>
+      <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 mb-2">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-2xl font-bold tracking-tight">
+            {t("usage.title")}
+          </h2>
+          <p className="text-sm text-muted-foreground">{t("usage.subtitle")}</p>
         </div>
 
-        <div className="rounded-xl border border-border/50 bg-card/40 backdrop-blur-sm p-4">
-          <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center p-1 bg-muted/30 rounded-lg border border-border/50">
             {APP_FILTER_OPTIONS.map((type) => (
               <button
                 key={type}
                 type="button"
                 onClick={() => setAppType(type)}
                 className={cn(
-                  "px-4 py-1.5 rounded-lg text-sm font-medium transition-all",
+                  "px-3 py-1.5 rounded-md text-sm font-medium transition-all",
                   appType === type
-                    ? "bg-primary/10 text-primary shadow-sm border border-primary/20"
-                    : "text-muted-foreground hover:text-primary hover:bg-muted/50 border border-transparent",
+                    ? "bg-background text-primary shadow-sm"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
                 )}
               >
                 {t(`usage.appFilter.${type}`)}
               </button>
             ))}
+          </div>
 
-            <div className="ml-auto flex items-center gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-8 px-2 text-xs text-muted-foreground"
-                title={t("common.refresh", "刷新")}
-                onClick={changeRefreshInterval}
-              >
-                <RefreshCw className="mr-1 h-3.5 w-3.5" />
-                {refreshIntervalMs > 0 ? `${refreshIntervalMs / 1000}s` : "--"}
-              </Button>
+          <div className="flex items-center gap-2 ml-auto lg:ml-0">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-9 px-3 text-xs"
+              title={t("common.refresh", "刷新")}
+              onClick={changeRefreshInterval}
+            >
+              <RefreshCw className="mr-2 h-3.5 w-3.5" />
+              {refreshIntervalMs > 0 ? `${refreshIntervalMs / 1000}s` : "--"}
+            </Button>
 
-              <UsageDateRangePicker
-                selection={range}
-                triggerLabel={rangeLabel}
-                onApply={(nextRange) => setRange(nextRange)}
-              />
-            </div>
+            <UsageDateRangePicker
+              selection={range}
+              triggerLabel={rangeLabel}
+              onApply={(nextRange) => setRange(nextRange)}
+            />
           </div>
         </div>
       </div>

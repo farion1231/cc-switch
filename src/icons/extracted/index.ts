@@ -6,7 +6,9 @@ import _apinebula from "./apinebula_icon.png";
 import _atlascloud from "./atlascloud_icon.png";
 import _claudeapi from "./ClaudeApi.png";
 import _byteplus from "./byteplus.png";
+import _ccsub from "./ccsub.svg?url";
 import _claudecn from "./claudecn.png";
+import _cherryin from "./cherryin.png";
 import _eflowcode from "./eflowcode.png";
 import _hermes from "./hermes.png";
 import _huoshan from "./huoshan.png";
@@ -96,8 +98,10 @@ export const iconUrls: Record<string, string> = {
   apinebula: _apinebula,
   atlascloud: _atlascloud,
   byteplus: _byteplus,
+  ccsub: _ccsub,
   claudeapi: _claudeapi,
   claudecn: _claudecn,
+  cherryin: _cherryin,
   eflowcode: _eflowcode,
   hermes: _hermes,
   huoshan: _huoshan,
