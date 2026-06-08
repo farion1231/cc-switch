@@ -701,8 +701,10 @@ fn append_responses_item_as_chat_message(
                             && last.get("tool_calls").is_some()
                         {
                             // Merge: add content from the new message to the existing one
-                            let new_content =
-                                message.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                            let new_content = message
+                                .get("content")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
                             if !new_content.is_empty() {
                                 let existing_content =
                                     last.get("content").and_then(|v| v.as_str()).unwrap_or("");
@@ -748,8 +750,10 @@ fn append_responses_item_as_chat_message(
                         if last.get("role").and_then(|v| v.as_str()) == Some("assistant")
                             && last.get("tool_calls").is_some()
                         {
-                            let new_content =
-                                message.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                            let new_content = message
+                                .get("content")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
                             if !new_content.is_empty() {
                                 let existing_content =
                                     last.get("content").and_then(|v| v.as_str()).unwrap_or("");
@@ -3447,10 +3451,7 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .find(|msg| {
-                msg["role"] == "assistant"
-                    && msg.get("tool_calls").is_some()
-            })
+            .find(|msg| msg["role"] == "assistant" && msg.get("tool_calls").is_some())
             .expect("should have an assistant message with tool_calls")
             .clone();
 
@@ -3460,7 +3461,9 @@ mod tests {
             "assistant message with tool_calls must have content=\"\" (not null) to avoid MiMo/MiniMax 400 errors"
         );
         assert!(
-            assistant_msg["tool_calls"].as_array().is_some_and(|a| !a.is_empty()),
+            assistant_msg["tool_calls"]
+                .as_array()
+                .is_some_and(|a| !a.is_empty()),
             "tool_calls should be present"
         );
     }
@@ -3580,15 +3583,27 @@ mod tests {
             assert!(
                 !(prev_was_assistant && is_assistant),
                 "Consecutive assistant messages are not allowed in Chat Completions: {:?}",
-                messages.iter().map(|m| format!("{}:{}", m["role"].as_str().unwrap_or("?"), m.get("tool_calls").map_or("text", |_| "tools"))).collect::<Vec<_>>()
+                messages
+                    .iter()
+                    .map(|m| format!(
+                        "{}:{}",
+                        m["role"].as_str().unwrap_or("?"),
+                        m.get("tool_calls").map_or("text", |_| "tools")
+                    ))
+                    .collect::<Vec<_>>()
             );
             prev_was_assistant = is_assistant;
         }
 
         // The assistant message should have both content AND tool_calls
-        let assistant_msg = messages.iter().find(|msg| msg["role"] == "assistant").unwrap();
+        let assistant_msg = messages
+            .iter()
+            .find(|msg| msg["role"] == "assistant")
+            .unwrap();
         assert_eq!(assistant_msg["content"], "I'll read that file for you.");
-        assert!(assistant_msg.get("tool_calls").is_some_and(|v| v.as_array().is_some_and(|a| !a.is_empty())));
+        assert!(assistant_msg
+            .get("tool_calls")
+            .is_some_and(|v| v.as_array().is_some_and(|a| !a.is_empty())));
     }
 
     /// Regression test: Three-round Codex conversation with tool calls.
@@ -3685,7 +3700,14 @@ mod tests {
             assert!(
                 !(prev_was_assistant && is_assistant),
                 "No consecutive assistant messages allowed. Messages: {:?}",
-                messages.iter().map(|m| format!("{}:{}", m["role"].as_str().unwrap_or("?"), m.get("tool_calls").map_or("text", |_| "tools"))).collect::<Vec<_>>()
+                messages
+                    .iter()
+                    .map(|m| format!(
+                        "{}:{}",
+                        m["role"].as_str().unwrap_or("?"),
+                        m.get("tool_calls").map_or("text", |_| "tools")
+                    ))
+                    .collect::<Vec<_>>()
             );
             prev_was_assistant = is_assistant;
         }
@@ -3714,7 +3736,10 @@ mod tests {
                 }
             }
             if msg["role"] == "tool" {
-                let call_id = msg.get("tool_call_id").and_then(|v| v.as_str()).unwrap_or("");
+                let call_id = msg
+                    .get("tool_call_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 assert!(
                     tool_call_ids.contains(call_id),
                     "Tool message with call_id '{}' has no matching assistant tool_call",
@@ -3725,7 +3750,10 @@ mod tests {
 
         // 4. Verify expected message sequence:
         // user → assistant(text+tools) → tool → assistant(text+tools) → tool → assistant(text+tools) → tool
-        let roles: Vec<&str> = messages.iter().map(|m| m["role"].as_str().unwrap_or("?")).collect();
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap_or("?"))
+            .collect();
         assert_eq!(roles, vec!["user", "assistant", "tool", "assistant", "tool", "assistant", "tool"],
             "Message sequence should be user → assistant → tool → assistant → tool → assistant → tool, got: {:?}", roles);
     }
@@ -3766,11 +3794,20 @@ mod tests {
         let messages = result["messages"].as_array().unwrap();
 
         // Should have exactly 2 messages: user + assistant(with both content and tool_calls)
-        assert_eq!(messages.len(), 2, "Expected 2 messages, got: {:?}", messages);
+        assert_eq!(
+            messages.len(),
+            2,
+            "Expected 2 messages, got: {:?}",
+            messages
+        );
         assert_eq!(messages[0]["role"], "user");
         assert_eq!(messages[1]["role"], "assistant");
         assert_eq!(messages[1]["content"], "Let me check that.");
-        assert!(messages[1].get("tool_calls").is_some_and(|v| v.as_array().is_some_and(|a| !a.is_empty())),
-            "Assistant message should have tool_calls");
+        assert!(
+            messages[1]
+                .get("tool_calls")
+                .is_some_and(|v| v.as_array().is_some_and(|a| !a.is_empty())),
+            "Assistant message should have tool_calls"
+        );
     }
 }

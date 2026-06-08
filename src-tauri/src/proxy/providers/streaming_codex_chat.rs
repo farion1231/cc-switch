@@ -235,8 +235,6 @@ impl ChatToResponsesState {
         }
     }
 
-
-
     fn drain_complete_inline_think(&mut self) -> Vec<Bytes> {
         let Some((reasoning, answer)) = split_leading_think_block(&self.inline_think.buffer) else {
             return Vec::new();
@@ -1408,8 +1406,16 @@ mod tests {
         ])
         .await;
 
-        assert!(output.matches("response.reasoning_summary_text.delta").count() >= 1);
-        assert!(output.contains("I'll read it."), "answer text must be emitted");
+        assert!(
+            output
+                .matches("response.reasoning_summary_text.delta")
+                .count()
+                >= 1
+        );
+        assert!(
+            output.contains("I'll read it."),
+            "answer text must be emitted"
+        );
         assert!(!output.contains("<think>"), "<think> tags must not leak");
         assert!(!output.contains("</think>"), "</think> tags must not leak");
         assert!(output.contains("event: response.completed"));
