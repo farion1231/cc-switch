@@ -2124,16 +2124,37 @@ pub fn write_codex_live_for_provider(
         };
     let config_text = unified_official_config.as_deref().or(config_text);
 
-    let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
-        || (category != Some("official")
-            && !crate::settings::preserve_codex_official_auth_on_switch());
+    if category == Some("official") {
+        return write_codex_official_live_for_provider(auth, config_text);
+    }
 
-    if should_write_auth {
+    if !crate::settings::preserve_codex_official_auth_on_switch() {
         write_codex_live_atomic(auth, config_text)
     } else {
         let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
         write_codex_live_config_atomic(Some(&live_config))
     }
+}
+
+fn write_codex_official_live_for_provider(
+    auth: &Value,
+    config_text: Option<&str>,
+) -> Result<(), AppError> {
+    if codex_auth_has_login_material(auth) {
+        return write_codex_live_atomic(auth, config_text);
+    }
+
+    let auth_path = get_codex_auth_path();
+    if auth_path.exists() {
+        let mut live_auth: Value = read_json_file(&auth_path)?;
+        if let Some(live_auth_obj) = live_auth.as_object_mut() {
+            if live_auth_obj.remove("OPENAI_API_KEY").is_some() {
+                return write_codex_live_atomic(&live_auth, config_text);
+            }
+        }
+    }
+
+    write_codex_live_config_atomic(config_text)
 }
 
 /// Build the live Codex config for provider switching.
