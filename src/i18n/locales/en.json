@@ -1320,7 +1320,9 @@
     "label": "Provider Preset",
     "custom": "Custom Configuration",
     "other": "Other",
-    "hint": "You can continue to adjust the fields below after selecting a preset."
+    "hint": "You can continue to adjust the fields below after selecting a preset.",
+    "searchPlaceholder": "Search providers...",
+    "noMatches": "No matching presets · \"Custom Configuration\" allows any custom provider"
   },
   "usage": {
     "title": "Usage Statistics",

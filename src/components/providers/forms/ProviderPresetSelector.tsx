@@ -1,7 +1,9 @@
+import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 import { ClaudeIcon, CodexIcon, GeminiIcon } from "@/components/BrandIcons";
-import { Zap, Star, Layers, Settings2 } from "lucide-react";
+import { Zap, Star, Layers, Settings2, Search } from "lucide-react";
 import type { ProviderPreset } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
 import type { GeminiProviderPreset } from "@/config/geminiProviderPresets";
@@ -50,6 +52,18 @@ export function ProviderPresetSelector({
   category,
 }: ProviderPresetSelectorProps) {
   const { t } = useTranslation();
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const filteredPresetEntries = useMemo(() => {
+    const keyword = searchQuery.trim().toLowerCase();
+    if (!keyword) return presetEntries;
+    return presetEntries.filter((entry) => {
+      const displayName = entry.preset.nameKey
+        ? t(entry.preset.nameKey)
+        : entry.preset.name;
+      return displayName.toLowerCase().includes(keyword);
+    });
+  }, [searchQuery, presetEntries, t]);
 
   const getCategoryHint = (): React.ReactNode => {
     switch (category) {
@@ -130,7 +144,21 @@ export function ProviderPresetSelector({
 
   return (
     <div className="space-y-3">
-      <FormLabel>{t("providerPreset.label")}</FormLabel>
+      <div className="flex items-center justify-between gap-4">
+        <FormLabel>{t("providerPreset.label")}</FormLabel>
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={t("providerPreset.searchPlaceholder", {
+              defaultValue: "Search providers...",
+            })}
+            className="h-8 w-50 pl-8 text-sm"
+          />
+        </div>
+      </div>
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
@@ -144,7 +172,7 @@ export function ProviderPresetSelector({
           {t("providerPreset.custom")}
         </button>
 
-        {presetEntries.map((entry) => {
+        {filteredPresetEntries.map((entry) => {
           const isSelected = selectedPresetId === entry.id;
           const isPartner = entry.preset.isPartner;
           const presetCategory = entry.preset.category ?? "others";
@@ -173,6 +201,15 @@ export function ProviderPresetSelector({
           );
         })}
       </div>
+
+      {searchQuery.trim() && filteredPresetEntries.length === 0 && (
+        <p className="text-sm text-muted-foreground">
+          {t("providerPreset.noMatches", {
+            defaultValue:
+              'No matching presets · "Custom Configuration" allows any custom provider',
+          })}
+        </p>
+      )}
 
       {onUniversalPresetSelect && universalProviderPresets.length > 0 && (
         <>
