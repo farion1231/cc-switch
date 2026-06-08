@@ -2201,7 +2201,7 @@
       "skillCount": "{{count}} skills detected"
     },
     "search": "Search Skills",
-    "searchPlaceholder": "Search skill name or repo...",
+    "searchPlaceholder": "Search skills, space to separate...",
     "searchSource": {
       "repos": "Repos",
       "skillssh": "skills.sh"
@@ -2221,9 +2221,7 @@
       "installed": "Installed",
       "uninstalled": "Not installed",
       "repo": "Filter by repo",
-      "allRepos": "All repos",
-      "source": "Filter by source",
-      "allSources": "All sources"
+      "allRepos": "All repos"
     },
     "noResults": "No matching skills found",
     "noInstalled": "No skills installed",
@@ -2267,6 +2265,43 @@
       "gemini": "Gemini",
       "opencode": "OpenCode",
       "openclaw": "OpenClaw"
+    },
+    "detail": {
+      "title": "Skill Details",
+      "description": "Description",
+      "noDescription": "No description",
+      "directory": "Directory",
+      "source": "Source",
+      "local": "Local",
+      "branch": "Branch",
+      "installedAt": "Installed",
+      "updatedAt": "Updated",
+      "enabledApps": "Enabled Apps",
+      "viewOnGitHub": "View on GitHub"
+    },
+    "batch": {
+      "selected": "{{count}} selected",
+      "selectAll": "Select all",
+      "enable": "Enable",
+      "disable": "Disable",
+      "toggleApps": "Enable/Disable",
+      "deleteSelected": "Delete selected",
+      "deleteConfirmTitle": "Delete Selected Skills",
+      "deleteConfirmMessage": "Are you sure you want to delete {{count}} selected skills? Backups are created automatically before deletion and can be restored.",
+      "toggleSuccess": "{{action}} {{count}} skills for {{app}}",
+      "deleteSuccess": "Deleted {{count}} skills",
+      "enableAction": "Enable",
+      "disableAction": "Disable",
+      "changeSource": "Change Source",
+      "changeSourceTitle": "Change Source",
+      "changeSourceDescription": "Associate {{count}} selected skills with a repository so they can receive updates from it.",
+      "selectRepo": "Select Repository",
+      "customRepo": "Custom Repository",
+      "repoOwner": "Owner",
+      "repoName": "Repository",
+      "repoBranch": "Branch",
+      "subdirectory": "Subdirectory (optional, e.g. skills)",
+      "sourceChangeSuccess": "Changed the source of {{count}} skills to {{repo}}"
     },
     "installFromZip": {
       "button": "Install from ZIP",

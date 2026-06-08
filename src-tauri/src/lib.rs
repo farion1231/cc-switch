@@ -1322,6 +1322,7 @@ pub fn run() {
             commands::uninstall_skill_unified,
             commands::restore_skill_backup,
             commands::toggle_skill_app,
+            commands::batch_update_skill_source,
             commands::scan_unmanaged_skills,
             commands::import_skills_from_apps,
             commands::discover_available_skills,

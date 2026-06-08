@@ -177,6 +177,23 @@ export const skillsApi = {
     return await invoke("toggle_skill_app", { id, app, enabled });
   },
 
+  /** 批量更新 Skills 的来源（仓库信息） */
+  async batchUpdateSource(
+    ids: string[],
+    repoOwner: string,
+    repoName: string,
+    repoBranch: string,
+    subdirectory?: string,
+  ): Promise<number> {
+    return await invoke("batch_update_skill_source", {
+      ids,
+      repoOwner,
+      repoName,
+      repoBranch,
+      subdirectory: subdirectory ?? null,
+    });
+  },
+
   /** 扫描未管理的 Skills */
   async scanUnmanaged(): Promise<UnmanagedSkill[]> {
     return await invoke("scan_unmanaged_skills");
