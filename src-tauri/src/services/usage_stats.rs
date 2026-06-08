@@ -1651,6 +1651,10 @@ impl Database {
             return Ok(Some(pricing));
         }
 
+        if !is_placeholder_pricing_model(&log.model) {
+            return Ok(None);
+        }
+
         let Some(request_model) = log.request_model.as_deref() else {
             return Ok(None);
         };
@@ -2155,7 +2159,7 @@ mod tests {
     }
 
     #[test]
-    fn test_backfill_missing_usage_costs_falls_back_to_request_model() -> Result<(), AppError> {
+    fn test_backfill_falls_back_to_request_model_for_placeholder() -> Result<(), AppError> {
         let db = Database::memory()?;
 
         {
@@ -2167,7 +2171,7 @@ mod tests {
                     input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
                     total_cost_usd, latency_ms, status_code, created_at, data_source
                 ) VALUES (
-                    'codex-request-model-fallback', '_codex_session', 'codex', 'unknown', 'gpt-5.5',
+                    'codex-unknown-model-placeholder', '_codex_session', 'codex', 'unknown', 'gpt-5.5',
                     1000000, 0, 0, 0,
                     '0', '0', '0', '0',
                     '0', 100, 200, 1000, 'codex_session'
@@ -2181,11 +2185,47 @@ mod tests {
         let conn = lock_conn!(db.conn);
         let total_cost: String = conn.query_row(
             "SELECT total_cost_usd
-             FROM proxy_request_logs WHERE request_id = 'codex-request-model-fallback'",
+             FROM proxy_request_logs WHERE request_id = 'codex-unknown-model-placeholder'",
             [],
             |row| row.get(0),
         )?;
         assert_eq!(total_cost, "5.000000");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_backfill_does_not_fall_back_when_model_is_not_placeholder() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
+                    total_cost_usd, latency_ms, status_code, created_at, data_source
+                ) VALUES (
+                    'routing-no-fallback', '_proxy', 'codex', 'deepseek-v4-pro-202606', 'claude-opus-4-8',
+                    1000000, 0, 0, 0,
+                    '0', '0', '0', '0',
+                    '0', 100, 200, 1000, 'proxy'
+                )",
+                [],
+            )?;
+        }
+
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+
+        let conn = lock_conn!(db.conn);
+        let total_cost: String = conn.query_row(
+            "SELECT total_cost_usd
+             FROM proxy_request_logs WHERE request_id = 'routing-no-fallback'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(total_cost, "0");
 
         Ok(())
     }
