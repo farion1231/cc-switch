@@ -12,9 +12,12 @@ use crate::services::skill::{
     SkillsShSearchResult,
 };
 use crate::store::AppState;
+use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
+use tauri::AppHandle;
 use tauri::State;
+use tauri_plugin_opener::OpenerExt;
 
 /// SkillService 状态包装
 pub struct SkillServiceState(pub Arc<SkillService>);
@@ -333,4 +336,154 @@ pub fn install_skills_from_zip(
     let path = std::path::Path::new(&file_path);
 
     SkillService::install_from_zip(&app_state.db, path, &app_type).map_err(|e| e.to_string())
+}
+
+// ========== 标签管理命令 ==========
+
+/// 获取所有技能标签
+#[tauri::command]
+pub fn get_skill_tags(
+    app_state: State<'_, AppState>,
+) -> Result<Vec<crate::database::SkillTag>, String> {
+    app_state.db.get_all_skill_tags().map_err(|e| e.to_string())
+}
+
+/// 创建技能标签
+#[tauri::command]
+pub fn create_skill_tag(
+    name: String,
+    app_state: State<'_, AppState>,
+) -> Result<crate::database::SkillTag, String> {
+    app_state
+        .db
+        .create_skill_tag(&name)
+        .map_err(|e| e.to_string())
+}
+
+/// 更新技能标签名称
+#[tauri::command]
+pub fn update_skill_tag(
+    id: i64,
+    name: String,
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    app_state
+        .db
+        .update_skill_tag(id, &name)
+        .map_err(|e| e.to_string())
+}
+
+/// 删除技能标签
+#[tauri::command]
+pub fn delete_skill_tag(id: i64, app_state: State<'_, AppState>) -> Result<bool, String> {
+    app_state.db.delete_skill_tag(id).map_err(|e| e.to_string())
+}
+
+/// 批量更新标签排序
+#[tauri::command]
+pub fn reorder_skill_tags(
+    ordered_ids: Vec<i64>,
+    app_state: State<'_, AppState>,
+) -> Result<(), String> {
+    app_state
+        .db
+        .reorder_skill_tags(&ordered_ids)
+        .map_err(|e| e.to_string())
+}
+
+/// 设置技能的标签分配（替换现有分配）
+#[tauri::command]
+pub fn set_skill_tags(
+    skill_id: String,
+    tag_ids: Vec<i64>,
+    app_state: State<'_, AppState>,
+) -> Result<(), String> {
+    app_state
+        .db
+        .set_skill_tags(&skill_id, &tag_ids)
+        .map_err(|e| e.to_string())
+}
+
+/// 获取所有标签分配关系
+#[tauri::command]
+pub fn get_all_skill_tag_assignments(
+    app_state: State<'_, AppState>,
+) -> Result<Vec<(String, i64)>, String> {
+    app_state
+        .db
+        .get_all_skill_tag_assignments()
+        .map_err(|e| e.to_string())
+}
+
+/// 在系统文件管理器中打开技能目录
+#[tauri::command]
+pub async fn open_skill_directory(handle: AppHandle, directory: String) -> Result<(), String> {
+    let ssot_dir = SkillService::get_ssot_dir().map_err(|e| e.to_string())?;
+    let dir = resolve_skill_directory(&ssot_dir, &directory)?;
+
+    handle
+        .opener()
+        .open_path(dir.to_string_lossy().to_string(), None::<String>)
+        .map_err(|e| format!("Failed to open directory: {e}"))
+}
+
+fn resolve_skill_directory(ssot_dir: &Path, directory: &str) -> Result<PathBuf, String> {
+    let requested = Path::new(&directory);
+    if directory.trim().is_empty()
+        || requested.is_absolute()
+        || requested.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err("Invalid skill directory".to_string());
+    }
+
+    let ssot_dir = ssot_dir
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve skills directory: {e}"))?;
+    let dir = ssot_dir.join(requested);
+    let dir = dir
+        .canonicalize()
+        .map_err(|_| format!("Directory not found: {}", dir.display()))?;
+
+    if !dir.starts_with(&ssot_dir) || !dir.is_dir() {
+        return Err("Invalid skill directory".to_string());
+    }
+
+    Ok(dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_skill_directory;
+
+    #[test]
+    fn resolve_skill_directory_rejects_escape_paths() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let ssot = temp.path().join("skills");
+        std::fs::create_dir(&ssot).expect("create ssot");
+        std::fs::create_dir(temp.path().join("outside")).expect("create outside");
+
+        assert!(resolve_skill_directory(&ssot, "").is_err());
+        assert!(resolve_skill_directory(&ssot, "../outside").is_err());
+        assert!(resolve_skill_directory(&ssot, temp.path().to_string_lossy().as_ref()).is_err());
+
+        #[cfg(windows)]
+        assert!(resolve_skill_directory(&ssot, r"C:\Users").is_err());
+    }
+
+    #[test]
+    fn resolve_skill_directory_accepts_existing_relative_directory() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let ssot = temp.path().join("skills");
+        let skill = ssot.join("my-skill");
+        std::fs::create_dir(&ssot).expect("create ssot");
+        std::fs::create_dir(&skill).expect("create skill");
+
+        let resolved = resolve_skill_directory(&ssot, "my-skill").expect("resolve skill");
+        assert_eq!(resolved, skill.canonicalize().expect("canonical skill"));
+    }
 }

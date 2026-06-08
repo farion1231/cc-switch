@@ -38,6 +38,24 @@ Development since v3.16.0 focuses on hardening Codex provider switching and Loca
 - **Anthropic Tool Thinking History for Kimi / Moonshot**: Added Kimi and Moonshot to the Anthropic-compatible tool-thinking history normalizer so later turns can replay reasoning and tool-call context correctly.
 - **Windows Tool Version Probing**: Fixed Windows version checks that could misquote `.cmd` / `.bat` commands and decode localized command output as mojibake, causing working tools to appear as "installed but not runnable".
 
+### Added
+
+- **技能标签分组功能**: 新增标签 CRUD 管理（创建/重命名/删除/拖拽排序）、标签分配 Popover、分组视图（支持拖拽技能到不同分组、分组排序、空标签保留作为 drop target）、内联编辑分组名称（双击重命名），数据库 v10→v11 自动迁移，4 种语言支持（en/zh/zh-TW/ja）
+- **在文件管理器中打开技能目录**: 每个技能行新增文件夹图标按钮，点击可直接在系统文件管理器中打开对应技能目录
+
+### Changed
+
+- **管理标签弹窗布局**: 优化管理标签弹窗的信息层级与操作布局，新增标签输入区前置，标签数量改为标题旁徽标，并使用更轻量的列表行样式
+
+### Fixed
+
+- **技能标签数据库操作原子性**: `set_skill_tags` 方法使用事务包裹 delete+insert，防止外键约束失败导致标签丢失
+- **技能标签分配保留**: 更新或重装已安装技能时不再因 SQLite `REPLACE` 语义清空已有标签分配
+- **技能标签 i18n key 修正**: TagAssignPopover 中的 i18n key 从 `skills.assignTags`/`skills.tagsFor`/`skills.noTags`/`skills.newTagPlaceholder` 修正为 `skills.tags.*` 命名空间下的正确 key
+- **未分组拖拽处理**: 将技能拖回未分组区域时正确清空标签分配，避免提交无效标签 ID
+- **分组视图空标签可见性**: 移除 `groupSkills.length > 0` 过滤条件，空标签现在作为有效的 drop target 显示在分组视图中
+- **Rust 编译警告修复**: 修复 3 个编译警告（`unused import`、`dead_code`），通过条件编译和移动 import 解决跨平台兼容性问题
+
 ## [3.16.0] - 2026-05-29
 
 Development since v3.15.0 focuses on making third-party Codex providers work like first-class citizens through Chat Completions routing, stabilizing Codex provider identity and history, adding an in-app managed CLI tool lifecycle, expanding the partner preset catalog, refreshing the default model / pricing matrix around GPT-5.5 and Claude Opus 4.8, and improving usage observability, localization, docs, and proxy robustness.

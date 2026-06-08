@@ -2115,7 +2115,32 @@
       "successSingle": "技能 {{name}} 已安裝",
       "successMultiple": "成功安裝 {{count}} 個技能",
       "noSkillsFound": "ZIP 檔案中未找到技能（需包含 SKILL.md 檔案）"
-    }
+    },
+    "tags": {
+      "manage": "管理標籤",
+      "create": "建立標籤",
+      "rename": "重新命名標籤",
+      "delete": "刪除標籤",
+      "deleteConfirm": "刪除標籤「{{name}}」將從所有關聯技能中移除該標籤，技能本身不會被刪除。",
+      "untagged": "預設",
+      "assignTag": "分配標籤",
+      "noTags": "還沒有建立標籤",
+      "tagNamePlaceholder": "標籤名稱...",
+      "listView": "列表視圖",
+      "groupedView": "分組視圖",
+      "doubleClickToEdit": "雙擊重新命名",
+      "moveSuccess": "技能已移動到新分組",
+      "renameSuccess": "標籤已重新命名",
+      "createSuccess": "標籤建立成功",
+      "createFailed": "標籤建立失敗",
+      "renameFailed": "標籤重新命名失敗",
+      "deleteSuccess": "標籤刪除成功",
+      "deleteFailed": "標籤刪除失敗",
+      "reorderSuccess": "排序已更新",
+      "reorderFailed": "排序更新失敗",
+      "count": "{{count}} 個標籤"
+    },
+    "openDirectory": "在檔案管理員中開啟"
   },
   "deeplink": {
     "confirmImport": "確認匯入供應商設定",

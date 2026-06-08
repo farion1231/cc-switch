@@ -12,6 +12,7 @@ import {
   type InstalledSkill,
   type SkillUpdateInfo,
   type SkillsShSearchResult,
+  type SkillTag,
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 import { mergeImportedSkills } from "@/hooks/useSkills.helpers";
@@ -354,5 +355,117 @@ export type {
   SkillBackupEntry,
   SkillUpdateInfo,
   SkillsShSearchResult,
+  SkillTag,
   AppId,
 };
+
+// ========== 标签管理 Hooks ==========
+
+/**
+ * 查询所有技能标签
+ * 使用 staleTime: Infinity，仅在 mutation 后手动更新缓存
+ */
+export function useSkillTags() {
+  return useQuery({
+    queryKey: ["skills", "tags"],
+    queryFn: () => skillsApi.getTags(),
+    staleTime: Infinity,
+    placeholderData: keepPreviousData,
+  });
+}
+
+/**
+ * 查询所有标签分配关系
+ * 返回 Record<skillId, tagId[]> 的映射
+ */
+export function useAllTagAssignments() {
+  return useQuery({
+    queryKey: ["skills", "tag-assignments"],
+    queryFn: () => skillsApi.getAllTagAssignments(),
+    staleTime: Infinity,
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** 创建标签 */
+export function useCreateTag() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => skillsApi.createTag(name),
+    onSuccess: (newTag) => {
+      queryClient.setQueryData<SkillTag[]>(["skills", "tags"], (old) => {
+        if (!old) return [newTag];
+        return [...old, newTag];
+      });
+    },
+  });
+}
+
+/** 更新标签名称 */
+export function useUpdateTag() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, name }: { id: number; name: string }) =>
+      skillsApi.updateTag(id, name),
+    onSuccess: (_result, variables) => {
+      queryClient.setQueryData<SkillTag[]>(["skills", "tags"], (old) => {
+        if (!old) return old;
+        return old.map((tag) =>
+          tag.id === variables.id ? { ...tag, name: variables.name } : tag,
+        );
+      });
+    },
+  });
+}
+
+/** 删除标签 */
+export function useDeleteTag() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => skillsApi.deleteTag(id),
+    onSuccess: (_result, id) => {
+      queryClient.setQueryData<SkillTag[]>(["skills", "tags"], (old) => {
+        if (!old) return old;
+        return old.filter((tag) => tag.id !== id);
+      });
+      // 标签删除后，分配关系也变了，需要刷新
+      queryClient.invalidateQueries({
+        queryKey: ["skills", "tag-assignments"],
+      });
+    },
+  });
+}
+
+/** 批量更新标签排序 */
+export function useReorderTags() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (orderedIds: number[]) => skillsApi.reorderTags(orderedIds),
+    onSuccess: (_result, orderedIds) => {
+      queryClient.setQueryData<SkillTag[]>(["skills", "tags"], (old) => {
+        if (!old) return old;
+        const tagMap = new Map(old.map((t) => [t.id, t]));
+        return orderedIds
+          .map((id, index) => {
+            const tag = tagMap.get(id);
+            return tag ? { ...tag, sort_index: index } : null;
+          })
+          .filter(Boolean) as SkillTag[];
+      });
+    },
+  });
+}
+
+/** 设置技能的标签分配 */
+export function useSetSkillTags() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ skillId, tagIds }: { skillId: string; tagIds: number[] }) =>
+      skillsApi.setSkillTags(skillId, tagIds),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["skills", "tag-assignments"],
+      });
+    },
+  });
+}

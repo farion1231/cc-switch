@@ -2169,7 +2169,32 @@
       "successSingle": "Skill {{name}} installed",
       "successMultiple": "Successfully installed {{count}} skills",
       "noSkillsFound": "No skills found in ZIP file (requires SKILL.md file)"
-    }
+    },
+    "tags": {
+      "manage": "Manage Tags",
+      "create": "Create Tag",
+      "rename": "Rename Tag",
+      "delete": "Delete Tag",
+      "deleteConfirm": "Deleting tag \"{{name}}\" will remove it from all associated skills. Skills themselves will not be deleted.",
+      "untagged": "Default",
+      "assignTag": "Assign Tags",
+      "noTags": "No tags created yet",
+      "tagNamePlaceholder": "Tag name...",
+      "listView": "List View",
+      "groupedView": "Grouped View",
+      "doubleClickToEdit": "Double-click to rename",
+      "moveSuccess": "Skill moved to group",
+      "renameSuccess": "Tag renamed",
+      "createSuccess": "Tag created",
+      "createFailed": "Failed to create tag",
+      "renameFailed": "Failed to rename tag",
+      "deleteSuccess": "Tag deleted",
+      "deleteFailed": "Failed to delete tag",
+      "reorderSuccess": "Order updated",
+      "reorderFailed": "Failed to update order",
+      "count": "{{count}} tags"
+    },
+    "openDirectory": "Open in file manager"
   },
   "deeplink": {
     "confirmImport": "Confirm Import Provider",

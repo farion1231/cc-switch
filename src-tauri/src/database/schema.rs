@@ -287,6 +287,31 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 19. Skill Tags 表 (技能标签)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS skill_tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                sort_index INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT 0
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 20. Skill Tag Assignments 表 (技能标签关联，多对多)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS skill_tag_assignments (
+                skill_id TEXT NOT NULL,
+                tag_id INTEGER NOT NULL,
+                PRIMARY KEY (skill_id, tag_id),
+                FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE,
+                FOREIGN KEY (tag_id) REFERENCES skill_tags(id) ON DELETE CASCADE
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 尝试添加 live_takeover_active 列到 proxy_config 表
         let _ = conn.execute(
             "ALTER TABLE proxy_config ADD COLUMN live_takeover_active INTEGER NOT NULL DEFAULT 0",
@@ -430,6 +455,11 @@ impl Database {
                         log::info!("迁移数据库从 v9 到 v10（添加 Hermes Agent 支持）");
                         Self::migrate_v9_to_v10(conn)?;
                         Self::set_user_version(conn, 10)?;
+                    }
+                    10 => {
+                        log::info!("迁移数据库从 v10 到 v11（添加 Skills 标签分组支持）");
+                        Self::migrate_v10_to_v11(conn)?;
+                        Self::set_user_version(conn, 11)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1197,6 +1227,37 @@ impl Database {
         }
 
         log::info!("v9 -> v10 迁移完成：已添加 Hermes Agent 支持");
+        Ok(())
+    }
+
+    /// v10 -> v11 迁移：添加 Skills 标签分组支持
+    fn migrate_v10_to_v11(conn: &Connection) -> Result<(), AppError> {
+        // 创建 skill_tags 表
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS skill_tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                sort_index INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT 0
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 skill_tags 表失败: {e}")))?;
+
+        // 创建 skill_tag_assignments 表（多对多关联，级联删除）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS skill_tag_assignments (
+                skill_id TEXT NOT NULL,
+                tag_id INTEGER NOT NULL,
+                PRIMARY KEY (skill_id, tag_id),
+                FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE,
+                FOREIGN KEY (tag_id) REFERENCES skill_tags(id) ON DELETE CASCADE
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 skill_tag_assignments 表失败: {e}")))?;
+
+        log::info!("v10 -> v11 迁移完成：已添加 skill_tags 和 skill_tag_assignments 表");
         Ok(())
     }
 

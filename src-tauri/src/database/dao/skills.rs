@@ -107,11 +107,27 @@ impl Database {
     pub fn save_skill(&self, skill: &InstalledSkill) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute(
-            "INSERT OR REPLACE INTO skills
+            "INSERT INTO skills
              (id, name, description, directory, repo_owner, repo_name, repo_branch,
               readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_hermes,
               installed_at, content_hash, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+             ON CONFLICT(id) DO UPDATE SET
+               name = excluded.name,
+               description = excluded.description,
+               directory = excluded.directory,
+               repo_owner = excluded.repo_owner,
+               repo_name = excluded.repo_name,
+               repo_branch = excluded.repo_branch,
+               readme_url = excluded.readme_url,
+               enabled_claude = excluded.enabled_claude,
+               enabled_codex = excluded.enabled_codex,
+               enabled_gemini = excluded.enabled_gemini,
+               enabled_opencode = excluded.enabled_opencode,
+               enabled_hermes = excluded.enabled_hermes,
+               installed_at = excluded.installed_at,
+               content_hash = excluded.content_hash,
+               updated_at = excluded.updated_at",
             params![
                 skill.id,
                 skill.name,
@@ -259,5 +275,59 @@ impl Database {
             log::info!("补充默认 Skill 仓库完成，新增 {count} 个");
         }
         Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app_config::{InstalledSkill, SkillApps};
+    use rusqlite::Connection;
+    use std::sync::Mutex;
+
+    fn test_db() -> Database {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        conn.execute("PRAGMA foreign_keys = ON;", [])
+            .expect("enable foreign keys");
+        Database::create_tables_on_conn(&conn).expect("create tables");
+        Database {
+            conn: Mutex::new(conn),
+        }
+    }
+
+    fn skill(name: &str) -> InstalledSkill {
+        InstalledSkill {
+            id: "owner/repo:skill".to_string(),
+            name: name.to_string(),
+            description: Some("description".to_string()),
+            directory: "skill".to_string(),
+            repo_owner: Some("owner".to_string()),
+            repo_name: Some("repo".to_string()),
+            repo_branch: Some("main".to_string()),
+            readme_url: None,
+            apps: SkillApps::default(),
+            installed_at: 1,
+            content_hash: Some("hash".to_string()),
+            updated_at: 1,
+        }
+    }
+
+    #[test]
+    fn save_skill_update_preserves_tag_assignments() {
+        let db = test_db();
+        db.save_skill(&skill("Old Name")).expect("insert skill");
+        let tag = db.create_skill_tag("Work").expect("create tag");
+        db.set_skill_tags("owner/repo:skill", &[tag.id])
+            .expect("assign tag");
+
+        let mut updated = skill("New Name");
+        updated.updated_at = 2;
+        db.save_skill(&updated).expect("update skill");
+
+        let assigned = db
+            .get_skill_tag_ids("owner/repo:skill")
+            .expect("load assigned tags");
+        assert_eq!(assigned.len(), 1);
+        assert_eq!(assigned[0], tag.id);
     }
 }
