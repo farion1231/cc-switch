@@ -70,14 +70,16 @@ pub async fn upload(
     let dir_segs = remote_dir_segments(settings, RemoteLayout::Current);
     ensure_remote_directories(&settings.base_url, &dir_segs, &auth).await?;
 
-    let snapshot = build_local_snapshot(db)?;
+    let snapshot = build_local_snapshot(db, &settings.sync_scope)?;
 
     // Upload order: artifacts first, manifest last (best-effort consistency)
     let db_url = remote_file_url(settings, RemoteLayout::Current, REMOTE_DB_SQL)?;
     put_bytes(&db_url, &auth, snapshot.db_sql, "application/sql").await?;
 
-    let skills_url = remote_file_url(settings, RemoteLayout::Current, REMOTE_SKILLS_ZIP)?;
-    put_bytes(&skills_url, &auth, snapshot.skills_zip, "application/zip").await?;
+    if let Some(skills_zip) = snapshot.skills_zip {
+        let skills_url = remote_file_url(settings, RemoteLayout::Current, REMOTE_SKILLS_ZIP)?;
+        put_bytes(&skills_url, &auth, skills_zip, "application/zip").await?;
+    }
 
     let manifest_url = remote_file_url(settings, RemoteLayout::Current, REMOTE_MANIFEST)?;
     put_bytes(
@@ -134,17 +136,24 @@ pub async fn download(
         &snapshot.manifest.artifacts,
     )
     .await?;
-    let skills_zip = download_and_verify(
-        settings,
-        &auth,
-        snapshot.layout,
-        REMOTE_SKILLS_ZIP,
-        &snapshot.manifest.artifacts,
-    )
-    .await?;
+    let should_restore_skills = settings.sync_scope.skills && snapshot.manifest.sync_scope.skills;
+    let skills_zip = if should_restore_skills {
+        Some(
+            download_and_verify(
+                settings,
+                &auth,
+                snapshot.layout,
+                REMOTE_SKILLS_ZIP,
+                &snapshot.manifest.artifacts,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
 
     // Apply snapshot
-    apply_snapshot(db, &db_sql, &skills_zip)?;
+    apply_snapshot(db, &db_sql, skills_zip.as_deref(), &settings.sync_scope)?;
 
     let manifest_hash = sha256_hex(&snapshot.manifest_bytes);
     let _persisted = persist_sync_success_best_effort(
@@ -179,6 +188,7 @@ pub async fn fetch_remote_info(settings: &WebDavSyncSettings) -> Result<Option<V
         "dbCompatVersion": db_compat_version,
         "compatible": compatible,
         "artifacts": snapshot.manifest.artifacts.keys().collect::<Vec<_>>(),
+        "syncScope": snapshot.manifest.sync_scope,
         "layout": snapshot.layout.as_str(),
         "remotePath": remote_dir_display(settings, snapshot.layout),
     });

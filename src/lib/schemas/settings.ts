@@ -45,6 +45,14 @@ export const settingsSchema = z.object({
       password: z.string().optional(),
       remoteRoot: z.string().trim().optional().or(z.literal("")),
       profile: z.string().trim().optional().or(z.literal("")),
+      syncScope: z
+        .object({
+          providers: z.boolean().optional(),
+          settings: z.boolean().optional(),
+          mcp: z.boolean().optional(),
+          skills: z.boolean().optional(),
+        })
+        .optional(),
       status: z
         .object({
           lastSyncAt: z.number().nullable().optional(),

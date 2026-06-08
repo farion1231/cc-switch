@@ -9,12 +9,14 @@ import {
   Check,
   Info,
   AlertTriangle,
+  Trash2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -171,12 +173,22 @@ function buildPasswordPreservationKey(values: {
   });
 }
 
+function normalizeWebdavScope(scope?: WebDavSyncSettings["syncScope"]) {
+  return {
+    providers: true,
+    settings: true,
+    mcp: scope?.mcp ?? false,
+    skills: scope?.skills ?? false,
+  };
+}
+
 // ─── Types ──────────────────────────────────────────────────
 
 type ActionState =
   | "idle"
   | "testing"
   | "saving"
+  | "clearing"
   | "uploading"
   | "downloading"
   | "fetching_remote";
@@ -270,6 +282,8 @@ export function WebdavSyncSection({
     remoteRoot: config?.remoteRoot ?? "cc-switch-sync",
     profile: config?.profile ?? "default",
     autoSync: config?.autoSync ?? false,
+    syncMcp: config?.syncScope?.mcp ?? false,
+    syncSkills: config?.syncScope?.skills ?? false,
   }));
 
   // ─── S3 form state ─────────────────────────────────────────
@@ -314,6 +328,9 @@ export function WebdavSyncSection({
   const [dialogType, setDialogType] = useState<DialogType>(null);
   const [remoteInfo, setRemoteInfo] = useState<RemoteSnapshotInfo | null>(null);
   const [showAutoSyncConfirm, setShowAutoSyncConfirm] = useState(false);
+  const [showClearWebdavConfirm, setShowClearWebdavConfirm] = useState(false);
+  const [showClearWebdavFinalConfirm, setShowClearWebdavFinalConfirm] =
+    useState(false);
 
   const closeDialog = useCallback(() => {
     setDialogType(null);
@@ -342,6 +359,7 @@ export function WebdavSyncSection({
       const nextUsername = config.username ?? "";
       const nextRemoteRoot = config.remoteRoot ?? "cc-switch-sync";
       const nextProfile = config.profile ?? "default";
+      const nextScope = normalizeWebdavScope(config.syncScope);
       const nextKey = buildPasswordPreservationKey({
         baseUrl: nextBaseUrl,
         username: nextUsername,
@@ -366,6 +384,8 @@ export function WebdavSyncSection({
         remoteRoot: nextRemoteRoot,
         profile: nextProfile,
         autoSync: config.autoSync ?? false,
+        syncMcp: nextScope.mcp,
+        syncSkills: nextScope.skills,
       };
     });
     setPasswordTouched(false);
@@ -399,6 +419,19 @@ export function WebdavSyncSection({
       justSavedTimerRef.current = null;
     }
   }, []);
+
+  const updateScopeField = useCallback(
+    (field: "syncMcp" | "syncSkills", checked: boolean) => {
+      setForm((prev) => ({ ...prev, [field]: checked }));
+      setDirty(true);
+      setJustSaved(false);
+      if (justSavedTimerRef.current) {
+        clearTimeout(justSavedTimerRef.current);
+        justSavedTimerRef.current = null;
+      }
+    },
+    [],
+  );
 
   const handlePresetChange = useCallback((id: string) => {
     setPresetId(id);
@@ -464,6 +497,12 @@ export function WebdavSyncSection({
       remoteRoot: form.remoteRoot.trim() || "cc-switch-sync",
       profile: form.profile.trim() || "default",
       autoSync: form.autoSync,
+      syncScope: {
+        providers: true,
+        settings: true,
+        mcp: form.syncMcp,
+        skills: form.syncSkills,
+      },
     };
   }, [form, passwordTouched]);
 
@@ -541,6 +580,59 @@ export function WebdavSyncSection({
       setActionState("idle");
     }
   }, [buildSettings, form.password, passwordTouched, queryClient, t]);
+
+  const handleClearWebdavConfirm = useCallback(async () => {
+    setShowClearWebdavFinalConfirm(false);
+    setActionState("clearing");
+    const clearedSettings: WebDavSyncSettings = {
+      enabled: false,
+      autoSync: false,
+      baseUrl: "",
+      username: "",
+      password: "",
+      remoteRoot: "cc-switch-sync",
+      profile: "default",
+      syncScope: {
+        providers: true,
+        settings: true,
+        mcp: false,
+        skills: false,
+      },
+    };
+
+    try {
+      await settingsApi.webdavSyncSaveSettings(clearedSettings, true);
+      setForm({
+        baseUrl: "",
+        username: "",
+        password: "",
+        remoteRoot: "cc-switch-sync",
+        profile: "default",
+        autoSync: false,
+        syncMcp: false,
+        syncSkills: false,
+      });
+      setPresetId("custom");
+      setDirty(false);
+      setPasswordTouched(false);
+      setJustSaved(false);
+      pendingPasswordPreservationRef.current = null;
+      if (justSavedTimerRef.current) {
+        clearTimeout(justSavedTimerRef.current);
+        justSavedTimerRef.current = null;
+      }
+      toast.success(t("settings.webdavSync.clearSuccess"));
+      await queryClient.invalidateQueries();
+    } catch (error) {
+      toast.error(
+        t("settings.webdavSync.clearFailed", {
+          error: (error as Error)?.message ?? String(error),
+        }),
+      );
+    } finally {
+      setActionState("idle");
+    }
+  }, [queryClient, t]);
 
   /** Fetch remote info, then open upload confirmation dialog. */
   const handleUploadClick = useCallback(async () => {
@@ -947,6 +1039,21 @@ export function WebdavSyncSection({
     remoteInfo?.dbCompatVersion,
   );
   const remoteIsLegacy = remoteInfo?.layout === "legacy";
+  const webdavUploadScopeItems = [
+    t("settings.webdavSync.scope.providersAndSettings"),
+    ...(form.syncMcp ? [t("settings.webdavSync.scope.mcp")] : []),
+    ...(form.syncSkills ? [t("settings.webdavSync.scope.skills")] : []),
+  ];
+  const remoteScope = remoteInfo
+    ? normalizeWebdavScope(remoteInfo.syncScope)
+    : null;
+  const remoteScopeItems = remoteScope
+    ? [
+        t("settings.webdavSync.scope.providersAndSettings"),
+        ...(remoteScope.mcp ? [t("settings.webdavSync.scope.mcp")] : []),
+        ...(remoteScope.skills ? [t("settings.webdavSync.scope.skills")] : []),
+      ]
+    : [];
 
   const s3LastSyncAt = s3Config?.status?.lastSyncAt;
   const s3LastSyncDisplay = s3LastSyncAt
@@ -1106,6 +1213,55 @@ export function WebdavSyncSection({
               />
             </div>
 
+            {/* Sync scope */}
+            <div className="flex items-start gap-4">
+              <label className="w-40 text-xs font-medium text-foreground shrink-0">
+                {t("settings.webdavSync.scope.title")}
+                <span className="block text-[10px] font-normal text-muted-foreground">
+                  {t("settings.webdavSync.scope.hint")}
+                </span>
+              </label>
+              <div className="flex-1 space-y-2 text-xs">
+                <div className="flex items-start gap-2 rounded-md border border-border bg-background/70 px-3 py-2 text-muted-foreground">
+                  <Checkbox
+                    checked
+                    disabled
+                    aria-label={t(
+                      "settings.webdavSync.scope.providersAndSettings",
+                    )}
+                    className="mt-0.5 disabled:opacity-100"
+                  />
+                  <span>
+                    {t("settings.webdavSync.scope.providersAndSettings")}
+                  </span>
+                </div>
+                <label className="flex items-start gap-2 rounded-md border border-border bg-background/70 px-3 py-2">
+                  <Checkbox
+                    checked={form.syncMcp}
+                    onCheckedChange={(checked) =>
+                      updateScopeField("syncMcp", checked === true)
+                    }
+                    aria-label={t("settings.webdavSync.scope.mcp")}
+                    disabled={isLoading}
+                    className="mt-0.5"
+                  />
+                  <span>{t("settings.webdavSync.scope.mcp")}</span>
+                </label>
+                <label className="flex items-start gap-2 rounded-md border border-border bg-background/70 px-3 py-2">
+                  <Checkbox
+                    checked={form.syncSkills}
+                    onCheckedChange={(checked) =>
+                      updateScopeField("syncSkills", checked === true)
+                    }
+                    aria-label={t("settings.webdavSync.scope.skills")}
+                    disabled={isLoading}
+                    className="mt-0.5"
+                  />
+                  <span>{t("settings.webdavSync.scope.skills")}</span>
+                </label>
+              </div>
+            </div>
+
             <div className="flex items-start gap-4">
               <label className="w-40 text-xs font-medium text-foreground shrink-0">
                 {t("settings.webdavSync.autoSync")}
@@ -1165,6 +1321,18 @@ export function WebdavSyncSection({
               icon={Save}
               activeLabel={t("settings.webdavSync.saving")}
               idleLabel={t("settings.webdavSync.save")}
+            />
+            <ActionButton
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowClearWebdavConfirm(true)}
+              disabled={!hasSavedConfig && !dirty}
+              actionState={actionState}
+              targetState="clearing"
+              icon={Trash2}
+              activeLabel={t("settings.webdavSync.clearing")}
+              idleLabel={t("settings.webdavSync.clearConfig")}
             />
 
             {/* Save status indicator */}
@@ -1556,8 +1724,9 @@ export function WebdavSyncSection({
               <div className="space-y-3 text-sm leading-relaxed">
                 <p>{t("settings.webdavSync.confirmUpload.content")}</p>
                 <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
-                  <li>{t("settings.webdavSync.confirmUpload.dbItem")}</li>
-                  <li>{t("settings.webdavSync.confirmUpload.skillsItem")}</li>
+                  {webdavUploadScopeItems.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
                 </ul>
                 <p className="text-muted-foreground">
                   {t("settings.webdavSync.confirmUpload.targetPath")}
@@ -1598,6 +1767,14 @@ export function WebdavSyncSection({
                             {t("settings.webdavSync.confirmUpload.dbCompat")}
                           </dt>
                           <dd>{remoteDbCompatDisplay}</dd>
+                        </>
+                      )}
+                      {remoteScopeItems.length > 0 && (
+                        <>
+                          <dt className="font-medium text-foreground">
+                            {t("settings.webdavSync.confirmUpload.scope")}
+                          </dt>
+                          <dd>{remoteScopeItems.join(", ")}</dd>
                         </>
                       )}
                     </dl>
@@ -1676,6 +1853,14 @@ export function WebdavSyncSection({
                       {t("settings.webdavSync.confirmDownload.artifacts")}
                     </dt>
                     <dd>{remoteInfo.artifacts.join(", ")}</dd>
+                    {remoteScopeItems.length > 0 && (
+                      <>
+                        <dt className="font-medium text-foreground">
+                          {t("settings.webdavSync.confirmDownload.scope")}
+                        </dt>
+                        <dd>{remoteScopeItems.join(", ")}</dd>
+                      </>
+                    )}
                   </dl>
                 )}
                 {remoteInfo?.layout === "legacy" && (
@@ -1683,6 +1868,16 @@ export function WebdavSyncSection({
                     {t("settings.webdavSync.confirmDownload.legacyNotice")}
                   </p>
                 )}
+                <div>
+                  <p>
+                    {t("settings.webdavSync.confirmDownload.selectedScope")}
+                  </p>
+                  <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
+                    {webdavUploadScopeItems.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
                 <p className="text-destructive font-medium">
                   {t("settings.webdavSync.confirmDownload.warning")}
                 </p>
@@ -1861,6 +2056,28 @@ export function WebdavSyncSection({
         confirmText={t("confirm.autoSync.confirm")}
         onConfirm={() => void handleAutoSyncConfirm()}
         onCancel={() => setShowAutoSyncConfirm(false)}
+      />
+
+      <ConfirmDialog
+        isOpen={showClearWebdavConfirm}
+        title={t("settings.webdavSync.clearConfirmTitle")}
+        message={t("settings.webdavSync.clearConfirmMessage")}
+        confirmText={t("settings.webdavSync.clearContinue")}
+        variant="destructive"
+        onConfirm={() => {
+          setShowClearWebdavConfirm(false);
+          setShowClearWebdavFinalConfirm(true);
+        }}
+        onCancel={() => setShowClearWebdavConfirm(false)}
+      />
+      <ConfirmDialog
+        isOpen={showClearWebdavFinalConfirm}
+        title={t("settings.webdavSync.clearFinalConfirmTitle")}
+        message={t("settings.webdavSync.clearFinalConfirmMessage")}
+        confirmText={t("settings.webdavSync.clearFinalConfirm")}
+        variant="destructive"
+        onConfirm={handleClearWebdavConfirm}
+        onCancel={() => setShowClearWebdavFinalConfirm(false)}
       />
     </section>
   );

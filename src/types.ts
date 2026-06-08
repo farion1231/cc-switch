@@ -277,6 +277,13 @@ export interface WebDavSyncStatus {
   lastRemoteManifestHash?: string | null;
 }
 
+export interface SyncScope {
+  providers?: boolean;
+  settings?: boolean;
+  mcp?: boolean;
+  skills?: boolean;
+}
+
 // WebDAV 同步配置
 export interface WebDavSyncSettings {
   enabled?: boolean;
@@ -286,6 +293,7 @@ export interface WebDavSyncSettings {
   password?: string;
   remoteRoot?: string;
   profile?: string;
+  syncScope?: SyncScope;
   status?: WebDavSyncStatus;
 }
 
@@ -315,6 +323,7 @@ export interface RemoteSnapshotInfo {
   dbCompatVersion?: number | null;
   compatible: boolean;
   artifacts: string[];
+  syncScope?: SyncScope;
   layout: RemoteSnapshotLayout;
   remotePath: string;
 }

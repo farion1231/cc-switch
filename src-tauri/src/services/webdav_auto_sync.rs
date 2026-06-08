@@ -42,17 +42,16 @@ pub(crate) fn is_auto_sync_suppressed() -> bool {
 
 pub fn should_trigger_for_table(table: &str) -> bool {
     let normalized = table.trim().to_ascii_lowercase();
-    matches!(
-        normalized.as_str(),
-        "providers"
-            | "provider_endpoints"
-            | "mcp_servers"
-            | "prompts"
-            | "skills"
-            | "skill_repos"
-            | "settings"
-            | "proxy_config"
-    )
+    match normalized.as_str() {
+        "providers" | "provider_endpoints" | "prompts" | "settings" | "proxy_config" => true,
+        "mcp_servers" => settings::get_webdav_sync_settings()
+            .map(|sync| sync.sync_scope.mcp)
+            .unwrap_or(false),
+        "skills" | "skill_repos" => settings::get_webdav_sync_settings()
+            .map(|sync| sync.sync_scope.skills)
+            .unwrap_or(false),
+        _ => false,
+    }
 }
 
 pub(crate) fn enqueue_change_signal(tx: &Sender<String>, table: &str) -> bool {
