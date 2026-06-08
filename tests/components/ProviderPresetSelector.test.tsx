@@ -163,7 +163,7 @@ describe("ProviderPresetSelector", () => {
     expect(buttons[1].textContent).toMatch(/Zhipu|MiniMax|Anthropic/);
 
     // 点击 Sort 排序按钮
-    const sortButton = screen.getByRole("button", { name: /sort/i });
+    const sortButton = screen.getByRole("button", { name: /按首字母排序/i });
     await user.click(sortButton);
 
     // 排序后: Anthropic, MiniMax, Zhipu
@@ -209,7 +209,7 @@ describe("ProviderPresetSelector", () => {
     };
     render(<Wrapper />);
 
-    const sortButton = screen.getByRole("button", { name: /sort/i });
+    const sortButton = screen.getByRole("button", { name: /按首字母排序/i });
     await user.click(sortButton); // 开启 A-Z 排序
 
     const buttons = screen.getAllByRole("button");
@@ -339,7 +339,7 @@ describe("ProviderPresetSelector", () => {
     };
     render(<Wrapper />);
 
-    const sortButton = screen.getByRole("button", { name: /sort/i });
+    const sortButton = screen.getByRole("button", { name: /按首字母排序/i });
 
     // 开启排序
     await user.click(sortButton);
