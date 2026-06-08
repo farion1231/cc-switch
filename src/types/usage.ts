@@ -32,6 +32,7 @@ export interface RequestLog {
   errorMessage?: string;
   createdAt: number;
   dataSource?: string;
+  agent?: string;
 }
 
 export interface SessionSyncResult {

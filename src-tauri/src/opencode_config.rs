@@ -47,7 +47,11 @@ pub fn get_opencode_config_path() -> PathBuf {
 }
 
 /// 获取 OpenCode SQLite 数据库路径
-/// 优先级: OPENCODE_DB 环境变量 > XDG_DATA_HOME > ~/.local/share/opencode
+/// 优先级: OPENCODE_DB 环境变量 > XDG_DATA_HOME > APPDATA/LOCALAPPDATA (Windows) > ~/.local/share/opencode
+///
+/// Windows 上 opencode 不同的构建版本可能把数据库放到不同位置
+/// （有的走 XDG，有的走平台约定），所以实际取值在 `get_opencode_data_dir`
+/// 里探测式返回第一个含 `opencode.db` 的候选目录。
 pub fn get_opencode_db_path() -> PathBuf {
     // 支持 OPENCODE_DB 环境变量覆盖（忽略空字符串）
     if let Ok(custom_path) = std::env::var("OPENCODE_DB") {
@@ -65,19 +69,50 @@ pub fn get_opencode_db_path() -> PathBuf {
 }
 
 fn get_opencode_data_dir() -> PathBuf {
-    // 尊重 XDG_DATA_HOME（按 XDG 规范，空字符串视为未设置）
+    // 收集所有候选数据目录，按"在 opencode 实际安装位置里最可能命中"的顺序排列。
+    // 然后返回第一个已经在磁盘上存在 `opencode.db` 的目录，避免错过 Windows 上
+    // 不走 XDG 的 opencode 构建。
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    // 1. XDG_DATA_HOME（按 XDG 规范，空字符串视为未设置）
     if let Ok(xdg_data) = std::env::var("XDG_DATA_HOME") {
         if !xdg_data.is_empty() {
-            return PathBuf::from(xdg_data).join("opencode");
+            candidates.push(PathBuf::from(xdg_data).join("opencode"));
         }
     }
 
-    // OpenCode 使用 xdg-basedir，不遵守 macOS/Windows 平台约定，
-    // 所有平台默认都落在 ~/.local/share/opencode
-    crate::config::get_home_dir()
+    // 2. Windows 标准目录：部分 opencode 构建（scoop / 官方 .exe）会按
+    //    平台约定写到 %APPDATA%\opencode 或 %LOCALAPPDATA%\opencode。
+    //    在 macOS / Linux 上不添加这些候选。
+    #[cfg(target_os = "windows")]
+    {
+        for var in ["APPDATA", "LOCALAPPDATA"] {
+            if let Ok(dir) = std::env::var(var) {
+                if !dir.is_empty() {
+                    candidates.push(PathBuf::from(dir).join("opencode"));
+                }
+            }
+        }
+    }
+
+    // 3. XDG 默认路径：opencode 在所有平台都遵循 xdg-basedir 规范
+    //    （这跟它 README 一致），所以最终兜底一定是这个目录。
+    let xdg_default = crate::config::get_home_dir()
         .join(".local")
         .join("share")
-        .join("opencode")
+        .join("opencode");
+    candidates.push(xdg_default.clone());
+
+    // 探测：返回第一个已经存在 `opencode.db` 的目录
+    for c in &candidates {
+        if c.join("opencode.db").exists() {
+            return c.clone();
+        }
+    }
+
+    // 所有候选都不存在（首次运行 / opencode 还没装）→ 退回 XDG 默认，
+    // 保持和原来单路径实现完全等价的行为。
+    xdg_default
 }
 
 #[allow(dead_code)]

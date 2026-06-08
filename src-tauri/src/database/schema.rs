@@ -192,7 +192,8 @@ impl Database {
             duration_ms INTEGER, status_code INTEGER NOT NULL, error_message TEXT, session_id TEXT,
             provider_type TEXT, is_streaming INTEGER NOT NULL DEFAULT 0,
             cost_multiplier TEXT NOT NULL DEFAULT '1.0', created_at INTEGER NOT NULL,
-            data_source TEXT NOT NULL DEFAULT 'proxy'
+            data_source TEXT NOT NULL DEFAULT 'proxy',
+            agent TEXT
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON proxy_request_logs(provider_id, app_type)", [])
@@ -215,6 +216,12 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Self::create_request_logs_usage_indexes_if_supported(conn)?;
+
+        // agent 列是在 proxy_request_logs 表创建后通过迁移加的。
+        // 如果用户从旧版本升级，CREATE TABLE IF NOT EXISTS 不会重新执行，
+        // 而迁移中的 add_column_if_missing 又已过版本边界（v1→v2 后就不跑了）。
+        // 所以这里加一次兜底：每次启动检查并补上 agent 列。
+        Self::add_column_if_missing(conn, "proxy_request_logs", "agent", "TEXT")?;
 
         // 11. Model Pricing 表
         conn.execute(
@@ -627,6 +634,7 @@ impl Database {
         )?;
         Self::add_column_if_missing(conn, "proxy_request_logs", "first_token_ms", "INTEGER")?;
         Self::add_column_if_missing(conn, "proxy_request_logs", "duration_ms", "INTEGER")?;
+        Self::add_column_if_missing(conn, "proxy_request_logs", "agent", "TEXT")?;
 
         // model_pricing 表
         conn.execute(
