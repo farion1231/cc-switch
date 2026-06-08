@@ -87,15 +87,25 @@ jobs:
           version: 10.12.3
           run_install: false
 
-      - name: Get pnpm store directory
-        id: pnpm-store
+      - name: Get pnpm store directory (Windows)
+        if: runner.os == 'Windows'
+        id: pnpm-store-windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $storePath = pnpm store path --silent
+          "path=$storePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Get pnpm store directory (Unix)
+        if: runner.os != 'Windows'
+        id: pnpm-store-unix
         shell: bash
         run: echo "path=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
 
       - name: Setup pnpm cache
         uses: actions/cache@v5
         with:
-          path: ${{ steps.pnpm-store.outputs.path }}
+          path: ${{ steps.pnpm-store-windows.outputs.path || steps.pnpm-store-unix.outputs.path }}
           key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
 
