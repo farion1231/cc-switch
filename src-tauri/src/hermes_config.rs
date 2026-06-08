@@ -250,7 +250,7 @@ fn replace_yaml_section(
 // ============================================================================
 
 fn create_hermes_backup(source: &str) -> Result<PathBuf, AppError> {
-    let backup_dir = get_app_config_dir().join("backups").join(".hermes");
+    let backup_dir = get_app_config_dir().join("backups").join("hermes");
     fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
 
     let base_id = format!("hermes_{}", Local::now().format("%Y%m%d_%H%M%S"));
@@ -1961,14 +1961,10 @@ user_profile_enabled: false
         assert!(serde_json::from_str::<MemoryKind>("\"bogus\"").is_err());
     }
 
-    // ---- get_hermes_dir() 路径确认 ----
-
     #[test]
     #[serial]
-    fn hermes_fallback_uses_os_default() {
+    fn default_hermes_dir_without_override() {
         let _g = test_guard();
-        // 没有自定义目录走平台默认
-        // Windows：%LOCALAPPDATA%\hermes，Mac/Linux： ~/.hermes
         let dir = get_hermes_dir();
         #[cfg(target_os = "windows")]
         assert!(
@@ -1984,14 +1980,23 @@ user_profile_enabled: false
 
     #[test]
     #[serial]
-    fn settings_override_wins_over_default() {
+    fn settings_override_takes_precedence_over_default() {
         let _g = test_guard();
-        // 自定义目录优先于平台默认路径
-        // 确认不会因默认值变更而崩溃
+        let custom_dir = tempfile::tempdir().unwrap();
+        let custom_path = custom_dir.path().to_path_buf();
+
+        let mut settings = crate::settings::get_settings();
+        settings.hermes_config_dir = Some(custom_path.to_string_lossy().to_string());
+        crate::settings::update_settings(settings).unwrap();
+
         let dir = get_hermes_dir();
-        assert!(
-            dir.ends_with(".hermes") || dir.ends_with("hermes"),
-            "预期默认路径 ~/.hermes，实际路径：{dir:?}"
+        assert_eq!(
+            dir, custom_path,
+            "settings override 应优先于平台默认路径，实际为 {dir:?}"
         );
+
+        let mut settings = crate::settings::get_settings();
+        settings.hermes_config_dir = None;
+        crate::settings::update_settings(settings).unwrap();
     }
 }
