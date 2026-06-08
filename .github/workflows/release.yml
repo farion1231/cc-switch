@@ -271,15 +271,52 @@ jobs:
           WINDOWS_RELEASE_ARCH: ${{ matrix.arch || 'x86_64' }}
         run: |
           $ErrorActionPreference = 'Stop'
-          if ($env:WINDOWS_RELEASE_ARCH -eq 'arm64') {
-            pnpm tauri build --target aarch64-pc-windows-msvc --bundles msi
-          } else {
-            pnpm tauri build --bundles msi
+          $maxAttempts = 3
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            Write-Host "=== Windows build attempt $attempt/$maxAttempts ==="
+
+            if ($env:WINDOWS_RELEASE_ARCH -eq 'arm64') {
+              pnpm tauri build --target aarch64-pc-windows-msvc --bundles msi
+            } else {
+              pnpm tauri build --bundles msi
+            }
+
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host '✅ Windows build succeeded'
+              exit 0
+            }
+
+            if ($attempt -eq $maxAttempts) {
+              throw "Windows build failed after $maxAttempts attempts"
+            }
+
+            $sleepSeconds = $attempt * 60
+            Write-Warning "Windows build failed, retrying in $sleepSeconds seconds..."
+            Start-Sleep -Seconds $sleepSeconds
           }
 
       - name: Build Tauri App (Linux)
         if: runner.os == 'Linux'
-        run: pnpm tauri build --bundles appimage,deb,rpm
+        shell: bash
+        run: |
+          set -euo pipefail
+          max_attempts=3
+          for attempt in $(seq 1 "$max_attempts"); do
+            echo "=== Linux build attempt ${attempt}/${max_attempts} ==="
+            if pnpm tauri build --bundles appimage,deb,rpm; then
+              echo "✅ Linux build succeeded"
+              exit 0
+            fi
+
+            if [ "$attempt" -eq "$max_attempts" ]; then
+              echo "❌ Linux build failed after ${max_attempts} attempts" >&2
+              exit 1
+            fi
+
+            sleep_seconds=$((attempt * 60))
+            echo "⚠️ Linux build failed, retrying in ${sleep_seconds}s..."
+            sleep "$sleep_seconds"
+          done
 
       - name: Prepare macOS Assets
         if: runner.os == 'macOS'
