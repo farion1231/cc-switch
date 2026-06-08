@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Skills Source Filter**: Added a source filter dropdown to the installed skills panel, allowing users to filter skills by their origin (repository or local). The filter appears automatically when skills come from multiple sources, and the app count bar updates to reflect the filtered results.
+- **Installed Skills Search**: Added a search box to the installed skills toolbar that filters skills by name or repository in real time. Supports space-separated multi-term search (any term matches).
+- **Batch Operations**: Added multi-select support for installed skills. Users can select individual skills or "Select All", then perform batch operations: enable/disable for specific apps, uninstall (with automatic backup), and change source repository. A dedicated toolbar appears when skills are selected.
+- **Skill Detail View**: Added a detail dialog that shows full skill metadata — name, description, directory, source repository, branch, enabled apps, and installation date — accessible by clicking the info button on each installed skill.
 
 ## [3.16.1] - 2026-06-01
 

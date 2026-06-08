@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Sparkles,
@@ -6,9 +6,14 @@ import {
   ExternalLink,
   RefreshCw,
   Loader2,
+  X,
+  GitBranch,
+  Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -16,10 +21,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   type ImportSkillSelection,
   type SkillBackupEntry,
+  type SkillRepo,
   useDeleteSkillBackup,
   useInstalledSkills,
   useSkillBackups,
@@ -31,6 +42,8 @@ import {
   useInstallSkillsFromZip,
   useCheckSkillUpdates,
   useUpdateSkill,
+  useBatchUpdateSkillSource,
+  useSkillRepos,
   type InstalledSkill,
   type SkillUpdateInfo,
 } from "@/hooks/useSkills";
@@ -38,7 +51,7 @@ import type { AppId } from "@/lib/api/types";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
-import { SKILLS_APP_IDS } from "@/config/appConfig";
+import { SKILLS_APP_IDS, APP_ICON_MAP } from "@/config/appConfig";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
@@ -107,8 +120,21 @@ const UnifiedSkillsPanel = React.forwardRef<
     isFetching: isCheckingUpdates,
   } = useCheckSkillUpdates();
   const updateSkillMutation = useUpdateSkill();
+  const batchUpdateSourceMutation = useBatchUpdateSkillSource();
+  const { data: skillRepos = [] } = useSkillRepos();
   const [isUpdatingAll, setIsUpdatingAll] = useState(false);
   const [filterSource, setFilterSource] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set());
+  const [isBatchOperating, setIsBatchOperating] = useState(false);
+  const [changeSourceDialogOpen, setChangeSourceDialogOpen] = useState(false);
+  const [changeSourceRepo, setChangeSourceRepo] = useState<{
+    owner: string;
+    name: string;
+    branch: string;
+    subdirectory?: string;
+  }>({ owner: "", name: "", branch: "main", subdirectory: "" });
+  const [detailSkill, setDetailSkill] = useState<InstalledSkill | null>(null);
 
   const sourceOptions = useMemo(() => {
     if (!skills) return [];
@@ -129,15 +155,82 @@ const UnifiedSkillsPanel = React.forwardRef<
   }, [skills, t]);
 
   const filteredSkills = useMemo(() => {
-    if (!skills || filterSource === "all") return skills;
+    if (!skills) return skills;
+
+    const searchTerms = searchQuery
+      .trim()
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((t) => t.length > 0);
+
     return skills.filter((skill) => {
-      const key =
+      const sourceKey =
         skill.repoOwner && skill.repoName
           ? `${skill.repoOwner}/${skill.repoName}`
           : "__local__";
-      return key === filterSource;
+
+      if (filterSource !== "all" && sourceKey !== filterSource) {
+        return false;
+      }
+
+      if (searchTerms.length === 0) {
+        return true;
+      }
+
+      const name = skill.name.toLowerCase();
+      const repo =
+        `${skill.repoOwner || ""}/${skill.repoName || ""}`.toLowerCase();
+
+      return searchTerms.some(
+        (term) => name.includes(term) || repo.includes(term),
+      );
     });
-  }, [skills, filterSource]);
+  }, [skills, filterSource, searchQuery]);
+
+  const handleFilterSourceChange = useCallback((value: string) => {
+    setFilterSource(value);
+    setSelectedSkills(new Set());
+  }, []);
+
+  const handleSearchChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      setSearchQuery(e.target.value);
+      setSelectedSkills(new Set());
+    },
+    [],
+  );
+
+  const toggleSelectSkill = useCallback((id: string) => {
+    setSelectedSkills((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const selectAllFiltered = useCallback(() => {
+    if (!filteredSkills) return;
+    setSelectedSkills(new Set(filteredSkills.map((s) => s.id)));
+  }, [filteredSkills]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedSkills(new Set());
+  }, []);
+
+  const selectedSkillsList = useMemo(() => {
+    if (!skills || selectedSkills.size === 0) return [];
+    return skills.filter((s) => selectedSkills.has(s.id));
+  }, [skills, selectedSkills]);
+
+  const batchAppsState = useMemo(() => {
+    const state: Record<string, boolean> = {};
+    if (selectedSkillsList.length === 0) return state;
+    for (const app of SKILLS_APP_IDS) {
+      state[app] = selectedSkillsList.every((s) => s.apps[app]);
+    }
+    return state;
+  }, [selectedSkillsList]);
 
   const updatesMap = useMemo(() => {
     const map: Record<string, SkillUpdateInfo> = {};
@@ -313,6 +406,115 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
   };
 
+  const handleBatchToggleApp = async (app: AppId, enabled: boolean) => {
+    if (selectedSkillsList.length === 0) return;
+    const targets = selectedSkillsList;
+    const actionLabel = enabled
+      ? t("skills.batch.enableAction")
+      : t("skills.batch.disableAction");
+    setIsBatchOperating(true);
+    let successCount = 0;
+    for (const skill of targets) {
+      try {
+        await toggleAppMutation.mutateAsync({
+          id: skill.id,
+          app,
+          enabled,
+        });
+        successCount++;
+      } catch {
+        // continue with remaining
+      }
+    }
+    setIsBatchOperating(false);
+    if (successCount > 0) {
+      toast.success(
+        t("skills.batch.toggleSuccess", {
+          count: successCount,
+          action: actionLabel,
+          app: APP_ICON_MAP[app].label,
+        }),
+        { closeButton: true },
+      );
+    }
+    setSelectedSkills(new Set());
+  };
+
+  const handleBatchUninstall = () => {
+    if (selectedSkillsList.length === 0) return;
+    const targets = selectedSkillsList;
+    setConfirmDialog({
+      isOpen: true,
+      title: t("skills.batch.deleteConfirmTitle"),
+      message: t("skills.batch.deleteConfirmMessage", {
+        count: targets.length,
+      }),
+      variant: "destructive",
+      onConfirm: async () => {
+        setIsBatchOperating(true);
+        setConfirmDialog(null);
+        let successCount = 0;
+        for (const skill of targets) {
+          const installName =
+            skill.directory.split(/[/\\]/).pop()?.toLowerCase() ||
+            skill.directory.toLowerCase();
+          const skillKey = `${installName}:${skill.repoOwner?.toLowerCase() || ""}:${skill.repoName?.toLowerCase() || ""}`;
+          try {
+            await uninstallMutation.mutateAsync({
+              id: skill.id,
+              skillKey,
+            });
+            successCount++;
+          } catch {
+            // continue with remaining
+          }
+        }
+        setIsBatchOperating(false);
+        if (successCount > 0) {
+          toast.success(
+            t("skills.batch.deleteSuccess", { count: successCount }),
+            { closeButton: true },
+          );
+        }
+        setSelectedSkills(new Set());
+      },
+    });
+  };
+
+  const handleBatchChangeSource = async () => {
+    if (selectedSkillsList.length === 0) return;
+    const { owner, name, branch, subdirectory } = changeSourceRepo;
+    if (!owner || !name || !branch) return;
+    const count = selectedSkillsList.length;
+    const repoLabel = `${owner}/${name}`;
+    setIsBatchOperating(true);
+    try {
+      await batchUpdateSourceMutation.mutateAsync({
+        ids: selectedSkillsList.map((s) => s.id),
+        repoOwner: owner,
+        repoName: name,
+        repoBranch: branch,
+        subdirectory: subdirectory?.trim() || undefined,
+      });
+      toast.success(
+        t("skills.batch.sourceChangeSuccess", { count, repo: repoLabel }),
+        { closeButton: true },
+      );
+      setChangeSourceDialogOpen(false);
+      setChangeSourceRepo({
+        owner: "",
+        name: "",
+        branch: "main",
+        subdirectory: "",
+      });
+      setSelectedSkills(new Set());
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    } finally {
+      setIsBatchOperating(false);
+    }
+  };
+
   const handleOpenRestoreFromBackup = async () => {
     setRestoreDialogOpen(true);
     try {
@@ -392,18 +594,54 @@ const UnifiedSkillsPanel = React.forwardRef<
           appIds={SKILLS_APP_IDS}
         />
         <div className="flex items-center gap-1.5">
+          <div className="relative w-80">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            <Input
+              value={searchQuery}
+              onChange={handleSearchChange}
+              placeholder={t("skills.searchPlaceholder")}
+              className="pl-9 pr-8"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery("");
+                  setSelectedSkills(new Set());
+                }}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
           {sourceOptions.length > 1 && (
-            <Select value={filterSource} onValueChange={setFilterSource}>
-              <SelectTrigger className="h-7 w-auto text-xs gap-1 pr-6 min-w-0">
-                <SelectValue placeholder={t("skills.filter.allSources")} />
+            <Select
+              value={filterSource}
+              onValueChange={handleFilterSourceChange}
+            >
+              <SelectTrigger className="bg-card border shadow-sm text-foreground w-auto min-w-0">
+                <SelectValue
+                  placeholder={t("skills.filter.allRepos")}
+                  className="text-left truncate"
+                />
               </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">
-                  {t("skills.filter.allSources")}
+              <SelectContent className="bg-card text-foreground shadow-lg max-h-64">
+                <SelectItem
+                  value="all"
+                  className="text-left pr-3 [&[data-state=checked]>span:first-child]:hidden"
+                >
+                  {t("skills.filter.allRepos")}
                 </SelectItem>
                 {sourceOptions.map((opt) => (
-                  <SelectItem key={opt.key} value={opt.key}>
-                    {opt.label}
+                  <SelectItem
+                    key={opt.key}
+                    value={opt.key}
+                    className="text-left pr-3 [&[data-state=checked]>span:first-child]:hidden"
+                  >
+                    <span className="truncate block max-w-[200px]">
+                      {opt.label}
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -455,6 +693,104 @@ const UnifiedSkillsPanel = React.forwardRef<
         </div>
       </div>
 
+      {selectedSkills.size > 0 && (
+        <div className="flex items-center gap-2 py-2 px-1 rounded-lg bg-accent/50 mb-2 flex-wrap">
+          <div className="flex items-center gap-2 px-2">
+            <Checkbox
+              checked={
+                filteredSkills &&
+                filteredSkills.length > 0 &&
+                filteredSkills.every((s) => selectedSkills.has(s.id))
+                  ? true
+                  : filteredSkills?.some((s) => selectedSkills.has(s.id))
+                    ? "indeterminate"
+                    : false
+              }
+              onCheckedChange={(checked) => {
+                if (checked === true || checked === "indeterminate") {
+                  selectAllFiltered();
+                } else {
+                  clearSelection();
+                }
+              }}
+              aria-label={t("skills.batch.selectAll")}
+            />
+            <span className="text-xs font-medium text-foreground">
+              {t("skills.batch.selected", { count: selectedSkills.size })}
+            </span>
+          </div>
+
+          <TooltipProvider delayDuration={300}>
+            <div className="flex items-center gap-1.5 px-1">
+              {SKILLS_APP_IDS.map((app) => {
+                const { label, icon, activeClass } = APP_ICON_MAP[app];
+                const enabled = batchAppsState[app] ?? false;
+                return (
+                  <Tooltip key={app}>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={() => handleBatchToggleApp(app, !enabled)}
+                        disabled={isBatchOperating}
+                        className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
+                          enabled ? activeClass : "opacity-35 hover:opacity-70"
+                        }`}
+                      >
+                        {icon}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <p>
+                        {label}
+                        {enabled ? " ✓" : ""}
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              })}
+            </div>
+          </TooltipProvider>
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs gap-1"
+            onClick={() => setChangeSourceDialogOpen(true)}
+            disabled={isBatchOperating}
+          >
+            <GitBranch size={12} />
+            {t("skills.batch.changeSource")}
+          </Button>
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs gap-1 text-red-600 border-red-200 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950"
+            onClick={handleBatchUninstall}
+            disabled={isBatchOperating}
+          >
+            <Trash2 size={12} />
+            {t("skills.batch.deleteSelected")}
+          </Button>
+
+          <div className="flex-1" />
+
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 w-7 p-0"
+            onClick={clearSelection}
+            title={t("common.clear")}
+            aria-label={t("common.clear")}
+          >
+            <X size={14} />
+          </Button>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
         {isLoading ? (
           <div className="text-center py-12 text-muted-foreground">
@@ -488,9 +824,12 @@ const UnifiedSkillsPanel = React.forwardRef<
                     updateSkillMutation.isPending &&
                     updateSkillMutation.variables === skill.id
                   }
+                  isSelected={selectedSkills.has(skill.id)}
+                  onSelect={() => toggleSelectSkill(skill.id)}
                   onToggleApp={handleToggleApp}
                   onUninstall={() => handleUninstall(skill)}
                   onUpdate={() => handleUpdateSkill(skill)}
+                  onViewDetail={() => setDetailSkill(skill)}
                   isLast={index === filteredSkills.length - 1}
                 />
               ))}
@@ -531,6 +870,24 @@ const UnifiedSkillsPanel = React.forwardRef<
         onClose={() => setRestoreDialogOpen(false)}
         open={restoreDialogOpen}
       />
+
+      <ChangeSourceDialog
+        open={changeSourceDialogOpen}
+        onClose={() => setChangeSourceDialogOpen(false)}
+        repos={skillRepos}
+        repo={changeSourceRepo}
+        onRepoChange={setChangeSourceRepo}
+        selectedCount={selectedSkillsList.length}
+        isSubmitting={batchUpdateSourceMutation.isPending || isBatchOperating}
+        onConfirm={handleBatchChangeSource}
+      />
+
+      {detailSkill && (
+        <SkillDetailDialog
+          skill={detailSkill}
+          onClose={() => setDetailSkill(null)}
+        />
+      )}
     </div>
   );
 });
@@ -541,9 +898,12 @@ interface InstalledSkillListItemProps {
   skill: InstalledSkill;
   hasUpdate?: boolean;
   isUpdating?: boolean;
+  isSelected: boolean;
+  onSelect: () => void;
   onToggleApp: (id: string, app: AppId, enabled: boolean) => void;
   onUninstall: () => void;
   onUpdate?: () => void;
+  onViewDetail: () => void;
   isLast?: boolean;
 }
 
@@ -551,9 +911,12 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   skill,
   hasUpdate,
   isUpdating,
+  isSelected,
+  onSelect,
   onToggleApp,
   onUninstall,
   onUpdate,
+  onViewDetail,
   isLast,
 }) => {
   const { t } = useTranslation();
@@ -576,11 +939,22 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
 
   return (
     <ListItemRow isLast={isLast}>
+      <Checkbox
+        checked={isSelected}
+        onCheckedChange={onSelect}
+        aria-label={skill.name}
+        className="flex-shrink-0"
+      />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="font-medium text-sm text-foreground truncate">
+          <button
+            type="button"
+            onClick={onViewDetail}
+            className="font-medium text-sm text-foreground truncate hover:text-primary hover:underline cursor-pointer text-left"
+            title={skill.name}
+          >
             {skill.name}
-          </span>
+          </button>
           {skill.readmeUrl && (
             <button
               type="button"
@@ -603,12 +977,13 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
           )}
         </div>
         {skill.description && (
-          <p
-            className="text-xs text-muted-foreground truncate"
-            title={skill.description}
+          <button
+            type="button"
+            onClick={onViewDetail}
+            className="text-xs text-muted-foreground truncate text-left w-full hover:text-foreground cursor-pointer"
           >
             {skill.description}
-          </p>
+          </button>
         )}
       </div>
 
@@ -923,6 +1298,277 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
         </div>
       </div>
     </TooltipProvider>
+  );
+};
+
+interface SkillDetailDialogProps {
+  skill: InstalledSkill;
+  onClose: () => void;
+}
+
+const SkillDetailDialog: React.FC<SkillDetailDialogProps> = ({
+  skill,
+  onClose,
+}) => {
+  const { t } = useTranslation();
+
+  const sourceLabel =
+    skill.repoOwner && skill.repoName
+      ? `${skill.repoOwner}/${skill.repoName}`
+      : t("skills.detail.local");
+
+  const enabledApps = SKILLS_APP_IDS.filter((app) => skill.apps[app]);
+
+  const formatDate = (ts: number) => {
+    if (!ts) return "—";
+    return new Date(ts * 1000).toLocaleString();
+  };
+
+  const openGitHub = async () => {
+    if (!skill.readmeUrl) return;
+    try {
+      await settingsApi.openExternal(skill.readmeUrl);
+    } catch {
+      // ignore
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(nextOpen) => !nextOpen && onClose()}>
+      <DialogContent className="max-w-lg" zIndex="alert">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {skill.name}
+            {skill.readmeUrl && (
+              <button
+                type="button"
+                onClick={openGitHub}
+                className="text-muted-foreground/60 hover:text-foreground"
+                title={t("skills.detail.viewOnGitHub")}
+              >
+                <ExternalLink size={14} />
+              </button>
+            )}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 px-6 py-4">
+          <div>
+            <div className="text-xs font-medium text-muted-foreground mb-1">
+              {t("skills.detail.description")}
+            </div>
+            <p className="text-sm text-foreground whitespace-pre-wrap">
+              {skill.description || t("skills.detail.noDescription")}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+            <div>
+              <div className="text-xs text-muted-foreground">
+                {t("skills.detail.source")}
+              </div>
+              <div className="font-medium">{sourceLabel}</div>
+              {skill.repoBranch && (
+                <div className="text-xs text-muted-foreground/70 mt-0.5">
+                  {skill.repoBranch}
+                </div>
+              )}
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">
+                {t("skills.detail.directory")}
+              </div>
+              <div className="font-medium break-all">{skill.directory}</div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">
+                {t("skills.detail.installedAt")}
+              </div>
+              <div>{formatDate(skill.installedAt)}</div>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">
+                {t("skills.detail.updatedAt")}
+              </div>
+              <div>{formatDate(skill.updatedAt)}</div>
+            </div>
+          </div>
+
+          {enabledApps.length > 0 && (
+            <div>
+              <div className="text-xs font-medium text-muted-foreground mb-2">
+                {t("skills.detail.enabledApps")}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {enabledApps.map((app) => (
+                  <Badge
+                    key={app}
+                    variant="secondary"
+                    className="text-xs gap-1"
+                  >
+                    {APP_ICON_MAP[app].icon}
+                    {APP_ICON_MAP[app].label}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>
+            {t("common.close")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+interface ChangeSourceDialogProps {
+  open: boolean;
+  onClose: () => void;
+  repos: SkillRepo[];
+  repo: { owner: string; name: string; branch: string; subdirectory?: string };
+  onRepoChange: (repo: {
+    owner: string;
+    name: string;
+    branch: string;
+    subdirectory?: string;
+  }) => void;
+  selectedCount: number;
+  isSubmitting: boolean;
+  onConfirm: () => void;
+}
+
+const ChangeSourceDialog: React.FC<ChangeSourceDialogProps> = ({
+  open,
+  onClose,
+  repos,
+  repo,
+  onRepoChange,
+  selectedCount,
+  isSubmitting,
+  onConfirm,
+}) => {
+  const { t } = useTranslation();
+  const enabledRepos = repos.filter((r) => r.enabled);
+
+  const selectRepo = (r: SkillRepo) => {
+    onRepoChange({
+      owner: r.owner,
+      name: r.name,
+      branch: r.branch,
+      subdirectory: repo.subdirectory,
+    });
+  };
+
+  const isCurrentSelected = (r: SkillRepo) =>
+    r.owner === repo.owner && r.name === repo.name && r.branch === repo.branch;
+
+  const canConfirm =
+    repo.owner.trim() && repo.name.trim() && repo.branch.trim();
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
+      <DialogContent className="max-w-md" zIndex="alert">
+        <DialogHeader>
+          <DialogTitle>{t("skills.batch.changeSourceTitle")}</DialogTitle>
+          <DialogDescription>
+            {t("skills.batch.changeSourceDescription", {
+              count: selectedCount,
+            })}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 px-6 py-4">
+          {enabledRepos.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-muted-foreground">
+                {t("skills.batch.selectRepo")}
+              </div>
+              <div className="space-y-1 max-h-40 overflow-y-auto">
+                {enabledRepos.map((r) => (
+                  <button
+                    key={`${r.owner}/${r.name}:${r.branch}`}
+                    type="button"
+                    onClick={() => selectRepo(r)}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-xs border transition-colors ${
+                      isCurrentSelected(r)
+                        ? "border-primary bg-primary/10 text-foreground"
+                        : "border-border-default hover:bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    <div className="font-medium">
+                      {r.owner}/{r.name}
+                    </div>
+                    <div className="text-muted-foreground/70 mt-0.5">
+                      {r.branch}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <div className="text-xs font-medium text-muted-foreground">
+              {t("skills.batch.customRepo")}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Input
+                placeholder={t("skills.batch.repoOwner")}
+                value={repo.owner}
+                onChange={(e) =>
+                  onRepoChange({ ...repo, owner: e.target.value })
+                }
+                className="h-8 text-xs"
+              />
+              <Input
+                placeholder={t("skills.batch.repoName")}
+                value={repo.name}
+                onChange={(e) =>
+                  onRepoChange({ ...repo, name: e.target.value })
+                }
+                className="h-8 text-xs"
+              />
+            </div>
+            <Input
+              placeholder={t("skills.batch.repoBranch")}
+              value={repo.branch}
+              onChange={(e) =>
+                onRepoChange({ ...repo, branch: e.target.value })
+              }
+              className="h-8 text-xs"
+            />
+            <Input
+              placeholder={t("skills.batch.subdirectory")}
+              value={repo.subdirectory || ""}
+              onChange={(e) =>
+                onRepoChange({ ...repo, subdirectory: e.target.value })
+              }
+              className="h-8 text-xs"
+            />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>
+            {t("common.cancel")}
+          </Button>
+          <Button
+            type="button"
+            onClick={onConfirm}
+            disabled={!canConfirm || isSubmitting}
+          >
+            {isSubmitting ? (
+              <Loader2 size={14} className="animate-spin mr-1.5" />
+            ) : null}
+            {t("common.confirm")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };
 

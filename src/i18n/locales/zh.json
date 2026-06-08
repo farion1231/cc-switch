@@ -2115,7 +2115,7 @@
       "skillCount": "识别到 {{count}} 个技能"
     },
     "search": "搜索技能",
-    "searchPlaceholder": "搜索技能名称或仓库名称...",
+    "searchPlaceholder": "搜索技能，多个用空格分隔...",
     "searchSource": {
       "repos": "仓库",
       "skillssh": "skills.sh"
@@ -2135,9 +2135,7 @@
       "installed": "已安装",
       "uninstalled": "未安装",
       "repo": "仓库筛选",
-      "allRepos": "全部仓库",
-      "source": "来源筛选",
-      "allSources": "全部来源"
+      "allRepos": "全部仓库"
     },
     "noResults": "未找到匹配的技能",
     "noInstalled": "暂无已安装的技能",
@@ -2180,6 +2178,43 @@
       "gemini": "Gemini",
       "opencode": "OpenCode",
       "openclaw": "OpenClaw"
+    },
+    "detail": {
+      "title": "技能详情",
+      "description": "描述",
+      "noDescription": "暂无描述",
+      "directory": "目录",
+      "source": "来源",
+      "local": "本地",
+      "branch": "分支",
+      "installedAt": "安装时间",
+      "updatedAt": "更新时间",
+      "enabledApps": "启用应用",
+      "viewOnGitHub": "查看 GitHub"
+    },
+    "batch": {
+      "selected": "已选择 {{count}} 项",
+      "selectAll": "全选",
+      "enable": "启用",
+      "disable": "禁用",
+      "toggleApps": "启用/禁用",
+      "deleteSelected": "删除已选",
+      "deleteConfirmTitle": "批量删除技能",
+      "deleteConfirmMessage": "确定要删除 {{count}} 个选中的技能吗？删除前会自动备份，此操作可在备份中恢复。",
+      "toggleSuccess": "已为 {{count}} 个技能{{action}} {{app}}",
+      "deleteSuccess": "已删除 {{count}} 个技能",
+      "enableAction": "启用",
+      "disableAction": "禁用",
+      "changeSource": "变更来源",
+      "changeSourceTitle": "批量变更来源",
+      "changeSourceDescription": "将选中的 {{count}} 个技能关联到指定仓库，后续可跟随该仓库检测更新。",
+      "selectRepo": "选择仓库",
+      "customRepo": "自定义仓库",
+      "repoOwner": "仓库所有者",
+      "repoName": "仓库名称",
+      "repoBranch": "分支",
+      "subdirectory": "仓库子目录（可选，如 skills）",
+      "sourceChangeSuccess": "已将 {{count}} 个技能的来源变更为 {{repo}}"
     },
     "installFromZip": {
       "button": "从 ZIP 安装",
