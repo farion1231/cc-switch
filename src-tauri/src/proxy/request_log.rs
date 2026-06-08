@@ -45,6 +45,10 @@ pub struct ProxyRequestLogEntry {
     pub session_id: Option<String>,
     /// Extracted system prompt (for quick viewing)
     pub system_prompt: Option<String>,
+    /// Last user message text (truncated, for list preview)
+    pub user_query: Option<String>,
+    /// Last user message content type (e.g. "text", "image", "tool_result")
+    pub user_query_type: Option<String>,
 }
 
 /// Event payload pushed to frontend (simplified version, without full body)
@@ -63,6 +67,10 @@ pub struct RequestLogEventPayload {
     pub has_system_prompt: bool,
     /// System prompt preview (first 200 characters)
     pub system_prompt_preview: Option<String>,
+    /// Last user message text (truncated)
+    pub user_query: Option<String>,
+    /// Last user message content type
+    pub user_query_type: Option<String>,
 }
 
 impl From<&ProxyRequestLogEntry> for RequestLogEventPayload {
@@ -91,6 +99,61 @@ impl From<&ProxyRequestLogEntry> for RequestLogEventPayload {
             latency_ms: entry.latency_ms,
             has_system_prompt: entry.system_prompt.is_some(),
             system_prompt_preview,
+            user_query: entry.user_query.clone(),
+            user_query_type: entry.user_query_type.clone(),
+        }
+    }
+}
+
+/// Lightweight summary for list view (no request_body/response_body)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestLogSummary {
+    pub id: String,
+    pub timestamp: String,
+    pub app_type: String,
+    pub provider_name: String,
+    pub method: String,
+    pub endpoint: String,
+    pub model: String,
+    pub is_stream: bool,
+    pub status_code: Option<u16>,
+    pub latency_ms: Option<u64>,
+    pub has_system_prompt: bool,
+    pub system_prompt_preview: Option<String>,
+    pub user_query: Option<String>,
+    pub user_query_type: Option<String>,
+    pub session_id: Option<String>,
+}
+
+impl From<&ProxyRequestLogEntry> for RequestLogSummary {
+    fn from(entry: &ProxyRequestLogEntry) -> Self {
+        let system_prompt_preview = entry.system_prompt.as_ref().map(|prompt| {
+            if prompt.len() > 200 {
+                let mut end = 200;
+                while end > 0 && !prompt.is_char_boundary(end) {
+                    end -= 1;
+                }
+                format!("{}…", &prompt[..end])
+            } else {
+                prompt.clone()
+            }
+        });
+        Self {
+            id: entry.id.clone(),
+            timestamp: entry.timestamp.clone(),
+            app_type: entry.app_type.clone(),
+            provider_name: entry.provider_name.clone(),
+            method: entry.method.clone(),
+            endpoint: entry.endpoint.clone(),
+            model: entry.model.clone(),
+            is_stream: entry.is_stream,
+            status_code: entry.status_code,
+            latency_ms: entry.latency_ms,
+            has_system_prompt: entry.system_prompt.is_some(),
+            system_prompt_preview,
+            user_query: entry.user_query.clone(),
+            user_query_type: entry.user_query_type.clone(),
+            session_id: entry.session_id.clone(),
         }
     }
 }
@@ -139,7 +202,9 @@ impl RequestLogStore {
         }
     }
 
-    /// Add a log entry
+    /// Add a log entry.
+    /// For entries with the same session_id, strip `messages` from older entries'
+    /// request_body and clear their response_body to save memory.
     pub async fn push(&self, entry: ProxyRequestLogEntry) {
         if !self.is_enabled() {
             return;
@@ -149,6 +214,19 @@ impl RequestLogStore {
         while entries.len() >= max {
             entries.pop_front();
         }
+
+        // Deduplicate: strip messages/response_body from older entries in the same session
+        if let Some(ref session_id) = entry.session_id {
+            for old in entries.iter_mut() {
+                if old.session_id.as_deref() == Some(session_id) {
+                    if let Some(obj) = old.request_body.as_object_mut() {
+                        obj.remove("messages");
+                    }
+                    old.response_body = None;
+                }
+            }
+        }
+
         entries.push_back(entry);
     }
 
@@ -175,6 +253,12 @@ impl RequestLogStore {
     pub async fn get_all(&self) -> Vec<ProxyRequestLogEntry> {
         let entries = self.entries.read().await;
         entries.iter().rev().cloned().collect()
+    }
+
+    /// Get lightweight summaries for list view (no request_body/response_body cloning)
+    pub async fn get_all_summaries(&self) -> Vec<RequestLogSummary> {
+        let entries = self.entries.read().await;
+        entries.iter().rev().map(RequestLogSummary::from).collect()
     }
 
     /// Get a single log entry by ID
@@ -264,6 +348,58 @@ pub fn extract_system_prompt(body: &Value) -> Option<String> {
     None
 }
 
+/// Extract the last user message from request body (truncated to 120 chars)
+///
+/// Walks `body["messages"]` from the end, finds the last `role: "user"` message,
+/// and extracts its text content. Returns (type, truncated_text).
+pub fn extract_user_query(body: &Value) -> Option<(String, String)> {
+    let messages = body.get("messages")?.as_array()?;
+
+    // Find last role=user message
+    let user_msg = messages.iter().rev().find(|msg| {
+        msg.get("role").and_then(|r| r.as_str()) == Some("user")
+    })?;
+
+    let content = user_msg.get("content")?;
+
+    // content is a plain string
+    if let Some(text) = content.as_str() {
+        let truncated = if text.len() > 120 {
+            let mut end = 120;
+            while end > 0 && !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}…", &text[..end])
+        } else {
+            text.to_string()
+        };
+        return Some(("text".to_string(), truncated));
+    }
+
+    // content is an array — get last item
+    if let Some(arr) = content.as_array() {
+        let last = arr.last()?;
+        let item_type = last.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
+        if item_type == "text" {
+            if let Some(text) = last.get("text").and_then(|t| t.as_str()) {
+                let truncated = if text.len() > 120 {
+                    let mut end = 120;
+                    while end > 0 && !text.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    format!("{}…", &text[..end])
+                } else {
+                    text.to_string()
+                };
+                return Some(("text".to_string(), truncated));
+            }
+        }
+        return Some((item_type.to_string(), String::new()));
+    }
+
+    None
+}
+
 /// Create a request log entry
 pub fn create_log_entry(
     app_type: &str,
@@ -277,6 +413,10 @@ pub fn create_log_entry(
     session_id: Option<String>,
 ) -> ProxyRequestLogEntry {
     let system_prompt = extract_system_prompt(body);
+    let (user_query, user_query_type) = match extract_user_query(body) {
+        Some((t, q)) => (Some(q), Some(t)),
+        None => (None, None),
+    };
     ProxyRequestLogEntry {
         id: uuid::Uuid::new_v4().to_string(),
         timestamp: Utc::now().to_rfc3339(),
@@ -293,6 +433,8 @@ pub fn create_log_entry(
         latency_ms: None,
         session_id,
         system_prompt,
+        user_query,
+        user_query_type,
     }
 }
 
@@ -422,7 +564,8 @@ mod tests {
     async fn store_ring_buffer_eviction() {
         let store = RequestLogStore::new();
         store.set_enabled(true);
-        for i in 0..510 {
+        // Default max is 200
+        for i in 0..300 {
             let entry = create_log_entry(
                 "claude",
                 "P",
@@ -437,8 +580,7 @@ mod tests {
             store.push(entry).await;
         }
         let all = store.get_all().await;
-        assert_eq!(all.len(), 500);
-        // 最新的在前面（倒序）
-        assert_eq!(all[0].model, "model-509");
+        assert_eq!(all.len(), DEFAULT_MAX_LOG_ENTRIES);
+        assert_eq!(all[0].model, "model-299");
     }
 }

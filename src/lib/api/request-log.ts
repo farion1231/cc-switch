@@ -37,11 +37,42 @@ export interface RequestLogEventPayload {
   latency_ms: number | null;
   has_system_prompt: boolean;
   system_prompt_preview: string | null;
+  user_query: string | null;
+  user_query_type: string | null;
+}
+
+export interface RequestLogSummary {
+  id: string;
+  timestamp: string;
+  app_type: string;
+  provider_name: string;
+  method: string;
+  endpoint: string;
+  model: string;
+  is_stream: boolean;
+  status_code: number | null;
+  latency_ms: number | null;
+  has_system_prompt: boolean;
+  system_prompt_preview: string | null;
+  user_query: string | null;
+  user_query_type: string | null;
+  session_id: string | null;
+}
+
+export interface RequestLogUpdatedPayload {
+  id: string;
+  status_code: number;
+  latency_ms: number;
+  has_response_body: boolean;
 }
 
 export const requestLogApi = {
   async getLogs(): Promise<ProxyRequestLogEntry[]> {
     return await invoke("get_captured_request_logs");
+  },
+
+  async getLogSummaries(): Promise<RequestLogSummary[]> {
+    return await invoke("get_captured_request_log_summaries");
   },
 
   async getLogDetail(id: string): Promise<ProxyRequestLogEntry | null> {

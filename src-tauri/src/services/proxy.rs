@@ -2331,6 +2331,13 @@ impl ProxyService {
         Ok(self.request_log_store.get_all().await)
     }
 
+    /// 获取请求日志摘要列表（不含 request_body/response_body）
+    pub async fn get_captured_request_log_summaries(
+        &self,
+    ) -> Result<Vec<crate::proxy::request_log::RequestLogSummary>, String> {
+        Ok(self.request_log_store.get_all_summaries().await)
+    }
+
     /// 获取单条请求日志详情
     pub async fn get_captured_request_log_detail(
         &self,

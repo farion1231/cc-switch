@@ -19,6 +19,7 @@ use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::Value;
+use tauri::Emitter;
 use std::{
     io::Read,
     sync::{
@@ -226,7 +227,7 @@ pub async fn handle_streaming(
     let response_log_info = if let Some(id) = &log_id {
         if state.request_log_store.is_enabled() {
             let latency_ms = ctx.latency_ms();
-            Some((state.request_log_store.clone(), id.clone(), latency_ms))
+            Some((state.request_log_store.clone(), id.clone(), latency_ms, state.app_handle.clone()))
         } else {
             None
         }
@@ -348,14 +349,24 @@ pub async fn handle_non_streaming(
     if let Some(id) = &log_id {
         if state.request_log_store.is_enabled() {
             let latency_ms = ctx.latency_ms();
-            // Attempt to parse body_bytes as JSON
             let response_body = serde_json::from_slice::<Value>(&body_bytes).ok();
-            // Backfill asynchronously (without blocking response return)
             let store = state.request_log_store.clone();
             let id = id.clone();
             let status_code = status.as_u16();
+            let app_handle = state.app_handle.clone();
             tokio::spawn(async move {
+                let has_body = response_body.is_some();
                 store.update_response(&id, status_code, latency_ms, response_body).await;
+                if has_body {
+                    if let Some(app) = &app_handle {
+                        let _ = app.emit("proxy-request-log-updated", serde_json::json!({
+                            "id": id,
+                            "status_code": status_code,
+                            "latency_ms": latency_ms,
+                            "has_response_body": true,
+                        }));
+                    }
+                }
             });
         }
     }
@@ -714,7 +725,7 @@ pub fn create_logged_passthrough_stream(
     usage_collector: Option<SseUsageCollector>,
     timeout_config: StreamingTimeoutConfig,
     connection_guard: Option<ActiveConnectionGuard>,
-    response_log_info: Option<(Arc<RequestLogStore>, String, u64)>,
+    response_log_info: Option<(Arc<RequestLogStore>, String, u64, Option<tauri::AppHandle>)>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let _conn_guard = connection_guard;
@@ -722,16 +733,22 @@ pub fn create_logged_passthrough_stream(
         let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut collector = usage_collector;
         let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
-        let inspect_sse_events =
-            collector.is_some() || log::log_enabled!(log::Level::Debug) || response_log_info.is_some();
         let mut is_first_chunk = true;
 
         // Collect SSE events for response_body backfill (only when response_log_info is present)
-        let mut sse_events_for_log: Option<Vec<Value>> = if response_log_info.is_some() {
-            Some(Vec::new())
+        // Uses head+tail strategy to cap memory: keep first HEAD_CAP and last TAIL_CAP events.
+        const HEAD_CAP: usize = 50;
+        const TAIL_CAP: usize = 50;
+        let mut sse_log_head: Option<Vec<Value>> = if response_log_info.is_some() {
+            Some(Vec::with_capacity(HEAD_CAP))
         } else {
             None
         };
+        let mut sse_log_tail: std::collections::VecDeque<Value> = std::collections::VecDeque::new();
+        let mut sse_log_total: usize = 0;
+
+        let inspect_sse_events =
+            collector.is_some() || log::log_enabled!(log::Level::Debug) || sse_log_head.is_some();
 
         // 超时配置
         let first_byte_timeout = if timeout_config.first_byte_timeout > 0 {
@@ -795,9 +812,16 @@ pub fn create_logged_passthrough_stream(
                                                 Some(c) if c.should_collect(data) => {
                                                     match serde_json::from_str::<Value>(data) {
                                                         Ok(json_value) => {
-                                                            // 如果启用了 response_log，也收集到 sse_events_for_log
-                                                            if let Some(ref mut events) = sse_events_for_log {
-                                                                events.push(json_value.clone());
+                                                            if let Some(ref mut head) = sse_log_head {
+                                                                sse_log_total += 1;
+                                                                if head.len() < HEAD_CAP {
+                                                                    head.push(json_value.clone());
+                                                                } else {
+                                                                    if sse_log_tail.len() >= TAIL_CAP {
+                                                                        sse_log_tail.pop_front();
+                                                                    }
+                                                                    sse_log_tail.push_back(json_value.clone());
+                                                                }
                                                             }
                                                             c.push(json_value).await;
                                                             true
@@ -806,11 +830,19 @@ pub fn create_logged_passthrough_stream(
                                                     }
                                                 }
                                                 _ => {
-                                                    // 没有 usage collector，但如果需要记录 response_log，仍然要解析
-                                                    if sse_events_for_log.is_some() {
+                                                    if sse_log_head.is_some() {
                                                         match serde_json::from_str::<Value>(data) {
                                                             Ok(json_value) => {
-                                                                sse_events_for_log.as_mut().unwrap().push(json_value);
+                                                                sse_log_total += 1;
+                                                                let head = sse_log_head.as_mut().unwrap();
+                                                                if head.len() < HEAD_CAP {
+                                                                    head.push(json_value);
+                                                                } else {
+                                                                    if sse_log_tail.len() >= TAIL_CAP {
+                                                                        sse_log_tail.pop_front();
+                                                                    }
+                                                                    sse_log_tail.push_back(json_value);
+                                                                }
                                                                 true
                                                             }
                                                             Err(_) => false,
@@ -855,13 +887,27 @@ pub fn create_logged_passthrough_stream(
             guard.disarm();
         }
 
-        // After stream ends, if response_log_info exists and SSE events were collected, backfill asynchronously
-        if let Some((store, log_id, latency_ms)) = response_log_info {
-            if let Some(events) = sse_events_for_log {
-                if !events.is_empty() {
-                    let response_body = Value::Array(events);
+        // After stream ends, merge head+tail and backfill asynchronously
+        if let Some((store, log_id, latency_ms, app_handle)) = response_log_info {
+            if let Some(head) = sse_log_head {
+                if !head.is_empty() || !sse_log_tail.is_empty() {
+                    let mut merged = head;
+                    let skipped = sse_log_total.saturating_sub(merged.len() + sse_log_tail.len());
+                    if skipped > 0 {
+                        merged.push(serde_json::json!({"type": "__truncated", "skipped_count": skipped}));
+                    }
+                    merged.extend(sse_log_tail);
+                    let response_body = Value::Array(merged);
                     tokio::spawn(async move {
                         store.update_response(&log_id, 200, latency_ms, Some(response_body)).await;
+                        if let Some(app) = &app_handle {
+                            let _ = app.emit("proxy-request-log-updated", serde_json::json!({
+                                "id": log_id,
+                                "status_code": 200u16,
+                                "latency_ms": latency_ms,
+                                "has_response_body": true,
+                            }));
+                        }
                     });
                 }
             }

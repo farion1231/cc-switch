@@ -1401,6 +1401,7 @@ pub fn run() {
             commands::is_lightweight_mode,
             // Request log capture (proxy traffic inspector)
             commands::get_captured_request_logs,
+            commands::get_captured_request_log_summaries,
             commands::get_captured_request_log_detail,
             commands::clear_captured_request_logs,
             commands::set_request_log_capture_enabled,

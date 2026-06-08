@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
@@ -15,10 +16,13 @@ import {
   Settings,
   User,
   Braces,
+  ChevronsDownUp,
+  ChevronsUpDown,
 } from "lucide-react";
 import {
   JsonView,
   allExpanded,
+  collapseAllNested,
   darkStyles,
   defaultStyles,
 } from "react-json-view-lite";
@@ -48,8 +52,25 @@ import { cn } from "@/lib/utils";
 import type {
   ProxyRequestLogEntry,
   RequestLogEventPayload,
+  RequestLogSummary,
+  RequestLogUpdatedPayload,
 } from "@/lib/api/request-log";
 import { requestLogApi } from "@/lib/api/request-log";
+
+const PREVIEW_MAX_CHARS = 500;
+
+/** Truncate JSON string for inline preview to avoid rendering large DOM */
+function truncateJsonPreview(data: unknown): string {
+  if (data == null) return "null";
+  if (typeof data !== "object") return String(data);
+  if (Array.isArray(data) && data.length > 20) {
+    const preview = JSON.stringify(data.slice(0, 10), null, 2);
+    return preview + `\n… (${data.length} items total)`;
+  }
+  const full = JSON.stringify(data, null, 2);
+  if (full.length <= PREVIEW_MAX_CHARS) return full;
+  return full.slice(0, PREVIEW_MAX_CHARS) + "\n… (truncated)";
+}
 
 /** Simplified log entry used in the list */
 interface LogListItem {
@@ -69,84 +90,24 @@ interface LogListItem {
   userQuery: { type: string; text: string } | null;
 }
 
-/**
- * Extract the last content item from the last role=user message in request_body.messages,
- * returning its type and text content.
- */
-function extractUserQuery(
-  requestBody: unknown,
-): { type: string; text: string } | null {
-  if (
-    requestBody == null ||
-    typeof requestBody !== "object" ||
-    !("messages" in requestBody)
-  )
-    return null;
-
-  const messages = (requestBody as Record<string, unknown>).messages;
-  if (!Array.isArray(messages)) return null;
-
-  // Find the last role=user message
-  let lastUserMessage: Record<string, unknown> | null = null;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    if (
-      msg &&
-      typeof msg === "object" &&
-      (msg as Record<string, unknown>).role === "user"
-    ) {
-      lastUserMessage = msg as Record<string, unknown>;
-      break;
-    }
-  }
-  if (!lastUserMessage) return null;
-
-  const content = lastUserMessage.content;
-
-  // content is a plain string
-  if (typeof content === "string") {
-    const text = content.length > 120 ? content.slice(0, 120) + "…" : content;
-    return { type: "text", text };
-  }
-
-  // content is an array
-  if (Array.isArray(content) && content.length > 0) {
-    const lastItem = content[content.length - 1];
-    if (lastItem && typeof lastItem === "object") {
-      const item = lastItem as Record<string, unknown>;
-      const itemType = typeof item.type === "string" ? item.type : "unknown";
-      if (itemType === "text" && typeof item.text === "string") {
-        const text =
-          item.text.length > 120 ? item.text.slice(0, 120) + "…" : item.text;
-        return { type: "text", text };
-      }
-      return { type: itemType, text: "" };
-    }
-  }
-
-  return null;
-}
-
-function toListItem(entry: ProxyRequestLogEntry): LogListItem {
-  const preview = entry.system_prompt
-    ? entry.system_prompt.length > 200
-      ? entry.system_prompt.slice(0, 200) + "…"
-      : entry.system_prompt
-    : null;
+function summaryToListItem(s: RequestLogSummary): LogListItem {
   return {
-    id: entry.id,
-    timestamp: entry.timestamp,
-    appType: entry.app_type,
-    providerName: entry.provider_name,
-    method: entry.method,
-    endpoint: entry.endpoint,
-    model: entry.model,
-    isStream: entry.is_stream,
-    statusCode: entry.status_code,
-    latencyMs: entry.latency_ms,
-    hasSystemPrompt: entry.system_prompt != null,
-    systemPromptPreview: preview,
-    userQuery: extractUserQuery(entry.request_body),
+    id: s.id,
+    timestamp: s.timestamp,
+    appType: s.app_type,
+    providerName: s.provider_name,
+    method: s.method,
+    endpoint: s.endpoint,
+    model: s.model,
+    isStream: s.is_stream,
+    statusCode: s.status_code,
+    latencyMs: s.latency_ms,
+    hasSystemPrompt: s.has_system_prompt,
+    systemPromptPreview: s.system_prompt_preview,
+    userQuery:
+      s.user_query != null && s.user_query_type != null
+        ? { type: s.user_query_type, text: s.user_query }
+        : null,
   };
 }
 
@@ -164,7 +125,10 @@ function fromEventPayload(payload: RequestLogEventPayload): LogListItem {
     latencyMs: payload.latency_ms,
     hasSystemPrompt: payload.has_system_prompt,
     systemPromptPreview: payload.system_prompt_preview,
-    userQuery: null, // Real-time events don't include request_body, will be backfilled after refresh
+    userQuery:
+      payload.user_query != null && payload.user_query_type != null
+        ? { type: payload.user_query_type, text: payload.user_query }
+        : null,
   };
 }
 
@@ -198,6 +162,82 @@ const APP_TYPE_OPTIONS = [
   { value: "hermes", label: "Hermes" },
 ];
 
+const LogListItemRow = React.memo(function LogListItemRow({
+  log,
+  isSelected,
+  onSelect,
+}: {
+  log: LogListItem;
+  isSelected: boolean;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        "w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors cursor-pointer border-b",
+        isSelected && "bg-muted",
+      )}
+      onClick={() => onSelect(log.id)}
+    >
+      <div className="flex items-center gap-2 mb-0.5">
+        <span className="text-[10px] text-muted-foreground font-mono tabular-nums">
+          {formatTimestamp(log.timestamp)}
+        </span>
+        <Badge variant="outline" className="text-[10px] px-1 py-0 h-4 font-normal">
+          {log.appType}
+        </Badge>
+        <span className={cn("text-[10px] font-mono font-semibold", statusColor(log.statusCode))}>
+          {log.statusCode ?? "…"}
+        </span>
+        {log.isStream && (
+          <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 font-normal">
+            SSE
+          </Badge>
+        )}
+        {log.hasSystemPrompt && (
+          <FileText className="w-3 h-3 text-blue-500 flex-shrink-0" />
+        )}
+        <span className="ml-auto text-[10px] text-muted-foreground tabular-nums">
+          {log.latencyMs != null ? `${log.latencyMs}ms` : ""}
+        </span>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <span className="text-[10px] font-mono text-muted-foreground uppercase">
+          {log.method}
+        </span>
+        <span className="text-xs font-mono truncate">{log.endpoint}</span>
+        <span className="text-[10px] text-muted-foreground">·</span>
+        <span className="text-[10px] text-muted-foreground truncate shrink-0">
+          {log.providerName}
+        </span>
+        <span className="text-[10px] text-muted-foreground">·</span>
+        <span className="text-[10px] text-muted-foreground truncate">{log.model}</span>
+      </div>
+      {log.userQuery && (
+        <div className="flex items-center gap-1.5 mt-0.5">
+          <MessageSquare className="w-3 h-3 text-muted-foreground shrink-0" />
+          <Badge
+            variant="outline"
+            className="text-[10px] px-1 py-0 h-4 font-mono font-normal shrink-0"
+          >
+            {log.userQuery.type}
+          </Badge>
+          {log.userQuery.text ? (
+            <span className="text-[11px] text-foreground/70 truncate">
+              {log.userQuery.text}
+            </span>
+          ) : (
+            <span className="text-[10px] text-muted-foreground italic">
+              [{log.userQuery.type} content]
+            </span>
+          )}
+        </div>
+      )}
+    </button>
+  );
+});
+
 export function RequestLogPanel() {
   const { t } = useTranslation();
   const { theme } = useTheme();
@@ -218,6 +258,8 @@ export function RequestLogPanel() {
   const [showResponseFormatView, setShowResponseFormatView] = useState(false);
   const [showRequestJsonView, setShowRequestJsonView] = useState(false);
   const [showResponseJsonView, setShowResponseJsonView] = useState(false);
+  const [requestJsonExpanded, setRequestJsonExpanded] = useState(false);
+  const [responseJsonExpanded, setResponseJsonExpanded] = useState(false);
   const [maxEntries, setMaxEntries] = useState(200);
 
   // Filtering
@@ -225,11 +267,14 @@ export function RequestLogPanel() {
   const [appTypeFilter, setAppTypeFilter] = useState("all");
   const [systemPromptOnly, setSystemPromptOnly] = useState(false);
 
-  const logsEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const maxEntriesRef = useRef(maxEntries);
   maxEntriesRef.current = maxEntries;
+  const selectedLogIdRef = useRef(selectedLogId);
+  selectedLogIdRef.current = selectedLogId;
 
-  // Initialize: load switch state and existing logs
+  // Initialize: load switch state and existing logs (using lightweight summaries)
+  // On unmount (navigate away): disable capture to prevent background memory growth
   useEffect(() => {
     void (async () => {
       try {
@@ -240,16 +285,19 @@ export function RequestLogPanel() {
         setCaptureEnabled(enabled);
         setMaxEntries(max);
         if (enabled) {
-          const existingLogs = await requestLogApi.getLogs();
-          setLogs(existingLogs.map(toListItem));
+          const summaries = await requestLogApi.getLogSummaries();
+          setLogs(summaries.map(summaryToListItem));
         }
       } catch (error) {
         console.error("Failed to init request log panel:", error);
       }
     })();
+    return () => {
+      void requestLogApi.setCaptureEnabled(false);
+    };
   }, []);
 
-  // Receive new logs in real-time
+  // Receive new logs in real-time (userQuery is now included in the event payload)
   useTauriEvent<RequestLogEventPayload>("proxy-request-log", (payload) => {
     const item = fromEventPayload(payload);
     setLogs((prev) => {
@@ -257,20 +305,27 @@ export function RequestLogPanel() {
       const next = [item, ...prev];
       return next.length > limit ? next.slice(0, limit) : next;
     });
-
-    // Asynchronously fetch full entry to backfill userQuery
-    void requestLogApi.getLogDetail(payload.id).then((detail) => {
-      if (!detail) return;
-      const query = extractUserQuery(detail.request_body);
-      if (query) {
-        setLogs((prev) =>
-          prev.map((log) =>
-            log.id === payload.id ? { ...log, userQuery: query } : log,
-          ),
-        );
-      }
-    });
   });
+
+  // Receive status/latency updates when response completes
+  useTauriEvent<RequestLogUpdatedPayload>(
+    "proxy-request-log-updated",
+    (payload) => {
+      setLogs((prev) =>
+        prev.map((log) =>
+          log.id === payload.id
+            ? { ...log, statusCode: payload.status_code, latencyMs: payload.latency_ms }
+            : log,
+        ),
+      );
+      // If the currently viewed detail matches, refresh it
+      if (selectedLogId === payload.id && payload.has_response_body) {
+        void requestLogApi.getLogDetail(payload.id).then((detail) => {
+          if (detail) setDetailEntry(detail);
+        });
+      }
+    },
+  );
 
   // Toggle capture switch
   const handleToggleCapture = useCallback(
@@ -279,9 +334,8 @@ export function RequestLogPanel() {
         await requestLogApi.setCaptureEnabled(enabled);
         setCaptureEnabled(enabled);
         if (enabled) {
-          // Load existing logs when just enabled
-          const existingLogs = await requestLogApi.getLogs();
-          setLogs(existingLogs.map(toListItem));
+          const summaries = await requestLogApi.getLogSummaries();
+          setLogs(summaries.map(summaryToListItem));
         }
       } catch (error) {
         toast.error(
@@ -304,10 +358,10 @@ export function RequestLogPanel() {
     }
   }, [t]);
 
-  // View details
+  // View details (response_body backfill now handled by proxy-request-log-updated event)
   const handleSelectLog = useCallback(
     async (id: string) => {
-      if (selectedLogId === id) {
+      if (selectedLogIdRef.current === id) {
         setSelectedLogId(null);
         setDetailEntry(null);
         return;
@@ -315,19 +369,8 @@ export function RequestLogPanel() {
       setSelectedLogId(id);
       setDetailLoading(true);
       try {
-        let detail = await requestLogApi.getLogDetail(id);
+        const detail = await requestLogApi.getLogDetail(id);
         setDetailEntry(detail);
-        // If response_body is empty, retry with delay (wait for async backfill to complete)
-        if (detail && detail.response_body == null) {
-          for (const delay of [500, 1500, 3000]) {
-            await new Promise((r) => setTimeout(r, delay));
-            const refreshed = await requestLogApi.getLogDetail(id);
-            if (refreshed?.response_body != null) {
-              setDetailEntry(refreshed);
-              break;
-            }
-          }
-        }
       } catch (error) {
         console.error("Failed to load log detail:", error);
         setDetailEntry(null);
@@ -335,7 +378,7 @@ export function RequestLogPanel() {
         setDetailLoading(false);
       }
     },
-    [selectedLogId],
+    [],
   );
 
   // Copy to clipboard
@@ -380,6 +423,18 @@ export function RequestLogPanel() {
 
     return result;
   }, [logs, appTypeFilter, systemPromptOnly, searchQuery]);
+
+  const virtualizer = useVirtualizer({
+    count: filteredLogs.length,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: () => 64,
+    overscan: 10,
+  });
+
+  const onSelectRow = useCallback(
+    (id: string) => void handleSelectLog(id),
+    [handleSelectLog],
+  );
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden px-6">
@@ -512,96 +567,41 @@ export function RequestLogPanel() {
               </p>
             </div>
           ) : (
-            <ScrollArea className="flex-1">
-              <div className="divide-y">
-                {filteredLogs.map((log) => (
-                  <button
-                    key={log.id}
-                    type="button"
-                    className={cn(
-                      "w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors cursor-pointer",
-                      selectedLogId === log.id && "bg-muted",
-                    )}
-                    onClick={() => void handleSelectLog(log.id)}
-                  >
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <span className="text-[10px] text-muted-foreground font-mono tabular-nums">
-                        {formatTimestamp(log.timestamp)}
-                      </span>
-                      <Badge
-                        variant="outline"
-                        className="text-[10px] px-1 py-0 h-4 font-normal"
-                      >
-                        {log.appType}
-                      </Badge>
-                      <span
-                        className={cn(
-                          "text-[10px] font-mono font-semibold",
-                          statusColor(log.statusCode),
-                        )}
-                      >
-                        {log.statusCode ?? "…"}
-                      </span>
-                      {log.isStream && (
-                        <Badge
-                          variant="secondary"
-                          className="text-[10px] px-1 py-0 h-4 font-normal"
-                        >
-                          SSE
-                        </Badge>
-                      )}
-                      {log.hasSystemPrompt && (
-                        <FileText className="w-3 h-3 text-blue-500 flex-shrink-0" />
-                      )}
-                      <span className="ml-auto text-[10px] text-muted-foreground tabular-nums">
-                        {log.latencyMs != null ? `${log.latencyMs}ms` : ""}
-                      </span>
+            <div
+              ref={scrollContainerRef}
+              className="flex-1 overflow-y-auto"
+            >
+              <div
+                style={{
+                  height: virtualizer.getTotalSize(),
+                  position: "relative",
+                }}
+              >
+                {virtualizer.getVirtualItems().map((virtualRow) => {
+                  const log = filteredLogs[virtualRow.index];
+                  return (
+                    <div
+                      key={log.id}
+                      data-index={virtualRow.index}
+                      ref={virtualizer.measureElement}
+                      style={{
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        width: "100%",
+                        transform: `translateY(${virtualRow.start}px)`,
+                      }}
+                    >
+                      <LogListItemRow
+                        log={log}
+                        isSelected={selectedLogId === log.id}
+                        onSelect={onSelectRow}
+                      />
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] font-mono text-muted-foreground uppercase">
-                        {log.method}
-                      </span>
-                      <span className="text-xs font-mono truncate">
-                        {log.endpoint}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground">
-                        ·
-                      </span>
-                      <span className="text-[10px] text-muted-foreground truncate shrink-0">
-                        {log.providerName}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground">
-                        ·
-                      </span>
-                      <span className="text-[10px] text-muted-foreground truncate">
-                        {log.model}
-                      </span>
-                    </div>
-                    {log.userQuery && (
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <MessageSquare className="w-3 h-3 text-muted-foreground shrink-0" />
-                        <Badge
-                          variant="outline"
-                          className="text-[10px] px-1 py-0 h-4 font-mono font-normal shrink-0"
-                        >
-                          {log.userQuery.type}
-                        </Badge>
-                        {log.userQuery.text ? (
-                          <span className="text-[11px] text-foreground/70 truncate">
-                            {log.userQuery.text}
-                          </span>
-                        ) : (
-                          <span className="text-[10px] text-muted-foreground italic">
-                            [{log.userQuery.type} content]
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </button>
-                ))}
+                  );
+                })}
               </div>
-              <div ref={logsEndRef} />
-            </ScrollArea>
+            </div>
           )}
 
           {/* Bottom stats */}
@@ -793,14 +793,17 @@ export function RequestLogPanel() {
                       </div>
                     </div>
                     <pre className="text-xs bg-muted/50 rounded-lg p-3 whitespace-pre-wrap break-words max-h-32 overflow-y-auto font-mono leading-relaxed">
-                      {JSON.stringify(detailEntry.request_body, null, 2)}
+                      {truncateJsonPreview(detailEntry.request_body)}
                     </pre>
                   </div>
 
                   {/* Request Body JSON dialog */}
                   <Dialog
                     open={showRequestJsonView}
-                    onOpenChange={setShowRequestJsonView}
+                    onOpenChange={(open) => {
+                      setShowRequestJsonView(open);
+                      if (!open) setRequestJsonExpanded(false);
+                    }}
                   >
                     <DialogContent
                       zIndex="top"
@@ -811,6 +814,19 @@ export function RequestLogPanel() {
                         <DialogTitle className="flex items-center gap-2">
                           <Braces className="w-4 h-4" />
                           Request Body (JSON)
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="ml-auto h-7 px-2 text-xs"
+                            onClick={() => setRequestJsonExpanded((v) => !v)}
+                          >
+                            {requestJsonExpanded ? (
+                              <ChevronsDownUp className="w-3.5 h-3.5 mr-1" />
+                            ) : (
+                              <ChevronsUpDown className="w-3.5 h-3.5 mr-1" />
+                            )}
+                            {requestJsonExpanded ? t("requestLog.collapseAll", { defaultValue: "全部折叠" }) : t("requestLog.expandAll", { defaultValue: "全部展开" })}
+                          </Button>
                         </DialogTitle>
                         <DialogDescription>
                           {detailEntry.model} · {detailEntry.provider_name}
@@ -819,7 +835,7 @@ export function RequestLogPanel() {
                       <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 text-xs">
                         <JsonView
                           data={detailEntry.request_body as object}
-                          shouldExpandNode={allExpanded}
+                          shouldExpandNode={requestJsonExpanded ? allExpanded : collapseAllNested}
                           style={jsonViewStyle}
                         />
                       </div>
@@ -903,7 +919,7 @@ export function RequestLogPanel() {
                       </p>
                     ) : (
                       <pre className="text-xs bg-muted/50 rounded-lg p-3 whitespace-pre-wrap break-words max-h-32 overflow-y-auto font-mono leading-relaxed">
-                        {JSON.stringify(detailEntry.response_body, null, 2)}
+                        {truncateJsonPreview(detailEntry.response_body)}
                       </pre>
                     )}
 
@@ -944,7 +960,10 @@ export function RequestLogPanel() {
                     {detailEntry.response_body != null && (
                       <Dialog
                         open={showResponseJsonView}
-                        onOpenChange={setShowResponseJsonView}
+                        onOpenChange={(open) => {
+                          setShowResponseJsonView(open);
+                          if (!open) setResponseJsonExpanded(false);
+                        }}
                       >
                         <DialogContent
                           zIndex="top"
@@ -955,6 +974,19 @@ export function RequestLogPanel() {
                             <DialogTitle className="flex items-center gap-2">
                               <Braces className="w-4 h-4" />
                               Response Body (JSON)
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="ml-auto h-7 px-2 text-xs"
+                                onClick={() => setResponseJsonExpanded((v) => !v)}
+                              >
+                                {responseJsonExpanded ? (
+                                  <ChevronsDownUp className="w-3.5 h-3.5 mr-1" />
+                                ) : (
+                                  <ChevronsUpDown className="w-3.5 h-3.5 mr-1" />
+                                )}
+                                {responseJsonExpanded ? t("requestLog.collapseAll", { defaultValue: "全部折叠" }) : t("requestLog.expandAll", { defaultValue: "全部展开" })}
+                              </Button>
                             </DialogTitle>
                             <DialogDescription>
                               {detailEntry.model} · {detailEntry.provider_name}
@@ -963,7 +995,7 @@ export function RequestLogPanel() {
                           <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 text-xs">
                             <JsonView
                               data={detailEntry.response_body as object}
-                              shouldExpandNode={allExpanded}
+                              shouldExpandNode={responseJsonExpanded ? allExpanded : collapseAllNested}
                               style={jsonViewStyle}
                             />
                           </div>

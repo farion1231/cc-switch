@@ -86,16 +86,20 @@ async fn capture_request_log(
     Some(log_id)
 }
 
-/// Updates request log response info; notifies frontend if response_body is present
+/// Updates request log response info; emits event only for final updates (with response_body)
+/// to avoid flooding the frontend. For streaming requests, the final event comes from
+/// response_processor after SSE collection completes. For non-streaming non-body updates,
+/// we still emit so the frontend gets status/latency.
 async fn update_request_log_response(state: &ProxyState, log_id: Option<&str>, status_code: u16, latency_ms: u64, response_body: Option<Value>) {
     if let Some(id) = log_id {
-        let has_body = response_body.is_some();
         state.request_log_store.update_response(id, status_code, latency_ms, response_body).await;
-        // When response_body backfill completes, notify frontend to refresh details
-        if has_body {
-            if let Some(app) = &state.app_handle {
-                let _ = app.emit("proxy-request-log-response-ready", id);
-            }
+        if let Some(app) = &state.app_handle {
+            let _ = app.emit("proxy-request-log-updated", json!({
+                "id": id,
+                "status_code": status_code,
+                "latency_ms": latency_ms,
+                "has_response_body": false,
+            }));
         }
     }
 }
@@ -424,7 +428,7 @@ async fn handle_claude_transform(
         let timeout_config = ctx.streaming_timeout_config();
 
         let response_log_info = log_id.map(|id| {
-            (state.request_log_store.clone(), id, ctx.start_time.elapsed().as_millis() as u64)
+            (state.request_log_store.clone(), id, ctx.start_time.elapsed().as_millis() as u64, state.app_handle.clone())
         });
         let logged_stream = create_logged_passthrough_stream(
             sse_stream,
@@ -861,7 +865,7 @@ async fn handle_codex_chat_to_responses_transform(
         };
 
         let response_log_info = log_id.map(|id| {
-            (state.request_log_store.clone(), id, ctx.start_time.elapsed().as_millis() as u64)
+            (state.request_log_store.clone(), id, ctx.start_time.elapsed().as_millis() as u64, state.app_handle.clone())
         });
         let logged_stream = create_logged_passthrough_stream(
             sse_stream,

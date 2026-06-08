@@ -1,14 +1,22 @@
 //! Tauri commands related to request log capture
 
-use crate::proxy::request_log::ProxyRequestLogEntry;
+use crate::proxy::request_log::{ProxyRequestLogEntry, RequestLogSummary};
 use crate::store::AppState;
 
-/// Get all captured request logs
+/// Get all captured request logs (full entries)
 #[tauri::command]
 pub async fn get_captured_request_logs(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<ProxyRequestLogEntry>, String> {
     state.proxy_service.get_captured_request_logs().await
+}
+
+/// Get lightweight summaries for list view (no request_body/response_body)
+#[tauri::command]
+pub async fn get_captured_request_log_summaries(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<RequestLogSummary>, String> {
+    state.proxy_service.get_captured_request_log_summaries().await
 }
 
 /// Get details of a single request log (including full request body)
