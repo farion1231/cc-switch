@@ -284,10 +284,8 @@ export function RequestLogPanel() {
         ]);
         setCaptureEnabled(enabled);
         setMaxEntries(max);
-        if (enabled) {
-          const summaries = await requestLogApi.getLogSummaries();
-          setLogs(summaries.map(summaryToListItem));
-        }
+        const summaries = await requestLogApi.getLogSummaries();
+        setLogs(summaries.map(summaryToListItem));
       } catch (error) {
         console.error("Failed to init request log panel:", error);
       }
@@ -319,7 +317,7 @@ export function RequestLogPanel() {
         ),
       );
       // If the currently viewed detail matches, refresh it
-      if (selectedLogId === payload.id && payload.has_response_body) {
+      if (selectedLogIdRef.current === payload.id && payload.has_response_body) {
         void requestLogApi.getLogDetail(payload.id).then((detail) => {
           if (detail) setDetailEntry(detail);
         });
@@ -427,7 +425,7 @@ export function RequestLogPanel() {
   const virtualizer = useVirtualizer({
     count: filteredLogs.length,
     getScrollElement: () => scrollContainerRef.current,
-    estimateSize: () => 64,
+    estimateSize: () => 80,
     overscan: 10,
   });
 
@@ -456,6 +454,11 @@ export function RequestLogPanel() {
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
             </span>
           )}
+          <span className="text-[10px] text-muted-foreground tabular-nums ml-1">
+            {filteredLogs.length !== logs.length
+              ? `${filteredLogs.length}/${logs.length}`
+              : `${logs.length} 条`}
+          </span>
         </div>
 
         <div className="flex-1" />
@@ -536,11 +539,11 @@ export function RequestLogPanel() {
       </div>
 
       {/* Main area */}
-      <div className="flex flex-1 min-h-0 gap-0">
+      <div className="flex h-0 flex-1 overflow-hidden gap-0">
         {/* Left list */}
         <div
           className={cn(
-            "flex flex-col min-h-0 border-r transition-all",
+            "flex flex-col min-h-0 overflow-hidden border-r transition-all",
             selectedLogId ? "w-[45%]" : "w-full",
           )}
         >
@@ -604,28 +607,11 @@ export function RequestLogPanel() {
             </div>
           )}
 
-          {/* Bottom stats */}
-          <div className="px-3 py-1.5 border-t text-[10px] text-muted-foreground flex items-center gap-3">
-            <span>
-              {t("requestLog.totalCount", {
-                count: logs.length,
-                defaultValue: `${logs.length} 条记录`,
-              })}
-            </span>
-            {filteredLogs.length !== logs.length && (
-              <span>
-                {t("requestLog.filteredCount", {
-                  count: filteredLogs.length,
-                  defaultValue: `${filteredLogs.length} 条匹配`,
-                })}
-              </span>
-            )}
-          </div>
         </div>
 
         {/* Right details */}
         {selectedLogId && (
-          <div className="flex-1 flex flex-col min-h-0 min-w-0">
+          <div className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden">
             <div className="flex items-center justify-between px-4 py-2 border-b">
               <h3 className="text-sm font-medium">
                 {t("requestLog.detail", { defaultValue: "请求详情" })}
@@ -1105,18 +1091,23 @@ function parseMessages(requestBody: unknown): ParsedMessage[] | null {
       }
     }
 
+    // Filter out empty text parts to avoid rendering blank bubbles
+    const nonEmptyParts = normalParts.filter(
+      (p) => p.type !== "text" || p.text.trim().length > 0,
+    );
+
     // Split each text part into separate messages, tool calls as a single message
-    if (normalParts.length > 1) {
-      for (const part of normalParts) {
+    if (nonEmptyParts.length > 1) {
+      for (const part of nonEmptyParts) {
         result.push({ role: rawRole, contentParts: [part] });
       }
       if (toolCalls.length > 0) {
         result.push({ role: rawRole, contentParts: [], toolCalls });
       }
-    } else if (normalParts.length > 0 || toolCalls.length > 0) {
+    } else if (nonEmptyParts.length > 0 || toolCalls.length > 0) {
       result.push({
         role: rawRole,
-        contentParts: normalParts,
+        contentParts: nonEmptyParts,
         toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       });
     }
@@ -1184,9 +1175,22 @@ const DEFAULT_ROLE_CONFIG = {
   bubbleColor: "bg-muted border border-border",
 };
 
+function isSessionReclaimed(requestBody: unknown): boolean {
+  if (!requestBody || typeof requestBody !== "object") return false;
+  const body = requestBody as Record<string, unknown>;
+  return !("messages" in body) && Object.keys(body).length > 0;
+}
+
 function FormattedMessagesView({ requestBody }: { requestBody: unknown }) {
   const messages = parseMessages(requestBody);
   if (!messages || messages.length === 0) {
+    if (isSessionReclaimed(requestBody)) {
+      return (
+        <p className="text-xs text-muted-foreground italic">
+          消息内容已被回收（同 Session 有更新的请求，旧请求的 messages 已自动释放以节省内存）
+        </p>
+      );
+    }
     return (
       <p className="text-xs text-muted-foreground italic">无 messages 数据</p>
     );

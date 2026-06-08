@@ -227,7 +227,7 @@ pub async fn handle_streaming(
     let response_log_info = if let Some(id) = &log_id {
         if state.request_log_store.is_enabled() {
             let latency_ms = ctx.latency_ms();
-            Some((state.request_log_store.clone(), id.clone(), latency_ms, state.app_handle.clone()))
+            Some((state.request_log_store.clone(), id.clone(), latency_ms, status.as_u16(), state.app_handle.clone()))
         } else {
             None
         }
@@ -725,7 +725,7 @@ pub fn create_logged_passthrough_stream(
     usage_collector: Option<SseUsageCollector>,
     timeout_config: StreamingTimeoutConfig,
     connection_guard: Option<ActiveConnectionGuard>,
-    response_log_info: Option<(Arc<RequestLogStore>, String, u64, Option<tauri::AppHandle>)>,
+    response_log_info: Option<(Arc<RequestLogStore>, String, u64, u16, Option<tauri::AppHandle>)>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let _conn_guard = connection_guard;
@@ -888,7 +888,7 @@ pub fn create_logged_passthrough_stream(
         }
 
         // After stream ends, merge head+tail and backfill asynchronously
-        if let Some((store, log_id, latency_ms, app_handle)) = response_log_info {
+        if let Some((store, log_id, latency_ms, status_code, app_handle)) = response_log_info {
             if let Some(head) = sse_log_head {
                 if !head.is_empty() || !sse_log_tail.is_empty() {
                     let mut merged = head;
@@ -899,11 +899,11 @@ pub fn create_logged_passthrough_stream(
                     merged.extend(sse_log_tail);
                     let response_body = Value::Array(merged);
                     tokio::spawn(async move {
-                        store.update_response(&log_id, 200, latency_ms, Some(response_body)).await;
+                        store.update_response(&log_id, status_code, latency_ms, Some(response_body)).await;
                         if let Some(app) = &app_handle {
                             let _ = app.emit("proxy-request-log-updated", serde_json::json!({
                                 "id": log_id,
-                                "status_code": 200u16,
+                                "status_code": status_code,
                                 "latency_ms": latency_ms,
                                 "has_response_body": true,
                             }));

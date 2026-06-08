@@ -428,7 +428,7 @@ async fn handle_claude_transform(
         let timeout_config = ctx.streaming_timeout_config();
 
         let response_log_info = log_id.map(|id| {
-            (state.request_log_store.clone(), id, ctx.start_time.elapsed().as_millis() as u64, state.app_handle.clone())
+            (state.request_log_store.clone(), id, ctx.start_time.elapsed().as_millis() as u64, status.as_u16(), state.app_handle.clone())
         });
         let logged_stream = create_logged_passthrough_stream(
             sse_stream,
@@ -865,7 +865,7 @@ async fn handle_codex_chat_to_responses_transform(
         };
 
         let response_log_info = log_id.map(|id| {
-            (state.request_log_store.clone(), id, ctx.start_time.elapsed().as_millis() as u64, state.app_handle.clone())
+            (state.request_log_store.clone(), id, ctx.start_time.elapsed().as_millis() as u64, status.as_u16(), state.app_handle.clone())
         });
         let logged_stream = create_logged_passthrough_stream(
             sse_stream,
