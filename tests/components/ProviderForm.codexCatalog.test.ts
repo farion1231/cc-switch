@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { normalizeCodexCatalogModelsForSave } from "@/components/providers/forms/ProviderForm";
+import {
+  normalizeCodexCatalogModelsForSave,
+  normalizeProviderLoadLimitsForSave,
+} from "@/components/providers/forms/ProviderForm";
 
 describe("ProviderForm Codex catalog helpers", () => {
   it("normalizes catalog rows and removes empty or duplicate models", () => {
@@ -14,5 +17,18 @@ describe("ProviderForm Codex catalog helpers", () => {
       { model: "deepseek-v4-flash", displayName: "DeepSeek" },
       { model: "kimi-k2", contextWindow: 128000 },
     ]);
+  });
+
+  it("normalizes provider load limits for save", () => {
+    expect(
+      normalizeProviderLoadLimitsForSave({ maxConcurrent: 20, rpm: 100 }),
+    ).toEqual({
+      maxConcurrent: 20,
+      rpm: 100,
+    });
+    expect(
+      normalizeProviderLoadLimitsForSave({ maxConcurrent: 0 }),
+    ).toBeUndefined();
+    expect(normalizeProviderLoadLimitsForSave({})).toBeUndefined();
   });
 });

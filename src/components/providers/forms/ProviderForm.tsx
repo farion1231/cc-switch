@@ -11,6 +11,7 @@ import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import { providersApi, settingsApi, type AppId } from "@/lib/api";
 import type {
   ProviderCategory,
+  ProviderLoadLimits,
   ProviderMeta,
   ProviderTestConfig,
   ClaudeApiFormat,
@@ -175,6 +176,25 @@ export const normalizeCodexCatalogModelsForSave = (
   return normalized;
 };
 
+export const normalizeProviderLoadLimitsForSave = (
+  limits: ProviderLoadLimits,
+): ProviderLoadLimits | undefined => {
+  const maxConcurrent =
+    limits.maxConcurrent && limits.maxConcurrent > 0
+      ? limits.maxConcurrent
+      : undefined;
+  const rpm = limits.rpm && limits.rpm > 0 ? limits.rpm : undefined;
+
+  if (!maxConcurrent && !rpm) {
+    return undefined;
+  }
+
+  return {
+    ...(maxConcurrent ? { maxConcurrent } : {}),
+    ...(rpm ? { rpm } : {}),
+  };
+};
+
 const normalizeCodexChatReasoningForSave = (
   value?: CodexChatReasoning,
 ): CodexChatReasoning | undefined => {
@@ -309,6 +329,9 @@ function ProviderFormFull({
   const [testConfig, setTestConfig] = useState<ProviderTestConfig>(
     () => initialData?.meta?.testConfig ?? { enabled: false },
   );
+  const [loadLimits, setLoadLimits] = useState<ProviderLoadLimits>(
+    () => initialData?.meta?.loadLimits ?? {},
+  );
   const [pricingConfig, setPricingConfig] = useState<{
     enabled: boolean;
     costMultiplier?: string;
@@ -345,6 +368,7 @@ function ProviderFormFull({
       supportsFullUrl ? (initialData?.meta?.isFullUrl ?? false) : false,
     );
     setTestConfig(initialData?.meta?.testConfig ?? { enabled: false });
+    setLoadLimits(initialData?.meta?.loadLimits ?? {});
     setPricingConfig({
       enabled:
         initialData?.meta?.costMultiplier !== undefined ||
@@ -963,6 +987,21 @@ function ProviderFormFull({
       return;
     }
 
+    const invalidLoadLimit =
+      (loadLimits.maxConcurrent !== undefined &&
+        (!Number.isInteger(loadLimits.maxConcurrent) ||
+          loadLimits.maxConcurrent < 0)) ||
+      (loadLimits.rpm !== undefined &&
+        (!Number.isInteger(loadLimits.rpm) || loadLimits.rpm < 0));
+    if (invalidLoadLimit) {
+      toast.error(
+        t("providerAdvanced.loadLimitsInvalid", {
+          defaultValue: "负载限制必须为非负整数",
+        }),
+      );
+      return;
+    }
+
     // opencode / openclaw / hermes: providerKey 相关
     // A 类（空）归到 issues；B 类（正则不合法 / 重复 / 状态加载中）仍硬拒绝
     const keyPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -1379,6 +1418,7 @@ function ProviderFormFull({
         isCopilotProvider && selectedGitHubAccountId
           ? selectedGitHubAccountId
           : undefined,
+      loadLimits: normalizeProviderLoadLimitsForSave(loadLimits),
       codexFastMode: isCodexOauthProvider ? codexFastMode : undefined,
       codexChatReasoning:
         appId === "codex" &&
@@ -2310,8 +2350,10 @@ function ProviderFormFull({
               <ProviderAdvancedConfig
                 testConfig={testConfig}
                 pricingConfig={pricingConfig}
+                loadLimits={loadLimits}
                 onTestConfigChange={setTestConfig}
                 onPricingConfigChange={setPricingConfig}
+                onLoadLimitsChange={setLoadLimits}
               />
             )}
 

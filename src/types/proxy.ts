@@ -27,12 +27,15 @@ export interface ProxyStatus {
   last_error: string | null;
   failover_count: number;
   active_targets?: ActiveTarget[];
+  active_provider_sessions?: ActiveTarget[];
 }
 
 export interface ActiveTarget {
   app_type: string;
   provider_name: string;
   provider_id: string;
+  active_connections?: number;
+  session_ids?: string[];
 }
 
 export interface ProxyServerInfo {
@@ -113,6 +116,7 @@ export interface FailoverQueueItem {
   providerName: string;
   providerNotes?: string;
   sortIndex?: number;
+  enabled?: boolean;
 }
 
 // 全局代理配置（统一字段，三行镜像）

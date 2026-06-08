@@ -8,6 +8,7 @@ use super::{
     error::*,
     failover_switch::FailoverSwitchManager,
     json_canonical::{canonicalize_value, short_value_hash},
+    load_balancer::{ProviderLoadBalancer, ProviderLoadPermit},
     log_codes::fwd as log_fwd,
     provider_router::ProviderRouter,
     providers::{
@@ -41,6 +42,8 @@ pub struct ForwardResult {
     /// 活跃连接 RAII guard：随响应一起流转到 response_processor / handle_claude_transform，
     /// 最终被 move 进流式 body future（或非流式响应作用域），覆盖整个响应生命周期。
     pub(crate) connection_guard: Option<ActiveConnectionGuard>,
+    /// Provider 负载许可。随响应生命周期释放并发名额。
+    pub(crate) load_permit: Option<ProviderLoadPermit>,
 }
 
 pub struct ForwardError {
@@ -60,6 +63,7 @@ pub struct ForwardError {
 /// 不需要每条出口路径都手动调用。
 pub(crate) struct ActiveConnectionGuard {
     status: Arc<RwLock<ProxyStatus>>,
+    load_permit: Option<ProviderLoadPermit>,
 }
 
 impl ActiveConnectionGuard {
@@ -68,7 +72,14 @@ impl ActiveConnectionGuard {
             let mut s = status.write().await;
             s.active_connections = s.active_connections.saturating_add(1);
         }
-        Self { status }
+        Self {
+            status,
+            load_permit: None,
+        }
+    }
+
+    pub(crate) fn attach_load_permit(&mut self, load_permit: Option<ProviderLoadPermit>) {
+        self.load_permit = load_permit;
     }
 }
 
@@ -95,6 +106,8 @@ pub struct RequestForwarder {
     codex_chat_history: Arc<CodexChatHistoryStore>,
     /// 故障转移切换管理器
     failover_manager: Arc<FailoverSwitchManager>,
+    /// Provider 级运行态负载调度器
+    load_balancer: ProviderLoadBalancer,
     /// AppHandle，用于发射事件和更新托盘
     app_handle: Option<tauri::AppHandle>,
     /// 请求开始时的"当前供应商 ID"（用于判断是否需要同步 UI/托盘）
@@ -176,6 +189,7 @@ impl RequestForwarder {
         gemini_shadow: Arc<GeminiShadowStore>,
         codex_chat_history: Arc<CodexChatHistoryStore>,
         failover_manager: Arc<FailoverSwitchManager>,
+        load_balancer: ProviderLoadBalancer,
         app_handle: Option<tauri::AppHandle>,
         current_provider_id_at_start: String,
         session_id: String,
@@ -197,6 +211,7 @@ impl RequestForwarder {
             gemini_shadow,
             codex_chat_history,
             failover_manager,
+            load_balancer,
             app_handle,
             current_provider_id_at_start,
             session_id,
@@ -244,6 +259,19 @@ impl RequestForwarder {
                 );
             }
         });
+    }
+
+    async fn bind_provider_session_success(
+        &self,
+        app_type_str: &str,
+        provider_id: &str,
+        load_permit: &mut ProviderLoadPermit,
+    ) {
+        if self.session_client_provided {
+            self.load_balancer
+                .bind_success(app_type_str, &self.session_id, provider_id, load_permit)
+                .await;
+        }
     }
 
     /// 整流（thinking signature 或 budget）重试失败后的统一收尾。
@@ -327,7 +355,7 @@ impl RequestForwarder {
         extensions: Extensions,
         providers: Vec<Provider>,
     ) -> Result<ForwardResult, ForwardError> {
-        let guard = ActiveConnectionGuard::acquire(self.status.clone()).await;
+        let mut guard = ActiveConnectionGuard::acquire(self.status.clone()).await;
         {
             let mut s = self.status.write().await;
             s.total_requests = s.total_requests.saturating_add(1);
@@ -342,6 +370,7 @@ impl RequestForwarder {
         // 在流式 body 的 future 内才真正 drop。
         // Err 路径：guard 在函数 scope 内随返回值落地时自动 drop。
         result.map(|mut fr| {
+            guard.attach_load_permit(fr.load_permit.take());
             fr.connection_guard = Some(guard);
             fr
         })
@@ -420,6 +449,24 @@ impl RequestForwarder {
                 continue;
             }
 
+            let load_session_id = if self.session_client_provided {
+                self.session_id.as_str()
+            } else {
+                ""
+            };
+            let Ok(mut load_permit) = self
+                .load_balancer
+                .acquire(app_type_str, load_session_id, provider)
+                .await
+            else {
+                if used_half_open_permit {
+                    self.router
+                        .release_permit_neutral(&provider.id, app_type_str, true)
+                        .await;
+                }
+                continue;
+            };
+
             // PRE-SEND 优化器：每个 provider 独立决定是否优化
             // clone body 以避免 Bedrock 优化字段泄漏到非 Bedrock provider（failover 场景）
             let mut provider_body =
@@ -468,6 +515,12 @@ impl RequestForwarder {
                     // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
                     self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
                         .await;
+                    self.bind_provider_session_success(
+                        app_type_str,
+                        &provider.id,
+                        &mut load_permit,
+                    )
+                    .await;
 
                     // 更新当前应用类型使用的 provider
                     {
@@ -512,6 +565,7 @@ impl RequestForwarder {
                         provider: provider.clone(),
                         claude_api_format,
                         connection_guard: None,
+                        load_permit: Some(load_permit),
                     });
                 }
                 Err(e) => {
@@ -571,6 +625,12 @@ impl RequestForwarder {
                                         used_half_open_permit,
                                     )
                                     .await;
+                                    self.bind_provider_session_success(
+                                        app_type_str,
+                                        &provider.id,
+                                        &mut load_permit,
+                                    )
+                                    .await;
 
                                     {
                                         let mut current_providers =
@@ -614,6 +674,7 @@ impl RequestForwarder {
                                         provider: provider.clone(),
                                         claude_api_format,
                                         connection_guard: None,
+                                        load_permit: Some(load_permit),
                                     });
                                 }
                                 Err(retry_err) => {
@@ -714,6 +775,12 @@ impl RequestForwarder {
                                             used_half_open_permit,
                                         )
                                         .await;
+                                        self.bind_provider_session_success(
+                                            app_type_str,
+                                            &provider.id,
+                                            &mut load_permit,
+                                        )
+                                        .await;
 
                                         // 更新当前应用类型使用的 provider
                                         {
@@ -762,6 +829,7 @@ impl RequestForwarder {
                                             provider: provider.clone(),
                                             claude_api_format,
                                             connection_guard: None,
+                                            load_permit: Some(load_permit),
                                         });
                                     }
                                     Err(retry_err) => {
@@ -879,6 +947,12 @@ impl RequestForwarder {
                                         used_half_open_permit,
                                     )
                                     .await;
+                                    self.bind_provider_session_success(
+                                        app_type_str,
+                                        &provider.id,
+                                        &mut load_permit,
+                                    )
+                                    .await;
 
                                     {
                                         let mut current_providers =
@@ -921,6 +995,7 @@ impl RequestForwarder {
                                         provider: provider.clone(),
                                         claude_api_format,
                                         connection_guard: None,
+                                        load_permit: Some(load_permit),
                                     });
                                 }
                                 Err(retry_err) => {
@@ -1187,7 +1262,8 @@ impl RequestForwarder {
             //   1. metadata.user_id 中的 _session_ 后缀
             //   2. metadata.session_id（直接字段）
             //   3. raw metadata.user_id（整串 fallback）
-            //   4. x-session-id header
+            //   4. Codex 官方 thread-id / session-id header
+            //   5. 兼容旧 x-session-id header
             let metadata = body.get("metadata");
             let session_id = metadata
                 .and_then(|m| m.get("user_id"))
@@ -1209,7 +1285,9 @@ impl RequestForwarder {
                 })
                 .or_else(|| {
                     headers
-                        .get("x-session-id")
+                        .get("thread-id")
+                        .or_else(|| headers.get("session-id"))
+                        .or_else(|| headers.get("x-session-id"))
                         .and_then(|v| v.to_str().ok())
                         .filter(|s| !s.is_empty())
                         .map(|s| s.to_string())
@@ -1499,7 +1577,13 @@ impl RequestForwarder {
 
         let codex_oauth_session_headers =
             if should_send_codex_oauth_session_headers && self.session_client_provided {
-                build_codex_oauth_session_headers(&self.session_id)
+                let session_id = headers
+                    .get("session-id")
+                    .and_then(|value| value.to_str().ok());
+                let thread_id = headers
+                    .get("thread-id")
+                    .and_then(|value| value.to_str().ok());
+                build_codex_oauth_session_headers(session_id, thread_id)
             } else {
                 Vec::new()
             };
@@ -2352,22 +2436,31 @@ fn append_query_to_full_url(base_url: &str, query: Option<&str>) -> String {
 }
 
 fn build_codex_oauth_session_headers(
-    session_id: &str,
+    session_id: Option<&str>,
+    thread_id: Option<&str>,
 ) -> Vec<(http::HeaderName, http::HeaderValue)> {
-    let session_id = session_id.trim();
-    if session_id.is_empty() {
-        return Vec::new();
-    }
-
     let mut headers = Vec::new();
-    if let Ok(value) = http::HeaderValue::from_str(session_id) {
-        headers.push((http::HeaderName::from_static("session_id"), value.clone()));
-        headers.push((http::HeaderName::from_static("x-client-request-id"), value));
+    let session_id = session_id.map(str::trim).filter(|value| !value.is_empty());
+    let thread_id = thread_id.map(str::trim).filter(|value| !value.is_empty());
+
+    if let Some(session_id) = session_id {
+        if let Ok(value) = http::HeaderValue::from_str(session_id) {
+            headers.push((http::HeaderName::from_static("session-id"), value));
+        }
     }
 
-    let window_id = format!("{session_id}:0");
-    if let Ok(value) = http::HeaderValue::from_str(&window_id) {
-        headers.push((http::HeaderName::from_static("x-codex-window-id"), value));
+    if let Some(thread_id) = thread_id {
+        if let Ok(value) = http::HeaderValue::from_str(thread_id) {
+            headers.push((http::HeaderName::from_static("thread-id"), value.clone()));
+            headers.push((http::HeaderName::from_static("x-client-request-id"), value));
+        }
+    }
+
+    if let Some(id) = thread_id.or(session_id) {
+        let window_id = format!("{id}:0");
+        if let Ok(value) = http::HeaderValue::from_str(&window_id) {
+            headers.push((http::HeaderName::from_static("x-codex-window-id"), value));
+        }
     }
 
     headers
@@ -2583,6 +2676,7 @@ mod tests {
             gemini_shadow: Arc::new(GeminiShadowStore::new()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
+            load_balancer: ProviderLoadBalancer::default(),
             app_handle: None,
             current_provider_id_at_start: String::new(),
             session_id: String::new(),
@@ -2833,23 +2927,27 @@ mod tests {
 
     #[test]
     fn codex_oauth_session_headers_match_codex_cache_identity() {
-        let headers = build_codex_oauth_session_headers("session-123");
+        let headers = build_codex_oauth_session_headers(Some("session-123"), Some("thread-456"));
         let mut map = HeaderMap::new();
         for (name, value) in headers {
             map.insert(name, value);
         }
 
         assert_eq!(
-            map.get("session_id"),
+            map.get("session-id"),
             Some(&HeaderValue::from_static("session-123"))
+        );
+        assert_eq!(
+            map.get("thread-id"),
+            Some(&HeaderValue::from_static("thread-456"))
         );
         assert_eq!(
             map.get("x-client-request-id"),
-            Some(&HeaderValue::from_static("session-123"))
+            Some(&HeaderValue::from_static("thread-456"))
         );
         assert_eq!(
             map.get("x-codex-window-id"),
-            Some(&HeaderValue::from_static("session-123:0"))
+            Some(&HeaderValue::from_static("thread-456:0"))
         );
     }
 

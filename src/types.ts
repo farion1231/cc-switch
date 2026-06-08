@@ -123,6 +123,11 @@ export interface ProviderTestConfig {
   maxRetries?: number;
 }
 
+export interface ProviderLoadLimits {
+  maxConcurrent?: number;
+  rpm?: number;
+}
+
 export type AuthBindingSource = "provider_config" | "managed_account";
 
 export interface AuthBinding {
@@ -191,6 +196,8 @@ export interface ProviderMeta {
   isPartner?: boolean;
   // 合作伙伴促销 key（用于后端识别 PackyCode 等）
   partnerPromotionKey?: string;
+  // 本地路由负载限制
+  loadLimits?: ProviderLoadLimits;
   // 供应商单独的模型测试配置
   testConfig?: ProviderTestConfig;
   // 供应商成本倍率

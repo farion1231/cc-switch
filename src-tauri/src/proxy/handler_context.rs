@@ -137,6 +137,15 @@ impl RequestContext {
                 crate::error::AppError::NoProvidersConfigured => ProxyError::NoProvidersConfigured,
                 _ => ProxyError::DatabaseError(e.to_string()),
             })?;
+        let sticky_session_id = if session_result.client_provided {
+            session_id.as_str()
+        } else {
+            ""
+        };
+        let providers = state
+            .load_balancer
+            .order_providers_for_session(app_type_str, sticky_session_id, &providers)
+            .await;
 
         let provider = providers
             .first()
@@ -225,6 +234,7 @@ impl RequestContext {
             state.gemini_shadow.clone(),
             state.codex_chat_history.clone(),
             state.failover_manager.clone(),
+            state.load_balancer.clone(),
             state.app_handle.clone(),
             self.current_provider_id.clone(),
             self.session_id.clone(),
