@@ -159,6 +159,10 @@ fn handle_deeplink_url(
                     {
                         linux_fix::nudge_main_window(window.clone());
                     }
+                    #[cfg(target_os = "macos")]
+                    {
+                        crate::tray::apply_tray_policy(app, true);
+                    }
                     log::info!("✓ Window shown and focused");
                 }
             }
@@ -259,6 +263,10 @@ pub fn run() {
                 #[cfg(target_os = "linux")]
                 {
                     linux_fix::nudge_main_window(window.clone());
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    crate::tray::apply_tray_policy(app, true);
                 }
             }
         }));
@@ -1108,6 +1116,8 @@ pub fn run() {
                 } else {
                     // 正常启动模式：显示窗口
                     let _ = window.show();
+                    #[cfg(target_os = "macos")]
+                    tray::apply_tray_policy(app.handle(), true);
                     log::info!("正常启动模式：主窗口已显示");
 
                     // Linux: 解决首次启动 UI 无响应问题（Tauri #10746 + wry #637）。
@@ -1575,6 +1585,7 @@ pub fn run() {
                                 let _ = window.unminimize();
                                 let _ = window.show();
                                 let _ = window.set_focus();
+                                tray::apply_tray_policy(app_handle, true);
                             }
                         }
                     }

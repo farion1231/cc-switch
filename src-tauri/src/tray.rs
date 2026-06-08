@@ -677,22 +677,42 @@ pub fn refresh_tray_menu(app: &tauri::AppHandle) {
 }
 
 #[cfg(target_os = "macos")]
-pub fn apply_tray_policy(app: &tauri::AppHandle, dock_visible: bool) {
+fn restore_window_hide_behavior() {
+    use objc2_app_kit::NSApplication;
+    use objc2_foundation::run_on_main;
+
+    run_on_main(|mtm| unsafe {
+        let app = NSApplication::sharedApplication(mtm);
+        let windows = app.windows();
+
+        for index in 0..windows.count() {
+            let window = windows.objectAtIndex(index);
+            window.setCanHide(true);
+        }
+    });
+}
+
+#[cfg(target_os = "macos")]
+pub fn apply_tray_policy(app: &tauri::AppHandle, main_window_visible: bool) {
     use tauri::ActivationPolicy;
 
-    let desired_policy = if dock_visible {
+    let effective_dock_visible =
+        main_window_visible && crate::settings::get_settings().keep_dock_icon;
+    let desired_policy = if effective_dock_visible {
         ActivationPolicy::Regular
     } else {
         ActivationPolicy::Accessory
     };
 
-    if let Err(err) = app.set_dock_visibility(dock_visible) {
+    if let Err(err) = app.set_dock_visibility(effective_dock_visible) {
         log::warn!("设置 Dock 显示状态失败: {err}");
     }
 
     if let Err(err) = app.set_activation_policy(desired_policy) {
         log::warn!("设置激活策略失败: {err}");
     }
+
+    restore_window_hide_behavior();
 }
 
 /// 处理托盘菜单事件
