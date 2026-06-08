@@ -1074,7 +1074,11 @@ fn write_codex_official_live_for_provider(
     if auth_path.exists() {
         let mut live_auth: Value = read_json_file(&auth_path)?;
         if let Some(live_auth_obj) = live_auth.as_object_mut() {
-            if live_auth_obj.remove("OPENAI_API_KEY").is_some() {
+            let has_stale_api_key = live_auth_obj
+                .get("OPENAI_API_KEY")
+                .is_some_and(|value| !value.is_null());
+            if has_stale_api_key {
+                live_auth_obj.remove("OPENAI_API_KEY");
                 return write_codex_live_atomic(&live_auth, config_text);
             }
         }
