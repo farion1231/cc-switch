@@ -1137,6 +1137,10 @@ pub fn ensure_codex_model_provider_section(config_text: &str) -> String {
             .collect();
 
         if !fields_to_insert.is_empty() {
+            // Only proceed with cleanup if we can actually write into the
+            // provider entry.  Inline tables (e.g. `vendor = { name = "V" }`)
+            // are values, not tables — as_table_mut() returns None for them,
+            // so we must not remove top-level fields we couldn't migrate.
             if let Some(provider_table) = mp
                 .get_mut(&provider_id)
                 .and_then(|item| item.as_table_mut())
@@ -1144,10 +1148,11 @@ pub fn ensure_codex_model_provider_section(config_text: &str) -> String {
                 for (field, val) in &fields_to_insert {
                     provider_table.insert(field, val.clone());
                 }
-            }
-            // Clean up top-level copies after filling table (after provider_table borrow ends).
-            for (field, _) in &fields_to_insert {
-                doc.remove(field);
+                // Clean up top-level copies only after successful insertion
+                // (borrow on provider_table has ended by this point).
+                for (field, _) in &fields_to_insert {
+                    doc.remove(field);
+                }
             }
         }
     }
@@ -2470,6 +2475,37 @@ base_url = "https://correct.example/v1"
             parsed.get("base_url").and_then(|v| v.as_str()),
             Some("https://stale.example/v1"),
             "top-level base_url must remain when provider table already existed"
+        );
+    }
+
+    #[test]
+    fn ensure_model_provider_section_preserves_flat_fields_for_inline_table() {
+        // When the provider entry is an inline table (value, not a standard table),
+        // as_table_mut() returns None so we cannot insert into it.  Top-level
+        // endpoint fields must NOT be removed in this case — doing so would
+        // silently drop the routing information Codex CLI needs.
+        let input = r#"model_provider = "vendor"
+model = "gpt-5"
+base_url = "https://vendor.example/v1"
+wire_api = "responses"
+
+[model_providers]
+vendor = { name = "Vendor" }
+"#;
+        let result = ensure_codex_model_provider_section(input);
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        // Top-level endpoint fields must be preserved — we couldn't migrate them
+        // into the inline table, so removing them would be data loss.
+        assert_eq!(
+            parsed.get("base_url").and_then(|v| v.as_str()),
+            Some("https://vendor.example/v1"),
+            "top-level base_url must be preserved when provider is an inline table"
+        );
+        assert_eq!(
+            parsed.get("wire_api").and_then(|v| v.as_str()),
+            Some("responses"),
+            "top-level wire_api must be preserved when provider is an inline table"
         );
     }
 
