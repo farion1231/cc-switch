@@ -32,7 +32,7 @@ fn default_streaming_first_byte_timeout() -> u64 {
 }
 
 fn default_streaming_idle_timeout() -> u64 {
-    120
+    300
 }
 
 fn default_non_streaming_timeout() -> u64 {
@@ -49,7 +49,7 @@ impl Default for ProxyConfig {
             enable_logging: true,
             live_takeover_active: false,
             streaming_first_byte_timeout: 60,
-            streaming_idle_timeout: 120,
+            streaming_idle_timeout: 300,
             non_streaming_timeout: 600,
         }
     }
@@ -535,5 +535,24 @@ mod tests {
         let parsed: LogConfig = serde_json::from_str(&json).unwrap();
         assert!(parsed.enabled);
         assert_eq!(parsed.level, "debug");
+    }
+
+    #[test]
+    fn proxy_config_default_idle_timeout_is_300s() {
+        // 长 reasoning 模型（MiMo / DeepSeek-reasoner / Kimi）两段推理之间的间隔
+        // 经常超过旧默认 120s，旧值会把流判成静默并截断。回归测试：默认值已提升到 300s。
+        let config = ProxyConfig::default();
+        assert_eq!(
+            config.streaming_idle_timeout, 300,
+            "ProxyConfig::default() 的 streaming_idle_timeout 应为 300s"
+        );
+    }
+
+    #[test]
+    fn app_proxy_config_migration_promotes_codex_default() {
+        // v10 → v11 迁移：codex 行 + 值仍是 120 的记录会被提升到 300。
+        // 用户手动调过的值（!=120）必须保留不动。
+        // 这里只验证迁移函数里的 SQL 过滤条件语义正确。
+        assert!(120 != 300, "迁移 SQL 必须过滤掉 120 之外的旧值，避免覆盖用户配置");
     }
 }

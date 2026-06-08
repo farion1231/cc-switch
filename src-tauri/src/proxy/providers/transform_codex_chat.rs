@@ -703,6 +703,44 @@ fn append_responses_item_as_chat_message(
             );
             if item.get("role").is_some() || item.get("content").is_some() {
                 let message = responses_message_item_to_chat_message(item, pending_reasoning);
+                // If this is an assistant message and the last message is also
+                // an assistant message with tool_calls, merge the content into
+                // it instead of creating a new message. This prevents consecutive
+                // assistant messages which strict Chat Completions providers
+                // (MiMo/MiniMax) reject with HTTP 400.
+                if message.get("role").and_then(|v| v.as_str()) == Some("assistant") {
+                    if let Some(last) = messages.last_mut() {
+                        if last.get("role").and_then(|v| v.as_str()) == Some("assistant")
+                            && last.get("tool_calls").is_some()
+                        {
+                            // Merge: add content from the new message to the existing one
+                            let new_content =
+                                message.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                            if !new_content.is_empty() {
+                                let existing_content =
+                                    last.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                                if existing_content.is_empty() {
+                                    last["content"] = json!(new_content);
+                                } else {
+                                    last["content"] =
+                                        json!(format!("{}\n{}", existing_content, new_content));
+                                }
+                            }
+                            // Merge reasoning_content if the new message has it and the existing one doesn't
+                            if let Some(reasoning) = message.get("reasoning_content") {
+                                let existing_has_reasoning = last
+                                    .get("reasoning_content")
+                                    .and_then(|v| v.as_str())
+                                    .is_some_and(|s| !s.trim().is_empty());
+                                if !existing_has_reasoning {
+                                    last["reasoning_content"] = reasoning.clone();
+                                }
+                            }
+                            // last_assistant_index stays the same since we merged into the existing message
+                            return Ok(());
+                        }
+                    }
+                }
                 update_last_assistant_index(messages, &message, last_assistant_index);
                 messages.push(message);
             }
@@ -716,6 +754,38 @@ fn append_responses_item_as_chat_message(
             );
             if item.get("role").is_some() || item.get("content").is_some() {
                 let message = responses_message_item_to_chat_message(item, pending_reasoning);
+                // Same merge logic as the "message" | None branch above:
+                // prevent consecutive assistant messages.
+                if message.get("role").and_then(|v| v.as_str()) == Some("assistant") {
+                    if let Some(last) = messages.last_mut() {
+                        if last.get("role").and_then(|v| v.as_str()) == Some("assistant")
+                            && last.get("tool_calls").is_some()
+                        {
+                            let new_content =
+                                message.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                            if !new_content.is_empty() {
+                                let existing_content =
+                                    last.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                                if existing_content.is_empty() {
+                                    last["content"] = json!(new_content);
+                                } else {
+                                    last["content"] =
+                                        json!(format!("{}\n{}", existing_content, new_content));
+                                }
+                            }
+                            if let Some(reasoning) = message.get("reasoning_content") {
+                                let existing_has_reasoning = last
+                                    .get("reasoning_content")
+                                    .and_then(|v| v.as_str())
+                                    .is_some_and(|s| !s.trim().is_empty());
+                                if !existing_has_reasoning {
+                                    last["reasoning_content"] = reasoning.clone();
+                                }
+                            }
+                            return Ok(());
+                        }
+                    }
+                }
                 update_last_assistant_index(messages, &message, last_assistant_index);
                 messages.push(message);
             }
@@ -735,10 +805,40 @@ fn flush_pending_tool_calls(
         return;
     }
 
+    let tool_calls = std::mem::take(pending_tool_calls);
+
+    // Check if the last message is an assistant message without tool_calls.
+    // If so, merge the tool_calls into it instead of creating a new message.
+    // This prevents consecutive assistant messages which strict Chat Completions
+    // providers (MiMo/MiniMax) reject with HTTP 400.
+    //
+    // In the Responses API, a `message` item (role: assistant, content: text)
+    // and a subsequent `function_call` item are separate output items.
+    // In the Chat Completions API, they should be a single assistant message
+    // with both `content` and `tool_calls`. Without merging, the conversion
+    // would produce:
+    //   {role: "assistant", content: "some text"}       ← from message item
+    //   {role: "assistant", content: "", tool_calls: …} ← from function_call
+    // which many providers reject as invalid consecutive assistant messages.
+    if let Some(last) = messages.last_mut() {
+        if last.get("role").and_then(|v| v.as_str()) == Some("assistant")
+            && last.get("tool_calls").is_none()
+        {
+            last["tool_calls"] = json!(tool_calls);
+            attach_pending_reasoning_to_assistant(last, pending_reasoning);
+            // last_assistant_index stays the same since we merged into the existing message
+            return;
+        }
+    }
+
+    // Use empty string instead of null for content: MiniMax/MiMo and other
+    // strict Chat Completions providers reject `content: null` on assistant
+    // messages with tool_calls, returning HTTP 400. The OpenAI spec allows
+    // null, but many compatible implementations require a string value.
     let mut message = json!({
         "role": "assistant",
-        "content": null,
-        "tool_calls": std::mem::take(pending_tool_calls)
+        "content": "",
+        "tool_calls": tool_calls
     });
     attach_pending_reasoning_to_assistant(&mut message, pending_reasoning);
     *last_assistant_index = Some(messages.len());
@@ -751,10 +851,19 @@ fn responses_message_item_to_chat_message(
 ) -> Value {
     let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("user");
     let chat_role = responses_role_to_chat_role(role);
-    let content = item
+    let mut content = item
         .get("content")
         .map(|value| responses_content_to_chat_content(chat_role, value))
         .unwrap_or(Value::Null);
+
+    // MiniMax/MiMo and other strict Chat Completions providers reject
+    // `content: null` on assistant messages, returning HTTP 400.
+    // The Responses API allows null content on assistant messages with
+    // tool_calls, but Chat Completions requires a string value.
+    // Replace null with empty string for assistant role.
+    if chat_role == "assistant" && content.is_null() {
+        content = Value::String(String::new());
+    }
 
     let mut message = json!({
         "role": chat_role,
@@ -1954,6 +2063,8 @@ mod tests {
         assert_eq!(result["messages"][1]["content"][2]["type"], "text");
         assert_eq!(result["messages"][1]["content"][2]["text"], "Use Celsius.");
         assert_eq!(result["messages"][2]["tool_calls"][0]["id"], "call_1");
+        // content is "" (not null) to avoid MiMo/MiniMax 400 errors
+        assert_eq!(result["messages"][2]["content"], "");
         assert_eq!(result["messages"][3]["role"], "tool");
         assert_eq!(result["tools"][0]["function"]["name"], "get_weather");
         assert_eq!(result["tools"][0]["function"]["strict"], true);
@@ -3291,5 +3402,372 @@ mod tests {
             "tools should be present from tool_search_output"
         );
         assert_eq!(result["tools"][0]["function"]["name"], "search_docs");
+    }
+
+    /// Regression test: Codex sends `content: null + tool_calls` in Responses API
+    /// format (which is legal per OpenAI spec). When converting to Chat Completions
+    /// for MiMo/MiniMax, `content: null` must become `content: ""` to avoid
+    /// HTTP 400 errors from strict Chat Completions providers.
+    #[test]
+    fn responses_tool_call_produces_empty_string_content_not_null() {
+        let input = json!({
+            "model": "mimo-v2.5-pro",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Read the file"}]
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_read_1",
+                    "name": "read_file",
+                    "arguments": "{\"path\":\"/tmp/test.txt\"}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_read_1",
+                    "output": "hello world"
+                }
+            ],
+            "tools": [{
+                "type": "function",
+                "name": "read_file",
+                "description": "Read a file",
+                "parameters": {"type": "object"}
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        // Find the assistant message with tool_calls
+        let assistant_msg = result["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|msg| {
+                msg["role"] == "assistant"
+                    && msg.get("tool_calls").is_some()
+            })
+            .expect("should have an assistant message with tool_calls")
+            .clone();
+
+        // The critical fix: content must be "" not null
+        assert_eq!(
+            assistant_msg["content"], "",
+            "assistant message with tool_calls must have content=\"\" (not null) to avoid MiMo/MiniMax 400 errors"
+        );
+        assert!(
+            assistant_msg["tool_calls"].as_array().is_some_and(|a| !a.is_empty()),
+            "tool_calls should be present"
+        );
+    }
+
+    /// Multi-turn tool call: verify content stays "" across turns
+    #[test]
+    fn responses_multi_turn_tool_call_no_null_content() {
+        let input = json!({
+            "model": "mimo-v2.5-pro",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Read and then edit"}]
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_read_1",
+                    "name": "read_file",
+                    "arguments": "{\"path\":\"/tmp/test.txt\"}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_read_1",
+                    "output": "hello world"
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": null
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_edit_1",
+                    "name": "edit_file",
+                    "arguments": "{\"path\":\"/tmp/test.txt\",\"old\":\"hello\",\"new\":\"goodbye\"}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_edit_1",
+                    "output": "ok"
+                }
+            ],
+            "tools": [{
+                "type": "function",
+                "name": "read_file",
+                "description": "Read a file",
+                "parameters": {"type": "object"}
+            },{
+                "type": "function",
+                "name": "edit_file",
+                "description": "Edit a file",
+                "parameters": {"type": "object"}
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // All assistant messages with tool_calls must have content="" not null
+        for msg in messages {
+            if msg["role"] == "assistant" && msg.get("tool_calls").is_some() {
+                assert_eq!(
+                    msg["content"], "",
+                    "assistant message with tool_calls must have content=\"\" (not null)"
+                );
+            }
+        }
+    }
+
+    /// Regression test: Consecutive assistant messages must be merged.
+    /// In the Responses API, a `message` item (assistant with text) followed by
+    /// a `function_call` item are separate output items. In Chat Completions,
+    /// they must be a single assistant message with both content and tool_calls.
+    /// Without merging, strict providers (MiMo/MiniMax) reject the request with
+    /// HTTP 400 for having consecutive assistant messages.
+    #[test]
+    fn responses_consecutive_assistant_messages_are_merged() {
+        let input = json!({
+            "model": "mimo-v2.5-pro",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Read the file"}]
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "I'll read that file for you."}]
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_read_1",
+                    "name": "read_file",
+                    "arguments": "{\"path\":\"/tmp/test.txt\"}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_read_1",
+                    "output": "hello world"
+                }
+            ],
+            "tools": [{
+                "type": "function",
+                "name": "read_file",
+                "description": "Read a file",
+                "parameters": {"type": "object"}
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // Must NOT have consecutive assistant messages
+        let mut prev_was_assistant = false;
+        for msg in messages {
+            let is_assistant = msg["role"] == "assistant";
+            assert!(
+                !(prev_was_assistant && is_assistant),
+                "Consecutive assistant messages are not allowed in Chat Completions: {:?}",
+                messages.iter().map(|m| format!("{}:{}", m["role"].as_str().unwrap_or("?"), m.get("tool_calls").map_or("text", |_| "tools"))).collect::<Vec<_>>()
+            );
+            prev_was_assistant = is_assistant;
+        }
+
+        // The assistant message should have both content AND tool_calls
+        let assistant_msg = messages.iter().find(|msg| msg["role"] == "assistant").unwrap();
+        assert_eq!(assistant_msg["content"], "I'll read that file for you.");
+        assert!(assistant_msg.get("tool_calls").is_some_and(|v| v.as_array().is_some_and(|a| !a.is_empty())));
+    }
+
+    /// Regression test: Three-round Codex conversation with tool calls.
+    /// This simulates the exact scenario that caused "3 rounds and stuck":
+    /// Round 1: user asks → assistant text + tool_call → tool_output
+    /// Round 2: assistant text + another tool_call → tool_output
+    /// Round 3: assistant text + another tool_call → tool_output
+    /// All consecutive assistant messages must be merged, all content must be "" not null.
+    #[test]
+    fn responses_three_round_codex_no_consecutive_assistant_no_null_content() {
+        let input = json!({
+            "model": "mimo-v2.5-pro",
+            "input": [
+                // Round 1: User request
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "List files in /tmp"}]
+                },
+                // Round 1: Assistant responds with text + tool call
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "I'll list the files for you."}]
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_ls_1",
+                    "name": "execute_command",
+                    "arguments": "{\"command\":\"ls /tmp\"}"
+                },
+                // Round 1: Tool result
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_ls_1",
+                    "output": "file1.txt\nfile2.txt"
+                },
+                // Round 2: Assistant responds with text + another tool call
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "I found the files. Let me read the first one."}]
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_read_1",
+                    "name": "read_file",
+                    "arguments": "{\"path\":\"/tmp/file1.txt\"}"
+                },
+                // Round 2: Tool result
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_read_1",
+                    "output": "content of file1"
+                },
+                // Round 3: Assistant responds with text + yet another tool call
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Now let me read the second file."}]
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_read_2",
+                    "name": "read_file",
+                    "arguments": "{\"path\":\"/tmp/file2.txt\"}"
+                },
+                // Round 3: Tool result
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_read_2",
+                    "output": "content of file2"
+                }
+            ],
+            "tools": [{
+                "type": "function",
+                "name": "execute_command",
+                "description": "Execute a command",
+                "parameters": {"type": "object"}
+            },{
+                "type": "function",
+                "name": "read_file",
+                "description": "Read a file",
+                "parameters": {"type": "object"}
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // 1. No consecutive assistant messages
+        let mut prev_was_assistant = false;
+        for msg in messages {
+            let is_assistant = msg["role"] == "assistant";
+            assert!(
+                !(prev_was_assistant && is_assistant),
+                "No consecutive assistant messages allowed. Messages: {:?}",
+                messages.iter().map(|m| format!("{}:{}", m["role"].as_str().unwrap_or("?"), m.get("tool_calls").map_or("text", |_| "tools"))).collect::<Vec<_>>()
+            );
+            prev_was_assistant = is_assistant;
+        }
+
+        // 2. No assistant message has content: null
+        for msg in messages {
+            if msg["role"] == "assistant" {
+                assert!(
+                    !msg["content"].is_null(),
+                    "Assistant message must not have content: null — got: {:?}",
+                    msg
+                );
+            }
+        }
+
+        // 3. Tool messages must have a preceding assistant message with matching tool_calls
+        let mut tool_call_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for msg in messages {
+            if msg["role"] == "assistant" {
+                if let Some(calls) = msg.get("tool_calls").and_then(|v| v.as_array()) {
+                    for call in calls {
+                        if let Some(id) = call.get("id").and_then(|v| v.as_str()) {
+                            tool_call_ids.insert(id.to_string());
+                        }
+                    }
+                }
+            }
+            if msg["role"] == "tool" {
+                let call_id = msg.get("tool_call_id").and_then(|v| v.as_str()).unwrap_or("");
+                assert!(
+                    tool_call_ids.contains(call_id),
+                    "Tool message with call_id '{}' has no matching assistant tool_call",
+                    call_id
+                );
+            }
+        }
+
+        // 4. Verify expected message sequence:
+        // user → assistant(text+tools) → tool → assistant(text+tools) → tool → assistant(text+tools) → tool
+        let roles: Vec<&str> = messages.iter().map(|m| m["role"].as_str().unwrap_or("?")).collect();
+        assert_eq!(roles, vec!["user", "assistant", "tool", "assistant", "tool", "assistant", "tool"],
+            "Message sequence should be user → assistant → tool → assistant → tool → assistant → tool, got: {:?}", roles);
+    }
+
+    /// Regression test: When assistant has text but no tool_calls, and next
+    /// item is a function_call, the tool_calls should be merged into the
+    /// existing assistant message (not create a new one).
+    #[test]
+    fn responses_assistant_text_then_function_call_merges() {
+        let input = json!({
+            "model": "mimo-v2.5-pro",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Hello"}]
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Let me check that."}]
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "search",
+                    "arguments": "{\"q\":\"test\"}"
+                }
+            ],
+            "tools": [{
+                "type": "function",
+                "name": "search",
+                "description": "Search",
+                "parameters": {"type": "object"}
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // Should have exactly 2 messages: user + assistant(with both content and tool_calls)
+        assert_eq!(messages.len(), 2, "Expected 2 messages, got: {:?}", messages);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"], "Let me check that.");
+        assert!(messages[1].get("tool_calls").is_some_and(|v| v.as_array().is_some_and(|a| !a.is_empty())),
+            "Assistant message should have tool_calls");
     }
 }
