@@ -29,7 +29,6 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { PricingConfigPanel } from "@/components/usage/PricingConfigPanel";
-import { DataSourceBar } from "@/components/usage/DataSourceBar";
 import { cn } from "@/lib/utils";
 import { getLocaleFromLanguage } from "./format";
 import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
@@ -135,8 +134,6 @@ export function UsageDashboard() {
         appType={appType === "all" ? undefined : appType}
         refreshIntervalMs={refreshIntervalMs}
       />
-
-      <DataSourceBar refreshIntervalMs={refreshIntervalMs} />
 
       <UsageTrendChart
         range={range}

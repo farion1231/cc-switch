@@ -144,13 +144,16 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
         if *time_updated <= sess_last_modified {
             log::debug!(
                 "[OPENCODE-SYNC] session={} 未更新 ({} <= {}), 跳过",
-                session_id, time_updated, sess_last_modified
+                session_id,
+                time_updated,
+                sess_last_modified
             );
             continue; // 会话未更新，跳过
         }
         log::debug!(
             "[OPENCODE-SYNC] 处理 session={}, time_updated={}",
-            session_id, time_updated
+            session_id,
+            time_updated
         );
 
         let mut session_had_error = false;
@@ -312,7 +315,8 @@ fn query_assistant_messages(
             Err(e) => {
                 log::debug!(
                     "[OPENCODE-SYNC]   msg={} skipped: JSON 解析失败: {}",
-                    message_id, e
+                    message_id,
+                    e
                 );
                 skipped_json_err += 1;
                 continue;
@@ -328,7 +332,8 @@ fn query_assistant_messages(
         if role != Some("assistant") {
             log::debug!(
                 "[OPENCODE-SYNC]   msg={} skipped: role={:?} (非 assistant)",
-                message_id, role
+                message_id,
+                role
             );
             skipped_role += 1;
             continue;
@@ -721,7 +726,10 @@ mod tests {
         assert_eq!(data.input_tokens, 1127, "input tokens should be 1127");
         assert_eq!(data.output_tokens, 1173, "output tokens should be 1173");
         assert_eq!(data.reasoning_tokens, 0);
-        assert_eq!(data.cache_read_tokens, 286194, "cache.read should be 286194");
+        assert_eq!(
+            data.cache_read_tokens, 286194,
+            "cache.read should be 286194"
+        );
         assert_eq!(data.cache_write_tokens, 0);
         assert_eq!(data.cost, 0.0);
         assert_eq!(data.model_id, "oc/minimax-m3-free");
@@ -760,7 +768,11 @@ mod tests {
 
         let result = query_assistant_messages(&conn, "s1").unwrap();
         // 关键断言：嵌套 schema 也能解析出来
-        assert_eq!(result.messages.len(), 1, "nested format must produce 1 message");
+        assert_eq!(
+            result.messages.len(),
+            1,
+            "nested format must produce 1 message"
+        );
         assert_eq!(result.messages[0].0, "m1");
         assert_eq!(result.messages[0].1.input_tokens, 100);
         assert_eq!(result.messages[0].1.output_tokens, 200);
