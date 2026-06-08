@@ -170,6 +170,16 @@ impl ChatToResponsesState {
     }
 
     fn push_content_delta(&mut self, delta: &str) -> Vec<Bytes> {
+        // When reasoning was already received via the `reasoning_content` field
+        // (typical for MiMo/DeepSeek/Kimi), skip the inline `<think>` state machine.
+        // These providers put their thinking in `reasoning_content`, not in content.
+        // If content also contains `<think>` tags (some providers do both), buffering
+        // until the closing tag causes visible lag ("卡顿").  Strip think blocks from
+        // content immediately without entering the inline think state machine.
+        if self.reasoning.added {
+            return self.content_when_reasoning_already_seen(delta);
+        }
+
         match self.inline_think.mode {
             InlineThinkMode::Text => {
                 let mut events = self.finalize_reasoning();
@@ -200,6 +210,33 @@ impl ChatToResponsesState {
         }
     }
 
+    /// Strip leading `<think>` blocks from content when reasoning was already
+    /// captured via `reasoning_content`.  This avoids buffering the content
+    /// in the inline think state machine (which causes visible lag) while
+    /// still preventing `<think>` tags from leaking into the output.
+    fn content_when_reasoning_already_seen(&mut self, delta: &str) -> Vec<Bytes> {
+        // Try complete <think>...</think> block first
+        if let Some((_reasoning, answer)) = split_leading_think_block(delta) {
+            let mut events = self.finalize_reasoning();
+            if !answer.is_empty() {
+                events.extend(self.push_text_delta(&answer));
+            }
+            return events;
+        }
+        // Try stripping incomplete <think> tag
+        let stripped = strip_leading_think_open_tag(delta).unwrap_or_else(|| delta.to_string());
+        if stripped.trim().is_empty() {
+            // Only whitespace inside an incomplete think block — drop it
+            self.finalize_reasoning()
+        } else {
+            let mut events = self.finalize_reasoning();
+            events.extend(self.push_text_delta(&stripped));
+            events
+        }
+    }
+
+
+
     fn drain_complete_inline_think(&mut self) -> Vec<Bytes> {
         let Some((reasoning, answer)) = split_leading_think_block(&self.inline_think.buffer) else {
             return Vec::new();
@@ -228,6 +265,13 @@ impl ChatToResponsesState {
                 let text = std::mem::take(&mut self.inline_think.buffer);
                 if text.is_empty() {
                     Vec::new()
+                } else if self.reasoning.done || self.reasoning.added {
+                    // Reasoning was already sent via `reasoning_content` or was
+                    // already finalized.  Treat buffered text as plain content
+                    // so we don't emit delta events on a closed reasoning item.
+                    let mut events = self.finalize_reasoning();
+                    events.extend(self.push_text_delta(&text));
+                    events
                 } else {
                     let mut events = self.finalize_reasoning();
                     events.extend(self.push_text_delta(&text));
@@ -237,6 +281,27 @@ impl ChatToResponsesState {
             InlineThinkMode::Reasoning => {
                 let buffered = std::mem::take(&mut self.inline_think.buffer);
                 self.inline_think.mode = InlineThinkMode::Text;
+
+                // If reasoning was already sent/finalized, don't try to append
+                // more reasoning text — just emit whatever answer text follows.
+                if self.reasoning.done || self.reasoning.added {
+                    if let Some((_reasoning, answer)) = split_leading_think_block(&buffered) {
+                        let mut events = self.finalize_reasoning();
+                        if !answer.is_empty() {
+                            events.extend(self.push_text_delta(&answer));
+                        }
+                        return events;
+                    }
+                    // No complete think block — strip tags and emit as text
+                    let stripped = strip_leading_think_open_tag(&buffered).unwrap_or(buffered);
+                    if !stripped.is_empty() {
+                        let mut events = self.finalize_reasoning();
+                        events.extend(self.push_text_delta(&stripped));
+                        return events;
+                    }
+                    return self.finalize_reasoning();
+                }
+
                 if let Some((reasoning, answer)) = split_leading_think_block(&buffered) {
                     let mut events = Vec::new();
                     if !reasoning.is_empty() {
@@ -1317,5 +1382,49 @@ mod tests {
         assert!(output.contains("quota exceeded"));
         assert!(output.contains("rate_limit_exceeded"));
         assert!(!output.contains("event: response.completed"));
+    }
+
+    /// Regression: MiMo sends `reasoning_content` first, then content with
+    /// `<think>` tags.  When reasoning was already captured, inline think detection
+    /// is bypassed so content emits immediately — no buffering lag.
+    #[tokio::test]
+    async fn reasoning_content_then_think_block_skips_detection() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_mimo\",\"created\":123,\"model\":\"mimo-v2.5-pro\",\"choices\":[{\"delta\":{\"reasoning_content\":\"I need to read the file\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_mimo\",\"created\":123,\"model\":\"mimo-v2.5-pro\",\"choices\":[{\"delta\":{\"content\":\"<think>I need to read the file</think>\\nI'll read it.\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_mimo\",\"created\":123,\"model\":\"mimo-v2.5-pro\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{}}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.matches("response.reasoning_summary_text.delta").count() >= 1);
+        assert!(output.contains("I'll read it."), "answer text must be emitted");
+        assert!(!output.contains("<think>"), "<think> tags must not leak");
+        assert!(!output.contains("</think>"), "</think> tags must not leak");
+        assert!(output.contains("event: response.completed"));
+    }
+
+    /// Regression: MiMo returns tool calls after reasoning_content.
+    /// Must produce complete tool_call lifecycle (added → arguments.done → item.done)
+    /// without being interrupted by inline think buffering.
+    #[tokio::test]
+    async fn mimo_reasoning_then_tool_call_stream() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_mimo\",\"created\":123,\"model\":\"mimo-v2.5-pro\",\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_mimo\",\"created\":123,\"model\":\"mimo-v2.5-pro\",\"choices\":[{\"delta\":{\"reasoning_content\":\"I should read the file\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_mimo\",\"created\":123,\"model\":\"mimo-v2.5-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_read\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_mimo\",\"created\":123,\"model\":\"mimo-v2.5-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\":\\\"/tmp/test.txt\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.output_item.added"));
+        assert!(output.contains("event: response.function_call_arguments.delta"));
+        assert!(output.contains("event: response.function_call_arguments.done"));
+        assert!(output.contains("event: response.output_item.done"));
+        assert!(output.contains("event: response.completed"));
+        assert!(output.contains("\"call_id\":\"call_read\""));
+        assert!(output.contains("\"name\":\"read_file\""));
+        assert!(!output.contains("<think>"), "<think> leaked into output");
     }
 }

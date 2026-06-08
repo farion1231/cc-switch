@@ -156,7 +156,7 @@ impl Database {
                 streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
                 circuit_error_rate_threshold, circuit_min_requests)
-                VALUES ('codex', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
+                VALUES ('codex', 3, 60, 300, 600, 4, 2, 60, 0.6, 10)",
                 [],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -317,7 +317,7 @@ impl Database {
             [],
         );
         let _ = conn.execute(
-            "ALTER TABLE proxy_config ADD COLUMN streaming_idle_timeout INTEGER NOT NULL DEFAULT 120",
+            "ALTER TABLE proxy_config ADD COLUMN streaming_idle_timeout INTEGER NOT NULL DEFAULT 300",
             [],
         );
         let _ = conn.execute(
@@ -430,6 +430,11 @@ impl Database {
                         log::info!("迁移数据库从 v9 到 v10（添加 Hermes Agent 支持）");
                         Self::migrate_v9_to_v10(conn)?;
                         Self::set_user_version(conn, 10)?;
+                    }
+                    10 => {
+                        log::info!("迁移数据库从 v10 到 v11（提高 Codex 流式静默超时默认值到 300 秒，避免 MiMo 等长任务被截断）");
+                        Self::migrate_v10_to_v11(conn)?;
+                        Self::set_user_version(conn, 11)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1197,6 +1202,35 @@ impl Database {
         }
 
         log::info!("v9 -> v10 迁移完成：已添加 Hermes Agent 支持");
+        Ok(())
+    }
+
+    /// v10 -> v11 迁移：提高 Codex 流式静默超时默认值到 300 秒
+    ///
+    /// 旧默认 120 秒在 MiMo / DeepSeek-reasoner 这类思考时间长的模型上会
+    /// 经常把"两段 reasoning 之间"误判成静默超时，把流掐断。这里只把
+    /// 还在用旧默认（且 app_type = codex）的行从 120 提到 300，避免
+    /// 覆盖用户已经手动调过的值。
+    fn migrate_v10_to_v11(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "proxy_config")? {
+            return Ok(());
+        }
+
+        // 只对 codex 行、且值仍是旧默认 120 的记录做提升。
+        // 用户主动调过的数值（!= 120）保留不动；其它 app 不动。
+        let updated = conn
+            .execute(
+                "UPDATE proxy_config
+                 SET streaming_idle_timeout = 300
+                 WHERE app_type = 'codex' AND streaming_idle_timeout = 120",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("提升 codex 静默超时默认值失败: {e}")))?;
+
+        log::info!(
+            "v10 -> v11 迁移完成：已将 {} 行 codex 静默超时从 120 提升到 300",
+            updated
+        );
         Ok(())
     }
 
