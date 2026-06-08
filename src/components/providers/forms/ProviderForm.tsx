@@ -2086,7 +2086,7 @@ function ProviderFormFull({
               selectedCodexAccountId={selectedCodexAccountId}
               onCodexAccountSelect={setSelectedCodexAccountId}
               onManageAuthAccounts={onManageAuthAccounts}
-              codexOauthNoneOptionLabel="暂不绑定托管账号"
+              codexOauthNoneOptionLabel="暂不绑定托管账号，使用浏览器登录"
               shouldShowSpeedTest={shouldShowSpeedTest}
               codexBaseUrl={codexBaseUrl}
               onBaseUrlChange={handleCodexBaseUrlChange}
