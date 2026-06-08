@@ -155,7 +155,7 @@ export function ProviderPresetSelector({
             placeholder={t("providerPreset.searchPlaceholder", {
               defaultValue: "Search providers...",
             })}
-            className="h-8 w-50 pl-8 text-sm"
+            className="h-8 w-48 pl-8 text-sm"
           />
         </div>
       </div>

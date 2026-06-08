@@ -5,6 +5,13 @@ import { useForm } from "react-hook-form";
 import { Form } from "@/components/ui/form";
 import { ProviderPresetSelector } from "@/components/providers/forms/ProviderPresetSelector";
 
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({
+    t: (key: string) => key,
+  }),
+  initReactI18next: { type: "3rdParty", init: () => {} },
+}));
+
 describe("ProviderPresetSelector", () => {
   it("按传入的预设数组顺序渲染，不按分类重新排序", () => {
     const Wrapper = () => {
@@ -121,7 +128,9 @@ describe("ProviderPresetSelector", () => {
 
     render(<Wrapper />);
 
-    const searchInput = screen.getByPlaceholderText("Search providers...");
+    const searchInput = screen.getByPlaceholderText(
+      "providerPreset.searchPlaceholder",
+    );
     await user.type(searchInput, "deep");
 
     expect(
@@ -160,10 +169,12 @@ describe("ProviderPresetSelector", () => {
 
     render(<Wrapper />);
 
-    const searchInput = screen.getByPlaceholderText("Search providers...");
+    const searchInput = screen.getByPlaceholderText(
+      "providerPreset.searchPlaceholder",
+    );
     await user.type(searchInput, "nonexistent");
 
-    expect(screen.getByText('No matching presets · "Custom Configuration" allows any custom provider')).toBeInTheDocument();
+    expect(screen.getByText("providerPreset.noMatches")).toBeInTheDocument();
     expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual([
       "providerPreset.custom",
     ]);
