@@ -24,7 +24,9 @@ use serde::{Deserialize, Serialize};
 pub use mcp::import_mcp_from_deeplink;
 pub use parser::parse_deeplink_url;
 pub use prompt::import_prompt_from_deeplink;
-pub use provider::{import_provider_from_deeplink, parse_and_merge_config};
+pub use provider::{
+    import_provider_from_deeplink, parse_and_merge_config, switch_provider_from_deeplink,
+};
 pub use skill::import_skill_from_deeplink;
 
 /// Deep link import request model
@@ -78,6 +80,9 @@ pub struct DeepLinkImportRequest {
     /// Optional Opus model (Claude only, v3.7.1+)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub opus_model: Option<String>,
+    /// Existing provider ID for switch-provider deep links
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
 
     // ============ Prompt-specific fields ============
     /// Base64 encoded Markdown content

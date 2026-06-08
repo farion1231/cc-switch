@@ -1,6 +1,7 @@
 use crate::deeplink::{
     import_mcp_from_deeplink, import_prompt_from_deeplink, import_provider_from_deeplink,
-    import_skill_from_deeplink, parse_deeplink_url, DeepLinkImportRequest,
+    import_skill_from_deeplink, parse_deeplink_url, switch_provider_from_deeplink,
+    DeepLinkImportRequest,
 };
 use crate::store::AppState;
 use tauri::State;
@@ -8,7 +9,7 @@ use tauri::State;
 /// Parse a deep link URL and return the parsed request for frontend confirmation
 #[tauri::command]
 pub fn parse_deeplink(url: String) -> Result<DeepLinkImportRequest, String> {
-    log::info!("Parsing deep link URL: {url}");
+    log::info!("Parsing deep link URL: {}", crate::redact_url_for_log(&url));
     parse_deeplink_url(&url).map_err(|e| e.to_string())
 }
 
@@ -56,6 +57,18 @@ pub async fn import_from_deeplink_unified(
             Ok(serde_json::json!({
                 "type": "provider",
                 "id": provider_id
+            }))
+        }
+        "switch-provider" => {
+            let app = request.app.clone();
+            let provider_id = request.provider_id.clone();
+            let result =
+                switch_provider_from_deeplink(&state, &request).map_err(|e| e.to_string())?;
+            Ok(serde_json::json!({
+                "type": "switch-provider",
+                "app": app,
+                "providerId": provider_id,
+                "warnings": result.warnings
             }))
         }
         "prompt" => {

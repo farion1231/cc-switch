@@ -6,7 +6,7 @@ use super::utils::{decode_base64_param, infer_homepage_from_endpoint};
 use super::DeepLinkImportRequest;
 use crate::error::AppError;
 use crate::provider::{ClaudeDesktopMode, Provider, ProviderMeta, UsageScript};
-use crate::services::ProviderService;
+use crate::services::{ProviderService, SwitchResult};
 use crate::store::AppState;
 use crate::AppType;
 use serde_json::json;
@@ -134,6 +134,40 @@ pub fn import_provider_from_deeplink(
     }
 
     Ok(provider_id)
+}
+
+/// Switch to an existing provider from a deep link request.
+///
+/// This intentionally reuses ProviderService::switch so proxy takeover mode
+/// updates runtime state (including the active proxy target) instead of only
+/// mutating persisted settings.
+pub fn switch_provider_from_deeplink(
+    state: &AppState,
+    request: &DeepLinkImportRequest,
+) -> Result<SwitchResult, AppError> {
+    if request.resource != "switch-provider" {
+        return Err(AppError::InvalidInput(format!(
+            "Expected switch-provider resource, got '{}'",
+            request.resource
+        )));
+    }
+
+    let app_str = request.app.as_ref().ok_or_else(|| {
+        AppError::InvalidInput("Missing 'app' field for switch-provider".to_string())
+    })?;
+    let app_type = AppType::from_str(app_str)
+        .map_err(|_| AppError::InvalidInput(format!("Invalid app type: {app_str}")))?;
+    let provider_id = request.provider_id.as_deref().ok_or_else(|| {
+        AppError::InvalidInput("Missing 'providerId' field for switch-provider".to_string())
+    })?;
+
+    if provider_id.trim().is_empty() {
+        return Err(AppError::InvalidInput(
+            "providerId cannot be empty".to_string(),
+        ));
+    }
+
+    ProviderService::switch(state, app_type, provider_id)
 }
 
 /// Build a Provider structure from a deep link request

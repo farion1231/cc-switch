@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type ResourceType = "provider" | "prompt" | "mcp" | "skill";
+export type ResourceType = "provider" | "switch-provider" | "prompt" | "mcp" | "skill";
 
 export interface DeepLinkImportRequest {
   version: string;
@@ -21,6 +21,7 @@ export interface DeepLinkImportRequest {
   haikuModel?: string;
   sonnetModel?: string;
   opusModel?: string;
+  providerId?: string;
 
   // Prompt fields
   content?: string;
@@ -60,6 +61,7 @@ export interface McpImportResult {
 
 export type ImportResult =
   | { type: "provider"; id: string }
+  | { type: "switch-provider"; app?: string; providerId?: string; warnings?: string[] }
   | { type: "prompt"; id: string }
   | {
       type: "mcp";
