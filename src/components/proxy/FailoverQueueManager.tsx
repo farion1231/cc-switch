@@ -6,7 +6,7 @@
  * - 队列顺序基于首页供应商列表的 sort_index
  */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Plus, Trash2, Loader2, Info, AlertTriangle } from "lucide-react";
@@ -31,6 +31,8 @@ import {
   useAutoFailoverEnabled,
   useSetAutoFailoverEnabled,
 } from "@/lib/query/failover";
+import { useProvidersQuery } from "@/lib/query/queries";
+import { getModelFromConfig } from "@/utils/providerConfigUtils";
 
 interface FailoverQueueManagerProps {
   appType: AppId;
@@ -56,6 +58,18 @@ export function FailoverQueueManager({
   } = useFailoverQueue(appType);
   const { data: availableProviders, isLoading: isProvidersLoading } =
     useAvailableProvidersForFailover(appType);
+
+  // 拉取完整供应商数据（含 settingsConfig），用于在队列项上展示「实际映射到的模型」。
+  // 纯前端 join，不改后端：队列项只有 providerId，模型名从这里按 id 取。
+  const { data: providersData } = useProvidersQuery(appType);
+  const modelByProviderId = useMemo(() => {
+    const map: Record<string, string> = {};
+    const providers = providersData?.providers ?? {};
+    for (const [id, provider] of Object.entries(providers)) {
+      map[id] = getModelFromConfig(provider.settingsConfig, appType);
+    }
+    return map;
+  }, [providersData, appType]);
 
   // Mutations
   const addToQueue = useAddToFailoverQueue();
@@ -230,6 +244,7 @@ export function FailoverQueueManager({
               key={item.providerId}
               item={item}
               index={index}
+              model={modelByProviderId[item.providerId] ?? ""}
               disabled={disabled}
               onRemove={handleRemoveProvider}
               isRemoving={removeFromQueue.isPending}
@@ -254,6 +269,7 @@ export function FailoverQueueManager({
 interface QueueItemProps {
   item: FailoverQueueItem;
   index: number;
+  model: string;
   disabled: boolean;
   onRemove: (providerId: string) => void;
   isRemoving: boolean;
@@ -262,6 +278,7 @@ interface QueueItemProps {
 function QueueItem({
   item,
   index,
+  model,
   disabled,
   onRemove,
   isRemoving,
@@ -279,7 +296,7 @@ function QueueItem({
         {index + 1}
       </div>
 
-      {/* 供应商名称 */}
+      {/* 供应商名称 + 实际映射的模型 */}
       <div className="flex-1 min-w-0">
         <span className="text-sm font-medium truncate block">
           {item.providerName}
@@ -289,6 +306,18 @@ function QueueItem({
             </span>
           )}
         </span>
+        {model && (
+          <span
+            className="mt-0.5 inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground"
+            title={t("proxy.failoverQueue.mappedModelTooltip", {
+              model,
+              defaultValue: `请求将被转发到模型：${model}`,
+            })}
+          >
+            <span aria-hidden>→</span>
+            <span className="truncate max-w-[200px]">{model}</span>
+          </span>
+        )}
       </div>
 
       {/* 删除按钮 */}
