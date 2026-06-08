@@ -656,8 +656,8 @@ impl ChatToResponsesState {
         // (e.g. SSE stream ended mid-think-tag). Treat it as plain text so
         // we don't silently drop content. Bug fix for short-delta buffering.
         if let Some(pending) = self.pending_short_delta.take() {
-            let stripped = strip_leading_think_open_tag(&pending)
-                .unwrap_or_else(|| pending.clone());
+            let stripped =
+                strip_leading_think_open_tag(&pending).unwrap_or_else(|| pending.clone());
             if !stripped.trim().is_empty() {
                 events.extend(self.push_text_delta(&stripped));
             }
