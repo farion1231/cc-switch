@@ -1004,6 +1004,25 @@ impl Database {
                 "pricing_model_source",
                 "TEXT NOT NULL DEFAULT 'response'",
             )?;
+            // 添加超时配置列，后续 v10→v11 迁移会更新 streaming_idle_timeout
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "streaming_first_byte_timeout",
+                "INTEGER NOT NULL DEFAULT 60",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "streaming_idle_timeout",
+                "INTEGER NOT NULL DEFAULT 300",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "non_streaming_timeout",
+                "INTEGER NOT NULL DEFAULT 600",
+            )?;
         }
         if Self::table_exists(conn, "proxy_request_logs")? {
             Self::add_column_if_missing(conn, "proxy_request_logs", "request_model", "TEXT")?;
