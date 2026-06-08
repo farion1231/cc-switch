@@ -154,16 +154,18 @@ impl RequestForwarder {
     /// 这里是上游"实测"错误后的纯恢复，不是预测，故启发式开关与它无关。
     fn media_retry_should_trigger(
         &self,
-        adapter_name: &str,
+        _adapter_name: &str,
         already_retried: bool,
         provider_body: &Value,
         error: &ProxyError,
     ) -> bool {
-        adapter_name == "Claude"
-            && self.rectifier_config.enabled
+        // Media retry now works for all adapters (Claude, Codex, etc.),
+        // not just Claude.  The image-block detection covers both Anthropic
+        // and Responses API formats.
+        self.rectifier_config.enabled
             && self.rectifier_config.request_media_fallback
             && !already_retried
-            && super::media_sanitizer::contains_image_blocks(provider_body)
+            && super::media_sanitizer::contains_image_blocks_any_format(provider_body)
             && super::media_sanitizer::is_unsupported_image_error(error)
     }
 
@@ -515,7 +517,7 @@ impl RequestForwarder {
                     });
                 }
                 Err(e) => {
-                    // 检测是否需要触发整流器（仅 Claude/ClaudeAuth 供应商）
+                    // 检测是否需要触发整流器（所有适配器均可触发，不限于 Claude）
                     let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
                     let is_anthropic_provider = matches!(
                         provider_type,
@@ -530,10 +532,17 @@ impl RequestForwarder {
                         &e,
                     ) {
                         let mut media_body = provider_body.clone();
-                        let replaced_images =
+                        // Try both Anthropic and Responses API image replacement;
+                        // whichever format the body uses, the other is a no-op.
+                        let replaced_anthropic =
                             super::media_sanitizer::replace_image_blocks_with_marker(
                                 &mut media_body,
                             );
+                        let replaced_responses =
+                            super::media_sanitizer::replace_responses_images_with_marker(
+                                &mut media_body,
+                            );
+                        let replaced_images = replaced_anthropic + replaced_responses;
 
                         if replaced_images > 0 {
                             let _ = std::mem::replace(&mut media_rectifier_retried, true);
@@ -3425,5 +3434,55 @@ mod tests {
         });
         let body = body_with_image("any-model");
         assert!(fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
+    }
+
+    // --- Codex / Responses API media retry ---
+
+    fn responses_body_with_image(model: &str) -> Value {
+        json!({
+            "model": model,
+            "input": [
+                { "type": "input_image", "image_url": "data:image/png;base64,abc" },
+                { "type": "input_text", "text": "describe this image" }
+            ]
+        })
+    }
+
+    fn image_unsupported_error_404() -> ProxyError {
+        ProxyError::UpstreamError {
+            status: 404,
+            body: Some(
+                r#"{"error":{"message":"No endpoints found that support image input"}}"#.to_string(),
+            ),
+        }
+    }
+
+    #[test]
+    fn reactive_triggers_for_codex_adapter() {
+        // Previously blocked by adapter_name == "Claude" check.
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+        let body = body_with_image("any-model");
+        assert!(fwd.media_retry_should_trigger("Codex", false, &body, &image_unsupported_error()));
+    }
+
+    #[test]
+    fn reactive_triggers_for_responses_api_format() {
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+        let body = responses_body_with_image("mimo-v2.5");
+        assert!(fwd.media_retry_should_trigger("Codex", false, &body, &image_unsupported_error_404()));
+    }
+
+    #[test]
+    fn reactive_triggers_for_404_image_error() {
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+        let body = body_with_image("mimo-v2.5");
+        assert!(fwd.media_retry_should_trigger("Codex", false, &body, &image_unsupported_error_404()));
+    }
+
+    #[test]
+    fn reactive_skipped_for_codex_when_already_retried() {
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+        let body = responses_body_with_image("mimo-v2.5");
+        assert!(!fwd.media_retry_should_trigger("Codex", true, &body, &image_unsupported_error_404()));
     }
 }
