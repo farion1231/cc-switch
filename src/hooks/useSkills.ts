@@ -10,6 +10,7 @@ import {
   type DiscoverableSkill,
   type ImportSkillSelection,
   type InstalledSkill,
+  type SkillRepo,
   type SkillUpdateInfo,
   type SkillsShSearchResult,
 } from "@/lib/api/skills";
@@ -179,6 +180,38 @@ export function useToggleSkillApp() {
       app: AppId;
       enabled: boolean;
     }) => skillsApi.toggleApp(id, app, enabled),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
+    },
+  });
+}
+
+/**
+ * 批量更新 Skills 的来源（仓库信息）
+ */
+export function useBatchUpdateSkillSource() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      ids,
+      repoOwner,
+      repoName,
+      repoBranch,
+      subdirectory,
+    }: {
+      ids: string[];
+      repoOwner: string;
+      repoName: string;
+      repoBranch: string;
+      subdirectory?: string;
+    }) =>
+      skillsApi.batchUpdateSource(
+        ids,
+        repoOwner,
+        repoName,
+        repoBranch,
+        subdirectory,
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
     },
@@ -361,5 +394,6 @@ export type {
   SkillBackupEntry,
   SkillUpdateInfo,
   SkillsShSearchResult,
+  SkillRepo,
   AppId,
 };
