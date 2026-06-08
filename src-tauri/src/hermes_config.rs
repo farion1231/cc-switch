@@ -62,7 +62,7 @@ pub fn get_hermes_dir() -> PathBuf {
 #[cfg(target_os = "windows")]
 fn default_hermes_dir() -> PathBuf {
     dirs::data_local_dir()
-        .unwrap_or_else(crate::config::get_home_dir)
+        .unwrap_or_else(|| crate::config::get_home_dir().join("AppData").join("Local"))
         .join("hermes")
 }
 
@@ -250,7 +250,7 @@ fn replace_yaml_section(
 // ============================================================================
 
 fn create_hermes_backup(source: &str) -> Result<PathBuf, AppError> {
-    let backup_dir = get_app_config_dir().join("backups").join("hermes");
+    let backup_dir = get_app_config_dir().join("backups").join(".hermes");
     fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
 
     let base_id = format!("hermes_{}", Local::now().format("%Y%m%d_%H%M%S"));
