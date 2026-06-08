@@ -78,6 +78,12 @@ struct ChatToResponsesState {
     latest_usage: Option<Value>,
     finish_reason: Option<String>,
     tool_context: CodexToolContext,
+    /// Buffer for short content deltas that look like a fragment of a `<think>`
+    /// tag (e.g. `"<think>"`, `"<think>\n"`, `"<"`). SSE chunks may split a
+    /// `<think>` open tag across two deltas; without buffering, the second
+    /// delta's content would be emitted as plain text and leak the model's
+    /// reasoning. See `content_when_reasoning_already_seen`.
+    pending_short_delta: Option<String>,
 }
 
 impl Default for ChatToResponsesState {
@@ -97,6 +103,7 @@ impl Default for ChatToResponsesState {
             latest_usage: None,
             finish_reason: None,
             tool_context: CodexToolContext::default(),
+            pending_short_delta: None,
         }
     }
 }
@@ -214,7 +221,30 @@ impl ChatToResponsesState {
     /// captured via `reasoning_content`.  This avoids buffering the content
     /// in the inline think state machine (which causes visible lag) while
     /// still preventing `<think>` tags from leaking into the output.
+    ///
+    /// SSE chunks may split a `<think>` open tag across two deltas (e.g.
+    /// `"<think>"` in chunk 1, `"..."` in chunk 2).  Without short-delta
+    /// buffering, chunk 2's content would be emitted as plain text and leak
+    /// the model's reasoning.  We buffer any short delta that looks like
+    /// the start of a think tag (length ≤ 16, contains `<`), then re-decide
+    /// when the next chunk arrives.  Long deltas are not buffered — they
+    /// can't possibly be a half-think-tag if they're already that big.
     fn content_when_reasoning_already_seen(&mut self, delta: &str) -> Vec<Bytes> {
+        const SHORT_DELTA_THRESHOLD: usize = 16;
+
+        // Drain any previously buffered short delta first.
+        if let Some(pending) = self.pending_short_delta.take() {
+            let combined = format!("{pending}{delta}");
+            return self.content_when_reasoning_already_seen(&combined);
+        }
+
+        // Buffer short deltas that look like a fragment of a think tag.
+        // The heuristic: short AND contains a `<` (a think tag boundary).
+        if delta.len() <= SHORT_DELTA_THRESHOLD && delta.contains('<') {
+            self.pending_short_delta = Some(delta.to_string());
+            return Vec::new();
+        }
+
         // Try complete <think>...</think> block first
         if let Some((_reasoning, answer)) = split_leading_think_block(delta) {
             let mut events = self.finalize_reasoning();
@@ -622,6 +652,16 @@ impl ChatToResponsesState {
         let mut events = self.ensure_response_started();
         events.extend(self.flush_inline_think_at_boundary());
         events.extend(self.finalize_reasoning());
+        // Flush any pending short delta that never got a follow-up chunk
+        // (e.g. SSE stream ended mid-think-tag). Treat it as plain text so
+        // we don't silently drop content. Bug fix for short-delta buffering.
+        if let Some(pending) = self.pending_short_delta.take() {
+            let stripped = strip_leading_think_open_tag(&pending)
+                .unwrap_or_else(|| pending.clone());
+            if !stripped.trim().is_empty() {
+                events.extend(self.push_text_delta(&stripped));
+            }
+        }
         events.extend(self.finalize_text());
         events.extend(self.finalize_tools());
 
@@ -1432,5 +1472,38 @@ mod tests {
         assert!(output.contains("\"call_id\":\"call_read\""));
         assert!(output.contains("\"name\":\"read_file\""));
         assert!(!output.contains("<think>"), "<think> leaked into output");
+    }
+
+    /// Regression: a `<think>` open tag can be split across SSE chunks.
+    /// Before this fix, chunk 2's content (the reasoning text immediately
+    /// after the split `<think>`) was emitted as plain text and leaked
+    /// reasoning to the user.  The short-delta buffer holds the first chunk
+    /// until the next one arrives, then processes the combined text.
+    #[tokio::test]
+    async fn split_think_open_tag_across_chunks_does_not_leak() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_mimo\",\"created\":123,\"model\":\"mimo-v2.5-pro\",\"choices\":[{\"delta\":{\"reasoning_content\":\"plan\"}}]}\n\n",
+            // Chunk 1: short delta containing the literal `<think>` tag (7 chars).
+            "data: {\"id\":\"chatcmpl_mimo\",\"created\":123,\"model\":\"mimo-v2.5-pro\",\"choices\":[{\"delta\":{\"content\":\"<think>\"}}]}\n\n",
+            // Chunk 2: reasoning text + closing tag + answer.  Must be combined
+            // with chunk 1 to detect the think block, not emitted as raw text.
+            "data: {\"id\":\"chatcmpl_mimo\",\"created\":123,\"model\":\"mimo-v2.5-pro\",\"choices\":[{\"delta\":{\"content\":\"plan</think>\\nanswer\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_mimo\",\"created\":123,\"model\":\"mimo-v2.5-pro\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{}}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(
+            output.contains("answer"),
+            "answer text must be emitted after buffering split think tag"
+        );
+        assert!(!output.contains("<think>"), "<think> leaked into output");
+        assert!(!output.contains("</think>"), "</think> leaked into output");
+        assert!(
+            !output.contains("\\nplan\\n"),
+            "reasoning text 'plan' must not leak as plain text (found in output: {:?})",
+            output
+        );
+        assert!(output.contains("event: response.completed"));
     }
 }
