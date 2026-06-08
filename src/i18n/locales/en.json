@@ -723,7 +723,8 @@
           "xfce4Terminal": "Xfce4 Terminal",
           "alacritty": "Alacritty",
           "kitty": "Kitty",
-          "ghostty": "Ghostty"
+          "ghostty": "Ghostty",
+          "xTerminalEmulator": "X Terminal"
         }
       }
     },

@@ -2839,12 +2839,13 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let default_terminals = [
         ("gnome-terminal", vec!["--"]),
         ("konsole", vec!["-e"]),
-        ("xfce4-terminal", vec!["-e"]),
+        ("xfce4-terminal", vec!["-x"]),
         ("mate-terminal", vec!["--"]),
         ("lxterminal", vec!["-e"]),
         ("alacritty", vec!["-e"]),
         ("kitty", vec!["-e"]),
         ("ghostty", vec!["-e"]),
+        ("x-terminal-emulator", vec!["-e"]),
     ];
 
     // Create temp script file
@@ -2909,7 +2910,9 @@ exec bash --norc --noprofile
             let result = Command::new(terminal)
                 .args(&args)
                 .arg("bash")
+                .arg("-i")
                 .arg(script_file.to_string_lossy().as_ref())
+                .env_remove("PYTHONHOME")
                 .spawn();
 
             match result {
