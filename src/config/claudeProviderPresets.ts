@@ -552,6 +552,24 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#006FFB",
   },
   {
+    name: "CherryIN",
+    websiteUrl: "https://open.cherryin.ai",
+    apiKeyUrl: "https://open.cherryin.ai/console/token",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://open.cherryin.net",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "anthropic/claude-sonnet-4.6",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "anthropic/claude-haiku-4.5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "anthropic/claude-sonnet-4.6",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "anthropic/claude-opus-4.8",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://open.cherryin.net"],
+    icon: "cherryin",
+  },
+  {
     name: "SiliconFlow",
     websiteUrl: "https://siliconflow.cn",
     apiKeyUrl: "https://cloud.siliconflow.cn/i/drGuwc9k",
@@ -852,18 +870,18 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "SSSAiCode",
-    websiteUrl: "https://www.sssaicode.com",
-    apiKeyUrl: "https://www.sssaicode.com/register?ref=DCP0SM",
+    websiteUrl: "https://sssaicodeapi.com",
+    apiKeyUrl: "https://sssaicodeapi.com/register?ref=DCP0SM",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://node-hk.sssaicode.com/api",
+        ANTHROPIC_BASE_URL: "https://node-hk.sssaicodeapi.com/api",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
     endpointCandidates: [
-      "https://node-hk.sssaicode.com/api",
-      "https://claude2.sssaicode.com/api",
-      "https://anti.sssaicode.com/api",
+      "https://node-hk.sssaicodeapi.com/api",
+      "https://node-hk.sssaiapi.com/api",
+      "https://node-cf.sssaicodeapi.com/api",
     ],
     category: "third_party",
     isPartner: true, // 合作伙伴

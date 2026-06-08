@@ -110,7 +110,7 @@ type View =
   | "hermesMemory"
   | "requestLog";
 
-interface WebDavSyncStatusUpdatedPayload {
+interface SyncStatusUpdatedPayload {
   source?: string;
   status?: string;
   error?: string;
@@ -375,7 +375,7 @@ function App() {
     }
   });
 
-  useTauriEvent<WebDavSyncStatusUpdatedPayload | null | undefined>(
+  useTauriEvent<SyncStatusUpdatedPayload | null | undefined>(
     "webdav-sync-status-updated",
     async (payload) => {
       const statusPayload = payload ?? {};
@@ -385,6 +385,22 @@ function App() {
       }
       toast.error(
         t("settings.webdavSync.autoSyncFailedToast", {
+          error: statusPayload.error || t("common.unknown"),
+        }),
+      );
+    },
+  );
+
+  useTauriEvent<SyncStatusUpdatedPayload | null | undefined>(
+    "s3-sync-status-updated",
+    async (payload) => {
+      const statusPayload = payload ?? {};
+      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      if (statusPayload.source !== "auto" || statusPayload.status !== "error") {
+        return;
+      }
+      toast.error(
+        t("settings.s3Sync.autoSyncFailedToast", {
           error: statusPayload.error || t("common.unknown"),
         }),
       );
@@ -1565,7 +1581,7 @@ function App() {
         }}
         onSubmit={handleEditProvider}
         appId={activeApp}
-        isProxyTakeover={isProxyRunning && isCurrentAppTakeoverActive}
+        isProxyTakeover={isCurrentAppTakeoverActive}
       />
 
       {effectiveUsageProvider && (

@@ -77,6 +77,7 @@ indexmap = { version = "2", features = ["serde"] }
 rust_decimal = "1.33"
 uuid = { version = "1.11", features = ["v4"] }
 sha2 = "0.10"
+hmac = "0.12"
 json5 = "0.4"
 json-five = "0.3.1"
 
@@ -88,7 +89,7 @@ webkit2gtk = { version = "2.0.1", features = ["v2_16"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.52"
-windows-sys = { version = "0.61", features = ["Win32_Globalization"] }
+windows-sys = { version = "0.61", features = ["Win32_Globalization", "Win32_UI_Shell"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"

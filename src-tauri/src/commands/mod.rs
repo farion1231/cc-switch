@@ -30,6 +30,7 @@ mod subscription;
 mod sync_support;
 
 mod lightweight;
+mod s3_sync;
 mod usage;
 mod webdav_sync;
 mod workspace;
@@ -63,6 +64,7 @@ pub use stream_check::*;
 pub use subscription::*;
 
 pub use lightweight::*;
+pub use s3_sync::*;
 pub use usage::*;
 pub use webdav_sync::*;
 pub use workspace::*;

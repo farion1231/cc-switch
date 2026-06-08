@@ -6,16 +6,19 @@
 
 use super::codex_chat_common::{
     append_reasoning_content, extract_reasoning_field_text, extract_reasoning_summary_text,
-    response_function_call_item, split_leading_think_block,
+    response_function_call_item, response_function_call_item_with_namespace,
+    split_leading_think_block,
 };
 use crate::provider::CodexChatReasoningConfig;
 use crate::proxy::{
     error::ProxyError,
     json_canonical::{
         canonical_json_string, canonicalize_json_string_if_parseable, canonicalize_tool_arguments,
+        short_sha256_hex,
     },
 };
 use serde_json::{json, Value};
+use std::collections::{HashMap, HashSet};
 
 const EXTRA_CHAT_PASSTHROUGH_FIELDS: &[&str] = &[
     "frequency_penalty",
@@ -33,6 +36,215 @@ const EXTRA_CHAT_PASSTHROUGH_FIELDS: &[&str] = &[
     "top_logprobs",
     "user",
 ];
+
+const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
+const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
+const CHAT_TOOL_NAME_MAX_LEN: usize = 64;
+const CUSTOM_TOOL_INPUT_DESCRIPTION: &str = "Raw string input for the original custom tool. Preserve formatting exactly and follow the original tool definition embedded in the description.";
+const CUSTOM_TOOL_PRESERVED_METADATA_HEADING: &str = "Original tool definition:";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CodexToolKind {
+    Function,
+    Namespace,
+    Custom,
+    ToolSearch,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CodexToolSpec {
+    pub(crate) kind: CodexToolKind,
+    pub(crate) name: String,
+    pub(crate) namespace: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct CodexToolContext {
+    chat_tools: Vec<Value>,
+    seen_chat_names: HashSet<String>,
+    chat_name_to_spec: HashMap<String, CodexToolSpec>,
+    namespace_name_to_chat_name: HashMap<(String, String), String>,
+}
+
+impl CodexToolContext {
+    pub(crate) fn chat_tools(&self) -> &[Value] {
+        &self.chat_tools
+    }
+
+    pub(crate) fn lookup_chat_name(&self, chat_name: &str) -> Option<&CodexToolSpec> {
+        self.chat_name_to_spec.get(chat_name)
+    }
+
+    pub(crate) fn is_custom_tool_chat_name(&self, chat_name: &str) -> bool {
+        self.lookup_chat_name(chat_name)
+            .is_some_and(|spec| matches!(&spec.kind, CodexToolKind::Custom))
+    }
+
+    fn chat_name_for_response_function(&self, name: &str, namespace: Option<&str>) -> String {
+        if let Some(namespace) = namespace.filter(|value| !value.is_empty()) {
+            if let Some(chat_name) = self
+                .namespace_name_to_chat_name
+                .get(&(namespace.to_string(), name.to_string()))
+            {
+                return chat_name.clone();
+            }
+            return flatten_namespace_tool_name(namespace, name);
+        }
+
+        name.to_string()
+    }
+
+    fn add_chat_tool(&mut self, chat_name: String, spec: CodexToolSpec, chat_tool: Value) {
+        if chat_name.trim().is_empty() || self.seen_chat_names.contains(&chat_name) {
+            return;
+        }
+        self.seen_chat_names.insert(chat_name.clone());
+        if let Some(namespace) = spec.namespace.as_ref() {
+            self.namespace_name_to_chat_name
+                .insert((namespace.clone(), spec.name.clone()), chat_name.clone());
+        }
+        self.chat_name_to_spec.insert(chat_name, spec);
+        self.chat_tools.push(chat_tool);
+    }
+
+    fn add_function_tool(&mut self, tool: &Value, namespace: Option<&str>) {
+        let Some(original_name) = responses_tool_name(tool) else {
+            return;
+        };
+        let chat_name = namespace
+            .map(|namespace| flatten_namespace_tool_name(namespace, &original_name))
+            .unwrap_or_else(|| original_name.clone());
+
+        let Some(chat_tool) = responses_function_tool_to_chat_tool(tool, &chat_name) else {
+            return;
+        };
+        let spec = CodexToolSpec {
+            kind: if namespace.is_some() {
+                CodexToolKind::Namespace
+            } else {
+                CodexToolKind::Function
+            },
+            name: original_name,
+            namespace: namespace.map(ToString::to_string),
+        };
+        self.add_chat_tool(chat_name, spec, chat_tool);
+    }
+
+    fn add_custom_tool(&mut self, tool: &Value) {
+        let Some(name) = responses_tool_name(tool) else {
+            return;
+        };
+        let description = json!(responses_custom_tool_description(tool));
+        let chat_tool = json!({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        CUSTOM_TOOL_INPUT_FIELD: {
+                            "type": "string",
+                            "description": CUSTOM_TOOL_INPUT_DESCRIPTION
+                        }
+                    },
+                    "required": [CUSTOM_TOOL_INPUT_FIELD]
+                }
+            }
+        });
+        let spec = CodexToolSpec {
+            kind: CodexToolKind::Custom,
+            name: name.clone(),
+            namespace: None,
+        };
+        self.add_chat_tool(name, spec, chat_tool);
+    }
+
+    fn add_tool_search_tool(&mut self) {
+        let chat_tool = json!({
+            "type": "function",
+            "function": {
+                "name": TOOL_SEARCH_PROXY_NAME,
+                "description": "Search and load Codex tools, plugins, connectors, and MCP namespaces for the current task.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query for tools or connectors to load."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of tool groups to return."
+                        }
+                    },
+                    "required": ["query"]
+                }
+            }
+        });
+        let spec = CodexToolSpec {
+            kind: CodexToolKind::ToolSearch,
+            name: TOOL_SEARCH_PROXY_NAME.to_string(),
+            namespace: None,
+        };
+        self.add_chat_tool(TOOL_SEARCH_PROXY_NAME.to_string(), spec, chat_tool);
+    }
+
+    fn add_namespace_tool(&mut self, namespace_tool: &Value) {
+        let Some(namespace) = namespace_tool.get("name").and_then(|v| v.as_str()) else {
+            return;
+        };
+        let Some(children) = namespace_tool
+            .get("tools")
+            .or_else(|| namespace_tool.get("children"))
+            .and_then(|v| v.as_array())
+        else {
+            return;
+        };
+
+        for child in children {
+            if child.get("type").and_then(|v| v.as_str()) == Some("function") {
+                self.add_function_tool(child, Some(namespace));
+            }
+        }
+    }
+
+    fn add_response_tool(&mut self, tool: &Value) {
+        match tool {
+            Value::String(name) => {
+                self.add_custom_tool(&json!({
+                    "type": "custom",
+                    "name": name
+                }));
+            }
+            Value::Object(_) => match tool.get("type").and_then(|v| v.as_str()) {
+                Some("function") => self.add_function_tool(tool, None),
+                Some("custom") => self.add_custom_tool(tool),
+                Some("tool_search") => self.add_tool_search_tool(),
+                Some("namespace") => self.add_namespace_tool(tool),
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+}
+
+pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolContext {
+    let mut context = CodexToolContext::default();
+
+    if let Some(tools) = body.get("tools").and_then(|v| v.as_array()) {
+        for tool in tools {
+            context.add_response_tool(tool);
+        }
+    }
+
+    if let Some(input) = body.get("input") {
+        collect_tool_search_output_tools(input, &mut context);
+    }
+
+    context
+}
+
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request.
 #[allow(dead_code)]
 pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
@@ -46,6 +258,7 @@ pub fn responses_to_chat_completions_with_reasoning(
     reasoning_config: Option<&CodexChatReasoningConfig>,
 ) -> Result<Value, ProxyError> {
     let mut result = json!({});
+    let tool_context = build_codex_tool_context_from_request(&body);
 
     if let Some(model) = body.get("model") {
         result["model"] = model.clone();
@@ -63,7 +276,7 @@ pub fn responses_to_chat_completions_with_reasoning(
     }
 
     if let Some(input) = body.get("input") {
-        append_responses_input_as_chat_messages(input, &mut messages)?;
+        append_responses_input_as_chat_messages(input, &mut messages, &tool_context)?;
     }
     let messages = collapse_system_messages_to_head(messages);
     result["messages"] = json!(messages);
@@ -91,18 +304,13 @@ pub fn responses_to_chat_completions_with_reasoning(
 
     apply_reasoning_options(&mut result, &body, model, reasoning_config);
 
-    if let Some(tools) = body.get("tools").and_then(|v| v.as_array()) {
-        let tools: Vec<Value> = tools
-            .iter()
-            .filter_map(responses_tool_to_chat_tool)
-            .collect();
-        if !tools.is_empty() {
-            result["tools"] = json!(tools);
-        }
+    let tools = tool_context.chat_tools();
+    if !tools.is_empty() {
+        result["tools"] = json!(tools);
     }
 
     if let Some(tool_choice) = body.get("tool_choice") {
-        result["tool_choice"] = responses_tool_choice_to_chat(tool_choice);
+        result["tool_choice"] = responses_tool_choice_to_chat(tool_choice, &tool_context);
     }
 
     for key in EXTRA_CHAT_PASSTHROUGH_FIELDS {
@@ -111,6 +319,19 @@ pub fn responses_to_chat_completions_with_reasoning(
         }
     }
 
+    // Strict OpenAI-compatible upstreams (vLLM, enterprise gateways) reject
+    // requests that carry tool_choice or parallel_tool_calls without a non-empty
+    // tools array. Drop both fields when tools ended up absent or empty after
+    // conversion to avoid 503/400 from such providers.
+    let has_tools = result
+        .get("tools")
+        .is_some_and(|v| v.as_array().is_some_and(|a| !a.is_empty()));
+    if !has_tools {
+        if let Some(obj) = result.as_object_mut() {
+            obj.remove("tool_choice");
+            obj.remove("parallel_tool_calls");
+        }
+    }
     // OpenAI 兼容上游在流式下默认不在 SSE 里返回 usage，必须显式声明
     // include_usage 才会在末尾吐 usage chunk。Codex CLI 用 Responses 协议、
     // 自身不带 stream_options，缺这一注入会导致 kimi/MiniMax 等第三方流式请求的
@@ -330,6 +551,7 @@ fn instruction_text(value: &Value) -> String {
 fn append_responses_input_as_chat_messages(
     input: &Value,
     messages: &mut Vec<Value>,
+    tool_context: &CodexToolContext,
 ) -> Result<(), ProxyError> {
     let mut pending_tool_calls = Vec::new();
     let mut pending_reasoning: Option<String> = None;
@@ -350,6 +572,7 @@ fn append_responses_input_as_chat_messages(
                     &mut pending_tool_calls,
                     &mut pending_reasoning,
                     &mut last_assistant_index,
+                    tool_context,
                 )?;
             }
         }
@@ -360,6 +583,7 @@ fn append_responses_input_as_chat_messages(
                 &mut pending_tool_calls,
                 &mut pending_reasoning,
                 &mut last_assistant_index,
+                tool_context,
             )?;
         }
         _ => {}
@@ -381,12 +605,24 @@ fn append_responses_item_as_chat_message(
     pending_tool_calls: &mut Vec<Value>,
     pending_reasoning: &mut Option<String>,
     last_assistant_index: &mut Option<usize>,
+    tool_context: &CodexToolContext,
 ) -> Result<(), ProxyError> {
     let item_type = item.get("type").and_then(|v| v.as_str());
     match item_type {
         Some("function_call") => {
             append_unique_pending_reasoning(pending_reasoning, responses_item_reasoning_text(item));
-            pending_tool_calls.push(responses_function_call_to_chat_tool_call(item));
+            pending_tool_calls.push(responses_function_call_to_chat_tool_call(
+                item,
+                tool_context,
+            ));
+        }
+        Some("custom_tool_call") => {
+            append_unique_pending_reasoning(pending_reasoning, responses_item_reasoning_text(item));
+            pending_tool_calls.push(responses_custom_tool_call_to_chat_tool_call(item));
+        }
+        Some("tool_search_call") => {
+            append_unique_pending_reasoning(pending_reasoning, responses_item_reasoning_text(item));
+            pending_tool_calls.push(responses_tool_search_call_to_chat_tool_call(item));
         }
         Some("function_call_output") => {
             flush_pending_tool_calls(
@@ -407,6 +643,21 @@ fn append_responses_item_as_chat_message(
                 "content": output
             }));
         }
+        Some("custom_tool_call_output") | Some("tool_search_output") => {
+            flush_pending_tool_calls(
+                messages,
+                pending_tool_calls,
+                pending_reasoning,
+                last_assistant_index,
+            );
+            let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
+            let output = canonical_json_string(item);
+            messages.push(json!({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": output
+            }));
+        }
         Some("reasoning") => {
             let reasoning = responses_reasoning_item_text(item);
             let attached_to_previous = pending_tool_calls.is_empty()
@@ -414,6 +665,34 @@ fn append_responses_item_as_chat_message(
             if !attached_to_previous {
                 append_pending_reasoning(pending_reasoning, reasoning);
             }
+        }
+        Some("input_text" | "input_image" | "input_file" | "input_audio") => {
+            flush_pending_tool_calls(
+                messages,
+                pending_tool_calls,
+                pending_reasoning,
+                last_assistant_index,
+            );
+            let role = item
+                .get("role")
+                .and_then(|v| v.as_str())
+                .map(responses_role_to_chat_role)
+                .unwrap_or("user");
+            let message = json!({
+                "role": role,
+                "content": responses_content_to_chat_content(role, &Value::Array(vec![item.clone()]))
+            });
+            if role == "assistant" {
+                let mut message = message;
+                attach_pending_reasoning_to_assistant(&mut message, pending_reasoning);
+                update_last_assistant_index(messages, &message, last_assistant_index);
+                messages.push(message);
+                return Ok(());
+            } else if pending_reasoning.is_some() {
+                pending_reasoning.take();
+            }
+            update_last_assistant_index(messages, &message, last_assistant_index);
+            messages.push(message);
         }
         Some("message") | None => {
             flush_pending_tool_calls(
@@ -708,6 +987,24 @@ fn responses_content_to_chat_content(_role: &str, content: &Value) -> Value {
                     has_non_text_part = true;
                 }
             }
+            "input_file" => {
+                if let Some(file) = responses_input_file_to_chat_file(part) {
+                    chat_parts.push(json!({
+                        "type": "file",
+                        "file": file
+                    }));
+                    has_non_text_part = true;
+                }
+            }
+            "input_audio" => {
+                if let Some(input_audio) = part.get("input_audio") {
+                    chat_parts.push(json!({
+                        "type": "input_audio",
+                        "input_audio": input_audio.clone()
+                    }));
+                    has_non_text_part = true;
+                }
+            }
             _ => {}
         }
     }
@@ -725,48 +1022,113 @@ fn responses_content_to_chat_content(_role: &str, content: &Value) -> Value {
     Value::Array(chat_parts)
 }
 
-fn responses_function_call_to_chat_tool_call(item: &Value) -> Value {
-    let call_id = item
-        .get("call_id")
-        .or_else(|| item.get("id"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
-    let arguments = canonicalize_tool_arguments(item.get("arguments"));
+fn responses_input_file_to_chat_file(part: &Value) -> Option<Value> {
+    let mut file = serde_json::Map::new();
+    let has_supported_file_ref = part.get("file_id").is_some() || part.get("file_data").is_some();
+    if !has_supported_file_ref {
+        return None;
+    }
 
-    json!({
-        "id": call_id,
-        "type": "function",
-        "function": {
-            "name": name,
-            "arguments": arguments
+    for key in ["file_id", "file_data", "filename"] {
+        if let Some(value) = part.get(key) {
+            file.insert(key.to_string(), value.clone());
         }
-    })
+    }
+    Some(Value::Object(file))
 }
 
-fn responses_tool_to_chat_tool(tool: &Value) -> Option<Value> {
+fn collect_tool_search_output_tools(value: &Value, context: &mut CodexToolContext) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_tool_search_output_tools(item, context);
+            }
+        }
+        Value::Object(obj) => {
+            if obj.get("type").and_then(|v| v.as_str()) == Some("tool_search_output") {
+                if let Some(tools) = obj.get("tools").and_then(|v| v.as_array()) {
+                    for tool in tools {
+                        context.add_response_tool(tool);
+                    }
+                }
+            }
+            for value in obj.values() {
+                collect_tool_search_output_tools(value, context);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn flatten_namespace_tool_name(namespace: &str, name: &str) -> String {
+    let full_name = format!("{namespace}__{name}");
+    if full_name.len() <= CHAT_TOOL_NAME_MAX_LEN {
+        return full_name;
+    }
+
+    let hash = short_sha256_hex(full_name.as_bytes());
+    let suffix = format!("__{hash}");
+    let prefix_len = CHAT_TOOL_NAME_MAX_LEN.saturating_sub(suffix.len());
+    let mut prefix = String::new();
+    for ch in full_name.chars() {
+        if prefix.len() + ch.len_utf8() > prefix_len {
+            break;
+        }
+        prefix.push(ch);
+    }
+    format!("{prefix}{suffix}")
+}
+
+fn responses_tool_name(tool: &Value) -> Option<String> {
+    tool.get("function")
+        .and_then(|function| function.get("name"))
+        .or_else(|| tool.get("name"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn responses_custom_tool_description(tool: &Value) -> String {
+    let mut description = String::new();
+    description.push_str(CUSTOM_TOOL_PRESERVED_METADATA_HEADING);
+    description.push_str("\n```json\n");
+    description.push_str(&serialize_tool_definition_for_description(tool));
+    description.push_str("\n```");
+    description
+}
+
+fn serialize_tool_definition_for_description(tool: &Value) -> String {
+    // Keep the embedded definition compact to reduce tool-description token
+    // overhead for chat-only upstreams, while remaining stable across map
+    // storage order.
+    canonical_json_string(tool)
+}
+
+fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option<Value> {
     if tool.get("type").and_then(|v| v.as_str()) != Some("function") {
         return None;
     }
 
-    if tool.get("function").is_some() {
-        let mut chat_tool = tool.clone();
-        if let Some(strict) = tool.get("strict").cloned() {
-            if let Some(function) = chat_tool
-                .get_mut("function")
-                .and_then(|value| value.as_object_mut())
-            {
-                function.entry("strict".to_string()).or_insert(strict);
-            }
-            if let Some(obj) = chat_tool.as_object_mut() {
-                obj.remove("strict");
+    if let Some(function) = tool.get("function") {
+        let mut chat_tool = json!({
+            "type": "function",
+            "function": function.clone()
+        });
+        if let Some(obj) = chat_tool
+            .get_mut("function")
+            .and_then(|value| value.as_object_mut())
+        {
+            obj.insert("name".to_string(), json!(chat_name));
+            if let Some(strict) = tool.get("strict").cloned() {
+                obj.entry("strict".to_string()).or_insert(strict);
             }
         }
         return Some(chat_tool);
     }
 
     let mut function = json!({
-        "name": tool.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+        "name": chat_name,
         "description": tool.get("description").cloned().unwrap_or(Value::Null),
         "parameters": tool.get("parameters").cloned().unwrap_or_else(|| json!({}))
     });
@@ -780,13 +1142,97 @@ fn responses_tool_to_chat_tool(tool: &Value) -> Option<Value> {
     }))
 }
 
-fn responses_tool_choice_to_chat(tool_choice: &Value) -> Value {
+fn responses_function_call_to_chat_tool_call(
+    item: &Value,
+    tool_context: &CodexToolContext,
+) -> Value {
+    let call_id = item
+        .get("call_id")
+        .or_else(|| item.get("id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    let namespace = item.get("namespace").and_then(|v| v.as_str());
+    let chat_name = tool_context.chat_name_for_response_function(name, namespace);
+    let arguments = canonicalize_tool_arguments(item.get("arguments"));
+
+    json!({
+        "id": call_id,
+        "type": "function",
+        "function": {
+            "name": chat_name,
+            "arguments": arguments
+        }
+    })
+}
+
+fn responses_custom_tool_call_to_chat_tool_call(item: &Value) -> Value {
+    let call_id = item
+        .get("call_id")
+        .or_else(|| item.get("id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    let input = item.get("input").cloned().unwrap_or_else(|| json!(""));
+
+    json!({
+        "id": call_id,
+        "type": "function",
+        "function": {
+            "name": name,
+            "arguments": canonical_json_string(&json!({ CUSTOM_TOOL_INPUT_FIELD: input }))
+        }
+    })
+}
+
+fn responses_tool_search_call_to_chat_tool_call(item: &Value) -> Value {
+    let call_id = item
+        .get("call_id")
+        .or_else(|| item.get("id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let arguments = item
+        .get("arguments")
+        .map(canonical_json_string)
+        .unwrap_or_else(|| "{}".to_string());
+
+    json!({
+        "id": call_id,
+        "type": "function",
+        "function": {
+            "name": TOOL_SEARCH_PROXY_NAME,
+            "arguments": arguments
+        }
+    })
+}
+
+fn responses_tool_choice_to_chat(tool_choice: &Value, tool_context: &CodexToolContext) -> Value {
     match tool_choice {
         Value::Object(obj) if obj.get("type").and_then(|v| v.as_str()) == Some("function") => {
+            let name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let namespace = obj.get("namespace").and_then(|v| v.as_str());
+            let chat_name = tool_context.chat_name_for_response_function(name, namespace);
             json!({
                 "type": "function",
                 "function": {
-                    "name": obj.get("name").and_then(|v| v.as_str()).unwrap_or("")
+                    "name": chat_name
+                }
+            })
+        }
+        Value::Object(obj) if obj.get("type").and_then(|v| v.as_str()) == Some("tool_search") => {
+            json!({
+                "type": "function",
+                "function": {
+                    "name": TOOL_SEARCH_PROXY_NAME
+                }
+            })
+        }
+        Value::Object(obj) if obj.get("type").and_then(|v| v.as_str()) == Some("custom") => {
+            let name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            json!({
+                "type": "function",
+                "function": {
+                    "name": name
                 }
             })
         }
@@ -795,7 +1241,17 @@ fn responses_tool_choice_to_chat(tool_choice: &Value) -> Value {
 }
 
 /// Convert a non-streaming Chat Completions response into a Responses response.
+#[allow(dead_code)]
 pub fn chat_completion_to_response(body: Value) -> Result<Value, ProxyError> {
+    chat_completion_to_response_with_context(body, &CodexToolContext::default())
+}
+
+/// Convert a non-streaming Chat Completions response into a Responses response,
+/// restoring Codex-specific tool names using the original Responses request.
+pub(crate) fn chat_completion_to_response_with_context(
+    body: Value,
+    tool_context: &CodexToolContext,
+) -> Result<Value, ProxyError> {
     let choices = body
         .get("choices")
         .and_then(|v| v.as_array())
@@ -825,6 +1281,7 @@ pub fn chat_completion_to_response(body: Value) -> Result<Value, ProxyError> {
     output.extend(chat_tool_calls_to_response_output_items(
         message,
         reasoning.as_deref(),
+        tool_context,
     ));
 
     let mut response = json!({
@@ -948,17 +1405,24 @@ fn chat_message_to_response_output_item(message: &Value, response_id: &str) -> O
 fn chat_tool_calls_to_response_output_items(
     message: &Value,
     reasoning: Option<&str>,
+    tool_context: &CodexToolContext,
 ) -> Vec<Value> {
     let mut output = Vec::new();
 
     if let Some(tool_calls) = message.get("tool_calls").and_then(|v| v.as_array()) {
         for (index, tool_call) in tool_calls.iter().enumerate() {
-            output.push(chat_tool_call_to_response_item(tool_call, index, reasoning));
+            output.push(chat_tool_call_to_response_item(
+                tool_call,
+                index,
+                reasoning,
+                tool_context,
+            ));
         }
     } else if let Some(function_call) = message.get("function_call") {
         output.push(chat_legacy_function_call_to_response_item(
             function_call,
             reasoning,
+            tool_context,
         ));
     }
 
@@ -969,6 +1433,7 @@ fn chat_tool_call_to_response_item(
     tool_call: &Value,
     index: usize,
     reasoning: Option<&str>,
+    tool_context: &CodexToolContext,
 ) -> Value {
     let call_id = tool_call
         .get("id")
@@ -980,13 +1445,22 @@ fn chat_tool_call_to_response_item(
     let name = function.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let arguments = canonicalize_tool_arguments(function.get("arguments"));
 
-    let item_id = format!("fc_{call_id}");
-    response_function_call_item(&item_id, "completed", &call_id, name, &arguments, reasoning)
+    let item_id = response_tool_call_item_id_from_chat_name(&call_id, name, tool_context);
+    response_tool_call_item_from_chat_name(
+        &item_id,
+        "completed",
+        &call_id,
+        name,
+        &arguments,
+        reasoning,
+        tool_context,
+    )
 }
 
 fn chat_legacy_function_call_to_response_item(
     function_call: &Value,
     reasoning: Option<&str>,
+    tool_context: &CodexToolContext,
 ) -> Value {
     let call_id = function_call
         .get("id")
@@ -999,8 +1473,122 @@ fn chat_legacy_function_call_to_response_item(
         .unwrap_or("");
     let arguments = canonicalize_tool_arguments(function_call.get("arguments"));
 
-    let item_id = format!("fc_{call_id}");
-    response_function_call_item(&item_id, "completed", call_id, name, &arguments, reasoning)
+    let item_id = response_tool_call_item_id_from_chat_name(call_id, name, tool_context);
+    response_tool_call_item_from_chat_name(
+        &item_id,
+        "completed",
+        call_id,
+        name,
+        &arguments,
+        reasoning,
+        tool_context,
+    )
+}
+
+pub(crate) fn response_tool_call_item_id_from_chat_name(
+    call_id: &str,
+    chat_name: &str,
+    tool_context: &CodexToolContext,
+) -> String {
+    if tool_context.is_custom_tool_chat_name(chat_name) {
+        format!("ctc_{call_id}")
+    } else {
+        format!("fc_{call_id}")
+    }
+}
+
+pub(crate) fn response_tool_call_item_from_chat_name(
+    item_id: &str,
+    status: &str,
+    call_id: &str,
+    chat_name: &str,
+    arguments: &str,
+    reasoning: Option<&str>,
+    tool_context: &CodexToolContext,
+) -> Value {
+    match tool_context.lookup_chat_name(chat_name) {
+        Some(spec) if spec.kind == CodexToolKind::ToolSearch => {
+            response_tool_search_call_item(call_id, status, arguments, reasoning)
+        }
+        Some(spec) if spec.kind == CodexToolKind::Custom => response_custom_tool_call_item(
+            item_id, status, call_id, &spec.name, arguments, reasoning,
+        ),
+        Some(spec) => response_function_call_item_with_namespace(
+            item_id,
+            status,
+            call_id,
+            &spec.name,
+            spec.namespace.as_deref(),
+            arguments,
+            reasoning,
+        ),
+        None => {
+            response_function_call_item(item_id, status, call_id, chat_name, arguments, reasoning)
+        }
+    }
+}
+
+fn response_tool_search_call_item(
+    call_id: &str,
+    status: &str,
+    arguments: &str,
+    reasoning: Option<&str>,
+) -> Value {
+    let parsed_arguments = parse_tool_arguments_object(arguments);
+    let mut item = json!({
+        "type": "tool_search_call",
+        "call_id": call_id,
+        "status": status,
+        "execution": "client",
+        "arguments": parsed_arguments
+    });
+    super::codex_chat_common::attach_optional_reasoning_content_field(&mut item, reasoning);
+    item
+}
+
+fn response_custom_tool_call_item(
+    item_id: &str,
+    status: &str,
+    call_id: &str,
+    name: &str,
+    arguments: &str,
+    reasoning: Option<&str>,
+) -> Value {
+    let input = custom_tool_input_from_chat_arguments(arguments);
+    let mut item = json!({
+        "id": item_id,
+        "type": "custom_tool_call",
+        "status": status,
+        "call_id": call_id,
+        "name": name,
+        "input": input
+    });
+    super::codex_chat_common::attach_optional_reasoning_content_field(&mut item, reasoning);
+    item
+}
+
+fn parse_tool_arguments_object(arguments: &str) -> Value {
+    if arguments.trim().is_empty() {
+        return json!({});
+    }
+    serde_json::from_str::<Value>(arguments)
+        .ok()
+        .filter(|value| value.is_object())
+        .unwrap_or_else(|| json!({ "query": arguments }))
+}
+
+pub(crate) fn custom_tool_input_from_chat_arguments(arguments: &str) -> String {
+    if arguments.trim().is_empty() {
+        return String::new();
+    }
+    match serde_json::from_str::<Value>(arguments) {
+        Ok(Value::Object(obj)) => obj
+            .get(CUSTOM_TOOL_INPUT_FIELD)
+            .and_then(|value| value.as_str())
+            .unwrap_or(arguments)
+            .to_string(),
+        _ => arguments.to_string(),
+    }
 }
 
 pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
@@ -1008,7 +1596,8 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
         return json!({
             "input_tokens": 0,
             "output_tokens": 0,
-            "total_tokens": 0
+            "total_tokens": 0,
+            "output_tokens_details": { "reasoning_tokens": 0 }
         });
     };
 
@@ -1041,8 +1630,17 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
         result["input_tokens_details"] = json!({ "cached_tokens": cached });
     }
 
-    if let Some(details) = usage.get("completion_tokens_details") {
-        result["output_tokens_details"] = details.clone();
+    if let Some(details) = usage
+        .get("completion_tokens_details")
+        .filter(|v| v.is_object())
+    {
+        let mut details = details.clone();
+        if details.get("reasoning_tokens").is_none() {
+            details["reasoning_tokens"] = json!(0);
+        }
+        result["output_tokens_details"] = details;
+    } else {
+        result["output_tokens_details"] = json!({ "reasoning_tokens": 0 });
     }
 
     if let Some(cache_read) = usage.get("cache_read_input_tokens") {
@@ -1192,6 +1790,122 @@ mod tests {
     }
 
     #[test]
+    fn responses_request_maps_input_file_content_parts() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Summarize this."},
+                    {
+                        "type": "input_file",
+                        "file_id": "file_123",
+                        "file_url": "https://example.com/spec.pdf",
+                        "filename": "spec.pdf"
+                    },
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": "UklGRg==",
+                            "format": "wav"
+                        }
+                    }
+                ]
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let content = result["messages"][0]["content"].as_array().unwrap();
+
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "file");
+        assert_eq!(content[1]["file"]["file_id"], "file_123");
+        assert!(content[1]["file"].get("file_url").is_none());
+        assert_eq!(content[1]["file"]["filename"], "spec.pdf");
+        assert_eq!(content[2]["type"], "input_audio");
+        assert_eq!(content[2]["input_audio"]["format"], "wav");
+    }
+
+    #[test]
+    fn responses_request_does_not_emit_chat_file_for_url_only_input_file() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Summarize this URL file."},
+                    {
+                        "type": "input_file",
+                        "file_url": "https://example.com/spec.pdf"
+                    }
+                ]
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert_eq!(result["messages"][0]["content"], "Summarize this URL file.");
+    }
+
+    #[test]
+    fn responses_request_maps_top_level_input_file_item() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {
+                    "type": "input_file",
+                    "file_id": "file_top",
+                    "filename": "top.pdf"
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let content = result["messages"][0]["content"].as_array().unwrap();
+
+        assert_eq!(result["messages"][0]["role"], "user");
+        assert_eq!(content[0]["type"], "file");
+        assert_eq!(content[0]["file"]["file_id"], "file_top");
+        assert_eq!(content[0]["file"]["filename"], "top.pdf");
+    }
+
+    #[test]
+    fn top_level_user_content_part_clears_pending_reasoning() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {
+                    "type": "reasoning",
+                    "summary": [{"text": "stale reasoning"}]
+                },
+                {
+                    "type": "input_text",
+                    "text": "Please run the tool."
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "lookup",
+                    "arguments": "{}"
+                }
+            ],
+            "tools": [{
+                "type": "function",
+                "name": "lookup",
+                "parameters": {"type": "object"}
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"], "Please run the tool.");
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["reasoning_content"], "tool call");
+    }
+
+    #[test]
     fn responses_request_to_chat_maps_messages_tools_and_limits() {
         let input = json!({
             "model": "gpt-5.4",
@@ -1246,6 +1960,134 @@ mod tests {
         assert_eq!(result["tool_choice"]["function"]["name"], "get_weather");
         assert_eq!(result["max_tokens"], 100);
         assert_eq!(result["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn responses_request_to_chat_exposes_tool_search_and_loaded_namespace_tools() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{"type": "tool_search"}],
+            "input": [
+                {
+                    "type": "tool_search_call",
+                    "call_id": "call_tool_search_1",
+                    "status": "completed",
+                    "execution": "client",
+                    "arguments": {"query": "Gmail search emails", "limit": 5}
+                },
+                {
+                    "type": "tool_search_output",
+                    "call_id": "call_tool_search_1",
+                    "status": "completed",
+                    "execution": "client",
+                    "tools": [{
+                        "type": "namespace",
+                        "name": "mcp__codex_apps__gmail",
+                        "description": "Find and reference emails from your inbox.",
+                        "tools": [{
+                            "type": "function",
+                            "name": "_search_emails",
+                            "description": "Search Gmail for emails matching a query.",
+                            "strict": false,
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "query": {"type": "string"},
+                                    "max_results": {"type": "integer"}
+                                },
+                                "required": ["query"]
+                            }
+                        }]
+                    }]
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": "Search unread inbox mail."
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let tools = result["tools"].as_array().unwrap();
+        let tool_names = tools
+            .iter()
+            .filter_map(|tool| tool.pointer("/function/name").and_then(|v| v.as_str()))
+            .collect::<Vec<_>>();
+
+        assert!(tool_names.contains(&"tool_search"));
+        assert!(tool_names.contains(&"mcp__codex_apps__gmail___search_emails"));
+        assert_eq!(
+            result["messages"][0]["tool_calls"][0]["function"]["name"],
+            "tool_search"
+        );
+        assert_eq!(result["messages"][1]["role"], "tool");
+        assert_eq!(result["messages"][1]["tool_call_id"], "call_tool_search_1");
+        assert!(result["messages"][1]["content"]
+            .as_str()
+            .unwrap()
+            .contains("mcp__codex_apps__gmail"));
+    }
+
+    #[test]
+    fn responses_request_to_chat_maps_custom_tool_and_choice() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "custom",
+                "name": "apply_patch",
+                "description": "Apply a patch to files."
+            }],
+            "tool_choice": {"type": "custom", "name": "apply_patch"},
+            "input": [{
+                "type": "custom_tool_call",
+                "id": "ctc_1",
+                "call_id": "call_patch",
+                "name": "apply_patch",
+                "input": "*** Begin Patch\n*** End Patch"
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert_eq!(result["tools"][0]["function"]["name"], "apply_patch");
+        assert_eq!(
+            result["tools"][0]["function"]["parameters"]["required"][0],
+            "input"
+        );
+        assert_eq!(result["tool_choice"]["function"]["name"], "apply_patch");
+        assert_eq!(
+            result["messages"][0]["tool_calls"][0]["function"]["arguments"],
+            r#"{"input":"*** Begin Patch\n*** End Patch"}"#
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_preserves_custom_tool_metadata_in_description() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "custom",
+                "name": "apply_patch",
+                "description": "Use the `apply_patch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.",
+                "format": {
+                    "type": "grammar",
+                    "syntax": "lark",
+                    "definition": "start: begin_patch hunk+ end_patch"
+                }
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let description = result["tools"][0]["function"]["description"]
+            .as_str()
+            .unwrap();
+
+        assert!(description.starts_with("Original tool definition:"));
+        assert!(!description.contains("Original Codex tool definition"));
+        assert!(description.contains("\"type\":\"custom\""));
+        assert!(description.contains("\"format\":"));
+        assert!(description.contains("\"syntax\":\"lark\""));
     }
 
     #[test]
@@ -1913,6 +2755,152 @@ mod tests {
     }
 
     #[test]
+    fn chat_response_to_responses_restores_loaded_namespace_tool_call() {
+        let request = json!({
+            "model": "gpt-5.4",
+            "tools": [{"type": "tool_search"}],
+            "input": [{
+                "type": "tool_search_output",
+                "call_id": "call_tool_search_1",
+                "status": "completed",
+                "execution": "client",
+                "tools": [{
+                    "type": "namespace",
+                    "name": "mcp__codex_apps__gmail",
+                    "description": "Find and reference emails from your inbox.",
+                    "tools": [{
+                        "type": "function",
+                        "name": "_search_emails",
+                        "description": "Search Gmail for emails matching a query.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string"},
+                                "label_ids": {"type": "array", "items": {"type": "string"}},
+                                "max_results": {"type": "integer"}
+                            }
+                        }
+                    }]
+                }]
+            }]
+        });
+        let context = build_codex_tool_context_from_request(&request);
+        let chat = json!({
+            "id": "chatcmpl_gmail",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "gpt-5.4",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call_gmail",
+                        "type": "function",
+                        "function": {
+                            "name": "mcp__codex_apps__gmail___search_emails",
+                            "arguments": "{\"query\":\"-in:spam -in:trash\",\"label_ids\":[\"UNREAD\"],\"max_results\":5}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let result = chat_completion_to_response_with_context(chat, &context).unwrap();
+
+        assert_eq!(result["output"][0]["type"], "function_call");
+        assert_eq!(result["output"][0]["call_id"], "call_gmail");
+        assert_eq!(result["output"][0]["namespace"], "mcp__codex_apps__gmail");
+        assert_eq!(result["output"][0]["name"], "_search_emails");
+        assert_eq!(
+            result["output"][0]["arguments"],
+            r#"{"label_ids":["UNREAD"],"max_results":5,"query":"-in:spam -in:trash"}"#
+        );
+    }
+
+    #[test]
+    fn chat_response_to_responses_restores_tool_search_call() {
+        let request = json!({
+            "model": "gpt-5.4",
+            "tools": [{"type": "tool_search"}],
+            "input": "Find tools."
+        });
+        let context = build_codex_tool_context_from_request(&request);
+        let chat = json!({
+            "id": "chatcmpl_tool_search",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "gpt-5.4",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call_tool_search_1",
+                        "type": "function",
+                        "function": {
+                            "name": "tool_search",
+                            "arguments": "{\"query\":\"Gmail search emails\",\"limit\":10}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let result = chat_completion_to_response_with_context(chat, &context).unwrap();
+
+        assert_eq!(result["output"][0]["type"], "tool_search_call");
+        assert_eq!(result["output"][0]["call_id"], "call_tool_search_1");
+        assert_eq!(result["output"][0]["execution"], "client");
+        assert_eq!(
+            result["output"][0]["arguments"]["query"],
+            "Gmail search emails"
+        );
+        assert_eq!(result["output"][0]["arguments"]["limit"], 10);
+    }
+
+    #[test]
+    fn chat_response_to_responses_restores_custom_tool_call() {
+        let request = json!({
+            "model": "gpt-5.4",
+            "tools": [{"type": "custom", "name": "apply_patch"}],
+            "input": "Patch it."
+        });
+        let context = build_codex_tool_context_from_request(&request);
+        let chat = json!({
+            "id": "chatcmpl_custom",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "gpt-5.4",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call_patch",
+                        "type": "function",
+                        "function": {
+                            "name": "apply_patch",
+                            "arguments": "{\"input\":\"*** Begin Patch\\n*** End Patch\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let result = chat_completion_to_response_with_context(chat, &context).unwrap();
+
+        assert_eq!(result["output"][0]["type"], "custom_tool_call");
+        assert_eq!(result["output"][0]["id"], "ctc_call_patch");
+        assert_eq!(result["output"][0]["call_id"], "call_patch");
+        assert_eq!(result["output"][0]["name"], "apply_patch");
+        assert_eq!(
+            result["output"][0]["input"],
+            "*** Begin Patch\n*** End Patch"
+        );
+    }
+
+    #[test]
     fn chat_response_to_responses_canonicalizes_json_string_tool_arguments() {
         let input = json!({
             "id": "chatcmpl_args",
@@ -2069,5 +3057,239 @@ mod tests {
 
         assert_eq!(result["error"]["message"], "rate limit exceeded");
         assert_eq!(result["error"]["type"], "upstream_error");
+    }
+    // Regression tests for tool_choice without tools guard
+    // https://github.com/farion1231/cc-switch/issues/3557
+
+    #[test]
+    fn responses_request_to_chat_drops_tool_choice_when_no_tools() {
+        // When tools is absent from the request, tool_choice must be dropped
+        // to avoid 503/400 from strict OpenAI-compatible upstreams.
+        let input = json!({
+            "model": "qwen3-7-max",
+            "tool_choice": "auto",
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert!(
+            result.get("tool_choice").is_none(),
+            "tool_choice should be dropped when tools is absent"
+        );
+        assert!(result.get("tools").is_none(), "tools should be absent");
+        assert_eq!(result["model"], "qwen3-7-max");
+    }
+
+    #[test]
+    fn responses_request_to_chat_drops_tool_choice_when_tools_empty_array() {
+        // When tools is an empty array, tool_choice must be dropped.
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [],
+            "tool_choice": "auto",
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert!(
+            result.get("tool_choice").is_none(),
+            "tool_choice should be dropped when tools is empty"
+        );
+        assert!(
+            result.get("tools").is_none(),
+            "tools should be absent when input tools was empty"
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_drops_parallel_tool_calls_when_no_tools() {
+        // parallel_tool_calls must also be dropped when tools is absent,
+        // as it is part of EXTRA_CHAT_PASSTHROUGH_FIELDS.
+        let input = json!({
+            "model": "gpt-5.4",
+            "tool_choice": "auto",
+            "parallel_tool_calls": true,
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert!(
+            result.get("tool_choice").is_none(),
+            "tool_choice should be dropped"
+        );
+        assert!(
+            result.get("parallel_tool_calls").is_none(),
+            "parallel_tool_calls should be dropped"
+        );
+        assert!(result.get("tools").is_none(), "tools should be absent");
+    }
+
+    #[test]
+    fn responses_request_to_chat_drops_tool_choice_when_all_tools_filtered() {
+        // When all tools are filtered out (e.g., missing name), tool_choice must be dropped.
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [
+                {"type": "function"}
+            ],
+            "tool_choice": "auto",
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert!(
+            result.get("tool_choice").is_none(),
+            "tool_choice should be dropped when all tools filtered"
+        );
+        assert!(
+            result.get("tools").is_none(),
+            "tools should be absent when all filtered"
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_keeps_tool_choice_when_tools_present() {
+        // When tools is present and non-empty, tool_choice must be preserved.
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "get_weather",
+                "description": "Get weather",
+                "parameters": {"type": "object"}
+            }],
+            "tool_choice": "auto",
+            "parallel_tool_calls": true,
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert!(
+            result.get("tool_choice").is_some(),
+            "tool_choice should be kept when tools present"
+        );
+        assert_eq!(result["tool_choice"], "auto");
+        assert!(
+            result.get("parallel_tool_calls").is_some(),
+            "parallel_tool_calls should be kept"
+        );
+        assert_eq!(result["parallel_tool_calls"], true);
+        assert!(
+            result
+                .get("tools")
+                .is_some_and(|v| v.as_array().is_some_and(|a| !a.is_empty())),
+            "tools should be present"
+        );
+        assert_eq!(result["tools"][0]["function"]["name"], "get_weather");
+    }
+
+    #[test]
+    fn responses_request_to_chat_keeps_tool_choice_function_when_tools_present() {
+        // When tools is present, function-type tool_choice must be preserved and mapped.
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "get_weather",
+                "description": "Get weather",
+                "parameters": {"type": "object"}
+            }],
+            "tool_choice": {"type": "function", "name": "get_weather"},
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert!(
+            result.get("tool_choice").is_some(),
+            "tool_choice should be kept"
+        );
+        assert_eq!(result["tool_choice"]["type"], "function");
+        assert_eq!(result["tool_choice"]["function"]["name"], "get_weather");
+    }
+
+    #[test]
+    fn responses_request_to_chat_no_tool_choice_no_tools_stays_clean() {
+        // When neither tool_choice nor tools are present, the output should be clean.
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert!(
+            result.get("tool_choice").is_none(),
+            "tool_choice should be absent"
+        );
+        assert!(result.get("tools").is_none(), "tools should be absent");
+        assert!(
+            result.get("parallel_tool_calls").is_none(),
+            "parallel_tool_calls should be absent"
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_tool_choice_none_dropped_when_no_tools() {
+        // Even tool_choice: "none" should be dropped when tools is absent,
+        // because strict upstreams reject the combination regardless of value.
+        let input = json!({
+            "model": "gpt-5.4",
+            "tool_choice": "none",
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert!(
+            result.get("tool_choice").is_none(),
+            "tool_choice 'none' should be dropped when no tools"
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_tool_search_output_provides_tools_keeps_tool_choice() {
+        // When tool_search_output in input provides tools, tool_choice should be kept.
+        let input = json!({
+            "model": "gpt-5.4",
+            "tool_choice": "auto",
+            "input": [{
+                "type": "tool_search_output",
+                "call_id": "call_ts_1",
+                "status": "completed",
+                "execution": "client",
+                "tools": [{
+                    "type": "function",
+                    "name": "search_docs",
+                    "description": "Search documentation.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"}
+                        }
+                    }
+                }]
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert!(
+            result.get("tool_choice").is_some(),
+            "tool_choice should be kept when tool_search_output provides tools"
+        );
+        assert_eq!(result["tool_choice"], "auto");
+        assert!(
+            result
+                .get("tools")
+                .is_some_and(|v| v.as_array().is_some_and(|a| !a.is_empty())),
+            "tools should be present from tool_search_output"
+        );
+        assert_eq!(result["tools"][0]["function"]["name"], "search_docs");
     }
 }
