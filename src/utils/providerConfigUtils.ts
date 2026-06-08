@@ -401,6 +401,8 @@ export const hasTomlCommonConfigSnippet = (
 const TOML_SECTION_HEADER_PATTERN = /^\s*\[([^\]\r\n]+)\]\s*$/;
 const TOML_BASE_URL_PATTERN =
   /^\s*base_url\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
+const TOML_OPENAI_BASE_URL_PATTERN =
+  /^\s*openai_base_url\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
 const TOML_EXPERIMENTAL_BEARER_TOKEN_PATTERN =
   /^\s*experimental_bearer_token\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
 const TOML_EXPERIMENTAL_BEARER_TOKEN_REPLACE_PATTERN =
@@ -425,6 +427,19 @@ const CODEX_RESERVED_MODEL_PROVIDER_IDS = new Set([
   "oss",
   "ollama-chat",
 ]);
+
+// Codex ConfigToml does not have a top-level `base_url` field.
+// For built-in providers, the base URL override uses provider-specific fields
+// (e.g. `openai_base_url`). This helper picks the correct top-level field name.
+const getTopLevelBaseUrlFieldName = (
+  modelProvider: string | undefined,
+): string => {
+  if (modelProvider === "openai") return "openai_base_url";
+  if (modelProvider === "chatgpt") return "chatgpt_base_url";
+  // Fallback: Codex does not recognize top-level base_url, but preserve
+  // the field for unknown built-in providers to avoid breaking changes.
+  return "openai_base_url";
+};
 
 interface TomlSectionRange {
   bodyEndIndex: number;
@@ -1053,6 +1068,17 @@ export const extractCodexBaseUrl = (
       return topLevelMatch.value;
     }
 
+    // Also check openai_base_url (Codex ConfigToml field for built-in openai provider)
+    const openaiBaseUrlMatch = findTomlAssignmentInRange(
+      lines,
+      TOML_OPENAI_BASE_URL_PATTERN,
+      0,
+      getTopLevelEndIndex(lines),
+    );
+    if (openaiBaseUrlMatch?.value) {
+      return openaiBaseUrlMatch.value;
+    }
+
     const fallbackAssignments = getRecoverableBaseUrlAssignments(
       findTomlAssignments(lines, TOML_BASE_URL_PATTERN),
       targetSectionName,
@@ -1253,6 +1279,68 @@ export const setCodexBaseUrl = (
   }
 
   const normalizedUrl = trimmed.replace(/\s+/g, "");
+
+  // Built-in providers (openai, amazon-bedrock, etc.) cannot have
+  // [model_providers.<id>] sections — use the top-level override field instead.
+  const providerName = getCodexModelProviderName(normalizedText || "");
+  const isBuiltInProvider =
+    providerName &&
+    !isCustomCodexModelProviderId(providerName);
+
+  if (isBuiltInProvider) {
+    const fieldName = getTopLevelBaseUrlFieldName(providerName);
+    const topLevelReplacement = `${fieldName} = "${normalizedUrl}"`;
+    const topLevelEndIndex = getTopLevelEndIndex(lines);
+
+    // Try to update existing openai_base_url first
+    const openaiBaseUrlPattern = new RegExp(
+      `^\\s*${fieldName}\\s*=\\s*(["'])([^"\\r\\n]+)\\1\\s*(?:#.*)?$`,
+    );
+    const existingOpenaiMatch = findTomlAssignmentInRange(
+      lines,
+      openaiBaseUrlPattern,
+      0,
+      topLevelEndIndex,
+    );
+    if (existingOpenaiMatch) {
+      lines[existingOpenaiMatch.index] = topLevelReplacement;
+      // Also remove any stale top-level base_url
+      const staleMatch = findTomlAssignmentInRange(
+        lines,
+        TOML_BASE_URL_PATTERN,
+        0,
+        topLevelEndIndex,
+      );
+      if (staleMatch) lines.splice(staleMatch.index, 1);
+      return finalizeTomlText(lines);
+    }
+
+    // Remove stale top-level base_url if present, then insert openai_base_url
+    const staleMatch = findTomlAssignmentInRange(
+      lines,
+      TOML_BASE_URL_PATTERN,
+      0,
+      topLevelEndIndex,
+    );
+    if (staleMatch) {
+      lines[staleMatch.index] = topLevelReplacement;
+      return finalizeTomlText(lines);
+    }
+
+    const modelProviderIndex = getTopLevelModelProviderLineIndex(lines);
+    if (modelProviderIndex !== -1) {
+      lines.splice(modelProviderIndex + 1, 0, topLevelReplacement);
+      return finalizeTomlText(lines);
+    }
+
+    const insertIndex = topLevelEndIndex;
+    if (lines.length === 0) {
+      return `${topLevelReplacement}\n`;
+    }
+    lines.splice(insertIndex, 0, topLevelReplacement);
+    return finalizeTomlText(lines);
+  }
+
   const replacementLine = `base_url = "${normalizedUrl}"`;
 
   if (targetSectionName) {

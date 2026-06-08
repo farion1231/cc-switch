@@ -151,10 +151,61 @@ pub fn validate_config_toml(text: &str) -> Result<(), AppError> {
 }
 
 /// 读取并校验 `~/.codex/config.toml`，返回文本（可能为空）
+/// 自动将过时的顶层 base_url 迁移为 openai_base_url。
 pub fn read_and_validate_codex_config_text() -> Result<String, AppError> {
     let s = read_codex_config_text()?;
     validate_config_toml(&s)?;
-    Ok(s)
+    Ok(migrate_stale_base_url(&s))
+}
+
+/// Migrate stale top-level `base_url` to `openai_base_url` in config text.
+///
+/// Codex's ConfigToml struct has no `base_url` field — it uses `openai_base_url`
+/// for the built-in openai provider. Older cc-switch versions wrote `base_url`
+/// which Codex silently ignored, causing requests to go to api.openai.com.
+/// This function normalizes the field name on read so the UI always shows the
+/// correct value, and returns the migrated text for writing back.
+pub fn migrate_stale_base_url(config_text: &str) -> String {
+    let trimmed = config_text.trim();
+    if trimmed.is_empty() {
+        return config_text.to_string();
+    }
+
+    let mut doc = match trimmed.parse::<DocumentMut>() {
+        Ok(d) => d,
+        Err(_) => return config_text.to_string(),
+    };
+
+    // Only migrate when model_provider is a built-in (e.g. "openai")
+    let mp = doc
+        .get("model_provider")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+
+    if let Some(ref provider_id) = mp {
+        if !is_custom_codex_model_provider_id(provider_id) {
+            let field = builtin_provider_base_url_field(provider_id);
+            // Don't overwrite an existing openai_base_url
+            if doc.get(field).is_none() {
+                if let Some(stale) = doc.as_table_mut().remove("base_url") {
+                    doc[field] = stale;
+                    return doc.to_string();
+                }
+            }
+        }
+    }
+
+    // Also migrate when there's no model_provider but a bare base_url exists
+    if mp.is_none() {
+        if doc.get("openai_base_url").is_none() {
+            if let Some(stale) = doc.as_table_mut().remove("base_url") {
+                doc["openai_base_url"] = stale;
+                return doc.to_string();
+            }
+        }
+    }
+
+    config_text.to_string()
 }
 
 fn active_codex_model_provider_id(doc: &DocumentMut) -> Option<String> {
@@ -171,6 +222,21 @@ pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
         && !CODEX_RESERVED_MODEL_PROVIDER_IDS
             .iter()
             .any(|reserved| reserved.eq_ignore_ascii_case(id))
+}
+
+/// Return the top-level TOML field name for overriding a built-in provider's base URL.
+/// Codex ConfigToml does not have a generic `base_url`; instead it uses provider-specific
+/// fields such as `openai_base_url` and `chatgpt_base_url`.
+fn builtin_provider_base_url_field(model_provider: &str) -> &'static str {
+    let id = model_provider.trim();
+    if id.eq_ignore_ascii_case("openai") {
+        "openai_base_url"
+    } else if id.eq_ignore_ascii_case("chatgpt") {
+        "chatgpt_base_url"
+    } else {
+        // Default to openai_base_url for unknown built-in providers.
+        "openai_base_url"
+    }
 }
 
 /// Write only Codex `config.toml` for provider switching.
@@ -208,7 +274,8 @@ pub fn extract_codex_api_key(auth: Option<&Value>, config_text: Option<&str>) ->
 /// Extract the upstream base URL from a Codex `config.toml` string.
 ///
 /// Prefers the active `[model_providers.<model_provider>].base_url`, falling
-/// back to a top-level `base_url` when no model provider is selected.
+/// back to `openai_base_url` for the built-in openai provider, then to a
+/// top-level `base_url` for backwards compatibility.
 pub fn extract_codex_base_url(config_text: &str) -> Option<String> {
     let doc = config_text.parse::<toml::Value>().ok()?;
 
@@ -223,9 +290,16 @@ pub fn extract_codex_base_url(config_text: &str) -> Option<String> {
         }
     }
 
-    doc.get("base_url")
+    // Codex ConfigToml uses `openai_base_url` for the built-in openai provider.
+    doc.get("openai_base_url")
         .and_then(|v| v.as_str())
         .map(ToString::to_string)
+        .or_else(|| {
+            // Backwards-compatible fallback for stale top-level base_url.
+            doc.get("base_url")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+        })
 }
 
 pub fn codex_auth_has_login_material(auth: &Value) -> bool {
@@ -1137,8 +1211,9 @@ pub fn restore_codex_settings_for_backfill(
 /// Update a field in Codex config.toml using toml_edit (syntax-preserving).
 ///
 /// Supported fields:
-/// - `"base_url"`: writes to `[model_providers.<current>].base_url` if `model_provider` exists,
-///   otherwise falls back to top-level `base_url`.
+/// - `"base_url"`: writes to `[model_providers.<current>].base_url` if `model_provider` is a
+///   custom (non-reserved) ID. For built-in providers (e.g. "openai"), writes to the
+///   provider-specific top-level field (`openai_base_url`, `chatgpt_base_url`).
 /// - `"wire_api"`: writes to `[model_providers.<current>].wire_api` if `model_provider` exists,
 ///   otherwise falls back to top-level `wire_api`.
 /// - `"model"` / `"model_catalog_json"`: writes to top-level field.
@@ -1157,6 +1232,26 @@ pub fn update_codex_toml_field(toml_str: &str, field: &str, value: &str) -> Resu
                 .get("model_provider")
                 .and_then(|item| item.as_str())
                 .map(str::to_string);
+
+            if let Some(ref provider_key) = model_provider {
+                // Built-in providers cannot have [model_providers.<id>] sections.
+                // Write to the provider-specific top-level field instead.
+                if field == "base_url"
+                    && !is_custom_codex_model_provider_id(provider_key)
+                {
+                    let top_field = builtin_provider_base_url_field(provider_key);
+                    if trimmed.is_empty() {
+                        doc.as_table_mut().remove(top_field);
+                        // Also clean up any stale top-level base_url
+                        doc.as_table_mut().remove("base_url");
+                    } else {
+                        doc[top_field] = toml_edit::value(trimmed);
+                        // Remove stale top-level base_url if present
+                        doc.as_table_mut().remove("base_url");
+                    }
+                    return Ok(doc.to_string());
+                }
+            }
 
             if let Some(provider_key) = model_provider {
                 // Ensure [model_providers] table exists
@@ -1202,7 +1297,7 @@ pub fn update_codex_toml_field(toml_str: &str, field: &str, value: &str) -> Resu
 }
 
 /// Remove `base_url` from the active model_provider section only if it matches `predicate`.
-/// Also removes top-level `base_url` if it matches.
+/// Also removes top-level `base_url` and `openai_base_url` if they match.
 /// Used by proxy cleanup to strip local proxy URLs without touching user-configured URLs.
 pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) -> bool) -> String {
     let mut doc = match toml_str.parse::<DocumentMut>() {
@@ -1214,6 +1309,21 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
         .get("model_provider")
         .and_then(|item| item.as_str())
         .map(str::to_string);
+
+    if let Some(ref provider_key) = model_provider {
+        // For built-in providers, check the provider-specific top-level field.
+        if !is_custom_codex_model_provider_id(provider_key) {
+            let top_field = builtin_provider_base_url_field(provider_key);
+            let should_remove = doc
+                .get(top_field)
+                .and_then(|item| item.as_str())
+                .map(&predicate)
+                .unwrap_or(false);
+            if should_remove {
+                doc.as_table_mut().remove(top_field);
+            }
+        }
+    }
 
     if let Some(provider_key) = model_provider {
         if let Some(model_providers) = doc
@@ -1236,7 +1346,7 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
         }
     }
 
-    // Fallback: also clean up top-level base_url if it matches
+    // Fallback: also clean up top-level base_url and openai_base_url if they match
     let should_remove_root = doc
         .get("base_url")
         .and_then(|item| item.as_str())
@@ -1244,6 +1354,15 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
         .unwrap_or(false);
     if should_remove_root {
         doc.as_table_mut().remove("base_url");
+    }
+
+    let should_remove_openai = doc
+        .get("openai_base_url")
+        .and_then(|item| item.as_str())
+        .map(&predicate)
+        .unwrap_or(false);
+    if should_remove_openai {
+        doc.as_table_mut().remove("openai_base_url");
     }
 
     doc.to_string()
