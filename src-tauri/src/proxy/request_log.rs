@@ -159,7 +159,7 @@ impl From<&ProxyRequestLogEntry> for RequestLogSummary {
 }
 
 /// Default maximum number of log entries to retain
-const DEFAULT_MAX_LOG_ENTRIES: usize = 200;
+const DEFAULT_MAX_LOG_ENTRIES: usize = 10;
 
 /// Request log storage (in-memory ring buffer)
 pub struct RequestLogStore {

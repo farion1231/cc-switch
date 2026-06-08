@@ -518,7 +518,7 @@ export function RequestLogPanel() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {[1, 10, 50, 100, 200].map((n) => (
+              {[1, 10, 20, 50].map((n) => (
                 <SelectItem key={n} value={String(n)}>
                   Max {n}
                 </SelectItem>
