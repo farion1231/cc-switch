@@ -102,6 +102,17 @@ struct AppTypeValueRequest {
     value: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FetchModelsRequest {
+    base_url: String,
+    api_key: String,
+    #[serde(default)]
+    is_full_url: bool,
+    #[serde(default)]
+    models_url: Option<String>,
+}
+
 fn parse_bool_env(name: &str) -> bool {
     std::env::var(name)
         .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
@@ -555,6 +566,20 @@ async fn set_pricing_model_source(
     }
 }
 
+async fn fetch_models(Json(payload): Json<FetchModelsRequest>) -> Response {
+    match crate::services::model_fetch::fetch_models(
+        &payload.base_url,
+        &payload.api_key,
+        payload.is_full_url,
+        payload.models_url.as_deref(),
+    )
+    .await
+    {
+        Ok(models) => Json(models).into_response(),
+        Err(e) => command_error(e),
+    }
+}
+
 async fn usage_command(
     Path(command): Path<String>,
     State(state): State<WebUiState>,
@@ -702,6 +727,7 @@ fn command_router(state: WebUiState) -> Router {
         .route("/api/proxy/default-cost-multiplier/update", post(set_default_cost_multiplier))
         .route("/api/proxy/pricing-model-source", post(get_pricing_model_source))
         .route("/api/proxy/pricing-model-source/update", post(set_pricing_model_source))
+        .route("/api/models/fetch", post(fetch_models))
         .route("/api/usage/:command", post(usage_command))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth))
         .with_state(state)

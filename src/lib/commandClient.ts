@@ -166,6 +166,9 @@ export async function invokeCommand<T = unknown>(
     case "set_pricing_model_source":
       return post<T>("/api/proxy/pricing-model-source/update", args);
 
+    case "fetch_models_for_config":
+      return post<T>("/api/models/fetch", args);
+
     case "get_usage_summary":
     case "get_usage_summary_by_app":
     case "get_usage_trends":
@@ -198,3 +201,8 @@ export async function listenEvent<T>(
   }
   return () => {};
 }
+
+export const commandClient = {
+  invoke: invokeCommand,
+  listen: listenEvent,
+};
