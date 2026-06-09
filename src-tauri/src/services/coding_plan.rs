@@ -571,7 +571,7 @@ fn parse_minimax_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
         return tiers;
     };
 
-    // 5h 桶:用剩余额度 / 桶总量反推已用率。
+    // 5h 桶:用剩余比例和 boost 后的桶总量反推已用百分比点数。
     if let Some(utilization) = minimax_bucket_utilization(
         item,
         "current_interval_remaining_percent",
@@ -621,7 +621,7 @@ fn minimax_bucket_utilization(
 ) -> Option<f64> {
     let remaining = item.get(remaining_percent_key).and_then(parse_f64)?;
     let total = minimax_bucket_total_percent(item, boost_permille_key);
-    Some(((total - remaining) / total) * 100.0)
+    Some((100.0 - remaining) * total / 100.0)
 }
 
 fn minimax_bucket_total_percent(item: &serde_json::Value, boost_permille_key: &str) -> f64 {
@@ -870,13 +870,9 @@ mod tests {
         let tiers = parse_minimax_tiers(&body);
         assert_eq!(tiers.len(), 2);
         assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
-        assert!(
-            (tiers[0].utilization - 65.333_333_333_333_33).abs() < 1e-9
-        );
+        assert_eq!(tiers[0].utilization, 72.0);
         assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
-        assert!(
-            (tiers[1].utilization - 38.666_666_666_666_664).abs() < 1e-9
-        );
+        assert_eq!(tiers[1].utilization, 12.0);
     }
 
     #[test]
