@@ -289,6 +289,9 @@ impl ProxyServer {
             // 健康检查
             .route("/health", get(handlers::health_check))
             .route("/status", get(handlers::get_status))
+            // Provider Switching API (局域网切换)
+            .route("/api/provider/switch", post(handlers::switch_provider))
+            .route("/api/providers", get(handlers::list_providers))
             // Claude API (支持带前缀和不带前缀两种格式)
             .route("/v1/messages", post(handlers::handle_messages))
             .route("/claude/v1/messages", post(handlers::handle_messages))
