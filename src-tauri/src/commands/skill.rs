@@ -97,6 +97,17 @@ pub fn toggle_skill_app(
     Ok(true)
 }
 
+/// 更新 Skill 备注
+#[tauri::command]
+pub fn update_skill_notes(
+    id: String,
+    notes: Option<String>,
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    SkillService::update_notes(&app_state.db, &id, notes).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
 /// 扫描未管理的 Skills
 #[tauri::command]
 pub fn scan_unmanaged_skills(
