@@ -1279,7 +1279,7 @@ impl Database {
                 SELECT l.provider_id, l.app_type,
                     {detail_pname} as provider_name,
                     COUNT(*) as request_count,
-                    COALESCE(SUM({fresh_input_detail} + l.output_tokens), 0) as total_tokens,
+                    COALESCE(SUM({fresh_input_detail} + l.output_tokens + l.cache_creation_tokens + l.cache_read_tokens), 0) as total_tokens,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost,
                     COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0) as success_count,
                     COALESCE(SUM(l.latency_ms), 0) as latency_sum
@@ -1291,7 +1291,7 @@ impl Database {
                 SELECT r.provider_id, r.app_type,
                     {rollup_pname} as provider_name,
                     COALESCE(SUM(r.request_count), 0),
-                    COALESCE(SUM({fresh_input_rollup} + r.output_tokens), 0),
+                    COALESCE(SUM({fresh_input_rollup} + r.output_tokens + r.cache_creation_tokens + r.cache_read_tokens), 0),
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0),
                     COALESCE(SUM(r.success_count), 0),
                     COALESCE(SUM(r.avg_latency_ms * r.request_count), 0)
@@ -1398,7 +1398,7 @@ impl Database {
             FROM (
                 SELECT l.model,
                     COUNT(*) as request_count,
-                    COALESCE(SUM({fresh_input_detail} + l.output_tokens), 0) as total_tokens,
+                    COALESCE(SUM({fresh_input_detail} + l.output_tokens + l.cache_creation_tokens + l.cache_read_tokens), 0) as total_tokens,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost
                 FROM proxy_request_logs l
                 {detail_where}
@@ -1406,7 +1406,7 @@ impl Database {
                 UNION ALL
                 SELECT r.model,
                     COALESCE(SUM(r.request_count), 0),
-                    COALESCE(SUM({fresh_input_rollup} + r.output_tokens), 0),
+                    COALESCE(SUM({fresh_input_rollup} + r.output_tokens + r.cache_creation_tokens + r.cache_read_tokens), 0),
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0)
                 FROM usage_daily_rollups r
                 {rollup_where}
@@ -2898,6 +2898,13 @@ mod tests {
         assert!(!provider_stats
             .iter()
             .any(|stat| stat.provider_id == "_session"));
+        assert_eq!(
+            provider_stats
+                .iter()
+                .map(|stat| stat.total_tokens)
+                .sum::<u64>(),
+            summary.real_total_tokens
+        );
 
         let model_stats = db.get_model_stats(None, None, None)?;
         assert_eq!(
@@ -2906,6 +2913,13 @@ mod tests {
                 .map(|stat| stat.request_count)
                 .sum::<u64>(),
             4
+        );
+        assert_eq!(
+            model_stats
+                .iter()
+                .map(|stat| stat.total_tokens)
+                .sum::<u64>(),
+            summary.real_total_tokens
         );
 
         let logs = db.get_request_logs(&LogFilters::default(), 0, 10)?;
