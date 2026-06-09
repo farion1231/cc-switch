@@ -69,6 +69,10 @@ struct ClaudeRollbackState {
     previous_config_env: Option<String>,
 }
 
+#[cfg(test)]
+static FAIL_CLAUDE_CONFIG_ENV_RESTORE_FOR_TEST: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// Result of a provider switch operation, including any non-fatal warnings
 #[derive(Debug, serde::Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -3363,6 +3367,120 @@ mod tests {
 
     #[test]
     #[serial]
+    fn rollback_claude_restores_core_state_when_env_restore_fails() {
+        with_test_home(|state, home| {
+            let previous_profile_dir = home.join(".claude-profiles").join("previous");
+            fs::create_dir_all(&previous_profile_dir).expect("create previous profile dir");
+            let default_settings_path = home.join(".claude").join("settings.json");
+            write_json_file(
+                &default_settings_path,
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "previous-token",
+                        "ANTHROPIC_BASE_URL": "https://previous.example"
+                    }
+                }),
+            )
+            .expect("seed previous live settings");
+
+            let previous_provider = claude_provider(
+                "previous",
+                "Previous Claude",
+                "previous-token",
+                "https://previous.example",
+                None,
+            );
+            let failed_provider = claude_provider(
+                "failed-target",
+                "Failed Target",
+                "failed-token",
+                "https://failed.example",
+                None,
+            );
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &previous_provider)
+                .expect("save previous provider");
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &failed_provider)
+                .expect("save failed provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "failed-target")
+                .expect("set failed db current");
+            crate::settings::set_current_provider(&AppType::Claude, Some("failed-target"))
+                .expect("set failed local current");
+            crate::settings::set_claude_provider_override_dir(Some(
+                &home
+                    .join(".claude-profiles")
+                    .join("failed")
+                    .to_string_lossy(),
+            ))
+            .expect("set failed provider override");
+            write_json_file(
+                &default_settings_path,
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "failed-token",
+                        "ANTHROPIC_BASE_URL": "https://failed.example"
+                    }
+                }),
+            )
+            .expect("simulate failed switch live write");
+
+            let rollback = ClaudeRollbackState {
+                previous_provider_override_dir: None,
+                previous_local_current: Some("previous".to_string()),
+                previous_db_current: Some("previous".to_string()),
+                previous_live_settings: Some(json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "previous-token",
+                        "ANTHROPIC_BASE_URL": "https://previous.example"
+                    }
+                })),
+                target_live_path: None,
+                target_live_settings: None,
+                previous_config_env: Some(previous_profile_dir.to_string_lossy().to_string()),
+            };
+
+            FAIL_CLAUDE_CONFIG_ENV_RESTORE_FOR_TEST
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+
+            ProviderService::rollback_claude_switch(state, &rollback)
+                .expect("env restore failure should not stop core rollback");
+
+            assert_eq!(
+                crate::settings::get_current_provider(&AppType::Claude).as_deref(),
+                Some("previous"),
+                "rollback should restore the local current provider"
+            );
+            assert_eq!(
+                state
+                    .db
+                    .get_current_provider(AppType::Claude.as_str())
+                    .expect("read db current")
+                    .as_deref(),
+                Some("previous"),
+                "rollback should restore the DB current provider"
+            );
+            assert_eq!(
+                crate::settings::get_claude_override_dir().as_deref(),
+                None,
+                "rollback should restore the previous provider override"
+            );
+            let live: Value =
+                read_json_file(&default_settings_path).expect("read restored live settings");
+            assert_eq!(
+                live["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("previous-token".to_string()),
+                "rollback should restore previous live settings"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn apply_claude_legacy_clears_stale_provider_profile_override() {
         with_test_home(|_state, home| {
             let stale_profile_dir = home.join(".claude-profiles").join("stale");
@@ -5037,6 +5155,19 @@ impl ProviderService {
         Ok(Some(profile_dir.to_string()))
     }
 
+    fn restore_claude_config_env_for_rollback(value: Option<&str>) -> Result<(), AppError> {
+        #[cfg(test)]
+        if FAIL_CLAUDE_CONFIG_ENV_RESTORE_FOR_TEST.swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(AppError::Message(
+                "simulated CLAUDE_CONFIG_DIR restore failure".to_string(),
+            ));
+        }
+
+        crate::services::env_manager::set_user_env_var("CLAUDE_CONFIG_DIR", value)
+            .map_err(AppError::Message)
+    }
+
     fn rollback_claude_switch(
         state: &AppState,
         rollback: &ClaudeRollbackState,
@@ -5044,11 +5175,11 @@ impl ProviderService {
         crate::settings::set_claude_provider_override_dir(
             rollback.previous_provider_override_dir.as_deref(),
         )?;
-        crate::services::env_manager::set_user_env_var(
-            "CLAUDE_CONFIG_DIR",
-            rollback.previous_config_env.as_deref(),
-        )
-        .map_err(AppError::Message)?;
+        if let Err(err) =
+            Self::restore_claude_config_env_for_rollback(rollback.previous_config_env.as_deref())
+        {
+            log::warn!("Failed to restore CLAUDE_CONFIG_DIR during Claude rollback: {err}");
+        }
         crate::settings::set_current_provider(
             &AppType::Claude,
             rollback.previous_local_current.as_deref(),
