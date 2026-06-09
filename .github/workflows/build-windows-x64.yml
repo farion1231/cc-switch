@@ -1,62 +1,17 @@
-# CC Switch - 自动构建 Windows x64 安装包
-#
-# 工作流程：
-#   1. 拉取原作者最新代码
-#   2. 用你的 stream_check.rs 替换原文件
-#   3. 禁用 updater 签名（因为你没有原作者的私钥）
-#   4. 编译打包 Windows x64 安装包
-#   5. 发布到你的 GitHub Release
-#
-# 使用方式：
-#   - 手动触发：Actions 页面点击 Run workflow
-#   - 自动触发：原作者推送新代码时自动构建
- 
-name: Build & Release Windows x64
+name: Build Windows x64 Installer
  
 on:
   workflow_dispatch: {}
-  # 如果你想自动跟踪上游更新，取消下面的注释：
-  # schedule:
-  #   - cron: '0 */6 * * *'  # 每6小时检查一次
- 
-permissions:
-  contents: write
- 
-env:
-  UPSTREAM_REPO: farion1231/cc-switch
-  UPSTREAM_BRANCH: main
  
 jobs:
-  build-and-release:
-    name: Build & Release
+  build-windows-x64:
+    name: Build Windows x64
     runs-on: windows-latest
  
     steps:
-      # ── 1. 拉取原作者最新代码 ──────────────────────────
-      - name: Checkout upstream repo
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          repository: ${{ env.UPSTREAM_REPO }}
-          ref: ${{ env.UPSTREAM_BRANCH }}
-          path: upstream
  
-      # ── 2. 拉取你自己的仓库（获取 patch 文件） ───────
-      - name: Checkout own repo for patches
-        uses: actions/checkout@v4
-        with:
-          ref: heyhey-lin-patch-1
-          path: own-repo
- 
-      # ── 3. 用你的文件替换原文件 ────────────────────────
-      - name: Apply patches
-        shell: pwsh
-        run: |
-          Write-Host "Replacing stream_check.rs..."
-          Copy-Item "own-repo/patch/stream_check.rs" `
-            -Destination "upstream/src-tauri/src/services/stream_check.rs" -Force
-          Write-Host "Patch applied."
- 
-      # ── 4. 环境准备 ───────────────────────────────────
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -76,98 +31,28 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: upstream/src-tauri -> target
-          shared-key: windows-x64
+          workspaces: src-tauri -> target
  
       - name: Install frontend dependencies
-        working-directory: upstream
         run: pnpm install
  
-      # ── 5. 修改 tauri.conf.json ───────────────────────
-      # 移除 updater 配置，因为没有原作者的签名私钥
-      # 如果以后你自己生成了签名密钥，可以把这段改掉
-      - name: Patch tauri.conf.json
+      - name: Disable updater signing
         shell: pwsh
-        working-directory: upstream
         run: |
-          $path = "src-tauri/tauri.conf.json"
-          $json = Get-Content $path -Raw
-          $conf = $json | ConvertFrom-Json -Depth 20
- 
-          # 禁用 updater 产物
+          $conf = Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
           $conf.bundle.createUpdaterArtifacts = $false
+          $conf.plugins.updater = $null
+          $conf | ConvertTo-Json -Depth 10 | Set-Content "src-tauri/tauri.conf.json" -Encoding UTF8
  
-          # 移除 updater 插件配置
-          if ($conf.plugins.PSObject.Properties.Name -contains 'updater') {
-            $conf.plugins.PSObject.Properties.Remove('updater')
-          }
- 
-          $conf | ConvertTo-Json -Depth 20 | Set-Content $path -Encoding UTF8
-          Write-Host "tauri.conf.json patched."
- 
-      # ── 6. 编译打包 ───────────────────────────────────
       - name: Build Tauri app
-        working-directory: upstream
         run: pnpm tauri build
  
-      # ── 7. 读取版本号 ─────────────────────────────────
-      - name: Get version
-        id: version
-        shell: pwsh
-        run: |
-          $conf = Get-Content "upstream/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
-          $ver = $conf.version
-          echo "VERSION=$ver" >> $env:GITHUB_OUTPUT
-          echo "Resolved version: $ver"
- 
-      # ── 8. 计算文件哈希 ───────────────────────────────
-      - name: Compute SHA256
-        shell: pwsh
-        run: |
-          Get-ChildItem "upstream/src-tauri/target/release/bundle/msi/*.msi" |
-            ForEach-Object {
-              $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
-              "$hash  $($_.Name)" | Out-File -Append "upstream/sha256.txt" -Encoding UTF8
-            }
-          Get-ChildItem "upstream/src-tauri/target/release/bundle/nsis/*.exe" |
-            ForEach-Object {
-              $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
-              "$hash  $($_.Name)" | Out-File -Append "upstream/sha256.txt" -Encoding UTF8
-            }
-          Write-Host "SHA256 checksums:"
-          Get-Content "upstream/sha256.txt"
- 
-      # ── 9. 上传构建产物（即使不发 Release 也能下载） ───
-      - name: Upload artifacts
+      - name: Upload installer artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: cc-switch-windows-x64-v${{ steps.version.outputs.VERSION }}
+          name: cc-switch-windows-x64-installer
           path: |
-            upstream/src-tauri/target/release/bundle/msi/*.msi
-            upstream/src-tauri/target/release/bundle/nsis/*.exe
-            upstream/sha256.txt
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
  
-      # ── 10. 发布到 GitHub Release ─────────────────────
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ steps.version.outputs.VERSION }}
-          name: CC Switch v${{ steps.version.outputs.VERSION }} (Windows x64)
-          body: |
-            CC Switch v${{ steps.version.outputs.VERSION }} - Windows x64
- 
-            基于 [farion1231/cc-switch](https://github.com/farion1231/cc-switch) 构建，
-            已替换 stream_check.rs。
- 
-            **安装包：**
-            - `.msi` — Windows Installer 标准格式
-            - `.exe` — NSIS 安装程序
- 
-            > 注意：此版本不含自动更新功能，如需更新请手动下载新版本。
-          files: |
-            upstream/src-tauri/target/release/bundle/msi/*.msi
-            upstream/src-tauri/target/release/bundle/nsis/*.exe
-            upstream/sha256.txt
-          draft: false
-          prerelease: false
