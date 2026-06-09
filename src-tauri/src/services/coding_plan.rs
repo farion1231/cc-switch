@@ -547,7 +547,8 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> SubscriptionQuota {
 
 /// 从 `/coding_plan/remains` 响应中解析 MiniMax 编程套餐的额度 tier。
 ///
-/// 新接口语义:`current_*_remaining_percent` 是"剩余百分比"(0-100),
+/// 新接口语义:`current_*_remaining_percent` 是剩余额度的百分比点数,
+/// 但桶总量不一定是 100;接口可通过对应 boost permille 字段放大,
 /// `model_remains` 数组里有 `general`(编程套餐)和 `video` 等其他模型,
 /// 这里只取 `general`,跳过 video。
 ///
@@ -570,18 +571,19 @@ fn parse_minimax_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
         return tiers;
     };
 
-    // 5h 桶:剩余百分比 → 已用百分比
-    if let Some(remain_pct) = item
-        .get("current_interval_remaining_percent")
-        .and_then(|v| v.as_f64())
-    {
+    // 5h 桶:用剩余额度 / 桶总量反推已用率。
+    if let Some(utilization) = minimax_bucket_utilization(
+        item,
+        "current_interval_remaining_percent",
+        "current_interval_boost_permille",
+    ) {
         let resets_at = item
             .get("end_time")
             .and_then(|v| v.as_i64())
             .and_then(millis_to_iso8601);
         tiers.push(QuotaTier {
             name: TIER_FIVE_HOUR.to_string(),
-            utilization: 100.0 - remain_pct,
+            utilization,
             resets_at,
             used_value_usd: None,
             max_value_usd: None,
@@ -590,17 +592,18 @@ fn parse_minimax_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
 
     // 周桶:仅当 status=1 时激活;status=3 等表示该套餐无周限额,跳过
     if item.get("current_weekly_status").and_then(|v| v.as_i64()) == Some(1) {
-        if let Some(remain_pct) = item
-            .get("current_weekly_remaining_percent")
-            .and_then(|v| v.as_f64())
-        {
+        if let Some(utilization) = minimax_bucket_utilization(
+            item,
+            "current_weekly_remaining_percent",
+            "weekly_boost_permille",
+        ) {
             let resets_at = item
                 .get("weekly_end_time")
                 .and_then(|v| v.as_i64())
                 .and_then(millis_to_iso8601);
             tiers.push(QuotaTier {
                 name: TIER_WEEKLY_LIMIT.to_string(),
-                utilization: 100.0 - remain_pct,
+                utilization,
                 resets_at,
                 used_value_usd: None,
                 max_value_usd: None,
@@ -609,6 +612,24 @@ fn parse_minimax_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
     }
 
     tiers
+}
+
+fn minimax_bucket_utilization(
+    item: &serde_json::Value,
+    remaining_percent_key: &str,
+    boost_permille_key: &str,
+) -> Option<f64> {
+    let remaining = item.get(remaining_percent_key).and_then(parse_f64)?;
+    let total = minimax_bucket_total_percent(item, boost_permille_key);
+    Some(((total - remaining) / total) * 100.0)
+}
+
+fn minimax_bucket_total_percent(item: &serde_json::Value, boost_permille_key: &str) -> f64 {
+    item.get(boost_permille_key)
+        .and_then(parse_f64)
+        .filter(|permille| *permille > 0.0)
+        .map(|permille| permille / 10.0)
+        .unwrap_or(100.0)
 }
 
 // ── 公开入口 ────────────────────────────────────────────────
@@ -827,6 +848,55 @@ mod tests {
         assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
         assert_eq!(tiers[1].utilization, 5.0);
         assert!(tiers[1].resets_at.is_some());
+    }
+
+    #[test]
+    fn minimax_boost_permille_changes_bucket_totals() {
+        let body = json!({
+            "model_remains": [{
+                "model_name": "general",
+                "current_interval_remaining_percent": 52,
+                "current_weekly_remaining_percent": 92,
+                "current_interval_status": 1,
+                "current_weekly_status": 1,
+                "current_interval_total_count": 0,
+                "current_interval_usage_count": 0,
+                "current_weekly_total_count": 0,
+                "current_weekly_usage_count": 0,
+                "current_interval_boost_permille": 1500,
+                "weekly_boost_permille": 1500
+            }]
+        });
+        let tiers = parse_minimax_tiers(&body);
+        assert_eq!(tiers.len(), 2);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert!(
+            (tiers[0].utilization - 65.333_333_333_333_33).abs() < 1e-9
+        );
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert!(
+            (tiers[1].utilization - 38.666_666_666_666_664).abs() < 1e-9
+        );
+    }
+
+    #[test]
+    fn minimax_count_fields_do_not_override_remaining_percent() {
+        let body = json!({
+            "model_remains": [{
+                "model_name": "general",
+                "current_interval_total_count": 3,
+                "current_interval_usage_count": 3,
+                "current_interval_remaining_percent": 80,
+                "current_weekly_total_count": 21,
+                "current_weekly_usage_count": 7,
+                "current_weekly_remaining_percent": 70,
+                "current_weekly_status": 1
+            }]
+        });
+        let tiers = parse_minimax_tiers(&body);
+        assert_eq!(tiers.len(), 2);
+        assert_eq!(tiers[0].utilization, 20.0);
+        assert_eq!(tiers[1].utilization, 30.0);
     }
 
     #[test]
