@@ -7,11 +7,12 @@ const CLAUDE_DIR: &str = ".claude";
 const CLAUDE_CONFIG_FILE: &str = "config.json";
 
 fn claude_dir() -> Result<PathBuf, AppError> {
-    // 优先使用设置中的覆盖目录
-    if let Some(dir) = crate::settings::get_claude_override_dir() {
+    // Prompt/plugin files belong to the configured/default Claude directory,
+    // not the transient provider profile directory.
+    if let Some(dir) = crate::settings::get_claude_configured_override_dir() {
         return Ok(dir);
     }
-    let home = dirs::home_dir().ok_or_else(|| AppError::Config("无法获取用户主目录".into()))?;
+    let home = crate::config::get_home_dir();
     Ok(home.join(CLAUDE_DIR))
 }
 
@@ -127,5 +128,81 @@ pub fn is_claude_config_applied() -> Result<bool, AppError> {
     match read_claude_config()? {
         Some(content) => Ok(is_managed_config(&content)),
         None => Ok(false),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serial_test::serial;
+    use std::env;
+    use tempfile::TempDir;
+
+    struct TempHome {
+        dir: TempDir,
+        original_home: Option<String>,
+        original_userprofile: Option<String>,
+        original_test_home: Option<String>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = TempDir::new().expect("create temp home");
+            let original_home = env::var("HOME").ok();
+            let original_userprofile = env::var("USERPROFILE").ok();
+            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
+
+            env::set_var("HOME", dir.path());
+            env::set_var("USERPROFILE", dir.path());
+            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            crate::settings::reload_settings().expect("reload settings");
+
+            Self {
+                dir,
+                original_home,
+                original_userprofile,
+                original_test_home,
+            }
+        }
+
+        fn path(&self) -> &std::path::Path {
+            self.dir.path()
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            let _ = crate::settings::update_settings(crate::settings::AppSettings::default());
+            match &self.original_home {
+                Some(value) => env::set_var("HOME", value),
+                None => env::remove_var("HOME"),
+            }
+            match &self.original_userprofile {
+                Some(value) => env::set_var("USERPROFILE", value),
+                None => env::remove_var("USERPROFILE"),
+            }
+            match &self.original_test_home {
+                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            let _ = crate::settings::reload_settings();
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn claude_plugin_config_path_ignores_provider_profile_override() {
+        let home = TempHome::new();
+        let profile_dir = home.path().join("external-profile");
+
+        crate::settings::update_settings(crate::settings::AppSettings {
+            claude_provider_config_dir: Some(profile_dir.to_string_lossy().into_owned()),
+            ..Default::default()
+        })
+        .expect("set provider profile override");
+
+        let path = claude_config_path().expect("claude plugin config path");
+
+        assert_eq!(path, home.path().join(".claude").join("config.json"));
     }
 }
