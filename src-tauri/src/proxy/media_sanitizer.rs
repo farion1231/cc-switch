@@ -113,7 +113,8 @@ fn content_has_image_blocks(content: &Value) -> bool {
     };
 
     blocks.iter().any(|block| {
-        block.get("type").and_then(Value::as_str) == Some("image")
+        let block_type = block.get("type").and_then(Value::as_str);
+        block_type == Some("image") || block_type == Some("image_url")
             || block.get("content").is_some_and(content_has_image_blocks)
     })
 }
@@ -137,7 +138,8 @@ fn replace_images_in_content(content: &mut Value) -> usize {
 
     let mut replaced = 0usize;
     for block in blocks {
-        if block.get("type").and_then(Value::as_str) == Some("image") {
+        let block_type = block.get("type").and_then(Value::as_str);
+        if block_type == Some("image") || block_type == Some("image_url") {
             let cache_control = block.get("cache_control").cloned();
             *block = json!({
                 "type": "text",
