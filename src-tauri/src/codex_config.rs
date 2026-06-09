@@ -311,19 +311,15 @@ fn normalize_codex_live_config_model_provider_with_anchors<'a>(
         return Ok(config_text.to_string());
     }
 
-    let has_stable_provider_table = doc
-        .get("model_providers")
-        .and_then(|item| item.as_table())
-        .and_then(|table| table.get(stable_provider_id.as_str()))
-        .is_some();
-    if has_stable_provider_table {
-        return Ok(config_text.to_string());
-    }
-
     if let Some(model_providers) = doc
         .get_mut("model_providers")
         .and_then(|item| item.as_table_mut())
     {
+        let has_stable_provider_table = model_providers.get(stable_provider_id.as_str()).is_some();
+        if has_stable_provider_table && !is_cc_switch_codex_model_provider_id(&stable_provider_id) {
+            return Ok(config_text.to_string());
+        }
+
         let Some(mut provider_table) = model_providers.remove(source_provider_id.as_str()) else {
             return Ok(config_text.to_string());
         };
@@ -1870,6 +1866,50 @@ requires_openai_auth = true
                 .and_then(|v| v.get("base_url"))
                 .and_then(|v| v.as_str()),
             Some("https://api.openai.com/v1")
+        );
+    }
+
+    #[test]
+    fn normalize_live_config_rewrites_openai_custom_endpoint_when_custom_table_exists() {
+        let target = r#"model_provider = "openai"
+model = "gpt-5.4"
+
+[model_providers.openai]
+name = "OpenAI"
+base_url = "https://relay.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[model_providers.custom]
+name = "Stale Custom"
+base_url = "https://stale.example/v1"
+wire_api = "responses"
+"#;
+
+        let result = normalize_codex_live_config_model_provider_with_anchors(target, None).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID),
+            "custom endpoint history must use the same key as future live sessions"
+        );
+
+        let model_providers = parsed
+            .get("model_providers")
+            .and_then(|v| v.as_table())
+            .expect("model_providers should exist");
+        let provider = model_providers
+            .get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+            .expect("custom provider table should exist");
+        assert_eq!(
+            provider.get("base_url").and_then(|v| v.as_str()),
+            Some("https://relay.example/v1"),
+            "the active OpenAI-named custom endpoint should replace stale custom table contents"
+        );
+        assert!(
+            model_providers.get("openai").is_none(),
+            "OpenAI-named custom endpoint should not remain under openai"
         );
     }
 
