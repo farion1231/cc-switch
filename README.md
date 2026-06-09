@@ -2,7 +2,7 @@
 
 # CC Switch · 多账号用量监控版
 
-### 基于 [farion1231/cc-switch](https://github.com/farion1231/cc-switch) 的个人增强 Fork,新增 Codex 多账号实时用量监控
+### 基于 [farion1231/cc-switch](https://github.com/farion1231/cc-switch) 的个人增强 Fork,聚焦多账号、用量可视化与 Codex 工作流
 
 [![Version](https://img.shields.io/badge/version-3.16.2-blue.svg)](https://github.com/ajia1206/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](https://github.com/ajia1206/cc-switch/releases)
@@ -17,33 +17,47 @@
 
 ## 📌 关于本 Fork
 
-这是 [farion1231/cc-switch](https://github.com/farion1231/cc-switch) 的个人增强版本。原项目是一款优秀的 Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw 账号切换管理工具,本 Fork 在其基础上**专注解决多账号用户的用量可视化痛点**。
+这是 [farion1231/cc-switch](https://github.com/farion1231/cc-switch) 的个人增强版本。原项目是一款优秀的 Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw 账号切换管理工具,本 Fork 在其基础上**专注解决多账号用户的用量可视化与 Codex 工作流痛点**。
 
-如果你管理多个 Codex 官方账号、经常被 5 小时窗口或 7 天周期限流、需要随时知道哪个账号还能用 —— 这个 Fork 就是为你准备的。
+如果你管理多个 Codex 官方账号、经常被 5 小时窗口或 7 天周期限流、需要随时知道哪个账号还能用,或者希望把 CLI 会话用量、缓存命中与真实 Token 消耗沉淀成仪表盘 —— 这个 Fork 就是为你准备的。
 
 ---
 
 ## ✨ 相比上游的核心增强
 
-### 🎯 Codex 多账号实时用量监控
+### 功能速览
 
-| 功能 | 上游 | 本 Fork |
-|------|:----:|:-------:|
-| 单账号用量查询 | ✅ | ✅ |
-| **多账号并发查询** | ❌ | ✅ |
-| **每账号独立显示 5h / 7d 用量** | ❌ | ✅ |
-| **重置倒计时** | ❌ | ✅ |
-| **可配置刷新间隔** | ❌ | ✅ |
-| **手动立即刷新** | ❌ | ✅ |
+| 场景 | 上游 | 本 Fork | 入口 |
+|------|:----:|:-------:|------|
+| Codex 官方账号快照切换 | ✅ | ✅ 增强 | Codex 标签页 |
+| 多账号并发用量查询 | ❌ | ✅ | Codex 官方账号快照 |
+| 每账号 5h / 7d 剩余额度与重置时间 | ❌ | ✅ | Codex 账号卡片 |
+| 全局 Codex 额度摘要 | ❌ | ✅ | 首页 / Codex 用量面板 |
+| 年度用量热力图 | ❌ | ✅ | 用量统计 |
+| Provider / 模型维度真实 Tokens 统计 | 基础统计 | ✅ 计入缓存命中与缓存创建 | 用量统计 |
+| Notch 浮层用量摘要 | ❌ | ✅ | Notch overlay 窗口 |
+| Codex proxy takeover 恢复一致性 | 基础行为 | ✅ 增强 | 后台服务 |
 
-### 详细特性
+### 1. Codex 多账号实时用量监控
 
-- **🔄 全账号并发查询** — 后端 `get_all_account_quotas` 命令,一次性遍历所有 Codex 快照账号,并发查询用量。无需切换账号即可查看
-- **📊 卡片化显示** — 每个账号卡片下方显示 `5h 剩余: XX% · X 小时后重置` 与 `7d 剩余: XX% · X 天后重置`
-- **🎨 用量分级颜色** — 剩余 ≥30% 绿色 / ≥10% 橙色 / <10% 红色
-- **⏱ 可配置刷新间隔** — 下拉菜单选择 `1 / 5 / 30 / 60 分钟`,默认 5 分钟
-- **⚡ 立即刷新按钮** — 想看实时数据时一键手动同步
-- **💾 设置持久化** — 刷新间隔保存到 `~/.cc-switch/settings.json`,重启不丢失
+- **🔄 全账号并发查询** — 一次性遍历所有 Codex 快照账号,无需切换账号即可查看每个账号的官方用量
+- **📊 卡片化额度显示** — 每个账号独立展示 `5h` 与 `7d` 窗口的剩余额度、重置时间与状态颜色
+- **⏱ 可配置刷新间隔** — 在设置中配置用量刷新频率,也可以在账号面板手动立即刷新
+- **💾 查询缓存与事件同步** — 后端缓存官方用量结果,托盘或后台刷新后会同步到前端 React Query 缓存
+
+### 2. 用量统计增强
+
+- **📈 真实 Tokens 口径** — Provider / 模型统计中的 `Tokens` 使用 `fresh input + output + cache read + cache creation`,避免缓存命中场景被低估
+- **🟩 年度热力图** — 用 GitHub contribution 风格展示最近一年的活跃天数、会话数与真实 Token 消耗
+- **🧮 多来源去重** — 对 Codex / Gemini / Claude / OpenCode 的 proxy 日志与 session 日志做有效用量去重,避免重复计数
+- **🗄 历史 rollup** — 旧明细日志会汇总到每日 rollup,减少数据库膨胀,同时保持趋势与统计可查询
+
+### 3. Codex 工作流细节增强
+
+- **🔐 官方账号快照管理** — 支持保存、切换、恢复多个 Codex 官方账号快照
+- **🔁 可靠重启 Codex** — 切换账号后自动重启相关 Codex 进程,让凭据尽快生效
+- **🧭 proxy takeover 一致性** — Codex proxy 接管/恢复时保留关键 live config 与 OAuth 信息,减少切换后配置漂移
+- **⌁ Notch 用量摘要** — 轻量浮层显示当前 Codex 账号组里可用额度最好的摘要信息
 
 ---
 
@@ -100,10 +114,17 @@ pnpm tauri build
 └─────────────────────────────────────┘
 ```
 
+### 查看全局用量统计
+
+1. 打开 **用量统计**
+2. 在顶部选择应用范围与时间范围
+3. 通过 **Provider 统计** / **模型统计** 查看计入缓存后的真实 Tokens
+4. 在热力图中查看最近一年的活跃天数、会话数与 Tokens 峰值
+
 ### 调整刷新策略
 
-- **顶部下拉菜单**:选择刷新间隔(1 / 5 / 30 / 60 分钟)
-- **🔄 立即刷新按钮**:点击立即触发并发查询所有账号
+- **设置 → 用量统计**:配置刷新间隔
+- **账号面板刷新按钮**:立即触发所有 Codex 快照账号并发查询
 
 ### 切换账号
 
@@ -121,9 +142,13 @@ pnpm tauri build
 | 多账号查询 | `src-tauri/src/codex_accounts.rs` | `get_all_account_quotas` 并发查询所有快照 |
 | Tauri 命令 | `src-tauri/src/commands/codex_accounts.rs` | `get_all_codex_quotas` 暴露给前端 |
 | 用量缓存 | `src-tauri/src/services/subscription.rs` | 每账号独立 TTL 缓存 |
+| 统计聚合 | `src-tauri/src/services/usage_stats.rs` | 真实 Tokens、去重、Provider / 模型统计 |
+| 历史汇总 | `src-tauri/src/database/dao/usage_rollup.rs` | 明细日志 rollup 与保留策略 |
 | 设置持久化 | `src-tauri/src/settings.rs` | `codex_quota_refresh_interval` 字段 |
-| 前端查询 | `src/lib/query/subscription.ts` | `useAllCodexQuotas` Hook |
+| 前端查询 | `src/lib/query/subscription.ts` | Codex 额度 React Query hooks |
 | 账号面板 | `src/components/codex/CodexAccountsPanel.tsx` | 卡片用量渲染 + 刷新控件 |
+| 用量热力图 | `src/components/usage/UsageActivityHeatmap.tsx` | 年度活跃与 Tokens 可视化 |
+| Notch 浮层 | `src/components/NotchOverlay.tsx` | Codex 用量轻量摘要 |
 
 ---
 
