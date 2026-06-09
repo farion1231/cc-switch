@@ -3,6 +3,7 @@
   "version": "3.16.0",
   "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI",
   "type": "module",
+  "packageManager": "pnpm@10.12.3",
   "scripts": {
     "dev": "pnpm tauri dev",
     "build": "pnpm tauri build",
