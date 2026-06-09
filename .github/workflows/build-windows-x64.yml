@@ -38,6 +38,9 @@ jobs:
  
       - name: Build Tauri app
         run: pnpm tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ""
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
  
       - name: Upload installer artifacts
         uses: actions/upload-artifact@v4
