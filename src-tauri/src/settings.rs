@@ -796,6 +796,14 @@ pub fn get_claude_override_dir() -> Option<PathBuf> {
         .map(|p| resolve_override_path(p))
 }
 
+pub fn get_claude_configured_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .claude_config_dir
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+}
+
 pub fn set_claude_provider_override_dir(path: Option<&str>) -> Result<(), AppError> {
     let next = path.map(str::trim).filter(|value| !value.is_empty());
     mutate_settings(|settings| {

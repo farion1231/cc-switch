@@ -499,7 +499,7 @@ impl SkillService {
         // 目录覆盖：优先使用用户在 settings.json 中配置的 override 目录
         match app {
             AppType::Claude => {
-                if let Some(custom) = crate::settings::get_claude_override_dir() {
+                if let Some(custom) = crate::settings::get_claude_configured_override_dir() {
                     return Ok(custom.join("skills"));
                 }
             }
@@ -3047,7 +3047,51 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use tempfile::tempdir;
+
+    struct SettingsGuard {
+        _temp: tempfile::TempDir,
+        old_home: Option<std::ffi::OsString>,
+        old_test_home: Option<std::ffi::OsString>,
+        old_settings: crate::settings::AppSettings,
+    }
+
+    impl SettingsGuard {
+        fn new() -> Self {
+            let temp = tempdir().expect("tempdir");
+            let old_home = std::env::var_os("HOME");
+            let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            let old_settings = crate::settings::get_settings();
+
+            std::env::set_var("HOME", temp.path());
+            std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+
+            Self {
+                _temp: temp,
+                old_home,
+                old_test_home,
+                old_settings,
+            }
+        }
+    }
+
+    impl Drop for SettingsGuard {
+        fn drop(&mut self) {
+            crate::settings::update_settings(self.old_settings.clone())
+                .expect("restore settings store");
+
+            match &self.old_home {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+
+            match &self.old_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
 
     fn write_skill(dir: &Path, name: &str) {
         fs::create_dir_all(dir).expect("create skill dir");
@@ -3091,6 +3135,26 @@ mod tests {
             .expect("install name should fall back to the matching discovered skill directory");
 
         assert_eq!(resolved, nested);
+    }
+
+    #[test]
+    #[serial]
+    fn claude_skills_dir_ignores_provider_profile_override() {
+        let _settings = SettingsGuard::new();
+        let temp = tempdir().expect("tempdir");
+        let configured_claude_dir = temp.path().join("configured-claude");
+        let provider_profile_dir = temp.path().join("external-profile");
+
+        let mut settings = crate::settings::AppSettings::default();
+        settings.claude_config_dir = Some(configured_claude_dir.to_string_lossy().to_string());
+        settings.claude_provider_config_dir =
+            Some(provider_profile_dir.to_string_lossy().to_string());
+        crate::settings::update_settings(settings).expect("update test settings");
+
+        let app_skills_dir =
+            SkillService::get_app_skills_dir(&AppType::Claude).expect("claude skills dir");
+
+        assert_eq!(app_skills_dir, configured_claude_dir.join("skills"));
     }
 
     #[test]
