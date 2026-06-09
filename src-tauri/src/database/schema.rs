@@ -293,7 +293,19 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 19. Session Log Sync 表 (会话日志同步状态)
+        // 19. Usage Daily Activity Session Rollups 表 (年度热力图 session 去重)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS usage_daily_activity_session_rollups (
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                session_key TEXT NOT NULL,
+                PRIMARY KEY (date, app_type, session_key)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 20. Session Log Sync 表 (会话日志同步状态)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS session_log_sync (
                 file_path TEXT PRIMARY KEY,
@@ -453,6 +465,11 @@ impl Database {
                         log::info!("迁移数据库从 v10 到 v11（添加年度活跃热力图聚合表）");
                         Self::migrate_v10_to_v11(conn)?;
                         Self::set_user_version(conn, 11)?;
+                    }
+                    11 => {
+                        log::info!("迁移数据库从 v11 到 v12（添加年度活跃 session 去重表）");
+                        Self::migrate_v11_to_v12(conn)?;
+                        Self::set_user_version(conn, 12)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1245,6 +1262,27 @@ impl Database {
         })?;
 
         log::info!("v10 -> v11 迁移完成：已添加年度活跃热力图聚合表");
+        Ok(())
+    }
+
+    /// v11 -> v12 迁移：添加年度活跃 session 去重表
+    fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS usage_daily_activity_session_rollups (
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                session_key TEXT NOT NULL,
+                PRIMARY KEY (date, app_type, session_key)
+            )",
+            [],
+        )
+        .map_err(|e| {
+            AppError::Database(format!(
+                "创建 usage_daily_activity_session_rollups 表失败: {e}"
+            ))
+        })?;
+
+        log::info!("v11 -> v12 迁移完成：已添加年度活跃 session 去重表");
         Ok(())
     }
 

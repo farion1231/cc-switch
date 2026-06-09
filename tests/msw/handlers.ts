@@ -47,12 +47,12 @@ const mockCodexQuota = (tool: string): SubscriptionQuota => ({
   success: true,
   tiers: [
     {
-      name: "5h",
+      name: "five_hour",
       utilization: 25,
       resetsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
     },
     {
-      name: "7d",
+      name: "seven_day",
       utilization: 40,
       resetsAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     },
@@ -71,6 +71,37 @@ export const handlers = [
     success({
       default: mockCodexQuota("codex"),
     }),
+  ),
+  http.post(`${TAURI_ENDPOINT}/codex_list_account_snapshots`, () =>
+    success([
+      {
+        accountKey: "default",
+        profileName: "Test Codex Account",
+        emailMasked: "te***@example.com",
+        plan: "plus",
+        authMode: "chatgpt",
+        isActive: true,
+        lastUsedAt: Math.floor(Date.now() / 1000),
+      },
+    ]),
+  ),
+  http.post(
+    `${TAURI_ENDPOINT}/codex_rename_account_snapshot`,
+    async ({ request }) => {
+      const { accountKey, profileName } = await withJson<{
+        accountKey: string;
+        profileName: string;
+      }>(request);
+      return success({
+        accountKey,
+        profileName,
+        emailMasked: "te***@example.com",
+        plan: "plus",
+        authMode: "chatgpt",
+        isActive: true,
+        lastUsedAt: Math.floor(Date.now() / 1000),
+      });
+    },
   ),
   http.post(`${TAURI_ENDPOINT}/get_providers`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);

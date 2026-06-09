@@ -151,6 +151,24 @@ impl Database {
         conn.execute(&aggregation_sql, [cutoff])
             .map_err(|e| AppError::Database(format!("Rollup aggregation failed: {e}")))?;
 
+        let session_identity_sql = format!(
+            "INSERT OR IGNORE INTO usage_daily_activity_session_rollups
+                (date, app_type, session_key)
+            SELECT
+                date(l.created_at, 'unixepoch', 'localtime') as d,
+                l.app_type as a,
+                l.session_id as session_key
+            FROM proxy_request_logs l
+            WHERE l.created_at < ?1
+                AND {effective_filter}
+                AND l.session_id IS NOT NULL
+                AND l.session_id != ''
+            GROUP BY d, a, session_key"
+        );
+
+        conn.execute(&session_identity_sql, [cutoff])
+            .map_err(|e| AppError::Database(format!("Activity session rollup failed: {e}")))?;
+
         let activity_sql = format!(
             "INSERT OR REPLACE INTO usage_daily_activity_rollups
                 (date, app_type, request_count, session_count,
@@ -159,7 +177,7 @@ impl Database {
             SELECT
                 d, a,
                 COALESCE(old.request_count, 0) + new_req,
-                COALESCE(old.session_count, 0) + new_sessions,
+                MAX(COALESCE(old.session_count, 0), COALESCE(sessions.session_count, 0)),
                 COALESCE(old.input_tokens, 0) + new_in,
                 COALESCE(old.output_tokens, 0) + new_out,
                 COALESCE(old.cache_read_tokens, 0) + new_cr,
@@ -170,10 +188,6 @@ impl Database {
                     date(l.created_at, 'unixepoch', 'localtime') as d,
                     l.app_type as a,
                     COUNT(*) as new_req,
-                    COUNT(DISTINCT CASE
-                        WHEN l.session_id IS NULL OR l.session_id = '' THEN NULL
-                        ELSE l.session_id
-                    END) as new_sessions,
                     COALESCE(SUM(l.input_tokens), 0) as new_in,
                     COALESCE(SUM(l.output_tokens), 0) as new_out,
                     COALESCE(SUM(l.cache_read_tokens), 0) as new_cr,
@@ -184,7 +198,13 @@ impl Database {
                 GROUP BY d, a
             ) agg
             LEFT JOIN usage_daily_activity_rollups old
-                ON old.date = agg.d AND old.app_type = agg.a"
+                ON old.date = agg.d AND old.app_type = agg.a
+            LEFT JOIN (
+                SELECT date, app_type, COUNT(*) as session_count
+                FROM usage_daily_activity_session_rollups
+                GROUP BY date, app_type
+            ) sessions
+                ON sessions.date = agg.d AND sessions.app_type = agg.a"
         );
 
         conn.execute(&activity_sql, [cutoff])
@@ -429,6 +449,61 @@ mod tests {
     }
 
     #[test]
+    fn test_activity_sessions_are_deduped_across_partial_rollups() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let first_ts = local_dt(2026, 1, 3, 10, 0, 0).timestamp();
+        let second_ts = local_dt(2026, 1, 3, 12, 0, 0).timestamp();
+        let date_str = local_dt(2026, 1, 3, 0, 0, 0)
+            .date_naive()
+            .format("%Y-%m-%d")
+            .to_string();
+
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            for (request_id, created_at) in [("activity-1", first_ts), ("activity-2", second_ts)] {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model,
+                        input_tokens, output_tokens, total_cost_usd,
+                        latency_ms, status_code, session_id, created_at
+                    ) VALUES (?1, 'p1', 'claude', 'claude-3', 100, 50, '0.02', 100, 200, 'session-a', ?2)",
+                    rusqlite::params![request_id, created_at],
+                )?;
+            }
+
+            Database::do_rollup_and_prune(&conn, first_ts + 1)?;
+        }
+
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            let (request_count, session_count): (i64, i64) = conn.query_row(
+                "SELECT request_count, session_count
+                 FROM usage_daily_activity_rollups
+                 WHERE date = ?1 AND app_type = 'claude'",
+                [&date_str],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            assert_eq!(request_count, 1);
+            assert_eq!(session_count, 1);
+
+            Database::do_rollup_and_prune(&conn, second_ts + 1)?;
+        }
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let (request_count, session_count): (i64, i64) = conn.query_row(
+            "SELECT request_count, session_count
+             FROM usage_daily_activity_rollups
+             WHERE date = ?1 AND app_type = 'claude'",
+            [&date_str],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(request_count, 2);
+        assert_eq!(session_count, 1);
+
+        Ok(())
+    }
+
+    #[test]
     fn test_rollup_noop_when_no_old_data() -> Result<(), AppError> {
         let db = Database::memory()?;
         assert_eq!(db.rollup_and_prune(30)?, 0);
@@ -443,8 +518,10 @@ mod tests {
 
         {
             let conn = crate::database::lock_conn!(db.conn);
-            let date_str = chrono::DateTime::from_timestamp(old_ts, 0)
-                .unwrap()
+            let date_str = Local
+                .timestamp_opt(old_ts, 0)
+                .single()
+                .expect("valid local timestamp")
                 .format("%Y-%m-%d")
                 .to_string();
             conn.execute(

@@ -258,6 +258,47 @@ pub fn capture_current(label: Option<String>) -> Result<CodexAccountSummary, App
     Ok(to_summary(&next_item, Some(&account_key)))
 }
 
+pub fn rename_account(
+    account_key: String,
+    profile_name: String,
+) -> Result<CodexAccountSummary, AppError> {
+    let account_key = account_key.trim();
+    if account_key.is_empty() {
+        return Err(AppError::InvalidInput("Missing accountKey.".to_string()));
+    }
+
+    let profile_name = clean_label(Some(&profile_name));
+    if profile_name.is_empty() {
+        return Err(AppError::InvalidInput(
+            "Account name cannot be empty.".to_string(),
+        ));
+    }
+
+    let mut registry = read_registry_with_snapshot_scan()?;
+    let active_account_key = registry.active_account_key.clone();
+    let now = now_seconds();
+    let mut renamed: Option<RegistryItem> = None;
+
+    for item in &mut registry.items {
+        if item.account_key == account_key {
+            item.profile_name = profile_name.clone();
+            item.alias.clear();
+            renamed = Some(item.clone());
+            break;
+        }
+    }
+
+    let Some(item) = renamed else {
+        return Err(AppError::Config(format!(
+            "Codex account not found: {account_key}"
+        )));
+    };
+
+    registry.updated_at = now;
+    write_registry(&registry)?;
+    Ok(to_summary(&item, active_account_key.as_deref()))
+}
+
 pub fn switch_account(account_key: String) -> Result<CodexAccountSwitchResult, AppError> {
     if account_key.trim().is_empty() {
         return Err(AppError::InvalidInput("Missing accountKey.".to_string()));
@@ -274,14 +315,6 @@ pub fn switch_account(account_key: String) -> Result<CodexAccountSwitchResult, A
     validate_auth_file(Path::new(&target.snapshot_path))?;
     ensure_snapshot_matches_account(&target)?;
 
-    let auth_path = get_codex_auth_path();
-    if !auth_path.exists() {
-        return Err(AppError::Config(format!(
-            "Current Codex auth file does not exist: {}",
-            auth_path.display()
-        )));
-    }
-
     if registry.active_account_key.as_deref() == Some(target.account_key.as_str()) {
         return Ok(CodexAccountSwitchResult {
             previous_account_key: registry.active_account_key,
@@ -292,8 +325,14 @@ pub fn switch_account(account_key: String) -> Result<CodexAccountSwitchResult, A
     }
 
     let previous_account_key = registry.active_account_key.clone();
-    let backup_path = backup_current_auth(previous_account_key.as_deref())?;
-    persist_current_auth_to_active_snapshot(&registry)?;
+    let auth_path = get_codex_auth_path();
+    let backup_path = if auth_path.exists() {
+        let backup_path = backup_current_auth(previous_account_key.as_deref())?;
+        persist_current_auth_to_active_snapshot(&registry)?;
+        backup_path.to_string_lossy().to_string()
+    } else {
+        String::new()
+    };
     copy_file_atomic(Path::new(&target.snapshot_path), &auth_path)?;
 
     let now = now_seconds();
@@ -313,7 +352,7 @@ pub fn switch_account(account_key: String) -> Result<CodexAccountSwitchResult, A
     let latest = LatestSwitch {
         previous_account_key: previous_account_key.clone(),
         active_account_key: target.account_key.clone(),
-        backup_path: backup_path.to_string_lossy().to_string(),
+        backup_path: backup_path.clone(),
         created_at: Utc::now().to_rfc3339(),
     };
     write_json_file(&paths.latest_switch_path, &latest)?;
@@ -321,7 +360,7 @@ pub fn switch_account(account_key: String) -> Result<CodexAccountSwitchResult, A
     Ok(CodexAccountSwitchResult {
         previous_account_key,
         active_account_key: target.account_key,
-        backup_path: backup_path.to_string_lossy().to_string(),
+        backup_path,
         restart_recommended: true,
     })
 }
@@ -329,12 +368,40 @@ pub fn switch_account(account_key: String) -> Result<CodexAccountSwitchResult, A
 pub fn rollback_last_switch() -> Result<CodexAccountSwitchResult, AppError> {
     let paths = account_paths();
     let latest: LatestSwitch = read_json_file(&paths.latest_switch_path)?;
-    validate_auth_file(Path::new(&latest.backup_path))?;
 
     let mut registry = read_registry_with_snapshot_scan()?;
-    let backup_path = backup_current_auth(registry.active_account_key.as_deref())?;
+    let restore_path = if latest.backup_path.trim().is_empty() {
+        let previous_key = latest.previous_account_key.as_deref().ok_or_else(|| {
+            AppError::Config("No rollback backup or previous Codex account snapshot.".to_string())
+        })?;
+        let previous_item = registry
+            .items
+            .iter()
+            .find(|item| item.account_key == previous_key)
+            .ok_or_else(|| {
+                AppError::Config(format!(
+                    "Previous Codex account snapshot not found: {previous_key}"
+                ))
+            })?;
+        let snapshot_path = PathBuf::from(&previous_item.snapshot_path);
+        validate_auth_file(&snapshot_path)?;
+        ensure_snapshot_matches_account(previous_item)?;
+        snapshot_path
+    } else {
+        let backup_path = PathBuf::from(&latest.backup_path);
+        validate_auth_file(&backup_path)?;
+        backup_path
+    };
+
     let auth_path = get_codex_auth_path();
-    copy_file_atomic(Path::new(&latest.backup_path), &auth_path)?;
+    let backup_path = if auth_path.exists() {
+        backup_current_auth(registry.active_account_key.as_deref())?
+            .to_string_lossy()
+            .to_string()
+    } else {
+        String::new()
+    };
+    copy_file_atomic(&restore_path, &auth_path)?;
 
     registry.active_account_key = latest.previous_account_key.clone();
     registry.updated_at = now_seconds();
@@ -343,7 +410,7 @@ pub fn rollback_last_switch() -> Result<CodexAccountSwitchResult, AppError> {
     Ok(CodexAccountSwitchResult {
         previous_account_key: Some(latest.active_account_key),
         active_account_key: latest.previous_account_key.unwrap_or_default(),
-        backup_path: backup_path.to_string_lossy().to_string(),
+        backup_path,
         restart_recommended: true,
     })
 }
@@ -571,13 +638,16 @@ fn persist_current_auth_to_active_snapshot(registry: &Registry) -> Result<(), Ap
 
     let auth_path = get_codex_auth_path();
     let current_auth: AuthSnapshot = read_json_file(&auth_path)?;
-    if current_auth.auth_mode.as_deref() == Some("chatgpt")
-        && account_key_from_auth(&current_auth) != active_item.account_key
-    {
+    if !can_persist_auth_to_account(&current_auth, active_item) {
         return Ok(());
     }
     validate_auth_file(&auth_path)?;
     copy_file_atomic(&auth_path, Path::new(&active_item.snapshot_path))
+}
+
+fn can_persist_auth_to_account(auth: &AuthSnapshot, active_item: &RegistryItem) -> bool {
+    auth.auth_mode.as_deref().unwrap_or_default() == active_item.auth_mode
+        && account_key_from_auth(auth) == active_item.account_key
 }
 
 fn backup_current_auth(previous_account_key: Option<&str>) -> Result<PathBuf, AppError> {
@@ -1047,6 +1117,34 @@ fn restart_codex_app_impl() -> Result<CodexAppRestartResult, AppError> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use serial_test::serial;
+    use tempfile::TempDir;
+
+    struct TestHomeGuard {
+        _temp: TempDir,
+        previous_home: Option<std::ffi::OsString>,
+    }
+
+    impl TestHomeGuard {
+        fn new() -> Self {
+            let temp = tempfile::tempdir().expect("create temp home");
+            let previous_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+            Self {
+                _temp: temp,
+                previous_home,
+            }
+        }
+    }
+
+    impl Drop for TestHomeGuard {
+        fn drop(&mut self) {
+            match &self.previous_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
 
     #[test]
     fn chatgpt_account_key_uses_user_and_workspace() {
@@ -1082,5 +1180,137 @@ mod tests {
     fn email_mask_keeps_domain_without_revealing_full_name() {
         assert_eq!(mask_email("abcdef@example.com"), "ab****@example.com");
         assert_eq!(mask_email("a@example.com"), "a***@example.com");
+    }
+
+    #[test]
+    fn persist_guard_rejects_proxy_apikey_for_active_chatgpt_snapshot() {
+        let payload = URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&json!({
+                "https://api.openai.com/auth": {
+                    "chatgpt_user_id": "user-1",
+                    "organizations": [{ "id": "org-1", "is_default": true }]
+                }
+            }))
+            .unwrap(),
+        );
+        let chatgpt_auth = AuthSnapshot {
+            auth_mode: Some("chatgpt".to_string()),
+            tokens: Some(json!({
+                "id_token": format!("header.{payload}.sig"),
+                "workspace_id": "workspace-1"
+            })),
+            openai_api_key: None,
+        };
+        let active_item = RegistryItem {
+            account_key: account_key_from_auth(&chatgpt_auth),
+            snapshot_path: "/tmp/chatgpt.json".to_string(),
+            email: String::new(),
+            alias: String::new(),
+            account_name: String::new(),
+            workspace_name: String::new(),
+            profile_name: String::new(),
+            plan: String::new(),
+            auth_mode: "chatgpt".to_string(),
+            last_used_at: None,
+            extra: Map::new(),
+        };
+        let proxy_auth = AuthSnapshot {
+            auth_mode: Some("apikey".to_string()),
+            tokens: None,
+            openai_api_key: Some(json!("proxy-placeholder-key")),
+        };
+
+        assert!(can_persist_auth_to_account(&chatgpt_auth, &active_item));
+        assert!(!can_persist_auth_to_account(&proxy_auth, &active_item));
+    }
+
+    #[test]
+    #[serial]
+    fn switch_restores_saved_snapshot_when_current_auth_is_missing() -> Result<(), AppError> {
+        let _home = TestHomeGuard::new();
+        let paths = account_paths();
+        std::fs::create_dir_all(&paths.snapshots_dir)
+            .map_err(|e| AppError::io(&paths.snapshots_dir, e))?;
+
+        let previous_auth = AuthSnapshot {
+            auth_mode: Some("apikey".to_string()),
+            tokens: None,
+            openai_api_key: Some(json!("sk-previous")),
+        };
+        let previous_key = account_key_from_auth(&previous_auth);
+        let previous_snapshot_path = paths.snapshots_dir.join("previous.json");
+        write_json_file(&previous_snapshot_path, &previous_auth)?;
+
+        let target_auth = AuthSnapshot {
+            auth_mode: Some("apikey".to_string()),
+            tokens: None,
+            openai_api_key: Some(json!("sk-target")),
+        };
+        let target_key = account_key_from_auth(&target_auth);
+        let snapshot_path = paths.snapshots_dir.join("target.json");
+        write_json_file(&snapshot_path, &target_auth)?;
+
+        let registry = Registry {
+            schema_version: 1,
+            updated_at: 1,
+            active_account_key: Some(previous_key.clone()),
+            items: vec![
+                RegistryItem {
+                    account_key: previous_key.clone(),
+                    snapshot_path: previous_snapshot_path.to_string_lossy().to_string(),
+                    email: String::new(),
+                    alias: String::new(),
+                    account_name: String::new(),
+                    workspace_name: String::new(),
+                    profile_name: "Previous".to_string(),
+                    plan: String::new(),
+                    auth_mode: "apikey".to_string(),
+                    last_used_at: None,
+                    extra: Map::new(),
+                },
+                RegistryItem {
+                    account_key: target_key.clone(),
+                    snapshot_path: snapshot_path.to_string_lossy().to_string(),
+                    email: String::new(),
+                    alias: String::new(),
+                    account_name: String::new(),
+                    workspace_name: String::new(),
+                    profile_name: "Target".to_string(),
+                    plan: String::new(),
+                    auth_mode: "apikey".to_string(),
+                    last_used_at: None,
+                    extra: Map::new(),
+                },
+            ],
+            extra: Map::new(),
+        };
+        write_registry(&registry)?;
+
+        let auth_path = get_codex_auth_path();
+        assert!(!auth_path.exists());
+
+        let result = switch_account(target_key.clone())?;
+        assert_eq!(
+            result.previous_account_key.as_deref(),
+            Some(previous_key.as_str())
+        );
+        assert_eq!(result.active_account_key, target_key);
+        assert_eq!(result.backup_path, "");
+        assert!(result.restart_recommended);
+
+        let restored: AuthSnapshot = read_json_file(&auth_path)?;
+        assert_eq!(restored.openai_api_key, Some(json!("sk-target")));
+
+        let rollback = rollback_last_switch()?;
+        assert_eq!(
+            rollback.previous_account_key.as_deref(),
+            Some(target_key.as_str())
+        );
+        assert_eq!(rollback.active_account_key, previous_key);
+        assert!(rollback.restart_recommended);
+
+        let rolled_back: AuthSnapshot = read_json_file(&auth_path)?;
+        assert_eq!(rolled_back.openai_api_key, Some(json!("sk-previous")));
+        Ok(())
     }
 }

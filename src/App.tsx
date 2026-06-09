@@ -957,38 +957,6 @@ function App() {
                     transition={{ duration: 0.15 }}
                     className="space-y-4"
                   >
-                    {activeApp === "codex" && (
-                      <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <KeyRound className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                              <h2 className="text-base font-semibold tracking-normal">
-                                {t("codexAccounts.title", {
-                                  defaultValue: "Codex 官方账号快照",
-                                })}
-                              </h2>
-                            </div>
-                            <p className="mt-1 text-sm text-muted-foreground">
-                              {t("codexAccounts.subtitle", {
-                                defaultValue:
-                                  "保存、切换和回滚 ~/.codex/auth.json 中的官方登录账号。",
-                              })}
-                            </p>
-                          </div>
-                          <Button
-                            size="sm"
-                            onClick={() => setCurrentView("codexAccounts")}
-                            className="w-full sm:w-auto"
-                          >
-                            <KeyRound className="h-4 w-4" />
-                            {t("codexAccounts.openModule", {
-                              defaultValue: "打开账号快照",
-                            })}
-                          </Button>
-                        </div>
-                      </div>
-                    )}
                     {activeApp === "codex" &&
                       settingsData?.usageShowAllAccounts !== false && (
                         <CodexQuotaPanel />

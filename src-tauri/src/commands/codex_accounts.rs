@@ -48,6 +48,14 @@ pub fn codex_capture_current_account(label: Option<String>) -> Result<CodexAccou
 }
 
 #[tauri::command]
+pub fn codex_rename_account_snapshot(
+    accountKey: String,
+    profileName: String,
+) -> Result<CodexAccountSummary, String> {
+    crate::codex_accounts::rename_account(accountKey, profileName).map_err(Into::into)
+}
+
+#[tauri::command]
 pub fn codex_switch_account(accountKey: String) -> Result<CodexAccountSwitchResult, String> {
     crate::codex_accounts::switch_account(accountKey).map_err(Into::into)
 }

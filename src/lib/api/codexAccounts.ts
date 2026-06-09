@@ -39,6 +39,16 @@ export const codexAccountsApi = {
     });
   },
 
+  async rename(
+    accountKey: string,
+    profileName: string,
+  ): Promise<CodexAccountSummary> {
+    return await invoke("codex_rename_account_snapshot", {
+      accountKey,
+      profileName: profileName.trim(),
+    });
+  },
+
   async switch(accountKey: string): Promise<CodexAccountSwitchResult> {
     return await invoke("codex_switch_account", { accountKey });
   },

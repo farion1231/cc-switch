@@ -23,21 +23,6 @@
         "resizable": true,
         "fullscreen": false,
         "center": true
-      },
-      {
-        "label": "notch",
-        "title": "",
-        "width": 1600,
-        "height": 40,
-        "visible": false,
-        "resizable": false,
-        "fullscreen": false,
-        "decorations": false,
-        "transparent": true,
-        "alwaysOnTop": true,
-        "skipTaskbar": true,
-        "center": false,
-        "url": "/notch"
       }
     ],
     "security": {

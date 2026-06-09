@@ -1,4 +1,4 @@
-import { Activity, Clock, MonitorUp } from "lucide-react";
+import { Activity, Clock } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import { ToggleRow } from "@/components/ui/toggle-row";
@@ -50,7 +50,7 @@ export function UsageSettings({ settings, onChange }: UsageSettingsProps) {
             </div>
             <div className="text-xs text-muted-foreground">
               {t("settings.usageRefreshIntervalDescription", {
-                defaultValue: "Used by the tray and notch usage refresh task.",
+                defaultValue: "Used by background and tray usage refresh.",
               })}
             </div>
           </div>
@@ -83,19 +83,6 @@ export function UsageSettings({ settings, onChange }: UsageSettingsProps) {
           })}
           checked={settings.usageShowAllAccounts ?? true}
           onCheckedChange={(value) => onChange({ usageShowAllAccounts: value })}
-        />
-
-        <ToggleRow
-          icon={<MonitorUp className="h-4 w-4 text-purple-500" />}
-          title={t("settings.notchShowCodex", {
-            defaultValue: "Show Codex in notch window",
-          })}
-          description={t("settings.notchShowCodexDescription", {
-            defaultValue:
-              "Keep the compact notch overlay focused on Codex usage.",
-          })}
-          checked={settings.notchShowCodex ?? true}
-          onCheckedChange={(value) => onChange({ notchShowCodex: value })}
         />
       </div>
     </section>

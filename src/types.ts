@@ -429,10 +429,6 @@ export interface Settings {
   usageRefreshIntervalSecs?: number;
   usageAutoRefresh?: boolean;
   usageShowAllAccounts?: boolean;
-
-  // ===== 刘海窗口设置 =====
-  notchVisible?: boolean;
-  notchShowCodex?: boolean;
 }
 
 export interface SessionMeta {

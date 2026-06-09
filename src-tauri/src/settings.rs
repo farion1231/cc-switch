@@ -463,11 +463,11 @@ pub struct AppSettings {
     #[serde(default = "default_true")]
     pub usage_show_all_accounts: bool,
 
-    // ===== 刘海窗口设置 =====
-    /// 是否显示刘海用量窗口
+    // ===== 旧版顶部浮层兼容字段 =====
+    /// 是否显示旧版顶部浮层
     #[serde(default)]
     pub notch_visible: bool,
-    /// 刘海窗口显示 Codex 用量
+    /// 旧版顶部浮层显示 Codex 用量
     #[serde(default = "default_true")]
     pub notch_show_codex: bool,
 }
