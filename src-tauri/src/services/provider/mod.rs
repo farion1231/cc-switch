@@ -497,6 +497,18 @@ mod tests {
             .collect()
     }
 
+    fn codex_thread_provider_rows(home: &Path) -> Vec<(String, Option<String>)> {
+        let conn = rusqlite::Connection::open(home.join(".codex").join("state_5.sqlite"))
+            .expect("open codex state db");
+        let mut stmt = conn
+            .prepare("SELECT id, model_provider FROM threads ORDER BY id")
+            .expect("prepare thread provider query");
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("query thread providers")
+            .map(|row| row.expect("thread provider row"))
+            .collect()
+    }
+
     fn rewrite_codex_thread_provider(home: &Path, id: &str, provider: &str) {
         let conn = rusqlite::Connection::open(home.join(".codex").join("state_5.sqlite"))
             .expect("open codex state db");
@@ -948,6 +960,72 @@ mod tests {
                     ("source-thread".to_string(), Some("custom".to_string())),
                 ],
                 "null DB rows with OpenAI rollout metadata should not be relabeled during a third-party to custom switch"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_codex_to_custom_preserves_unrelated_rollout_for_null_db_rows() {
+        with_test_home(|state, home| {
+            let source_provider = codex_provider(
+                "codex-rightcode",
+                "RightCode",
+                "model_provider = \"rightcode\"\nmodel = \"gpt-5.4\"\n",
+            );
+            let target_provider = codex_provider(
+                "codex-api",
+                "Codex API",
+                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n[model_providers.OpenAI]\nname = \"OpenAI\"\nbase_url = \"http://127.0.0.1:12345/v1\"\n",
+            );
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &source_provider)
+                .expect("save source provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &target_provider)
+                .expect("save target provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), "codex-rightcode")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some("codex-rightcode"))
+                .expect("set local current provider");
+            seed_codex_thread_rows_nullable(
+                home,
+                &[
+                    ("unrelated-null-thread", None),
+                    ("source-thread", Some("rightcode")),
+                ],
+            );
+            rewrite_codex_rollout_provider(home, "unrelated-null-thread", "azure");
+
+            ProviderService::switch(state, AppType::Codex, "codex-api")
+                .expect("switch to custom codex provider");
+
+            assert_eq!(
+                codex_thread_provider_rows(home),
+                vec![
+                    (
+                        "source-thread".to_string(),
+                        Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string()),
+                    ),
+                    ("unrelated-null-thread".to_string(), None),
+                ],
+                "null DB rows with unrelated rollout metadata should not be relabeled"
+            );
+            assert_eq!(
+                codex_rollout_providers(home),
+                vec![
+                    ("source-thread".to_string(), Some("custom".to_string())),
+                    (
+                        "unrelated-null-thread".to_string(),
+                        Some("azure".to_string())
+                    ),
+                ],
+                "unrelated rollout metadata should remain under its original provider"
             );
         });
     }
@@ -5574,6 +5652,55 @@ impl ProviderService {
         Ok(true)
     }
 
+    fn codex_rollout_session_meta_provider(
+        rollout_path: &Path,
+    ) -> Result<Option<Option<String>>, AppError> {
+        let text = match std::fs::read_to_string(rollout_path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(AppError::io(rollout_path, err)),
+        };
+
+        let Some(first_line) = text.lines().next() else {
+            return Ok(None);
+        };
+        let value: serde_json::Value = match serde_json::from_str(first_line) {
+            Ok(value) => value,
+            Err(_) => return Ok(None),
+        };
+
+        if value.get("type").and_then(Value::as_str) != Some("session_meta") {
+            return Ok(None);
+        }
+
+        let Some(payload) = value.get("payload").and_then(Value::as_object) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            payload
+                .get("model_provider")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        ))
+    }
+
+    fn codex_should_relabel_source_less_thread(
+        rollout_path: &Path,
+        source_provider: &str,
+        target_provider: &str,
+    ) -> Result<bool, AppError> {
+        match Self::codex_rollout_session_meta_provider(rollout_path)? {
+            Some(None) => Ok(true),
+            Some(Some(current_provider)) => Ok(current_provider == target_provider
+                || Self::codex_rollout_provider_matches_source(
+                    &current_provider,
+                    source_provider,
+                    target_provider,
+                )),
+            None => Ok(false),
+        }
+    }
+
     fn sync_codex_desktop_threads(
         provider: &Provider,
         source_provider: Option<&str>,
@@ -5600,10 +5727,13 @@ impl ProviderService {
             return Ok(0);
         }
 
-        let rollout_paths = if Self::codex_threads_have_rollout_path(&conn)? {
+        let has_rollout_path = Self::codex_threads_have_rollout_path(&conn)?;
+        let mut source_less_thread_ids = Vec::new();
+        let mut rollout_paths = if has_rollout_path {
             if let Some(source_provider) = source_provider {
                 let sql = format!(
-                    "SELECT rollout_path FROM threads WHERE model_provider IS NULL OR {}",
+                    "SELECT rollout_path FROM threads \
+                     WHERE model_provider IS NOT NULL AND model_provider != '' AND {}",
                     Self::codex_provider_switch_where_clause("model_provider")
                 );
                 let mut stmt = conn.prepare(&sql)?;
@@ -5611,7 +5741,28 @@ impl ProviderService {
                     rusqlite::params![source_provider, target_provider.as_str()],
                     |row| row.get(0),
                 )?;
-                rows.collect::<Result<Vec<String>, _>>()?
+                let mut paths = rows.collect::<Result<Vec<String>, _>>()?;
+
+                let mut stmt = conn.prepare(
+                    "SELECT id, rollout_path FROM threads \
+                     WHERE model_provider IS NULL OR model_provider = ''",
+                )?;
+                let rows = stmt.query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+                for row in rows {
+                    let (id, rollout_path) = row?;
+                    if Self::codex_should_relabel_source_less_thread(
+                        Path::new(&rollout_path),
+                        source_provider,
+                        &target_provider,
+                    )? {
+                        source_less_thread_ids.push(id);
+                        paths.push(rollout_path);
+                    }
+                }
+
+                paths
             } else {
                 let mut stmt = conn.prepare(
                     "SELECT rollout_path FROM threads WHERE model_provider IS NULL OR model_provider = ''",
@@ -5625,7 +5776,7 @@ impl ProviderService {
 
         // Collect rollout paths for DB rows already at target provider (audit pass).
         // These rows had DB updated in a previous partial sync but rollout may be stale.
-        let audit_rollout_paths = if run_audit && Self::codex_threads_have_rollout_path(&conn)? {
+        let audit_rollout_paths = if run_audit && has_rollout_path {
             let mut stmt =
                 conn.prepare("SELECT rollout_path FROM threads WHERE model_provider = ?1")?;
             let rows = stmt.query_map(rusqlite::params![target_provider.as_str()], |row| {
@@ -5636,9 +5787,10 @@ impl ProviderService {
             Vec::new()
         };
 
-        let updated = if let Some(source_provider) = source_provider {
+        let mut updated = if let Some(source_provider) = source_provider {
             let sql = format!(
-                "UPDATE threads SET model_provider = ?2 WHERE model_provider IS NULL OR {}",
+                "UPDATE threads SET model_provider = ?2 \
+                 WHERE model_provider IS NOT NULL AND model_provider != '' AND {}",
                 Self::codex_provider_switch_where_clause("model_provider")
             );
             conn.execute(
@@ -5651,9 +5803,15 @@ impl ProviderService {
                 rusqlite::params![target_provider.as_str()],
             )?
         };
+        for id in source_less_thread_ids {
+            updated += conn.execute(
+                "UPDATE threads SET model_provider = ?1 WHERE id = ?2",
+                rusqlite::params![target_provider.as_str(), id],
+            )?;
+        }
 
         let mut rollout_updated = 0usize;
-        for rollout_path in rollout_paths {
+        for rollout_path in rollout_paths.drain(..) {
             match Self::sync_codex_rollout_session_meta(
                 Path::new(&rollout_path),
                 source_provider,
