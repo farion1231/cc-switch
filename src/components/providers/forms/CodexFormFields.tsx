@@ -29,6 +29,7 @@ import type {
   CodexApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
+  CodexDeepseekConfig,
   ProviderCategory,
 } from "@/types";
 
@@ -65,6 +66,14 @@ interface CodexFormFieldsProps {
   onApiFormatChange: (format: CodexApiFormat) => void;
   codexChatReasoning?: CodexChatReasoning;
   onCodexChatReasoningChange?: (value: CodexChatReasoning) => void;
+
+  // Codex DeepSeek 相关配置
+  codexDeepseekConfig?: CodexDeepseekConfig;
+  onCodexDeepseekConfigChange?: (value: CodexDeepseekConfig) => void;
+
+  // TOML 配置中的上游模型名
+  tomlModel: string;
+  onTomlModelChange: (model: string) => void;
 
   // Model Catalog
   catalogModels?: CodexCatalogModel[];
@@ -125,6 +134,10 @@ export function CodexFormFields({
   onApiFormatChange,
   codexChatReasoning = {},
   onCodexChatReasoningChange,
+  codexDeepseekConfig = {},
+  onCodexDeepseekConfigChange,
+  tomlModel,
+  onTomlModelChange,
   catalogModels = [],
   onCatalogModelsChange,
   speedTestEndpoints,
@@ -134,6 +147,8 @@ export function CodexFormFields({
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [reasoningExpanded, setReasoningExpanded] = useState(false);
+  const [deepseekExpanded, setDeepseekExpanded] = useState(false);
+  const namespaceFix = codexDeepseekConfig?.namespaceFix ?? false;
   const needsLocalRouting = apiFormat === "openai_chat";
   const canEditCatalog = Boolean(onCatalogModelsChange);
   const canEditReasoning = Boolean(onCodexChatReasoningChange);
@@ -205,6 +220,17 @@ export function CodexFormFields({
       });
     },
     [codexChatReasoning, onCodexChatReasoningChange],
+  );
+
+  const handleNamespaceFixChange = useCallback(
+    (checked: boolean) => {
+      if (!onCodexDeepseekConfigChange) return;
+      onCodexDeepseekConfigChange({
+        ...codexDeepseekConfig,
+        namespaceFix: checked,
+      });
+    },
+    [codexDeepseekConfig, onCodexDeepseekConfigChange],
   );
 
   const handleFetchModels = useCallback(() => {
@@ -428,6 +454,64 @@ export function CodexFormFields({
                 aria-label={t("codexConfig.reasoningEffortToggle", {
                   defaultValue: "支持思考等级",
                 })}
+              />
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
+
+      {/* Codex DeepSeek 相关配置 —— 仅在本地路由模式下显示 */}
+      {needsLocalRouting && (
+        <Collapsible
+          open={deepseekExpanded}
+          onOpenChange={setDeepseekExpanded}
+          className="rounded-lg border border-border-default p-4"
+        >
+          <CollapsibleTrigger asChild>
+            <Button
+              type="button"
+              variant={null}
+              size="sm"
+              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-foreground hover:opacity-70"
+            >
+              {deepseekExpanded ? (
+                <ChevronDown className="h-4 w-4" />
+              ) : (
+                <ChevronRight className="h-4 w-4" />
+              )}
+              {"Codex-DeepSeek 相关配置"}
+            </Button>
+          </CollapsibleTrigger>
+          {!deepseekExpanded && (
+            <p className="mt-1 ml-1 text-xs text-muted-foreground">
+              包含 namespace 工具递归展开、工具类型过滤等兼容性修复，适用于 DeepSeek / LiteLLM 等第三方 Chat 供应商。
+            </p>
+          )}
+          <CollapsibleContent className="space-y-3 pt-3">
+            <div className="flex items-center justify-between gap-4">
+              <div className="space-y-1">
+                <FormLabel>启用 namespace 工具修复</FormLabel>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  递归展开嵌套 namespace 工具为 function 类型，并在发送给上游前过滤掉非 function
+                  工具。解决 DeepSeek API 报 &quot;unknown variant `namespace`&quot; 错误。
+                </p>
+              </div>
+              <Switch
+                checked={namespaceFix}
+                onCheckedChange={handleNamespaceFixChange}
+                aria-label="启用 namespace 工具修复"
+              />
+            </div>
+
+            <div className="space-y-2 border-t border-border-default pt-3">
+              <FormLabel>上游模型名 (TOML model)</FormLabel>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                对应 config.toml 中的 model 字段，决定转发给上游 API 的实际模型名。支持 LiteLLM 格式如 deepseek/deepseek-v4-flash。
+              </p>
+              <Input
+                value={tomlModel}
+                onChange={(e) => onTomlModelChange(e.target.value)}
+                placeholder="例如: deepseek/deepseek-v4-flash"
               />
             </div>
           </CollapsibleContent>

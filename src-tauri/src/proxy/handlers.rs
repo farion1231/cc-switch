@@ -602,7 +602,7 @@ pub async fn handle_responses(
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
+    let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body, false);
 
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
@@ -679,7 +679,7 @@ pub async fn handle_responses_compact(
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
+    let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body, false);
 
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder

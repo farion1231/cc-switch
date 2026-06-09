@@ -1335,9 +1335,22 @@ impl RequestForwarder {
             super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
+            let deepseek_config = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.codex_deepseek_config.as_ref());
+            let namespace_fix = deepseek_config
+                .map(|c| c.namespace_fix_enabled())
+                .unwrap_or(false);
+            log::info!(
+                "[Codex] Chat转换: namespace_fix={}, provider={}",
+                namespace_fix,
+                provider.name
+            );
             super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
                 mapped_body,
                 reasoning_config.as_ref(),
+                deepseek_config,
             )?
         } else if needs_transform {
             if adapter.name() == "Claude" {
