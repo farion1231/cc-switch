@@ -894,10 +894,17 @@ pub fn run() {
 
             if crate::webui::WebUiServer::should_start_from_env() {
                 let webui_server = crate::webui::WebUiServer::new(webui_state);
-                tauri::async_runtime::spawn(async move {
-                    if let Err(e) = webui_server.start_from_env().await {
-                        log::error!("WebUI server failed to start: {e}");
-                    }
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Runtime::new()
+                        .expect("WebUI tokio runtime");
+                    rt.block_on(async move {
+                        match webui_server.start_from_env().await {
+                            Ok(addr) => log::info!("WebUI server listening on http://{addr}"),
+                            Err(e) => log::error!("WebUI server failed to start: {e}"),
+                        }
+                        // Block forever to keep the runtime alive
+                        futures::future::pending::<()>().await;
+                    });
                 });
             }
 
