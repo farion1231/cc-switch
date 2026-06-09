@@ -360,6 +360,11 @@ impl ProxyService {
         );
         effective_settings["config"] = json!(updated_config);
         Self::attach_codex_model_catalog_from_provider(&mut effective_settings, Some(provider));
+        crate::codex_config::normalize_codex_settings_config_model_provider(
+            &mut effective_settings,
+            None,
+        )
+        .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
 
         self.write_codex_takeover_live_for_provider(&effective_settings, Some(provider))?;
         Ok(())
@@ -2134,7 +2139,7 @@ impl ProxyService {
                 provider.category.as_deref(),
                 auth,
                 config_str,
-                false,
+                true,
             )
             .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
         }
@@ -5119,13 +5124,13 @@ requires_openai_auth = true
         let parsed_live: toml::Value = toml::from_str(live_config).expect("parse live config");
         assert_eq!(
             parsed_live.get("model_provider").and_then(|v| v.as_str()),
-            Some("aihubmix"),
-            "hot-switched Codex live config should expose the selected provider"
+            Some("rightcode"),
+            "hot-switched Codex live config should preserve the stable session provider"
         );
         assert_eq!(
             parsed_live
                 .get("model_providers")
-                .and_then(|v| v.get("aihubmix"))
+                .and_then(|v| v.get("rightcode"))
                 .and_then(|v| v.get("name"))
                 .and_then(|v| v.as_str()),
             Some("AiHubMix"),
@@ -5134,7 +5139,7 @@ requires_openai_auth = true
         assert_eq!(
             parsed_live
                 .get("model_providers")
-                .and_then(|v| v.get("aihubmix"))
+                .and_then(|v| v.get("rightcode"))
                 .and_then(|v| v.get("base_url"))
                 .and_then(|v| v.as_str()),
             Some("http://127.0.0.1:15721/v1"),
@@ -5263,12 +5268,12 @@ requires_openai_auth = true
 
         assert_eq!(
             parsed_live.get("model_provider").and_then(|v| v.as_str()),
-            Some("deepseek")
+            Some("stable")
         );
         assert_eq!(
             parsed_live
                 .get("model_providers")
-                .and_then(|v| v.get("deepseek"))
+                .and_then(|v| v.get("stable"))
                 .and_then(|v| v.get("name"))
                 .and_then(|v| v.as_str()),
             Some("DeepSeek")
@@ -5276,7 +5281,7 @@ requires_openai_auth = true
         assert_eq!(
             parsed_live
                 .get("model_providers")
-                .and_then(|v| v.get("deepseek"))
+                .and_then(|v| v.get("stable"))
                 .and_then(|v| v.get("base_url"))
                 .and_then(|v| v.as_str()),
             Some("http://127.0.0.1:15721/v1")
@@ -5284,6 +5289,116 @@ requires_openai_auth = true
         assert_eq!(
             parsed_live.get("model").and_then(|v| v.as_str()),
             Some("deepseek-v4-flash")
+        );
+        assert_eq!(
+            live.get("auth")
+                .and_then(|auth| auth.get("OPENAI_API_KEY"))
+                .and_then(|v| v.as_str()),
+            Some(PROXY_TOKEN_PLACEHOLDER)
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn hot_switch_codex_backup_only_normalizes_takeover_live_provider_display() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "RightCode".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "rightcode-key"
+                },
+                "config": r#"model_provider = "custom"
+model = "gpt-5.4"
+
+[model_providers.custom]
+name = "custom"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+            }),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "b".to_string(),
+            "OpenAI-compatible".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "vendor-key"
+                },
+                "config": r#"model_provider = "OpenAI"
+model = "gpt-5.4"
+
+[model_providers.OpenAI]
+name = "OpenAI-compatible"
+base_url = "https://vendor.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+            }),
+            None,
+        );
+
+        db.save_provider("codex", &provider_a)
+            .expect("save provider a");
+        db.save_provider("codex", &provider_b)
+            .expect("save provider b");
+        db.set_current_provider("codex", "a")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some("a"))
+            .expect("set local current provider");
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&provider_a.settings_config).expect("serialize provider a"),
+        )
+        .await
+        .expect("seed live backup");
+        service
+            .write_codex_live(&provider_a.settings_config)
+            .expect("seed unmanaged Codex live config");
+
+        service
+            .hot_switch_provider("codex", "b")
+            .await
+            .expect("hot switch Codex provider");
+
+        let live = service.read_codex_live().expect("read Codex live config");
+        let live_config = live
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("live config string");
+        let parsed_live: toml::Value = toml::from_str(live_config).expect("parse live config");
+
+        assert_eq!(
+            parsed_live.get("model_provider").and_then(|v| v.as_str()),
+            Some("custom"),
+            "backup-only Codex hot switch should preserve the stable live provider id"
+        );
+        let model_providers = parsed_live
+            .get("model_providers")
+            .and_then(|v| v.as_table())
+            .expect("live model_providers");
+        assert!(model_providers.get("OpenAI").is_none());
+        assert_eq!(
+            model_providers
+                .get("custom")
+                .and_then(|v| v.get("name"))
+                .and_then(|v| v.as_str()),
+            Some("OpenAI-compatible")
+        );
+        assert_eq!(
+            model_providers
+                .get("custom")
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("http://127.0.0.1:15721/v1")
         );
         assert_eq!(
             live.get("auth")
