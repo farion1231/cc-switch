@@ -271,12 +271,15 @@ fn gemini_base_url_is_official_equivalent(base_url: &str) -> bool {
         return false;
     };
 
-    matches!(
-        url.host_str(),
-        Some("generativelanguage.googleapis.com")
-            | Some("aiplatform.googleapis.com")
-            | Some("vertexai.googleapis.com")
-    )
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+
+    host == "generativelanguage.googleapis.com"
+        || host == "aiplatform.googleapis.com"
+        || host.ends_with("-aiplatform.googleapis.com")
+        || host == "vertexai.googleapis.com"
 }
 
 /// 供应商管理器
@@ -1239,6 +1242,23 @@ model = "gpt-5.4""#
                 "env": {
                     "GEMINI_API_KEY": "gemini-key",
                     "GOOGLE_GEMINI_BASE_URL": "https://generativelanguage.googleapis.com"
+                }
+            }),
+            None,
+        );
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Gemini));
+    }
+
+    #[test]
+    fn gemini_keyed_vertex_regional_endpoint_is_official_equivalent() {
+        let provider = Provider::with_id(
+            "keyed-google-vertex-url".to_string(),
+            "Keyed Google Vertex URL".to_string(),
+            json!({
+                "env": {
+                    "GEMINI_API_KEY": "gemini-key",
+                    "GOOGLE_GEMINI_BASE_URL": "https://us-central1-aiplatform.googleapis.com/v1"
                 }
             }),
             None,
