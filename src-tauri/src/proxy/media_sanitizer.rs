@@ -51,6 +51,84 @@ pub fn contains_image_blocks(body: &Value) -> bool {
         })
 }
 
+/// Detect image blocks in any supported API format:
+/// - Anthropic: `{ "type": "image", "source": ... }` inside `messages[].content[]`
+/// - Responses API: `{ "type": "input_image" }` inside top-level `input[]` or
+///   inside `input[].content[]`
+///
+/// This is used by the media rectifier to decide whether to retry with images
+/// stripped, regardless of which adapter (Claude / Codex / …) is active.
+pub fn contains_image_blocks_any_format(body: &Value) -> bool {
+    // 1. Anthropic / OpenAI Chat Completions format
+    if contains_image_blocks(body) {
+        return true;
+    }
+
+    // 2. Responses API: top-level `input` array
+    if let Some(input) = body.get("input").and_then(Value::as_array) {
+        for item in input {
+            // 2a. Direct input_image item
+            if item.get("type").and_then(Value::as_str) == Some("input_image") {
+                return true;
+            }
+            // 2b. input_image inside item.content[]
+            if let Some(content) = item.get("content").and_then(Value::as_array) {
+                if content
+                    .iter()
+                    .any(|c| c.get("type").and_then(Value::as_str) == Some("input_image"))
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+/// Strip image blocks from a Responses API request body by replacing
+/// `input_image` items with `input_text` markers.  Returns the number of
+/// images replaced.
+pub fn replace_responses_images_with_marker(body: &mut Value) -> usize {
+    let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
+        return 0;
+    };
+
+    let mut replaced = 0usize;
+    for item in input.iter_mut() {
+        // Top-level input_image item
+        if item.get("type").and_then(Value::as_str) == Some("input_image") {
+            if let Some(obj) = item.as_object_mut() {
+                obj.insert("type".to_string(), json!("input_text"));
+                obj.insert("text".to_string(), json!(UNSUPPORTED_IMAGE_MARKER));
+                obj.remove("image_url");
+                obj.remove("url");
+                obj.remove("detail");
+                replaced += 1;
+            }
+            continue;
+        }
+
+        // input_image inside item.content[]
+        if let Some(content) = item.get_mut("content").and_then(Value::as_array_mut) {
+            for part in content.iter_mut() {
+                if part.get("type").and_then(Value::as_str) == Some("input_image") {
+                    if let Some(obj) = part.as_object_mut() {
+                        obj.insert("type".to_string(), json!("input_text"));
+                        obj.insert("text".to_string(), json!(UNSUPPORTED_IMAGE_MARKER));
+                        obj.remove("image_url");
+                        obj.remove("url");
+                        obj.remove("detail");
+                        replaced += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    replaced
+}
+
 pub fn replace_image_blocks_with_marker(body: &mut Value) -> usize {
     replace_images_in_body(body)
 }
@@ -60,7 +138,9 @@ pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
         return false;
     };
 
-    if !matches!(*status, 400 | 415 | 422 | 501) {
+    // Some providers (e.g. Xiaomi MiMo) return 404 when no endpoint supports
+    // image input for the requested model, rather than the more common 400/415.
+    if !matches!(*status, 400 | 404 | 415 | 422 | 501) {
         return false;
     }
 
@@ -81,6 +161,14 @@ pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
 
     if !mentions_image {
         return false;
+    }
+
+    // For 404 errors, mentioning image/vision in the error is already a strong
+    // signal that the model doesn't support image input (e.g. Xiaomi MiMo returns
+    // "No endpoints found that support image input").  Skip the stricter
+    // UNSUPPORTED_HINTS check for 404.
+    if *status == 404 {
+        return true;
     }
 
     const UNSUPPORTED_HINTS: &[&str] = &[
@@ -699,5 +787,158 @@ mod tests {
             body["messages"][0]["content"][0]["text"],
             UNSUPPORTED_IMAGE_MARKER
         );
+    }
+
+    // --- contains_image_blocks_any_format ---
+
+    #[test]
+    fn any_format_detects_anthropic_image_blocks() {
+        let body = json!({
+            "model": "test",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "abc" } }
+                ]
+            }]
+        });
+        assert!(contains_image_blocks_any_format(&body));
+    }
+
+    #[test]
+    fn any_format_detects_responses_input_image_at_top_level() {
+        let body = json!({
+            "model": "test",
+            "input": [
+                { "type": "input_image", "image_url": "data:image/png;base64,abc" },
+                { "type": "input_text", "text": "describe" }
+            ]
+        });
+        assert!(contains_image_blocks_any_format(&body));
+    }
+
+    #[test]
+    fn any_format_detects_responses_input_image_in_content() {
+        let body = json!({
+            "model": "test",
+            "input": [{
+                "role": "user",
+                "content": [
+                    { "type": "input_image", "image_url": "data:image/png;base64,abc" },
+                    { "type": "input_text", "text": "describe" }
+                ]
+            }]
+        });
+        assert!(contains_image_blocks_any_format(&body));
+    }
+
+    #[test]
+    fn any_format_returns_false_for_text_only() {
+        let body = json!({
+            "model": "test",
+            "messages": [{
+                "role": "user",
+                "content": [{ "type": "text", "text": "hello" }]
+            }]
+        });
+        assert!(!contains_image_blocks_any_format(&body));
+    }
+
+    #[test]
+    fn any_format_returns_false_for_responses_text_only() {
+        let body = json!({
+            "model": "test",
+            "input": [
+                { "type": "input_text", "text": "hello" }
+            ]
+        });
+        assert!(!contains_image_blocks_any_format(&body));
+    }
+
+    // --- replace_responses_images_with_marker ---
+
+    #[test]
+    fn replace_responses_replaces_top_level_input_image() {
+        let mut body = json!({
+            "model": "test",
+            "input": [
+                { "type": "input_image", "image_url": "data:image/png;base64,abc" },
+                { "type": "input_text", "text": "describe" }
+            ]
+        });
+        let count = replace_responses_images_with_marker(&mut body);
+        assert_eq!(count, 1);
+        assert_eq!(body["input"][0]["type"], "input_text");
+        assert_eq!(body["input"][0]["text"], UNSUPPORTED_IMAGE_MARKER);
+        assert!(body["input"][0].get("image_url").is_none());
+        assert_eq!(body["input"][1]["type"], "input_text");
+        assert_eq!(body["input"][1]["text"], "describe");
+    }
+
+    #[test]
+    fn replace_responses_replaces_content_level_input_image() {
+        let mut body = json!({
+            "model": "test",
+            "input": [{
+                "role": "user",
+                "content": [
+                    { "type": "input_image", "image_url": "data:image/png;base64,abc" },
+                    { "type": "input_text", "text": "describe" }
+                ]
+            }]
+        });
+        let count = replace_responses_images_with_marker(&mut body);
+        assert_eq!(count, 1);
+        assert_eq!(body["input"][0]["content"][0]["type"], "input_text");
+        assert_eq!(body["input"][0]["content"][0]["text"], UNSUPPORTED_IMAGE_MARKER);
+    }
+
+    #[test]
+    fn replace_responses_noop_for_anthropic_format() {
+        let mut body = json!({
+            "model": "test",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "abc" } }
+                ]
+            }]
+        });
+        let count = replace_responses_images_with_marker(&mut body);
+        assert_eq!(count, 0);
+        assert_eq!(body["messages"][0]["content"][0]["type"], "image");
+    }
+
+    // --- is_unsupported_image_error with 404 ---
+
+    #[test]
+    fn detects_404_as_unsupported_image_error() {
+        let error = ProxyError::UpstreamError {
+            status: 404,
+            body: Some(
+                r#"{"error":{"message":"No endpoints found that support image input"}}"#.to_string(),
+            ),
+        };
+        assert!(is_unsupported_image_error(&error));
+    }
+
+    #[test]
+    fn detects_404_with_model_not_support_image() {
+        let error = ProxyError::UpstreamError {
+            status: 404,
+            body: Some(
+                r#"{"error":{"code":"404","message":"No endpoints found that support image input","param":"","type":""}}"#.to_string(),
+            ),
+        };
+        assert!(is_unsupported_image_error(&error));
+    }
+
+    #[test]
+    fn ignores_404_without_image_mention() {
+        let error = ProxyError::UpstreamError {
+            status: 404,
+            body: Some(r#"{"error":{"message":"Model not found"}}"#.to_string()),
+        };
+        assert!(!is_unsupported_image_error(&error));
     }
 }
