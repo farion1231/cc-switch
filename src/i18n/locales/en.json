@@ -1321,7 +1321,14 @@
     "label": "Provider Preset",
     "custom": "Custom Configuration",
     "other": "Other",
-    "hint": "You can continue to adjust the fields below after selecting a preset."
+    "hint": "You can continue to adjust the fields below after selecting a preset.",
+    "searchTooltip": "Search presets",
+    "searchAriaLabel": "Search provider presets",
+    "searchPlaceholder": "Search name, website, or category...",
+    "sortAriaLabel": "Toggle preset sorting",
+    "sortNameAscTooltip": "Sort by name A-Z",
+    "sortOriginalTooltip": "Restore original order",
+    "noSearchResults": "No provider presets match your search."
   },
   "usage": {
     "title": "Usage Statistics",

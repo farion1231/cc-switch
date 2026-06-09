@@ -1321,7 +1321,14 @@
     "label": "预设供应商",
     "custom": "自定义配置",
     "other": "其他",
-    "hint": "选择预设后可继续调整下方字段。"
+    "hint": "选择预设后可继续调整下方字段。",
+    "searchTooltip": "搜索预设",
+    "searchAriaLabel": "搜索预设供应商",
+    "searchPlaceholder": "搜索名称、官网或分类...",
+    "sortAriaLabel": "切换预设排序",
+    "sortNameAscTooltip": "按名称 A-Z 排序",
+    "sortOriginalTooltip": "恢复原始顺序",
+    "noSearchResults": "没有匹配的预设供应商。"
   },
   "usage": {
     "title": "使用统计",

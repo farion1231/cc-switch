@@ -1266,7 +1266,14 @@
     "label": "預設供應商",
     "custom": "自訂設定",
     "other": "其他",
-    "hint": "選擇預設後可繼續調整下方欄位。"
+    "hint": "選擇預設後可繼續調整下方欄位。",
+    "searchTooltip": "搜尋預設",
+    "searchAriaLabel": "搜尋預設供應商",
+    "searchPlaceholder": "搜尋名稱、官網或分類...",
+    "sortAriaLabel": "切換預設排序",
+    "sortNameAscTooltip": "按名稱 A-Z 排序",
+    "sortOriginalTooltip": "恢復原始順序",
+    "noSearchResults": "沒有相符的預設供應商。"
   },
   "usage": {
     "title": "使用統計",
