@@ -1,42 +1,44 @@
 name: Build Windows x64 Installer
-
+ 
 on:
   workflow_dispatch: {}
-
+ 
 jobs:
   build-windows-x64:
     name: Build Windows x64
     runs-on: windows-latest
-
+ 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
+ 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
-
+        with:
+          version: 9
+ 
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
-
+ 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-
+ 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
-
+ 
       - name: Install frontend dependencies
         run: pnpm install
-
+ 
       - name: Build Tauri app
         run: pnpm tauri build
-
+ 
       - name: Upload installer artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -45,3 +47,4 @@ jobs:
             src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
+ 
