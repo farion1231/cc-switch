@@ -53,7 +53,7 @@ use usage::validate_usage_script;
 pub struct ProviderService;
 
 #[derive(Debug, Clone)]
-struct ClaudeSwitchPlan {
+pub(crate) struct ClaudeSwitchPlan {
     activation_mode: ClaudeActivationMode,
     override_dir: Option<String>,
 }
@@ -5160,7 +5160,7 @@ base_url = "http://localhost:8080"
 }
 
 impl ProviderService {
-    fn claude_switch_plan(provider: &Provider) -> ClaudeSwitchPlan {
+    pub(crate) fn claude_switch_plan(provider: &Provider) -> ClaudeSwitchPlan {
         let activation_mode = provider
             .meta
             .as_ref()
@@ -5278,7 +5278,7 @@ impl ProviderService {
         })
     }
 
-    fn apply_claude_switch_plan(plan: &ClaudeSwitchPlan) -> Result<(), AppError> {
+    pub(crate) fn apply_claude_switch_plan(plan: &ClaudeSwitchPlan) -> Result<(), AppError> {
         crate::settings::set_claude_provider_override_dir(plan.override_dir.as_deref())?;
         let settings = crate::settings::get_settings();
         let legacy_config_dir = settings
@@ -5333,7 +5333,9 @@ impl ProviderService {
         }
     }
 
-    fn validate_claude_runtime_switch_plan(plan: &ClaudeSwitchPlan) -> Result<(), AppError> {
+    pub(crate) fn validate_claude_runtime_switch_plan(
+        plan: &ClaudeSwitchPlan,
+    ) -> Result<(), AppError> {
         let requires_profile_dir = matches!(
             plan.activation_mode,
             ClaudeActivationMode::ProfileOnly | ClaudeActivationMode::ProfileAndConfig
