@@ -45,6 +45,18 @@ interface ProviderActionsProps {
   onSetAsDefault?: () => void;
 }
 
+// 主按钮的呈现状态。title 用于 disabled 态向用户解释为何不可点击；
+// 因 Button 基类带 disabled:pointer-events-none，title 必须挂在外层非禁用
+// 的 wrapper 上才会在 hover 时显示（见下方 <span> 包裹）。
+interface MainButtonState {
+  disabled: boolean;
+  variant: "default" | "secondary";
+  className: string;
+  icon: JSX.Element;
+  text: string;
+  title?: string;
+}
+
 export function ProviderActions({
   appId,
   isCurrent,
@@ -108,7 +120,7 @@ export function ProviderActions({
     }
   };
 
-  const getMainButtonState = () => {
+  const getMainButtonState = (): MainButtonState => {
     if (isOmo) {
       if (isCurrent) {
         return {
@@ -237,16 +249,26 @@ export function ProviderActions({
           );
         })()}
 
-      <Button
-        size="sm"
-        variant={buttonState.variant}
-        onClick={handleMainButtonClick}
-        disabled={buttonState.disabled || isRoutingSwitchPending}
-        className={cn("w-[4.5rem] px-2.5", buttonState.className)}
+      {/* wrapper span 承接 hover：disabled 按钮自身 pointer-events:none，
+          原生 title 与 cursor 都必须挂在未禁用的外层元素上才会生效 */}
+      <span
+        title={buttonState.title}
+        className={cn(
+          "inline-flex",
+          buttonState.disabled && "cursor-not-allowed",
+        )}
       >
-        {buttonState.icon}
-        {buttonState.text}
-      </Button>
+        <Button
+          size="sm"
+          variant={buttonState.variant}
+          onClick={handleMainButtonClick}
+          disabled={buttonState.disabled || isRoutingSwitchPending}
+          className={cn("w-[4.5rem] px-2.5", buttonState.className)}
+        >
+          {buttonState.icon}
+          {buttonState.text}
+        </Button>
+      </span>
 
       <div className="flex items-center gap-1">
         <Button

@@ -887,6 +887,11 @@ pub fn proxy_gateway_base_url_from_db(db: &Database) -> Result<String, AppError>
     // get_proxy_config is async-tagged but its body is fully synchronous (rusqlite
     // under a Mutex), so block_on cannot deadlock the calling thread.
     let config = futures::executor::block_on(db.get_proxy_config())?;
+    if config.listen_port == 0 {
+        return Err(AppError::Config(
+            "Claude Desktop 代理地址需要真实监听端口；请先启动本地代理或使用固定端口".to_string(),
+        ));
+    }
     Ok(format!(
         "{}{}",
         proxy_origin_from_parts(&config.listen_address, config.listen_port),
@@ -1304,6 +1309,12 @@ mod tests {
         Database::memory().expect("memory db")
     }
 
+    fn set_proxy_port(db: &Database, port: u16) {
+        let mut config = crate::proxy::types::ProxyConfig::default();
+        config.listen_port = port;
+        futures::executor::block_on(db.update_proxy_config(config)).expect("update proxy config");
+    }
+
     fn direct_provider(id: &str) -> Provider {
         let mut provider = Provider::with_id(
             id.to_string(),
@@ -1322,6 +1333,19 @@ mod tests {
             ..Default::default()
         });
         provider
+    }
+
+    #[test]
+    fn proxy_gateway_base_url_rejects_unresolved_ephemeral_port() {
+        let db = test_db();
+        set_proxy_port(&db, 0);
+
+        let err = proxy_gateway_base_url_from_db(&db)
+            .expect_err("unresolved ephemeral port should not produce a :0 URL");
+        assert!(
+            err.to_string().contains("真实监听端口"),
+            "unexpected error: {err}"
+        );
     }
 
     fn official_provider() -> Provider {
