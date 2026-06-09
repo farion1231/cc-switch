@@ -15,6 +15,27 @@ export const subscriptionKeys = {
   codexAll: () => subscriptionKeys.allCodexQuotas(),
 };
 
+interface CodexAllQuotasQueryOptions {
+  enabled: boolean;
+  refetchInterval: number | false;
+  refetchIntervalInBackground: boolean;
+  refetchOnWindowFocus: boolean;
+  staleTime: number;
+}
+
+function useCodexAllQuotasQuery(options: CodexAllQuotasQueryOptions) {
+  return useQuery({
+    queryKey: subscriptionKeys.allCodexQuotas(),
+    queryFn: () => subscriptionApi.getAllCodexQuotas(),
+    enabled: options.enabled,
+    refetchInterval: options.refetchInterval,
+    refetchIntervalInBackground: options.refetchIntervalInBackground,
+    refetchOnWindowFocus: options.refetchOnWindowFocus,
+    staleTime: options.staleTime,
+    retry: 1,
+  });
+}
+
 export function useSubscriptionQuota(
   appId: AppId,
   enabled: boolean,
@@ -51,15 +72,14 @@ export function useAllCodexQuotas(
   enabled = true,
   intervalMs: number = REFETCH_INTERVAL,
 ) {
-  return useQuery({
-    queryKey: subscriptionKeys.allCodexQuotas(),
-    queryFn: () => subscriptionApi.getAllCodexQuotas(),
+  const autoRefresh = intervalMs > 0;
+
+  return useCodexAllQuotasQuery({
     enabled,
     refetchInterval: intervalMs > 0 ? intervalMs : false,
-    refetchIntervalInBackground: intervalMs > 0,
-    refetchOnWindowFocus: intervalMs > 0,
+    refetchIntervalInBackground: autoRefresh,
+    refetchOnWindowFocus: autoRefresh,
     staleTime: intervalMs,
-    retry: 1,
   });
 }
 
@@ -74,21 +94,18 @@ export interface UseCodexAllQuotasOptions {
 /**
  * 查询所有 Codex 账号的用量
  *
- * 同时监听后端 emit 的 `codex-account-quotas-updated` 事件，
- * 让托盘触发的刷新也能立刻反映到主界面。
+ * 与 `useUsageCacheBridge` 共享同一个 query key，所以托盘触发的后端刷新
+ * 可以通过 React Query 缓存立刻反映到主界面。
  */
 export function useCodexAllQuotas(options: UseCodexAllQuotasOptions = {}) {
   const { enabled = true, autoQuery = false, intervalMs = 60_000 } = options;
 
-  return useQuery({
-    queryKey: subscriptionKeys.codexAll(),
-    queryFn: () => subscriptionApi.getAllCodexQuotas(),
+  return useCodexAllQuotasQuery({
     enabled,
     refetchInterval: autoQuery ? intervalMs : false,
     refetchIntervalInBackground: autoQuery,
     refetchOnWindowFocus: autoQuery,
     staleTime: intervalMs,
-    retry: 1,
   });
 }
 
