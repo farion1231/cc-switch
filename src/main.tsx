@@ -9,8 +9,8 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "@/components/theme-provider";
 import { queryClient } from "@/lib/query";
 import { Toaster } from "@/components/ui/sonner";
-import { listen } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
+import { listenEvent } from "@/lib/commandClient";
+import { invokeCommand } from "@/lib/commandClient";
 import { message } from "@tauri-apps/plugin-dialog";
 import { exit } from "@tauri-apps/plugin-process";
 
@@ -62,7 +62,7 @@ async function handleConfigLoadError(
 
 // 监听后端的配置加载错误事件：仅提醒用户并强制退出，不修改任何配置文件
 try {
-  void listen("configLoadError", async (evt) => {
+  void listenEvent("configLoadError", async (evt) => {
     await handleConfigLoadError(evt.payload as ConfigLoadErrorPayload | null);
   });
 } catch (e) {
@@ -73,7 +73,7 @@ try {
 async function bootstrap() {
   // 启动早期主动查询后端初始化错误，避免事件竞态
   try {
-    const initError = (await invoke(
+    const initError = (await invokeCommand(
       "get_init_error",
     )) as ConfigLoadErrorPayload | null;
     if (initError && (initError.path || initError.error)) {

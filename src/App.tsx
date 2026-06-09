@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand, isTauriRuntime } from "@/lib/commandClient";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
@@ -27,7 +27,7 @@ import {
   Cpu,
   LayoutDashboard,
 } from "lucide-react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+
 import type { Provider, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
 import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
@@ -178,8 +178,9 @@ function App() {
   }, [currentView]);
 
   const { data: settingsData } = useSettingsQuery();
+  const isTauri = isTauriRuntime();
   const useAppWindowControls =
-    isLinux() && (settingsData?.useAppWindowControls ?? false);
+    isTauri && isLinux() && (settingsData?.useAppWindowControls ?? false);
   const dragBarHeight = useAppWindowControls ? 32 : DEFAULT_DRAG_BAR_HEIGHT;
   const contentTopOffset = dragBarHeight + HEADER_HEIGHT;
   const visibleApps: VisibleApps = settingsData?.visibleApps ?? {
@@ -422,6 +423,7 @@ function App() {
 
     const setupWindowStateSync = async () => {
       try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
         const currentWindow = getCurrentWindow();
         const syncWindowMaximizedState = async () => {
           const maximized = await currentWindow.isMaximized();
@@ -439,7 +441,9 @@ function App() {
       }
     };
 
-    void setupWindowStateSync();
+    if (isTauriRuntime()) {
+      void setupWindowStateSync();
+    }
     return () => {
       active = false;
       unlistenResize?.();
@@ -448,10 +452,11 @@ function App() {
 
   useEffect(() => {
     // settingsData 未加载时跳过，避免用 fallback false 覆盖 Rust 侧已设好的装饰状态
-    if (!settingsData) return;
+    if (!settingsData || !isTauriRuntime()) return;
 
     const syncWindowDecorations = async () => {
       try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
         await getCurrentWindow().setDecorations(!useAppWindowControls);
       } catch (error) {
         console.error("[App] Failed to update window decorations", error);
@@ -488,7 +493,7 @@ function App() {
   useEffect(() => {
     const checkMigration = async () => {
       try {
-        const migrated = await invoke<boolean>("get_migration_result");
+        const migrated = await invokeCommand<boolean>("get_migration_result");
         if (migrated) {
           toast.success(
             t("migration.success", { defaultValue: "配置迁移成功" }),
@@ -506,7 +511,7 @@ function App() {
   useEffect(() => {
     const checkSkillsMigration = async () => {
       try {
-        const result = await invoke<{ count: number; error?: string } | null>(
+        const result = await invokeCommand<{ count: number; error?: string } | null>(
           "get_skills_migration_result",
         );
         if (result?.error) {
@@ -830,6 +835,7 @@ function App() {
 
   const handleWindowMinimize = async () => {
     try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
       await getCurrentWindow().minimize();
     } catch (error) {
       console.error("[App] Failed to minimize window", error);
@@ -839,6 +845,7 @@ function App() {
 
   const handleWindowToggleMaximize = async () => {
     try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
       const currentWindow = getCurrentWindow();
       await currentWindow.toggleMaximize();
       setIsWindowMaximized(await currentWindow.isMaximized());
@@ -850,6 +857,7 @@ function App() {
 
   const handleWindowClose = async () => {
     try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
       await getCurrentWindow().close();
     } catch (error) {
       console.error("[App] Failed to close window", error);
