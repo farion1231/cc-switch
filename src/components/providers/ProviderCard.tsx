@@ -14,16 +14,15 @@ import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
 import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
-import { PROVIDER_TYPES } from "@/config/constants";
+import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
+import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import {
-  extractCodexBaseUrl,
-  extractCodexExperimentalBearerToken,
-  extractCodexWireApi,
-  isCodexChatWireApi,
-} from "@/utils/providerConfigUtils";
+  getProxyRequirement,
+  isOfficialProvider,
+} from "@/utils/providerRouting";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 
@@ -54,6 +53,7 @@ interface ProviderCardProps {
   isTesting?: boolean;
   isProxyRunning: boolean;
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管，切换为热切换）
+  isRoutingSwitchPending?: boolean; // 路由接管切换进行中（禁用主按钮防重复点击）
   dragHandleProps?: DragHandleProps;
   isAutoFailoverEnabled?: boolean; // 是否开启自动故障转移
   failoverPriority?: number; // 故障转移优先级（1 = P1, 2 = P2, ...）
@@ -63,41 +63,6 @@ interface ProviderCardProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
-}
-
-/** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
-function isOfficialProvider(provider: Provider, appId: AppId): boolean {
-  if (provider.category === "official") {
-    return true;
-  }
-
-  const config = provider.settingsConfig as Record<string, any>;
-  if (appId === "claude") {
-    const baseUrl = config?.env?.ANTHROPIC_BASE_URL;
-    return !baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === "");
-  }
-  if (appId === "codex") {
-    // 无 OPENAI_API_KEY → 使用 Codex CLI 内置 OAuth（官方）
-    const apiKey = config?.auth?.OPENAI_API_KEY;
-    const bearerToken =
-      typeof config?.config === "string"
-        ? extractCodexExperimentalBearerToken(config.config)
-        : undefined;
-    return (
-      !bearerToken &&
-      (!apiKey || (typeof apiKey === "string" && apiKey.trim() === ""))
-    );
-  }
-  if (appId === "gemini") {
-    // 无 GEMINI_API_KEY 且无 GOOGLE_GEMINI_BASE_URL → Google OAuth 官方模式
-    const apiKey = config?.env?.GEMINI_API_KEY;
-    const baseUrl = config?.env?.GOOGLE_GEMINI_BASE_URL;
-    return (
-      (!apiKey || (typeof apiKey === "string" && apiKey.trim() === "")) &&
-      (!baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === ""))
-    );
-  }
-  return false;
 }
 
 const extractApiUrl = (provider: Provider, fallbackText: string) => {
@@ -153,6 +118,7 @@ export function ProviderCard({
   isTesting,
   isProxyRunning,
   isProxyTakeover = false,
+  isRoutingSwitchPending = false,
   dragHandleProps,
   isAutoFailoverEnabled = false,
   failoverPriority,
@@ -192,8 +158,13 @@ export function ProviderCard({
 
   const usageEnabled = provider.meta?.usage_script?.enabled ?? false;
   const isOfficial = isOfficialProvider(provider, appId);
-  const isOfficialBlockedByProxy =
-    isProxyTakeover && (provider.category === "official" || isOfficial);
+  const supportsOfficialSubscription =
+    isOfficial && ["claude", "codex", "gemini"].includes(appId);
+  const isOfficialSubscriptionUsage =
+    provider.meta?.usage_script?.templateType ===
+    TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
+  const officialSubscriptionEnabled =
+    supportsOfficialSubscription && usageEnabled && isOfficialSubscriptionUsage;
   const isCopilot =
     provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
     provider.meta?.usage_script?.templateType === "github_copilot";
@@ -203,20 +174,10 @@ export function ProviderCard({
     appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
   const isCodexOauth =
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
-  const codexNeedsRouting = useMemo(() => {
-    if (appId !== "codex" || provider.category === "official") return false;
-    if (provider.meta?.apiFormat === "openai_chat") return true;
-    const config = (provider.settingsConfig as Record<string, any>)?.config;
-    return (
-      typeof config === "string" &&
-      isCodexChatWireApi(extractCodexWireApi(config))
-    );
-  }, [
-    appId,
-    provider.category,
-    provider.meta?.apiFormat,
-    (provider.settingsConfig as Record<string, any>)?.config,
-  ]);
+  // Whether this provider inherently requires the local proxy ("routing").
+  // Single source of truth shared with switchProvider's guard (getProxyRequirement),
+  // so the badge can never disagree with what the switch flow enforces.
+  const needsRouting = getProxyRequirement(provider, appId).required;
   const isClaudeThirdParty =
     appId === "claude" && provider.category === "third_party";
 
@@ -231,7 +192,7 @@ export function ProviderCard({
     : 0;
 
   const { data: usage } = useUsageQuery(provider.id, appId, {
-    enabled: usageEnabled,
+    enabled: usageEnabled && !isOfficial && !isOfficialSubscriptionUsage,
     autoQueryInterval,
   });
 
@@ -350,30 +311,9 @@ export function ProviderCard({
                 </span>
               )}
 
-              {appId === "claude-desktop" &&
-                provider.category !== "official" &&
-                provider.meta?.claudeDesktopMode === "proxy" && (
-                  <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
-                    {t("claudeDesktop.modeProxy", {
-                      defaultValue: "需要路由",
-                    })}
-                  </span>
-                )}
-
-              {appId === "claude" &&
-                provider.category !== "official" &&
-                provider.meta?.apiFormat &&
-                provider.meta.apiFormat !== "anthropic" && (
-                  <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
-                    {t("claudeCode.needsRouting", {
-                      defaultValue: "需要路由",
-                    })}
-                  </span>
-                )}
-
-              {codexNeedsRouting && (
+              {needsRouting && (
                 <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
-                  {t("codex.needsRouting", {
+                  {t("provider.needsRouting", {
                     defaultValue: "需要路由",
                   })}
                 </span>
@@ -469,11 +409,16 @@ export function ProviderCard({
                   isCurrent={isCurrent}
                 />
               ) : isOfficial ? (
-                <SubscriptionQuotaFooter
-                  appId={appId}
-                  inline={true}
-                  isCurrent={isCurrent}
-                />
+                officialSubscriptionEnabled ? (
+                  <SubscriptionQuotaFooter
+                    appId={appId}
+                    inline={true}
+                    isCurrent={isCurrent}
+                    autoQueryInterval={
+                      provider.meta?.usage_script?.autoQueryInterval ?? 0
+                    }
+                  />
+                ) : null
               ) : hasMultiplePlans ? (
                 <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
                   <span className="font-medium">
@@ -524,7 +469,7 @@ export function ProviderCard({
               isInConfig={isInConfig}
               isTesting={isTesting}
               isProxyTakeover={isProxyTakeover}
-              isOfficialBlockedByProxy={isOfficialBlockedByProxy}
+              isRoutingSwitchPending={isRoutingSwitchPending}
               isReadOnly={isHermesReadOnly}
               isOmo={isAnyOmo}
               onSwitch={() => onSwitch(provider)}
@@ -540,7 +485,9 @@ export function ProviderCard({
                   : undefined
               }
               onConfigureUsage={
-                isOfficial || isCopilot || isCodexOauth
+                (isOfficial && !supportsOfficialSubscription) ||
+                isCopilot ||
+                isCodexOauth
                   ? undefined
                   : () => onConfigureUsage(provider)
               }

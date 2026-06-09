@@ -109,7 +109,6 @@
     "currentlyUsing": "現在使用中",
     "enable": "有効化",
     "inUse": "使用中",
-    "blockedByProxy": "ブロック",
     "editProvider": "プロバイダーを編集",
     "editProviderHint": "保存すると現在のプロバイダーにすぐ反映されます。",
     "deleteProvider": "プロバイダーを削除",
@@ -171,21 +170,19 @@
         "oauthHint": "Google 公式は OAuth 個人認証を使用するため API Key は不要です。初回利用時にブラウザが開きます。",
         "apiKeyPlaceholder": "Gemini API Key を入力"
       }
-    }
+    },
+    "needsRouting": "ルーティングが必要"
   },
   "claudeCode": {
-    "needsRouting": "ルーティングが必要",
     "noRoutingSupport": "ルーティング非対応"
   },
   "codex": {
-    "needsRouting": "ルーティングが必要",
     "noRoutingSupport": "ルーティング非対応"
   },
   "claudeDesktop": {
     "officialNotice": "Claude Desktop の公式プロバイダーは内蔵の 1P サインインを使用します。API キーやエンドポイントの設定は不要です。",
     "mode": "モデル処理方式",
     "modeDirect": "直結",
-    "modeProxy": "ルーティング必要",
     "modelMappingToggle": "モデルマッピングが必要",
     "modelMappingOffHint": "プロバイダーが Claude Desktop の三つの役割 ID（claude-sonnet-* / claude-opus-* / claude-haiku-*）を受け付ける場合のみ直結できます。それ以外のモデル名（claude-3-5-sonnet-… などの旧式 ID を含む）はこのスイッチを有効にしてマッピングを使ってください。",
     "modelMappingOnHint": "Claude Desktop は claude-sonnet-* / claude-opus-* / claude-haiku-* の三つの役割 ID のみ受け付けます。有効にすると CC Switch がこの三役割をプロバイダーの実モデルにマッピングし、使用中はローカルルーティングを起動したままにします。",
@@ -225,6 +222,7 @@
     "providerSaved": "プロバイダー設定を保存しました",
     "providerDeleted": "プロバイダーを削除しました",
     "switchSuccess": "切り替え成功！",
+    "codexRestartRequired": "切り替えました。反映するにはクライアントを再起動してください",
     "claudeDesktopRestartRequired": "切り替えました。反映するには Claude Desktop を再起動してください",
     "claudeDesktopProxyRestartRequired": "切り替えました。CC Switch を起動したまま Claude Desktop を再起動してください",
     "addToConfigSuccess": "設定に追加しました",
@@ -261,7 +259,15 @@
     "backfillWarning": "切り替え成功しましたが、前のプロバイダーへの設定保存に失敗しました",
     "windowControlFailed": "ウィンドウ操作に失敗しました: {{error}}",
     "officialBlockedByProxy": "ローカルルーティングモード中は公式プロバイダーに切り替えできません。ルーティング経由で公式 API にアクセスするとアカウントが停止される可能性があります。",
-    "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。"
+    "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。",
+    "routingEnableFailed": "{{name}} に切り替えましたが、ローカルルーティングの有効化に失敗しました。プロキシパネルから手動で有効にしてください",
+    "routingDisableFailed": "ローカルルーティングの無効化に失敗しました。切り替えをキャンセルしました",
+    "proxyReasonGeminiNative": "Gemini Native インターフェース形式を使用",
+    "routingAutoEnabled": "{{name}} に切り替え、ローカルルーティングを自動で有効にしました",
+    "routingAutoEnabledRestart": "{{name}} に切り替え、ローカルルーティングを自動で有効にしました。クライアントを再起動してください",
+    "routingAutoDisabled": "現在のアプリのローカルルーティングが自動で無効になりました",
+    "routingAutoDisabledRestart": "現在のアプリのローカルルーティングが自動で無効になりました。クライアントを再起動してください",
+    "routingDisabledButSwitchFailed": "ローカルルーティングは無効になりましたが、切り替えに失敗しました。現在のプロバイダーはローカルルーティングが必要です。手動でルーティングを有効にするか、切り替えを再試行してください"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",
@@ -297,6 +303,20 @@
       "title": "共通設定について",
       "message": "「共通設定スニペット」を使うと、プラグインや環境変数などの設定を異なるプロバイダー間で共有でき、切り替え時に失われることがありません。\n\n使い方：\n① プロバイダーを編集 →「共通設定を編集」→「編集内容から抽出」\n② 新規プロバイダー作成時に「共通設定を書き込む」をチェック（デフォルトでオン）\n\n新しいプラグインや Hook をインストールした場合は、共通設定を再抽出してください。",
       "confirm": "わかりました"
+    },
+    "routingEnable": {
+      "title": "ローカルルーティングを有効にして切り替えますか？",
+      "message": "このプロバイダーはローカルルーティングが必要です。\n現在のアプリのローカルルーティングを有効にしてから、このプロバイダーに切り替えます。",
+      "confirm": "ルーティングを有効にして切り替え"
+    },
+    "routingDisable": {
+      "title": "ローカルルーティングを無効にして切り替えますか？",
+      "message": "これは公式の直接接続プロバイダーで、ローカルルーティング中は使用できません（アカウントが停止される可能性があります）。\n現在のアプリのローカルルーティングを無効にしてから、このプロバイダーに切り替えます。",
+      "confirm": "ルーティングを無効にして切り替え"
+    },
+    "routing": {
+      "rememberEnable": "今後はルーティングを自動で有効にする",
+      "rememberDisable": "今後はルーティングを自動で無効にする"
     }
   },
   "settings": {
@@ -326,7 +346,11 @@
         "enableFailoverToggle": "メインページにフェイルオーバー切り替えを表示",
         "enableFailoverToggleDescription": "有効にすると、メインページ上部にフェイルオーバー切り替えが独立して表示されます",
         "running": "実行中",
-        "stopped": "停止中"
+        "stopped": "停止中",
+        "autoEnableForNeedsRouting": "ルーティングが必要なプロバイダーへの切り替え時に自動でルーティングを有効化",
+        "autoEnableForNeedsRoutingDescription": "「ルーティングが必要」なプロバイダーを有効にする際、ローカルルーティングを自動的にオンにして切り替え、毎回の確認を省略します。",
+        "autoDisableForNoRouting": "公式プロバイダーへの切り替え時に自動でルーティングを無効化",
+        "autoDisableForNoRoutingDescription": "有効にすると、ルーティングが有効な状態で公式プロバイダーへ切り替えるとき、確認ダイアログなしで自動的にローカルルーティングを無効化してから切り替えます。"
       },
       "modelTest": {
         "title": "モデルテスト設定",
@@ -366,7 +390,11 @@
         "thinkingSignature": "Thinking 署名整流",
         "thinkingSignatureDescription": "Anthropic タイプのプロバイダーが thinking 署名の非互換性や不正なリクエストエラーを返した場合、互換性のない thinking 関連ブロックを自動削除し、同じプロバイダーで 1 回リトライします",
         "thinkingBudget": "Thinking Budget 整流",
-        "thinkingBudgetDescription": "Anthropic タイプのプロバイダーが budget_tokens 制約エラー（例: 1024 以上）を返した場合、thinking を enabled に正規化し、thinking 予算を 32000 に設定し、必要に応じて max_tokens を 64000 に引き上げて 1 回リトライします"
+        "thinkingBudgetDescription": "Anthropic タイプのプロバイダーが budget_tokens 制約エラー（例: 1024 以上）を返した場合、thinking を enabled に正規化し、thinking 予算を 32000 に設定し、必要に応じて max_tokens を 64000 に引き上げて 1 回リトライします",
+        "mediaFallback": "非対応画像フォールバック",
+        "mediaFallbackDescription": "プロバイダーが画像入力に対応していない場合（テキストのみの能力が宣言されている、または上流が画像非対応エラーを返した場合）、画像ブロックを [Unsupported Image] マーカーに自動置換し、会話を中断させません",
+        "mediaHeuristic": "ヒューリスティックなテキスト専用モデル判定",
+        "mediaHeuristicDescription": "送信前に内蔵モデル名リストに基づいて画像を予測的に削除します。オフにすると「宣言済みテキスト専用」と「上流エラー時のフォールバック」のみが残り、内蔵リストがマルチモーダルモデルをテキスト専用と誤判定して画像を静かに削除するのを防ぎます"
       },
       "optimizer": {
         "title": "Bedrock リクエストオプティマイザー",
@@ -541,6 +569,107 @@
         "confirm": "アップロードを実行"
       }
     },
+    "syncType": {
+      "label": "同期方式",
+      "webdav": "WebDAV",
+      "s3": "S3互換ストレージ"
+    },
+    "s3Sync": {
+      "presets": {
+        "label": "サービス",
+        "awsS3": "AWS S3",
+        "awsS3Hint": "IAM Access Keyを使用。s3:PutObject/GetObject/HeadObject権限が必要です。Region例: us-east-1, ap-northeast-1",
+        "minio": "MinIO",
+        "minioHint": "カスタムEndpointが必要です（例: http://minio.local:9000）。Regionは us-east-1 に設定可能",
+        "r2": "Cloudflare R2",
+        "r2Hint": "Endpoint: https://<account_id>.r2.cloudflarestorage.com、Regionは auto に設定",
+        "oss": "Alibaba Cloud OSS",
+        "ossHint": "Endpoint: https://oss-<region>.aliyuncs.com、Region例: cn-hangzhou, cn-shanghai",
+        "cos": "Tencent Cloud COS",
+        "cosHint": "Endpoint: https://cos.<region>.myqcloud.com、Region例: ap-guangzhou, ap-beijing",
+        "obs": "Huawei OBS",
+        "obsHint": "Endpoint: https://obs.<region>.myhuaweicloud.com、Region例: cn-north-4, cn-east-3",
+        "custom": "S3互換サービス（カスタム）",
+        "customHint": "任意のS3互換サービス。カスタムEndpointが必要です"
+      },
+      "region": "リージョン",
+      "regionPlaceholder": "例: us-east-1",
+      "bucket": "バケット",
+      "bucketPlaceholder": "例: my-cc-switch-bucket",
+      "accessKeyId": "Access Key ID",
+      "accessKeyIdPlaceholder": "例: AKIA...",
+      "secretAccessKey": "Secret Access Key",
+      "secretAccessKeyPlaceholder": "既存のシークレットを保持する場合は変更しないでください",
+      "endpoint": "エンドポイント（AWSは空欄可）",
+      "endpointHint": "多くの S3 互換サービスでは必須です",
+      "endpointPlaceholder": "例: https://s3-compatible.example.com",
+      "remoteRoot": "リモートルートディレクトリ",
+      "remoteRootDefault": "デフォルト: cc-switch-sync",
+      "profile": "同期プロファイル名",
+      "profileDefault": "デフォルト: default",
+      "autoSync": "自動同期",
+      "autoSyncHint": "有効にすると、データベース変更のたびに S3 へ自動アップロードします。",
+      "enabled": "S3 同期を有効化",
+      "enabledHint": "S3 のアップロード/ダウンロードと自動同期を有効にします。",
+      "mutualExclusionTitle": "同期方式の切り替え",
+      "mutualExclusionMessage": "S3同期を有効にすると、現在のWebDAV同期が無効になります。続行しますか？",
+      "mutualExclusionMessageReverse": "WebDAV同期を有効にすると、現在のS3同期が無効になります。続行しますか？",
+      "mutualExclusionFailed": "同期方式の切り替えに失敗しました：{{error}}",
+      "testConnection": "接続テスト",
+      "connectionOk": "S3接続成功",
+      "test": "接続テスト",
+      "testing": "テスト中...",
+      "testSuccess": "S3 接続成功",
+      "testFailed": "S3 接続失敗：{{error}}",
+      "save": "設定を保存",
+      "saving": "保存中...",
+      "saveFailed": "設定の保存に失敗しました：{{error}}",
+      "saveAndTestSuccess": "設定を保存しました。S3 接続正常です",
+      "saveAndTestFailed": "設定を保存しましたが、S3 接続テストに失敗しました：{{error}}",
+      "upload": "クラウドにアップロード",
+      "uploading": "アップロード中...",
+      "uploadSuccess": "S3 にアップロードしました",
+      "uploadFailed": "S3 アップロードに失敗しました：{{error}}",
+      "autoSyncFailedToast": "S3 自動同期に失敗しました：{{error}}",
+      "download": "クラウドからダウンロード",
+      "downloading": "ダウンロード中...",
+      "downloadSuccess": "S3 からダウンロード・復元しました",
+      "downloadFailed": "S3 ダウンロードに失敗しました：{{error}}",
+      "lastSync": "前回の同期：{{time}}",
+      "autoSyncLastErrorTitle": "前回の S3 自動同期に失敗しました",
+      "autoSyncLastErrorHint": "ネットワークまたは S3 設定を確認してください。次回の変更時に自動再試行されます。",
+      "missingBucket": "S3 バケットを入力してください",
+      "noRemoteData": "S3 バケットに同期データが見つかりません",
+      "incompatibleVersion": "リモートデータに互換性がありません（バージョン {{version}}）。このクライアントは protocol v2 / db-v6 をサポートしています。",
+      "unsaved": "未保存",
+      "saved": "保存済み",
+      "unsavedChanges": "先に設定を保存してください",
+      "saveBeforeSync": "アップロード/ダウンロードを有効にするには、先に設定を保存してください。",
+      "fetchingRemote": "リモート情報を取得中...",
+      "fetchRemoteFailed": "リモート情報の取得に失敗しました。設定とネットワークを確認してください。",
+      "notConfigured": "S3同期が設定されていません",
+      "disabled": "S3同期が無効です",
+      "confirmDownload": {
+        "title": "S3 から復元",
+        "deviceName": "アップロード元",
+        "createdAt": "アップロード日時",
+        "artifacts": "内容",
+        "warning": "ローカルのすべてのデータとスキル設定が上書きされます",
+        "confirm": "復元を実行"
+      },
+      "confirmUpload": {
+        "title": "S3 にアップロード",
+        "content": "以下の内容を S3 バケットに同期します：",
+        "dbItem": "データベース（すべてのプロバイダー設定とデータ）",
+        "skillsItem": "スキル（すべてのカスタムスキル）",
+        "targetPath": "保存先オブジェクトパス",
+        "existingData": "クラウドの既存データ",
+        "deviceName": "アップロード元",
+        "createdAt": "アップロード日時",
+        "warning": "この S3 パスにある既存の同期データが上書きされます",
+        "confirm": "アップロードを実行"
+      }
+    },
     "autoReload": "データを更新しました",
     "languageOptionChinese": "简体中文",
     "languageOptionTraditionalChinese": "繁體中文",
@@ -561,6 +690,9 @@
     "enableClaudePluginIntegrationDescription": "オンにすると VS Code の Claude Code 拡張のプロバイダーも同期します",
     "skipClaudeOnboarding": "Claude Code の初回確認をスキップ",
     "skipClaudeOnboardingDescription": "オンにすると Claude Code の初回インストール確認をスキップします",
+    "codexAuth": "Codex アプリ拡張",
+    "preserveCodexOfficialAuthOnSwitch": "サードパーティ切替時に公式ログインを保持",
+    "preserveCodexOfficialAuthOnSwitchDescription": "オンにすると、サードパーティ API を使用する際に Codex アプリの公式プラグインやスマホからのリモート操作などの機能を利用できます。",
     "appVisibility": {
       "title": "ホームページ表示",
       "description": "ホームページに表示するアプリを選択",
@@ -1100,8 +1232,11 @@
     "authJson": "auth.json (JSON) *",
     "authJsonPlaceholder": "{\n  \"OPENAI_API_KEY\": \"sk-your-api-key-here\"\n}",
     "authJsonHint": "Codex の auth.json 設定内容",
+    "authJsonStorageHint": "プロキシ引き継ぎ中は保存済みの auth を表示しており、実際の auth.json ではありません。",
     "configToml": "config.toml (TOML)",
     "configTomlHint": "Codex の config.toml 設定内容",
+    "configTomlStorageHint": "プロキシ引き継ぎ中は保存済みの config を表示しており、実際の config.toml ではありません。",
+    "proxyTakeoverStorageNotice": "💡 このアプリはプロキシ引き継ぎ中です。ここで編集しているのは保存済みのプロバイダー設定で、実際の live 設定はすでにプロキシが一時的に引き継いでいます。",
     "writeCommonConfig": "共通設定を書き込む",
     "editCommonConfig": "共通設定を編集",
     "editCommonConfigTitle": "Codex 共通設定スニペットを編集",
@@ -1233,7 +1368,6 @@
     "cacheTokens": "キャッシュトークン",
     "realTotal": "実消費トークン",
     "realTotalHint": "Input + Output + キャッシュ書込 + キャッシュ命中",
-    "tokensSuffix": "tokens",
     "freshInput": "新規入力",
     "cacheHitRate": "キャッシュヒット率",
     "requestLogs": "リクエストログ",
@@ -1262,7 +1396,8 @@
       "all": "すべて",
       "claude": "Claude Code",
       "codex": "Codex",
-      "gemini": "Gemini"
+      "gemini": "Gemini",
+      "opencode": "OpenCode"
     },
     "rawInputLabel": "原始",
     "dataSources": "データソース",
@@ -1271,7 +1406,8 @@
       "session_log": "セッションログ",
       "codex_db": "Codex DB",
       "codex_session": "Codex セッション",
-      "gemini_session": "Gemini セッション"
+      "gemini_session": "Gemini セッション",
+      "opencode_session": "OpenCode セッション"
     },
     "sessionSync": {
       "trigger": "セッションログを同期",
@@ -1375,9 +1511,11 @@
     "templateCopilot": "GitHub Copilot",
     "templateTokenPlan": "Token Plan",
     "templateBalance": "公式",
+    "templateOfficialSubscription": "公式サブスクリプション",
     "copilotAutoAuth": "OAuth 認証を自動使用、手動設定不要",
     "tokenPlanHint": "プロバイダーのAPI KeyとBase URLを使用してToken Planクォータを自動クエリ",
     "balanceHint": "プロバイダーのAPI Keyを使用してアカウント残高を自動クエリ",
+    "officialSubscriptionHint": "ローカル CLI の OAuth 認証情報を読み取り、公式 API でサブスクリプション枠を照会します。既定では無効で、有効化した後のみリクエストします。",
     "resetDate": "リセット日",
     "premiumRequests": "Premium リクエスト",
     "credentialsConfig": "認証情報",

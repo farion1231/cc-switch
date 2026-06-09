@@ -18,7 +18,7 @@ use super::{
     providers::{
         codex_chat_history::record_responses_sse_stream, get_adapter, get_claude_api_format,
         streaming::create_anthropic_sse_stream,
-        streaming_codex_chat::create_responses_sse_stream_from_chat,
+        streaming_codex_chat::create_responses_sse_stream_from_chat_with_context,
         streaming_gemini::create_anthropic_sse_stream_from_gemini,
         streaming_responses::create_anthropic_sse_stream_from_responses, transform,
         transform_codex_chat, transform_gemini, transform_responses,
@@ -522,7 +522,7 @@ pub async fn handle_chat_completions(
                 ctx.provider = provider;
             }
             log_forward_error(&state, &ctx, is_stream, &err.error);
-            return Err(err.error);
+            return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
         }
     };
 
@@ -566,6 +566,7 @@ pub async fn handle_responses(
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
 
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
@@ -586,7 +587,7 @@ pub async fn handle_responses(
                 ctx.provider = provider;
             }
             log_forward_error(&state, &ctx, is_stream, &err.error);
-            return Err(err.error);
+            return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
         }
     };
 
@@ -601,6 +602,7 @@ pub async fn handle_responses(
             &state,
             is_stream,
             connection_guard,
+            codex_tool_context,
         )
         .await;
     }
@@ -641,6 +643,7 @@ pub async fn handle_responses_compact(
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
 
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
@@ -661,7 +664,7 @@ pub async fn handle_responses_compact(
                 ctx.provider = provider;
             }
             log_forward_error(&state, &ctx, is_stream, &err.error);
-            return Err(err.error);
+            return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
         }
     };
 
@@ -676,6 +679,7 @@ pub async fn handle_responses_compact(
             &state,
             is_stream,
             connection_guard,
+            codex_tool_context,
         )
         .await;
     }
@@ -696,6 +700,7 @@ async fn handle_codex_chat_to_responses_transform(
     state: &ProxyState,
     is_stream: bool,
     connection_guard: Option<ActiveConnectionGuard>,
+    tool_context: transform_codex_chat::CodexToolContext,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
 
@@ -708,7 +713,7 @@ async fn handle_codex_chat_to_responses_transform(
 
     if is_stream || response.is_sse() {
         let stream = response.bytes_stream();
-        let sse_stream = create_responses_sse_stream_from_chat(stream);
+        let sse_stream = create_responses_sse_stream_from_chat_with_context(stream, tool_context);
         let sse_stream = record_responses_sse_stream(sse_stream, state.codex_chat_history.clone());
 
         let usage_collector = if usage_logging_enabled(state) {
@@ -790,11 +795,14 @@ async fn handle_codex_chat_to_responses_transform(
         log::error!("[Codex] 解析 Chat 上游响应失败: {e}, body: {body_str}");
         ProxyError::TransformError(format!("Failed to parse upstream chat response: {e}"))
     })?;
-    let responses_response = transform_codex_chat::chat_completion_to_response(chat_response)
-        .map_err(|e| {
-            log::error!("[Codex] Chat → Responses 响应转换失败: {e}");
-            e
-        })?;
+    let responses_response = transform_codex_chat::chat_completion_to_response_with_context(
+        chat_response,
+        &tool_context,
+    )
+    .map_err(|e| {
+        log::error!("[Codex] Chat → Responses 响应转换失败: {e}");
+        e
+    })?;
     state
         .codex_chat_history
         .record_response(&responses_response)
@@ -924,6 +932,195 @@ async fn handle_codex_chat_error_response(
         log::error!("[Codex] 构建 Responses 错误响应失败: {e}");
         ProxyError::Internal(format!("Failed to build response: {e}"))
     })
+}
+
+/// 把转发层（非上游响应）的失败构造成富化的 Codex 错误响应。
+///
+/// 与 `handle_codex_chat_error_response`（处理上游真实错误响应、复制上游头）不同，
+/// 这里没有上游响应可参照，只产出一个 `application/json` 错误体。状态码走
+/// `map_proxy_error_to_status`，该函数已与 `ProxyError::into_response` 对齐。
+///
+/// 注意：`endpoint` 经 `endpoint_with_query` 可能携带 query（如 `?beta=true`）并被
+/// 原样写入错误体。当前 Codex 端点不在 query 里放凭证，故安全；若将来复用到
+/// query 携带密钥的端点（如 Gemini 的 `?key=`），需先脱敏再回显。
+fn build_codex_proxy_error_response(
+    ctx: &RequestContext,
+    endpoint: &str,
+    error: &ProxyError,
+) -> Result<axum::response::Response, ProxyError> {
+    let status = axum::http::StatusCode::from_u16(map_proxy_error_to_status(error))
+        .unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+    let body = codex_proxy_error_json(&ctx.provider.name, &ctx.request_model, endpoint, error);
+    let body = serde_json::to_vec(&body).map_err(|e| {
+        log::error!("[Codex] 序列化代理错误体失败: {e}");
+        ProxyError::Internal(format!("Failed to serialize proxy error: {e}"))
+    })?;
+
+    axum::response::Response::builder()
+        .status(status)
+        .header(
+            axum::http::header::CONTENT_TYPE,
+            axum::http::HeaderValue::from_static("application/json"),
+        )
+        .body(axum::body::Body::from(body))
+        .map_err(|e| {
+            log::error!("[Codex] 构建代理错误响应失败: {e}");
+            ProxyError::Internal(format!("Failed to build proxy error response: {e}"))
+        })
+}
+
+fn codex_proxy_error_json(
+    provider_name: &str,
+    request_model: &str,
+    endpoint: &str,
+    error: &ProxyError,
+) -> Value {
+    let (mut body, upstream_status) = match error {
+        ProxyError::UpstreamError { status, body } => {
+            let parsed_body = body
+                .as_deref()
+                .map(|body| serde_json::from_str::<Value>(body).unwrap_or_else(|_| json!(body)));
+            (
+                transform_codex_chat::chat_error_to_response_error(parsed_body.as_ref()),
+                Some(*status),
+            )
+        }
+        _ => (
+            json!({
+                "error": {
+                    "message": get_error_message(error),
+                    "type": "proxy_error",
+                    "code": codex_proxy_error_code(error),
+                    "param": Value::Null,
+                }
+            }),
+            None,
+        ),
+    };
+
+    let Some(error_obj) = body
+        .get_mut("error")
+        .and_then(|value| value.as_object_mut())
+    else {
+        return body;
+    };
+
+    let message = if upstream_status == Some(413) {
+        // 413 来自上游渠道商的网关（典型是 nginx 的 client_max_body_size），不是 CC
+        // Switch 本地代理的限制（本地 DefaultBodyLimit 已放到 200MB）。上游响应体往往是
+        // 一整段 nginx HTML，对用户毫无价值，这里替换成明确指向上游 + 可操作的指引，
+        // 避免「以为是 CC Switch 封装了 nginx / 是本地代理的锅」这种反复出现的误解。
+        format!(
+            concat!(
+                "Upstream provider rejected the request with HTTP 413 (Payload Too Large). ",
+                "The request body exceeds the upstream gateway's size limit; this is the ",
+                "provider's server-side limit, not a CC Switch limit. ",
+                "Provider: {provider}; model: {model}; endpoint: {endpoint}. ",
+                "To recover, shrink the request: run /compact, remove large pasted logs or ",
+                "inline images, or ask the provider to raise its request body limit ",
+                "(e.g. nginx client_max_body_size)."
+            ),
+            provider = provider_name,
+            model = request_model,
+            endpoint = endpoint,
+        )
+    } else {
+        let cause = error_obj
+            .get("message")
+            .and_then(|value| value.as_str())
+            .map(ToString::to_string)
+            .filter(|message| !message.trim().is_empty())
+            .unwrap_or_else(|| get_error_message(error));
+        let status_fragment = upstream_status
+            .map(|status| format!("; upstream_status: HTTP {status}"))
+            .unwrap_or_default();
+        format!(
+            "CC Switch local proxy failed while handling Codex endpoint {endpoint}. Provider: {provider_name}; model: {request_model}{status_fragment}; cause: {cause}"
+        )
+    };
+
+    error_obj.insert(
+        "message".to_string(),
+        Value::String(compact_error_message(&message, 1800)),
+    );
+
+    if error_obj
+        .get("type")
+        .and_then(|value| value.as_str())
+        .map(|value| value.trim().is_empty())
+        .unwrap_or(true)
+    {
+        error_obj.insert("type".to_string(), Value::String("proxy_error".to_string()));
+    }
+
+    if error_obj.get("code").map(Value::is_null).unwrap_or(true) {
+        error_obj.insert(
+            "code".to_string(),
+            Value::String(codex_proxy_error_code(error).to_string()),
+        );
+    }
+
+    if !error_obj.contains_key("param") {
+        error_obj.insert("param".to_string(), Value::Null);
+    }
+
+    error_obj.insert(
+        "provider".to_string(),
+        Value::String(provider_name.to_string()),
+    );
+    error_obj.insert(
+        "model".to_string(),
+        Value::String(request_model.to_string()),
+    );
+    // 仅用于 Codex 本地路由；不要复用到 query 可能携带凭证的端点。
+    error_obj.insert("endpoint".to_string(), Value::String(endpoint.to_string()));
+    if let Some(status) = upstream_status {
+        error_obj.insert(
+            "upstream_status".to_string(),
+            Value::Number(serde_json::Number::from(status)),
+        );
+    }
+
+    body
+}
+
+fn codex_proxy_error_code(error: &ProxyError) -> &'static str {
+    match error {
+        ProxyError::ForwardFailed(_) => "cc_switch_forward_failed",
+        ProxyError::Timeout(_) | ProxyError::StreamIdleTimeout(_) => "cc_switch_timeout",
+        ProxyError::NoAvailableProvider => "cc_switch_no_available_provider",
+        ProxyError::AllProvidersCircuitOpen => "cc_switch_all_providers_circuit_open",
+        ProxyError::NoProvidersConfigured => "cc_switch_no_providers_configured",
+        ProxyError::MaxRetriesExceeded => "cc_switch_max_retries_exceeded",
+        ProxyError::ProviderUnhealthy(_) => "cc_switch_provider_unhealthy",
+        ProxyError::ConfigError(_) => "cc_switch_config_error",
+        ProxyError::TransformError(_) => "cc_switch_transform_error",
+        ProxyError::InvalidRequest(_) => "cc_switch_invalid_request",
+        ProxyError::AuthError(_) => "cc_switch_auth_error",
+        ProxyError::UpstreamError { .. } => "cc_switch_upstream_error",
+        ProxyError::DatabaseError(_) => "cc_switch_database_error",
+        ProxyError::Internal(_) => "cc_switch_internal_error",
+        ProxyError::AlreadyRunning
+        | ProxyError::NotRunning
+        | ProxyError::BindFailed(_)
+        | ProxyError::StopTimeout
+        | ProxyError::StopFailed(_) => "cc_switch_proxy_error",
+    }
+}
+
+fn compact_error_message(message: &str, max_chars: usize) -> String {
+    let normalized = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.chars().count() <= max_chars {
+        return normalized;
+    }
+
+    let truncated = normalized
+        .chars()
+        .take(max_chars)
+        .collect::<String>()
+        .trim_end()
+        .to_string();
+    format!("{truncated}…(truncated)")
 }
 
 // ============================================================================
@@ -1176,7 +1373,10 @@ async fn log_usage(
 
 #[cfg(test)]
 mod tests {
-    use super::{responses_sse_to_response_value, should_use_claude_transform_streaming};
+    use super::{
+        codex_proxy_error_json, responses_sse_to_response_value,
+        should_use_claude_transform_streaming,
+    };
     use crate::proxy::ProxyError;
 
     #[test]
@@ -1262,5 +1462,71 @@ data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"upstr
 data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n\n";
 
         assert!(responses_sse_to_response_value(sse).is_err());
+    }
+
+    #[test]
+    fn codex_proxy_forward_error_includes_context_and_cause() {
+        let error = ProxyError::ForwardFailed("连接失败: dns lookup failed".to_string());
+        let body = codex_proxy_error_json("DeepSeek", "deepseek-chat", "/responses", &error);
+
+        let message = body["error"]["message"].as_str().unwrap();
+        assert!(message.contains("CC Switch local proxy failed"));
+        assert!(message.contains("DeepSeek"));
+        assert!(message.contains("deepseek-chat"));
+        assert!(message.contains("/responses"));
+        assert!(message.contains("dns lookup failed"));
+        assert_eq!(body["error"]["code"], "cc_switch_forward_failed");
+        assert_eq!(body["error"]["provider"], "DeepSeek");
+        assert_eq!(body["error"]["model"], "deepseek-chat");
+    }
+
+    #[test]
+    fn codex_proxy_upstream_error_normalizes_nonstandard_body() {
+        let error = ProxyError::UpstreamError {
+            status: 502,
+            body: Some(
+                r#"{"base_resp":{"status_code":2013,"status_msg":"upstream gateway failed"}}"#
+                    .to_string(),
+            ),
+        };
+        let body = codex_proxy_error_json("MiniMax", "abab6.5s", "/responses", &error);
+
+        let message = body["error"]["message"].as_str().unwrap();
+        assert!(message.contains("upstream_status: HTTP 502"));
+        assert!(message.contains("upstream gateway failed"));
+        assert_eq!(body["error"]["code"], 2013);
+        assert_eq!(body["error"]["upstream_status"], 502);
+    }
+
+    #[test]
+    fn codex_proxy_413_points_to_upstream_not_local_proxy() {
+        // 模拟上游渠道商 nginx 因 client_max_body_size 返回的 413 HTML 页面
+        // （见 issue #666：长上下文 / 大图 / 大日志撞上游体积上限）
+        let error = ProxyError::UpstreamError {
+            status: 413,
+            body: Some(
+                "<html>\r\n<head><title>413 Request Entity Too Large</title></head>\r\n\
+                 <body>\r\n<center><h1>413 Request Entity Too Large</h1></center>\r\n\
+                 <hr><center>nginx/1.29.6</center>\r\n</body>\r\n</html>"
+                    .to_string(),
+            ),
+        };
+        let body = codex_proxy_error_json("HCAI", "gpt-5.5", "/responses", &error);
+
+        let message = body["error"]["message"].as_str().unwrap();
+        // 不再误导成「本地代理失败」
+        assert!(!message.contains("CC Switch local proxy failed"));
+        // 明确指向上游 + 体积超限 + 可操作指引
+        assert!(message.contains("413"));
+        assert!(message.to_lowercase().contains("upstream"));
+        assert!(message.contains("/compact"));
+        // 关键：不把整段 nginx HTML 回显给用户
+        assert!(!message.contains("<html>"));
+        assert!(!message.contains("nginx/1.29.6"));
+        // 结构化字段仍然保留，便于程序化消费 / UI 呈现
+        assert_eq!(body["error"]["upstream_status"], 413);
+        assert_eq!(body["error"]["provider"], "HCAI");
+        assert_eq!(body["error"]["model"], "gpt-5.5");
+        assert_eq!(body["error"]["endpoint"], "/responses");
     }
 }

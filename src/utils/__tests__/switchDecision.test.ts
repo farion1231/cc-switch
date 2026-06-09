@@ -5,19 +5,13 @@ import {
   type SwitchDecisionInput,
 } from "../switchDecision";
 
-/**
- * Typed expectation helper: keeps the expected literal constrained to the
- * SwitchAction union without relying on a (non-existent) type argument on
- * vitest's `toBe`.
- */
+// Constrains the expected literal to the SwitchAction union (vitest's `toBe`
+// takes no type argument).
 function expectAction(actual: SwitchAction, expected: SwitchAction): void {
   expect(actual).toBe(expected);
 }
 
-/**
- * Helper to build a fully-specified input with sensible defaults so each
- * test only states the fields it cares about.
- */
+// Defaults so each test only states the fields it cares about.
 function makeInput(
   overrides: Partial<SwitchDecisionInput> = {},
 ): SwitchDecisionInput {
@@ -32,7 +26,7 @@ function makeInput(
 }
 
 describe("decideSwitchAction — §4 state machine", () => {
-  it("official + takeover + autoDisable=false → hardBlock", () => {
+  it("official + takeover + autoDisable=false → confirmDisable", () => {
     expectAction(
       decideSwitchAction(
         makeInput({
@@ -41,11 +35,11 @@ describe("decideSwitchAction — §4 state machine", () => {
           autoDisable: false,
         }),
       ),
-      "hardBlock",
+      "confirmDisable",
     );
   });
 
-  it("official + takeover + autoDisable=true → confirmDisable", () => {
+  it("official + takeover + autoDisable=true → directDisable (remembered)", () => {
     expectAction(
       decideSwitchAction(
         makeInput({
@@ -54,7 +48,7 @@ describe("decideSwitchAction — §4 state machine", () => {
           autoDisable: true,
         }),
       ),
-      "confirmDisable",
+      "directDisable",
     );
   });
 
@@ -71,7 +65,7 @@ describe("decideSwitchAction — §4 state machine", () => {
     );
   });
 
-  it("needsRouting + !takeover + autoEnable=true → direct", () => {
+  it("needsRouting + !takeover + autoEnable=true → directEnable (remembered)", () => {
     expectAction(
       decideSwitchAction(
         makeInput({
@@ -80,7 +74,7 @@ describe("decideSwitchAction — §4 state machine", () => {
           autoEnable: true,
         }),
       ),
-      "direct",
+      "directEnable",
     );
   });
 
@@ -126,7 +120,7 @@ describe("decideSwitchAction — §4 state machine", () => {
   });
 
   describe("branch precedence: official+takeover wins over needsRouting", () => {
-    it("official + takeover + needsRouting + autoDisable=false → hardBlock", () => {
+    it("official + takeover + needsRouting + autoDisable=false → confirmDisable", () => {
       expectAction(
         decideSwitchAction(
           makeInput({
@@ -134,16 +128,14 @@ describe("decideSwitchAction — §4 state machine", () => {
             isProxyTakeover: true,
             needsRouting: true,
             autoDisable: false,
-            // autoEnable=true would point the second branch at "direct";
-            // precedence must still yield the first branch.
             autoEnable: true,
           }),
         ),
-        "hardBlock",
+        "confirmDisable",
       );
     });
 
-    it("official + takeover + needsRouting + autoDisable=true → confirmDisable", () => {
+    it("official + takeover + needsRouting + autoDisable=true → directDisable (remembered)", () => {
       expectAction(
         decideSwitchAction(
           makeInput({
@@ -154,7 +146,24 @@ describe("decideSwitchAction — §4 state machine", () => {
             autoEnable: true,
           }),
         ),
-        "confirmDisable",
+        "directDisable",
+      );
+    });
+
+    it("official + !takeover + needsRouting → direct (official never enables routing)", () => {
+      // Safety invariant: an official-class provider is never routed. A
+      // contradictory config that is both official (broad) and needsRouting
+      // must NOT reach confirmEnable.
+      expectAction(
+        decideSwitchAction(
+          makeInput({
+            isOfficial: true,
+            isProxyTakeover: false,
+            needsRouting: true,
+            autoEnable: true,
+          }),
+        ),
+        "direct",
       );
     });
   });
@@ -162,16 +171,53 @@ describe("decideSwitchAction — §4 state machine", () => {
   describe("exhaustive truth table (all 32 combinations)", () => {
     const bools = [false, true] as const;
 
+    // Independent oracle expressed as DATA, not as the implementation's nested-if
+    // flow — a copy-pasted oracle could mirror a source bug and stay green. Only
+    // the four non-"direct" situations are listed; everything else is "direct".
+    // Rules are mutually exclusive, so order does not matter.
+    const RULES: Array<{
+      when: Partial<SwitchDecisionInput>;
+      then: SwitchAction;
+    }> = [
+      // Official under takeover → must leave routing before switching.
+      {
+        when: { isOfficial: true, isProxyTakeover: true, autoDisable: true },
+        then: "directDisable",
+      },
+      {
+        when: { isOfficial: true, isProxyTakeover: true, autoDisable: false },
+        then: "confirmDisable",
+      },
+      // Non-official that needs routing, not yet routed → enable routing.
+      {
+        when: {
+          isOfficial: false,
+          needsRouting: true,
+          isProxyTakeover: false,
+          autoEnable: true,
+        },
+        then: "directEnable",
+      },
+      {
+        when: {
+          isOfficial: false,
+          needsRouting: true,
+          isProxyTakeover: false,
+          autoEnable: false,
+        },
+        then: "confirmEnable",
+      },
+    ];
+
     function expected(input: SwitchDecisionInput): SwitchAction {
-      // Independent reference implementation of §4, used to cross-check
-      // every combination of the five boolean inputs.
-      if (input.isOfficial && input.isProxyTakeover) {
-        return input.autoDisable ? "confirmDisable" : "hardBlock";
-      }
-      if (input.needsRouting && !input.isProxyTakeover) {
-        return input.autoEnable ? "direct" : "confirmEnable";
-      }
-      return "direct";
+      const match = RULES.find((rule) =>
+        (
+          Object.entries(rule.when) as Array<
+            [keyof SwitchDecisionInput, boolean]
+          >
+        ).every(([key, value]) => input[key] === value),
+      );
+      return match ? match.then : "direct";
     }
 
     for (const needsRouting of bools) {

@@ -106,15 +106,15 @@ CC Switch User Manual
 
 ## Version Information
 
-- Documentation version: v3.15.0
-- Last updated: 2026-05-16
-- Applicable to CC Switch v3.15.0+
+- Documentation version: v3.16.0
+- Last updated: 2026-05-29
+- Applicable to CC Switch v3.16.0+
 
-### v3.15.0 Highlights
+### v3.16.0 Highlights
 
-- **First-class Claude Desktop panel**: supports third-party providers, direct / model mapping modes, Copilot / Codex OAuth reuse, and 3P profile writing. See [2.6 Claude Desktop](./2-providers/2.6-claude-desktop.md)
-- **Role-based model mapping**: adapts Claude Desktop model validation with Sonnet / Opus / Haiku routes and `supports1m`
-- **Claude Desktop local routing**: provides a local gateway at `127.0.0.1:15721/claude-desktop` for providers that need conversion
+- **Codex Chat Completions routing**: route Chat-only providers such as DeepSeek, Kimi, GLM, and MiniMax through Codex. See [2.1 Add Provider](./2-providers/2.1-add.md)
+- **Managed CLI tool lifecycle**: install, update, update all, and diagnose Claude / Codex / Gemini / OpenCode / OpenClaw / Hermes from Settings / About. See [1.5 Personalization](./1-getting-started/1.5-settings.md)
+- **Provider and model refresh**: new partner presets, refreshed default models and pricing, Claude Opus 4.8 defaults, and GPT 5.5 defaults where applicable
 - **Routing support badges**: Claude Code / Codex provider cards indicate whether a provider can be served through Local Routing
 - **Codex OAuth live model discovery**: ChatGPT Codex providers fetch available models from the ChatGPT backend on demand
 - **Filter-driven Usage Hero**: shows cache-normalized real total tokens and cache hit rate, updating with date / provider / model filters — see [4.4 Usage Statistics](./4-proxy/4.4-usage.md)
@@ -124,7 +124,7 @@ CC Switch User Manual
 - **Per-App Tray Submenus**: Claude / Codex / Gemini submenus show the current provider and available usage summaries — see [2.2 Switch Provider](./2-providers/2.2-switch.md)
 - **Skills Discovery & Batch Updates**: SHA-256 update detection, batch updates, skills.sh public registry search — see [3.3 Skills Management](./3-extensions/3.3-skills.md)
 - **Full URL Endpoint Mode**: Advanced option to treat `base_url` as the full upstream endpoint — see [2.1 Add Provider](./2-providers/2.1-add.md)
-- **OpenCode / OpenClaw Stream Check Coverage**: Stream Check covers Claude / Codex / Gemini / OpenCode / OpenClaw — see [4.5 Model Test](./4-proxy/4.5-model-test.md)
+- **OpenCode / OpenClaw / Hermes Stream Check Coverage**: Stream Check covers Claude / Codex / Gemini / OpenCode / OpenClaw / Hermes — see [4.5 Model Test](./4-proxy/4.5-model-test.md)
 
 ## Contributing
 

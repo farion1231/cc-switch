@@ -66,7 +66,7 @@ export function ConfirmDialog({
           </DialogDescription>
         </DialogHeader>
         {checkbox && (
-          <label className="flex cursor-pointer select-none items-center gap-2 text-sm">
+          <label className="flex cursor-pointer select-none items-center gap-2 px-6 pt-3 text-sm">
             <Checkbox
               checked={checkbox.checked}
               onCheckedChange={(v) => checkbox.onChange(v === true)}

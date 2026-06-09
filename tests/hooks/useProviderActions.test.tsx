@@ -192,6 +192,10 @@ describe("useProviderActions", () => {
     expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
     expect(settingsApiGetMock).not.toHaveBeenCalled();
     expect(settingsApiApplyMock).not.toHaveBeenCalled();
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "切换成功，请重启客户端以生效",
+      { closeButton: true },
+    );
   });
 
   it("warns but still switches providers that require proxy when proxy is not running", async () => {
@@ -347,11 +351,23 @@ describe("useProviderActions", () => {
       wrapper,
     });
 
-    await expect(
-      result.current.switchProvider(provider),
-    ).resolves.toBeUndefined();
+    // switchProvider swallows the mutation error and resolves to `false`
+    // (success flag the routing guard relies on to NOT enable takeover).
+    await expect(result.current.switchProvider(provider)).resolves.toBe(false);
     expect(settingsApiGetMock).not.toHaveBeenCalled();
     expect(settingsApiApplyMock).not.toHaveBeenCalled();
+  });
+
+  it("resolves true on a successful switch (success flag for the routing guard)", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider();
+
+    const { result } = renderHook(() => useProviderActions("codex"), {
+      wrapper,
+    });
+
+    await expect(result.current.switchProvider(provider)).resolves.toBe(true);
   });
 
   it("should call delete mutation when calling deleteProvider", async () => {

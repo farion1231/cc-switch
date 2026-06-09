@@ -24,6 +24,7 @@ describe("getProxyRequirement", () => {
       copilot: "notifications.proxyReasonCopilot",
       openAIChat: "notifications.proxyReasonOpenAIChat",
       openAIResponses: "notifications.proxyReasonOpenAIResponses",
+      geminiNative: "notifications.proxyReasonGeminiNative",
       claudeDesktop: "notifications.proxyReasonClaudeDesktop",
       fullUrl: "notifications.proxyReasonFullUrl",
     });
@@ -93,6 +94,17 @@ describe("getProxyRequirement", () => {
       expect(result).toEqual({
         required: true,
         reason: "notifications.proxyReasonOpenAIResponses",
+      });
+    });
+
+    it("requires routing for gemini_native (proxy transforms anthropic↔gemini)", () => {
+      const provider = makeProvider({
+        meta: { apiFormat: "gemini_native" },
+      });
+      const result = getProxyRequirement(provider, "claude" as AppId);
+      expect(result).toEqual({
+        required: true,
+        reason: "notifications.proxyReasonGeminiNative",
       });
     });
 

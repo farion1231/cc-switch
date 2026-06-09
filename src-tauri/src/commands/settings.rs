@@ -21,6 +21,20 @@ fn merge_settings_for_save(
         }
         _ => {}
     }
+    match (&mut incoming.s3_sync, &existing.s3_sync) {
+        // incoming 没有 s3 → 保留现有
+        (None, _) => {
+            incoming.s3_sync = existing.s3_sync.clone();
+        }
+        // incoming 有 s3 但密钥为空，且现有有密钥 → 填回现有密钥
+        (Some(incoming_sync), Some(existing_sync))
+            if incoming_sync.secret_access_key.is_empty()
+                && !existing_sync.secret_access_key.is_empty() =>
+        {
+            incoming_sync.secret_access_key = existing_sync.secret_access_key.clone();
+        }
+        _ => {}
+    }
     if incoming.local_migrations.is_none() {
         incoming.local_migrations = existing.local_migrations.clone();
     } else if let (Some(incoming_migrations), Some(existing_migrations)) =
@@ -103,7 +117,7 @@ mod tests {
     use super::merge_settings_for_save;
     use crate::settings::{
         AppSettings, CodexProviderTemplateMigration, CodexThirdPartyHistoryProviderBucketMigration,
-        LocalMigrations, WebDavSyncSettings,
+        LocalMigrations, S3SyncSettings, WebDavSyncSettings,
     };
 
     #[test]
@@ -223,6 +237,64 @@ mod tests {
         assert_eq!(
             merged.webdav_sync.as_ref().map(|v| v.password.as_str()),
             Some("")
+        );
+    }
+
+    #[test]
+    fn save_settings_should_preserve_existing_s3_when_payload_omits_it() {
+        let existing = AppSettings {
+            s3_sync: Some(S3SyncSettings {
+                bucket: "bucket".to_string(),
+                access_key_id: "ak".to_string(),
+                secret_access_key: "secret".to_string(),
+                ..S3SyncSettings::default()
+            }),
+            ..AppSettings::default()
+        };
+
+        let incoming = AppSettings::default();
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert!(merged.s3_sync.is_some());
+        assert_eq!(
+            merged
+                .s3_sync
+                .as_ref()
+                .map(|v| v.secret_access_key.as_str()),
+            Some("secret")
+        );
+    }
+
+    #[test]
+    fn save_settings_should_preserve_s3_secret_when_incoming_has_empty_secret() {
+        let existing = AppSettings {
+            s3_sync: Some(S3SyncSettings {
+                bucket: "bucket".to_string(),
+                access_key_id: "ak".to_string(),
+                secret_access_key: "secret".to_string(),
+                ..S3SyncSettings::default()
+            }),
+            ..AppSettings::default()
+        };
+
+        let incoming = AppSettings {
+            s3_sync: Some(S3SyncSettings {
+                bucket: "bucket".to_string(),
+                access_key_id: "ak".to_string(),
+                secret_access_key: "".to_string(),
+                ..S3SyncSettings::default()
+            }),
+            ..AppSettings::default()
+        };
+
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert_eq!(
+            merged
+                .s3_sync
+                .as_ref()
+                .map(|v| v.secret_access_key.as_str()),
+            Some("secret")
         );
     }
 
