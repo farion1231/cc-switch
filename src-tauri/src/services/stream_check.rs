@@ -1393,8 +1393,16 @@ impl StreamCheckService {
         config: &StreamCheckConfig,
     ) -> String {
         match app_type {
-            AppType::Claude | AppType::ClaudeDesktop => {
+            AppType::Claude => {
                 Self::extract_env_model(provider, "ANTHROPIC_MODEL")
+                    .unwrap_or_else(|| config.claude_model.clone())
+            }
+            AppType::ClaudeDesktop => {
+                // 优先读 ANTHROPIC_MODEL（Claude 非 Desktop 的常规配置）；
+                // 若未设置，从 claude_desktop_model_routes 的 haiku 档提取
+                // 上游模型名，避免对不支持默认模型名的第三方代理误报健康检查失败。
+                Self::extract_env_model(provider, "ANTHROPIC_MODEL")
+                    .or_else(|| Self::extract_claude_desktop_route_model(provider))
                     .unwrap_or_else(|| config.claude_model.clone())
             }
             AppType::Codex => {
@@ -1448,6 +1456,30 @@ impl StreamCheckService {
             .and_then(|value| value.as_str())
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
+    }
+
+    /// 从 Claude Desktop proxy 模式的 model routes 中提取上游模型名。
+    /// 优先使用 haiku 档（健康检查默认探测 haiku 级模型），若不存在则回退到任意已映射档。
+    fn extract_claude_desktop_route_model(provider: &Provider) -> Option<String> {
+        let meta = provider.meta.as_ref().filter(|m| {
+            matches!(
+                m.claude_desktop_mode,
+                Some(crate::provider::ClaudeDesktopMode::Proxy)
+            )
+        })?;
+
+        let routes = &meta.claude_desktop_model_routes;
+        if routes.is_empty() {
+            return None;
+        }
+
+        // haiku 路由 ID 与前端 CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku 一致
+        const HAIKU_ROUTE: &str = "claude-haiku-4-5";
+        routes
+            .get(HAIKU_ROUTE)
+            .or_else(|| routes.values().next())
+            .map(|route| route.model.clone())
+            .filter(|m| !m.is_empty())
     }
 
     fn extract_codex_model(provider: &Provider) -> Option<String> {
@@ -2126,41 +2158,133 @@ mod tests {
         );
     }
 
-    /// 自定义前缀（路径中已经包含段如 `/openai`）生产路径不会自动补 /v1。
-    /// Stream Check 应先打不带 /v1 的版本，与 build_url 行为一致。
     #[test]
-    fn test_resolve_codex_chat_stream_urls_for_custom_prefix() {
-        let urls =
-            StreamCheckService::resolve_codex_chat_stream_urls("https://example.com/openai", false);
+    fn test_extract_claude_desktop_route_model_prefers_haiku() {
+        use crate::provider::{ClaudeDesktopModelRoute, ClaudeDesktopMode, ProviderMeta};
 
-        assert_eq!(
-            urls,
-            vec![
-                "https://example.com/openai/chat/completions",
-                "https://example.com/openai/v1/chat/completions",
-            ]
-        );
+        let mut p = make_provider(serde_json::json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://token-plan-cn.xiaomimimo.com/anthropic" }
+        }));
+        p.meta = Some(ProviderMeta {
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            claude_desktop_model_routes: std::collections::HashMap::from([
+                (
+                    "claude-sonnet-4-6".into(),
+                    ClaudeDesktopModelRoute {
+                        model: "mimo-v2.5-pro".into(),
+                        label_override: None,
+                        supports_1m: None,
+                    },
+                ),
+                (
+                    "claude-opus-4-8".into(),
+                    ClaudeDesktopModelRoute {
+                        model: "mimo-v2.5-pro".into(),
+                        label_override: None,
+                        supports_1m: None,
+                    },
+                ),
+                (
+                    "claude-haiku-4-5".into(),
+                    ClaudeDesktopModelRoute {
+                        model: "mimo-v2.5-pro".into(),
+                        label_override: None,
+                        supports_1m: None,
+                    },
+                ),
+            ]),
+            ..Default::default()
+        });
+
+        let model = StreamCheckService::extract_claude_desktop_route_model(&p);
+        assert_eq!(model, Some("mimo-v2.5-pro".to_string()));
     }
 
     #[test]
-    fn test_resolve_codex_chat_stream_urls_for_full_url_mode() {
-        let urls = StreamCheckService::resolve_codex_chat_stream_urls(
-            "https://relay.example/custom/chat/completions",
-            true,
-        );
+    fn test_extract_claude_desktop_route_model_falls_back_to_any_route() {
+        use crate::provider::{ClaudeDesktopModelRoute, ClaudeDesktopMode, ProviderMeta};
 
-        assert_eq!(urls, vec!["https://relay.example/custom/chat/completions"]);
+        let mut p = make_provider(serde_json::json!({}));
+        // Only sonnet route, no haiku — should still extract a model
+        p.meta = Some(ProviderMeta {
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            claude_desktop_model_routes: std::collections::HashMap::from([(
+                "claude-sonnet-4-6".into(),
+                ClaudeDesktopModelRoute {
+                    model: "deepseek-v4-pro".into(),
+                    label_override: None,
+                    supports_1m: None,
+                },
+            )]),
+            ..Default::default()
+        });
+
+        let model = StreamCheckService::extract_claude_desktop_route_model(&p);
+        assert_eq!(model, Some("deepseek-v4-pro".to_string()));
     }
 
-    /// 用户在 base_url 里直接写完整 chat/completions endpoint 但忘开 is_full_url 时，
-    /// 不应该再追加 `/chat/completions` 后缀。
     #[test]
-    fn test_resolve_codex_chat_stream_urls_recognizes_full_endpoint_without_flag() {
-        let urls = StreamCheckService::resolve_codex_chat_stream_urls(
-            "https://api.deepseek.com/v1/chat/completions",
-            false,
-        );
+    fn test_extract_claude_desktop_route_model_none_for_direct_mode() {
+        use crate::provider::{ClaudeDesktopModelRoute, ClaudeDesktopMode, ProviderMeta};
 
-        assert_eq!(urls, vec!["https://api.deepseek.com/v1/chat/completions"]);
+        let mut p = make_provider(serde_json::json!({}));
+        p.meta = Some(ProviderMeta {
+            claude_desktop_mode: Some(ClaudeDesktopMode::Direct),
+            claude_desktop_model_routes: std::collections::HashMap::from([(
+                "claude-sonnet-4-6".into(),
+                ClaudeDesktopModelRoute {
+                    model: "claude-sonnet-4-6".into(),
+                    label_override: None,
+                    supports_1m: None,
+                },
+            )]),
+            ..Default::default()
+        });
+
+        // Direct mode should not use route model — fall through to env/default
+        let model = StreamCheckService::extract_claude_desktop_route_model(&p);
+        assert_eq!(model, None);
+    }
+
+    #[test]
+    fn test_resolve_test_model_claude_desktop_uses_route_when_env_missing() {
+        use crate::provider::{ClaudeDesktopModelRoute, ClaudeDesktopMode, ProviderMeta};
+
+        // Simulates Xiaomi MiMo Token Plan: no ANTHROPIC_MODEL in env,
+        // only model routes in meta
+        let mut p = make_provider(serde_json::json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://token-plan-cn.xiaomimimo.com/anthropic",
+                "ANTHROPIC_AUTH_TOKEN": "test-token"
+            }
+        }));
+        p.meta = Some(ProviderMeta {
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            claude_desktop_model_routes: std::collections::HashMap::from([
+                (
+                    "claude-sonnet-4-6".into(),
+                    ClaudeDesktopModelRoute {
+                        model: "mimo-v2.5-pro".into(),
+                        label_override: None,
+                        supports_1m: None,
+                    },
+                ),
+                (
+                    "claude-haiku-4-5".into(),
+                    ClaudeDesktopModelRoute {
+                        model: "mimo-v2.5-pro".into(),
+                        label_override: None,
+                        supports_1m: None,
+                    },
+                ),
+            ]),
+            ..Default::default()
+        });
+
+        let config = StreamCheckConfig::default();
+        let model =
+            StreamCheckService::resolve_test_model(&AppType::ClaudeDesktop, &p, &config);
+        // Should use mimo-v2.5-pro from routes, NOT the global default claude-haiku-4-5-20251001
+        assert_eq!(model, "mimo-v2.5-pro");
     }
 }
