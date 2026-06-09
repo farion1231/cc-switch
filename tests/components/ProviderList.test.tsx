@@ -366,6 +366,7 @@ describe("ProviderList Component", () => {
       const official = createProvider({
         id: "official",
         name: "Official",
+        category: "official",
         settingsConfig: {},
       });
       useDragSortMock.mockReturnValue({
@@ -417,6 +418,48 @@ describe("ProviderList Component", () => {
         switchPromise.resolve(true);
       });
       expect(lastCardProps().isRoutingSwitchPending).toBe(false);
+    });
+
+    // Official detection is the explicit category ONLY — an empty config (no
+    // base URL / key) must NOT be treated as official: it can't be told apart
+    // from a custom provider that just isn't filled in yet.
+    it("does not treat a category-less empty-config provider as official", async () => {
+      const incomplete = createProvider({
+        id: "incomplete",
+        name: "Incomplete",
+        settingsConfig: {},
+      });
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [incomplete],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      const onSwitch = vi.fn(async () => true);
+
+      renderWithQueryClient(
+        <ProviderList
+          providers={{ incomplete }}
+          currentProviderId=""
+          appId="claude"
+          isProxyTakeover
+          onSwitch={onSwitch}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onDuplicate={vi.fn()}
+          onOpenWebsite={vi.fn()}
+        />,
+      );
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("switch-incomplete"));
+      });
+
+      // Direct switch: no confirm dialog, no takeover toggle.
+      expect(
+        screen.queryByRole("button", { name: "关闭路由并切换" }),
+      ).toBeNull();
+      expect(proxyMocks.takeoverMutateAsync).not.toHaveBeenCalled();
+      expect(onSwitch).toHaveBeenCalledWith(incomplete);
     });
 
     // Needs-routing, not yet routed: must switch FIRST, then enable takeover —

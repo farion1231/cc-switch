@@ -18,11 +18,11 @@ import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
-import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import {
-  getProxyRequirement,
-  isOfficialProvider,
-} from "@/utils/providerRouting";
+  extractCodexBaseUrl,
+  extractCodexExperimentalBearerToken,
+} from "@/utils/providerConfigUtils";
+import { getProxyRequirement } from "@/utils/providerRouting";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 
@@ -63,6 +63,41 @@ interface ProviderCardProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+}
+
+/** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
+function isOfficialProvider(provider: Provider, appId: AppId): boolean {
+  if (provider.category === "official") {
+    return true;
+  }
+
+  const config = provider.settingsConfig as Record<string, any>;
+  if (appId === "claude") {
+    const baseUrl = config?.env?.ANTHROPIC_BASE_URL;
+    return !baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === "");
+  }
+  if (appId === "codex") {
+    // 无 OPENAI_API_KEY → 使用 Codex CLI 内置 OAuth（官方）
+    const apiKey = config?.auth?.OPENAI_API_KEY;
+    const bearerToken =
+      typeof config?.config === "string"
+        ? extractCodexExperimentalBearerToken(config.config)
+        : undefined;
+    return (
+      !bearerToken &&
+      (!apiKey || (typeof apiKey === "string" && apiKey.trim() === ""))
+    );
+  }
+  if (appId === "gemini") {
+    // 无 GEMINI_API_KEY 且无 GOOGLE_GEMINI_BASE_URL → Google OAuth 官方模式
+    const apiKey = config?.env?.GEMINI_API_KEY;
+    const baseUrl = config?.env?.GOOGLE_GEMINI_BASE_URL;
+    return (
+      (!apiKey || (typeof apiKey === "string" && apiKey.trim() === "")) &&
+      (!baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === ""))
+    );
+  }
+  return false;
 }
 
 const extractApiUrl = (provider: Provider, fallbackText: string) => {

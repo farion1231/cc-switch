@@ -8,7 +8,6 @@
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import {
-  extractCodexExperimentalBearerToken,
   extractCodexWireApi,
   isCodexChatWireApi,
 } from "@/utils/providerConfigUtils";
@@ -16,50 +15,6 @@ import {
 export interface ProxyRequirement {
   required: boolean;
   reason: string | null;
-}
-
-/**
- * Whether a provider is "official" (direct connection to the vendor's own API,
- * no custom base URL / API key). Official providers must never be routed through
- * the local proxy — doing so risks account bans.
- *
- * Single source of truth shared by the card badge, the switch guard, and the
- * action button's disable logic, so they can never disagree (which would let one
- * path bypass confirmDisable). Broad detection: empty/absent base url counts as
- * official.
- */
-export function isOfficialProvider(provider: Provider, appId: AppId): boolean {
-  if (provider.category === "official") {
-    return true;
-  }
-
-  const config = provider.settingsConfig as Record<string, any>;
-  if (appId === "claude") {
-    const baseUrl = config?.env?.ANTHROPIC_BASE_URL;
-    return !baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === "");
-  }
-  if (appId === "codex") {
-    // 无 OPENAI_API_KEY → 使用 Codex CLI 内置 OAuth（官方）
-    const apiKey = config?.auth?.OPENAI_API_KEY;
-    const bearerToken =
-      typeof config?.config === "string"
-        ? extractCodexExperimentalBearerToken(config.config)
-        : undefined;
-    return (
-      !bearerToken &&
-      (!apiKey || (typeof apiKey === "string" && apiKey.trim() === ""))
-    );
-  }
-  if (appId === "gemini") {
-    // 无 GEMINI_API_KEY 且无 GOOGLE_GEMINI_BASE_URL → Google OAuth 官方模式
-    const apiKey = config?.env?.GEMINI_API_KEY;
-    const baseUrl = config?.env?.GOOGLE_GEMINI_BASE_URL;
-    return (
-      (!apiKey || (typeof apiKey === "string" && apiKey.trim() === "")) &&
-      (!baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === ""))
-    );
-  }
-  return false;
 }
 
 // Stable i18n keys used as the `reason` payload. Callers translate these.
@@ -99,12 +54,11 @@ export const getProxyRequirement = (
   provider: Provider,
   appId: AppId,
 ): ProxyRequirement => {
-  // Intentionally the NARROW check (literal "official" category only): this
-  // answers "does the wire protocol need the proxy to transform it", which
-  // depends on apiFormat, not on empty credentials. The BROAD account-ban safety
-  // ("never route an official-looking provider") is enforced separately by the
-  // switch guard via `isOfficialProvider` + `decideSwitchAction`, so the two
-  // never disagree in a way that could route official traffic.
+  // Official detection is the literal `category === "official"` check ONLY — no
+  // empty-credentials heuristic. That signal can't distinguish "official direct
+  // connection" from "custom provider not filled in yet", so high-cost decisions
+  // (ban protection, routing toggles) must not be built on it. The switch guard
+  // uses the same narrow check, so badge and guard never disagree.
   if (provider.category === "official") {
     return { required: false, reason: null };
   }

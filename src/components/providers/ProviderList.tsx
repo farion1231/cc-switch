@@ -48,10 +48,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi } from "@/lib/api/settings";
 import { useSetProxyTakeoverForApp } from "@/lib/query/proxy";
-import {
-  getProxyRequirement,
-  isOfficialProvider,
-} from "@/utils/providerRouting";
+import { getProxyRequirement } from "@/utils/providerRouting";
 import { decideSwitchAction } from "@/utils/switchDecision";
 
 interface ProviderListProps {
@@ -375,10 +372,13 @@ export function ProviderList({
     }
 
     const requirement = getProxyRequirement(provider, appId);
+    // 官方判定只认显式 category === "official"，不用空字段启发式：base_url/key 缺失
+    // 区分不了「官方直连」和「自定义但还没填完」，封号保护这类高代价决策不能建立在
+    // 这种脆弱信号上（与执行层 useProviderActions 的硬阻断判定保持一致）。
     const action = decideSwitchAction({
       needsRouting: requirement.required,
       isProxyTakeover,
-      isOfficial: isOfficialProvider(provider, appId),
+      isOfficial: provider.category === "official",
       autoEnable: settings?.autoEnableForNeedsRouting ?? false,
       autoDisable: settings?.autoDisableForNoRouting ?? false,
     });

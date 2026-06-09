@@ -151,8 +151,8 @@ describe("decideSwitchAction — §4 state machine", () => {
     });
 
     it("official + !takeover + needsRouting → direct (official never enables routing)", () => {
-      // Safety invariant: an official-class provider is never routed. A
-      // contradictory config that is both official (broad) and needsRouting
+      // Safety invariant: an official provider is never routed. A
+      // contradictory config that is both official and needsRouting
       // must NOT reach confirmEnable.
       expectAction(
         decideSwitchAction(
