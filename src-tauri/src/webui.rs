@@ -18,6 +18,7 @@ use std::{net::SocketAddr, str::FromStr, sync::Arc};
 use tokio::sync::{oneshot, RwLock};
 use tokio::task::JoinHandle;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::ServeDir;
 
 const DEFAULT_WEBUI_HOST: &str = "127.0.0.1";
 const DEFAULT_WEBUI_PORT: u16 = 15722;
@@ -187,6 +188,39 @@ async fn health() -> Json<Value> {
         "name": "cc-switch-webui",
         "version": env!("CARGO_PKG_VERSION"),
     }))
+}
+
+async fn webui_status() -> Json<Value> {
+    let settings = crate::settings::get_settings();
+    Json(json!({
+        "running": true,
+        "enabled": settings.webui_enabled,
+        "port": settings.webui_port,
+        "host": settings.webui_host,
+        "address": format!("http://{}:{}", settings.webui_host, settings.webui_port),
+        "tokenSet": settings.webui_token.is_some(),
+    }))
+}
+
+/// Browser client hitting this route means the server is already running.
+async fn webui_start() -> Json<Value> {
+    let settings = crate::settings::get_settings();
+    Json(json!(format!("http://{}:{}", settings.webui_host, settings.webui_port)))
+}
+
+/// Server cannot stop itself from a browser client request.
+/// The setting is saved separately; the server will not auto-start next launch.
+async fn webui_stop() -> Response {
+    (StatusCode::CONFLICT, Json(json!({
+        "error": "Cannot stop WebUI server from browser. Disable in settings and restart the app, or use the desktop UI."
+    }))).into_response()
+}
+
+/// Server cannot restart itself from its own HTTP handler.
+async fn webui_restart() -> Response {
+    (StatusCode::CONFLICT, Json(json!({
+        "error": "Cannot restart WebUI server from browser. Change settings and restart the app, or use the desktop UI."
+    }))).into_response()
 }
 
 async fn get_settings() -> Json<crate::settings::AppSettings> {
@@ -695,6 +729,10 @@ fn command_router(state: WebUiState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/api/health", get(health))
+        .route("/api/webui/status", get(webui_status))
+        .route("/api/webui/start", post(webui_start))
+        .route("/api/webui/stop", post(webui_stop))
+        .route("/api/webui/restart", post(webui_restart))
         .route("/api/settings", get(get_settings).post(save_settings))
         .route("/api/providers", get(get_providers))
         .route("/api/providers/current", get(get_current_provider))
@@ -750,6 +788,42 @@ impl WebUiServer {
         self.start(configured_addr(), auth_token()).await
     }
 
+    /// Start WebUI using persisted AppSettings (env vars still override if set)
+    pub async fn start_from_settings(&self) -> Result<SocketAddr, String> {
+        let settings = crate::settings::get_settings();
+
+        // Env var override takes precedence
+        let host = std::env::var(HOST_ENV)
+            .unwrap_or_else(|_| settings.webui_host.clone());
+        let port = std::env::var(PORT_ENV)
+            .ok()
+            .and_then(|v| v.parse::<u16>().ok())
+            .unwrap_or(settings.webui_port);
+        let token = auth_token().or_else(|| settings.webui_token.clone());
+
+        let addr: SocketAddr = format!("{host}:{port}")
+            .parse()
+            .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], DEFAULT_WEBUI_PORT)));
+
+        self.start(addr, token).await
+    }
+
+    pub async fn is_running(&self) -> bool {
+        self.shutdown_tx.read().await.is_some()
+    }
+
+    pub async fn get_status(&self) -> serde_json::Value {
+        let running = self.is_running().await;
+        let settings = crate::settings::get_settings();
+        serde_json::json!({
+            "running": running,
+            "host": settings.webui_host,
+            "port": settings.webui_port,
+            "hasToken": settings.webui_token.as_ref().map(|t| !t.is_empty()).unwrap_or(false),
+            "enabled": settings.webui_enabled,
+        })
+    }
+
     pub async fn start(&self, addr: SocketAddr, token: Option<String>) -> Result<SocketAddr, String> {
         if self.shutdown_tx.read().await.is_some() {
             return Err("WebUI server is already running".to_string());
@@ -774,7 +848,33 @@ impl WebUiServer {
             token,
         };
 
-        let app = command_router(state).layer(
+        // Try to find dist directory relative to executable
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+
+        let dist_path = exe_dir
+            .as_ref()
+            .map(|dir| dir.join("dist"))
+            .filter(|p| p.exists())
+            .or_else(|| {
+                // Fallback: check workspace root during development
+                let cwd = std::env::current_dir().ok()?;
+                let workspace_dist = cwd.join("dist");
+                workspace_dist.exists().then_some(workspace_dist)
+            });
+
+        let app = if let Some(dist) = dist_path {
+            log::info!("WebUI serving static files from: {}", dist.display());
+            // Serve API routes + static files with SPA fallback
+            command_router(state.clone())
+                .fallback_service(ServeDir::new(dist).append_index_html_on_directories(true))
+        } else {
+            log::warn!("WebUI dist/ not found, serving API only");
+            command_router(state.clone())
+        };
+
+        let app = app.layer(
             CorsLayer::new()
                 .allow_origin(Any)
                 .allow_methods([Method::GET, Method::POST, Method::OPTIONS])

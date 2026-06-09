@@ -179,6 +179,15 @@ export async function invokeCommand<T = unknown>(
     case "get_model_pricing":
       return post<T>(`/api/usage/${command}`, args);
 
+    case "get_webui_status":
+      return request<T>("/api/webui/status");
+    case "start_webui_server":
+      return post<T>("/api/webui/start");
+    case "stop_webui_server":
+      return post<T>("/api/webui/stop");
+    case "restart_webui_server":
+      return post<T>("/api/webui/restart");
+
     case "get_init_error":
     case "get_migration_result":
     case "get_skills_migration_result":

@@ -892,13 +892,25 @@ pub fn run() {
             let webui_state = Arc::new(app_state.clone());
             app.manage(app_state);
 
-            if crate::webui::WebUiServer::should_start_from_env() {
-                let webui_server = crate::webui::WebUiServer::new(webui_state);
+            // WebUI server - use settings (with env var override for backward compat)
+            let webui_server = Arc::new(crate::webui::WebUiServer::new(webui_state));
+            app.manage(webui_server.clone());
+
+            // Determine if WebUI should auto-start:
+            // 1. Env var CC_SWITCH_WEBUI=0 force-disables
+            // 2. Otherwise use settings.webui_enabled (default true)
+            let should_start = if matches!(std::env::var("CC_SWITCH_WEBUI").as_deref(), Ok("0") | Ok("false") | Ok("off")) {
+                false
+            } else {
+                crate::settings::get_settings().webui_enabled
+            };
+
+            if should_start {
                 std::thread::spawn(move || {
                     let rt = tokio::runtime::Runtime::new()
                         .expect("WebUI tokio runtime");
                     rt.block_on(async move {
-                        match webui_server.start_from_env().await {
+                        match webui_server.start_from_settings().await {
                             Ok(addr) => log::info!("WebUI server listening on http://{addr}"),
                             Err(e) => log::error!("WebUI server failed to start: {e}"),
                         }
@@ -1452,6 +1464,11 @@ pub fn run() {
             commands::enter_lightweight_mode,
             commands::exit_lightweight_mode,
             commands::is_lightweight_mode,
+            // WebUI server management
+            commands::get_webui_status,
+            commands::start_webui_server,
+            commands::stop_webui_server,
+            commands::restart_webui_server,
         ]);
 
     let app = builder

@@ -205,6 +205,14 @@ Modern AI-powered coding relies on tools like Claude Code, Claude Desktop, Codex
 - Browse, search, and restore conversation history across supported session sources
 - **Workspace editor** (OpenClaw) — Edit agent files (AGENTS.md, SOUL.md, etc.) with Markdown preview
 
+### WebUI (LAN Remote Control)
+
+- **Browser access** — Manage CC Switch from any device on your network at `http://<host>:15722/`
+- **Auto-start by default** — WebUI server launches with the app; disable via Settings or `CC_SWITCH_WEBUI=0`
+- **Full API** — 50+ endpoints covering providers, proxy, settings, usage, and model fetching
+- **Token authentication** — Optional for localhost, required for LAN access (`0.0.0.0` binding)
+- **Settings UI** — Enable/disable, configure port, host binding, and access token from Settings → WebUI
+
 ### System & Platform
 
 - **Cloud sync** — Custom config directory (Dropbox, OneDrive, iCloud, NAS) and WebDAV server sync
@@ -289,6 +297,24 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 - **Sessions**: Click "Sessions" → Browse, search, and restore conversation history across supported session sources
 
 > **Note**: On first launch, you can manually import existing CLI tool configs as the default provider.
+
+### WebUI (LAN Remote Access)
+
+The built-in WebUI server starts automatically with the app, letting you manage providers from any browser on the same network.
+
+1. **Access**: Open `http://127.0.0.1:15722/` in your browser (runs on the same machine by default)
+2. **LAN mode**: Go to Settings → WebUI → switch to "LAN" binding (`0.0.0.0`) and set a Bearer token
+3. **Remote access**: Open `http://<your-ip>:15722/?token=<your-token>` from any device on the LAN
+4. **Disable**: Set environment variable `CC_SWITCH_WEBUI=0` or toggle off in Settings → WebUI
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `CC_SWITCH_WEBUI` | `1` (enabled) | Set to `0` to disable auto-start |
+| `CC_SWITCH_WEBUI_HOST` | `127.0.0.1` | Bind address (`0.0.0.0` for LAN) |
+| `CC_SWITCH_WEBUI_PORT` | `15722` | HTTP port |
+| `CC_SWITCH_WEBUI_TOKEN` | (none) | Bearer token (required for non-loopback) |
+
+> **Security**: When binding to `0.0.0.0`, a strong token is enforced. The server will refuse to start without one.
 
 ## Download & Installation
 

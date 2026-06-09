@@ -449,6 +449,20 @@ pub struct AppSettings {
     // ===== 本机自动迁移状态 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_migrations: Option<LocalMigrations>,
+
+    // ===== WebUI 设置 =====
+    /// 是否启用 WebUI 管理服务器（默认启用）
+    #[serde(default = "default_true_fn")]
+    pub webui_enabled: bool,
+    /// WebUI 监听端口（默认 15722）
+    #[serde(default = "default_webui_port")]
+    pub webui_port: u16,
+    /// WebUI 监听地址（默认 127.0.0.1，设为 0.0.0.0 可局域网访问）
+    #[serde(default = "default_webui_host")]
+    pub webui_host: String,
+    /// WebUI 访问令牌（空表示不验证，局域网模式下强制要求）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webui_token: Option<String>,
 }
 
 fn default_show_in_tray() -> bool {
@@ -457,6 +471,18 @@ fn default_show_in_tray() -> bool {
 
 fn default_minimize_to_tray_on_close() -> bool {
     true
+}
+
+fn default_true_fn() -> bool {
+    true
+}
+
+fn default_webui_port() -> u16 {
+    15722
+}
+
+fn default_webui_host() -> String {
+    "127.0.0.1".to_string()
 }
 
 impl Default for AppSettings {
@@ -502,6 +528,10 @@ impl Default for AppSettings {
             backup_retain_count: None,
             preferred_terminal: None,
             local_migrations: None,
+            webui_enabled: true,
+            webui_port: 15722,
+            webui_host: "127.0.0.1".to_string(),
+            webui_token: None,
         }
     }
 }
