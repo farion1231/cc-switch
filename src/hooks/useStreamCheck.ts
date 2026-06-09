@@ -76,6 +76,23 @@ export function useStreamCheck(appId: AppId) {
               closeButton: true,
             },
           );
+        } else if (result.errorCategory === "context1mRequired") {
+          // 强制 1M 上下文的中转线路：探测包对 opus-4-8/sonnet-4-6 已补 context-1m，
+          // 端点本身可达/已鉴权，故用 warning 并给出可操作提示，而非通用 Bad request(400)。
+          toast.warning(
+            t("streamCheck.context1mRequired", {
+              providerName: providerName,
+              model: result.modelUsed,
+              defaultValue: `${providerName} forces 1M context for ${result.modelUsed}`,
+            }),
+            {
+              description: t("streamCheck.context1mRequiredHint", {
+                defaultValue: "",
+              }),
+              duration: 10000,
+              closeButton: true,
+            },
+          );
         } else {
           const httpStatus = result.httpStatus;
           const hintKey = httpStatus
