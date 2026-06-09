@@ -781,7 +781,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 provider.category.as_deref(),
                 auth,
                 config_str,
-                false,
+                true,
             )?;
         }
         AppType::Gemini => {
@@ -1649,6 +1649,45 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 mod tests {
     use super::*;
     use serde_json::json;
+    use serial_test::serial;
+    use tempfile::TempDir;
+
+    struct TestHomeGuard {
+        _dir: TempDir,
+        old_home: Option<std::ffi::OsString>,
+        old_test_home: Option<std::ffi::OsString>,
+    }
+
+    impl TestHomeGuard {
+        fn new() -> Self {
+            let dir = TempDir::new().expect("failed to create temp home");
+            let old_home = std::env::var_os("HOME");
+            let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+
+            std::env::set_var("HOME", dir.path());
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+
+            Self {
+                _dir: dir,
+                old_home,
+                old_test_home,
+            }
+        }
+    }
+
+    impl Drop for TestHomeGuard {
+        fn drop(&mut self) {
+            match &self.old_home {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+
+            match &self.old_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
 
     #[test]
     fn claude_common_config_apply_and_remove_roundtrip_for_non_overlapping_fields() {
@@ -1692,6 +1731,56 @@ mod tests {
         let stripped =
             remove_common_config_from_settings(&AppType::Codex, &applied, snippet).unwrap();
         assert_eq!(stripped, settings);
+    }
+
+    #[test]
+    #[serial]
+    fn codex_live_snapshot_normalizes_openai_custom_provider_to_stable_key() {
+        let _home = TestHomeGuard::new();
+        let config_path = crate::codex_config::get_codex_config_path();
+        std::fs::create_dir_all(
+            config_path
+                .parent()
+                .expect("config path should have parent"),
+        )
+        .expect("create codex config dir");
+        crate::config::write_text_file(
+            &config_path,
+            r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+base_url = "https://relay.example/v1"
+"#,
+        )
+        .expect("write existing codex config");
+
+        let mut provider = Provider::with_id(
+            "relay".to_string(),
+            "Relay".to_string(),
+            json!({
+                "auth": {},
+                "config": r#"model_provider = "OpenAI"
+model = "gpt-5"
+
+[model_providers.OpenAI]
+name = "OpenAI"
+base_url = "https://relay.example/v1"
+"#
+            }),
+            None,
+        );
+        provider.category = Some("custom".to_string());
+
+        write_live_snapshot(&AppType::Codex, &provider).expect("write codex live snapshot");
+
+        let written = std::fs::read_to_string(config_path).expect("read codex config");
+        assert_eq!(
+            crate::codex_config::extract_codex_model_provider(&written).as_deref(),
+            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+        );
+        assert!(written.contains("[model_providers.custom]"));
+        assert!(!written.contains("[model_providers.OpenAI]"));
     }
 
     #[test]
