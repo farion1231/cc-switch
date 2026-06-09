@@ -76,10 +76,23 @@ const INTENSITY_CLASSES: Record<
     4: "border-sky-500/30 bg-sky-500/75",
     5: "border-sky-500/40 bg-sky-600",
   },
+  opencode: {
+    0: "border-border/50 bg-muted/50",
+    1: "border-violet-500/15 bg-violet-500/20",
+    2: "border-violet-500/20 bg-violet-500/35",
+    3: "border-violet-500/25 bg-violet-500/55",
+    4: "border-violet-500/30 bg-violet-500/75",
+    5: "border-violet-500/40 bg-violet-600",
+  },
 };
 
 function getFilterType(appType?: string): AppType | "all" {
-  if (appType === "claude" || appType === "codex" || appType === "gemini") {
+  if (
+    appType === "claude" ||
+    appType === "codex" ||
+    appType === "gemini" ||
+    appType === "opencode"
+  ) {
     return appType;
   }
   return "all";

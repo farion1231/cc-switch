@@ -392,22 +392,9 @@ fn extract_codex_model_from_toml(config_text: &str) -> Option<String> {
 }
 
 fn extract_codex_base_url_from_toml(config_text: &str) -> Option<String> {
-    let doc = config_text.parse::<TomlValue>().ok()?;
-
-    if let Some(active_provider) = doc.get("model_provider").and_then(|v| v.as_str()) {
-        if let Some(base_url) = doc
-            .get("model_providers")
-            .and_then(|providers| providers.get(active_provider))
-            .and_then(|provider| provider.get("base_url"))
-            .and_then(|v| v.as_str())
-        {
-            return Some(base_url.to_string());
-        }
-    }
-
-    doc.get("base_url")
-        .and_then(|v| v.as_str())
-        .map(ToString::to_string)
+    // Canonical parser lives in codex_config; keep this thin alias so the
+    // proxy hot path and the usage-credential resolver share one implementation.
+    crate::codex_config::extract_codex_base_url(config_text)
 }
 
 impl CodexAdapter {

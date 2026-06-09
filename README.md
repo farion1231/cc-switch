@@ -4,7 +4,7 @@
 
 ### 基于 [farion1231/cc-switch](https://github.com/farion1231/cc-switch) 的个人增强 Fork,新增 Codex 多账号实时用量监控
 
-[![Version](https://img.shields.io/badge/version-3.14.1-blue.svg)](https://github.com/ajia1206/cc-switch/releases)
+[![Version](https://img.shields.io/badge/version-3.16.2-blue.svg)](https://github.com/ajia1206/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](https://github.com/ajia1206/cc-switch/releases)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -51,7 +51,7 @@
 
 ### 方式一:下载 DMG(macOS Apple Silicon)
 
-从 [Releases](https://github.com/ajia1206/cc-switch/releases) 页面下载 `CC Switch_3.14.1_aarch64.dmg`。
+从 [Releases](https://github.com/ajia1206/cc-switch/releases) 页面下载最新的 `CC Switch` macOS 安装包。
 
 ```bash
 # 双击 dmg → 拖到 Applications 即可
@@ -73,12 +73,12 @@ pnpm dev
 
 # 4. 打包发布
 pnpm tauri build
-# 产物位于 src-tauri/target/release/bundle/dmg/
+# 产物位于 src-tauri/target/release/bundle/
 ```
 
 **前置依赖:**
 - Node.js 22.12+(推荐用 [fnm](https://github.com/Schniz/fnm) 管理)
-- Rust 1.77+(`rustup install stable`)
+- Rust 1.85+
 - pnpm 9+(`npm i -g pnpm`)
 - macOS: Xcode Command Line Tools
 
@@ -92,7 +92,7 @@ pnpm tauri build
 2. 点击 **「Codex 官方账号快照」**
 3. 每个账号卡片下方自动显示用量信息:
 
-```
+```text
 ┌─────────────────────────────────────┐
 │ 📦 我的主账号        [使用中]       │
 │  ⏱ 5h 剩余: 73%  · 2 小时后重置     │

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::config::{
@@ -204,6 +205,29 @@ pub fn extract_codex_api_key(auth: Option<&Value>, config_text: Option<&str>) ->
         .or_else(|| config_text.and_then(extract_codex_experimental_bearer_token))
 }
 
+/// Extract the upstream base URL from a Codex `config.toml` string.
+///
+/// Prefers the active `[model_providers.<model_provider>].base_url`, falling
+/// back to a top-level `base_url` when no model provider is selected.
+pub fn extract_codex_base_url(config_text: &str) -> Option<String> {
+    let doc = config_text.parse::<toml::Value>().ok()?;
+
+    if let Some(active_provider) = doc.get("model_provider").and_then(|v| v.as_str()) {
+        if let Some(base_url) = doc
+            .get("model_providers")
+            .and_then(|providers| providers.get(active_provider))
+            .and_then(|provider| provider.get("base_url"))
+            .and_then(|v| v.as_str())
+        {
+            return Some(base_url.to_string());
+        }
+    }
+
+    doc.get("base_url")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
+}
+
 pub fn codex_auth_has_login_material(auth: &Value) -> bool {
     let Some(obj) = auth.as_object() else {
         return false;
@@ -393,37 +417,225 @@ fn load_codex_model_template_from_cache() -> Result<Option<Value>, AppError> {
     Ok(find_codex_model_template(&catalog))
 }
 
-fn load_codex_model_template_from_bundled() -> Result<Option<Value>, AppError> {
-    let output = match Command::new("codex")
-        .args(["debug", "models", "--bundled"])
-        .output()
-    {
-        Ok(output) => output,
-        Err(err) => {
-            log::debug!("failed to run `codex debug models --bundled`: {err}");
-            return Ok(None);
-        }
+/// Fixed candidates for locating the `codex` CLI when it is not on the process
+/// PATH (common in GUI apps launched outside a terminal).
+const CODEX_CLI_FIXED_CANDIDATES: &[&str] = &[
+    "codex",                                // PATH (all platforms)
+    "/opt/homebrew/bin/codex",              // macOS Apple Silicon Homebrew
+    "/usr/local/bin/codex",                 // macOS Intel Homebrew / Linux
+    "/home/linuxbrew/.linuxbrew/bin/codex", // Linux Homebrew
+];
+
+fn push_codex_cli_candidate(
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut HashSet<String>,
+    candidate: PathBuf,
+) {
+    let key = candidate.to_string_lossy().into_owned();
+    if seen.insert(key) {
+        candidates.push(candidate);
+    }
+}
+
+fn push_existing_codex_cli_candidate(
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut HashSet<String>,
+    candidate: PathBuf,
+) {
+    if candidate.exists() {
+        push_codex_cli_candidate(candidates, seen, candidate);
+    }
+}
+
+fn push_codex_cli_candidates_from_version_dirs(
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut HashSet<String>,
+    versions_dir: PathBuf,
+    suffix: &[&str],
+) {
+    let Ok(entries) = fs::read_dir(versions_dir) else {
+        return;
     };
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        log::debug!("`codex debug models --bundled` failed: {stderr}");
-        return Ok(None);
+    let mut discovered = entries
+        .filter_map(Result::ok)
+        .map(|entry| {
+            let mut candidate = entry.path();
+            for component in suffix {
+                candidate.push(component);
+            }
+            candidate
+        })
+        .filter(|candidate| candidate.exists())
+        .collect::<Vec<_>>();
+
+    // Prefer newer-looking version directories before older global installs.
+    discovered.sort_by(|a, b| b.cmp(a));
+    for candidate in discovered {
+        push_codex_cli_candidate(candidates, seen, candidate);
+    }
+}
+
+fn push_home_codex_cli_candidates(
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut HashSet<String>,
+    home: &Path,
+) {
+    for relative in [
+        ".nvm/current/bin/codex",
+        ".volta/bin/codex",
+        ".asdf/shims/codex",
+        ".local/share/mise/shims/codex",
+        ".config/mise/shims/codex",
+        ".local/bin/codex",
+        ".npm-global/bin/codex",
+        ".npm-packages/bin/codex",
+        ".local/share/pnpm/codex",
+        "Library/pnpm/codex",
+    ] {
+        push_existing_codex_cli_candidate(candidates, seen, home.join(relative));
     }
 
-    let catalog: Value = serde_json::from_slice(&output.stdout).map_err(|e| {
-        AppError::Message(format!(
-            "Failed to parse `codex debug models --bundled` output: {e}"
-        ))
-    })?;
-    Ok(find_codex_model_template(&catalog))
+    push_codex_cli_candidates_from_version_dirs(
+        candidates,
+        seen,
+        home.join(".nvm/versions/node"),
+        &["bin", "codex"],
+    );
+    push_codex_cli_candidates_from_version_dirs(
+        candidates,
+        seen,
+        home.join(".local/share/fnm/node-versions"),
+        &["installation", "bin", "codex"],
+    );
+    push_codex_cli_candidates_from_version_dirs(
+        candidates,
+        seen,
+        home.join("Library/Application Support/fnm/node-versions"),
+        &["installation", "bin", "codex"],
+    );
+}
+
+fn push_env_codex_cli_candidates(candidates: &mut Vec<PathBuf>, seen: &mut HashSet<String>) {
+    for (env_key, suffix) in [
+        ("NPM_CONFIG_PREFIX", &["bin", "codex"][..]),
+        ("VOLTA_HOME", &["bin", "codex"][..]),
+        ("ASDF_DATA_DIR", &["shims", "codex"][..]),
+        ("MISE_DATA_DIR", &["shims", "codex"][..]),
+        ("PNPM_HOME", &["codex"][..]),
+    ] {
+        let Some(prefix) = std::env::var_os(env_key) else {
+            continue;
+        };
+        let mut candidate = PathBuf::from(prefix);
+        for component in suffix {
+            candidate.push(component);
+        }
+        push_existing_codex_cli_candidate(candidates, seen, candidate);
+    }
+
+    if let Some(nvm_dir) = std::env::var_os("NVM_DIR") {
+        push_codex_cli_candidates_from_version_dirs(
+            candidates,
+            seen,
+            PathBuf::from(nvm_dir).join("versions/node"),
+            &["bin", "codex"],
+        );
+    }
+
+    if let Some(fnm_dir) = std::env::var_os("FNM_DIR") {
+        push_codex_cli_candidates_from_version_dirs(
+            candidates,
+            seen,
+            PathBuf::from(fnm_dir).join("node-versions"),
+            &["installation", "bin", "codex"],
+        );
+    }
+
+    #[cfg(windows)]
+    {
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            let npm_dir = PathBuf::from(appdata).join("npm");
+            for name in ["codex.cmd", "codex.exe", "codex"] {
+                push_existing_codex_cli_candidate(candidates, seen, npm_dir.join(name));
+            }
+        }
+    }
+}
+
+fn codex_cli_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let mut seen = HashSet::new();
+
+    for candidate in CODEX_CLI_FIXED_CANDIDATES {
+        push_codex_cli_candidate(&mut candidates, &mut seen, PathBuf::from(candidate));
+    }
+
+    push_env_codex_cli_candidates(&mut candidates, &mut seen);
+    push_home_codex_cli_candidates(&mut candidates, &mut seen, &get_home_dir());
+
+    candidates
+}
+
+fn load_codex_model_template_from_bundled() -> Result<Option<Value>, AppError> {
+    for candidate in codex_cli_candidates() {
+        let candidate_label = candidate.to_string_lossy();
+        let output = match Command::new(&candidate)
+            .args(["debug", "models", "--bundled"])
+            .output()
+        {
+            Ok(output) => output,
+            Err(err) => {
+                log::debug!("failed to run `{candidate_label} debug models --bundled`: {err}");
+                continue;
+            }
+        };
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::debug!("`{candidate_label} debug models --bundled` failed: {stderr}");
+            continue;
+        }
+
+        let catalog: Value = match serde_json::from_slice(&output.stdout) {
+            Ok(catalog) => catalog,
+            Err(e) => {
+                log::debug!(
+                    "Failed to parse `{candidate_label} debug models --bundled` output: {e}"
+                );
+                continue;
+            }
+        };
+        if let Some(template) = find_codex_model_template(&catalog) {
+            return Ok(Some(template));
+        }
+    }
+
+    Ok(None)
+}
+
+fn load_codex_model_template_static() -> Option<Value> {
+    let text = include_str!("resources/gpt5_5_template.json");
+    match serde_json::from_str(text) {
+        Ok(template) => Some(template),
+        Err(e) => {
+            log::warn!("Failed to parse bundled gpt-5.5 template: {e}");
+            None
+        }
+    }
 }
 
 fn load_codex_model_catalog_template() -> Result<Value, AppError> {
+    // ① models_cache.json (created by Codex when it connects to OpenAI)
     if let Some(template) = load_codex_model_template_from_cache()? {
         return Ok(template);
     }
+    // ② codex CLI (PATH + platform-specific common paths)
     if let Some(template) = load_codex_model_template_from_bundled()? {
+        return Ok(template);
+    }
+    // ③ Static fallback bundled at compile time
+    if let Some(template) = load_codex_model_template_static() {
         return Ok(template);
     }
 
@@ -470,20 +682,18 @@ fn set_codex_model_catalog_json_field(
     let mut doc = config_text
         .parse::<DocumentMut>()
         .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
-    let generated_path = get_codex_model_catalog_path();
 
     match catalog_path {
-        Some(path) => {
-            doc["model_catalog_json"] = toml_edit::value(path.to_string_lossy().as_ref());
+        Some(_) => {
+            doc["model_catalog_json"] = toml_edit::value(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
         }
         None => {
             let should_remove = doc
                 .get("model_catalog_json")
                 .and_then(|item| item.as_str())
                 .map(|path| {
-                    path == generated_path.to_string_lossy().as_ref()
-                        || Path::new(path).file_name().and_then(|name| name.to_str())
-                            == Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+                    Path::new(path).file_name().and_then(|name| name.to_str())
+                        == Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
                 })
                 .unwrap_or(false);
             if should_remove {
@@ -556,7 +766,10 @@ pub fn read_codex_model_catalog_simplified_from_live() -> Result<Option<Value>, 
 /// Given `config.toml` text, resolve the on-disk path of the cc-switch–owned
 /// catalog file (returns `None` if `model_catalog_json` is absent or points at
 /// a file we don't own). Relative paths fall back to `generated_path`.
-fn resolve_cc_switch_catalog_path(config_text: &str, generated_path: &Path) -> Option<PathBuf> {
+pub(crate) fn resolve_cc_switch_catalog_path(
+    config_text: &str,
+    generated_path: &Path,
+) -> Option<PathBuf> {
     if config_text.trim().is_empty() {
         return None;
     }
@@ -568,9 +781,8 @@ fn resolve_cc_switch_catalog_path(config_text: &str, generated_path: &Path) -> O
         .filter(|s| !s.is_empty())?;
 
     let referenced_path = Path::new(catalog_path_str);
-    let is_cc_switch_owned = catalog_path_str == generated_path.to_string_lossy().as_ref()
-        || referenced_path.file_name().and_then(|name| name.to_str())
-            == Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+    let is_cc_switch_owned = referenced_path.file_name().and_then(|name| name.to_str())
+        == Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
     if !is_cc_switch_owned {
         return None;
     }
@@ -634,18 +846,39 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
     Some(json!({ "models": entries }))
 }
 
-/// Unified helper: write Codex live config with model catalog preparation.
-/// Replaces scattered `prepare_codex_config_text_with_model_catalog` calls.
-pub fn write_codex_live_with_catalog(
+/// Decide the `config.toml` text to write during a takeover-off restore,
+/// projecting the model catalog **only when `settings` carries an inline
+/// `modelCatalog`**.
+///
+/// Restore feeds back a stored backup, and Codex backups come in two shapes that
+/// need opposite handling:
+///
+/// - **Snapshot backup** (`read_codex_live_settings`): `{ auth, config }` with no
+///   inline `modelCatalog`. Its `config.toml` text already carries whatever
+///   `model_catalog_json` pointer existed at backup time, and the generated
+///   catalog file on disk is untouched. Here we must keep the config **raw** —
+///   running catalog projection would see "no specs" and strip the live pointer.
+/// - **Provider-rebuilt backup** (`update_live_backup_from_provider`): the DB
+///   provider's settings, i.e. `{ auth, config (no pointer), modelCatalog
+///   (inline DB SSOT) }`. Here the pointer/catalog file must be (re)generated
+///   from the inline `modelCatalog`, or the mapping is lost on restore.
+///
+/// Gating on the presence of the inline `modelCatalog` key routes each shape
+/// correctly; an empty inline catalog still projects (and so correctly drops a
+/// now-stale pointer), while an absent key leaves the text untouched. This is
+/// **orthogonal to auth** — a provider-rebuilt backup can pair an inline
+/// `modelCatalog` with empty `auth.json` (the API key living in the config's
+/// `experimental_bearer_token`), so the caller must decide config projection
+/// independently of whether it writes or deletes `auth.json`.
+pub fn prepare_codex_live_config_text_with_optional_catalog(
     settings: &Value,
-    auth: &Value,
-    config_text: Option<&str>,
-) -> Result<(), AppError> {
-    let prepared_config = config_text
-        .map(|text| prepare_codex_config_text_with_model_catalog(settings, text))
-        .transpose()?;
-
-    write_codex_live_atomic(auth, prepared_config.as_deref())
+    config_text: &str,
+) -> Result<String, AppError> {
+    if settings.get("modelCatalog").is_some() {
+        prepare_codex_config_text_with_model_catalog(settings, config_text)
+    } else {
+        Ok(config_text.to_string())
+    }
 }
 
 pub fn write_codex_provider_live_with_catalog(
@@ -1558,7 +1791,7 @@ base_url = "https://production.api/v1"
     }
 
     #[test]
-    fn model_catalog_json_field_operates_on_top_level() {
+    fn model_catalog_json_field_writes_relative_filename() {
         let input = r#"model_provider = "any"
 
 [model_providers.any]
@@ -1572,7 +1805,7 @@ name = "any"
             parsed
                 .get("model_catalog_json")
                 .and_then(|value| value.as_str()),
-            Some("/tmp/cc-switch-model-catalog.json")
+            Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
         );
         assert!(
             parsed
@@ -1700,6 +1933,203 @@ name = "any"
             )
             .is_none(),
             "entries lacking slug are skipped; a fully-skipped catalog yields None"
+        );
+    }
+
+    #[test]
+    fn codex_cli_candidates_are_non_empty() {
+        let candidates = codex_cli_candidates();
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate == Path::new("codex")),
+            "codex CLI candidates must include the PATH entry"
+        );
+    }
+
+    #[test]
+    fn codex_cli_candidates_include_user_node_manager_bins() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let home = temp_home.path();
+        let expected = [
+            home.join(".nvm/versions/node/v22.14.0/bin/codex"),
+            home.join(".volta/bin/codex"),
+            home.join(".asdf/shims/codex"),
+            home.join(".local/share/mise/shims/codex"),
+            home.join(".local/share/fnm/node-versions/v22.14.0/installation/bin/codex"),
+        ];
+
+        for candidate in &expected {
+            std::fs::create_dir_all(candidate.parent().expect("candidate parent"))
+                .expect("create candidate parent");
+            std::fs::write(candidate, "").expect("create candidate");
+        }
+
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+        push_home_codex_cli_candidates(&mut candidates, &mut seen, home);
+
+        for candidate in expected {
+            assert!(
+                candidates.contains(&candidate),
+                "user-level Codex CLI candidate should be discovered: {}",
+                candidate.display()
+            );
+        }
+    }
+
+    #[test]
+    fn codex_cli_candidates_deduplicate_entries() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let home = temp_home.path();
+        let candidate = home.join(".volta/bin/codex");
+        std::fs::create_dir_all(candidate.parent().expect("candidate parent"))
+            .expect("create candidate parent");
+        std::fs::write(&candidate, "").expect("create candidate");
+
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+        push_existing_codex_cli_candidate(&mut candidates, &mut seen, candidate.clone());
+        push_home_codex_cli_candidates(&mut candidates, &mut seen, home);
+
+        assert_eq!(
+            candidates.iter().filter(|path| **path == candidate).count(),
+            1,
+            "duplicate candidates should be removed"
+        );
+    }
+
+    #[test]
+    fn static_template_is_valid_json_with_slug() {
+        let template =
+            load_codex_model_template_static().expect("static template must parse as valid JSON");
+        assert_eq!(
+            template.get("slug").and_then(|v| v.as_str()),
+            Some("gpt-5.5"),
+            "static template slug must be gpt-5.5"
+        );
+    }
+
+    #[test]
+    fn static_template_has_required_keys() {
+        let template =
+            load_codex_model_template_static().expect("static template must parse as valid JSON");
+        for key in &[
+            "model_messages",
+            "base_instructions",
+            "context_window",
+            "display_name",
+        ] {
+            assert!(
+                template.get(key).is_some(),
+                "static template must contain key '{key}'"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn set_catalog_json_field_writes_filename_ignoring_unc_path() {
+        let input = r#"model_provider = "custom"
+model = "glm-5"
+"#;
+        // Simulate a WSL UNC path as cc-switch would see it on Windows;
+        // the function now writes just the relative filename.
+        let unc_path =
+            Path::new(r"\\wsl.localhost\Ubuntu\home\user\.codex\cc-switch-model-catalog.json");
+
+        let result = set_codex_model_catalog_json_field(input, Some(unc_path)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        let written_path = parsed
+            .get("model_catalog_json")
+            .and_then(|v| v.as_str())
+            .expect("model_catalog_json should be set");
+        assert_eq!(
+            written_path, CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME,
+            "should write only the relative filename, not the UNC path"
+        );
+    }
+
+    #[test]
+    fn set_catalog_json_field_writes_filename_for_any_path() {
+        let input = r#"model_provider = "custom"
+model = "glm-5"
+"#;
+        let regular_path = Path::new("/home/user/.codex/cc-switch-model-catalog.json");
+
+        let result = set_codex_model_catalog_json_field(input, Some(regular_path)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
+            Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME),
+            "should write only the relative filename, not the full path"
+        );
+    }
+
+    #[test]
+    fn set_catalog_json_none_removes_cc_switch_owned_by_filename() {
+        // After the WSL fix, TOML may contain a Linux-style path.
+        // The None arm must still remove it (file_name match catches any format).
+        let input = r#"model_catalog_json = "/home/user/.codex/cc-switch-model-catalog.json"
+"#;
+        let result = set_codex_model_catalog_json_field(input, None).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert!(
+            parsed.get("model_catalog_json").is_none(),
+            "None arm should remove cc-switch-owned field regardless of path format"
+        );
+    }
+
+    #[test]
+    fn set_catalog_json_none_preserves_user_owned_catalog() {
+        let input = r#"model_catalog_json = "/Users/me/.codex/my-custom-catalog.json"
+"#;
+        let result = set_codex_model_catalog_json_field(input, None).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert_eq!(
+            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
+            Some("/Users/me/.codex/my-custom-catalog.json"),
+            "None arm should NOT remove user-owned catalog"
+        );
+    }
+
+    #[test]
+    fn resolve_catalog_finds_relative_filename() {
+        let config_text = r#"model_provider = "custom"
+model_catalog_json = "cc-switch-model-catalog.json"
+"#;
+        let generated_path = PathBuf::from("/home/user/.codex/cc-switch-model-catalog.json");
+        let result = resolve_cc_switch_catalog_path(config_text, &generated_path);
+        assert_eq!(
+            result,
+            Some(generated_path),
+            "relative filename should resolve to generated_path for file I/O"
+        );
+    }
+
+    #[test]
+    fn resolve_catalog_ignores_user_owned_relative() {
+        let config_text = r#"model_catalog_json = "my-custom-catalog.json"
+"#;
+        let generated_path = PathBuf::from("/home/user/.codex/cc-switch-model-catalog.json");
+        let result = resolve_cc_switch_catalog_path(config_text, &generated_path);
+        assert_eq!(
+            result, None,
+            "user-owned catalog should not be claimed by cc-switch"
+        );
+    }
+
+    #[test]
+    fn set_catalog_json_none_removes_relative_path() {
+        let input = r#"model_catalog_json = "cc-switch-model-catalog.json"
+"#;
+        let result = set_codex_model_catalog_json_field(input, None).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert!(
+            parsed.get("model_catalog_json").is_none(),
+            "None arm should remove relative cc-switch-owned field"
         );
     }
 }

@@ -78,7 +78,8 @@ export function UsageSettings({ settings, onChange }: UsageSettingsProps) {
             defaultValue: "Show all Codex accounts",
           })}
           description={t("settings.usageShowAllAccountsDescription", {
-            defaultValue: "Show the multi-account quota panel on the Codex page.",
+            defaultValue:
+              "Show the multi-account quota panel on the Codex page.",
           })}
           checked={settings.usageShowAllAccounts ?? true}
           onCheckedChange={(value) => onChange({ usageShowAllAccounts: value })}
@@ -90,7 +91,8 @@ export function UsageSettings({ settings, onChange }: UsageSettingsProps) {
             defaultValue: "Show Codex in notch window",
           })}
           description={t("settings.notchShowCodexDescription", {
-            defaultValue: "Keep the compact notch overlay focused on Codex usage.",
+            defaultValue:
+              "Keep the compact notch overlay focused on Codex usage.",
           })}
           checked={settings.notchShowCodex ?? true}
           onCheckedChange={(value) => onChange({ notchShowCodex: value })}

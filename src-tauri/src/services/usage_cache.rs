@@ -105,6 +105,19 @@ impl UsageCache {
             w.remove(&key);
         }
     }
+
+    pub fn invalidate_subscription(&self, app_type: &AppType) {
+        if !self
+            .subscription
+            .read()
+            .is_ok_and(|r| r.contains_key(app_type))
+        {
+            return;
+        }
+        if let Ok(mut w) = self.subscription.write() {
+            w.remove(app_type);
+        }
+    }
 }
 
 #[cfg(test)]

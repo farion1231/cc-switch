@@ -44,7 +44,9 @@ export function CodexQuotaPanel() {
           disabled={quotasQuery.isFetching}
         >
           <RefreshCw
-            className={quotasQuery.isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"}
+            className={
+              quotasQuery.isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"
+            }
           />
           {t("common.refresh", { defaultValue: "Refresh" })}
         </Button>
@@ -59,12 +61,21 @@ export function CodexQuotaPanel() {
           </div>
         ) : (
           quotas.map(([accountKey, quota]) => {
-            const fiveHour = quota.tiers.find((tier) => tier.name === "five_hour");
-            const sevenDay = quota.tiers.find((tier) => tier.name === "seven_day");
+            const fiveHour = quota.tiers.find(
+              (tier) => tier.name === "five_hour",
+            );
+            const sevenDay = quota.tiers.find(
+              (tier) => tier.name === "seven_day",
+            );
             return (
-              <div key={accountKey} className="rounded-md border bg-background p-3">
+              <div
+                key={accountKey}
+                className="rounded-md border bg-background p-3"
+              >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-sm font-medium">{accountKey}</span>
+                  <span className="truncate text-sm font-medium">
+                    {accountKey}
+                  </span>
                   <Badge variant={quota.success ? "default" : "secondary"}>
                     {quota.success ? "OK" : "N/A"}
                   </Badge>

@@ -90,14 +90,14 @@ struct ToolBlockState {
     started: bool,
     pending_args: String,
     /// 连续空白字符计数 — 用于检测 Copilot 无限换行 bug
-    /// 当 function call 参数中出现连续 20+ 空白字符时，强制终止流
+    /// 当 function call 参数中的连续空白字符达到阈值时，强制终止流
     consecutive_whitespace: usize,
     /// 是否已因无限空白 bug 被中止
     aborted: bool,
 }
 
 /// 无限空白 bug 的连续空白字符阈值
-const INFINITE_WHITESPACE_THRESHOLD: usize = 20;
+const INFINITE_WHITESPACE_THRESHOLD: usize = 500;
 
 fn build_anthropic_usage_json(usage: &Usage) -> Value {
     let mut usage_json = json!({
