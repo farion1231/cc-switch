@@ -296,6 +296,10 @@ fn normalize_codex_live_config_model_provider_with_anchors<'a>(
         return Ok(config_text.to_string());
     }
 
+    if codex_config_uses_official_openai_endpoint(config_text, &source_provider_id) {
+        return Ok(config_text.to_string());
+    }
+
     let stable_provider_id = anchor_stable_provider_id
         .or_else(|| {
             is_custom_codex_model_provider_id(&source_provider_id)
@@ -475,6 +479,25 @@ pub fn extract_codex_base_url(config_text: &str) -> Option<String> {
     doc.get("base_url")
         .and_then(|v| v.as_str())
         .map(ToString::to_string)
+}
+
+fn codex_config_uses_official_openai_endpoint(config_text: &str, provider_id: &str) -> bool {
+    if !provider_id.eq_ignore_ascii_case("openai") {
+        return false;
+    }
+
+    extract_codex_base_url(config_text)
+        .map(|base_url| codex_base_url_is_openai_official(&base_url))
+        .unwrap_or(true)
+}
+
+fn codex_base_url_is_openai_official(base_url: &str) -> bool {
+    let Ok(url) = url::Url::parse(base_url.trim()) else {
+        return false;
+    };
+
+    url.host_str()
+        .is_some_and(|host| host.eq_ignore_ascii_case("api.openai.com"))
 }
 
 pub fn codex_auth_has_login_material(auth: &Value) -> bool {
@@ -1801,6 +1824,52 @@ command = "npx"
         assert!(
             parsed.get("mcp_servers").is_some(),
             "unrelated config should be preserved"
+        );
+    }
+
+    #[test]
+    fn normalize_live_config_keeps_official_openai_when_anchor_is_custom() {
+        let current = r#"model_provider = "rightcode"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+"#;
+        let target = r#"model_provider = "openai"
+model = "gpt-5.4"
+
+[model_providers.openai]
+name = "OpenAI"
+base_url = "https://api.openai.com/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+
+        let result =
+            normalize_codex_live_config_model_provider_with_anchors(target, Some(current)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("openai"),
+            "official OpenAI switches must keep future Codex history under openai"
+        );
+
+        let model_providers = parsed
+            .get("model_providers")
+            .and_then(|v| v.as_table())
+            .expect("model_providers should exist");
+        assert!(
+            model_providers.get("rightcode").is_none(),
+            "custom anchor should not be injected into official OpenAI config"
+        );
+        assert_eq!(
+            model_providers
+                .get("openai")
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("https://api.openai.com/v1")
         );
     }
 
