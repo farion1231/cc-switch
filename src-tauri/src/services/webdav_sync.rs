@@ -15,7 +15,7 @@ use crate::services::webdav::{
     auth_from_credentials, build_remote_url, ensure_remote_directories, get_bytes, head_etag,
     path_segments, put_bytes, test_connection, WebDavAuth,
 };
-use crate::settings::{update_webdav_sync_status, WebDavSyncSettings, WebDavSyncStatus};
+use crate::settings::{update_webdav_sync_status, SyncScope, WebDavSyncSettings, WebDavSyncStatus};
 
 use super::sync_protocol::{
     apply_snapshot, build_local_snapshot, effective_db_compat_version, localized,
@@ -136,8 +136,8 @@ pub async fn download(
         &snapshot.manifest.artifacts,
     )
     .await?;
-    let should_restore_skills = settings.sync_scope.skills && snapshot.manifest.sync_scope.skills;
-    let skills_zip = if should_restore_skills {
+    let apply_scope = effective_download_scope(&settings.sync_scope, &snapshot.manifest.sync_scope);
+    let skills_zip = if apply_scope.skills {
         Some(
             download_and_verify(
                 settings,
@@ -153,7 +153,7 @@ pub async fn download(
     };
 
     // Apply snapshot
-    apply_snapshot(db, &db_sql, skills_zip.as_deref(), &settings.sync_scope)?;
+    apply_snapshot(db, &db_sql, skills_zip.as_deref(), &apply_scope)?;
 
     let manifest_hash = sha256_hex(&snapshot.manifest_bytes);
     let _persisted = persist_sync_success_best_effort(
@@ -315,6 +315,15 @@ fn auth_for(settings: &WebDavSyncSettings) -> WebDavAuth {
     auth_from_credentials(&settings.username, &settings.password)
 }
 
+fn effective_download_scope(local: &SyncScope, remote: &SyncScope) -> SyncScope {
+    SyncScope {
+        providers: local.providers && remote.providers,
+        settings: local.settings && remote.settings,
+        mcp: local.mcp && remote.mcp,
+        skills: local.skills && remote.skills,
+    }
+}
+
 // ─── Tests ───────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -341,5 +350,43 @@ mod tests {
         };
         let segs = remote_dir_segments(&settings, RemoteLayout::Legacy);
         assert_eq!(segs, vec!["cc-switch-sync", "v2", "default"]);
+    }
+
+    #[test]
+    fn effective_download_scope_preserves_remote_omitted_optional_scopes() {
+        let local = SyncScope::full();
+        let remote = SyncScope {
+            mcp: false,
+            skills: false,
+            ..SyncScope::full()
+        };
+
+        let scope = effective_download_scope(&local, &remote);
+
+        assert!(scope.providers);
+        assert!(scope.settings);
+        assert!(!scope.mcp);
+        assert!(!scope.skills);
+    }
+
+    #[test]
+    fn effective_download_scope_keeps_optional_scope_only_when_both_sides_enable_it() {
+        let local = SyncScope {
+            mcp: true,
+            skills: false,
+            ..SyncScope::default()
+        };
+        let remote = SyncScope {
+            mcp: true,
+            skills: true,
+            ..SyncScope::default()
+        };
+
+        let scope = effective_download_scope(&local, &remote);
+
+        assert!(scope.providers);
+        assert!(scope.settings);
+        assert!(scope.mcp);
+        assert!(!scope.skills);
     }
 }
