@@ -10,8 +10,8 @@ use crate::codex_config::get_codex_config_dir;
 use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
-    TITLE_MAX_CHARS,
+    extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, render_tool_call,
+    truncate_summary, TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "codex";
@@ -94,7 +94,12 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
                     .get("name")
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
-                ("assistant".to_string(), format!("[Tool: {name}]"))
+                let arguments = parse_function_call_arguments(payload.get("arguments"));
+                let call_id = payload.get("call_id").and_then(Value::as_str);
+                (
+                    "assistant".to_string(),
+                    render_tool_call(name, arguments.as_ref(), call_id),
+                )
             }
             "function_call_output" => {
                 let output = payload
@@ -117,6 +122,17 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     }
 
     Ok(messages)
+}
+
+fn parse_function_call_arguments(value: Option<&Value>) -> Option<Value> {
+    match value {
+        Some(Value::String(raw)) if raw.trim().is_empty() => None,
+        Some(Value::String(raw)) => serde_json::from_str(raw)
+            .ok()
+            .or_else(|| Some(Value::String(raw.clone()))),
+        Some(other) => Some(other.clone()),
+        None => None,
+    }
 }
 
 pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
@@ -668,6 +684,8 @@ mod tests {
 
         assert_eq!(msgs[1].role, "assistant");
         assert!(msgs[1].content.contains("[Tool: shell]"));
+        assert!(msgs[1].content.contains("Call ID: call_1"));
+        assert!(msgs[1].content.contains("\"cmd\""));
 
         assert_eq!(msgs[2].role, "tool");
         assert!(msgs[2].content.contains("file1.txt"));
