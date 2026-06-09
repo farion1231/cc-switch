@@ -3009,6 +3009,132 @@ mod tests {
 
     #[test]
     #[serial]
+    fn switch_codex_skips_claude_mcp_when_current_claude_is_profile_only() {
+        let _env_guard = UserEnvVarGuard::new("CLAUDE_CONFIG_DIR");
+        with_test_home(|state, home| {
+            let default_dir = home.join(".claude");
+            fs::create_dir_all(&default_dir).expect("create default claude dir");
+            write_json_file(
+                &default_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "default-live-token",
+                        "ANTHROPIC_BASE_URL": "https://default-live.example"
+                    }
+                }),
+            )
+            .expect("seed default live settings");
+
+            let profile_dir = home.join(".claude-profiles").join("api");
+            fs::create_dir_all(&profile_dir).expect("create api profile dir");
+            let profile_mcp_path = profile_dir.with_extension("json");
+            let existing_profile_mcp = json!({
+                "mcpServers": {
+                    "external": {
+                        "type": "stdio",
+                        "command": "external-tool"
+                    }
+                },
+                "profileOwned": true
+            });
+            write_json_file(&profile_mcp_path, &existing_profile_mcp)
+                .expect("seed profile-owned mcp file");
+
+            let profile_provider = claude_provider(
+                "profile-only",
+                "Profile Only",
+                "profile-token-should-not-write",
+                "https://profile-should-not-write.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(profile_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &profile_provider)
+                .expect("save profile provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "profile-only")
+                .expect("set current Claude provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("profile-only"))
+                .expect("set local current Claude provider");
+            crate::settings::set_claude_provider_override_dir(Some(&profile_dir.to_string_lossy()))
+                .expect("set profile-only override");
+
+            let codex_a = codex_provider(
+                "codex-a",
+                "Codex A",
+                r#"model_provider = "custom"
+model = "gpt-5.4"
+
+[model_providers.custom]
+base_url = "https://codex-a.example/v1"
+wire_api = "responses"
+"#,
+            );
+            let codex_b = codex_provider(
+                "codex-b",
+                "Codex B",
+                r#"model_provider = "other"
+model = "gpt-5.4"
+
+[model_providers.other]
+base_url = "https://codex-b.example/v1"
+wire_api = "responses"
+"#,
+            );
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &codex_a)
+                .expect("save codex a");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &codex_b)
+                .expect("save codex b");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), "codex-a")
+                .expect("set current Codex provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some("codex-a"))
+                .expect("set local current Codex provider");
+            state
+                .db
+                .save_mcp_server(&McpServer {
+                    id: "managed-mcp".to_string(),
+                    name: "Managed MCP".to_string(),
+                    server: json!({
+                        "type": "stdio",
+                        "command": "python",
+                        "args": ["-m", "managed_mcp"]
+                    }),
+                    apps: McpApps {
+                        claude: true,
+                        ..Default::default()
+                    },
+                    description: None,
+                    homepage: None,
+                    docs: None,
+                    tags: Vec::new(),
+                })
+                .expect("save managed mcp server");
+
+            ProviderService::switch(state, AppType::Codex, "codex-b")
+                .expect("switch Codex provider");
+
+            let profile_mcp: Value =
+                read_json_file(&profile_mcp_path).expect("read profile mcp file");
+            assert_eq!(
+                profile_mcp, existing_profile_mcp,
+                "non-Claude switching must not rewrite profile-only Claude MCP files"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn switch_claude_profile_mode_rolls_back_current_provider_and_override_on_failure() {
         with_test_home(|state, home| {
             let default_dir = home.join(".claude");
@@ -5094,6 +5220,41 @@ impl ProviderService {
         .map_err(AppError::Message)
     }
 
+    fn current_claude_provider_is_profile_only(state: &AppState) -> Result<bool, AppError> {
+        let Some(provider_id) =
+            crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)?
+        else {
+            return Ok(false);
+        };
+        let Some(provider) = state
+            .db
+            .get_provider_by_id(&provider_id, AppType::Claude.as_str())?
+        else {
+            return Ok(false);
+        };
+
+        Ok(matches!(
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.claude_activation_mode.as_ref()),
+            Some(ClaudeActivationMode::ProfileOnly)
+        ))
+    }
+
+    fn sync_mcp_after_provider_live_write(
+        state: &AppState,
+        app_type: &AppType,
+    ) -> Result<(), AppError> {
+        if !matches!(app_type, AppType::Claude)
+            && Self::current_claude_provider_is_profile_only(state)?
+        {
+            McpService::sync_all_enabled_without_claude(state)
+        } else {
+            McpService::sync_all_enabled(state)
+        }
+    }
+
     fn validate_claude_runtime_switch_plan(plan: &ClaudeSwitchPlan) -> Result<(), AppError> {
         let requires_profile_dir = matches!(
             plan.activation_mode,
@@ -5939,7 +6100,7 @@ impl ProviderService {
                 } else if !is_claude_profile_only {
                     write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
                     // Sync MCP
-                    McpService::sync_all_enabled(state)?;
+                    Self::sync_mcp_after_provider_live_write(state, &app_type)?;
                 }
 
                 Ok(())
@@ -6407,7 +6568,7 @@ impl ProviderService {
 
             if should_write_live {
                 // Sync MCP
-                McpService::sync_all_enabled(state)?;
+                Self::sync_mcp_after_provider_live_write(state, &app_type)?;
             }
 
             Ok(())

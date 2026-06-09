@@ -107,9 +107,12 @@ impl Provider {
             crate::app_config::AppType::Gemini => {
                 let base_url = self.settings_config.pointer("/env/GOOGLE_GEMINI_BASE_URL");
 
-                base_url
-                    .and_then(Value::as_str)
-                    .is_none_or(gemini_base_url_is_official_equivalent)
+                base_url.is_none_or(|base_url| {
+                    value_is_null_or_blank_string(base_url)
+                        || base_url
+                            .as_str()
+                            .is_some_and(gemini_base_url_is_official_equivalent)
+                })
             }
             _ => false,
         }
@@ -1226,6 +1229,23 @@ model = "gpt-5.4""#
             "Keyed Google Gemini".to_string(),
             json!({
                 "env": { "GEMINI_API_KEY": "gemini-key" }
+            }),
+            None,
+        );
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Gemini));
+    }
+
+    #[test]
+    fn gemini_keyed_blank_endpoint_is_official_equivalent() {
+        let provider = Provider::with_id(
+            "keyed-google-gemini-blank-url".to_string(),
+            "Keyed Google Gemini Blank URL".to_string(),
+            json!({
+                "env": {
+                    "GEMINI_API_KEY": "gemini-key",
+                    "GOOGLE_GEMINI_BASE_URL": ""
+                }
             }),
             None,
         );
