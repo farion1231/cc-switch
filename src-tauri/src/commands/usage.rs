@@ -276,6 +276,19 @@ pub fn sync_session_usage(
         }
     }
 
+    // 同步 OpenCode 使用数据
+    match crate::services::session_usage_opencode::sync_opencode_usage(&state.db) {
+        Ok(opencode_result) => {
+            result.imported += opencode_result.imported;
+            result.skipped += opencode_result.skipped;
+            result.files_scanned += opencode_result.files_scanned;
+            result.errors.extend(opencode_result.errors);
+        }
+        Err(e) => {
+            result.errors.push(format!("OpenCode 同步失败: {e}"));
+        }
+    }
+
     Ok(result)
 }
 

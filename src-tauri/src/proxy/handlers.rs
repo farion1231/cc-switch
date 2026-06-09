@@ -62,6 +62,41 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
     Ok(Json(status))
 }
 
+/// GET /v1/models — Codex model list (reachability check)
+///
+/// Codex CLI probes this endpoint at startup and deserializes the response as a
+/// catalog with a top-level `models` field.  Return the cc-switch–managed model
+/// catalog file directly so the format always matches what the current version
+/// of Codex expects.
+///
+/// Only serves the catalog when the live config.toml still references the
+/// cc-switch–owned `model_catalog_json`, using the same path ownership rules as
+/// Codex live-setting import.
+pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
+    let generated_path = crate::codex_config::get_codex_model_catalog_path();
+    let active_catalog_path = match crate::codex_config::read_codex_config_text() {
+        Ok(config_text) => {
+            crate::codex_config::resolve_cc_switch_catalog_path(&config_text, &generated_path)
+        }
+        Err(_) => None,
+    };
+
+    let catalog = if let Some(catalog_path) =
+        active_catalog_path.as_ref().filter(|path| path.exists())
+    {
+        let text = std::fs::read_to_string(catalog_path).unwrap_or_default();
+        serde_json::from_str(&text).unwrap_or(json!({"models": []}))
+    } else {
+        if active_catalog_path.is_none() {
+            log::debug!(
+                "[models] stale guard: catalog not served (model_catalog_json not set to cc-switch catalog)"
+            );
+        }
+        json!({"models": []})
+    };
+    Ok(Json(catalog))
+}
+
 // ============================================================================
 // Claude API 处理器（包含格式转换逻辑）
 // ============================================================================
@@ -298,7 +333,7 @@ async fn handle_claude_transform(
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
-            let model = ctx.request_model.clone();
+            let request_model = ctx.request_model.clone();
             let status_code = status.as_u16();
             let start_time = ctx.start_time;
             let session_id = ctx.session_id.clone();
@@ -308,11 +343,12 @@ async fn handle_claude_transform(
                 Some(claude_stream_usage_event_filter),
                 move |events, first_token_ms| {
                     if let Some(usage) = TokenUsage::from_claude_stream_events(&events) {
+                        let model = usage.model.clone().unwrap_or(request_model.clone());
                         let latency_ms = start_time.elapsed().as_millis() as u64;
                         let state = state.clone();
                         let provider_id = provider_id.clone();
-                        let model = model.clone();
                         let session_id = session_id.clone();
+                        let request_model = request_model.clone();
 
                         tokio::spawn(async move {
                             log_usage(
@@ -320,7 +356,7 @@ async fn handle_claude_transform(
                                 &provider_id,
                                 "claude",
                                 &model,
-                                &model,
+                                &request_model,
                                 usage,
                                 latency_ms,
                                 first_token_ms,
@@ -1005,19 +1041,39 @@ fn codex_proxy_error_json(
         return body;
     };
 
-    let cause = error_obj
-        .get("message")
-        .and_then(|value| value.as_str())
-        .map(ToString::to_string)
-        .filter(|message| !message.trim().is_empty())
-        .unwrap_or_else(|| get_error_message(error));
-
-    let status_fragment = upstream_status
-        .map(|status| format!("; upstream_status: HTTP {status}"))
-        .unwrap_or_default();
-    let message = format!(
-        "CC Switch local proxy failed while handling Codex endpoint {endpoint}. Provider: {provider_name}; model: {request_model}{status_fragment}; cause: {cause}"
-    );
+    let message = if upstream_status == Some(413) {
+        // 413 来自上游渠道商的网关（典型是 nginx 的 client_max_body_size），不是 CC
+        // Switch 本地代理的限制（本地 DefaultBodyLimit 已放到 200MB）。上游响应体往往是
+        // 一整段 nginx HTML，对用户毫无价值，这里替换成明确指向上游 + 可操作的指引，
+        // 避免「以为是 CC Switch 封装了 nginx / 是本地代理的锅」这种反复出现的误解。
+        format!(
+            concat!(
+                "Upstream provider rejected the request with HTTP 413 (Payload Too Large). ",
+                "The request body exceeds the upstream gateway's size limit; this is the ",
+                "provider's server-side limit, not a CC Switch limit. ",
+                "Provider: {provider}; model: {model}; endpoint: {endpoint}. ",
+                "To recover, shrink the request: run /compact, remove large pasted logs or ",
+                "inline images, or ask the provider to raise its request body limit ",
+                "(e.g. nginx client_max_body_size)."
+            ),
+            provider = provider_name,
+            model = request_model,
+            endpoint = endpoint,
+        )
+    } else {
+        let cause = error_obj
+            .get("message")
+            .and_then(|value| value.as_str())
+            .map(ToString::to_string)
+            .filter(|message| !message.trim().is_empty())
+            .unwrap_or_else(|| get_error_message(error));
+        let status_fragment = upstream_status
+            .map(|status| format!("; upstream_status: HTTP {status}"))
+            .unwrap_or_default();
+        format!(
+            "CC Switch local proxy failed while handling Codex endpoint {endpoint}. Provider: {provider_name}; model: {request_model}{status_fragment}; cause: {cause}"
+        )
+    };
 
     error_obj.insert(
         "message".to_string(),
@@ -1476,5 +1532,37 @@ data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n
         assert!(message.contains("upstream gateway failed"));
         assert_eq!(body["error"]["code"], 2013);
         assert_eq!(body["error"]["upstream_status"], 502);
+    }
+
+    #[test]
+    fn codex_proxy_413_points_to_upstream_not_local_proxy() {
+        // 模拟上游渠道商 nginx 因 client_max_body_size 返回的 413 HTML 页面
+        // （见 issue #666：长上下文 / 大图 / 大日志撞上游体积上限）
+        let error = ProxyError::UpstreamError {
+            status: 413,
+            body: Some(
+                "<html>\r\n<head><title>413 Request Entity Too Large</title></head>\r\n\
+                 <body>\r\n<center><h1>413 Request Entity Too Large</h1></center>\r\n\
+                 <hr><center>nginx/1.29.6</center>\r\n</body>\r\n</html>"
+                    .to_string(),
+            ),
+        };
+        let body = codex_proxy_error_json("HCAI", "gpt-5.5", "/responses", &error);
+
+        let message = body["error"]["message"].as_str().unwrap();
+        // 不再误导成「本地代理失败」
+        assert!(!message.contains("CC Switch local proxy failed"));
+        // 明确指向上游 + 体积超限 + 可操作指引
+        assert!(message.contains("413"));
+        assert!(message.to_lowercase().contains("upstream"));
+        assert!(message.contains("/compact"));
+        // 关键：不把整段 nginx HTML 回显给用户
+        assert!(!message.contains("<html>"));
+        assert!(!message.contains("nginx/1.29.6"));
+        // 结构化字段仍然保留，便于程序化消费 / UI 呈现
+        assert_eq!(body["error"]["upstream_status"], 413);
+        assert_eq!(body["error"]["provider"], "HCAI");
+        assert_eq!(body["error"]["model"], "gpt-5.5");
+        assert_eq!(body["error"]["endpoint"], "/responses");
     }
 }

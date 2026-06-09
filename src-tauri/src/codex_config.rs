@@ -766,7 +766,10 @@ pub fn read_codex_model_catalog_simplified_from_live() -> Result<Option<Value>, 
 /// Given `config.toml` text, resolve the on-disk path of the cc-switch–owned
 /// catalog file (returns `None` if `model_catalog_json` is absent or points at
 /// a file we don't own). Relative paths fall back to `generated_path`.
-fn resolve_cc_switch_catalog_path(config_text: &str, generated_path: &Path) -> Option<PathBuf> {
+pub(crate) fn resolve_cc_switch_catalog_path(
+    config_text: &str,
+    generated_path: &Path,
+) -> Option<PathBuf> {
     if config_text.trim().is_empty() {
         return None;
     }

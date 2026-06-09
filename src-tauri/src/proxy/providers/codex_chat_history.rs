@@ -60,7 +60,7 @@ impl CodexChatHistoryStore {
             .map(|items| {
                 items
                     .iter()
-                    .filter_map(cached_function_call)
+                    .filter_map(cached_call_item)
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
@@ -73,8 +73,8 @@ impl CodexChatHistoryStore {
         inner.insert_calls(response_id, calls)
     }
 
-    async fn record_function_call(&self, response_id: Option<&str>, item: &Value) -> bool {
-        let Some(call) = cached_function_call(item) else {
+    async fn record_call_item(&self, response_id: Option<&str>, item: &Value) -> bool {
+        let Some(call) = cached_call_item(item) else {
             return false;
         };
 
@@ -110,14 +110,18 @@ impl CodexChatHistoryStore {
         let output_call_ids = items
             .iter()
             .filter(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
+                item.get("type")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(is_call_output_item_type)
             })
             .filter_map(response_item_call_id)
             .collect::<HashSet<_>>();
         let existing_call_ids = items
             .iter()
             .filter(|item| {
-                item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+                item.get("type")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(is_call_item_type)
             })
             .filter_map(response_item_call_id)
             .collect::<HashSet<_>>();
@@ -143,10 +147,10 @@ impl CodexChatHistoryStore {
 
         for mut item in items {
             match item.get("type").and_then(|value| value.as_str()) {
-                Some("function_call") => {
+                Some(item_type) if is_call_item_type(item_type) => {
                     if let Some(call_id) = response_item_call_id(&item) {
                         if let Some(cached) = lookup.call(&call_id) {
-                            if enrich_function_call_reasoning(&mut item, cached) {
+                            if enrich_call_item_reasoning(&mut item, cached) {
                                 enriched += 1;
                             }
                         }
@@ -154,7 +158,7 @@ impl CodexChatHistoryStore {
                     }
                     new_items.push(item);
                 }
-                Some("function_call_output") => {
+                Some(item_type) if is_call_output_item_type(item_type) => {
                     if let Some(group) = restore_group.take().filter(|group| !group.is_empty()) {
                         for (call_id, cached_item) in group {
                             seen_call_ids.insert(call_id);
@@ -423,7 +427,7 @@ async fn inspect_sse_block(
         Some("response.output_item.done") => {
             if let Some(item) = value.get("item") {
                 history
-                    .record_function_call(current_response_id.as_deref(), item)
+                    .record_call_item(current_response_id.as_deref(), item)
                     .await;
             }
         }
@@ -436,15 +440,33 @@ async fn inspect_sse_block(
     }
 }
 
-fn cached_function_call(item: &Value) -> Option<(String, Value)> {
-    if item.get("type").and_then(|value| value.as_str()) != Some("function_call") {
+fn cached_call_item(item: &Value) -> Option<(String, Value)> {
+    if !item
+        .get("type")
+        .and_then(|value| value.as_str())
+        .is_some_and(is_call_item_type)
+    {
         return None;
     }
     let call_id = response_item_call_id(item)?;
     Some((call_id, item.clone()))
 }
 
-fn enrich_function_call_reasoning(item: &mut Value, cached: &Value) -> bool {
+fn is_call_item_type(item_type: &str) -> bool {
+    matches!(
+        item_type,
+        "function_call" | "custom_tool_call" | "tool_search_call"
+    )
+}
+
+fn is_call_output_item_type(item_type: &str) -> bool {
+    matches!(
+        item_type,
+        "function_call_output" | "custom_tool_call_output" | "tool_search_output"
+    )
+}
+
+fn enrich_call_item_reasoning(item: &mut Value, cached: &Value) -> bool {
     let mut changed = false;
     for key in ["reasoning_content", "reasoning"] {
         if item.get(key).is_some_and(|value| !is_empty_value(value)) {
@@ -702,6 +724,58 @@ mod tests {
         assert_eq!(input[1]["call_id"], "call_2");
         assert_eq!(input[2]["type"], "function_call_output");
         assert_eq!(input[3]["type"], "function_call_output");
+    }
+
+    #[tokio::test]
+    async fn restores_custom_and_tool_search_calls_from_previous_response() {
+        let history = CodexChatHistoryStore::default();
+        history
+            .record_response(&json!({
+                "id": "resp_1",
+                "output": [
+                    {
+                        "type": "custom_tool_call",
+                        "call_id": "call_patch",
+                        "name": "apply_patch",
+                        "input": "*** Begin Patch\n*** End Patch",
+                        "reasoning_content": "Need to patch the file."
+                    },
+                    {
+                        "type": "tool_search_call",
+                        "call_id": "call_search",
+                        "status": "completed",
+                        "execution": "client",
+                        "arguments": {"query": "Gmail tools"},
+                        "reasoning_content": "Need to discover tools."
+                    }
+                ]
+            }))
+            .await;
+
+        let mut request = json!({
+            "previous_response_id": "resp_1",
+            "input": [
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "call_patch",
+                    "output": "patched"
+                },
+                {
+                    "type": "tool_search_output",
+                    "call_id": "call_search",
+                    "tools": []
+                }
+            ]
+        });
+
+        assert_eq!(history.enrich_request(&mut request).await, 2);
+        let input = request["input"].as_array().unwrap();
+        assert_eq!(input[0]["type"], "custom_tool_call");
+        assert_eq!(input[0]["call_id"], "call_patch");
+        assert_eq!(input[1]["type"], "tool_search_call");
+        assert_eq!(input[1]["call_id"], "call_search");
+        assert_eq!(input[2]["type"], "custom_tool_call_output");
+        assert_eq!(input[3]["type"], "tool_search_output");
     }
 
     #[tokio::test]

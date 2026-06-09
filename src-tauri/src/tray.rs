@@ -11,6 +11,26 @@ use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::store::AppState;
 
+const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
+const H_TIER_NAMES: &[&str] = &[crate::services::subscription::TIER_FIVE_HOUR];
+const W_TIER_NAMES: &[&str] = &[
+    crate::services::subscription::TIER_WEEKLY_LIMIT,
+    crate::services::subscription::TIER_SEVEN_DAY,
+    crate::services::subscription::TIER_SEVEN_DAY_OPUS,
+    crate::services::subscription::TIER_SEVEN_DAY_SONNET,
+];
+const GEMINI_PRO_TIER_NAMES: &[&str] = &[crate::services::subscription::TIER_GEMINI_PRO];
+const GEMINI_FLASH_TIER_NAMES: &[&str] = &[crate::services::subscription::TIER_GEMINI_FLASH];
+const GEMINI_FLASH_LITE_TIER_NAMES: &[&str] =
+    &[crate::services::subscription::TIER_GEMINI_FLASH_LITE];
+const TIER_LABEL_GROUPS: &[(&str, &[&str])] = &[
+    ("h", H_TIER_NAMES),
+    ("w", W_TIER_NAMES),
+    ("p", GEMINI_PRO_TIER_NAMES),
+    ("f", GEMINI_FLASH_TIER_NAMES),
+    ("l", GEMINI_FLASH_LITE_TIER_NAMES),
+];
+
 /// 每个 app 分区的子菜单句柄，用于 usage 更新时就地改 label 而非整菜单重建。
 /// `create_tray_menu` 每次重建都会整表覆盖写入，保证句柄始终指向当前活跃菜单。
 static TRAY_SECTION_SUBMENUS: Lazy<
@@ -121,47 +141,16 @@ fn emoji_for_utilization(pct: f64) -> &'static str {
 fn format_subscription_summary(
     quota: &crate::services::subscription::SubscriptionQuota,
 ) -> Option<String> {
-    use crate::services::subscription::{
-        TIER_FIVE_HOUR, TIER_GEMINI_FLASH, TIER_GEMINI_FLASH_LITE, TIER_GEMINI_PRO, TIER_SEVEN_DAY,
-    };
     if !quota.success {
         return None;
     }
 
-    // 按 tool 选取主卡槽 tier 并映射到短 label：
-    //   Claude / Codex 沿用时间窗口（h=5 小时，w=7 天）；
-    //   Gemini 用模型维度（p=pro，f=flash，l=flash-lite）——Gemini 后端 tier
-    //   命名是 gemini_pro / gemini_flash / gemini_flash_lite，与时间窗口不同命名空间。
-    //   flash_lite 必须纳入：否则 lite 利用率最高时色标偏低，与前端 footer 行为不一致。
-    let parts: Vec<(&'static str, f64)> = match quota.tool.as_str() {
-        "gemini" => {
-            let mut v = Vec::new();
-            if let Some(t) = quota.tiers.iter().find(|t| t.name == TIER_GEMINI_PRO) {
-                v.push(("p", t.utilization));
-            }
-            if let Some(t) = quota.tiers.iter().find(|t| t.name == TIER_GEMINI_FLASH) {
-                v.push(("f", t.utilization));
-            }
-            if let Some(t) = quota
-                .tiers
-                .iter()
-                .find(|t| t.name == TIER_GEMINI_FLASH_LITE)
-            {
-                v.push(("l", t.utilization));
-            }
-            v
-        }
-        _ => {
-            let mut v = Vec::new();
-            if let Some(t) = quota.tiers.iter().find(|t| t.name == TIER_FIVE_HOUR) {
-                v.push(("h", t.utilization));
-            }
-            if let Some(t) = quota.tiers.iter().find(|t| t.name == TIER_SEVEN_DAY) {
-                v.push(("w", t.utilization));
-            }
-            v
-        }
-    };
+    let entries: Vec<(&str, f64)> = quota
+        .tiers
+        .iter()
+        .map(|tier| (tier.name.as_str(), tier.utilization))
+        .collect();
+    let parts = labeled_tier_parts(&entries);
 
     if parts.is_empty() {
         return None;
@@ -185,6 +174,22 @@ fn format_subscription_summary(
     Some(format!("{emoji} {body}"))
 }
 
+fn labeled_tier_parts(entries: &[(&str, f64)]) -> Vec<(&'static str, f64)> {
+    let mut parts = Vec::new();
+    for &(label, tier_names) in TIER_LABEL_GROUPS {
+        let max_utilization = entries
+            .iter()
+            .filter(|(name, _)| tier_names.contains(name))
+            .map(|(_, utilization)| *utilization)
+            .filter(|utilization| utilization.is_finite())
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        if let Some(utilization) = max_utilization {
+            parts.push((label, utilization));
+        }
+    }
+    parts
+}
+
 fn tier_pct(data: &crate::provider::UsageData) -> Option<f64> {
     match (data.used, data.total) {
         (Some(used), Some(total)) if total > 0.0 => Some(used / total * 100.0),
@@ -193,8 +198,6 @@ fn tier_pct(data: &crate::provider::UsageData) -> Option<f64> {
 }
 
 fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String> {
-    use crate::services::subscription::{TIER_FIVE_HOUR, TIER_WEEKLY_LIMIT};
-
     if !result.success {
         return None;
     }
@@ -203,23 +206,15 @@ fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String
         return None;
     }
 
-    // commands::provider 的 token_plan 分支把 SubscriptionQuota 的每个 tier
-    // 扁平化为一条 UsageData（plan_name 承载 tier 名），所以这里按 plan_name
-    // 识别双桶形态，其余 usage 结果（Copilot / balance / 自定义脚本）走 fallback。
-    const TOKEN_PLAN_LABELS: &[(&str, &str)] = &[(TIER_FIVE_HOUR, "h"), (TIER_WEEKLY_LIMIT, "w")];
-
-    let mut parts: Vec<(&'static str, f64)> = Vec::new();
-    for &(tier_name, label) in TOKEN_PLAN_LABELS {
-        let Some(d) = data
-            .iter()
-            .find(|d| d.plan_name.as_deref() == Some(tier_name))
-        else {
-            continue;
-        };
-        if let Some(u) = tier_pct(d) {
-            parts.push((label, u));
-        }
-    }
+    // commands::provider 的 token_plan / official_subscription 分支都会把
+    // SubscriptionQuota 的每个 tier 扁平化为一条 UsageData（plan_name 承载
+    // tier 名），所以这里按 plan_name 恢复托盘短标签。其余 usage 结果
+    //（Copilot / balance / 自定义脚本）走 fallback。
+    let entries: Vec<(&str, f64)> = data
+        .iter()
+        .filter_map(|d| Some((d.plan_name.as_deref()?, tier_pct(d)?)))
+        .collect();
+    let parts = labeled_tier_parts(&entries);
     if !parts.is_empty() {
         let worst = parts
             .iter()
@@ -246,6 +241,18 @@ fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String
     }
 }
 
+fn provider_uses_official_subscription(provider: &crate::provider::Provider) -> bool {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|m| m.usage_script.as_ref())
+        .map(|script| {
+            script.enabled
+                && script.template_type.as_deref() == Some(TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION)
+        })
+        .unwrap_or(false)
+}
+
 fn format_usage_suffix(
     app_state: &AppState,
     app_type: &AppType,
@@ -254,7 +261,10 @@ fn format_usage_suffix(
 ) -> Option<String> {
     // 当前脚本是否启用：禁用/删除时不再沿用旧 UsageCache 结果，
     // 并顺手 invalidate，防止后续重建继续命中过期数据。
-    if provider.has_usage_script_enabled() {
+    let is_official_provider = provider.category.as_deref() == Some("official");
+    let can_use_script = provider.has_usage_script_enabled()
+        && (!is_official_provider || provider_uses_official_subscription(provider));
+    if can_use_script {
         // 脚本缓存优先（覆盖 Copilot/coding_plan/balance/自定义脚本），借用访问避免克隆整条 UsageResult。
         if let Some(Some(s)) =
             app_state
@@ -263,19 +273,22 @@ fn format_usage_suffix(
         {
             return Some(format!(" · {s}"));
         }
+        if provider_uses_official_subscription(provider) {
+            if let Some(Some(s)) = app_state
+                .usage_cache
+                .with_subscription(app_type, format_subscription_summary)
+            {
+                return Some(format!(" · {s}"));
+            }
+        }
     } else {
         app_state
             .usage_cache
             .invalidate_script(app_type, provider_id);
     }
 
-    if provider.category.as_deref() == Some("official") {
-        if let Some(Some(s)) = app_state
-            .usage_cache
-            .with_subscription(app_type, format_subscription_summary)
-        {
-            return Some(format!(" · {s}"));
-        }
+    if !provider_uses_official_subscription(provider) {
+        app_state.usage_cache.invalidate_subscription(app_type);
     }
     None
 }
@@ -768,8 +781,8 @@ pub fn schedule_tray_refresh(app: &tauri::AppHandle) {
 /// 雪崩请求；互斥锁被毒化时以上次状态为准继续推进，不会永久阻塞。
 ///
 /// 刷新面与 `format_usage_suffix` 的展示面严格对齐 —— 每次悬停最多发
-/// `TRAY_SECTIONS.len()` 次外部请求，script 优先（覆盖 coding_plan / balance /
-/// Copilot / 自定义脚本），否则当前 provider 必须是 `official` 才查订阅。
+/// `TRAY_SECTIONS.len()` 次外部请求；只有显式启用的用量查询（含官方订阅、
+/// coding_plan / balance / Copilot / 自定义脚本）才会发请求。
 pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     use crate::commands::CopilotAuthState;
     use futures::future::join_all;
@@ -797,7 +810,6 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
         .visible_apps
         .unwrap_or_default();
 
-    let mut subscription_futures = Vec::new();
     let mut script_futures = Vec::new();
 
     for section in TRAY_SECTIONS.iter() {
@@ -831,9 +843,11 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
             }
         };
 
-        // 与 format_usage_suffix 同一优先级：脚本启用 → 查脚本；
-        // 否则当前 provider 是 official → 查订阅；其它情况不发请求。
-        if current.has_usage_script_enabled() {
+        // 与 format_usage_suffix 同一优先级：只有显式启用的用量查询才发请求。
+        let is_official_provider = current.category.as_deref() == Some("official");
+        if current.has_usage_script_enabled()
+            && (!is_official_provider || provider_uses_official_subscription(&current))
+        {
             let app_clone = app.clone();
             let state = app.state::<AppState>();
             let copilot_state = app.state::<CopilotAuthState>();
@@ -852,22 +866,10 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
                     log::debug!("[Tray] 刷新{log_name}供应商 {provider_id} 用量失败: {e}");
                 }
             });
-        } else if current.category.as_deref() == Some("official") {
-            let app_clone = app.clone();
-            let state = app.state::<AppState>();
-            let tool = app_type_str.to_string();
-            subscription_futures.push(async move {
-                if let Err(e) =
-                    crate::commands::get_subscription_quota(app_clone, state, tool).await
-                {
-                    log::debug!("[Tray] 刷新{log_name}订阅用量失败（可能未登录）: {e}");
-                }
-            });
         }
     }
 
-    // 两组并行启动，整体等待 —— 订阅/脚本互不依赖，没必要串行。
-    futures::future::join(join_all(subscription_futures), join_all(script_futures)).await;
+    join_all(script_futures).await;
 }
 
 #[cfg(test)]
@@ -875,7 +877,9 @@ mod tests {
     use super::{format_script_summary, format_subscription_summary, TRAY_ID};
     use crate::provider::{UsageData, UsageResult};
     use crate::services::subscription::{
-        CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_WEEKLY_LIMIT,
+        CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_GEMINI_FLASH,
+        TIER_GEMINI_FLASH_LITE, TIER_GEMINI_PRO, TIER_SEVEN_DAY, TIER_SEVEN_DAY_OPUS,
+        TIER_SEVEN_DAY_SONNET, TIER_WEEKLY_LIMIT,
     };
 
     #[test]
@@ -989,6 +993,22 @@ mod tests {
     }
 
     #[test]
+    fn subscription_summary_week_aliases_use_highest_utilization() {
+        let quota = make_quota(
+            "claude",
+            true,
+            vec![
+                tier(TIER_FIVE_HOUR, 10.0),
+                tier(TIER_SEVEN_DAY_OPUS, 20.0),
+                tier(TIER_SEVEN_DAY_SONNET, 95.0),
+            ],
+        );
+        let s = format_subscription_summary(&quota).unwrap();
+        assert!(s.contains("w95%"), "expected w95% in {s}");
+        assert!(s.starts_with("\u{1F534}"), "expected red emoji in {s}");
+    }
+
+    #[test]
     fn failure_quota_returns_none() {
         let quota = make_quota("claude", false, vec![tier("five_hour", 50.0)]);
         assert!(format_subscription_summary(&quota).is_none());
@@ -1072,6 +1092,59 @@ mod tests {
         let r = usage_result(true, vec![usage_data(Some(TIER_WEEKLY_LIMIT), 50.0)]);
         let s = format_script_summary(&r).expect("should format");
         assert!(s.contains("w50%"), "expected w50% in {s}");
+    }
+
+    #[test]
+    fn script_summary_official_subscription_claude_uses_h_and_w_labels() {
+        let r = usage_result(
+            true,
+            vec![
+                usage_data(Some(TIER_FIVE_HOUR), 12.0),
+                usage_data(Some(TIER_SEVEN_DAY), 80.0),
+            ],
+        );
+        let s = format_script_summary(&r).expect("should format");
+        assert!(s.contains("h12%"), "expected h12% in {s}");
+        assert!(s.contains("w80%"), "expected w80% in {s}");
+        assert!(
+            !s.contains(TIER_SEVEN_DAY),
+            "tier machine name should not leak into label: {s}"
+        );
+    }
+
+    #[test]
+    fn script_summary_week_aliases_use_highest_utilization() {
+        let r = usage_result(
+            true,
+            vec![
+                usage_data(Some(TIER_FIVE_HOUR), 10.0),
+                usage_data(Some(TIER_SEVEN_DAY_OPUS), 20.0),
+                usage_data(Some(TIER_SEVEN_DAY_SONNET), 95.0),
+            ],
+        );
+        let s = format_script_summary(&r).unwrap();
+        assert!(s.contains("w95%"), "expected w95% in {s}");
+        assert!(s.starts_with("\u{1F534}"), "expected red emoji in {s}");
+    }
+
+    #[test]
+    fn script_summary_official_subscription_gemini_uses_short_labels() {
+        let r = usage_result(
+            true,
+            vec![
+                usage_data(Some(TIER_GEMINI_PRO), 15.0),
+                usage_data(Some(TIER_GEMINI_FLASH), 42.0),
+                usage_data(Some(TIER_GEMINI_FLASH_LITE), 80.0),
+            ],
+        );
+        let s = format_script_summary(&r).expect("should format");
+        assert!(s.contains("p15%"), "expected p15% in {s}");
+        assert!(s.contains("f42%"), "expected f42% in {s}");
+        assert!(s.contains("l80%"), "expected l80% in {s}");
+        assert!(
+            !s.contains("gemini_"),
+            "Gemini tier machine names should not leak into label: {s}"
+        );
     }
 
     #[test]
