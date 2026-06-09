@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Provider, UsageScript, UsageData, createUsageScript } from "@/types";
 import { usageApi, settingsApi, type AppId } from "@/lib/api";
 import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
+import { subscriptionApi } from "@/lib/api/subscription";
 import { useSettingsQuery } from "@/lib/query";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import {
@@ -391,7 +392,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       if (selectedTemplate === TEMPLATE_TYPES.BALANCE) {
         const baseUrl = providerCredentials.baseUrl ?? "";
         const apiKey = providerCredentials.apiKey ?? "";
-        const { subscriptionApi } = await import("@/lib/api/subscription");
         const result = await subscriptionApi.getBalance(baseUrl, apiKey);
         if (result.success && result.data && result.data.length > 0) {
           const summary = result.data
@@ -421,7 +421,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       if (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN) {
         const baseUrl = providerCredentials.baseUrl ?? "";
         const apiKey = providerCredentials.apiKey ?? "";
-        const { subscriptionApi } = await import("@/lib/api/subscription");
         const quota = await subscriptionApi.getCodingPlanQuota(baseUrl, apiKey);
         if (quota.success && quota.tiers.length > 0) {
           const summary = quota.tiers
