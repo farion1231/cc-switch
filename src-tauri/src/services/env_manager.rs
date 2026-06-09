@@ -504,6 +504,42 @@ fn restore_single_env(conflict: &EnvConflict) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(target_os = "windows"))]
+    use serial_test::serial;
+
+    #[cfg(not(target_os = "windows"))]
+    struct TestEnvGuard {
+        old_test_home: Option<std::ffi::OsString>,
+        old_var: Option<std::ffi::OsString>,
+        name: &'static str,
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    impl TestEnvGuard {
+        fn new(home: &std::path::Path, name: &'static str) -> Self {
+            let guard = Self {
+                old_test_home: std::env::var_os("CC_SWITCH_TEST_HOME"),
+                old_var: std::env::var_os(name),
+                name,
+            };
+            std::env::set_var("CC_SWITCH_TEST_HOME", home);
+            guard
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    impl Drop for TestEnvGuard {
+        fn drop(&mut self) {
+            match &self.old_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            match &self.old_var {
+                Some(value) => std::env::set_var(self.name, value),
+                None => std::env::remove_var(self.name),
+            }
+        }
+    }
 
     #[test]
     fn test_backup_dir_creation() {
@@ -568,12 +604,12 @@ mod tests {
 
     #[cfg(not(target_os = "windows"))]
     #[test]
+    #[serial]
     fn set_user_env_var_persists_unix_shell_env_file() {
         let temp_home = tempfile::tempdir().expect("temp home");
-        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-        std::env::set_var("CC_SWITCH_TEST_HOME", temp_home.path());
-
         let name = "CC_SWITCH_TEST_UNIX_ENV";
+        let _env = TestEnvGuard::new(temp_home.path(), name);
+
         set_user_env_var(name, Some("  /tmp/claude profile  ")).expect("persist unix user env var");
 
         let env_file = temp_home.path().join(".cc-switch").join("env.sh");
@@ -593,22 +629,16 @@ mod tests {
             content.contains("unset CC_SWITCH_TEST_UNIX_ENV"),
             "removing the env var should write an unset line"
         );
-
-        match old_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
-        std::env::remove_var(name);
     }
 
     #[cfg(not(target_os = "windows"))]
     #[test]
+    #[serial]
     fn get_user_env_var_reads_persisted_unix_shell_env_file() {
         let temp_home = tempfile::tempdir().expect("temp home");
-        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-        std::env::set_var("CC_SWITCH_TEST_HOME", temp_home.path());
-
         let name = "CC_SWITCH_TEST_UNIX_ENV";
+        let _env = TestEnvGuard::new(temp_home.path(), name);
+
         set_user_env_var(name, Some("  /tmp/claude profile's dir  "))
             .expect("persist unix user env var");
         std::env::remove_var(name);
@@ -620,20 +650,15 @@ mod tests {
             Some("/tmp/claude profile's dir"),
             "unix user env lookup should fall back to the persisted env file"
         );
-
-        match old_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
-        std::env::remove_var(name);
     }
 
     #[cfg(not(target_os = "windows"))]
     #[test]
+    #[serial]
     fn set_user_env_var_preserves_undecodable_unix_rc_files() {
         let temp_home = tempfile::tempdir().expect("temp home");
-        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-        std::env::set_var("CC_SWITCH_TEST_HOME", temp_home.path());
+        let name = "CC_SWITCH_TEST_UNIX_ENV";
+        let _env = TestEnvGuard::new(temp_home.path(), name);
 
         let rc_path = temp_home.path().join(".profile");
         let original = vec![
@@ -641,7 +666,7 @@ mod tests {
         ];
         fs::write(&rc_path, &original).expect("seed undecodable rc file");
 
-        let err = set_user_env_var("CC_SWITCH_TEST_UNIX_ENV", Some("/tmp/claude"))
+        let err = set_user_env_var(name, Some("/tmp/claude"))
             .expect_err("undecodable rc file should abort startup source update");
         assert!(
             err.contains("读取 Unix shell 启动文件失败"),
@@ -652,11 +677,5 @@ mod tests {
             original,
             "undecodable rc file should remain byte-for-byte unchanged"
         );
-
-        match old_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
-        std::env::remove_var("CC_SWITCH_TEST_UNIX_ENV");
     }
 }

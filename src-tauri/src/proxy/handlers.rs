@@ -62,6 +62,41 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
     Ok(Json(status))
 }
 
+/// GET /v1/models — Codex model list (reachability check)
+///
+/// Codex CLI probes this endpoint at startup and deserializes the response as a
+/// catalog with a top-level `models` field.  Return the cc-switch–managed model
+/// catalog file directly so the format always matches what the current version
+/// of Codex expects.
+///
+/// Only serves the catalog when the live config.toml still references the
+/// cc-switch–owned `model_catalog_json`, using the same path ownership rules as
+/// Codex live-setting import.
+pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
+    let generated_path = crate::codex_config::get_codex_model_catalog_path();
+    let active_catalog_path = match crate::codex_config::read_codex_config_text() {
+        Ok(config_text) => {
+            crate::codex_config::resolve_cc_switch_catalog_path(&config_text, &generated_path)
+        }
+        Err(_) => None,
+    };
+
+    let catalog = if let Some(catalog_path) =
+        active_catalog_path.as_ref().filter(|path| path.exists())
+    {
+        let text = std::fs::read_to_string(catalog_path).unwrap_or_default();
+        serde_json::from_str(&text).unwrap_or(json!({"models": []}))
+    } else {
+        if active_catalog_path.is_none() {
+            log::debug!(
+                "[models] stale guard: catalog not served (model_catalog_json not set to cc-switch catalog)"
+            );
+        }
+        json!({"models": []})
+    };
+    Ok(Json(catalog))
+}
+
 // ============================================================================
 // Claude API 处理器（包含格式转换逻辑）
 // ============================================================================
@@ -298,7 +333,7 @@ async fn handle_claude_transform(
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
-            let model = ctx.request_model.clone();
+            let request_model = ctx.request_model.clone();
             let status_code = status.as_u16();
             let start_time = ctx.start_time;
             let session_id = ctx.session_id.clone();
@@ -308,11 +343,12 @@ async fn handle_claude_transform(
                 Some(claude_stream_usage_event_filter),
                 move |events, first_token_ms| {
                     if let Some(usage) = TokenUsage::from_claude_stream_events(&events) {
+                        let model = usage.model.clone().unwrap_or(request_model.clone());
                         let latency_ms = start_time.elapsed().as_millis() as u64;
                         let state = state.clone();
                         let provider_id = provider_id.clone();
-                        let model = model.clone();
                         let session_id = session_id.clone();
+                        let request_model = request_model.clone();
 
                         tokio::spawn(async move {
                             log_usage(
@@ -320,7 +356,7 @@ async fn handle_claude_transform(
                                 &provider_id,
                                 "claude",
                                 &model,
-                                &model,
+                                &request_model,
                                 usage,
                                 latency_ms,
                                 first_token_ms,
