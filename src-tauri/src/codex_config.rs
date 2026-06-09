@@ -1040,6 +1040,107 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
     Ok(json!({ "auth": auth, "config": cfg_text }))
 }
 
+/// Normalize the `model_provider` ID in a Codex `config.toml` string when the
+/// user has opted into unified provider IDs.
+///
+/// When `force_codex_model_provider_id` is set (e.g. to `"custom"`), all
+/// non-reserved (third-party) model_provider IDs are rewritten to the target
+/// value across the entire TOML document: the top-level `model_provider` key,
+/// the `[model_providers.<id>]` table, and any `profile` references.
+///
+/// Reserved Codex provider IDs (`openai`, `ollama`, `amazon-bedrock`,
+/// `lmstudio`, `oss`, `ollama-chat`) and empty/whitespace IDs are left
+/// untouched.
+///
+/// When the setting is `None` (default) or when there is nothing to rewrite,
+/// the original text is returned unchanged.
+pub fn normalize_codex_model_provider_id_if_configured(
+    config_text: &str,
+) -> Result<String, AppError> {
+    let target_id = crate::settings::force_codex_model_provider_id()
+        .filter(|t| !t.trim().is_empty());
+    normalize_codex_model_provider_id_to(config_text, target_id.as_deref())
+}
+
+pub fn normalize_codex_model_provider_id_to(
+    config_text: &str,
+    target_id: Option<&str>,
+) -> Result<String, AppError> {
+    let target_id = target_id.map(str::trim).filter(|t| !t.is_empty());
+    normalize_codex_provider_id_to_impl(config_text, target_id)
+}
+
+fn normalize_codex_provider_id_to_impl(
+    config_text: &str,
+    target_id: Option<&str>,
+) -> Result<String, AppError> {
+    let Some(target_id) = target_id else {
+        return Ok(config_text.to_string());
+    };
+
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+
+    let old_provider_id = doc
+        .get("model_provider")
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty() && is_custom_codex_model_provider_id(id))
+        .map(str::to_string);
+
+    let mut changed = false;
+
+    if let Some(ref old_id) = old_provider_id {
+        if old_id != target_id {
+            // Rename the [model_providers.<old>] table → [model_providers.<target>]
+            if let Some(model_providers) = doc
+                .get_mut("model_providers")
+                .and_then(|item| item.as_table_mut())
+            {
+                if let Some(provider_table) = model_providers.remove(old_id.as_str()) {
+                    model_providers[target_id] = provider_table;
+                }
+            }
+
+            // Rewrite top-level model_provider
+            doc["model_provider"] = toml_edit::value(target_id);
+
+            // Rewrite profile references
+            if let Some(profiles) = doc
+                .get_mut("profiles")
+                .and_then(|item| item.as_table_like_mut())
+            {
+                rewrite_profile_provider_refs(profiles, old_id, target_id);
+            }
+
+            changed = true;
+        }
+    }
+
+    if changed {
+        Ok(doc.to_string())
+    } else {
+        Ok(config_text.to_string())
+    }
+}
+
+fn rewrite_profile_provider_refs(
+    profiles: &mut dyn toml_edit::TableLike,
+    old_id: &str,
+    new_id: &str,
+) {
+    for (_, profile) in profiles.iter_mut() {
+        if let Some(table) = profile.as_table_like_mut() {
+            if let Some((_key, value)) = table.get("model_provider").map(|v| ("model_provider", v.clone())) {
+                if value.as_str().map(str::trim) == Some(old_id) {
+                    table.insert("model_provider", toml_edit::value(new_id));
+                }
+            }
+        }
+    }
+}
+
 /// Route a Codex live write between full auth+config or config-only.
 ///
 /// Official providers with usable login material own `auth.json`. Third-party
@@ -1050,14 +1151,20 @@ pub fn write_codex_live_for_provider(
     auth: &Value,
     config_text: Option<&str>,
 ) -> Result<(), AppError> {
+    // Normalize model_provider ID before writing, so that switching between
+    // providers with different IDs keeps chat history in a single bucket.
+    let config_text = config_text
+        .map(|text| normalize_codex_model_provider_id_if_configured(text))
+        .transpose()?;
+
     let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
         || (category != Some("official")
             && !crate::settings::preserve_codex_official_auth_on_switch());
 
     if should_write_auth {
-        write_codex_live_atomic(auth, config_text)
+        write_codex_live_atomic(auth, config_text.as_deref())
     } else {
-        let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
+        let live_config = prepare_codex_provider_live_config(auth, config_text.as_deref().unwrap_or(""))?;
         write_codex_live_config_atomic(Some(&live_config))
     }
 }
@@ -2130,6 +2237,139 @@ model_catalog_json = "cc-switch-model-catalog.json"
         assert!(
             parsed.get("model_catalog_json").is_none(),
             "None arm should remove relative cc-switch-owned field"
+        );
+    }
+
+    // ── normalize_codex_model_provider_id_to ───
+
+    #[test]
+    fn normalize_codex_noop_when_target_is_none() {
+        let input = r#"model_provider = "my_provider"
+model = "gpt-5.5"
+
+[model_providers.my_provider]
+name = "My Provider"
+base_url = "https://example.com/v1"
+wire_api = "responses"
+"#;
+        let result = normalize_codex_model_provider_id_to(input, None).unwrap();
+        assert_eq!(result, input, "None target should return input unchanged");
+    }
+
+    #[test]
+    fn normalize_codex_noop_when_target_is_empty() {
+        let input = r#"model_provider = "my_provider"
+model = "gpt-5.5"
+"#;
+        let result = normalize_codex_model_provider_id_to(input, Some("   ")).unwrap();
+        assert_eq!(result, input, "whitespace-only target should return input unchanged");
+    }
+
+    #[test]
+    fn normalize_codex_noop_when_reserved_provider() {
+        let input = r#"model_provider = "openai"
+model = "gpt-5.5"
+
+[model_providers.openai]
+name = "OpenAI"
+"#;
+        let result = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap();
+        assert_eq!(result, input, "reserved provider ID should not be rewritten");
+    }
+
+    #[test]
+    fn normalize_codex_rewrites_custom_provider_id_to_target() {
+        let input = r#"model_provider = "vendor_alpha"
+model = "gpt-5.5"
+
+[model_providers.vendor_alpha]
+name = "Vendor Alpha"
+base_url = "https://alpha.example/v1"
+wire_api = "responses"
+"#;
+        let result = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("custom"),
+            "model_provider should be rewritten to custom"
+        );
+        assert!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("vendor_alpha"))
+                .is_none(),
+            "old provider table should be removed"
+        );
+        let custom = parsed
+            .get("model_providers")
+            .and_then(|v| v.get("custom"))
+            .expect("custom provider table should exist");
+        assert_eq!(
+            custom.get("base_url").and_then(|v| v.as_str()),
+            Some("https://alpha.example/v1"),
+            "base_url should be preserved"
+        );
+    }
+
+    #[test]
+    fn normalize_codex_rewrites_profile_references() {
+        let input = r#"model_provider = "aihubmix"
+model = "gpt-5.5"
+
+[model_providers.aihubmix]
+name = "AIHubMix"
+base_url = "https://aihubmix.com/v1"
+
+[profiles.work]
+model_provider = "aihubmix"
+model = "gpt-5.5"
+
+[profiles.personal]
+model_provider = "aihubmix"
+model = "gpt-4"
+"#;
+        let result = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("custom"),
+            "model_provider should be rewritten"
+        );
+
+        let profiles = parsed.get("profiles").expect("profiles should exist");
+        for profile_name in &["work", "personal"] {
+            let profile = profiles.get(profile_name).expect("profile should exist");
+            assert_eq!(
+                profile.get("model_provider").and_then(|v| v.as_str()),
+                Some("custom"),
+                "profile '{profile_name}' model_provider should be rewritten"
+            );
+        }
+    }
+
+    #[test]
+    fn normalize_codex_keeps_non_matching_profile_references() {
+        let input = r#"model_provider = "my_provider"
+model = "gpt-5.5"
+
+[model_providers.my_provider]
+name = "My Provider"
+
+[profiles.work]
+model_provider = "openai"
+model = "gpt-5.5"
+"#;
+        let result = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        let profiles = parsed.get("profiles").expect("profiles should exist");
+        let profile = profiles.get("work").expect("profile should exist");
+        assert_eq!(
+            profile.get("model_provider").and_then(|v| v.as_str()),
+            Some("openai"),
+            "non-matching profile references should not be rewritten"
         );
     }
 }
