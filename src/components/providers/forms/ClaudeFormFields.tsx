@@ -251,7 +251,7 @@ export function ClaudeFormFields({
     const modelsUrl = matchedPreset?.modelsUrl;
 
     setIsFetchingModels(true);
-    fetchModelsForConfig(baseUrl, apiKey, isFullUrl, modelsUrl)
+    fetchModelsForConfig(baseUrl, apiKey, isFullUrl, modelsUrl, "anthropic")
       .then((models) => {
         setFetchedModels(models);
         showModelFetchResult(models.length);

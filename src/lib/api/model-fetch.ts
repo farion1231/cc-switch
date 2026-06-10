@@ -8,22 +8,35 @@ export interface FetchedModel {
 }
 
 /**
+ * 模型拉取认证策略
+ *
+ * - `bearer`：OpenAI 风格，Authorization: Bearer
+ * - `anthropic`：Anthropic 风格，x-api-key + anthropic-version
+ * - `google_api_key`：Gemini 风格，x-goog-api-key
+ */
+export type ModelFetchStrategy = "bearer" | "anthropic" | "google_api_key";
+
+/**
  * 从供应商获取可用模型列表
  *
  * 使用 OpenAI 兼容的 GET /v1/models 端点。优先用 `modelsUrl` 精确覆写；
  * 否则后端会对 baseURL 生成候选列表并按序尝试（含"剥离 /anthropic 等兼容子路径"兜底）。
+ *
+ * @param strategy 认证策略，默认 `"bearer"`。Anthropic 端点应传 `"anthropic"`。
  */
 export async function fetchModelsForConfig(
   baseUrl: string,
   apiKey: string,
   isFullUrl?: boolean,
   modelsUrl?: string,
+  strategy?: ModelFetchStrategy,
 ): Promise<FetchedModel[]> {
   return invoke("fetch_models_for_config", {
     baseUrl,
     apiKey,
     isFullUrl,
     modelsUrl,
+    strategy,
   });
 }
 

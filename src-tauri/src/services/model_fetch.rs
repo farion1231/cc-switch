@@ -8,6 +8,18 @@ use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+/// 模型拉取认证策略，决定请求头和 URL 候选排序。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModelFetchStrategy {
+    /// OpenAI 风格：Authorization: Bearer，优先 /v1/models
+    #[default]
+    Bearer,
+    /// Anthropic 风格：x-api-key + anthropic-version，优先 /v1/models
+    Anthropic,
+    /// Google Gemini 风格：x-goog-api-key，优先 /v1/models
+    GoogleApiKey,
+}
+
 /// 获取到的模型信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,24 +67,30 @@ pub async fn fetch_models(
     api_key: &str,
     is_full_url: bool,
     models_url_override: Option<&str>,
+    strategy: ModelFetchStrategy,
 ) -> Result<Vec<FetchedModel>, String> {
     if api_key.is_empty() {
         return Err("API Key is required to fetch models".to_string());
     }
 
-    let candidates = build_models_url_candidates(base_url, is_full_url, models_url_override)?;
+    let candidates =
+        build_models_url_candidates(base_url, is_full_url, models_url_override, strategy)?;
     let client = crate::proxy::http_client::get();
     let mut last_err: Option<String> = None;
 
     for url in &candidates {
         log::debug!("[ModelFetch] Trying endpoint: {url}");
-        let response = match client
+        let mut req = client
             .get(url)
-            .header("Authorization", format!("Bearer {api_key}"))
-            .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
-            .send()
-            .await
-        {
+            .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS));
+        req = match strategy {
+            ModelFetchStrategy::Bearer => req.header("Authorization", format!("Bearer {api_key}")),
+            ModelFetchStrategy::Anthropic => req
+                .header("x-api-key", api_key)
+                .header("anthropic-version", "2023-06-01"),
+            ModelFetchStrategy::GoogleApiKey => req.header("x-goog-api-key", api_key),
+        };
+        let response = match req.send().await {
             Ok(r) => r,
             Err(e) => {
                 return Err(format!("Request failed: {e}"));
@@ -126,11 +144,16 @@ pub async fn fetch_models(
 /// 3. 版本段非 `/v1`（如 `/v4`）时再追加 `/v1/models` 作为兜底次候选
 /// 4. 若 baseURL 命中 [`KNOWN_COMPAT_SUFFIXES`]，剥离后缀再拼 `/v1/models`、`/models`
 ///
+/// `strategy` 影响无版本段时的候选排序：
+/// - `Anthropic`：优先 `/v1/models`
+/// - `Bearer` / `GoogleApiKey`：优先 `/v1/models`（OpenAI 惯例）
+///
 /// 结果已去重且保持首次出现顺序。
 pub fn build_models_url_candidates(
     base_url: &str,
     is_full_url: bool,
     models_url_override: Option<&str>,
+    strategy: ModelFetchStrategy,
 ) -> Result<Vec<String>, String> {
     if let Some(raw) = models_url_override {
         let trimmed = raw.trim();
@@ -164,21 +187,55 @@ pub fn build_models_url_candidates(
     // baseURL 已以版本段 /v{N} 结尾时（如 `/v1`、智谱 `/api/coding/paas/v4`），
     // OpenAI 惯例的模型端点是 `{base}/models`，不能再补 `/v1`
     // （否则 .../coding/paas/v4/v1/models → 404）。
-    if ends_with_version_segment(trimmed) {
-        candidates.push(format!("{trimmed}/models"));
-        // 版本段非 /v1 时，保留旧的 /v1/models 作为兜底次候选（正确路径已在前）。
-        if !trimmed.ends_with("/v1") {
-            candidates.push(format!("{trimmed}/v1/models"));
-        }
-    } else {
-        candidates.push(format!("{trimmed}/v1/models"));
-    }
+    // 但版本段非 /v1 时保留 /v1/models 作为兜底候选。
+    let append_models = format!("{trimmed}/models");
 
-    if let Some(stripped) = strip_compat_suffix(trimmed) {
-        let root = stripped.trim_end_matches('/');
-        if !root.is_empty() && root.contains("://") {
-            candidates.push(format!("{root}/v1/models"));
-            candidates.push(format!("{root}/models"));
+    match strategy {
+        ModelFetchStrategy::Anthropic => {
+            // Anthropic: 优先 /v1/models
+            if ends_with_version_segment(trimmed) {
+                candidates.push(format!("{trimmed}/models"));
+                if !trimmed.ends_with("/v1") {
+                    candidates.push(format!("{trimmed}/v1/models"));
+                }
+            } else {
+                candidates.push(format!("{trimmed}/v1/models"));
+            }
+
+            if let Some(stripped) = strip_compat_suffix(trimmed) {
+                let root = stripped.trim_end_matches('/');
+                if !root.is_empty() && root.contains("://") {
+                    candidates.push(format!("{root}/v1/models"));
+                    candidates.push(format!("{root}/models"));
+                }
+            } else if !ends_with_version_segment(trimmed) {
+                candidates.push(append_models);
+            }
+        }
+        ModelFetchStrategy::Bearer | ModelFetchStrategy::GoogleApiKey => {
+            if let Some(stripped) = strip_compat_suffix(trimmed) {
+                if ends_with_version_segment(trimmed) {
+                    candidates.push(format!("{trimmed}/models"));
+                    if !trimmed.ends_with("/v1") {
+                        candidates.push(format!("{trimmed}/v1/models"));
+                    }
+                } else {
+                    candidates.push(format!("{trimmed}/v1/models"));
+                }
+                let root = stripped.trim_end_matches('/');
+                if !root.is_empty() && root.contains("://") {
+                    candidates.push(format!("{root}/v1/models"));
+                    candidates.push(format!("{root}/models"));
+                }
+            } else if ends_with_version_segment(trimmed) {
+                candidates.push(format!("{trimmed}/models"));
+                if !trimmed.ends_with("/v1") {
+                    candidates.push(format!("{trimmed}/v1/models"));
+                }
+            } else {
+                candidates.push(format!("{trimmed}/v1/models"));
+                candidates.push(append_models);
+            }
         }
     }
 
@@ -232,19 +289,37 @@ mod tests {
 
     #[test]
     fn test_candidates_plain_root() {
-        let c = build_models_url_candidates("https://api.siliconflow.cn", false, None).unwrap();
+        let c = build_models_url_candidates(
+            "https://api.siliconflow.cn",
+            false,
+            None,
+            ModelFetchStrategy::Bearer,
+        )
+        .unwrap();
         assert_eq!(c, vec!["https://api.siliconflow.cn/v1/models"]);
     }
 
     #[test]
     fn test_candidates_trailing_slash() {
-        let c = build_models_url_candidates("https://api.example.com/", false, None).unwrap();
+        let c = build_models_url_candidates(
+            "https://api.example.com/",
+            false,
+            None,
+            ModelFetchStrategy::Bearer,
+        )
+        .unwrap();
         assert_eq!(c, vec!["https://api.example.com/v1/models"]);
     }
 
     #[test]
     fn test_candidates_with_v1() {
-        let c = build_models_url_candidates("https://api.example.com/v1", false, None).unwrap();
+        let c = build_models_url_candidates(
+            "https://api.example.com/v1",
+            false,
+            None,
+            ModelFetchStrategy::Bearer,
+        )
+        .unwrap();
         assert_eq!(c, vec!["https://api.example.com/v1/models"]);
     }
 
@@ -252,9 +327,13 @@ mod tests {
     fn test_candidates_zhipu_coding_paas_v4() {
         // 智谱 Coding Plan 端点以 /v4 版本段结尾：模型端点是 {base}/models，
         // 正确路径必须排在 .../v4/v1/models（404）之前。
-        let c =
-            build_models_url_candidates("https://open.bigmodel.cn/api/coding/paas/v4", false, None)
-                .unwrap();
+        let c = build_models_url_candidates(
+            "https://open.bigmodel.cn/api/coding/paas/v4",
+            false,
+            None,
+            ModelFetchStrategy::Bearer,
+        )
+        .unwrap();
         assert_eq!(
             c,
             vec![
@@ -266,8 +345,13 @@ mod tests {
 
     #[test]
     fn test_candidates_zai_coding_paas_v4() {
-        let c = build_models_url_candidates("https://api.z.ai/api/coding/paas/v4", false, None)
-            .unwrap();
+        let c = build_models_url_candidates(
+            "https://api.z.ai/api/coding/paas/v4",
+            false,
+            None,
+            ModelFetchStrategy::Bearer,
+        )
+        .unwrap();
         assert_eq!(
             c,
             vec![
@@ -296,6 +380,7 @@ mod tests {
             "https://proxy.example.com/v1/chat/completions",
             true,
             None,
+            ModelFetchStrategy::Bearer,
         )
         .unwrap();
         assert_eq!(c, vec!["https://proxy.example.com/v1/models"]);
@@ -303,7 +388,7 @@ mod tests {
 
     #[test]
     fn test_candidates_empty() {
-        assert!(build_models_url_candidates("", false, None).is_err());
+        assert!(build_models_url_candidates("", false, None, ModelFetchStrategy::Bearer).is_err());
     }
 
     #[test]
@@ -312,6 +397,7 @@ mod tests {
             "https://api.deepseek.com/anthropic",
             false,
             Some("https://api.deepseek.com/models"),
+            ModelFetchStrategy::Bearer,
         )
         .unwrap();
         assert_eq!(c, vec!["https://api.deepseek.com/models"]);
@@ -319,15 +405,25 @@ mod tests {
 
     #[test]
     fn test_candidates_override_empty_falls_through() {
-        let c =
-            build_models_url_candidates("https://api.siliconflow.cn", false, Some("   ")).unwrap();
+        let c = build_models_url_candidates(
+            "https://api.siliconflow.cn",
+            false,
+            Some("   "),
+            ModelFetchStrategy::Bearer,
+        )
+        .unwrap();
         assert_eq!(c, vec!["https://api.siliconflow.cn/v1/models"]);
     }
 
     #[test]
     fn test_candidates_deepseek_strip_anthropic() {
-        let c =
-            build_models_url_candidates("https://api.deepseek.com/anthropic", false, None).unwrap();
+        let c = build_models_url_candidates(
+            "https://api.deepseek.com/anthropic",
+            false,
+            None,
+            ModelFetchStrategy::Bearer,
+        )
+        .unwrap();
         assert_eq!(
             c,
             vec![
@@ -340,8 +436,13 @@ mod tests {
 
     #[test]
     fn test_candidates_zhipu_strip_api_anthropic() {
-        let c = build_models_url_candidates("https://open.bigmodel.cn/api/anthropic", false, None)
-            .unwrap();
+        let c = build_models_url_candidates(
+            "https://open.bigmodel.cn/api/anthropic",
+            false,
+            None,
+            ModelFetchStrategy::Bearer,
+        )
+        .unwrap();
         assert_eq!(
             c,
             vec![
@@ -358,6 +459,7 @@ mod tests {
             "https://dashscope.aliyuncs.com/apps/anthropic",
             false,
             None,
+            ModelFetchStrategy::Bearer,
         )
         .unwrap();
         assert_eq!(
@@ -372,8 +474,13 @@ mod tests {
 
     #[test]
     fn test_candidates_stepfun_strip_step_plan() {
-        let c =
-            build_models_url_candidates("https://api.stepfun.com/step_plan", false, None).unwrap();
+        let c = build_models_url_candidates(
+            "https://api.stepfun.com/step_plan",
+            false,
+            None,
+            ModelFetchStrategy::Bearer,
+        )
+        .unwrap();
         assert_eq!(
             c,
             vec![
@@ -390,6 +497,7 @@ mod tests {
             "https://ark.cn-beijing.volces.com/api/coding",
             false,
             None,
+            ModelFetchStrategy::Bearer,
         )
         .unwrap();
         assert_eq!(
@@ -404,7 +512,13 @@ mod tests {
 
     #[test]
     fn test_candidates_rightcode_strip_claude() {
-        let c = build_models_url_candidates("https://www.right.codes/claude", false, None).unwrap();
+        let c = build_models_url_candidates(
+            "https://www.right.codes/claude",
+            false,
+            None,
+            ModelFetchStrategy::Bearer,
+        )
+        .unwrap();
         assert_eq!(
             c,
             vec![
@@ -419,7 +533,13 @@ mod tests {
     fn test_candidates_longer_suffix_wins() {
         // baseURL 以 /api/anthropic 结尾时，应剥离整个 /api/anthropic，
         // 而不是只剥离 /anthropic（那样会得到残缺的 https://.../api 根）。
-        let c = build_models_url_candidates("https://api.z.ai/api/anthropic", false, None).unwrap();
+        let c = build_models_url_candidates(
+            "https://api.z.ai/api/anthropic",
+            false,
+            None,
+            ModelFetchStrategy::Bearer,
+        )
+        .unwrap();
         assert_eq!(
             c,
             vec![
@@ -432,15 +552,63 @@ mod tests {
 
     #[test]
     fn test_candidates_no_suffix_no_strip() {
-        let c = build_models_url_candidates("https://openrouter.ai/api", false, None).unwrap();
+        let c = build_models_url_candidates(
+            "https://openrouter.ai/api",
+            false,
+            None,
+            ModelFetchStrategy::Bearer,
+        )
+        .unwrap();
         assert_eq!(c, vec!["https://openrouter.ai/api/v1/models"]);
     }
 
     #[test]
     fn test_candidates_deduplicate() {
         // 虚构 case：baseURL 就是 "scheme://host"，剥不出子路径，应只有一个候选。
-        let c = build_models_url_candidates("https://host.example.com", false, None).unwrap();
+        let c = build_models_url_candidates(
+            "https://host.example.com",
+            false,
+            None,
+            ModelFetchStrategy::Bearer,
+        )
+        .unwrap();
         assert_eq!(c.len(), 1);
+    }
+
+    #[test]
+    fn test_anthropic_prefers_v1_models() {
+        let c = build_models_url_candidates(
+            "https://api.anthropic.com",
+            false,
+            None,
+            ModelFetchStrategy::Anthropic,
+        )
+        .unwrap();
+        assert_eq!(
+            c,
+            vec![
+                "https://api.anthropic.com/v1/models",
+                "https://api.anthropic.com/models",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_bearer_prefers_v1_models() {
+        let c = build_models_url_candidates(
+            "https://api.openai.com",
+            false,
+            None,
+            ModelFetchStrategy::Bearer,
+        )
+        .unwrap();
+        assert_eq!(
+            c,
+            vec![
+                "https://api.openai.com/v1/models",
+                "https://api.openai.com/models",
+            ]
+        );
     }
 
     #[test]
