@@ -194,18 +194,7 @@ export function UsageDateRangePicker({
     if (draftLiveEnd) {
       const nextStartTs = normalizePickerStart(toTs(day));
       setDraftStart(nextStartTs);
-      
-      // Navigate calendar if the day is outside the displayed month
-      if (
-        day.getMonth() !== displayMonth.getMonth() ||
-        day.getFullYear() !== displayMonth.getFullYear()
-      ) {
-        setDisplayMonth(new Date(day.getFullYear(), day.getMonth(), 1));
-      }
-      return;
-    }
-
-    if (activeField === "start") {
+    } else if (activeField === "start") {
       const nextStartTs = normalizePickerStart(toTs(day));
       setDraftStart(nextStartTs);
       // Auto-swap if start > end
