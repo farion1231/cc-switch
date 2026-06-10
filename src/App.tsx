@@ -122,6 +122,7 @@ const VALID_APPS: AppId[] = [
   "claude-desktop",
   "codex",
   "gemini",
+  "antigravity",
   "opencode",
   "openclaw",
   "hermes",
@@ -187,6 +188,7 @@ function App() {
     "claude-desktop": true,
     codex: true,
     gemini: true,
+    antigravity: true,
     opencode: true,
     openclaw: true,
     hermes: true,
@@ -197,6 +199,7 @@ function App() {
     if (visibleApps["claude-desktop"]) return "claude-desktop";
     if (visibleApps.codex) return "codex";
     if (visibleApps.gemini) return "gemini";
+    if (visibleApps.antigravity) return "antigravity";
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
     if (visibleApps.hermes) return "hermes";
@@ -218,6 +221,7 @@ function App() {
       sharedFeatureApp !== "opencode" &&
       sharedFeatureApp !== "openclaw" &&
       sharedFeatureApp !== "gemini" &&
+      sharedFeatureApp !== "antigravity" &&
       sharedFeatureApp !== "hermes"
     ) {
       setCurrentView("providers");
@@ -283,6 +287,7 @@ function App() {
     sharedFeatureApp === "opencode" ||
     sharedFeatureApp === "openclaw" ||
     sharedFeatureApp === "gemini" ||
+    sharedFeatureApp === "antigravity" ||
     sharedFeatureApp === "hermes";
 
   const {
@@ -1223,11 +1228,13 @@ function App() {
                   {activeApp === "claude-desktop" ? (
                     <ClaudeDesktopRouteToggle />
                   ) : (
+                    activeApp !== "antigravity" &&
                     settingsData?.enableLocalProxy && (
                       <ProxyToggle activeApp={activeApp} />
                     )
                   )}
                   {activeApp !== "claude-desktop" &&
+                    activeApp !== "antigravity" &&
                     settingsData?.enableFailoverToggle && (
                       <FailoverToggle activeApp={activeApp} />
                     )}

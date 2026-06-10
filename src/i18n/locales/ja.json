@@ -738,6 +738,8 @@
     "codexConfigDirDescription": "Codex の設定ディレクトリを上書きします。",
     "geminiConfigDir": "Gemini 設定ディレクトリ",
     "geminiConfigDirDescription": "Gemini の設定ディレクトリ（.env）を上書きします。",
+    "antigravityConfigDir": "Antigravity 2.0 設定ディレクトリ",
+    "antigravityConfigDirDescription": "Antigravity 2.0 の設定ディレクトリを上書きします。",
     "opencodeConfigDir": "OpenCode 設定ディレクトリ",
     "opencodeConfigDirDescription": "OpenCode の設定ディレクトリ（opencode.json）を上書きします。",
     "openclawConfigDir": "OpenClaw 設定ディレクトリ",
@@ -747,6 +749,7 @@
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
+    "browsePlaceholderAntigravity": "例: %USERPROFILE%/.gemini",
     "browsePlaceholderOpencode": "例: /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
@@ -779,6 +782,7 @@
     "toolInstall": "インストール",
     "toolUpdate": "更新",
     "toolReady": "準備完了",
+    "toolManagedExternally": "Antigravity 2.0 側で更新",
     "toolActionDone": "{{count}} 個のツールの{{action}}が完了しました",
     "toolActionPartial": "{{succeeded}} 個成功、{{failed}} 個失敗（{{action}}）",
     "toolActionFailed": "インストール/更新コマンドの実行に失敗しました",
@@ -850,6 +854,12 @@
     },
     "saveFailedGeneric": "保存に失敗しました。もう一度お試しください"
   },
+  "antigravity": {
+    "accountBindingTitle": "現在の Antigravity 2.0 アカウントを紐付ける",
+    "accountBindingDescription": "保存時に、Antigravity 2.0 で現在ログインしているアカウントのシステム資格情報を自動的に読み取ります。別のアカウントを追加する前に、Antigravity 2.0 側でそのアカウントにログインしてください。",
+    "accountBindingEditDescription": "この設定には保存時のアカウント資格情報が紐付いています。切り替えると、その資格情報が復元されます。",
+    "emptyDescription": "Antigravity 2.0 で保存するアカウントにログインしてから、「プロバイダーを追加」をクリックしてください。保存時に現在のアカウントのシステム資格情報を自動的に読み取り、紐付けます。"
+  },
   "apps": {
     "claude": "Claude",
     "claudeCode": "Claude Code",
@@ -857,6 +867,7 @@
     "claude-desktop": "Claude Desktop",
     "codex": "Codex",
     "gemini": "Gemini",
+    "antigravity": "Antigravity 2.0",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes"
@@ -1375,6 +1386,7 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
+      "antigravity": "Antigravity 2.0",
       "opencode": "OpenCode"
     },
     "rawInputLabel": "原始",
@@ -1588,6 +1600,7 @@
         "claude": "Claude",
         "codex": "Codex",
         "gemini": "Gemini",
+        "antigravity": "Antigravity 2.0",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes"

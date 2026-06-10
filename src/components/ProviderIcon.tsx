@@ -17,6 +17,19 @@ interface ProviderIconProps {
   showFallback?: boolean; // 是否显示 fallback
 }
 
+const escapeSvgTitle = (value: string): string =>
+  value.replace(
+    /[&<>"']/g,
+    (character) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&apos;",
+      })[character]!,
+  );
+
 export const ProviderIcon: React.FC<ProviderIconProps> = ({
   icon,
   name,
@@ -28,10 +41,13 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
   // 获取内联 SVG 字符串
   const iconSvg = useMemo(() => {
     if (icon && !isUrlIcon(icon) && hasIcon(icon)) {
-      return getIcon(icon);
+      return getIcon(icon).replace(
+        /<title>[\s\S]*?<\/title>/i,
+        `<title>${escapeSvgTitle(name)}</title>`,
+      );
     }
     return "";
-  }, [icon]);
+  }, [icon, name]);
 
   // 获取图标 URL（URL_ICONS 列表中的 SVG / 光栅图片）
   const iconUrl = useMemo(() => {

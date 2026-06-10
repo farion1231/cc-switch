@@ -258,6 +258,7 @@ pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppErr
                         claude: false,
                         codex: false,
                         gemini: false,
+                        antigravity: false,
                         opencode: true,
                         hermes: false,
                     },

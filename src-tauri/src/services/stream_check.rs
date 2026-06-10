@@ -17,7 +17,7 @@ use crate::proxy::providers::transform::anthropic_to_openai;
 use crate::proxy::providers::transform_gemini::anthropic_to_gemini;
 use crate::proxy::providers::transform_responses::anthropic_to_responses;
 use crate::proxy::providers::{
-    get_adapter, AuthInfo, AuthStrategy, ClaudeAdapter, ProviderAdapter,
+    get_adapter, AuthInfo, AuthStrategy, ClaudeAdapter, GeminiAdapter, ProviderAdapter,
 };
 
 /// 健康状态枚举
@@ -215,10 +215,10 @@ impl StreamCheckService {
             return Self::check_once_without_adapter(app_type, provider, config, start).await;
         }
 
-        let adapter: Box<dyn ProviderAdapter> = if matches!(app_type, AppType::ClaudeDesktop) {
-            Box::new(ClaudeAdapter::new())
-        } else {
-            get_adapter(app_type)
+        let adapter: Box<dyn ProviderAdapter> = match app_type {
+            AppType::ClaudeDesktop => Box::new(ClaudeAdapter::new()),
+            AppType::Antigravity => Box::new(GeminiAdapter::new()),
+            _ => get_adapter(app_type),
         };
 
         let base_url = match base_url_override {
@@ -266,7 +266,7 @@ impl StreamCheckService {
                 )
                 .await
             }
-            AppType::Gemini => {
+            AppType::Gemini | AppType::Antigravity => {
                 Self::check_gemini_stream(
                     &client,
                     &base_url,
@@ -1400,8 +1400,10 @@ impl StreamCheckService {
             AppType::Codex => {
                 Self::extract_codex_model(provider).unwrap_or_else(|| config.codex_model.clone())
             }
-            AppType::Gemini => Self::extract_env_model(provider, "GEMINI_MODEL")
-                .unwrap_or_else(|| config.gemini_model.clone()),
+            AppType::Gemini | AppType::Antigravity => {
+                Self::extract_env_model(provider, "GEMINI_MODEL")
+                    .unwrap_or_else(|| config.gemini_model.clone())
+            }
             AppType::OpenCode => {
                 // OpenCode uses models map in settings_config
                 // Try to extract first model from the models object

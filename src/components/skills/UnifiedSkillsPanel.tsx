@@ -90,8 +90,11 @@ const UnifiedSkillsPanel = React.forwardRef<
   const toggleAppMutation = useToggleSkillApp();
   const uninstallMutation = useUninstallSkill();
   const restoreBackupMutation = useRestoreSkillBackup();
-  const { data: unmanagedSkills, refetch: scanUnmanaged } =
-    useScanUnmanagedSkills();
+  const {
+    data: unmanagedSkills,
+    refetch: scanUnmanaged,
+    isLoading: isLoadingUnmanaged,
+  } = useScanUnmanagedSkills(currentApp === "antigravity");
   const importMutation = useImportSkillsFromApps();
   const installFromZipMutation = useInstallSkillsFromZip();
   const {
@@ -118,6 +121,7 @@ const UnifiedSkillsPanel = React.forwardRef<
       "claude-desktop": 0,
       codex: 0,
       gemini: 0,
+      antigravity: 0,
       opencode: 0,
       openclaw: 0,
       hermes: 0,
@@ -130,6 +134,16 @@ const UnifiedSkillsPanel = React.forwardRef<
     });
     return counts;
   }, [skills]);
+
+  const antigravityNativeSkills = useMemo(
+    () =>
+      currentApp === "antigravity"
+        ? (unmanagedSkills || []).filter((skill) =>
+            skill.foundIn.some((source) => source.startsWith("antigravity:")),
+          )
+        : [],
+    [currentApp, unmanagedSkills],
+  );
 
   const handleToggleApp = async (id: string, app: AppId, enabled: boolean) => {
     try {
@@ -400,11 +414,12 @@ const UnifiedSkillsPanel = React.forwardRef<
       </div>
 
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
-        {isLoading ? (
+        {isLoading || (currentApp === "antigravity" && isLoadingUnmanaged) ? (
           <div className="text-center py-12 text-muted-foreground">
             {t("skills.loading")}
           </div>
-        ) : !skills || skills.length === 0 ? (
+        ) : (!skills || skills.length === 0) &&
+          antigravityNativeSkills.length === 0 ? (
           <div className="text-center py-12">
             <div className="w-16 h-16 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
               <Sparkles size={24} className="text-muted-foreground" />
@@ -417,25 +432,75 @@ const UnifiedSkillsPanel = React.forwardRef<
             </p>
           </div>
         ) : (
-          <TooltipProvider delayDuration={300}>
-            <div className="rounded-xl border border-border-default overflow-hidden">
-              {skills.map((skill, index) => (
-                <InstalledSkillListItem
-                  key={skill.id}
-                  skill={skill}
-                  hasUpdate={!!updatesMap[skill.id]}
-                  isUpdating={
-                    updateSkillMutation.isPending &&
-                    updateSkillMutation.variables === skill.id
-                  }
-                  onToggleApp={handleToggleApp}
-                  onUninstall={() => handleUninstall(skill)}
-                  onUpdate={() => handleUpdateSkill(skill)}
-                  isLast={index === skills.length - 1}
-                />
-              ))}
-            </div>
-          </TooltipProvider>
+          <div className="space-y-4">
+            {skills && skills.length > 0 && (
+              <TooltipProvider delayDuration={300}>
+                <div className="rounded-xl border border-border-default overflow-hidden">
+                  {skills.map((skill, index) => (
+                    <InstalledSkillListItem
+                      key={skill.id}
+                      skill={skill}
+                      hasUpdate={!!updatesMap[skill.id]}
+                      isUpdating={
+                        updateSkillMutation.isPending &&
+                        updateSkillMutation.variables === skill.id
+                      }
+                      onToggleApp={handleToggleApp}
+                      onUninstall={() => handleUninstall(skill)}
+                      onUpdate={() => handleUpdateSkill(skill)}
+                      isLast={index === skills.length - 1}
+                    />
+                  ))}
+                </div>
+              </TooltipProvider>
+            )}
+
+            {antigravityNativeSkills.length > 0 && (
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-sm font-medium text-foreground">
+                    Antigravity 2.0 Plugins ({antigravityNativeSkills.length})
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={handleOpenImport}
+                  >
+                    {t("skills.import")}
+                  </Button>
+                </div>
+                <div className="rounded-xl border border-border-default overflow-hidden">
+                  {antigravityNativeSkills.map((skill, index) => (
+                    <ListItemRow
+                      key={`${skill.directory}:${skill.path}`}
+                      isLast={index === antigravityNativeSkills.length - 1}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-medium text-sm text-foreground truncate">
+                            {skill.name}
+                          </span>
+                          <Badge variant="secondary" className="text-[10px]">
+                            Antigravity 2.0 Plugin
+                          </Badge>
+                        </div>
+                        {skill.description && (
+                          <p
+                            className="text-xs text-muted-foreground truncate"
+                            title={skill.description}
+                          >
+                            {skill.description}
+                          </p>
+                        )}
+                      </div>
+                    </ListItemRow>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
@@ -745,6 +810,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           claude: skill.foundIn.includes("claude"),
           codex: skill.foundIn.includes("codex"),
           gemini: skill.foundIn.includes("gemini"),
+          antigravity: skill.foundIn.includes("antigravity"),
           opencode: skill.foundIn.includes("opencode"),
           openclaw: false,
           hermes: skill.foundIn.includes("hermes"),
@@ -771,6 +837,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           claude: false,
           codex: false,
           gemini: false,
+          antigravity: false,
           opencode: false,
           openclaw: false,
           hermes: false,
@@ -814,6 +881,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                           claude: false,
                           codex: false,
                           gemini: false,
+                          antigravity: false,
                           opencode: false,
                           openclaw: false,
                           hermes: false,
@@ -827,6 +895,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                               claude: false,
                               codex: false,
                               gemini: false,
+                              antigravity: false,
                               opencode: false,
                               openclaw: false,
                               hermes: false,

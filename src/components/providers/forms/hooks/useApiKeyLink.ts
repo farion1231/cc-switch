@@ -82,6 +82,7 @@ export function useApiKeyLink({
       appId === "claude" ||
       appId === "codex" ||
       appId === "gemini" ||
+      appId === "antigravity" ||
       appId === "opencode"
         ? shouldShowApiKeyLink
         : false,

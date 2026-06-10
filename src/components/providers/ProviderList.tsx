@@ -389,7 +389,9 @@ export function ProviderList({
       <ProviderEmptyState
         appId={appId}
         onCreate={onCreate}
-        onImport={() => importMutation.mutate()}
+        onImport={
+          appId === "antigravity" ? undefined : () => importMutation.mutate()
+        }
       />
     );
   }

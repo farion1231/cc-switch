@@ -17,6 +17,7 @@ import { UniversalProviderPanel } from "@/components/universal";
 import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 import { geminiProviderPresets } from "@/config/geminiProviderPresets";
+import { antigravityProviderPresets } from "@/config/antigravityProviderPresets";
 import { claudeDesktopProviderPresets } from "@/config/claudeDesktopProviderPresets";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
@@ -47,7 +48,8 @@ export function AddProviderDialog({
     appId !== "opencode" &&
     appId !== "openclaw" &&
     appId !== "hermes" &&
-    appId !== "claude-desktop";
+    appId !== "claude-desktop" &&
+    appId !== "antigravity";
   const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
     "app-specific",
   );
@@ -172,10 +174,16 @@ export function AddProviderDialog({
                 preset.endpointCandidates.forEach(addUrl);
               }
             }
-          } else if (appId === "gemini") {
-            const presets = geminiProviderPresets;
+          } else if (appId === "gemini" || appId === "antigravity") {
+            const presets =
+              appId === "antigravity"
+                ? antigravityProviderPresets
+                : geminiProviderPresets;
             const presetIndex = parseInt(
-              values.presetId.replace("gemini-", ""),
+              values.presetId.replace(
+                appId === "antigravity" ? "antigravity-" : "gemini-",
+                "",
+              ),
             );
             if (
               !isNaN(presetIndex) &&
@@ -224,7 +232,7 @@ export function AddProviderDialog({
               addUrl(extractedBaseUrl);
             }
           }
-        } else if (appId === "gemini") {
+        } else if (appId === "gemini" || appId === "antigravity") {
           const env = parsedConfig.env as Record<string, any> | undefined;
           if (env?.GOOGLE_GEMINI_BASE_URL) {
             addUrl(env.GOOGLE_GEMINI_BASE_URL);

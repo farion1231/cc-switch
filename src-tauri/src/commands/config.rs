@@ -99,6 +99,14 @@ pub async fn get_config_status(
 
             Ok(ConfigStatus { exists, path })
         }
+        AppType::Antigravity => Ok(ConfigStatus {
+            exists: crate::antigravity_config::read_antigravity_live_settings().is_ok(),
+            path: format!(
+                "keytar:{}/{}",
+                crate::antigravity_config::ANTIGRAVITY_KEYTAR_SERVICE,
+                crate::antigravity_config::ANTIGRAVITY_KEYTAR_ACCOUNT
+            ),
+        }),
         AppType::OpenCode => {
             let config_path = crate::opencode_config::get_opencode_config_path();
             let exists = config_path.exists();
@@ -143,6 +151,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         }
         AppType::Codex => codex_config::get_codex_config_dir(),
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
+        AppType::Antigravity => crate::antigravity_config::get_antigravity_dir(),
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
@@ -160,6 +169,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         }
         AppType::Codex => codex_config::get_codex_config_dir(),
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
+        AppType::Antigravity => crate::antigravity_config::get_antigravity_dir(),
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),

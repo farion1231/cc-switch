@@ -68,4 +68,38 @@ describe("ProviderPresetSelector", () => {
       screen.getAllByRole("button").map((button) => button.textContent),
     ).toEqual(["providerPreset.custom", "First", "Second", "Third", "Fourth"]);
   });
+
+  it("renders the Antigravity icon for its official preset", () => {
+    const Wrapper = () => {
+      const form = useForm();
+
+      return (
+        <Form {...form}>
+          <ProviderPresetSelector
+            selectedPresetId="antigravity-0"
+            presetEntries={[
+              {
+                id: "antigravity-0",
+                preset: {
+                  name: "Google Official",
+                  websiteUrl: "https://ai.google.dev/",
+                  settingsConfig: { env: {} },
+                  category: "official",
+                  theme: { icon: "antigravity" },
+                },
+              },
+            ]}
+            presetCategoryLabels={{ official: "官方" }}
+            onPresetChange={vi.fn()}
+          />
+        </Form>
+      );
+    };
+
+    render(<Wrapper />);
+
+    expect(
+      screen.getByRole("img", { name: "Antigravity 2.0" }),
+    ).toBeVisible();
+  });
 });

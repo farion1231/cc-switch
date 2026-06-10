@@ -432,6 +432,7 @@ type = "stdio"
       claude: false,
       codex: false,
       gemini: false,
+      antigravity: false,
       opencode: false,
       openclaw: false,
       hermes: false,

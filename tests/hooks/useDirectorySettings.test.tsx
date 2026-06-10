@@ -68,6 +68,7 @@ describe("useDirectorySettings", () => {
       if (app === "claude") return "/remote/claude";
       if (app === "codex") return "/remote/codex";
       if (app === "gemini") return "/remote/gemini";
+      if (app === "antigravity") return "/remote/antigravity";
       if (app === "opencode") return "/remote/opencode";
       if (app === "openclaw") return "/remote/openclaw";
       return "/remote/hermes";
@@ -90,6 +91,7 @@ describe("useDirectorySettings", () => {
       claude: "/remote/claude",
       codex: "/remote/codex",
       gemini: "/remote/gemini",
+      antigravity: "/remote/antigravity",
       opencode: "/remote/opencode",
       openclaw: "/remote/openclaw",
       hermes: "/remote/hermes",
@@ -238,6 +240,31 @@ describe("useDirectorySettings", () => {
     expect(result.current.resolvedDirs.openclaw).toBe("/picked/openclaw");
   });
 
+  it("updates Antigravity directory when browsing succeeds", async () => {
+    selectConfigDirectoryMock.mockResolvedValue("/picked/antigravity");
+
+    const { result } = renderHook(() =>
+      useDirectorySettings({
+        settings: createSettings({ antigravityConfigDir: undefined }),
+        onUpdateSettings,
+      }),
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    await act(async () => {
+      await result.current.browseDirectory("antigravity");
+    });
+
+    expect(selectConfigDirectoryMock).toHaveBeenCalledWith(
+      "/remote/antigravity",
+    );
+    expect(onUpdateSettings).toHaveBeenCalledWith({
+      antigravityConfigDir: "/picked/antigravity",
+    });
+    expect(result.current.resolvedDirs.antigravity).toBe("/picked/antigravity");
+  });
+
   it("resetAllDirectories applies provided resolved values", async () => {
     const { result } = renderHook(() =>
       useDirectorySettings({ settings: createSettings(), onUpdateSettings }),
@@ -249,6 +276,7 @@ describe("useDirectorySettings", () => {
         claude: "/server/claude",
         codex: "/server/codex",
         gemini: "/server/gemini",
+        antigravity: "/server/antigravity",
         opencode: "/server/opencode",
         openclaw: "/server/openclaw",
       });
@@ -257,6 +285,7 @@ describe("useDirectorySettings", () => {
     expect(result.current.resolvedDirs.claude).toBe("/server/claude");
     expect(result.current.resolvedDirs.codex).toBe("/server/codex");
     expect(result.current.resolvedDirs.gemini).toBe("/server/gemini");
+    expect(result.current.resolvedDirs.antigravity).toBe("/server/antigravity");
     expect(result.current.resolvedDirs.opencode).toBe("/server/opencode");
     expect(result.current.resolvedDirs.openclaw).toBe("/server/openclaw");
   });
