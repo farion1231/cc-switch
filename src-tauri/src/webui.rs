@@ -388,7 +388,10 @@ async fn get_providers(
         Err(resp) => return resp,
     };
     match ProviderService::list(&state.app_state, app_type) {
-        Ok(providers) => Json(providers).into_response(),
+        Ok(providers) => {
+            let providers_vec: Vec<_> = providers.into_values().collect();
+            Json(providers_vec).into_response()
+        }
         Err(e) => command_error(e),
     }
 }
