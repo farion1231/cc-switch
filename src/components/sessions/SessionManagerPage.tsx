@@ -14,10 +14,13 @@ import {
   Clock,
   FolderOpen,
   X,
+  Check,
   CheckSquare,
+  Pencil,
 } from "lucide-react";
 import {
   useDeleteSessionMutation,
+  useRenameSessionMutation,
   useSessionMessagesQuery,
   useSessionsQuery,
 } from "@/lib/query";
@@ -95,6 +98,8 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     appId as ProviderFilter,
   );
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [renamingKey, setRenamingKey] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   // 使用 FlexSearch 全文搜索
   const { search: searchSessions } = useSessionSearch({
@@ -136,7 +141,9 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       selectedSession?.sourcePath,
     );
   const deleteSessionMutation = useDeleteSessionMutation();
+  const renameSessionMutation = useRenameSessionMutation();
   const isDeleting = deleteSessionMutation.isPending || isBatchDeleting;
+  const isRenaming = renameSessionMutation.isPending;
 
   const virtualizer = useVirtualizer({
     count: messages.length,
@@ -150,6 +157,11 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollTop = 0;
     }
+  }, [selectedKey]);
+
+  useEffect(() => {
+    setRenamingKey(null);
+    setRenameValue("");
   }, [selectedKey]);
 
   useEffect(() => {
@@ -354,6 +366,45 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     }
   };
 
+  const handleStartRename = () => {
+    if (!selectedSession?.sourcePath) return;
+    setRenamingKey(getSessionKey(selectedSession));
+    setRenameValue(formatSessionTitle(selectedSession));
+  };
+
+  const handleCancelRename = () => {
+    if (isRenaming) return;
+    setRenamingKey(null);
+    setRenameValue("");
+  };
+
+  const handleConfirmRename = async () => {
+    if (!selectedSession?.sourcePath || isRenaming) return;
+
+    const title = renameValue.trim();
+    if (!title) {
+      toast.error(
+        t("sessionManager.renameTitleRequired", {
+          defaultValue: "会话标题不能为空",
+        }),
+      );
+      return;
+    }
+
+    try {
+      await renameSessionMutation.mutateAsync({
+        providerId: selectedSession.providerId,
+        sessionId: selectedSession.sessionId,
+        sourcePath: selectedSession.sourcePath,
+        title,
+      });
+      setRenamingKey(null);
+      setRenameValue("");
+    } catch {
+      // Error toast is handled by the mutation.
+    }
+  };
+
   const deletableFilteredSessions = useMemo(
     () => filteredSessions.filter((session) => Boolean(session.sourcePath)),
     [filteredSessions],
@@ -400,6 +451,9 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     deletableFilteredSessions.every((session) =>
       selectedSessionKeys.has(getSessionKey(session)),
     );
+  const isRenamingSelectedSession = selectedSession
+    ? renamingKey === getSessionKey(selectedSession)
+    : false;
 
   const toggleSessionChecked = (session: SessionMeta, checked: boolean) => {
     if (!session.sourcePath) return;
@@ -832,7 +886,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                     <div className="flex items-start justify-between gap-4">
                       {/* 左侧：会话信息 */}
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 mb-1">
+                        <div className="flex items-center gap-2 mb-1 min-w-0">
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <span className="shrink-0">
@@ -849,9 +903,92 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                               {getProviderLabel(selectedSession.providerId, t)}
                             </TooltipContent>
                           </Tooltip>
-                          <h2 className="text-base font-semibold truncate">
-                            {formatSessionTitle(selectedSession)}
-                          </h2>
+                          {isRenamingSelectedSession ? (
+                            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                              <Input
+                                value={renameValue}
+                                onChange={(event) =>
+                                  setRenameValue(event.target.value)
+                                }
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    event.preventDefault();
+                                    void handleConfirmRename();
+                                  }
+                                  if (event.key === "Escape") {
+                                    event.preventDefault();
+                                    handleCancelRename();
+                                  }
+                                }}
+                                className="h-8 min-w-0 text-sm font-medium"
+                                placeholder={t(
+                                  "sessionManager.renamePlaceholder",
+                                  {
+                                    defaultValue: "输入会话标题",
+                                  },
+                                )}
+                                autoFocus
+                                disabled={isRenaming}
+                              />
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-7 shrink-0"
+                                aria-label={t("sessionManager.saveRename", {
+                                  defaultValue: "保存标题",
+                                })}
+                                onClick={() => void handleConfirmRename()}
+                                disabled={isRenaming || !renameValue.trim()}
+                              >
+                                <Check className="size-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-7 shrink-0"
+                                aria-label={t("sessionManager.cancelRename", {
+                                  defaultValue: "取消重命名",
+                                })}
+                                onClick={handleCancelRename}
+                                disabled={isRenaming}
+                              >
+                                <X className="size-3.5" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <>
+                              <h2 className="min-w-0 flex-1 truncate text-base font-semibold">
+                                {formatSessionTitle(selectedSession)}
+                              </h2>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="size-7 shrink-0"
+                                    aria-label={t("sessionManager.rename", {
+                                      defaultValue: "重命名会话",
+                                    })}
+                                    onClick={handleStartRename}
+                                    disabled={
+                                      !selectedSession.sourcePath || isRenaming
+                                    }
+                                  >
+                                    <Pencil className="size-3.5" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  {selectedSession.sourcePath
+                                    ? t("sessionManager.rename", {
+                                        defaultValue: "重命名会话",
+                                      })
+                                    : t("sessionManager.renameUnavailable", {
+                                        defaultValue: "此会话无法重命名",
+                                      })}
+                                </TooltipContent>
+                              </Tooltip>
+                            </>
+                          )}
                         </div>
 
                         {/* 元信息 */}

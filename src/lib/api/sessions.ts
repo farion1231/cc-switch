@@ -12,6 +12,13 @@ export interface DeleteSessionResult extends DeleteSessionOptions {
   error?: string;
 }
 
+export interface RenameSessionOptions {
+  providerId: string;
+  sessionId: string;
+  sourcePath: string;
+  title: string;
+}
+
 export const sessionsApi = {
   async list(): Promise<SessionMeta[]> {
     return await invoke("list_sessions");
@@ -37,6 +44,16 @@ export const sessionsApi = {
     items: DeleteSessionOptions[],
   ): Promise<DeleteSessionResult[]> {
     return await invoke("delete_sessions", { items });
+  },
+
+  async rename(options: RenameSessionOptions): Promise<SessionMeta> {
+    const { providerId, sessionId, sourcePath, title } = options;
+    return await invoke("rename_session", {
+      providerId,
+      sessionId,
+      sourcePath,
+      title,
+    });
   },
 
   async launchTerminal(options: {

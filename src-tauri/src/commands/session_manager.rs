@@ -1,12 +1,18 @@
 #![allow(non_snake_case)]
 
 use crate::session_manager;
+use crate::store::AppState;
 
 #[tauri::command]
-pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, String> {
-    let sessions = tauri::async_runtime::spawn_blocking(session_manager::scan_sessions)
-        .await
-        .map_err(|e| format!("Failed to scan sessions: {e}"))?;
+pub async fn list_sessions(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<session_manager::SessionMeta>, String> {
+    let db = state.db.clone();
+    let sessions = tauri::async_runtime::spawn_blocking(move || {
+        session_manager::scan_sessions_with_title_overrides(db.as_ref())
+    })
+    .await
+    .map_err(|e| format!("Failed to scan sessions: {e}"))??;
     Ok(sessions)
 }
 
@@ -82,4 +88,20 @@ pub async fn delete_sessions(
     tauri::async_runtime::spawn_blocking(move || session_manager::delete_sessions(&items))
         .await
         .map_err(|e| format!("Failed to delete sessions: {e}"))
+}
+
+#[tauri::command]
+pub async fn rename_session(
+    state: tauri::State<'_, AppState>,
+    providerId: String,
+    sessionId: String,
+    sourcePath: String,
+    title: String,
+) -> Result<session_manager::SessionMeta, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        session_manager::rename_session(db.as_ref(), &providerId, &sessionId, &sourcePath, &title)
+    })
+    .await
+    .map_err(|e| format!("Failed to rename session: {e}"))?
 }
