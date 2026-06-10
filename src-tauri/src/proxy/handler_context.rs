@@ -235,6 +235,7 @@ impl RequestContext {
             self.optimizer_config.clone(),
             self.copilot_optimizer_config.clone(),
             max_retries,
+            self.app_config.filter_unsupported_response_tools,
         )
     }
 

@@ -18,6 +18,46 @@
 use serde_json::Value;
 use std::collections::HashSet;
 
+/// 过滤 Responses API 顶层 tools 数组中上游不支持的工具类型。
+///
+/// 只处理顶层 `tools`，避免误改 JSON Schema、MCP namespace 或业务自定义字段。
+pub fn filter_unsupported_response_tools(body: Value, unsupported_tool_types: &[&str]) -> Value {
+    let unsupported: HashSet<&str> = unsupported_tool_types.iter().copied().collect();
+    if unsupported.is_empty() {
+        return body;
+    }
+
+    let mut body = body;
+    let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) else {
+        return body;
+    };
+
+    let original_len = tools.len();
+    let mut removed_types = Vec::new();
+    tools.retain(|tool| {
+        let Some(tool_type) = tool.get("type").and_then(Value::as_str) else {
+            return true;
+        };
+        if unsupported.contains(tool_type) {
+            removed_types.push(tool_type.to_string());
+            false
+        } else {
+            true
+        }
+    });
+
+    let removed_count = original_len.saturating_sub(tools.len());
+    if removed_count > 0 {
+        removed_types.sort();
+        removed_types.dedup();
+        log::debug!(
+            "[BodyFilter] filtered unsupported Responses tools: count={removed_count}, types={removed_types:?}"
+        );
+    }
+
+    body
+}
+
 /// 过滤私有参数（以 `_` 开头的字段）
 ///
 /// 递归遍历 JSON 结构，移除所有以下划线开头的字段。
@@ -335,5 +375,71 @@ mod tests {
         let output2 = filter_private_params_with_whitelist(input, &[]);
 
         assert_eq!(output1, output2);
+    }
+
+    #[test]
+    fn test_filter_unsupported_response_tools_removes_image_generation() {
+        let input = json!({
+            "model": "gpt-5",
+            "tools": [
+                {"type": "function", "name": "read_file"},
+                {"type": "image_generation", "output_format": "png"},
+                {"type": "web_search_preview"}
+            ]
+        });
+
+        let output = filter_unsupported_response_tools(input, &["image_generation"]);
+
+        assert_eq!(
+            output["tools"],
+            json!([
+                {"type": "function", "name": "read_file"},
+                {"type": "web_search_preview"}
+            ])
+        );
+    }
+
+    #[test]
+    fn test_filter_unsupported_response_tools_preserves_non_matching_shapes() {
+        let input = json!({
+            "tools": [
+                {"type": "function", "name": "read_file"},
+                {"name": "missing_type"},
+                "string-tool",
+                {"type": "unknown_native_tool"}
+            ]
+        });
+
+        let output = filter_unsupported_response_tools(input.clone(), &["image_generation"]);
+
+        assert_eq!(output, input);
+    }
+
+    #[test]
+    fn test_filter_unsupported_response_tools_keeps_empty_tools_array() {
+        let input = json!({
+            "tools": [
+                {"type": "image_generation", "output_format": "png"}
+            ]
+        });
+
+        let output = filter_unsupported_response_tools(input, &["image_generation"]);
+
+        assert_eq!(output["tools"], json!([]));
+    }
+
+    #[test]
+    fn test_filter_unsupported_response_tools_ignores_missing_or_non_array_tools() {
+        let without_tools = json!({"model": "gpt-5"});
+        assert_eq!(
+            filter_unsupported_response_tools(without_tools.clone(), &["image_generation"]),
+            without_tools
+        );
+
+        let non_array_tools = json!({"tools": {"type": "image_generation"}});
+        assert_eq!(
+            filter_unsupported_response_tools(non_array_tools.clone(), &["image_generation"]),
+            non_array_tools
+        );
     }
 }

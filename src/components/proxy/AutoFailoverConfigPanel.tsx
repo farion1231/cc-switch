@@ -172,6 +172,7 @@ export function AutoFailoverConfigPanel({
         circuitTimeoutSeconds: raw.circuitTimeoutSeconds,
         circuitErrorRateThreshold: raw.circuitErrorRateThreshold / 100,
         circuitMinRequests: raw.circuitMinRequests,
+        filterUnsupportedResponseTools: config.filterUnsupportedResponseTools,
       });
       toast.success(
         t("proxy.autoFailover.configSaved", "自动故障转移配置已保存"),

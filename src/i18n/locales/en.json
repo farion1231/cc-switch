@@ -2394,7 +2394,14 @@
       "invalidAddress": "Invalid address. Enter an IPv4 (e.g. 127.0.0.1), IPv6 (e.g. ::1), or localhost",
       "configSaved": "Routing configuration saved",
       "configSaveFailed": "Failed to save configuration",
-      "restartRequired": "Restart routing service for address or port changes to take effect"
+      "restartRequired": "Restart routing service for address or port changes to take effect",
+      "codexToolFilter": {
+        "title": "Codex: Filter unsupported Responses tools",
+        "description": "When local routing takes over Codex, remove tools unsupported by the upstream from Responses requests. Defaults to removing image_generation to avoid 403/unsupported_value.",
+        "enabled": "Codex Responses tool filtering enabled",
+        "disabled": "Codex Responses tool filtering disabled",
+        "failed": "Failed to toggle Codex Responses tool filtering"
+      }
     },
     "switchFailed": "Switch failed: {{error}}",
     "takeover": {

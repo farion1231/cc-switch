@@ -2394,7 +2394,14 @@
       "invalidAddress": "無効なアドレスです。IPv4（例: 127.0.0.1）、IPv6（例: ::1）、または localhost を入力してください",
       "configSaved": "ルーティング設定を保存しました",
       "configSaveFailed": "設定の保存に失敗しました",
-      "restartRequired": "アドレスまたはポートの変更を反映するにはルーティングサービスの再起動が必要です"
+      "restartRequired": "アドレスまたはポートの変更を反映するにはルーティングサービスの再起動が必要です",
+      "codexToolFilter": {
+        "title": "Codex: 未対応の Responses ツールをフィルター",
+        "description": "ローカルルーティングで Codex を接管したとき、上流が対応していないツールを Responses リクエストから削除します。デフォルトでは image_generation を削除し、403/unsupported_value を回避します。",
+        "enabled": "Codex Responses ツールフィルターを有効にしました",
+        "disabled": "Codex Responses ツールフィルターを無効にしました",
+        "failed": "Codex Responses ツールフィルターの切り替えに失敗しました"
+      }
     },
     "switchFailed": "切り替えに失敗しました: {{error}}",
     "takeover": {

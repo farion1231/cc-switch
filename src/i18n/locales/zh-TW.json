@@ -2339,7 +2339,14 @@
       "invalidAddress": "位址無效，請輸入 IPv4（如 127.0.0.1）、IPv6（如 ::1）或 localhost",
       "configSaved": "路由設定已儲存",
       "configSaveFailed": "儲存設定失敗",
-      "restartRequired": "修改位址或連接埠後需要重新啟動路由服務才能生效"
+      "restartRequired": "修改位址或連接埠後需要重新啟動路由服務才能生效",
+      "codexToolFilter": {
+        "title": "Codex: 過濾不支援的 Responses 工具",
+        "description": "本地路由接管 Codex 後，從 Responses 請求中移除上游不支援的工具；預設移除 image_generation，避免 403/unsupported_value。",
+        "enabled": "Codex Responses 工具過濾已啟用",
+        "disabled": "Codex Responses 工具過濾已關閉",
+        "failed": "切換 Codex Responses 工具過濾失敗"
+      }
     },
     "switchFailed": "切換失敗：{{error}}",
     "takeover": {

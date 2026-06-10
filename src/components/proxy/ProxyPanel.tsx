@@ -25,6 +25,8 @@ import {
   useSetProxyTakeoverForApp,
   useGlobalProxyConfig,
   useUpdateGlobalProxyConfig,
+  useAppProxyConfig,
+  useUpdateAppProxyConfig,
 } from "@/lib/query/proxy";
 import type { ProxyStatus } from "@/types/proxy";
 import { useTranslation } from "react-i18next";
@@ -54,6 +56,8 @@ export function ProxyPanel({
   // 获取全局代理配置
   const { data: globalConfig } = useGlobalProxyConfig();
   const updateGlobalConfig = useUpdateGlobalProxyConfig();
+  const { data: codexProxyConfig } = useAppProxyConfig("codex");
+  const updateAppProxyConfig = useUpdateAppProxyConfig();
 
   // 监听地址/端口的本地状态（端口用字符串以支持完全清空）
   const [listenAddress, setListenAddress] = useState("127.0.0.1");
@@ -117,6 +121,32 @@ export function ProxyPanel({
     } catch (error) {
       toast.error(
         t("proxy.logging.failed", { defaultValue: "切换日志状态失败" }),
+      );
+    }
+  };
+
+  const handleCodexToolFilterChange = async (enabled: boolean) => {
+    if (!codexProxyConfig) return;
+    try {
+      await updateAppProxyConfig.mutateAsync({
+        ...codexProxyConfig,
+        filterUnsupportedResponseTools: enabled,
+      });
+      toast.success(
+        enabled
+          ? t("proxy.settings.codexToolFilter.enabled", {
+              defaultValue: "Codex Responses 工具过滤已启用",
+            })
+          : t("proxy.settings.codexToolFilter.disabled", {
+              defaultValue: "Codex Responses 工具过滤已关闭",
+            }),
+        { closeButton: true },
+      );
+    } catch (error) {
+      toast.error(
+        t("proxy.settings.codexToolFilter.failed", {
+          defaultValue: "切换 Codex Responses 工具过滤失败",
+        }),
       );
     }
   };
@@ -307,6 +337,33 @@ export function ProxyPanel({
             </motion.div>
           )}
         </AnimatePresence>
+
+        <div className="rounded-xl border border-border bg-card/50 p-4 transition-colors hover:bg-muted/50">
+          <div className="flex items-center justify-between gap-4">
+            <div className="space-y-1">
+              <Label
+                htmlFor="codex-filter-unsupported-response-tools"
+                className="text-sm font-medium"
+              >
+                {t("proxy.settings.codexToolFilter.title", {
+                  defaultValue: "Codex: 过滤不支持的 Responses 工具",
+                })}
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                {t("proxy.settings.codexToolFilter.description", {
+                  defaultValue:
+                    "本地路由接管 Codex 后，从 Responses 请求中移除上游不支持的工具；默认移除 image_generation，避免 403/unsupported_value。",
+                })}
+              </p>
+            </div>
+            <Switch
+              id="codex-filter-unsupported-response-tools"
+              checked={codexProxyConfig?.filterUnsupportedResponseTools ?? true}
+              onCheckedChange={handleCodexToolFilterChange}
+              disabled={!codexProxyConfig || updateAppProxyConfig.isPending}
+            />
+          </div>
+        </div>
 
         {/* Running state: service info + stats */}
         {isRunning && status ? (
