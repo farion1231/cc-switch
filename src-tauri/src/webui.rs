@@ -167,13 +167,35 @@ fn app_type(app: &str) -> Result<AppType, Response> {
 
 async fn require_auth(
     State(state): State<WebUiState>,
-    request: Request<axum::body::Body>,
+    mut request: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
     let Some(expected) = state.token.as_deref() else {
         return next.run(request).await;
     };
 
+    // Check if client IP is private (RFC 1918 + loopback)
+    let client_ip = request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<SocketAddr>>()
+        .map(|ci| ci.0.ip());
+
+    if let Some(ip) = client_ip {
+        let is_private = match ip {
+            std::net::IpAddr::V4(ip) => {
+                ip.is_loopback() || ip.is_private() || ip.is_link_local()
+            }
+            std::net::IpAddr::V6(ip) => {
+                ip.is_loopback() || ip.is_unicast_link_local()
+            }
+        };
+
+        if is_private {
+            return next.run(request).await;
+        }
+    }
+
+    // Public IP requires token
     let authorized = request
         .headers()
         .get(header::AUTHORIZATION)
@@ -902,7 +924,11 @@ impl WebUiServer {
 
         *self.shutdown_tx.write().await = Some(shutdown_tx);
         let handle = tokio::spawn(async move {
-            let server = axum::serve(listener, app).with_graceful_shutdown(async {
+            let server = axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(async {
                 let _ = shutdown_rx.await;
             });
             if let Err(e) = server.await {
