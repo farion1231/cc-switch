@@ -795,8 +795,15 @@ pub fn set_model_config(model: &HermesModelConfig) -> Result<HermesWriteOutcome,
 /// still have a runnable configuration (Hermes will surface a clear error
 /// if the default no longer belongs to the active provider).
 ///
-/// Existing fields in `model:` (`context_length` / `max_tokens` / `base_url`
-/// / `extra`) are preserved via struct-update.
+/// `model.base_url` is overwritten when the new provider's `settings_config`
+/// declares a `base_url` — provider switching MUST refresh the upstream
+/// endpoint, otherwise auxiliary services (title generation, etc.) hit the
+/// previous provider and return 404. When the new provider has no
+/// `base_url`, the existing value is preserved so a user override survives.
+///
+/// `context_length` / `max_tokens` / `extra` are always preserved via
+/// struct-update so user-set customizations through the Model panel survive
+/// the switch.
 pub fn apply_switch_defaults(
     provider_id: &str,
     settings_config: &serde_json::Value,
@@ -810,10 +817,17 @@ pub fn apply_switch_defaults(
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
+    let new_base_url = settings_config
+        .get("base_url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
     let current = get_model_config()?.unwrap_or_default();
     let merged = HermesModelConfig {
         default: first_model_id.or(current.default.clone()),
         provider: Some(provider_id.to_string()),
+        base_url: new_base_url.or(current.base_url.clone()),
         ..current
     };
     set_model_config(&merged)
@@ -1806,6 +1820,70 @@ custom_providers:
             // First entry's id is whitespace-only → blank → fall back to old default
             // (we intentionally don't scan past the first entry for a default).
             assert_eq!(model.default.as_deref(), Some("prev-default"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn apply_switch_defaults_updates_base_url_to_new_provider() {
+        // Regression test for issue #2757 — switching providers must refresh
+        // `model.base_url` so auxiliary services (title generation, session
+        // search, etc.) hit the new provider's endpoint rather than the
+        // previously active one.
+        with_test_home(|| {
+            // User was previously running DeepSeek.
+            let initial = HermesModelConfig {
+                default: Some("deepseek-chat".to_string()),
+                provider: Some("deepseek".to_string()),
+                base_url: Some("https://api.deepseek.com".to_string()),
+                ..Default::default()
+            };
+            set_model_config(&initial).unwrap();
+
+            // Switch to Kimi For Coding — new provider declares its own base_url.
+            let settings = serde_json::json!({
+                "base_url": "https://api.kimi.com/coding",
+                "models": [{ "id": "kimi-for-coding" }]
+            });
+            apply_switch_defaults("kimi", &settings).unwrap();
+
+            let model = get_model_config().unwrap().unwrap();
+            assert_eq!(model.provider.as_deref(), Some("kimi"));
+            assert_eq!(model.default.as_deref(), Some("kimi-for-coding"));
+            assert_eq!(
+                model.base_url.as_deref(),
+                Some("https://api.kimi.com/coding"),
+                "base_url must refresh to the new provider's endpoint on switch"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn apply_switch_defaults_ignores_blank_base_url_in_settings() {
+        // If the new provider's settings has an empty/whitespace base_url,
+        // fall back to the existing value rather than blanking it out.
+        with_test_home(|| {
+            let initial = HermesModelConfig {
+                default: Some("old".to_string()),
+                provider: Some("old".to_string()),
+                base_url: Some("https://existing.example.com".to_string()),
+                ..Default::default()
+            };
+            set_model_config(&initial).unwrap();
+
+            let settings = serde_json::json!({
+                "base_url": "   ",
+                "models": [{ "id": "new-model" }]
+            });
+            apply_switch_defaults("new", &settings).unwrap();
+
+            let model = get_model_config().unwrap().unwrap();
+            assert_eq!(
+                model.base_url.as_deref(),
+                Some("https://existing.example.com"),
+                "blank base_url in settings must not clobber existing override"
+            );
         });
     }
 
