@@ -1082,40 +1082,45 @@ fn normalize_codex_provider_id_to_impl(
         .parse::<DocumentMut>()
         .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
 
-    let old_provider_id = doc
-        .get("model_provider")
-        .and_then(|item| item.as_str())
-        .map(str::trim)
-        .filter(|id| !id.is_empty() && is_custom_codex_model_provider_id(id))
-        .map(str::to_string);
+    // Collect every third-party (non-reserved) provider ID referenced
+    // anywhere in the document so that profile-only references are
+    // rewritten even when the top-level model_provider is already the
+    // target or is a reserved ID.
+    let third_party_ids = collect_non_reserved_provider_ids(&doc, target_id);
 
     let mut changed = false;
 
-    if let Some(ref old_id) = old_provider_id {
-        if old_id != target_id {
-            // Rename the [model_providers.<old>] table → [model_providers.<target>]
-            if let Some(model_providers) = doc
-                .get_mut("model_providers")
-                .and_then(|item| item.as_table_mut())
-            {
-                if let Some(provider_table) = model_providers.remove(old_id.as_str()) {
+    for old_id in &third_party_ids {
+        // Rename [model_providers.<old>] → [model_providers.<target>]
+        // Always remove the old table; only insert into target slot
+        // when target doesn't exist yet, so the active provider's
+        // live config is never overwritten by stale profile data.
+        if let Some(model_providers) = doc
+            .get_mut("model_providers")
+            .and_then(|item| item.as_table_mut())
+        {
+            let target_exists = model_providers.contains_key(target_id);
+            if let Some(provider_table) = model_providers.remove(old_id.as_str()) {
+                if !target_exists {
                     model_providers[target_id] = provider_table;
                 }
             }
-
-            // Rewrite top-level model_provider
-            doc["model_provider"] = toml_edit::value(target_id);
-
-            // Rewrite profile references
-            if let Some(profiles) = doc
-                .get_mut("profiles")
-                .and_then(|item| item.as_table_like_mut())
-            {
-                rewrite_profile_provider_refs(profiles, old_id, target_id);
-            }
-
-            changed = true;
         }
+
+        // Rewrite top-level model_provider if it matches
+        if doc.get("model_provider").and_then(|v| v.as_str()).map(str::trim) == Some(old_id.as_str()) {
+            doc["model_provider"] = toml_edit::value(target_id);
+        }
+
+        // Rewrite profile references
+        if let Some(profiles) = doc
+            .get_mut("profiles")
+            .and_then(|item| item.as_table_like_mut())
+        {
+            rewrite_profile_provider_refs(profiles, old_id, target_id);
+        }
+
+        changed = true;
     }
 
     if changed {
@@ -1123,6 +1128,46 @@ fn normalize_codex_provider_id_to_impl(
     } else {
         Ok(config_text.to_string())
     }
+}
+
+/// Return every custom (non-reserved) model_provider ID referenced
+/// anywhere in the document whose value differs from `target_id`.
+fn collect_non_reserved_provider_ids(
+    doc: &DocumentMut,
+    target_id: &str,
+) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::new();
+
+    let mut push_if_custom = |id: &str| {
+        let id = id.trim().to_string();
+        if !id.is_empty()
+            && is_custom_codex_model_provider_id(&id)
+            && id != target_id
+            && !ids.contains(&id)
+        {
+            ids.push(id);
+        }
+    };
+
+    if let Some(id) = doc
+        .get("model_provider")
+        .and_then(|v| v.as_str())
+    {
+        push_if_custom(id);
+    }
+
+    if let Some(profiles) = doc.get("profiles").and_then(|v| v.as_table_like()) {
+        for (_, profile) in profiles.iter() {
+            if let Some(id) = profile
+                .get("model_provider")
+                .and_then(|v| v.as_str())
+            {
+                push_if_custom(id);
+            }
+        }
+    }
+
+    ids
 }
 
 fn rewrite_profile_provider_refs(
@@ -2370,6 +2415,65 @@ model = "gpt-5.5"
             profile.get("model_provider").and_then(|v| v.as_str()),
             Some("openai"),
             "non-matching profile references should not be rewritten"
+        );
+    }
+
+    #[test]
+    fn normalize_rewrites_profile_when_top_level_already_target() {
+        // Profile-only: top-level is already the target "custom" but a
+        // [profiles.*] entry still points at a third-party ID.
+        let input = r#"model_provider = "custom"
+model = "gpt-5.5"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://main.example/v1"
+
+[model_providers.aihubmix]
+name = "AIHubMix"
+base_url = "https://aihubmix.com/v1"
+
+[profiles.old]
+model_provider = "aihubmix"
+model = "gpt-5.5"
+"#;
+        let result = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        // Top-level should stay "custom"
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("custom")
+        );
+
+        // Stale aihubmix table should be removed
+        assert!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("aihubmix"))
+                .is_none(),
+            "stale aihubmix table should be removed"
+        );
+
+        // Profile reference must be rewritten
+        let profiles = parsed.get("profiles").expect("profiles should exist");
+        let old_profile = profiles.get("old").expect("old profile should exist");
+        assert_eq!(
+            old_profile.get("model_provider").and_then(|v| v.as_str()),
+            Some("custom"),
+            "stale profile reference should be rewritten to custom"
+        );
+
+        // Main custom table must preserve its original config (not
+        // overwritten by stale aihubmix data).
+        let custom = parsed
+            .get("model_providers")
+            .and_then(|v| v.get("custom"))
+            .expect("custom provider table should exist");
+        assert_eq!(
+            custom.get("base_url").and_then(|v| v.as_str()),
+            Some("https://main.example/v1"),
+            "existing custom table content should be preserved"
         );
     }
 }
