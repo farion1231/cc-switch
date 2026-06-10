@@ -1427,6 +1427,7 @@
     "modelIdPlaceholder": "例如: claude-3-5-sonnet-20241022",
     "displayNamePlaceholder": "例如: Claude 3.5 Sonnet",
     "appType": "应用类型",
+    "agent": "代理",
     "allApps": "全部应用",
     "statusCode": "状态码",
     "searchProviderPlaceholder": "搜索供应商...",

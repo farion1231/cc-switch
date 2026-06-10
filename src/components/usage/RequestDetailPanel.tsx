@@ -106,6 +106,14 @@ export function RequestDetailPanel({
                 </dt>
                 <dd>{request.appType}</dd>
               </div>
+              {request.appType === "opencode" && request.agent && (
+                <div>
+                  <dt className="text-muted-foreground">
+                    {t("usage.agent", "代理")}
+                  </dt>
+                  <dd className="font-mono">{request.agent}</dd>
+                </div>
+              )}
               <div>
                 <dt className="text-muted-foreground">
                   {t("usage.model", "模型")}

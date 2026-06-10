@@ -1427,6 +1427,7 @@
     "modelIdPlaceholder": "e.g., claude-3-5-sonnet-20241022",
     "displayNamePlaceholder": "e.g., Claude 3.5 Sonnet",
     "appType": "App Type",
+    "agent": "Agent",
     "allApps": "All Apps",
     "statusCode": "Status Code",
     "searchProviderPlaceholder": "Search provider...",

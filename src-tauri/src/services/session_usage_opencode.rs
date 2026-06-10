@@ -33,6 +33,7 @@ struct OpenCodeMessageData {
     cache_write_tokens: u32,
     cost: f64,
     model_id: String,
+    agent: Option<String>,
     timestamp_ms: i64,
 }
 
@@ -44,8 +45,13 @@ struct OpenCodeMessageQueryResult {
 /// 同步 OpenCode 使用数据
 pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let db_path = get_opencode_db_path();
+    log::info!("[OPENCODE-SYNC] start, db_path={}", db_path.display());
 
     if !db_path.exists() {
+        log::info!(
+            "[OPENCODE-SYNC] opencode.db 不存在，跳过同步：{}",
+            db_path.display()
+        );
         return Ok(SessionSyncResult {
             imported: 0,
             skipped: 0,
@@ -53,6 +59,7 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
             errors: vec![],
         });
     }
+    log::info!("[OPENCODE-SYNC] opencode.db 存在: {}", db_path.display());
 
     let db_path_str = db_path.to_string_lossy().to_string();
 
@@ -70,9 +77,17 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
     }
 
     let (last_modified, _last_offset) = get_sync_state(db, &db_path_str)?;
+    log::info!(
+        "[OPENCODE-SYNC] mtime: file_modified={}, last_modified={}, delta={}ns, will_sync={}",
+        file_modified,
+        last_modified,
+        file_modified - last_modified,
+        file_modified > last_modified
+    );
 
     // 文件未变化则跳过
     if file_modified <= last_modified {
+        log::info!("[OPENCODE-SYNC] 文件未变化（<= last_modified），跳过");
         return Ok(SessionSyncResult {
             imported: 0,
             skipped: 0,
@@ -86,6 +101,30 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
         rusqlite::Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|e| AppError::Database(format!("无法打开 opencode.db: {e}")))?;
 
+    // 诊断：dump 一行消息样本数据（仅第一次），帮用户验证 schema 是否与代码预期一致
+    match opencode_conn.query_row(
+        "SELECT id, session_id, time_created, data FROM message ORDER BY time_created DESC LIMIT 1",
+        [],
+        |row| {
+            let id: String = row.get(0)?;
+            let sid: String = row.get(1)?;
+            let tc: i64 = row.get(2)?;
+            let data: String = row.get(3)?;
+            Ok((id, sid, tc, data))
+        },
+    ) {
+        Ok((id, sid, tc, data)) => {
+            log::debug!(
+                "[OPENCODE-SYNC] 样本消息: id={}, session_id={}, time_created={}, data前300字符: {}",
+                id, sid, tc,
+                data.chars().take(300).collect::<String>()
+            );
+        }
+        Err(e) => {
+            log::warn!("[OPENCODE-SYNC] 无法读取样本消息（schema 可能不同?）: {e}");
+        }
+    }
+
     let mut result = SessionSyncResult {
         imported: 0,
         skipped: 0,
@@ -96,14 +135,26 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
 
     // 查询所有会话
     let sessions = query_sessions(&opencode_conn)?;
+    log::info!("[OPENCODE-SYNC] 发现 {} 个 session", sessions.len());
 
     for (session_id, time_updated) in &sessions {
         // 检查会话是否需要重新同步
         let sync_key = format!("{db_path_str}:{session_id}");
         let (sess_last_modified, _) = get_sync_state(db, &sync_key)?;
         if *time_updated <= sess_last_modified {
+            log::debug!(
+                "[OPENCODE-SYNC] session={} 未更新 ({} <= {}), 跳过",
+                session_id,
+                time_updated,
+                sess_last_modified
+            );
             continue; // 会话未更新，跳过
         }
+        log::debug!(
+            "[OPENCODE-SYNC] 处理 session={}, time_updated={}",
+            session_id,
+            time_updated
+        );
 
         let mut session_had_error = false;
 
@@ -112,15 +163,39 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
         match query_assistant_messages(&opencode_conn, session_id) {
             Ok(query_result) => {
                 session_has_incomplete_usage = query_result.has_incomplete_usage;
+                log::info!(
+                    "[OPENCODE-SYNC]   session={} 解析到 {} 条 assistant 消息, has_incomplete_usage={}",
+                    session_id,
+                    query_result.messages.len(),
+                    query_result.has_incomplete_usage
+                );
                 for (message_id, msg_data) in &query_result.messages {
                     let request_id = format!("opencode_session:{session_id}:{message_id}");
 
                     match insert_opencode_message(db, &request_id, msg_data, session_id) {
-                        Ok(true) => result.imported += 1,
-                        Ok(false) => result.skipped += 1,
+                        Ok(true) => {
+                            result.imported += 1;
+                            log::debug!(
+                                "[OPENCODE-SYNC]     inserted msg={} (in:{} out:{} cache_r:{} cache_w:{} model={} agent={:?})",
+                                message_id,
+                                msg_data.input_tokens,
+                                msg_data.output_tokens,
+                                msg_data.cache_read_tokens,
+                                msg_data.cache_write_tokens,
+                                msg_data.model_id,
+                                msg_data.agent
+                            );
+                        }
+                        Ok(false) => {
+                            result.skipped += 1;
+                            log::debug!(
+                                "[OPENCODE-SYNC]     skipped msg={} (dedup hit 或 INSERT OR IGNORE 冲突)",
+                                message_id
+                            );
+                        }
                         Err(e) => {
                             let msg = format!("OpenCode 消息插入失败 {request_id}: {e}");
-                            log::warn!("[OPENCODE-SYNC] {msg}");
+                            log::warn!("[OPENCODE-SYNC]     {msg}");
                             result.errors.push(msg);
                             result.skipped += 1;
                             session_had_error = true;
@@ -142,6 +217,10 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
         }
 
         if session_has_incomplete_usage {
+            log::info!(
+                "[OPENCODE-SYNC]   session={} 有未完成消息，跳过状态推进（下轮重试）",
+                session_id
+            );
             continue;
         }
 
@@ -159,14 +238,13 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
         update_sync_state(db, &db_path_str, file_modified, 0)?;
     }
 
-    if result.imported > 0 {
-        log::info!(
-            "[OPENCODE-SYNC] 同步完成: 导入 {} 条, 跳过 {} 条, 扫描 {} 个会话",
-            result.imported,
-            result.skipped,
-            sessions.len()
-        );
-    }
+    log::info!(
+        "[OPENCODE-SYNC] 完成: imported={}, skipped={}, errors={}, sessions_scanned={}",
+        result.imported,
+        result.skipped,
+        result.errors.len(),
+        sessions.len()
+    );
 
     Ok(result)
 }
@@ -198,6 +276,12 @@ fn query_sessions(conn: &rusqlite::Connection) -> Result<Vec<(String, i64)>, App
     Ok(sessions)
 }
 
+/// 兼容 OpenCode 实际存储的嵌套格式 `{ message: { role, tokens, time, ... }, parts: [...] }`。
+/// 老版本/部分自定义 schema 可能把字段放在顶层，这里回退一下。
+fn message_obj(value: &serde_json::Value) -> &serde_json::Value {
+    value.get("message").unwrap_or(value)
+}
+
 /// 查询某会话的已完成 assistant 消息，并标记是否还有未完成 usage 消息。
 fn query_assistant_messages(
     conn: &rusqlite::Connection,
@@ -215,34 +299,96 @@ fn query_assistant_messages(
 
     let mut messages = Vec::new();
     let mut has_incomplete_usage = false;
+    // 诊断计数器：每条消息被丢的具体原因
+    let mut skipped_json_err = 0usize;
+    let mut skipped_role = 0usize;
+    let mut skipped_no_tokens = 0usize;
+    let mut skipped_no_completed = 0usize;
+    let mut skipped_all_zero = 0usize;
     for row in rows {
         let (message_id, data_json) =
             row.map_err(|e| AppError::Database(format!("读取消息行失败: {e}")))?;
 
-        // 只处理 assistant 消息
+        // 解析整体 data 容器
         let value: serde_json::Value = match serde_json::from_str(&data_json) {
             Ok(v) => v,
-            Err(_) => continue,
+            Err(e) => {
+                log::debug!(
+                    "[OPENCODE-SYNC]   msg={} skipped: JSON 解析失败: {}",
+                    message_id,
+                    e
+                );
+                skipped_json_err += 1;
+                continue;
+            }
         };
 
-        if value.get("role").and_then(|r| r.as_str()) != Some("assistant") {
+        // OpenCode 实际 schema 把 role/tokens/time 嵌套在 `message` 字段下。
+        // 顶层 fallback 兼容旧版 schema。
+        let m = message_obj(&value);
+
+        // 只处理 assistant 消息
+        let role = m.get("role").and_then(|r| r.as_str());
+        if role != Some("assistant") {
+            log::debug!(
+                "[OPENCODE-SYNC]   msg={} skipped: role={:?} (非 assistant)",
+                message_id,
+                role
+            );
+            skipped_role += 1;
             continue;
         }
 
         // 必须有 tokens 字段
-        if value.get("tokens").is_none() {
+        if m.get("tokens").is_none() {
+            // 没有 tokens 字段时，把 data 的顶层 key 列表打出来帮用户诊断 schema
+            let top_keys: Vec<&str> = value
+                .as_object()
+                .map(|o| o.keys().map(|s| s.as_str()).collect())
+                .unwrap_or_default();
+            let inner_keys: Vec<&str> = m
+                .as_object()
+                .map(|o| o.keys().map(|s| s.as_str()).collect())
+                .unwrap_or_default();
+            log::debug!(
+                "[OPENCODE-SYNC]   msg={} skipped: 没有 tokens 字段. 顶层 keys={:?}, 解析后 keys={:?}",
+                message_id, top_keys, inner_keys
+            );
+            skipped_no_tokens += 1;
             continue;
         }
 
         // 跳过未完成的消息：进行中只有半截 token，且因 INSERT OR IGNORE 无法回填
-        if value.get("time").and_then(|t| t.get("completed")).is_none() {
+        if m.get("time").and_then(|t| t.get("completed")).is_none() {
             has_incomplete_usage = true;
+            log::debug!(
+                "[OPENCODE-SYNC]   msg={} skipped: 没有 time.completed（消息未完成）",
+                message_id
+            );
+            skipped_no_completed += 1;
             continue;
         }
 
-        if let Some(msg_data) = parse_message_data(&value) {
-            messages.push((message_id, msg_data));
+        match parse_message_data(&value) {
+            Some(msg_data) => messages.push((message_id, msg_data)),
+            None => {
+                log::debug!(
+                    "[OPENCODE-SYNC]   msg={} skipped: parse_message_data 返回 None（全零 token 或字段缺失）",
+                    message_id
+                );
+                skipped_all_zero += 1;
+            }
         }
+    }
+
+    // 把这一轮的 skip 统计记下来（INFO 级别，确保用户能看到总数）
+    if skipped_json_err + skipped_role + skipped_no_tokens + skipped_no_completed + skipped_all_zero
+        > 0
+    {
+        log::info!(
+            "[OPENCODE-SYNC]   session={} 跳过统计: json_err={}, role={}, no_tokens={}, no_completed={}, all_zero={}",
+            session_id, skipped_json_err, skipped_role, skipped_no_tokens, skipped_no_completed, skipped_all_zero
+        );
     }
 
     Ok(OpenCodeMessageQueryResult {
@@ -252,8 +398,11 @@ fn query_assistant_messages(
 }
 
 /// 解析 opencode message.data JSON 为结构化数据
+///
+/// 支持 OpenCode 实际 schema（字段在 `message` 嵌套对象下）和扁平 schema 双形态。
 fn parse_message_data(value: &serde_json::Value) -> Option<OpenCodeMessageData> {
-    let tokens = value.get("tokens")?;
+    let m = message_obj(value);
+    let tokens = m.get("tokens")?;
 
     let input_tokens = tokens.get("input").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     let output_tokens = tokens.get("output").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
@@ -282,15 +431,20 @@ fn parse_message_data(value: &serde_json::Value) -> Option<OpenCodeMessageData> 
         return None;
     }
 
-    let cost = value.get("cost").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let cost = m.get("cost").and_then(|v| v.as_f64()).unwrap_or(0.0);
 
-    let model_id = value
+    let model_id = m
         .get("modelID")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown")
         .to_string();
 
-    let timestamp_ms = value
+    let agent = m
+        .get("agent")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let timestamp_ms = m
         .get("time")
         .and_then(|t| t.get("created"))
         .and_then(|v| v.as_i64())
@@ -304,6 +458,7 @@ fn parse_message_data(value: &serde_json::Value) -> Option<OpenCodeMessageData> 
         cache_write_tokens,
         cost,
         model_id,
+        agent,
         timestamp_ms,
     })
 }
@@ -398,8 +553,8 @@ fn insert_opencode_message(
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
-            provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+            provider_type, is_streaming, cost_multiplier, created_at, data_source, agent
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
         rusqlite::params![
             request_id,
             "_opencode_session",   // provider_id
@@ -425,6 +580,7 @@ fn insert_opencode_message(
             "1.0",                 // cost_multiplier
             created_at,
             "opencode_session",    // data_source
+            msg.agent.clone(),     // agent (OpenCode-specific, e.g. "build"/"plan"/"sisyphus")
         ],
     )
     .map_err(|e| AppError::Database(format!("插入 OpenCode 会话日志失败: {e}")))?;
@@ -467,6 +623,161 @@ mod tests {
         assert!((data.cost - 0.0023113).abs() < 1e-10);
         assert_eq!(data.model_id, "deepseek-v4-pro");
         assert_eq!(data.timestamp_ms, 1779755333700);
+    }
+
+    #[test]
+    fn test_parse_message_data_extracts_agent() {
+        // Build agent present
+        let json: serde_json::Value = serde_json::json!({
+            "role": "assistant",
+            "tokens": { "input": 100, "output": 50 },
+            "modelID": "claude-opus-4-5",
+            "agent": "build",
+            "time": { "created": 100, "completed": 200 }
+        });
+        let data = parse_message_data(&json).unwrap();
+        assert_eq!(data.agent, Some("build".to_string()));
+
+        // Plan agent
+        let json2: serde_json::Value = serde_json::json!({
+            "role": "assistant",
+            "tokens": { "input": 100, "output": 50 },
+            "modelID": "claude-opus-4-5",
+            "agent": "plan",
+            "time": { "created": 100, "completed": 200 }
+        });
+        let data2 = parse_message_data(&json2).unwrap();
+        assert_eq!(data2.agent, Some("plan".to_string()));
+
+        // Missing agent field
+        let json3: serde_json::Value = serde_json::json!({
+            "role": "assistant",
+            "tokens": { "input": 100, "output": 50 },
+            "modelID": "m",
+            "time": { "created": 100, "completed": 200 }
+        });
+        let data3 = parse_message_data(&json3).unwrap();
+        assert_eq!(data3.agent, None);
+
+        // agent is JSON null
+        let json4: serde_json::Value = serde_json::json!({
+            "role": "assistant",
+            "tokens": { "input": 100, "output": 50 },
+            "modelID": "m",
+            "agent": null,
+            "time": { "created": 100, "completed": 200 }
+        });
+        let data4 = parse_message_data(&json4).unwrap();
+        assert_eq!(data4.agent, None);
+    }
+
+    /// 回归测试：OpenCode 真实 schema 把 role/tokens/time 嵌套在 `message` 字段下。
+    /// 之前版本直接 `value.get("role")` 永远拿到 None，导致所有消息被跳过。
+    #[test]
+    fn test_parse_message_data_nested_message_format() {
+        // 来自用户实测的真实 OpenCode message.data JSON
+        let json: serde_json::Value = serde_json::json!({
+            "message": {
+                "id": "msg_ea25e940f001xVPLg7Pw6yl2qT",
+                "parentID": "msg_ea25d91e90013EoZFwg9vnWSZR",
+                "role": "assistant",
+                "mode": "Atlas - Plan Executor",
+                "agent": "Atlas - Plan Executor",
+                "path": {
+                    "cwd": "D:\\code-py\\forkcc",
+                    "root": "D:\\code-py\\forkcc"
+                },
+                "cost": 0,
+                "tokens": {
+                    "input": 1127,
+                    "output": 1173,
+                    "reasoning": 0,
+                    "cache": {
+                        "read": 286194,
+                        "write": 0
+                    },
+                    "total": 288494
+                },
+                "modelID": "oc/minimax-m3-free",
+                "providerID": "9router",
+                "time": {
+                    "created": 1780840567823i64,
+                    "completed": 1780840609494i64
+                },
+                "sessionID": "ses_15ec1005effeLGOqD5IuNEqO5j",
+                "finish": "stop"
+            },
+            "parts": [
+                {
+                    "id": "prt_ea25ec1d5001GlzZnLY4Mhdo5A",
+                    "messageID": "msg_ea25e940f001xVPLg7Pw6yl2qT",
+                    "sessionID": "ses_15ec1005effeLGOqD5IuNEqO5j",
+                    "type": "text",
+                    "text": "输出内容",
+                    "time": {
+                        "start": 1780840579541i64,
+                        "end": 1780840608790i64
+                    }
+                }
+            ]
+        });
+
+        let data = parse_message_data(&json).expect("parse must succeed for nested format");
+        assert_eq!(data.input_tokens, 1127, "input tokens should be 1127");
+        assert_eq!(data.output_tokens, 1173, "output tokens should be 1173");
+        assert_eq!(data.reasoning_tokens, 0);
+        assert_eq!(
+            data.cache_read_tokens, 286194,
+            "cache.read should be 286194"
+        );
+        assert_eq!(data.cache_write_tokens, 0);
+        assert_eq!(data.cost, 0.0);
+        assert_eq!(data.model_id, "oc/minimax-m3-free");
+        assert_eq!(data.agent, Some("Atlas - Plan Executor".to_string()));
+        assert_eq!(data.timestamp_ms, 1780840567823);
+    }
+
+    /// 回归测试：query_assistant_messages 对嵌套 schema 也要正确处理。
+    /// 之前 version.role check 失败导致整条消息被跳过。
+    #[test]
+    fn test_query_assistant_messages_handles_nested_message_format() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT);",
+        )
+        .unwrap();
+
+        let nested = serde_json::json!({
+            "message": {
+                "id": "msg_nested_1",
+                "role": "assistant",
+                "tokens": { "input": 100, "output": 200, "cache": { "read": 0, "write": 0 } },
+                "modelID": "m",
+                "agent": "build",
+                "time": { "created": 100, "completed": 200 }
+            },
+            "parts": []
+        })
+        .to_string();
+
+        conn.execute(
+            "INSERT INTO message VALUES ('m1', 's1', 1, ?1)",
+            rusqlite::params![nested],
+        )
+        .unwrap();
+
+        let result = query_assistant_messages(&conn, "s1").unwrap();
+        // 关键断言：嵌套 schema 也能解析出来
+        assert_eq!(
+            result.messages.len(),
+            1,
+            "nested format must produce 1 message"
+        );
+        assert_eq!(result.messages[0].0, "m1");
+        assert_eq!(result.messages[0].1.input_tokens, 100);
+        assert_eq!(result.messages[0].1.output_tokens, 200);
+        assert_eq!(result.messages[0].1.agent, Some("build".to_string()));
+        assert!(!result.has_incomplete_usage);
     }
 
     #[test]

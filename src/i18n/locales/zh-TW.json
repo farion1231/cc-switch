@@ -1372,6 +1372,7 @@
     "modelIdPlaceholder": "例如: claude-3-5-sonnet-20241022",
     "displayNamePlaceholder": "例如: Claude 3.5 Sonnet",
     "appType": "應用程式類型",
+    "agent": "代理",
     "allApps": "全部應用程式",
     "statusCode": "狀態碼",
     "searchProviderPlaceholder": "搜尋供應商...",
