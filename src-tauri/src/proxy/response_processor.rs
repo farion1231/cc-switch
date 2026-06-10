@@ -3,6 +3,7 @@
 //! 统一处理流式和非流式 API 响应
 
 use super::{
+    content_encoding::{decompress_body, get_content_encoding},
     forwarder::ActiveConnectionGuard,
     handler_config::{StreamUsageEventFilter, UsageParserConfig},
     handler_context::{RequestContext, StreamingTimeoutConfig},
@@ -19,7 +20,6 @@ use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::Value;
 use std::{
-    io::Read,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -29,47 +29,8 @@ use std::{
 use tokio::sync::Mutex;
 
 // ============================================================================
-// 响应解压
+// 响应头处理
 // ============================================================================
-
-/// 根据 content-encoding 解压响应体字节
-///
-/// reqwest 自动解压已禁用（为了透传 accept-encoding），需要手动解压。
-fn decompress_body(content_encoding: &str, body: &[u8]) -> Result<Vec<u8>, std::io::Error> {
-    match content_encoding {
-        "gzip" | "x-gzip" => {
-            let mut decoder = flate2::read::GzDecoder::new(body);
-            let mut decompressed = Vec::new();
-            decoder.read_to_end(&mut decompressed)?;
-            Ok(decompressed)
-        }
-        "deflate" => {
-            let mut decoder = flate2::read::DeflateDecoder::new(body);
-            let mut decompressed = Vec::new();
-            decoder.read_to_end(&mut decompressed)?;
-            Ok(decompressed)
-        }
-        "br" => {
-            let mut decompressed = Vec::new();
-            brotli::BrotliDecompress(&mut std::io::Cursor::new(body), &mut decompressed)?;
-            Ok(decompressed)
-        }
-        _ => {
-            log::warn!("未知的 content-encoding: {content_encoding}，跳过解压");
-            Ok(body.to_vec())
-        }
-    }
-}
-
-/// 从响应头提取 content-encoding（忽略 identity 和 chunked）
-fn get_content_encoding(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get("content-encoding")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.trim().to_lowercase())
-        .filter(|s| !s.is_empty() && s != "identity")
-}
-
 /// RFC 2616 / RFC 7230 中定义的不应被代理继续转发的响应头。
 const HOP_BY_HOP_RESPONSE_HEADERS: &[&str] = &[
     "connection",
