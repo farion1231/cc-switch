@@ -239,6 +239,56 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "CCSub",
+    websiteUrl: "https://www.ccsub.net",
+    apiKeyUrl: "https://www.ccsub.net/register?ref=Y6Z8DXEA",
+    settingsConfig: {
+      name: "ccsub",
+      base_url: "https://www.ccsub.net/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-4-6",
+          name: "Claude Sonnet 4.6",
+          context_length: 1000000,
+        },
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          context_length: 400000,
+        },
+        {
+          id: "o3",
+          name: "o3",
+          context_length: 200000,
+        },
+        {
+          id: "gemini-3.1-pro",
+          name: "Gemini 3.1 Pro",
+          context_length: 1000000,
+        },
+        {
+          id: "deepseek-v4-flash",
+          name: "DeepSeek V4 Flash",
+          context_length: 1000000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ccsub",
+    icon: "ccsub",
+    suggestedDefaults: {
+      model: { default: "claude-opus-4-8", provider: "ccsub" },
+    },
+  },
+  {
     name: "OpenRouter",
     nameKey: "providerForm.presets.openrouter",
     websiteUrl: "https://openrouter.ai",
@@ -465,7 +515,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "Kimi",
-    websiteUrl: "https://platform.moonshot.cn/console",
+    websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
     settingsConfig: {
       name: "kimi",
       base_url: "https://api.moonshot.cn/v1",
@@ -482,7 +532,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "Kimi For Coding",
-    websiteUrl: "https://www.kimi.com/code/docs/",
+    websiteUrl: "https://www.kimi.com/code/docs/?aff=cc-switch",
     settingsConfig: {
       name: "kimi_coding",
       base_url: "https://api.kimi.com/coding/",

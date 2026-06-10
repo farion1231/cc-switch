@@ -216,6 +216,22 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     iconColor: "#3370FF",
   },
   {
+    name: "CCSub",
+    websiteUrl: "https://www.ccsub.net",
+    apiKeyUrl: "https://www.ccsub.net/register?ref=Y6Z8DXEA",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "ccsub",
+      "https://www.ccsub.net/v1",
+      "gpt-5.5",
+    ),
+    endpointCandidates: ["https://www.ccsub.net/v1"],
+    isPartner: true,
+    partnerPromotionKey: "ccsub",
+    icon: "ccsub",
+  },
+  {
     name: "Azure OpenAI",
     websiteUrl:
       "https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/codex",
@@ -388,8 +404,8 @@ requires_openai_auth = true`,
   },
   {
     name: "Kimi",
-    websiteUrl: "https://platform.moonshot.cn/console",
-    apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
+    websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
+    apiKeyUrl: "https://platform.moonshot.cn/console/api-keys?aff=cc-switch",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "kimi",
