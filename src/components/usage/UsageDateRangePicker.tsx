@@ -484,8 +484,7 @@ export function UsageDateRangePicker({
                 const isEnd = isSameDay(day, endDay);
                 const dayStart = getStartOfLocalDayDate(day.getTime());
                 const inRange =
-                  dayStart >= startBoundary &&
-                  dayStart <= endBoundary;
+                  dayStart >= startBoundary && dayStart <= endBoundary;
                 const isEndpoint = isStart || isEnd;
 
                 return (

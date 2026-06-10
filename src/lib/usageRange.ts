@@ -56,7 +56,10 @@ export function normalizePickerStart(startTs: number): number {
   return Math.floor(getStartOfLocalDayDate(startTs * 1000).getTime() / 1000);
 }
 
-export function normalizePickerEnd(endTs: number, nowMs: number = Date.now()): number {
+export function normalizePickerEnd(
+  endTs: number,
+  nowMs: number = Date.now(),
+): number {
   const endDate = new Date(endTs * 1000);
   const today = new Date(nowMs);
   if (isSameDay(endDate, today)) {
