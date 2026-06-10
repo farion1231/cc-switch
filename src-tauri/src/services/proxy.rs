@@ -2270,6 +2270,9 @@ impl ProxyService {
         let mut updated =
             crate::codex_config::update_codex_toml_field(&updated, "wire_api", "responses")
                 .unwrap_or(updated);
+        updated =
+            crate::codex_config::update_codex_toml_field(&updated, "supports_websockets", "false")
+                .unwrap_or(updated);
 
         if let Some(upstream_model) =
             provider.and_then(crate::proxy::providers::codex_provider_upstream_model)
@@ -4051,6 +4054,16 @@ wire_api = "chat"
         assert_eq!(
             provider.get("wire_api").and_then(|v| v.as_str()),
             Some("responses")
+        );
+        assert_eq!(
+            provider
+                .get("supports_websockets")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert!(
+            parsed.get("supports_websockets").is_none(),
+            "should not write top-level supports_websockets when model_provider exists"
         );
     }
 

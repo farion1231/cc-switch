@@ -63,6 +63,8 @@ interface CodexFormFieldsProps {
   // Note: wire_api is always "responses" for Codex; apiFormat controls proxy-layer conversion
   apiFormat: CodexApiFormat;
   onApiFormatChange: (format: CodexApiFormat) => void;
+  supportsWebSockets: boolean;
+  onSupportsWebSocketsChange: (enabled: boolean) => void;
   codexChatReasoning?: CodexChatReasoning;
   onCodexChatReasoningChange?: (value: CodexChatReasoning) => void;
 
@@ -123,6 +125,8 @@ export function CodexFormFields({
   onAutoSelectChange,
   apiFormat,
   onApiFormatChange,
+  supportsWebSockets,
+  onSupportsWebSocketsChange,
   codexChatReasoning = {},
   onCodexChatReasoningChange,
   catalogModels = [],
@@ -319,6 +323,33 @@ export function CodexFormFields({
           onFullUrlChange={onFullUrlChange}
           onManageClick={() => onEndpointModalToggle(true)}
         />
+      )}
+
+      {shouldShowSpeedTest && (
+        <div className="space-y-3 rounded-lg border border-border-default bg-muted/20 p-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="space-y-1">
+              <FormLabel>
+                {t("codexConfig.websocketToggle", {
+                  defaultValue: "使用 WebSocket 接入",
+                })}
+              </FormLabel>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {t("codexConfig.websocketHint", {
+                  defaultValue:
+                    "开启后会在当前 model_providers 条目写入 supports_websockets = true；关闭则写入 false。",
+                })}
+              </p>
+            </div>
+            <Switch
+              checked={supportsWebSockets}
+              onCheckedChange={onSupportsWebSocketsChange}
+              aria-label={t("codexConfig.websocketToggle", {
+                defaultValue: "使用 WebSocket 接入",
+              })}
+            />
+          </div>
+        </div>
       )}
 
       {shouldShowSpeedTest && (

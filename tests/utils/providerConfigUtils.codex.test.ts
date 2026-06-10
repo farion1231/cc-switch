@@ -3,12 +3,14 @@ import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
+  extractCodexSupportsWebSockets,
   extractCodexTopLevelInt,
   isCodexGoalModeEnabled,
   removeCodexTopLevelField,
   setCodexBaseUrl,
   setCodexGoalMode,
   setCodexModelName,
+  setCodexSupportsWebSockets,
   setCodexTopLevelInt,
   updateCodexExperimentalBearerToken,
 } from "@/utils/providerConfigUtils";
@@ -83,6 +85,50 @@ describe("Codex TOML utils", () => {
       '[model_providers.custom]\nname = "custom"\nwire_api = "responses"\nbase_url = "https://api.example.com/v1"',
     );
     expect(extractCodexBaseUrl(output)).toBe("https://api.example.com/v1");
+  });
+
+  it("reads and writes supports_websockets in the active provider section", () => {
+    const input = [
+      'model_provider = "custom"',
+      'model = "gpt-5.4"',
+      "",
+      "[model_providers.custom]",
+      'name = "custom"',
+      'wire_api = "responses"',
+      "",
+    ].join("\n");
+
+    const enabled = setCodexSupportsWebSockets(input, true);
+
+    expect(enabled).toContain(
+      '[model_providers.custom]\nname = "custom"\nwire_api = "responses"\nsupports_websockets = true',
+    );
+    expect(extractCodexSupportsWebSockets(enabled)).toBe(true);
+
+    const disabled = setCodexSupportsWebSockets(enabled, false);
+    expect(disabled).toContain("supports_websockets = false");
+    expect(extractCodexSupportsWebSockets(disabled)).toBe(false);
+  });
+
+  it("moves a top-level supports_websockets value into the active provider section", () => {
+    const input = [
+      'model_provider = "custom"',
+      "supports_websockets = true",
+      "",
+      "[model_providers.custom]",
+      'name = "custom"',
+      "",
+    ].join("\n");
+
+    const output = setCodexSupportsWebSockets(input, false);
+
+    expect(output.split("[model_providers.custom]")[0]).not.toContain(
+      "supports_websockets",
+    );
+    expect(output).toContain(
+      '[model_providers.custom]\nname = "custom"\nsupports_websockets = false',
+    );
+    expect(extractCodexSupportsWebSockets(output)).toBe(false);
   });
 
   it("recovers a single misplaced base_url from another section", () => {

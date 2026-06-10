@@ -1200,6 +1200,8 @@
     "saveFailed": "儲存失敗：{{error}}",
     "modelNameHint": "指定使用的模型，將自動更新到 config.toml 中",
     "modelName": "模型名稱",
+    "websocketToggle": "使用 WebSocket 接入",
+    "websocketHint": "開啟後會在目前 model_providers 條目寫入 supports_websockets = true；關閉則寫入 false。",
     "modelNamePlaceholder": "例如: gpt-5-codex",
     "contextWindow1M": "1M 上下文視窗",
     "autoCompactLimit": "壓縮閾值",
