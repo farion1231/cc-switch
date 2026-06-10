@@ -3,6 +3,7 @@
 //! Handles reading and writing live configuration files for Claude, Codex, and Gemini.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
@@ -31,6 +32,141 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
         obj.remove("openrouterCompatMode");
     }
     v
+}
+
+fn first_shell_command_word(command: &str) -> Option<String> {
+    let command = command.trim_start();
+    if command.is_empty() {
+        return None;
+    }
+
+    let mut chars = command.chars();
+    let first = chars.next()?;
+
+    if matches!(first, '\'' | '"') {
+        let quote = first;
+        let mut word = String::new();
+        let mut escaped = false;
+        for ch in chars {
+            if escaped {
+                word.push(ch);
+                escaped = false;
+                continue;
+            }
+            if quote == '"' && ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == quote {
+                break;
+            }
+            word.push(ch);
+        }
+        return if word.is_empty() { None } else { Some(word) };
+    }
+
+    let mut word = String::new();
+    let mut escaped = false;
+    for ch in std::iter::once(first).chain(chars) {
+        if escaped {
+            word.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch.is_whitespace() {
+            break;
+        }
+        word.push(ch);
+    }
+    if word.is_empty() {
+        None
+    } else {
+        Some(word)
+    }
+}
+
+fn command_uses_missing_absolute_executable(command: &str) -> bool {
+    first_shell_command_word(command).is_some_and(|word| {
+        let path = Path::new(&word);
+        path.is_absolute() && !path.exists()
+    })
+}
+
+fn prune_hook_commands(value: &mut Value) -> bool {
+    let Some(events) = value.get_mut("hooks").and_then(Value::as_object_mut) else {
+        return false;
+    };
+
+    let mut changed = false;
+    events.retain(|_, matchers| {
+        let Some(matchers_array) = matchers.as_array_mut() else {
+            return true;
+        };
+
+        matchers_array.retain_mut(|matcher| {
+            let Some(hooks_array) = matcher.get_mut("hooks").and_then(Value::as_array_mut) else {
+                return true;
+            };
+
+            let before = hooks_array.len();
+            hooks_array.retain(|hook| {
+                !hook
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .is_some_and(command_uses_missing_absolute_executable)
+            });
+            changed |= hooks_array.len() != before;
+
+            !hooks_array.is_empty()
+        });
+
+        !matchers_array.is_empty()
+    });
+
+    if events.is_empty() {
+        if let Some(obj) = value.as_object_mut() {
+            obj.remove("hooks");
+            changed = true;
+        }
+    }
+
+    changed
+}
+
+fn prune_status_line_command(value: &mut Value) -> bool {
+    let should_remove = value
+        .get("statusLine")
+        .and_then(|status_line| status_line.get("command"))
+        .and_then(Value::as_str)
+        .is_some_and(command_uses_missing_absolute_executable);
+
+    if should_remove {
+        if let Some(obj) = value.as_object_mut() {
+            obj.remove("statusLine");
+        }
+    }
+
+    should_remove
+}
+
+pub(crate) fn prune_missing_absolute_claude_command_references(value: &mut Value) -> bool {
+    let hooks_changed = prune_hook_commands(value);
+    let status_line_changed = prune_status_line_command(value);
+    hooks_changed || status_line_changed
+}
+
+pub(crate) fn sanitize_claude_common_config_snippet_text(
+    snippet: &str,
+) -> Result<String, AppError> {
+    let mut value = serde_json::from_str::<Value>(snippet)
+        .map_err(|e| AppError::Message(format!("Invalid Claude common config: {e}")))?;
+    prune_missing_absolute_claude_command_references(&mut value);
+    serde_json::to_string_pretty(&value)
+        .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))
 }
 
 pub(crate) fn provider_exists_in_live_config(
@@ -435,8 +571,9 @@ fn apply_common_config_to_settings(
 
     match app_type {
         AppType::Claude => {
-            let source = serde_json::from_str::<Value>(trimmed)
+            let mut source = serde_json::from_str::<Value>(trimmed)
                 .map_err(|e| AppError::Message(format!("Invalid Claude common config: {e}")))?;
+            prune_missing_absolute_claude_command_references(&mut source);
             let mut result = settings.clone();
             json_deep_merge(&mut result, &source);
             Ok(result)
@@ -1593,6 +1730,43 @@ mod tests {
         let stripped =
             remove_common_config_from_settings(&AppType::Claude, &applied, snippet).unwrap();
         assert_eq!(stripped, settings);
+    }
+
+    #[test]
+    fn claude_common_config_apply_prunes_missing_absolute_commands() {
+        let missing_command = std::env::temp_dir()
+            .join(format!("cc-switch-missing-command-{}", std::process::id()))
+            .join("bridge");
+        assert!(!missing_command.exists());
+
+        let settings = json!({
+            "env": {
+                "ANTHROPIC_API_KEY": "sk-test"
+            }
+        });
+        let snippet_value = json!({
+            "includeCoAuthoredBy": false,
+            "hooks": {
+                "SessionStart": [{
+                    "hooks": [{
+                        "type": "command",
+                        "command": missing_command.to_string_lossy()
+                    }]
+                }]
+            },
+            "statusLine": {
+                "type": "command",
+                "command": missing_command.to_string_lossy()
+            }
+        });
+        let snippet = serde_json::to_string(&snippet_value).unwrap();
+
+        let applied =
+            apply_common_config_to_settings(&AppType::Claude, &settings, &snippet).unwrap();
+
+        assert_eq!(applied["includeCoAuthoredBy"], json!(false));
+        assert!(applied.get("hooks").is_none());
+        assert!(applied.get("statusLine").is_none());
     }
 
     #[test]
