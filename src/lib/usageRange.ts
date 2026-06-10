@@ -8,9 +8,62 @@ export interface ResolvedUsageRange {
   endDate: number;
 }
 
-function getStartOfLocalDayDate(nowMs: number): Date {
+/**
+ * 把任意时间戳归到本地当天 00:00:00 的 Date 对象。
+ * 用 setHours(0,0,0,0) 处理 DST 边界 (而不是依赖 getDate() 的隐式 0 时分秒)。
+ */
+export function getStartOfLocalDayDate(nowMs: number): Date {
   const date = new Date(nowMs);
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+/**
+ * 判断两个 Date 是否是同一天（本地时间）。
+ */
+export function isSameDay(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+/**
+ * 把任意时间戳归到本地当天 23:59:59.999 的 Date 对象。
+ * 用于 custom 范围的默认 end：对齐后端"end==23:59 视为当天结束"的隐式约定，
+ * 避免 0:00 触发 `pred_opt()` 把 end 推到昨天、start > end 被判为空。
+ */
+export function getEndOfLocalDayDate(nowMs: number): Date {
+  const start = getStartOfLocalDayDate(nowMs);
+  // 用时间戳算术 +1 天 -1ms, 避免在 DST 转换日 setHours(23,...) 跨日回绕
+  return new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
+}
+
+/**
+ * Picker reset / 日历点选 / time 框输入的统一归一化.
+ *
+ * 语义:
+ *   - start 永远归一到 00:00:00
+ *   - end:
+ *       * end 所在日期 == 今天 → 总是 now 时刻, 不论原值 (0:00 / 18:00 等都归一)
+ *       * end 所在日期 != 今天 → 23:59:59 (整天已过完)
+ *
+ * 用于 picker 内的所有 '写 draft*' 路径, 防止任意 ts 逃逸到后端
+ * (后端 compute_rollup_date_bounds 对 hour==23 && minute==59 敏感)。
+ */
+export function normalizePickerStart(startTs: number): number {
+  return Math.floor(getStartOfLocalDayDate(startTs * 1000).getTime() / 1000);
+}
+
+export function normalizePickerEnd(endTs: number, nowMs: number = Date.now()): number {
+  const endDate = new Date(endTs * 1000);
+  const today = new Date(nowMs);
+  if (isSameDay(endDate, today)) {
+    // end 是当天 → 总是 now 时刻, 不论原值
+    return Math.floor(nowMs / 1000);
+  }
+  return Math.floor(getEndOfLocalDayDate(endTs * 1000).getTime() / 1000);
 }
 
 function getPresetLookbackStart(
@@ -48,10 +101,13 @@ export function resolveUsageRange(
         endDate,
       };
     case "custom": {
-      const startDate = selection.customStartDate ?? endDate - DAY_SECONDS;
+      const startDate =
+        selection.customStartDate ??
+        Math.floor(getStartOfLocalDayDate(nowMs).getTime() / 1000);
       const customEndDate = selection.liveEndTime
         ? endDate
-        : (selection.customEndDate ?? endDate);
+        : (selection.customEndDate ??
+          Math.floor(getEndOfLocalDayDate(nowMs).getTime() / 1000));
       return {
         startDate,
         endDate: customEndDate,

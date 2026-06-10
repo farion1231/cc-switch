@@ -15,7 +15,15 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
+import {
+  getEndOfLocalDayDate,
+  getStartOfLocalDayDate,
+  getUsageRangePresetLabel,
+  isSameDay,
+  normalizePickerEnd,
+  normalizePickerStart,
+  resolveUsageRange,
+} from "@/lib/usageRange";
 import { getLocaleFromLanguage } from "./format";
 import type { UsageRangePreset, UsageRangeSelection } from "@/types/usage";
 
@@ -30,18 +38,6 @@ interface UsageDateRangePickerProps {
 }
 
 /* ── helpers ── */
-
-function startOfDay(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
-}
-
-function isSameDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
-}
 
 function toTs(d: Date): number {
   return Math.floor(d.getTime() / 1000);
@@ -78,19 +74,6 @@ function parseTimeInput(ts: number, value: string): number {
   );
 }
 
-function setDateKeepTime(ts: number, day: Date): number {
-  const base = fromTs(ts);
-  return toTs(
-    new Date(
-      day.getFullYear(),
-      day.getMonth(),
-      day.getDate(),
-      base.getHours(),
-      base.getMinutes(),
-    ),
-  );
-}
-
 function getCalendarDays(month: Date): Date[] {
   const first = new Date(month.getFullYear(), month.getMonth(), 1);
   const gridStart = new Date(first);
@@ -102,6 +85,16 @@ function getCalendarDays(month: Date): Date[] {
   });
 }
 
+/**
+ * 归一化 helper:
+ *   - start → 00:00
+ *   - end → 23:59 (整天结束, 不走 '今天→now' 分支)
+ */
+function normalizeField(field: DraftField, ts: number): number {
+  if (field === "start") return normalizePickerStart(ts);
+  return Math.floor(getEndOfLocalDayDate(ts * 1000).getTime() / 1000);
+}
+
 /* ── component ── */
 
 export function UsageDateRangePicker({
@@ -111,13 +104,18 @@ export function UsageDateRangePicker({
 }: UsageDateRangePickerProps) {
   const { t, i18n } = useTranslation();
   const [open, setOpen] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [activeField, setActiveField] = useState<DraftField>("start");
   const resolvedRange = useMemo(
-    () => resolveUsageRange(selection),
-    [selection],
+    () => resolveUsageRange(selection, nowMs),
+    [selection, nowMs],
   );
-  const [draftStart, setDraftStart] = useState(resolvedRange.startDate);
-  const [draftEnd, setDraftEnd] = useState(resolvedRange.endDate);
+  const [draftStart, setDraftStart] = useState(() =>
+    normalizePickerStart(resolvedRange.startDate),
+  );
+  const [draftEnd, setDraftEnd] = useState(() =>
+    normalizePickerEnd(resolvedRange.endDate, nowMs),
+  );
   const [draftLiveEnd, setDraftLiveEnd] = useState(
     selection.preset === "custom" ? (selection.liveEndTime ?? false) : false,
   );
@@ -137,9 +135,13 @@ export function UsageDateRangePicker({
   // Reset draft when popover opens
   useEffect(() => {
     if (!open) return;
-    const r = resolveUsageRange(selection);
-    setDraftStart(r.startDate);
-    setDraftEnd(r.endDate);
+    const currentNow = Date.now();
+    setNowMs(currentNow);
+    const r = resolveUsageRange(selection, currentNow);
+    // 打开 picker 时 reset: start→00:00, end→当天→now / 非当天→23:59.
+    // 用户在 picker 内改的时间由 setDraftStart/setDraftEnd 维护, 不被本次 reset 覆盖。
+    setDraftStart(normalizePickerStart(r.startDate));
+    setDraftEnd(normalizePickerEnd(r.endDate, currentNow));
     setDraftLiveEnd(
       selection.preset === "custom" ? (selection.liveEndTime ?? false) : false,
     );
@@ -181,38 +183,45 @@ export function UsageDateRangePicker({
   const startDay = fromTs(draftStart);
   const endDay = fromTs(draftEnd);
   const today = new Date();
+  // day grid 内 inRange 比较用的边界, 提到循环外避免 42 次重建 Date
+  const startBoundary = getStartOfLocalDayDate(draftStart * 1000);
+  const endBoundary = getStartOfLocalDayDate(draftEnd * 1000);
 
   /* Pick a date from the calendar */
   const handleDatePick = (day: Date) => {
     setError(null);
-
     // When live end time is active, calendar only controls start date
     if (draftLiveEnd) {
-      const nextTs = setDateKeepTime(draftStart, day);
-      setDraftStart(nextTs);
+      const nextStartTs = normalizePickerStart(toTs(day));
+      setDraftStart(nextStartTs);
+      
+      // Navigate calendar if the day is outside the displayed month
+      if (
+        day.getMonth() !== displayMonth.getMonth() ||
+        day.getFullYear() !== displayMonth.getFullYear()
+      ) {
+        setDisplayMonth(new Date(day.getFullYear(), day.getMonth(), 1));
+      }
       return;
     }
 
-    const nextTs = setDateKeepTime(
-      activeField === "start" ? draftStart : draftEnd,
-      day,
-    );
-
     if (activeField === "start") {
-      setDraftStart(nextTs);
+      const nextStartTs = normalizePickerStart(toTs(day));
+      setDraftStart(nextStartTs);
       // Auto-swap if start > end
-      if (nextTs > draftEnd) {
-        setDraftEnd(nextTs);
+      if (nextStartTs > draftEnd) {
+        setDraftEnd(normalizePickerEnd(nextStartTs, nowMs));
       }
       // Auto-advance to end field
       setActiveField("end");
     } else {
-      // If picked end < start, treat as new start and auto-advance
-      if (nextTs < draftStart) {
-        setDraftStart(nextTs);
-        setActiveField("end");
+      const nextEndTs = normalizePickerEnd(toTs(day), nowMs);
+      // If picked end < start, treat as new start and stay on start field
+      if (nextEndTs < draftStart) {
+        setDraftStart(normalizePickerStart(toTs(day)));
+        setActiveField("start");
       } else {
-        setDraftEnd(nextTs);
+        setDraftEnd(nextEndTs);
       }
     }
 
@@ -282,7 +291,10 @@ export function UsageDateRangePicker({
             value={fmtDate(ts)}
             onChange={(e) => {
               if (isEndLive) return;
-              const next = parseDateInput(ts, e.target.value);
+              const next = normalizeField(
+                field,
+                parseDateInput(ts, e.target.value),
+              );
               setTs(next);
               const d = fromTs(next);
               setDisplayMonth(new Date(d.getFullYear(), d.getMonth(), 1));
@@ -303,7 +315,7 @@ export function UsageDateRangePicker({
             value={fmtTime(ts)}
             onChange={(e) => {
               if (isEndLive) return;
-              setTs(parseTimeInput(ts, e.target.value));
+              setTs(normalizeField(field, parseTimeInput(ts, e.target.value)));
               setError(null);
             }}
             onFocus={() => {
@@ -470,10 +482,10 @@ export function UsageDateRangePicker({
                 const isToday = isSameDay(day, today);
                 const isStart = isSameDay(day, startDay);
                 const isEnd = isSameDay(day, endDay);
-                const dayStart = startOfDay(day);
+                const dayStart = getStartOfLocalDayDate(day.getTime());
                 const inRange =
-                  dayStart >= startOfDay(startDay) &&
-                  dayStart <= startOfDay(endDay);
+                  dayStart >= startBoundary &&
+                  dayStart <= endBoundary;
                 const isEndpoint = isStart || isEnd;
 
                 return (
