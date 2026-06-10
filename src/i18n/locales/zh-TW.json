@@ -1266,7 +1266,11 @@
     "label": "預設供應商",
     "custom": "自訂設定",
     "other": "其他",
-    "hint": "選擇預設後可繼續調整下方欄位。"
+    "hint": "選擇預設後可繼續調整下方欄位。",
+    "searchPlaceholder": "搜尋預設供應商",
+    "searchAriaLabel": "搜尋預設供應商",
+    "sortByName": "按首字母 A-Z 排序",
+    "sortByNameShort": "按首字母排序"
   },
   "usage": {
     "title": "使用統計",
