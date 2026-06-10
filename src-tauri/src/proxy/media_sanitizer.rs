@@ -96,6 +96,7 @@ pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
         "invalid content type",
         "invalid message content",
         "unknown content type",
+        "unknown variant",
         "unrecognized content type",
         "cannot process",
         "cannot handle",
@@ -113,7 +114,8 @@ fn content_has_image_blocks(content: &Value) -> bool {
     };
 
     blocks.iter().any(|block| {
-        block.get("type").and_then(Value::as_str) == Some("image")
+        let block_type = block.get("type").and_then(Value::as_str).unwrap_or("");
+        block_type == "image" || block_type == "image_url"
             || block.get("content").is_some_and(content_has_image_blocks)
     })
 }
@@ -137,7 +139,8 @@ fn replace_images_in_content(content: &mut Value) -> usize {
 
     let mut replaced = 0usize;
     for block in blocks {
-        if block.get("type").and_then(Value::as_str) == Some("image") {
+        let block_type = block.get("type").and_then(Value::as_str).unwrap_or("");
+        if block_type == "image" || block_type == "image_url" {
             let cache_control = block.get("cache_control").cloned();
             *block = json!({
                 "type": "text",
@@ -698,6 +701,65 @@ mod tests {
         assert_eq!(
             body["messages"][0]["content"][0]["text"],
             UNSUPPORTED_IMAGE_MARKER
+        );
+    }
+
+    #[test]
+    fn replaces_openai_image_url_format_for_text_only_model() {
+        // OpenAI Chat Completions 格式的 image_url 块也应被检测和替换。
+        // Codex Responses API 请求经 responses_to_chat_completions 转换后生成此格式。
+        let provider = provider(json!({}));
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "look at this" },
+                    { "type": "image_url", "image_url": { "url": "data:image/png;base64,abc" } }
+                ]
+            }]
+        });
+
+        let count = replace_images_for_text_only_model(&mut body, &provider, true);
+
+        assert_eq!(count, 1);
+        assert_eq!(body["messages"][0]["content"][0]["text"], "look at this");
+        assert_eq!(body["messages"][0]["content"][1]["type"], "text");
+        assert_eq!(
+            body["messages"][0]["content"][1]["text"],
+            UNSUPPORTED_IMAGE_MARKER
+        );
+    }
+
+    #[test]
+    fn detects_image_url_blocks() {
+        let body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "hello" },
+                    { "type": "image_url", "image_url": { "url": "data:image/png;base64,abc" } }
+                ]
+            }]
+        });
+
+        assert!(contains_image_blocks(&body));
+    }
+
+    #[test]
+    fn detects_unknown_variant_image_errors() {
+        // DeepSeek 等 upstream 返回 serde 反序列化错误，提示 unknown variant 'image_url'
+        let error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(
+                r#"{"error":{"message":"Failed to deserialize the JSON body: messages[994]: unknown variant 'image_url', expected 'text'"}}"#.to_string(),
+            ),
+        };
+
+        assert!(
+            is_unsupported_image_error(&error),
+            "should detect serde unknown variant error for image_url"
         );
     }
 }
