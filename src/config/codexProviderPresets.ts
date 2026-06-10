@@ -52,7 +52,7 @@ export function generateThirdPartyAuth(apiKey: string): Record<string, any> {
 export function generateThirdPartyConfig(
   providerName: string,
   baseUrl: string,
-  modelName = "gpt-5.4",
+  modelName = "gpt-5.5",
 ): string {
   const tomlString = (value: string) => JSON.stringify(value);
 
@@ -103,13 +103,13 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
-    websiteUrl: "https://www.shengsuanyun.com",
+    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
     apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "shengsuanyun",
       "https://router.shengsuanyun.com/api/v1",
-      "gpt-5.4",
+      "openai/gpt-5.5",
     ),
     category: "aggregator",
     isPartner: true,
@@ -216,6 +216,22 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     iconColor: "#3370FF",
   },
   {
+    name: "CCSub",
+    websiteUrl: "https://www.ccsub.net",
+    apiKeyUrl: "https://www.ccsub.net/register?ref=Y6Z8DXEA",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "ccsub",
+      "https://www.ccsub.net/v1",
+      "gpt-5.5",
+    ),
+    endpointCandidates: ["https://www.ccsub.net/v1"],
+    isPartner: true,
+    partnerPromotionKey: "ccsub",
+    icon: "ccsub",
+  },
+  {
     name: "Azure OpenAI",
     websiteUrl:
       "https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/codex",
@@ -223,7 +239,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     isOfficial: true,
     auth: generateThirdPartyAuth(""),
     config: `model_provider = "custom"
-model = "gpt-5.4"
+model = "gpt-5.5"
 model_reasoning_effort = "high"
 disable_response_storage = true
 
@@ -286,13 +302,13 @@ requires_openai_auth = true`,
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "zhipu_glm",
-      "https://open.bigmodel.cn/api/paas/v4",
-      "glm-5",
+      "https://open.bigmodel.cn/api/coding/paas/v4",
+      "glm-5.1",
     ),
-    endpointCandidates: ["https://open.bigmodel.cn/api/paas/v4"],
+    endpointCandidates: ["https://open.bigmodel.cn/api/coding/paas/v4"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
-      { model: "glm-5", displayName: "GLM-5", contextWindow: 200000 },
+      { model: "glm-5.1", displayName: "GLM-5.1", contextWindow: 200000 },
     ]),
     codexChatReasoning: {
       supportsThinking: true,
@@ -312,13 +328,13 @@ requires_openai_auth = true`,
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "zhipu_glm_en",
-      "https://api.z.ai/api/paas/v4",
-      "glm-5",
+      "https://api.z.ai/api/coding/paas/v4",
+      "glm-5.1",
     ),
-    endpointCandidates: ["https://api.z.ai/api/paas/v4"],
+    endpointCandidates: ["https://api.z.ai/api/coding/paas/v4"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
-      { model: "glm-5", displayName: "GLM-5", contextWindow: 200000 },
+      { model: "glm-5.1", displayName: "GLM-5.1", contextWindow: 200000 },
     ]),
     codexChatReasoning: {
       supportsThinking: true,
@@ -388,8 +404,8 @@ requires_openai_auth = true`,
   },
   {
     name: "Kimi",
-    websiteUrl: "https://platform.moonshot.cn/console",
-    apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
+    websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
+    apiKeyUrl: "https://platform.moonshot.cn/console/api-keys?aff=cc-switch",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "kimi",
@@ -476,14 +492,14 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "modelscope",
       "https://api-inference.modelscope.cn/v1",
-      "ZhipuAI/GLM-5",
+      "ZhipuAI/GLM-5.1",
     ),
     endpointCandidates: ["https://api-inference.modelscope.cn/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
       {
-        model: "ZhipuAI/GLM-5",
-        displayName: "ZhipuAI / GLM-5",
+        model: "ZhipuAI/GLM-5.1",
+        displayName: "ZhipuAI / GLM-5.1",
         contextWindow: 200000,
       },
     ]),
@@ -732,12 +748,16 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "novita",
       "https://api.novita.ai/openai/v1",
-      "zai-org/glm-5",
+      "zai-org/glm-5.1",
     ),
     endpointCandidates: ["https://api.novita.ai/openai/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
-      { model: "zai-org/glm-5", displayName: "GLM-5", contextWindow: 202800 },
+      {
+        model: "zai-org/glm-5.1",
+        displayName: "GLM-5.1",
+        contextWindow: 202800,
+      },
     ]),
     codexChatReasoning: {
       supportsThinking: true,
@@ -788,12 +808,26 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "aihubmix",
       "https://aihubmix.com/v1",
-      "gpt-5.4",
+      "gpt-5.5",
     ),
     endpointCandidates: [
       "https://aihubmix.com/v1",
       "https://api.aihubmix.com/v1",
     ],
+  },
+  {
+    name: "CherryIN",
+    websiteUrl: "https://open.cherryin.ai",
+    apiKeyUrl: "https://open.cherryin.ai/console/token",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "cherryin",
+      "https://open.cherryin.net/v1",
+      "openai/gpt-5.5",
+    ),
+    endpointCandidates: ["https://open.cherryin.net/v1"],
+    category: "aggregator",
+    icon: "cherryin",
   },
   {
     name: "DMXAPI",
@@ -803,7 +837,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "dmxapi",
       "https://www.dmxapi.cn/v1",
-      "gpt-5.4",
+      "gpt-5.5",
     ),
     endpointCandidates: ["https://www.dmxapi.cn/v1"],
     isPartner: true, // 合作伙伴
@@ -818,7 +852,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "packycode",
       "https://www.packyapi.com/v1",
-      "gpt-5.4",
+      "gpt-5.5",
     ),
     endpointCandidates: [
       "https://www.packyapi.com/v1",
@@ -827,6 +861,103 @@ requires_openai_auth = true`,
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "packycode", // 促销信息 i18n key
     icon: "packycode",
+  },
+  {
+    name: "APIKEY.FUN",
+    websiteUrl: "https://apikey.fun",
+    apiKeyUrl: "https://apikey.fun/register?aff=CCSwitch",
+    category: "third_party",
+    auth: generateThirdPartyAuth(""),
+    config: `model_provider = "custom"
+model = "gpt-5.5"
+review_model = "gpt-5.5"
+model_reasoning_effort = "high"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "APIKEY.FUN"
+base_url = "https://api.apikey.fun/v1"
+wire_api = "responses"
+requires_openai_auth = true`,
+    endpointCandidates: [
+      "https://api.apikey.fun/v1",
+      "https://slb.apikey.fun/v1",
+    ],
+    apiFormat: "openai_responses",
+    isPartner: true,
+    partnerPromotionKey: "apikeyfun",
+    icon: "apikeyfun",
+  },
+  {
+    name: "APINebula",
+    websiteUrl: "https://apinebula.com",
+    apiKeyUrl: "https://apinebula.com/02rw5X",
+    category: "third_party",
+    auth: generateThirdPartyAuth(""),
+    config: `model_provider = "custom"
+model = "gpt-5.5"
+review_model = "gpt-5.5"
+model_reasoning_effort = "high"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "APINebula"
+base_url = "https://apinebula.com/v1"
+wire_api = "responses"
+requires_openai_auth = true`,
+    endpointCandidates: ["https://apinebula.com/v1"],
+    apiFormat: "openai_responses",
+    isPartner: true,
+    partnerPromotionKey: "apinebula",
+    icon: "apinebula",
+  },
+  {
+    name: "AtlasCloud",
+    websiteUrl: "https://www.atlascloud.ai/console/coding-plan",
+    apiKeyUrl: "https://www.atlascloud.ai/console/coding-plan",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: `model_provider = "custom"
+model = "zai-org/glm-5.1"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "AtlasCloud"
+base_url = "https://api.atlascloud.ai/v1"
+wire_api = "responses"
+requires_openai_auth = true`,
+    endpointCandidates: ["https://api.atlascloud.ai/v1"],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      { model: "zai-org/glm-5.1", displayName: "GLM 5.1" },
+    ]),
+    isPartner: true,
+    partnerPromotionKey: "atlascloud",
+    icon: "atlascloud",
+  },
+  {
+    name: "SudoCode",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    category: "third_party",
+    auth: generateThirdPartyAuth(""),
+    config: `model_provider = "custom"
+model = "gpt-5.5"
+review_model = "gpt-5.5"
+model_reasoning_effort = "high"
+disable_response_storage = true
+model_verbosity = "high"
+
+[model_providers.custom]
+name = "sudocode"
+base_url = "https://sudocode.us/v1"
+wire_api = "responses"
+requires_openai_auth = true`,
+    endpointCandidates: ["https://sudocode.us/v1", "https://sudocode.run/v1"],
+    apiFormat: "openai_responses",
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
+    icon: "sudocode",
   },
   {
     name: "ClaudeCN",
@@ -879,7 +1010,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "cubence",
       "https://api.cubence.com/v1",
-      "gpt-5.4",
+      "gpt-5.5",
     ),
     endpointCandidates: [
       "https://api.cubence.com/v1",
@@ -902,7 +1033,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "aigocode",
       "https://api.aigocode.com",
-      "gpt-5.4",
+      "gpt-5.5",
     ),
     endpointCandidates: ["https://api.aigocode.com"],
     isPartner: true, // 合作伙伴
@@ -918,7 +1049,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "rightcode",
       "https://right.codes/codex/v1",
-      "gpt-5.4",
+      "gpt-5.5",
     ),
     category: "third_party",
     isPartner: true,
@@ -934,7 +1065,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "aicodemirror",
       "https://api.aicodemirror.com/api/codex/backend-api/codex",
-      "gpt-5.4",
+      "gpt-5.5",
     ),
     endpointCandidates: [
       "https://api.aicodemirror.com/api/codex/backend-api/codex",
@@ -953,7 +1084,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "crazyrouter",
       "https://cn.crazyrouter.com/v1",
-      "gpt-5.4",
+      "gpt-5.5",
     ),
     endpointCandidates: ["https://cn.crazyrouter.com/v1"],
     isPartner: true,
@@ -963,18 +1094,18 @@ requires_openai_auth = true`,
   },
   {
     name: "SSSAiCode",
-    websiteUrl: "https://www.sssaicode.com",
-    apiKeyUrl: "https://www.sssaicode.com/register?ref=DCP0SM",
+    websiteUrl: "https://sssaicodeapi.com",
+    apiKeyUrl: "https://sssaicodeapi.com/register?ref=DCP0SM",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "sssaicode",
-      "https://node-hk.sssaicode.com/api/v1",
-      "gpt-5.4",
+      "https://node-hk.sssaicodeapi.com/api/v1",
+      "gpt-5.5",
     ),
     endpointCandidates: [
-      "https://node-hk.sssaicode.com/api/v1",
-      "https://claude2.sssaicode.com/api/v1",
-      "https://anti.sssaicode.com/api/v1",
+      "https://node-hk.sssaicodeapi.com/api/v1",
+      "https://node-hk.sssaiapi.com/api/v1",
+      "https://node-cf.sssaicodeapi.com/api/v1",
     ],
     category: "third_party",
     isPartner: true, // 合作伙伴
@@ -992,7 +1123,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "compshare",
       "https://api.modelverse.cn/v1",
-      "gpt-5.4",
+      "gpt-5.5",
     ),
     endpointCandidates: ["https://api.modelverse.cn/v1"],
     category: "aggregator",
@@ -1011,7 +1142,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "compshare_coding",
       "https://cp.compshare.cn/v1",
-      "gpt-5.4",
+      "gpt-5.5",
     ),
     endpointCandidates: ["https://cp.compshare.cn/v1"],
     category: "aggregator",
@@ -1028,7 +1159,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "micu",
       "https://www.micuapi.ai/v1",
-      "gpt-5.4",
+      "gpt-5.5",
     ),
     endpointCandidates: ["https://www.micuapi.ai/v1"],
     category: "third_party",
@@ -1045,7 +1176,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "ctok",
       "https://api.ctok.ai/v1",
-      "gpt-5.4",
+      "gpt-5.5",
     ),
     endpointCandidates: ["https://api.ctok.ai/v1"],
     category: "third_party",
@@ -1062,7 +1193,7 @@ requires_openai_auth = true`,
       OPENAI_API_KEY: "",
     },
     config: `model_provider = "custom"
-model = "gpt-5.4"
+model = "gpt-5.5"
 model_reasoning_effort = "high"
 disable_response_storage = true
 personality = "pragmatic"
@@ -1088,7 +1219,7 @@ model_auto_compact_token_limit = 9000000`,
     config: generateThirdPartyConfig(
       "lemondata",
       "https://api.lemondata.cc/v1",
-      "gpt-5.4",
+      "gpt-5.5",
     ),
     endpointCandidates: ["https://api.lemondata.cc/v1"],
     isPartner: true,
@@ -1103,7 +1234,7 @@ model_auto_compact_token_limit = 9000000`,
       OPENAI_API_KEY: "",
     },
     config: `model_provider = "custom"
-model = "gpt-5.4"
+model = "gpt-5.5"
 model_reasoning_effort = "medium"
 disable_response_storage = true
 
@@ -1124,7 +1255,7 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     config: generateThirdPartyConfig(
       "openrouter",
       "https://openrouter.ai/api/v1",
-      "gpt-5.4",
+      "gpt-5.5",
     ),
     category: "aggregator",
     icon: "openrouter",

@@ -90,21 +90,24 @@ struct ToolBlockState {
     started: bool,
     pending_args: String,
     /// 连续空白字符计数 — 用于检测 Copilot 无限换行 bug
-    /// 当 function call 参数中出现连续 20+ 空白字符时，强制终止流
+    /// 当 function call 参数中的连续空白字符达到阈值时，强制终止流
     consecutive_whitespace: usize,
     /// 是否已因无限空白 bug 被中止
     aborted: bool,
 }
 
 /// 无限空白 bug 的连续空白字符阈值
-const INFINITE_WHITESPACE_THRESHOLD: usize = 20;
+const INFINITE_WHITESPACE_THRESHOLD: usize = 500;
 
 fn build_anthropic_usage_json(usage: &Usage) -> Value {
+    // OpenAI prompt_tokens 含缓存，Anthropic input_tokens 不含，需减去
+    let cached = extract_cache_read_tokens(usage).unwrap_or(0);
+    let input_tokens = usage.prompt_tokens.saturating_sub(cached);
     let mut usage_json = json!({
-        "input_tokens": usage.prompt_tokens,
+        "input_tokens": input_tokens,
         "output_tokens": usage.completion_tokens
     });
-    if let Some(cached) = extract_cache_read_tokens(usage) {
+    if cached > 0 {
         usage_json["cache_read_input_tokens"] = json!(cached);
     }
     if let Some(created) = usage.cache_creation_input_tokens {
@@ -223,8 +226,10 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                 "output_tokens": 0
                                             });
                                             if let Some(u) = &chunk.usage {
-                                                start_usage["input_tokens"] = json!(u.prompt_tokens);
-                                                if let Some(cached) = extract_cache_read_tokens(u) {
+                                                let cached = extract_cache_read_tokens(u).unwrap_or(0);
+                                                let input = u.prompt_tokens.saturating_sub(cached);
+                                                start_usage["input_tokens"] = json!(input);
+                                                if cached > 0 {
                                                     start_usage["cache_read_input_tokens"] = json!(cached);
                                                 }
                                                 if let Some(created) = u.cache_creation_input_tokens {
@@ -1022,7 +1027,7 @@ mod tests {
             message_delta
                 .pointer("/usage/input_tokens")
                 .and_then(|v| v.as_u64()),
-            Some(13312)
+            Some(13212)
         );
         assert_eq!(
             message_delta

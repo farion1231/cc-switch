@@ -12,7 +12,9 @@ import { useTranslation } from "react-i18next";
 import JsonEditor from "@/components/JsonEditor";
 import {
   isCodexGoalModeEnabled,
+  isCodexRemoteCompactionEnabled,
   setCodexGoalMode,
+  setCodexRemoteCompaction,
 } from "@/utils/providerConfigUtils";
 /*
 import {
@@ -27,6 +29,7 @@ interface CodexAuthSectionProps {
   onChange: (value: string) => void;
   onBlur?: () => void;
   error?: string;
+  isProxyTakeover?: boolean;
 }
 
 /**
@@ -37,6 +40,7 @@ export const CodexAuthSection: React.FC<CodexAuthSectionProps> = ({
   onChange,
   onBlur,
   error,
+  isProxyTakeover = false,
 }) => {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -88,7 +92,11 @@ export const CodexAuthSection: React.FC<CodexAuthSectionProps> = ({
 
       {!error && (
         <p className="text-xs text-muted-foreground">
-          {t("codexConfig.authJsonHint")}
+          {t(
+            isProxyTakeover
+              ? "codexConfig.authJsonStorageHint"
+              : "codexConfig.authJsonHint",
+          )}
         </p>
       )}
     </div>
@@ -98,11 +106,14 @@ export const CodexAuthSection: React.FC<CodexAuthSectionProps> = ({
 interface CodexConfigSectionProps {
   value: string;
   onChange: (value: string) => void;
+  providerName?: string;
+  showRemoteCompaction?: boolean;
   useCommonConfig: boolean;
   onCommonConfigToggle: (checked: boolean) => void;
   onEditCommonConfig: () => void;
   commonConfigError?: string;
   configError?: string;
+  isProxyTakeover?: boolean;
 }
 
 /**
@@ -111,11 +122,14 @@ interface CodexConfigSectionProps {
 export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
   value,
   onChange,
+  providerName,
+  showRemoteCompaction = true,
   useCommonConfig,
   onCommonConfigToggle,
   onEditCommonConfig,
   commonConfigError,
   configError,
+  isProxyTakeover = false,
 }) => {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -157,12 +171,29 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
     () => isCodexGoalModeEnabled(localValue),
     [localValue],
   );
+  const remoteCompactionEnabled = useMemo(
+    () => isCodexRemoteCompactionEnabled(localValue),
+    [localValue],
+  );
 
   const handleGoalModeToggle = useCallback(
     (checked: boolean) => {
       handleLocalChange(setCodexGoalMode(localValueRef.current || "", checked));
     },
     [handleLocalChange],
+  );
+
+  const handleRemoteCompactionToggle = useCallback(
+    (checked: boolean) => {
+      handleLocalChange(
+        setCodexRemoteCompaction(
+          localValueRef.current || "",
+          checked,
+          providerName,
+        ),
+      );
+    },
+    [handleLocalChange, providerName],
   );
 
   // Codex 1M 上下文相关状态/回调暂时禁用——见同文件下方 JSX 注释处的恢复说明。
@@ -257,6 +288,21 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
             {t("codexConfig.enableGoalMode")}
           </label>
 
+          {showRemoteCompaction && (
+            <label
+              className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground"
+              title={t("codexConfig.remoteCompactionHint")}
+            >
+              <input
+                type="checkbox"
+                checked={remoteCompactionEnabled}
+                onChange={(e) => handleRemoteCompactionToggle(e.target.checked)}
+                className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+              />
+              {t("codexConfig.enableRemoteCompaction")}
+            </label>
+          )}
+
           <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
             <input
               type="checkbox"
@@ -329,7 +375,11 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
 
       {!configError && (
         <p className="text-xs text-muted-foreground">
-          {t("codexConfig.configTomlHint")}
+          {t(
+            isProxyTakeover
+              ? "codexConfig.configTomlStorageHint"
+              : "codexConfig.configTomlHint",
+          )}
         </p>
       )}
     </div>

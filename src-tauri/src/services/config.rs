@@ -187,8 +187,8 @@ impl ConfigService {
                         &provider.settings_config,
                         restore_provider_token,
                     )?;
-                    // 必须同时写回 auth 和 config: backfill 会恢复 stored provider id，
-                    // 并把 live 的 experimental_bearer_token 移到 restored.auth.OPENAI_API_KEY。
+                    // 必须同时写回 auth 和 config: backfill 会把 live 的
+                    // experimental_bearer_token 移到 restored.auth.OPENAI_API_KEY。
                     if let Some(restored_obj) = restored.as_object() {
                         if let Some(auth_value) = restored_obj.get("auth") {
                             obj.insert("auth".to_string(), auth_value.clone());

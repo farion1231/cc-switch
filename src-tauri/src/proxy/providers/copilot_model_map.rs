@@ -324,14 +324,14 @@ mod tests {
 
     #[test]
     fn resolve_falls_back_to_highest_family_version() {
-        // 用户请求 opus 4.7 但 Copilot 账号只有 opus 4.6
+        // 用户请求 opus 4.8 但 Copilot 账号只有 opus 4.6
         let models = vec![
             model("claude-opus-4.5"),
             model("claude-opus-4.6"),
             model("claude-sonnet-4.6"),
         ];
         assert_eq!(
-            resolve_against_models("claude-opus-4.7", &models),
+            resolve_against_models("claude-opus-4.8", &models),
             Some("claude-opus-4.6".to_string())
         );
     }

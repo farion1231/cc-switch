@@ -5,7 +5,112 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.16.2] - 2026-06-07
+
+Development since v3.16.1 focuses on broadening data portability and usage observability — S3-compatible cloud sync, OpenCode session usage import, and an opt-in official-subscription quota template — while hardening Codex Chat Completions routing (stream truncation, `tool_choice` / custom-tool / reasoning-token edge cases, file and audio attachments, and a Codex CLI models endpoint), strengthening proxy robustness (ephemeral ports, takeover/placeholder restore, system-message normalization, clearer upstream errors, and a text-only image fallback), fixing coding-plan quota lookups (Zhipu, MiniMax) and several Windows/macOS issues, adding the CherryIN and ZenMux providers, and refreshing the user manual.
+
+**Stats**: 41 commits | 132 files changed | +11,116 insertions | -1,636 deletions
+
+### Added
+
+- **S3-Compatible Cloud Sync**: Cloud Sync now supports S3-compatible object storage as a second backend alongside WebDAV, using hand-rolled AWS Signature V4 signing for broad compatibility. The settings panel offers one-click presets for AWS S3, MinIO, Cloudflare R2, Alibaba Cloud OSS, Tencent Cloud COS, and Huawei OBS plus a custom endpoint, with connection testing, manual upload/download, and auto-sync on configuration changes (provider, endpoint, MCP, prompt, skill, settings, and proxy tables — not high-frequency data like usage logs); enabling S3 sync disables active WebDAV sync and vice versa (#1351).
+- **OpenCode Session Usage Sync**: Added OpenCode as a usage-statistics source that imports per-message token, cost, and model data from OpenCode's local SQLite database, with a new "OpenCode" app filter tab and an "OpenCode Session" data-source label. The database path respects `OPENCODE_DB` and `XDG_DATA_HOME` (defaulting to `~/.local/share/opencode` on all platforms), only finalized messages are imported, and the freshness check accounts for the WAL file so newly written sessions are not skipped (#3215).
+- **Official Subscription Quota Template**: Added an explicit, opt-in "official subscription" usage template for Claude, Codex, and Gemini official providers that queries plan quota via CLI/OAuth credentials, replacing the previous implicit auto-query. It is disabled by default and enabled from the usage-script modal with a configurable refresh interval.
+- **Unsupported Image Fallback Rectifier**: Added a proxy rectifier that replaces Anthropic image blocks with an `[Unsupported Image]` marker when the routed model is text-only (declared, or detected via a built-in model-name heuristic) or when the upstream rejects image input, so conversations are not interrupted. A new Settings toggle controls the fallback, with a separate toggle for the heuristic detection.
+- **ZenMux Token Plan Provider**: Added ZenMux as a Token Plan coding-plan provider that accepts a manually entered API key and base URL in the usage-script modal and renders its quota with USD-denominated used / limit values (#2709).
+- **CherryIN Preset**: Added the CherryIN aggregator gateway as a quick-config preset across all seven supported apps — Anthropic-format endpoint for Claude Code / Claude Desktop / OpenClaw / Hermes, `@ai-sdk/anthropic` for OpenCode, the OpenAI-compatible endpoint for Codex, and the Gemini-compatible endpoint for Gemini CLI — with the official brand icon, placed next to AiHubMix (#3643).
+- **CCSub Preset**: Added CCSub, a multi-model aggregator partner, as a quick-config preset across six apps — Claude Code, Claude Desktop, Codex, OpenCode, OpenClaw, and Hermes — with the official brand icon and the partner referral link prefilled as the API-key signup URL (`gpt-5.5` for the OpenAI-compatible Codex and OpenCode endpoints).
+- **Codex CLI Models Endpoint**: The local proxy now answers `GET /v1/models`, which Codex CLI probes at startup, returning the cc-switch-managed Codex model catalog. A stale-catalog guard parses the live `config.toml` and only serves the catalog when `model_catalog_json` still references the cc-switch-owned file, so a leftover catalog from a previous provider is not advertised (#3818).
+- **Codex Chat File and Audio Attachments**: The Codex Responses-to-Chat converter now maps `input_file` parts (carrying `file_id` or inline `file_data`) and `input_audio` parts into their Chat Completions equivalents, and emits top-level `input_*` items that were previously dropped, so file and audio attachments reach Chat-only Codex upstreams.
+
+### Changed
+
+- **Usage Dashboard Hero Redesign**: Restructured the Usage Dashboard hero and summary cards into a more compact layout, consolidating the real-token total, request count, and cost into a single top row (#3426).
+- **SSSAiCode Endpoint Refresh**: Updated the SSSAiCode preset's website, signup, and API base URLs to the `sssaicodeapi.com` domain and refreshed its endpoint nodes (default `node-hk.sssaicodeapi.com`, plus `node-hk.sssaiapi.com` and `node-cf.sssaicodeapi.com`) across all seven app presets.
+
+### Fixed
+
+- **Codex Chat Truncated Stream Detection**: When a Chat Completions upstream ends a stream without a `finish_reason` or `[DONE]`, CC Switch no longer reports it as a normal completion — it finalizes normally only when the stream truly finished, emits an incomplete (`max_output_tokens`) response when partial output was produced, and emits a failed `stream_truncated` event when nothing was produced. Late-arriving reasoning is also attached to still-active streamed tool calls.
+- **Codex Chat `tool_choice` Without Tools**: The Responses-to-Chat converter now drops `tool_choice` and `parallel_tool_calls` whenever the resulting tools array is absent or empty, so strict OpenAI-compatible upstreams (vLLM, enterprise gateways) no longer reject the request with "When using `tool_choice`, `tools` must be set." (#3640).
+- **Codex Custom Tool Metadata Over Chat Routing**: Custom Codex tools (such as the freeform `apply_patch` tool) now preserve their full original definition — including format and grammar metadata — as a compact, order-stable JSON block in the generated Chat function description instead of a generic placeholder, keeping them usable on Chat Completions upstreams (#3644).
+- **Codex Chat `reasoning_tokens` in Usage**: The Chat-to-Responses usage conversion now always includes `output_tokens_details.reasoning_tokens` (defaulting to 0), even when a provider omits `completion_tokens_details` or returns it as a non-object, satisfying the Codex CLI's strict requirement and avoiding repeated parse failures and retries (#3514).
+- **Codex Cross-Turn Reasoning for Custom and Search Tools**: The cross-turn reasoning cache in Codex Chat history now covers the full tool-call set (`function_call`, `custom_tool_call`, `tool_search_call`) and their outputs, so `apply_patch` and tool-search calls keep their `reasoning_content` when restored via `previous_response_id`.
+- **Ephemeral Proxy Port Resolution**: When the proxy listens on port 0 (OS-assigned), takeover now starts the proxy first to learn the real port and writes it into the Live configs and database, so client URLs no longer point at a broken `:0` address; the Claude Desktop gateway URL is rejected if no concrete port has been resolved.
+- **Proxy Placeholder Backup/Restore Loop**: If a previous proxy stop left the proxy placeholders in Live, taking over again no longer overwrites a good backup with the proxy config, and restore no longer writes the placeholder back to Live — both paths detect the placeholder state and rebuild Live from the current provider, fixing cases where the proxy toggle became a no-op and clients stayed pinned to the local proxy (#3689).
+- **Official Provider Block Under Proxy Takeover**: While Local Routing takeover is active, only providers explicitly categorized as official are blocked from switching, instead of also disabling custom providers whose endpoint lives in metadata or whose fields are unfilled. The disabled Enable button now shows a lighter hint tooltip in place of the red "Blocked" badge.
+- **Localhost Listen Address Normalization**: Saving the proxy with a listen address of `localhost` now normalizes it to `127.0.0.1` before persisting, avoiding binding inconsistencies (#3016).
+- **Anthropic System Message Normalization**: For Anthropic-format providers, system-role entries inside the `messages` array are collapsed and merged into the top-level `system` field (preserving order and any existing top-level system), preventing strict upstreams from rejecting non-leading system messages; OpenAI Chat routing is untouched (#3775).
+- **Claude Desktop 1M-Context Model Routing**: Claude Desktop appends a `[1m]` marker to the model name when the 1M-context beta is active (e.g. `claude-opus-4-8[1m]`). The proxy now strips that suffix before route lookup so exact, alias, legacy, and role-keyword matching resolve correctly, fixing `route_unknown` (HTTP 400) failures when switching to a 1M-capable model mid-conversation.
+- **Codex 413 Error Clarity**: When a Codex upstream gateway rejects an oversized request with HTTP 413, the proxy now returns a dedicated message identifying it as the provider's server-side body-size limit (not a CC Switch limit) with recovery steps (run `/compact`, drop large logs or inline images, or ask the provider to raise its limit), instead of echoing the raw upstream HTML page.
+- **Proxy Panel Error Detail**: When toggling proxy takeover fails, the proxy panel toast now includes the underlying backend error detail instead of only a generic failure message (#3656).
+- **Copilot Infinite-Whitespace Threshold**: Raised the streaming infinite-whitespace abort threshold from 20 to 500 consecutive whitespace characters, so legitimate tool calls with deeply indented code arguments are no longer falsely aborted while still catching the real Copilot infinite-whitespace bug (#2647).
+- **Subscription Tier Tray Rendering**: Fixed tray and quota rendering for official subscription tiers via a unified tier-to-label mapping: Claude/Codex no longer drop the seven-day window, Gemini Pro/Flash/Flash-Lite tiers no longer leak raw machine names, and multi-window plans (e.g. Opus + Sonnet) now display the worst utilization instead of the first match.
+- **Inflated Claude Stream Input Tokens**: Some Anthropic-compatible streaming providers (e.g. Qwen, MiniMax) report the full context as `input_tokens` in `message_start`, double-counting the cached portion and artificially lowering the displayed cache hit rate. The parser now prefers a smaller positive `input_tokens` from `message_delta` and adopts the paired cache counts from the same usage block; native Claude and OpenRouter-converted paths are unchanged.
+- **Zhipu Quota Query Endpoint Routing**: The Zhipu coding-plan quota lookup was hard-coded to `api.z.ai`, so users on the mainland China preset (`open.bigmodel.cn`) could not retrieve usage when the international endpoint was unreachable. The quota request now routes to the host matching the user's configured base URL (#3702).
+- **MiniMax Balance API and Pricing**: Adapted MiniMax coding-plan quota to its new balance API (which returns remaining-percent fields instead of usage counts that broke the old parser and left the tray blank), filtered out non-coding models (e.g. video), handled plans without a weekly limit, and seeded default pricing for MiniMax M3 (#3518).
+- **GLM Coding Plan Endpoints and Model Fetch**: Corrected the ZhiPu / Z.AI GLM Coding Plan presets to the `/api/coding/paas/v4` endpoints across Codex, OpenCode, OpenClaw, and Hermes, and taught the model-list probe to query `{base}/models` for base URLs that already end in a `/v{N}` segment (keeping `/v1/models` as a fallback), so the Fetch Models button no longer 404s on versioned endpoints (#3524).
+- **Codex Model Catalog Path Portability**: Codex now writes only the relative filename `cc-switch-model-catalog.json` to `config.toml` instead of an absolute path (Codex CLI resolves it from the config directory), fixing the model catalog breaking on WSL and symlinked setups where the absolute path could not be translated (#3614).
+- **APINebula OpenCode SDK**: The APINebula OpenCode preset now loads `@ai-sdk/openai-compatible` instead of `@ai-sdk/openai`, so requests use the OpenAI Chat Completions format the relay expects rather than the Responses API.
+- **Windows Tray Icon Residue on Exit**: Quitting CC Switch on Windows could leave a dead tray icon until hovered; the app now removes the tray icon before exiting so it disappears cleanly (#3797).
+- **Windows Taskbar Icon**: Set an explicit Windows AppUserModelID at runtime and stamped the installer's desktop and start-menu shortcuts with the same ID and product icon, so CC Switch shows the correct icon and groups properly in the taskbar (#3457).
+- **Windows Subdirectory Skill Updates**: Normalized backslash path separators to forward slashes when scanning installed skills on Windows, so skills nested in subdirectories (e.g. `skills/my-skill`) are matched by the update check instead of being silently skipped (#3430).
+- **macOS Input Auto-Capitalization**: Disabled autocomplete, autocorrect, autocapitalize, and spellcheck on the shared text Input component so macOS no longer auto-capitalizes or auto-corrects the first letter typed into configuration fields (#3626).
+- **Codex VS Code Session Previews**: Codex session previews for requests sent from VS Code could show selection or open-file content instead of the prompt when a markdown heading preceded the injected request. Both the backend title and frontend preview now match the last "## My request for Codex:" heading (the IDE injects the real request as the final section) (#3593).
+- **VS Code Wording in Chinese UI**: Corrected the "Apply to Claude Code plugin" description in the Simplified and Traditional Chinese locales to write "VS Code" properly instead of "Vscode", aligning with the English and Japanese strings (#3228).
+
+### Docs
+
+- **User Manual Refresh**: Refreshed the README locales and the en / zh / ja user manuals to reflect all seven supported apps (adding Claude Desktop and Hermes), corrected the OpenCode config path to `~/.config/opencode/` (`opencode.json`), documented Hermes configuration files, updated the language docs to four languages, revised per-app MCP / Prompts / Skills availability, noted that export produces a timestamped SQL backup including usage logs, and documented the pricing model-ID matching rules (#3411).
+- **Codex Official Auth Preservation Guide**: Added a trilingual (en / zh / ja) guide explaining how to keep Codex official remote control and plugins working while routing model traffic to third-party APIs, and linked it from the v3.16.1 release notes.
+- **README Release-Note Links and Sponsor Markup**: Updated the Release Notes links in all README locales to point at v3.16.1 and fixed broken smart-quote characters in the README_ZH sponsor blocks so their HTML attributes render correctly (#3772).
+
+## [3.16.1] - 2026-06-01
+
+Development since v3.16.0 focuses on hardening Codex provider switching and Local Routing takeover: preserving official OAuth auth and model catalogs across normal switches, hot-switches, backup restore, and edit flows; restoring Codex Chat tool/plugin compatibility over Chat Completions upstreams; improving Codex proxy diagnostics and CLI discovery; and documenting DeepSeek routing.
+
+**Stats**: 23 commits | 62 files changed | +5,603 insertions | -1,113 deletions
+
+### Added
+
+- **Codex Official Auth Preservation Setting**: Added an opt-in setting that keeps the official ChatGPT / Codex OAuth login in `auth.json` when switching third-party Codex providers, while moving third-party provider tokens into `config.toml` when enabled.
+- **Codex DeepSeek Routing Guides**: Added localized DeepSeek routing guides for Codex in English, Chinese, and Japanese, with screenshots covering provider routing requirements, Codex provider setup, and Local Routing takeover.
+
+### Changed
+
+- **Codex Auth Preservation Is Opt-In**: The new official-auth preservation setting now defaults to off, so third-party Codex switches keep the legacy behavior of writing the active provider auth unless users explicitly enable preservation.
+- **Codex Provider Switch Restart Hint**: Successful Codex provider switches now tell users to restart the Codex client so catalog and config changes take effect.
+- **Codex Proxy Takeover Switching Is Serialized**: Provider switches and takeover toggles now share a per-app lock and use backup / live placeholder ownership signals instead of lagging `enabled` or server-running flags, preventing normal live writes from racing a just-activated or temporarily stopped takeover.
+- **Codex Takeover Hot-Switch Display Refresh**: Hot-switching a Codex provider while Local Routing owns Live now refreshes the proxy-safe live provider id, model, and display name while keeping endpoints pointed at the local proxy.
+- **Sponsor Ordering**: Swapped the Shengsuanyun and AICodeMirror sponsor blocks across README locales.
+- **Docs Organization**: Moved the Chinese proxy guide under `docs/guides/` and removed the obsolete working-directory plan document.
+
+### Fixed
+
+- **Codex Provider Edit Dialog Under Takeover**: The Codex provider edit form now shows an explicit notice and storage-aware auth / config hints clarifying that it displays the stored provider config (not the proxy-managed live `auth.json` / `config.toml`), so the official OAuth token is no longer mistaken as lost while takeover is active. The dialog also treats takeover as active regardless of whether the proxy server is currently running.
+- **Codex OAuth Auth During Proxy Takeover**: Fixed multiple preserve-mode takeover paths that could clear or overwrite the official ChatGPT / Codex OAuth `auth.json`. Takeover detection now recognizes `PROXY_MANAGED` in `config.toml`, cleanup only removes placeholder bearer tokens, config-only takeover writes are used consistently, and mis-categorized third-party providers no longer trigger the official-provider auth overwrite path. Provider sync and switching now treat the restore backup and live placeholders as the takeover-ownership signal (instead of the lagging `enabled` / proxy-running flags) and serialize switch/takeover per app, so a just-activated or proxy-stopped takeover can no longer be overwritten by a normal live write.
+- **Codex Model Catalog Data Loss**: Fixed cases where Codex `modelCatalog` could be wiped by live-config backfill, active-provider edit dialogs, provider switches, or proxy takeover-off restore. Snapshot backups now keep existing `model_catalog_json` pointers, provider-rebuilt backups regenerate the catalog projection from the database source of truth, active edit dialogs prefer the DB catalog over lossy Live reconstruction, and provider switches always refresh the generated catalog JSON.
+- **Codex Chat Tools Over Chat Completions Routing**: Restored Codex `tool_search`, loaded namespace tools, custom tools, and tool outputs when third-party Codex providers are routed through Chat Completions. Non-streaming and streaming Chat responses now map back to the right Responses item types, including native `response.custom_tool_call_input.*` events for custom-tool streaming.
+- **Codex Proxy Error Diagnostics**: Codex forwarding failures now return richer JSON errors with provider, model, endpoint, upstream status, stable `cc_switch_*` codes, and HTTP statuses aligned with the canonical `ProxyError` response mapping.
+- **Codex Native Balance / Coding-Plan Queries**: Fixed native usage and plan lookups so each app resolves the correct provider credentials instead of leaking assumptions from another app surface.
+- **Codex CLI Discovery and Catalog Projection**: Fixed third-party Codex catalog projection that could fail when the Codex CLI was not reachable through one narrow PATH lookup, by adding multi-platform CLI discovery plus a bundled GPT-5.5 model-catalog template fallback.
+- **Claude Desktop Official Provider Creation**: Fixed adding the Claude Desktop Official provider when the official category/config path was selected.
+- **Anthropic Tool Thinking History for Kimi / Moonshot**: Added Kimi and Moonshot to the Anthropic-compatible tool-thinking history normalizer so later turns can replay reasoning and tool-call context correctly.
+- **Windows Tool Version Probing**: Fixed Windows version checks that could misquote `.cmd` / `.bat` commands and decode localized command output as mojibake, causing working tools to appear as "installed but not runnable".
+
+## [3.16.0] - 2026-05-29
+
+Development since v3.15.0 focuses on making third-party Codex providers work like first-class citizens through Chat Completions routing, stabilizing Codex provider identity and history, adding an in-app managed CLI tool lifecycle, expanding the partner preset catalog, refreshing the default model / pricing matrix around GPT-5.5 and Claude Opus 4.8, and improving usage observability, localization, docs, and proxy robustness.
+
+**Stats**: 101 commits | 221 files changed | +27,063 insertions | -3,052 deletions
+
+### Highlights
+
+- **Codex Chat Completions routing**: Codex providers can now be served by OpenAI-compatible Chat Completions upstreams. CC Switch converts Codex Responses requests into Chat Completions, rebuilds JSON and SSE responses back into Responses shape, preserves reasoning / `<think>` / tool-call state, normalizes error envelopes, and probes Chat-format providers correctly in Stream Check.
+- **Codex third-party provider state is unified and safer**: third-party Codex providers now share the stable `custom` model-provider bucket, with a one-shot migration for historical JSONL sessions and `state_5.sqlite` threads, plus fixes that preserve OAuth login state, user-selected catalog models, and user-authored provider ids during live reads / switches.
+- **Managed CLI tool management**: the About page is now a tool management panel for Claude, Codex, Gemini, OpenCode, OpenClaw, and Hermes, with install / update actions, update-all, conflict diagnostics, source-aware anchored upgrades, WSL handling, and visible "installed but not runnable" states.
+- **Provider ecosystem and model matrix refresh**: added APIKEY.FUN, APINebula, AtlasCloud, SudoCode, Xiaomi MiMo Token Plan, and Claude Desktop Official presets; refreshed partner links and default models / pricing across apps; upgraded the default Claude Opus model line to 4.8 and GPT defaults to 5.5 where applicable.
+- **Usage and docs polish**: Usage Dashboard updates now react immediately when logs are written, custom usage-script summaries and subagent session-log accounting were fixed, Traditional Chinese UI localization landed, and a German README plus expanded Claude Desktop / Codex Chat / tool-management manuals were added.
+- **Proxy and conversion hardening**: fixed Codex Chat reasoning / cache / usage edge cases, DeepSeek Anthropic tool-thinking history, Claude-compatible empty `tool_calls` streams, managed-account takeover auth, MiMo reasoning output, Gemini Native tool-call replay, and several panic-prone proxy paths.
 
 ### Added
 
@@ -14,15 +119,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Codex Model Mapping Table**: Codex provider forms now expose a model catalog (model + display name + context window per row) that is the single source of truth for the upstream model list, projected to `~/.codex/cc-switch-model-catalog.json`.
 - **Codex Chat Providers in Stream Check**: Stream Check now probes Chat-format Codex providers against `/chat/completions` with a Chat-shaped body instead of `/v1/responses`, and aligns its URL fallback order with the production `CodexAdapter` (origin-only base URLs hit `/v1/<endpoint>` first) so a non-404 error on the bare path no longer flags a working provider as down.
 - **Codex Chat Reasoning Auto-Detection**: When a Codex provider is served through Chat Completions routing, CC Switch now auto-detects the upstream's reasoning interface from its name, base URL, and model — injecting the correct thinking parameter (`thinking:{type}`, `enable_thinking`, `reasoning_split`, top-level `reasoning_effort`, or OpenRouter's native `reasoning:{effort}` object) with no manual setup. Aggregator/hosting platforms (OpenRouter, SiliconFlow) are matched platform-first, since the same model can expose different reasoning controls on different platforms. Providers that only expose a thinking on/off switch (Kimi, GLM, Qwen, MiniMax, MiMo, SiliconFlow) drop the effort *level* instead of forwarding an unsupported field — so changing Codex's reasoning effort has no effect for them — while providers with real effort tiers (DeepSeek, OpenRouter, and StepFun's `step-3.5-flash-2603` only) pass the level through. OpenRouter specifically uses the native `reasoning:{effort}` object, clamps `max` to `xhigh` (its enum has no `max`), and forwards an explicit `effort:"none"` so reasoning can be turned off.
+- **Codex Goal Mode and Remote Compaction Controls**: Codex config editing now exposes a Goal Mode toggle and a Remote Compaction toggle for third-party providers; new Codex templates default to `disable_response_storage = true` while still allowing explicit goal support.
 - **Xiaomi MiMo Token Plan Presets**: Added Xiaomi MiMo Token Plan presets with specs aligned to the official documentation (#2803).
 - **Claude Desktop Official Preset**: Added a Claude Desktop Official preset that restores the native Claude Desktop login, plus a localized Claude Desktop user guide (en / zh / ja).
+- **Managed CLI Tool Lifecycle**: Added silent install / update commands for managed CLI tools, latest-version checks, per-tool and batch actions, update-all, and diagnostics for multiple installations across PATH, Homebrew, npm, pnpm, bun, volta, fnm, nvm, scoop, WinGet, Windows native paths, and WSL.
+- **Source-Aware Tool Diagnostics**: The Settings / About surface can now diagnose conflicting tool installations, show the concrete install source and version for each path, and generate backend-planned upgrade commands anchored to the actual installation source.
+- **Real-Time Usage Refresh**: The backend now emits `usage-log-recorded` when proxy logs, session-log syncs, or rollups write usage data; Usage Dashboard listens for that event and invalidates its queries immediately instead of waiting for the next polling interval (#3027).
+- **Traditional Chinese Localization**: Added `zh-TW` UI localization and a settings language option (#3093).
+- **German README**: Added `README_DE.md` and linked it from the existing README language switchers (#2994).
+- **New Partner Presets**: Added APIKEY.FUN, APINebula, AtlasCloud, and SudoCode partner presets across the supported app surfaces, with partner copy, icons, and README entries.
 
 ### Changed
 
 - **Codex Third-Party Providers Unified into a "custom" History Bucket**: Codex filters resume history by `model_provider`, so switching between provider-specific ids made past sessions appear to vanish. All third-party providers now normalize to a single stable `custom` bucket (reserved built-in ids like `openai` / `ollama` are preserved), with a one-shot device migration that rewrites historical JSONL sessions and the `state_5.sqlite` threads table and backs up originals under `~/.cc-switch/backups/codex-history-provider-migration-v1/`.
 - **Codex Provider Form Simplified**: Removed the API Format selector from the Codex form (`wire_api` is always `responses`, so the selector misleadingly implied a protocol change); the model mapping table is now the only source of truth with no hidden default entries, and the form notes that a Codex restart is required after catalog changes since `model_catalog_json` is loaded at startup. Only the "Needs Local Routing" toggle remains.
 - **Codex Local Routing Toggle Hints Rewritten**: Reframed the OFF / ON hints as action guidance (when to enable) rather than scenario descriptions, synced across zh / en / ja.
+- **Codex Live Config Preservation**: Live Codex config reads no longer force-rewrite a user's `model_provider` field, and provider-scoped `experimental_bearer_token` handling now preserves OAuth login state when switching between third-party providers.
+- **Tool Install / Upgrade Strategy**: Managed tool installation now prefers official native installers where available, falls back to package managers when appropriate, runs self-update first for compatible tools, anchors upgrades to the detected install source, and locks duplicate batch actions while work is in flight.
+- **About Page Becomes Tool Management**: The About settings page now presents installed / latest versions, install and update actions, conflict diagnostics, WSL shell preferences, and clearer status for broken or unrunnable tools.
+- **Default Models and Pricing Refreshed**: Upgraded the default Claude Opus model to 4.8, moved GPT-based presets and templates to GPT-5.5 where applicable, refreshed pricing seeds, aligned Claude Desktop model mapping with Claude Code's three-role tiers, and renamed the OpenCode Go preset to drop a stale model suffix.
+- **Partner Links Refreshed**: Updated ShengSuanYun referral links, Atlas Cloud UTM links, and partner copy across README locales and provider metadata.
 - **Homebrew Official Cask Installation**: Installation simplified to `brew install --cask cc-switch` now that CC Switch is in the official Homebrew repository; the personal-tap requirement was removed from all READMEs.
+- **Shared Frontend Utilities**: Replaced JSON stringify / parse deep-copy patterns with a shared `deepClone` helper and extracted a shared `useTauriEvent` hook (#3140).
 
 ### Fixed
 
@@ -35,17 +153,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Codex Chat Streaming Usage Recovered**: The Responses-to-Chat conversion now injects `stream_options.include_usage` (merging into any client-provided `stream_options`) when a request is streaming, so OpenAI-compatible upstreams like Kimi and MiniMax emit the trailing usage chunk again. Previously their streamed token / cost / cache stats were recorded as zero on the Codex Chat path.
 - **Codex Chat Tool-Call Reasoning Backfill**: Thinking models like Kimi/Moonshot and DeepSeek reject an assistant message that carries `tool_calls` without a non-empty `reasoning_content`. When cross-turn history recovery misses (proxy restart, ambiguous `call_id`, or a turn with no upstream reasoning), a placeholder `reasoning_content` is now backfilled in a final pass — genuine trailing reasoning still attaches first — so the request no longer fails with `reasoning_content is missing in assistant tool call message`.
 - **Managed-Account Claude Takeover Auth**: Managed-account providers (GitHub Copilot / Codex OAuth) now drop token env keys and write only the `ANTHROPIC_API_KEY` placeholder when taking over Claude Live config, with an outbound guard that refuses to send the `PROXY_MANAGED` placeholder upstream.
+- **Claude Desktop Profile Sync During Takeover**: Claude Desktop profile data is now synced during proxy takeover, model routes align with the Claude Code three-role tiers, and the Cowork egress profile has been corrected (#3157, #3172).
+- **Managed-Account Takeover Model Fields**: Local Routing now sources takeover model fields from the target provider on managed accounts instead of carrying stale model values.
+- **DeepSeek Anthropic Tool Thinking History**: Normalized DeepSeek Anthropic-compatible tool-thinking history so later turns can replay reasoning / tool-call context without malformed messages (#3203).
+- **Claude-Compatible Empty Tool Calls in Streams**: Fixed a Claude-compatible streaming edge case where an empty `tool_calls` array reset block state and broke streamed responses (#2915).
+- **MiMo Reasoning for Claude Code Proxy**: Added MiMo `reasoning_content` support on the Claude Code proxy path (#2990).
 - **Gemini Native Tool-Call Robustness**: Fixed `functionResponse.name` resolution (422) and `thought_signature` replay (400) for synthesized tool-call IDs in long multi-turn sessions (#2814).
 - **Session Log Subagent Token Accounting**: `collect_jsonl_files()` now scans subagent JSONL logs that were previously missed, so subagent token usage is counted in session cost (session-log mode only) (#2821).
+- **Usage Dashboard / Sync Stability**: Fixed a Codex usage-sync panic on non-ASCII model names, custom usage-script summaries, and missing real-time refresh after usage rollups (#3027, #3129).
+- **ZhiPu Coding-Plan Quota Tier Ordering**: When the 5-hour bucket is at 0% utilization, ZhiPu's API omits `nextResetTime`; the old `i64::MAX` sentinel sorted those entries last, letting the weekly bucket incorrectly claim the five-hour slot. Tiers now sort so a missing `nextResetTime` maps to the five-hour bucket, so tray and usage quota display stays correct for ZhiPu coding plans.
 - **Skills Install by Key**: Installing from skills.sh search results now uses the unique key instead of the directory name, so skills that share a directory name install the correct one (#2784); also fixed a skill sync copy fallback (#2791).
 - **Usage Price Input Precision**: Reduced the price input step to 0.0001 so sub-cent costs like DeepSeek cache reads can be entered (#2793, closes #2503).
 - **Ghostty Clean Window Launch**: Ghostty now opens a single clean window instead of cloning existing tabs, and other terminals open a new window via `open -na` (#2801, closes #2798).
+- **Tool Version and Update Reliability**: Version probing no longer masks unrunnable installs, prerelease tools are handled correctly in version checks, batch updates run per tool, install / update buttons stay locked during preflight, anchored upgrade branches enforce absolute paths, and WSL installer paths use native Unix installers when needed.
 - **Codex mise Detection**: Fixed Codex mise environment detection (#2822).
+- **Codex Archived Sessions**: Codex archived sessions are now included in session discovery (#2861).
+- **Codex Chat Empty Tool Arguments**: Empty tool-call argument payloads are coerced to `{}` during Codex Chat conversion so upstreams and clients receive valid JSON.
+- **Claude Provider Deeplink Imports**: Importing Claude providers through deeplinks now preserves custom environment fields (#2928).
+- **OMO Recommended Models**: Synced OMO recommended models with upstream defaults and improved Fill Recommended feedback.
+- **ShengSuanYun Model IDs Prefixed for Routing**: ShengSuanYun (胜算云) presets now carry the vendor prefixes the upstream gateway requires — `anthropic/…`, `google/…`, and `openai/…` (e.g. `anthropic/claude-sonnet-4.6`, `google/gemini-3.1-pro-preview`) — across the Claude Code, Claude Desktop, Codex, Gemini, OpenCode, and OpenClaw presets, including the Claude Code routing env (`ANTHROPIC_MODEL` / `ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL`), so they resolve to valid upstream models instead of failing to route.
+- **ClaudeAPI Model Test Re-Enabled**: Reclassified the ClaudeAPI preset (Claude Code and Claude Desktop) from `third_party` to `aggregator` so its model test button is no longer disabled by the third-party Claude gate; the partner star is unaffected since it is driven by `isPartner`, not category.
+- **About Version Check**: Version checks now handle prerelease tool versions without misclassifying update state.
+- **App Switcher Text Clipping**: Removed a fixed width constraint that clipped app-switcher text (#3161).
 - **useEffect Race Condition**: Added an active-flag pattern to App.tsx effects to prevent listener leaks on unmount, and guarded against storing `undefined` language in localStorage (#2827).
 
 ### Removed
 
 - **LionCC Sponsor and Presets**: Removed the LionCC sponsor entry and LionCCAPI presets across READMEs, provider configs, and locales (icon asset retained).
+- **AICoding Partner Entry**: Removed the AICoding partner from README sponsor listings, provider presets, and i18n metadata.
+- **Kimi For Coding Codex Preset**: Removed the Kimi For Coding preset from the Codex preset catalog.
+- **CLI Uninstall Command Hints**: Dropped generated CLI uninstall command hints from the tool-management UI while keeping conflict diagnostics visible.
+
+### Docs
+
+- **Codex Chat Provider Support**: Documented Chat Completions routing, provider support, reasoning auto-detection, and Local Routing guidance in the changelog and user manual.
+- **Settings Manual Refresh**: Updated settings documentation for the new managed tool lifecycle and Hermes installer behavior.
+- **Claude Desktop Guide**: Added localized Claude Desktop guide pages and screenshots for provider setup, import, model mapping, and Local Routing context.
+- **Installation Docs**: Updated installation docs and READMEs to recommend the official Homebrew cask and refreshed the v3.15.0 release-note imposter-site warning wording across locales.
 
 ## [3.15.0] - 2026-05-16
 

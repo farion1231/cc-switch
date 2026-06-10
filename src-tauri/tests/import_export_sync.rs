@@ -10,7 +10,8 @@ use cc_switch_lib::{
 #[path = "support.rs"]
 mod support;
 use support::{
-    create_test_state, create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex,
+    create_test_state, create_test_state_with_config, enable_codex_official_auth_preservation,
+    ensure_test_home, reset_test_fs, test_mutex,
 };
 
 #[test]
@@ -73,6 +74,7 @@ fn sync_claude_provider_writes_live_settings() {
 fn sync_codex_provider_writes_config_without_touching_auth() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
+    enable_codex_official_auth_preservation();
 
     let mut config = MultiAppConfig::default();
 
@@ -210,7 +212,7 @@ experimental_bearer_token = "stored-bearer-key"
 }
 
 #[test]
-fn sync_codex_provider_preserves_live_model_provider_id_for_history() {
+fn sync_codex_provider_preserves_user_model_provider_id_after_migration() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
 
@@ -264,8 +266,8 @@ requires_openai_auth = true
 
     assert_eq!(
         parsed.get("model_provider").and_then(|v| v.as_str()),
-        Some("custom"),
-        "legacy ConfigService sync should collapse third-party providers into the stable \"custom\" history bucket"
+        Some("aihubmix"),
+        "ConfigService sync should preserve user-editable model_provider after the one-time migration"
     );
 
     let model_providers = parsed
@@ -273,12 +275,12 @@ requires_openai_auth = true
         .and_then(|v| v.as_table())
         .expect("model_providers should exist");
     assert!(
-        model_providers.get("aihubmix").is_none(),
-        "provider-specific target id should not be written to live config"
+        model_providers.get("custom").is_none(),
+        "provider sync should not force user-edited provider ids back to custom"
     );
     assert_eq!(
         model_providers
-            .get("custom")
+            .get("aihubmix")
             .and_then(|v| v.get("base_url"))
             .and_then(|v| v.as_str()),
         Some("https://aihubmix.example/v1")
