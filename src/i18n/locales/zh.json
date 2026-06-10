@@ -496,6 +496,9 @@
       "lastSync": "上次同步：{{time}}",
       "autoSyncLastErrorTitle": "上次自动同步失败",
       "autoSyncLastErrorHint": "请检查网络或 WebDAV 配置，系统会在后续变更时继续自动重试。",
+      "autoSyncRemoteChangedTitle": "需要选择同步方向",
+      "autoSyncRemoteChangedMessage": "云端同步数据已更新，自动同步已暂停。",
+      "autoSyncRemoteChangedHint": "请确认使用本机版本覆盖云端，或使用云端版本覆盖本机。",
       "missingUrl": "请填写 WebDAV 服务器地址",
       "presets": {
         "label": "服务商",
@@ -544,6 +547,13 @@
         "warning": "将覆盖云端已有的同步数据",
         "legacyNotice": "检测到旧版云端路径数据。本次上传将写入新路径 v2/db-v6，不会覆盖旧路径。",
         "confirm": "确认上传"
+      },
+      "conflictDialog": {
+        "title": "WebDAV 同步需要手动选择",
+        "message": "本机和云端的同步快照不一致，自动同步已暂停以避免覆盖任一端数据。",
+        "warning": "使用本机版本会覆盖云端；使用云端版本会覆盖本机数据库和技能配置。",
+        "useLocal": "使用本机版本",
+        "useRemote": "使用云端版本"
       }
     },
     "syncType": {
@@ -608,6 +618,7 @@
       "uploadSuccess": "已上传到 S3",
       "uploadFailed": "S3 上传失败：{{error}}",
       "autoSyncFailedToast": "S3 自动同步失败：{{error}}",
+      "autoSyncRemoteChangedToast": "S3 云端已有更新，自动同步已暂停。请手动选择同步方向。",
       "download": "从云端下载",
       "downloading": "下载中...",
       "downloadSuccess": "已从 S3 下载并恢复",
@@ -615,6 +626,9 @@
       "lastSync": "上次同步：{{time}}",
       "autoSyncLastErrorTitle": "上次 S3 自动同步失败",
       "autoSyncLastErrorHint": "请检查网络或 S3 配置，系统会在后续变更时继续自动重试。",
+      "autoSyncRemoteChangedTitle": "需要选择 S3 同步方向",
+      "autoSyncRemoteChangedMessage": "S3 云端同步数据已更新，自动同步已暂停。",
+      "autoSyncRemoteChangedHint": "请确认使用本机版本覆盖云端，或使用云端版本覆盖本机。",
       "missingBucket": "请填写 S3 存储桶",
       "noRemoteData": "S3 存储桶中没有找到同步数据",
       "incompatibleVersion": "远端数据版本不兼容（版本 {{version}}），当前支持协议 v2 / db-v6",

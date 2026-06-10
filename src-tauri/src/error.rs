@@ -91,6 +91,13 @@ impl AppError {
             en: en.into(),
         }
     }
+
+    pub fn localized_key(&self) -> Option<&'static str> {
+        match self {
+            Self::Localized { key, .. } => Some(*key),
+            _ => None,
+        }
+    }
 }
 
 impl<T> From<PoisonError<T>> for AppError {

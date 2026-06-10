@@ -117,6 +117,43 @@ vi.mock("@/components/ConfirmDialog", () => ({
     ) : null,
 }));
 
+vi.mock("@/components/WebdavSyncConflictDialog", () => ({
+  WebdavSyncConflictDialog: ({
+    open,
+    resolvingAction,
+    onCancel,
+    onUseLocal,
+    onUseRemote,
+  }: any) =>
+    open ? (
+      <div data-testid="webdav-sync-conflict-dialog">
+        <button disabled={resolvingAction !== null} onClick={() => onCancel()}>
+          common.cancel
+        </button>
+        <button
+          disabled={resolvingAction !== null}
+          onClick={() => onUseLocal()}
+        >
+          settings.webdavSync.conflictDialog.useLocal
+        </button>
+        <button
+          disabled={resolvingAction !== null}
+          onClick={() => onUseRemote()}
+        >
+          settings.webdavSync.conflictDialog.useRemote
+        </button>
+      </div>
+    ) : null,
+}));
+
+vi.mock("@/components/DeepLinkImportDialog", () => ({
+  DeepLinkImportDialog: () => null,
+}));
+
+vi.mock("@/components/FirstRunNoticeDialog", () => ({
+  FirstRunNoticeDialog: () => null,
+}));
+
 vi.mock("@/components/AppSwitcher", () => ({
   AppSwitcher: ({ activeApp, onSwitch }: any) => (
     <div data-testid="app-switcher">
@@ -158,6 +195,8 @@ const renderApp = (AppComponent: ComponentType) => {
 
 describe("App integration with MSW", () => {
   beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
     resetProviderState();
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
@@ -218,7 +257,7 @@ describe("App integration with MSW", () => {
 
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
-  });
+  }, 30_000);
 
   it("shows toast when auto sync fails in background", async () => {
     const { default: App } = await import("@/App");
@@ -244,6 +283,70 @@ describe("App integration with MSW", () => {
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalled();
     });
+
+    toastErrorMock.mockReset();
+    emitTauriEvent("webdav-sync-status-updated", {
+      source: "auto",
+      status: "conflict",
+      error: "backend remote changed error",
+      errorKey: "sync.remote_changed_since_last_sync",
+    });
+
+    const useLocalButton = await screen.findByRole("button", {
+      name: "settings.webdavSync.conflictDialog.useLocal",
+    });
+    expect(toastErrorMock).not.toHaveBeenCalled();
+
+    fireEvent.click(useLocalButton);
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith(
+        "settings.webdavSync.uploadSuccess",
+      );
+    });
+    expect(
+      screen.queryByRole("button", {
+        name: "settings.webdavSync.conflictDialog.useLocal",
+      }),
+    ).not.toBeInTheDocument();
+
+    toastErrorMock.mockReset();
+    emitTauriEvent("webdav-sync-status-updated", {
+      source: "auto",
+      status: "error",
+      error: "backend conflict error",
+      errorKey: "sync.conflict_detected",
+    });
+
+    expect(
+      await screen.findByRole("button", {
+        name: "settings.webdavSync.conflictDialog.useRemote",
+      }),
+    ).toBeInTheDocument();
+    expect(toastErrorMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("backend conflict error"),
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "common.cancel",
+      }),
+    );
+    toastErrorMock.mockReset();
+    emitTauriEvent("webdav-sync-status-updated", {
+      source: "auto",
+      status: "conflict",
+      error: "backend manual resolution error",
+      errorKey: "sync.manual_resolution_required",
+    });
+
+    expect(
+      await screen.findByRole("button", {
+        name: "settings.webdavSync.conflictDialog.useRemote",
+      }),
+    ).toBeInTheDocument();
+    expect(toastErrorMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("backend manual resolution error"),
+    );
 
     toastErrorMock.mockReset();
     expect(() => {

@@ -9,6 +9,9 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use crate::error::AppError;
+use crate::services::sync_protocol::{
+    SYNC_CONFLICT_DETECTED_KEY, SYNC_MANUAL_RESOLUTION_REQUIRED_KEY, SYNC_REMOTE_CHANGED_KEY,
+};
 use crate::services::webdav_sync as webdav_sync_service;
 use crate::settings::{self, WebDavSyncSettings};
 
@@ -81,16 +84,18 @@ fn should_run_auto_sync(settings: Option<&WebDavSyncSettings>) -> bool {
 
 fn persist_auto_sync_error(settings: &mut WebDavSyncSettings, error: &AppError) {
     settings.status.last_error = Some(error.to_string());
+    settings.status.last_error_key = error.localized_key().map(str::to_string);
     settings.status.last_error_source = Some("auto".to_string());
     let _ = settings::update_webdav_sync_status(settings.status.clone());
 }
 
-fn emit_auto_sync_status_updated(app: &AppHandle, status: &str, error: Option<&str>) {
+fn emit_auto_sync_status_updated(app: &AppHandle, status: &str, error: Option<&AppError>) {
     let payload = match error {
-        Some(message) => json!({
+        Some(error) => json!({
             "source": "auto",
             "status": status,
-            "error": message,
+            "error": error.to_string(),
+            "errorKey": error.localized_key(),
         }),
         None => json!({
             "source": "auto",
@@ -100,6 +105,16 @@ fn emit_auto_sync_status_updated(app: &AppHandle, status: &str, error: Option<&s
 
     if let Err(err) = app.emit("webdav-sync-status-updated", payload) {
         log::debug!("[WebDAV] failed to emit sync status update event: {err}");
+    }
+}
+
+fn auto_sync_status_for_error(error: &AppError) -> &'static str {
+    match error.localized_key() {
+        Some(key) if key == SYNC_CONFLICT_DETECTED_KEY || key == SYNC_REMOTE_CHANGED_KEY => {
+            "conflict"
+        }
+        Some(key) if key == SYNC_MANUAL_RESOLUTION_REQUIRED_KEY => "conflict",
+        _ => "error",
     }
 }
 
@@ -117,10 +132,15 @@ async fn run_auto_sync_upload(
         None => return Ok(()),
     };
 
-    let result = webdav_sync_service::run_with_sync_lock(webdav_sync_service::upload(
-        db,
-        &mut sync_settings,
-    ))
+    let result = webdav_sync_service::run_with_sync_lock(async {
+        let snapshot =
+            webdav_sync_service::prepare_auto_sync_snapshot(db, &mut sync_settings).await?;
+        if let Some(snapshot) = snapshot {
+            webdav_sync_service::upload_prepared_auto_sync_snapshot(&mut sync_settings, snapshot)
+                .await?;
+        }
+        Ok(())
+    })
     .await;
     match result {
         Ok(_) => {
@@ -129,7 +149,7 @@ async fn run_auto_sync_upload(
         }
         Err(err) => {
             persist_auto_sync_error(&mut sync_settings, &err);
-            emit_auto_sync_status_updated(app, "error", Some(&err.to_string()));
+            emit_auto_sync_status_updated(app, auto_sync_status_for_error(&err), Some(&err));
             Err(err)
         }
     }
