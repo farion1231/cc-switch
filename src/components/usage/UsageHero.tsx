@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { Card, CardContent } from "@/components/ui/card";
 import { useUsageSummaryByApp } from "@/lib/query/usage";
 import { cn } from "@/lib/utils";
+import { UsageActivityHeatmap } from "./UsageActivityHeatmap";
 import {
   Activity,
   ArrowDownToLine,
@@ -318,6 +319,11 @@ export function UsageHero({
               </div>
             </div>
           </div>
+
+          <UsageActivityHeatmap
+            appType={appType}
+            refreshIntervalMs={refreshIntervalMs}
+          />
         </CardContent>
       </Card>
     </motion.div>

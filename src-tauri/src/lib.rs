@@ -4,6 +4,7 @@ mod auto_launch;
 mod claude_desktop_config;
 mod claude_mcp;
 mod claude_plugin;
+mod codex_accounts;
 mod codex_config;
 mod codex_history_migration;
 mod commands;
@@ -68,6 +69,10 @@ use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::RunEvent;
 use tauri::{Emitter, Manager};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
+
+fn codex_quota_refresh_interval_duration(settings: &AppSettings) -> std::time::Duration {
+    std::time::Duration::from_secs(u64::from(settings.codex_quota_refresh_interval.max(30)))
+}
 
 #[cfg(target_os = "windows")]
 fn set_windows_app_user_model_id(app: &tauri::AppHandle) {
@@ -179,6 +184,20 @@ fn handle_deeplink_url(
     }
 
     true
+}
+
+/// 唤起主窗口
+#[tauri::command]
+fn show_main_window(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        #[cfg(target_os = "macos")]
+        {
+            crate::tray::apply_tray_policy(&app, true);
+        }
+    }
 }
 
 /// 更新托盘菜单的Tauri命令
@@ -890,6 +909,57 @@ pub fn run() {
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
+            // 启动 Codex 多账号用量自动刷新任务
+            {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    // 首次延迟 10 秒，避免启动时与大量初始化任务竞争
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    let mut last_refresh: Option<std::time::Instant> = None;
+                    loop {
+                        let settings = crate::settings::get_settings();
+                        if !settings.usage_auto_refresh {
+                            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                            continue;
+                        }
+
+                        let refresh_interval = codex_quota_refresh_interval_duration(&settings);
+                        if let Some(last_refresh_at) = last_refresh {
+                            let elapsed = last_refresh_at.elapsed();
+                            if elapsed < refresh_interval {
+                                let remaining = refresh_interval - elapsed;
+                                tokio::time::sleep(
+                                    remaining.min(std::time::Duration::from_secs(30)),
+                                )
+                                .await;
+                                continue;
+                            }
+                        }
+
+                        let results =
+                            crate::services::subscription::get_all_codex_quotas().await;
+                        if let Some(state) = app_handle.try_state::<AppState>() {
+                            for (account_key, quota) in &results {
+                                state
+                                    .usage_cache
+                                    .put_codex_account(account_key.clone(), quota.clone());
+                            }
+                        }
+                        let payload = serde_json::json!({
+                            "kind": "codex-all",
+                            "accounts": results.iter().map(|(k, q)| {
+                                serde_json::json!({"accountKey": k, "quota": q})
+                            }).collect::<Vec<_>>(),
+                        });
+                        if let Err(e) = app_handle.emit("codex-account-quotas-updated", payload) {
+                            log::warn!("emit codex-account-quotas-updated (定时任务) 失败: {e}");
+                        }
+                        crate::tray::schedule_tray_refresh(&app_handle);
+                        last_refresh = Some(std::time::Instant::now());
+                    }
+                });
+            }
+
             // 从数据库加载日志配置并应用
             {
                 let db = &app.state::<AppState>().db;
@@ -1120,11 +1190,17 @@ pub fn run() {
                 }
             }
 
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_providers,
+            commands::codex_list_account_snapshots,
+            commands::codex_capture_current_account,
+            commands::codex_rename_account_snapshot,
+            commands::codex_switch_account,
+            commands::codex_rollback_last_account_switch,
+            commands::codex_restart_app,
+            commands::get_all_codex_quotas,
             commands::get_current_provider,
             commands::add_provider,
             commands::update_provider,
@@ -1248,6 +1324,7 @@ pub fn run() {
             commands::import_from_deeplink,
             commands::import_from_deeplink_unified,
             update_tray_menu,
+            show_main_window,
             // Environment variable management
             commands::check_env_conflicts,
             commands::delete_env_vars,
@@ -1319,6 +1396,7 @@ pub fn run() {
             commands::get_usage_summary,
             commands::get_usage_summary_by_app,
             commands::get_usage_trends,
+            commands::get_usage_activity_heatmap,
             commands::get_provider_stats,
             commands::get_model_stats,
             commands::get_request_logs,
@@ -1906,5 +1984,33 @@ pub fn save_window_state_before_exit(app_handle: &tauri::AppHandle) {
         log::error!("退出前保存窗口状态失败: {err}");
     } else {
         log::info!("已在退出前保存窗口状态");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_quota_refresh_uses_codex_interval_setting() {
+        let mut settings = AppSettings::default();
+        settings.codex_quota_refresh_interval = 120;
+        settings.usage_refresh_interval_secs = 999;
+
+        assert_eq!(
+            codex_quota_refresh_interval_duration(&settings),
+            std::time::Duration::from_secs(120)
+        );
+    }
+
+    #[test]
+    fn codex_quota_refresh_has_minimum_interval() {
+        let mut settings = AppSettings::default();
+        settings.codex_quota_refresh_interval = 5;
+
+        assert_eq!(
+            codex_quota_refresh_interval_duration(&settings),
+            std::time::Duration::from_secs(30)
+        );
     }
 }

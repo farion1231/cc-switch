@@ -607,7 +607,9 @@ pub fn create_tray_menu(
     )
     .map_err(|e| AppError::Message(format!("创建轻量模式菜单失败: {e}")))?;
 
-    menu_builder = menu_builder.item(&lightweight_item).separator();
+    menu_builder = menu_builder.item(&lightweight_item);
+
+    menu_builder = menu_builder.separator();
 
     // 退出菜单（分隔符已在上面的 section 循环中添加）
     let quit_item = MenuItem::with_id(app, "quit", tray_texts.quit, true, None::<&str>)

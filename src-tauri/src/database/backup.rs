@@ -22,6 +22,8 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "provider_health",
     "proxy_live_backup",
     "usage_daily_rollups",
+    "usage_daily_activity_rollups",
+    "usage_daily_activity_session_rollups",
 ];
 
 /// Tables whose local data is preserved (restored from local snapshot) during WebDAV import.
@@ -31,6 +33,8 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "stream_check_logs",
     "proxy_live_backup",
     "usage_daily_rollups",
+    "usage_daily_activity_rollups",
+    "usage_daily_activity_session_rollups",
 ];
 
 /// A database backup entry for the UI
@@ -732,6 +736,20 @@ mod tests {
                 [],
             )?;
             conn.execute(
+                "INSERT INTO usage_daily_activity_rollups (
+                    date, app_type, request_count, session_count,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd
+                ) VALUES ('2026-03-01', 'claude', 7, 2, 700, 350, 0, 0, '0.07')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO usage_daily_activity_session_rollups (
+                    date, app_type, session_key
+                ) VALUES ('2026-03-01', 'claude', 'session-a')",
+                [],
+            )?;
+            conn.execute(
                 "INSERT INTO stream_check_logs (
                     provider_id, provider_name, app_type, status, success, message,
                     response_time_ms, http_status, model_used, retry_count, tested_at
@@ -755,7 +773,13 @@ mod tests {
             "remote config should be imported"
         );
 
-        let (request_logs, rollups, stream_logs): (i64, i64, i64) = {
+        let (request_logs, rollups, activity_rollups, activity_sessions, stream_logs): (
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+        ) = {
             let conn = crate::database::lock_conn!(local_db.conn);
             let request_logs =
                 conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
@@ -765,14 +789,38 @@ mod tests {
                 conn.query_row("SELECT COUNT(*) FROM usage_daily_rollups", [], |row| {
                     row.get(0)
                 })?;
+            let activity_rollups = conn.query_row(
+                "SELECT COUNT(*) FROM usage_daily_activity_rollups",
+                [],
+                |row| row.get(0),
+            )?;
+            let activity_sessions = conn.query_row(
+                "SELECT COUNT(*) FROM usage_daily_activity_session_rollups",
+                [],
+                |row| row.get(0),
+            )?;
             let stream_logs =
                 conn.query_row("SELECT COUNT(*) FROM stream_check_logs", [], |row| {
                     row.get(0)
                 })?;
-            (request_logs, rollups, stream_logs)
+            (
+                request_logs,
+                rollups,
+                activity_rollups,
+                activity_sessions,
+                stream_logs,
+            )
         };
         assert_eq!(request_logs, 1, "local request logs should be preserved");
         assert_eq!(rollups, 1, "local rollups should be preserved");
+        assert_eq!(
+            activity_rollups, 1,
+            "local activity rollups should be preserved"
+        );
+        assert_eq!(
+            activity_sessions, 1,
+            "local activity session identities should be preserved"
+        );
         assert_eq!(
             stream_logs, 1,
             "local stream check logs should be preserved"

@@ -19,6 +19,11 @@ type UsageCacheUpdatedPayload =
       data: SubscriptionQuota;
     };
 
+type CodexAccountQuotasPayload = {
+  kind: "codex-all";
+  accounts: Array<{ accountKey: string; quota: SubscriptionQuota }>;
+};
+
 /**
  * 后端 `UsageCache` 写入后会 emit `usage-cache-updated`，本 hook 把 payload 同步到
  * React Query 缓存，让托盘触发的刷新（不经前端）也能立刻反映到主界面，避免
@@ -40,4 +45,17 @@ export function useUsageCacheBridge() {
       );
     }
   });
+
+  useTauriEvent<CodexAccountQuotasPayload>(
+    "codex-account-quotas-updated",
+    ({ accounts }) => {
+      const quotas = Object.fromEntries(
+        accounts.map(({ accountKey, quota }) => [accountKey, quota]),
+      );
+      queryClient.setQueryData<Record<string, SubscriptionQuota>>(
+        subscriptionKeys.allCodexQuotas(),
+        quotas,
+      );
+    },
+  );
 }
