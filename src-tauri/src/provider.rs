@@ -108,17 +108,13 @@ impl Provider {
             .unwrap_or(false)
     }
 
-    /// Resolve `(base_url, api_key)` for native usage queries (balance /
-    /// coding-plan) from the stored provider config.
+    /// Resolve `(base_url, api_key)` for usage queries (native balance /
+    /// coding-plan and the JS-script `{{apiKey}}`/`{{baseUrl}}` fallback)
+    /// from the stored provider config.
     ///
     /// Each app persists credentials in a different shape, so callers must pass
     /// the owning app type. This mirrors the frontend `getProviderCredentials`
     /// in `UsageScriptModal.tsx`.
-    ///
-    /// TODO: the env-only helpers in `services/provider/usage.rs`
-    /// (`extract_api_key_from_provider` / `extract_base_url_from_provider`)
-    /// duplicate this per-app logic on the JS-script path and could delegate
-    /// here in a follow-up to remove the remaining copy.
     pub fn resolve_usage_credentials(
         &self,
         app_type: &crate::app_config::AppType,

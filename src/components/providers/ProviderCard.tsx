@@ -199,8 +199,16 @@ export function ProviderCard({
     TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
   const officialSubscriptionEnabled =
     supportsOfficialSubscription && usageEnabled && isOfficialSubscriptionUsage;
+  // 官方判定只认显式 category === "official"（SSOT），不回退 isOfficial 的空字段启发式。
+  // 理由（此判定曾在「纯 category ↔ category+isOfficial 回退」间反复，结论钉死于此）：
+  //  1) 封号保护是高代价决策，不该建立在「base_url/key 缺失」这种脆弱信号上——它无法区分
+  //     「想直连官方」与「自定义但还没填完」，两者都表现为字段为空，必然误伤后者。
+  //  2) 启发式在 UI 多拦的部分，执行层 useProviderActions.ts 也只认 category === "official"、
+  //     并不兑现（绕过 UI 即可切换）→ 属虚保护，却以误伤 category 缺失的自定义供应商为代价。
+  //  3) 预设导入的官方一定带 category="official"，category 缺失的「真官方」现实中≈不存在。
+  // 真官方就该有显式 category；手动新建官方应引导标注，而不是靠空字段猜。
   const isOfficialBlockedByProxy =
-    isProxyTakeover && (provider.category === "official" || isOfficial);
+    isProxyTakeover && provider.category === "official";
   const isCopilot =
     provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
     provider.meta?.usage_script?.templateType === "github_copilot";
