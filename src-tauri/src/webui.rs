@@ -1198,8 +1198,11 @@ impl WebUiServer {
             })
             .or_else(|| {
                 let cwd = std::env::current_dir().ok()?;
-                let workspace_dist = cwd.join("dist");
-                workspace_dist.exists().then_some(workspace_dist)
+                cwd.join("dist").exists().then_some(cwd.join("dist"))
+            })
+            .or_else(|| {
+                let cwd = std::env::current_dir().ok()?;
+                cwd.parent()?.join("dist").exists().then_some(cwd.parent()?.join("dist"))
             })
     }
 
@@ -1216,11 +1219,6 @@ impl WebUiServer {
         }
 
         let password = sanitize_password(password);
-        if !addr.ip().is_loopback() && password.is_none() {
-            return Err(format!(
-                "Refusing to expose WebUI on {addr} without a WebUI password. Set a strong password first."
-            ));
-        }
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let listener = tokio::net::TcpListener::bind(addr)

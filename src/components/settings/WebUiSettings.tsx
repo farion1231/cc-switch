@@ -124,7 +124,8 @@ export function WebUiSettings({ settings, onChange }: WebUiSettingsProps) {
   }, [status]);
 
   const accessUrl = status?.address || `http://${settings.webuiHost ?? "127.0.0.1"}:${settings.webuiPort ?? 15722}`;
-  const isLan = settings.webuiHost === "0.0.0.0";
+  const isPublic = settings.webuiHost !== "127.0.0.1" && settings.webuiHost !== "localhost";
+  const requirePassword = settings.webuiToken !== undefined && settings.webuiToken !== "";
 
   return (
     <section className="space-y-4">
@@ -151,7 +152,6 @@ export function WebUiSettings({ settings, onChange }: WebUiSettingsProps) {
         })}
       </p>
 
-      {/* Enable/Disable toggle */}
       <ToggleRow
         icon={<Globe className="h-4 w-4 text-blue-500" />}
         title={t("settings.webui.enable", { defaultValue: "启用 WebUI" })}
@@ -162,7 +162,6 @@ export function WebUiSettings({ settings, onChange }: WebUiSettingsProps) {
         onCheckedChange={handleToggleEnabled}
       />
 
-      {/* Access URL display */}
       {status?.running && (
         <div className="rounded-lg border border-border/50 p-3 space-y-2">
           <Label className="text-xs text-muted-foreground">
@@ -196,53 +195,45 @@ export function WebUiSettings({ settings, onChange }: WebUiSettingsProps) {
         </div>
       )}
 
-      {/* Host binding */}
       <div className="space-y-2">
         <Label className="text-xs">
           {t("settings.webui.host", { defaultValue: "监听地址" })}
         </Label>
         <div className="flex gap-2">
           <Button
-            variant={!isLan ? "default" : "outline"}
+            variant={!isPublic ? "default" : "outline"}
             size="sm"
             onClick={() => onChange({ webuiHost: "127.0.0.1" })}
           >
             {t("settings.webui.localhost", { defaultValue: "仅本机" })}
           </Button>
           <Button
-            variant={isLan ? "default" : "outline"}
+            variant={isPublic ? "default" : "outline"}
             size="sm"
             onClick={() => onChange({ webuiHost: "0.0.0.0" })}
           >
-            {t("settings.webui.lan", { defaultValue: "局域网" })}
+            {t("settings.webui.lanAndPublic", { defaultValue: "局域网/公网" })}
           </Button>
         </div>
-        {isLan && (
-          <div className="flex items-start gap-2 rounded-md bg-blue-500/10 border border-blue-500/20 p-2 mt-1">
-            <Shield className="h-4 w-4 text-blue-500 flex-shrink-0 mt-0.5" />
-            <p className="text-xs text-blue-700 dark:text-blue-400">
-              {t("settings.webui.lanWarning", {
-                defaultValue:
-                  "局域网模式允许同一网络内的设备访问（基于 RFC 1918 私有地址，无需令牌）。",
-              })}
-            </p>
-          </div>
-        )}
       </div>
 
-      {/* Port */}
       <div className="space-y-2">
         <Label className="text-xs">
           {t("settings.webui.port", { defaultValue: "端口" })}
         </Label>
         <Input
           type="number"
-          min={1024}
+          min={1}
           max={65535}
           value={settings.webuiPort ?? 15722}
           onChange={(e) => {
-            const port = parseInt(e.target.value, 10);
-            if (port >= 1024 && port <= 65535) {
+            const val = e.target.value;
+            if (val === "") {
+              onChange({ webuiPort: undefined });
+              return;
+            }
+            const port = parseInt(val, 10);
+            if (!isNaN(port) && port >= 1 && port <= 65535) {
               onChange({ webuiPort: port });
             }
           }}
@@ -250,34 +241,35 @@ export function WebUiSettings({ settings, onChange }: WebUiSettingsProps) {
         />
       </div>
 
-      {/* Token */}
-      <div className="space-y-2">
-        <Label className="text-xs">
-          {t("settings.webui.token", { defaultValue: "访问令牌" })}
-          {!isLan && (
-            <span className="ml-1 text-muted-foreground">
-              ({t("settings.webui.tokenOptional", { defaultValue: "可选" })})
-            </span>
-          )}
-          {isLan && (
-            <span className="ml-1 text-red-500">
-              ({t("settings.webui.tokenRequired", { defaultValue: "必填" })})
-            </span>
-          )}
-        </Label>
-        <Input
-          type="password"
-          placeholder={
-            status?.tokenSet
-              ? "••••••••"
-              : t("settings.webui.tokenPlaceholder", {
-                  defaultValue: "设置 Bearer Token",
-                })
+      <ToggleRow
+        icon={<Shield className="h-4 w-4 text-amber-500" />}
+        title={t("settings.webui.requirePassword", { defaultValue: "需要密码" })}
+        description={t("settings.webui.requirePasswordDesc", {
+          defaultValue: "启用后需要密码才能访问 WebUI",
+        })}
+        checked={requirePassword}
+        onCheckedChange={(checked) => {
+          if (!checked) {
+            onChange({ webuiToken: undefined });
           }
-          value={settings.webuiToken ?? ""}
-          onChange={(e) => onChange({ webuiToken: e.target.value || undefined })}
-        />
-      </div>
+        }}
+      />
+
+      {requirePassword && (
+        <div className="space-y-2">
+          <Label className="text-xs">
+            {t("settings.webui.password", { defaultValue: "密码" })}
+          </Label>
+          <Input
+            type="password"
+            placeholder={t("settings.webui.passwordPlaceholder", {
+              defaultValue: "设置访问密码",
+            })}
+            value={settings.webuiToken ?? ""}
+            onChange={(e) => onChange({ webuiToken: e.target.value || undefined })}
+          />
+        </div>
+      )}
 
       {/* Control buttons */}
       <div className="flex items-center gap-2 pt-2">
