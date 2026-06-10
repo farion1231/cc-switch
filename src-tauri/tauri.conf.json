@@ -62,7 +62,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhBODlDNUQwQkRGNzQ1MEIKUldRTFJmZTkwTVdKaW55c3c2SWhVK09YQVBRbFlNR055Z3lpRlFQT2dzWVFVTjVPSWhMZXRDWDcK",
       "endpoints": [
-        "https://github.com/farion1231/cc-switch/releases/latest/download/latest.json"
+        "https://github.com/lssuzie/cc-switch/releases/latest/download/latest.json"
       ]
     }
   }
