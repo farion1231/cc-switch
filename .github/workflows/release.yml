@@ -97,27 +97,10 @@ jobs:
       - name: Prepare Tauri signing key
         shell: bash
         run: |
-          # 调试：检查 Secret 是否存在
           if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
-            echo "⚠️ TAURI_SIGNING_PRIVATE_KEY 未设置，生成临时密钥用于构建" >&2
-            # 生成 ed25519 私钥
-            PRIV_DER=$(openssl genpkey -algorithm ed25519 -outform DER 2>/dev/null)
-            # 获取公钥
-            PUB_DER=$(echo "$PRIV_DER" | openssl pkey -pubout -outform DER 2>/dev/null)
-            # base64 编码公钥
-            PUB_B64=$(echo "$PUB_DER" | base64 -o - | tr -d '\n')
-            # 构造 Tauri 公钥
-            PUB_KEY="untrusted comment: tauri signing public key\n$PUB_B64"
-            # 替换 tauri.conf.json 中的 pubkey
-            ESCAPED_PUB=$(echo "$PUB_KEY" | sed 's|/|\\/|g' | tr '\n' ' ')
-            # 提取 base64 私钥 (64 bytes)
-            PRIV_B64=$(echo "$PRIV_DER" | base64 -o - | tr -d '\n')
-            # 构造 Tauri 私钥文件
-            KEY_PATH="$RUNNER_TEMP/tauri_signing.key"
-            printf 'untrusted comment: tauri signing key\n%s\n' "$PRIV_B64" > "$KEY_PATH"
-            KEY_B64=$(base64 < "$KEY_PATH" | tr -d '\r\n')
-            echo "TAURI_SIGNING_PRIVATE_KEY=$KEY_B64" >> "$GITHUB_ENV"
-            echo "✅ 生成本地临时签名密钥"
+            echo "⚠️ TAURI_SIGNING_PRIVATE_KEY 未设置，使用内置临时密钥" >&2
+            # 预先生成的 Tauri 密钥（仅用于构建）
+            echo "TAURI_SIGNING_PRIVATE_KEY=dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5V2EycGg2c3MrUE01QW5kbE9UZUNPR3l5U3JEVlpGbW9CMEkzamxnOEZRTUFBQkFBQUFBQUFBQUFBQUlBQUFBQXBnV1hOYjdJU3Z4SDJHUE91TFQ1WVMyaVpRT3lDbGt5NVRiTUVZOHdRSDZrSHllLzROOE5SY2lCaVpycGVpbVdaRFk3U0tycFNtZFZPamtNT212Sjh0ZVBzR3BxWm1XV3lNbHQwdTdkS3Y0N2xKSVNLWHhLcnlNQ2dGbnBIWVN0eFE0SFc3eSs0NzA9Cg==" >> "$GITHUB_ENV"
             exit 0
           fi
           
