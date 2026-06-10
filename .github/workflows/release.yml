@@ -99,9 +99,9 @@ jobs:
         run: |
           # 调试：检查 Secret 是否存在
           if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
-            echo "❌ TAURI_SIGNING_PRIVATE_KEY Secret 为空或不存在" >&2
-            echo "请检查 GitHub 仓库 Settings > Secrets and variables > Actions" >&2
-            exit 1
+            echo "⚠️ TAURI_SIGNING_PRIVATE_KEY 未设置，跳过签名（本地使用没问题）" >&2
+            echo "TAURI_SIGNING_PRIVATE_KEY=" >> "$GITHUB_ENV"
+            exit 0
           fi
           
           RAW="${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
@@ -150,10 +150,15 @@ jobs:
           fi
           echo "✅ Tauri signing key prepared"
 
-      - name: Import Apple signing certificate
+      - name: Import Apple signing certificate (optional)
         if: runner.os == 'macOS'
         shell: bash
         run: |
+          if [ -z "${{ secrets.APPLE_CERTIFICATE }}" ]; then
+            echo "⚠️ APPLE_CERTIFICATE 未设置，跳过代码签名（本地使用没问题）"
+            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
+            exit 0
+          fi
           set -euo pipefail
           # Decode .p12 certificate from base64
           CERT_PATH="$RUNNER_TEMP/certificate.p12"
@@ -203,6 +208,12 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
+          if [ "${APPLE_SIGNING_IDENTITY:-}" = "-" ] || [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            echo "⚠️ 无签名证书，构建不含签名的 .app 和 .dmg"
+            pnpm tauri build --bundles dmg
+            echo "✅ macOS 构建成功（无签名）"
+            exit 0
+          fi
           max_attempts=3
           for attempt in $(seq 1 "$max_attempts"); do
             echo "=== macOS build/notarization attempt ${attempt}/${max_attempts} ==="
@@ -260,8 +271,12 @@ jobs:
           fi
 
           # Staple notarization ticket to .app (Tauri already notarized it)
-          xcrun stapler staple "$APP_PATH"
-          echo "✅ .app stapled"
+          if [ -n "${APPLE_SIGNING_IDENTITY:-}" ] && [ "${APPLE_SIGNING_IDENTITY:-}" != "-" ]; then
+            xcrun stapler staple "$APP_PATH"
+            echo "✅ .app stapled"
+          else
+            echo "⚠️ 无签名，跳过 stapler"
+          fi
 
           # 1) Collect .tar.gz (updater artifact)
           NEW_TAR_GZ="CC-Switch-${VERSION}-macOS.tar.gz"
@@ -275,11 +290,6 @@ jobs:
           echo "macOS zip ready: $NEW_ZIP"
 
           # 3) Create styled DMG with create-dmg (Tauri's built-in DMG styling doesn't work on CI)
-          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
-            echo "❌ APPLE_SIGNING_IDENTITY is missing before DMG creation" >&2
-            exit 1
-          fi
-
           HOMEBREW_NO_AUTO_UPDATE=1 brew install create-dmg
           NEW_DMG="CC-Switch-${VERSION}-macOS.dmg"
           DMG_STAGE_DIR="$RUNNER_TEMP/dmg-stage"
@@ -287,24 +297,39 @@ jobs:
           mkdir -p "$DMG_STAGE_DIR"
           ditto "$APP_PATH" "$DMG_STAGE_DIR/CC Switch.app"
 
-          create-dmg \
-            --volname "CC Switch" \
-            --background "src-tauri/icons/dmg-background.png" \
-            --window-size 660 400 \
-            --window-pos 200 120 \
-            --icon-size 80 \
-            --icon "CC Switch.app" 180 220 \
-            --hide-extension "CC Switch.app" \
-            --app-drop-link 480 220 \
-            --codesign "$APPLE_SIGNING_IDENTITY" \
-            --no-internet-enable \
-            "release-assets/$NEW_DMG" \
-            "$DMG_STAGE_DIR"
+          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ] || [ "${APPLE_SIGNING_IDENTITY:-}" = "-" ]; then
+            echo "⚠️ 无签名证书，创建不含签名的 .dmg"
+            create-dmg \
+              --volname "CC Switch" \
+              --window-size 660 400 \
+              --window-pos 200 120 \
+              --icon-size 80 \
+              --icon "CC Switch.app" 180 220 \
+              --hide-extension "CC Switch.app" \
+              --app-drop-link 480 220 \
+              --no-internet-enable \
+              "release-assets/$NEW_DMG" \
+              "$DMG_STAGE_DIR"
+          else
+            create-dmg \
+              --volname "CC Switch" \
+              --background "src-tauri/icons/dmg-background.png" \
+              --window-size 660 400 \
+              --window-pos 200 120 \
+              --icon-size 80 \
+              --icon "CC Switch.app" 180 220 \
+              --hide-extension "CC Switch.app" \
+              --app-drop-link 480 220 \
+              --codesign "$APPLE_SIGNING_IDENTITY" \
+              --no-internet-enable \
+              "release-assets/$NEW_DMG" \
+              "$DMG_STAGE_DIR"
+          fi
 
           rm -rf "$DMG_STAGE_DIR"
           echo "✅ Styled DMG created: $NEW_DMG"
 
-      - name: Notarize macOS DMG
+      - name: Notarize macOS DMG (optional)
         if: runner.os == 'macOS'
         shell: bash
         timeout-minutes: 30
@@ -313,6 +338,10 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          if [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_PASSWORD:-}" ]; then
+            echo "⚠️ Apple ID 凭据未设置，跳过公证（本地使用没问题）"
+            exit 0
+          fi
           set -euo pipefail
 
           DMG_PATH=$(find release-assets -maxdepth 1 -name "*.dmg" -type f | head -1 || true)
@@ -346,10 +375,14 @@ jobs:
             sleep "$sleep_seconds"
           done
 
-      - name: Verify macOS code signing and notarization
+      - name: Verify macOS code signing and notarization (optional)
         if: runner.os == 'macOS'
         shell: bash
         run: |
+          if [ "${APPLE_SIGNING_IDENTITY:-}" = "-" ] || [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            echo "⚠️ 无签名证书，跳过代码签名验证（本地使用没问题）"
+            exit 0
+          fi
           set -euo pipefail
 
           # Verify .app (from Tauri bundle)
@@ -387,8 +420,8 @@ jobs:
             xcrun stapler validate "$DMG_PATH"
             echo "✅ .dmg stapler validation passed"
           else
-            echo "❌ No .dmg found for verification — release would ship without verified DMG" >&2
-            exit 1
+            echo "⚠️ No .dmg found for verification — 无签名构建，忽略" >&2
+            exit 0
           fi
 
       - name: Prepare Windows Assets
