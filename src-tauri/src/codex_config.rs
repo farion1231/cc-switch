@@ -1057,8 +1057,8 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
 pub fn normalize_codex_model_provider_id_if_configured(
     config_text: &str,
 ) -> Result<String, AppError> {
-    let target_id = crate::settings::force_codex_model_provider_id()
-        .filter(|t| !t.trim().is_empty());
+    let target_id =
+        crate::settings::force_codex_model_provider_id().filter(|t| !t.trim().is_empty());
     normalize_codex_model_provider_id_to(config_text, target_id.as_deref())
 }
 
@@ -1108,7 +1108,12 @@ fn normalize_codex_provider_id_to_impl(
         }
 
         // Rewrite top-level model_provider if it matches
-        if doc.get("model_provider").and_then(|v| v.as_str()).map(str::trim) == Some(old_id.as_str()) {
+        if doc
+            .get("model_provider")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            == Some(old_id.as_str())
+        {
             doc["model_provider"] = toml_edit::value(target_id);
         }
 
@@ -1132,10 +1137,7 @@ fn normalize_codex_provider_id_to_impl(
 
 /// Return every custom (non-reserved) model_provider ID referenced
 /// anywhere in the document whose value differs from `target_id`.
-fn collect_non_reserved_provider_ids(
-    doc: &DocumentMut,
-    target_id: &str,
-) -> Vec<String> {
+fn collect_non_reserved_provider_ids(doc: &DocumentMut, target_id: &str) -> Vec<String> {
     let mut ids: Vec<String> = Vec::new();
 
     let mut push_if_custom = |id: &str| {
@@ -1149,19 +1151,13 @@ fn collect_non_reserved_provider_ids(
         }
     };
 
-    if let Some(id) = doc
-        .get("model_provider")
-        .and_then(|v| v.as_str())
-    {
+    if let Some(id) = doc.get("model_provider").and_then(|v| v.as_str()) {
         push_if_custom(id);
     }
 
     if let Some(profiles) = doc.get("profiles").and_then(|v| v.as_table_like()) {
         for (_, profile) in profiles.iter() {
-            if let Some(id) = profile
-                .get("model_provider")
-                .and_then(|v| v.as_str())
-            {
+            if let Some(id) = profile.get("model_provider").and_then(|v| v.as_str()) {
                 push_if_custom(id);
             }
         }
@@ -1177,7 +1173,10 @@ fn rewrite_profile_provider_refs(
 ) {
     for (_, profile) in profiles.iter_mut() {
         if let Some(table) = profile.as_table_like_mut() {
-            if let Some((_key, value)) = table.get("model_provider").map(|v| ("model_provider", v.clone())) {
+            if let Some((_key, value)) = table
+                .get("model_provider")
+                .map(|v| ("model_provider", v.clone()))
+            {
                 if value.as_str().map(str::trim) == Some(old_id) {
                     table.insert("model_provider", toml_edit::value(new_id));
                 }
@@ -1209,7 +1208,8 @@ pub fn write_codex_live_for_provider(
     if should_write_auth {
         write_codex_live_atomic(auth, config_text.as_deref())
     } else {
-        let live_config = prepare_codex_provider_live_config(auth, config_text.as_deref().unwrap_or(""))?;
+        let live_config =
+            prepare_codex_provider_live_config(auth, config_text.as_deref().unwrap_or(""))?;
         write_codex_live_config_atomic(Some(&live_config))
     }
 }
@@ -2307,7 +2307,10 @@ wire_api = "responses"
 model = "gpt-5.5"
 "#;
         let result = normalize_codex_model_provider_id_to(input, Some("   ")).unwrap();
-        assert_eq!(result, input, "whitespace-only target should return input unchanged");
+        assert_eq!(
+            result, input,
+            "whitespace-only target should return input unchanged"
+        );
     }
 
     #[test]
@@ -2319,7 +2322,10 @@ model = "gpt-5.5"
 name = "OpenAI"
 "#;
         let result = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap();
-        assert_eq!(result, input, "reserved provider ID should not be rewritten");
+        assert_eq!(
+            result, input,
+            "reserved provider ID should not be rewritten"
+        );
     }
 
     #[test]

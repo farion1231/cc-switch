@@ -845,7 +845,10 @@ pub fn preserve_codex_official_auth_on_switch() -> bool {
 /// keeping chat history in a single bucket.  When `None` (default), the
 /// original provider ID is preserved.
 pub fn force_codex_model_provider_id() -> Option<String> {
-    settings_store().read().map(|s| s.force_codex_model_provider_id.clone()).unwrap_or(None)
+    settings_store()
+        .read()
+        .map(|s| s.force_codex_model_provider_id.clone())
+        .unwrap_or(None)
 }
 
 // ===== 当前供应商管理函数 =====
