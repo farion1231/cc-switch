@@ -49,6 +49,10 @@ async function request<T>(
   if (options.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
+  const token = webUiToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
 
   const response = await fetch(`${webUiBaseUrl()}${path}`, {
     ...options,
@@ -171,6 +175,13 @@ export async function invokeCommand<T = unknown>(
     case "get_request_logs":
     case "get_request_detail":
     case "get_model_pricing":
+    case "queryProviderUsage":
+    case "testUsageScript":
+    case "update_model_pricing":
+    case "delete_model_pricing":
+    case "check_provider_limits":
+    case "sync_session_usage":
+    case "get_usage_data_sources":
       return post<T>(`/api/usage/${command}`, args);
 
     case "get_universal_providers":

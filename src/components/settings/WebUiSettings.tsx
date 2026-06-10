@@ -249,7 +249,9 @@ export function WebUiSettings({ settings, onChange }: WebUiSettingsProps) {
         })}
         checked={requirePassword}
         onCheckedChange={(checked) => {
-          if (!checked) {
+          if (checked) {
+            onChange({ webuiToken: "" });
+          } else {
             onChange({ webuiToken: undefined });
           }
         }}
