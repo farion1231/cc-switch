@@ -19,7 +19,9 @@ use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
     get_sync_state, metadata_modified_nanos, update_sync_state, SessionSyncResult,
 };
-use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
+use crate::services::usage_stats::{
+    find_model_pricing, should_skip_session_insert_with_proxy_dedup, DedupKey,
+};
 use rust_decimal::Decimal;
 use std::fs;
 use std::time::SystemTime;
@@ -339,7 +341,7 @@ fn insert_opencode_message(
         cache_creation_tokens: msg.cache_write_tokens,
         created_at,
     };
-    if should_skip_session_insert(&conn, request_id, &dedup_key)? {
+    if should_skip_session_insert_with_proxy_dedup(&conn, request_id, &dedup_key, true)? {
         return Ok(false);
     }
 
