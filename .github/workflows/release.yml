@@ -99,15 +99,7 @@ jobs:
         run: |
           # 调试：检查 Secret 是否存在
           if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
-            echo "⚠️ TAURI_SIGNING_PRIVATE_KEY 未设置，生成临时签名密钥（仅用于构建，不用于正式签名）" >&2
-            # 生成一个临时 Tauri 签名密钥 (ed25519)
-            KEY_PATH="$RUNNER_TEMP/tauri_signing.key"
-            openssl genpkey -algorithm ed25519 -outform PEM 2>/dev/null | tail -1 > "$KEY_PATH"
-            # 加上 untrusted comment 头
-            { echo 'untrusted comment: tauri signing key'; cat "$KEY_PATH"; } > "${KEY_PATH}.tmp"
-            mv "${KEY_PATH}.tmp" "$KEY_PATH"
-            KEY_B64=$(base64 < "$KEY_PATH" | tr -d '\r\n')
-            echo "TAURI_SIGNING_PRIVATE_KEY=$KEY_B64" >> "$GITHUB_ENV"
+            echo "⚠️ TAURI_SIGNING_PRIVATE_KEY 未设置，跳过签名" >&2
             exit 0
           fi
           
