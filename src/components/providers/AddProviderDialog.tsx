@@ -12,6 +12,7 @@ import {
   ProviderForm,
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
+import { AuthSettingsPanel } from "@/components/providers/AuthSettingsPanel";
 import { UniversalProviderFormModal } from "@/components/universal/UniversalProviderFormModal";
 import { UniversalProviderPanel } from "@/components/universal";
 import { providerPresets } from "@/config/claudeProviderPresets";
@@ -21,6 +22,7 @@ import { claudeDesktopProviderPresets } from "@/config/claudeDesktopProviderPres
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
+import type { ManagedAuthProvider } from "@/lib/api";
 
 interface AddProviderDialogProps {
   open: boolean;
@@ -55,6 +57,21 @@ export function AddProviderDialog({
   const [selectedUniversalPreset, setSelectedUniversalPreset] =
     useState<UniversalProviderPreset | null>(null);
   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
+  const [authSettingsTarget, setAuthSettingsTarget] =
+    useState<ManagedAuthProvider | null>(null);
+
+  const closeDialog = useCallback(() => {
+    setAuthSettingsTarget(null);
+    onOpenChange(false);
+  }, [onOpenChange]);
+
+  const handlePanelClose = useCallback(() => {
+    if (authSettingsTarget) {
+      setAuthSettingsTarget(null);
+      return;
+    }
+    closeDialog();
+  }, [authSettingsTarget, closeDialog]);
 
   const handleUniversalProviderSave = useCallback(
     async (provider: UniversalProvider) => {
@@ -272,9 +289,9 @@ export function AddProviderDialog({
       }
 
       await onSubmit(providerData);
-      onOpenChange(false);
+      closeDialog();
     },
-    [appId, onSubmit, onOpenChange],
+    [appId, onSubmit, closeDialog],
   );
 
   const footer =
@@ -282,7 +299,7 @@ export function AddProviderDialog({
       <>
         <Button
           variant="outline"
-          onClick={() => onOpenChange(false)}
+          onClick={closeDialog}
           className="border-border/20 hover:bg-accent hover:text-accent-foreground"
         >
           {t("common.cancel")}
@@ -301,7 +318,7 @@ export function AddProviderDialog({
       <>
         <Button
           variant="outline"
-          onClick={() => onOpenChange(false)}
+          onClick={closeDialog}
           className="border-border/20 hover:bg-accent hover:text-accent-foreground"
         >
           {t("common.cancel")}
@@ -320,7 +337,7 @@ export function AddProviderDialog({
     <FullScreenPanel
       isOpen={open}
       title={t("provider.addNewProvider")}
-      onClose={() => onOpenChange(false)}
+      onClose={handlePanelClose}
       footer={footer}
     >
       {showUniversalTab ? (
@@ -342,7 +359,8 @@ export function AddProviderDialog({
               appId={appId}
               submitLabel={t("common.add")}
               onSubmit={handleSubmit}
-              onCancel={() => onOpenChange(false)}
+              onCancel={closeDialog}
+              onManageAuthAccounts={setAuthSettingsTarget}
               onSubmittingChange={setIsFormSubmitting}
               showButtons={false}
             />
@@ -358,7 +376,8 @@ export function AddProviderDialog({
           appId={appId}
           submitLabel={t("common.add")}
           onSubmit={handleSubmit}
-          onCancel={() => onOpenChange(false)}
+          onCancel={closeDialog}
+          onManageAuthAccounts={setAuthSettingsTarget}
           onSubmittingChange={setIsFormSubmitting}
           showButtons={false}
         />
@@ -372,6 +391,11 @@ export function AddProviderDialog({
           initialPreset={selectedUniversalPreset}
         />
       )}
+
+      <AuthSettingsPanel
+        target={authSettingsTarget}
+        onClose={() => setAuthSettingsTarget(null)}
+      />
     </FullScreenPanel>
   );
 }

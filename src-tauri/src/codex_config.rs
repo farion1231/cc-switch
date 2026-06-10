@@ -6,7 +6,9 @@ use crate::config::{
     write_json_file, write_text_file,
 };
 use crate::error::AppError;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::process::Command;
 use toml_edit::DocumentMut;
@@ -14,6 +16,14 @@ use toml_edit::DocumentMut;
 pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
 const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
+const CODEX_MANAGED_OAUTH_LIVE_AUTH_MARKER_FILENAME: &str = "codex_managed_oauth_live_auth.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CodexManagedOAuthLiveAuthMarker {
+    version: u32,
+    account_id: String,
+    access_token_sha256: String,
+}
 
 /// Reserved built-in provider IDs from OpenAI Codex's config/model-provider
 /// catalog. Keep in sync with Codex `RESERVED_MODEL_PROVIDER_IDS` and legacy
@@ -39,6 +49,121 @@ pub fn get_codex_config_dir() -> PathBuf {
 /// 获取 Codex auth.json 路径
 pub fn get_codex_auth_path() -> PathBuf {
     get_codex_config_dir().join("auth.json")
+}
+
+fn get_codex_managed_oauth_live_auth_marker_path() -> PathBuf {
+    crate::config::get_app_config_dir().join(CODEX_MANAGED_OAUTH_LIVE_AUTH_MARKER_FILENAME)
+}
+
+fn sha256_hex(text: &str) -> String {
+    let digest = Sha256::digest(text.as_bytes());
+    digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+}
+
+fn extract_codex_managed_oauth_auth(auth: &Value) -> Option<(String, String)> {
+    let auth_obj = auth.as_object()?;
+
+    if auth_obj
+        .keys()
+        .any(|key| !matches!(key.as_str(), "auth_mode" | "OPENAI_API_KEY" | "tokens"))
+    {
+        return None;
+    }
+
+    if auth.get("auth_mode").and_then(|value| value.as_str()) != Some("chatgpt") {
+        return None;
+    }
+
+    let api_key_is_clearable = auth
+        .get("OPENAI_API_KEY")
+        .is_none_or(|value| value.is_null() || value.as_str() == Some("PROXY_MANAGED"));
+    if !api_key_is_clearable {
+        return None;
+    }
+
+    let tokens = auth.get("tokens").and_then(|value| value.as_object())?;
+
+    if tokens
+        .keys()
+        .any(|key| !matches!(key.as_str(), "access_token" | "account_id"))
+    {
+        return None;
+    }
+
+    let account_id = tokens
+        .get("account_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())?;
+    let access_token = tokens
+        .get("access_token")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|token| !token.is_empty())?;
+
+    Some((account_id.to_string(), access_token.to_string()))
+}
+
+pub fn record_codex_managed_oauth_live_auth(auth: &Value) -> Result<(), AppError> {
+    let Some((account_id, access_token)) = extract_codex_managed_oauth_auth(auth) else {
+        return Ok(());
+    };
+
+    let marker = CodexManagedOAuthLiveAuthMarker {
+        version: 1,
+        account_id,
+        access_token_sha256: sha256_hex(&access_token),
+    };
+    crate::config::write_json_file(&get_codex_managed_oauth_live_auth_marker_path(), &marker)
+}
+
+pub fn codex_auth_matches_recorded_managed_oauth(
+    auth: &Value,
+    account_id: &str,
+) -> Result<bool, AppError> {
+    let account_id = account_id.trim();
+    if account_id.is_empty() {
+        return Ok(false);
+    }
+
+    let Some((auth_account_id, access_token)) = extract_codex_managed_oauth_auth(auth) else {
+        return Ok(false);
+    };
+    if auth_account_id != account_id {
+        return Ok(false);
+    }
+
+    let marker_path = get_codex_managed_oauth_live_auth_marker_path();
+    let marker: CodexManagedOAuthLiveAuthMarker = match read_json_file(&marker_path) {
+        Ok(marker) => marker,
+        Err(err) => {
+            log::warn!(
+                "Failed to read Codex managed OAuth auth marker at {}: {err}",
+                marker_path.display()
+            );
+            return Ok(false);
+        }
+    };
+
+    Ok(marker.version == 1
+        && marker.account_id == account_id
+        && marker.access_token_sha256 == sha256_hex(&access_token))
+}
+
+pub fn clear_codex_live_auth_for_managed_account(account_id: &str) -> Result<(), AppError> {
+    let auth_path = get_codex_auth_path();
+    if auth_path.exists() {
+        let auth = read_json_file(&auth_path)?;
+        if !codex_auth_matches_recorded_managed_oauth(&auth, account_id)? {
+            return Ok(());
+        }
+        delete_file(&auth_path)?;
+        let _ = delete_file(&get_codex_managed_oauth_live_auth_marker_path());
+    }
+    Ok(())
 }
 
 /// 获取 Codex config.toml 路径
@@ -1253,6 +1378,36 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
 mod tests {
     use super::*;
     use serde_json::json;
+    use serial_test::serial;
+    use std::env;
+
+    struct TempHome {
+        #[allow(dead_code)]
+        dir: tempfile::TempDir,
+        original_test_home: Option<String>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().expect("create temp home");
+            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
+            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+
+            Self {
+                dir,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            match &self.original_test_home {
+                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
 
     #[test]
     fn prepare_provider_live_config_rejects_key_without_config() {
@@ -1262,6 +1417,47 @@ mod tests {
         assert!(
             err.to_string().contains("config.toml"),
             "error should explain missing config.toml, got: {err}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn recorded_managed_oauth_marker_matches_only_same_account_and_token() {
+        let _home = TempHome::new();
+        let managed_auth = json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": {
+                "access_token": "managed-token",
+                "account_id": "acct-managed"
+            }
+        });
+        let same_account_native_auth = json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": {
+                "access_token": "native-token",
+                "account_id": "acct-managed"
+            }
+        });
+
+        assert!(
+            !codex_auth_matches_recorded_managed_oauth(&managed_auth, "acct-managed")
+                .expect("marker check before record"),
+            "without a cc-switch marker, OAuth-shaped auth must not be treated as managed"
+        );
+
+        record_codex_managed_oauth_live_auth(&managed_auth).expect("record marker");
+
+        assert!(
+            codex_auth_matches_recorded_managed_oauth(&managed_auth, "acct-managed")
+                .expect("marker should match"),
+            "the recorded managed token should be clearable"
+        );
+        assert!(
+            !codex_auth_matches_recorded_managed_oauth(&same_account_native_auth, "acct-managed")
+                .expect("same-account native token should not match"),
+            "a later native login for the same account must not be cleared"
         );
     }
 

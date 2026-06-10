@@ -695,6 +695,31 @@ impl CodexOAuthManager {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) async fn add_test_account_with_access_token(
+        &self,
+        account_id: &str,
+        access_token: &str,
+    ) -> Result<(), CodexOAuthError> {
+        self.add_account_internal(
+            account_id.to_string(),
+            "test-refresh-token".to_string(),
+            Some(format!("{account_id}@example.test")),
+        )
+        .await?;
+
+        let mut tokens = self.access_tokens.write().await;
+        tokens.insert(
+            account_id.to_string(),
+            CachedAccessToken {
+                token: access_token.to_string(),
+                expires_at_ms: chrono::Utc::now().timestamp_millis() + 3_600_000,
+            },
+        );
+
+        Ok(())
+    }
+
     // ==================== 内部方法 ====================
 
     async fn add_account_internal(
