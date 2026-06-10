@@ -408,6 +408,39 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "CCSub",
+    websiteUrl: "https://www.ccsub.net",
+    apiKeyUrl: "https://www.ccsub.net/register?ref=Y6Z8DXEA",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "CCSub",
+      options: {
+        baseURL: "https://www.ccsub.net/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-4-8": { name: "Claude Opus 4.8" },
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "gpt-5.5": { name: "GPT-5.5" },
+        o3: { name: "o3" },
+        "gemini-3.1-pro": { name: "Gemini 3.1 Pro" },
+        "deepseek-v4-flash": { name: "DeepSeek V4 Flash" },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ccsub",
+    icon: "ccsub",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "DeepSeek",
     websiteUrl: "https://platform.deepseek.com",
     apiKeyUrl: "https://platform.deepseek.com/api_keys",
@@ -533,8 +566,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "Kimi k2.6",
-    websiteUrl: "https://platform.moonshot.cn/console",
-    apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
+    websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
+    apiKeyUrl: "https://platform.moonshot.cn/console/api-keys?aff=cc-switch",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "Kimi k2.6",
@@ -566,8 +599,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "Kimi For Coding",
-    websiteUrl: "https://www.kimi.com/code/docs/",
-    apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
+    websiteUrl: "https://www.kimi.com/code/docs/?aff=cc-switch",
+    apiKeyUrl: "https://platform.moonshot.cn/console/api-keys?aff=cc-switch",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "Kimi For Coding",
