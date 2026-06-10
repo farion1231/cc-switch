@@ -893,7 +893,7 @@ pub fn run() {
             app.manage(app_state);
 
             // WebUI server - use settings (with env var override for backward compat)
-            let webui_server = Arc::new(crate::webui::WebUiServer::new(webui_state));
+            let webui_server = Arc::new(crate::webui::WebUiServer::new(webui_state, app.handle().clone()));
             app.manage(webui_server.clone());
 
             // Determine if WebUI should auto-start:
@@ -906,17 +906,12 @@ pub fn run() {
             };
 
             if should_start {
-                std::thread::spawn(move || {
-                    let rt = tokio::runtime::Runtime::new()
-                        .expect("WebUI tokio runtime");
-                    rt.block_on(async move {
-                        match webui_server.start_from_settings().await {
-                            Ok(addr) => log::info!("WebUI server listening on http://{addr}"),
-                            Err(e) => log::error!("WebUI server failed to start: {e}"),
-                        }
-                        // Block forever to keep the runtime alive
-                        futures::future::pending::<()>().await;
-                    });
+                let webui_server_clone = webui_server.clone();
+                tauri::async_runtime::spawn(async move {
+                    match webui_server_clone.start_from_settings().await {
+                        Ok(addr) => log::info!("WebUI server listening on http://{addr}"),
+                        Err(e) => log::error!("WebUI server failed to start: {e}"),
+                    }
                 });
             }
 

@@ -715,6 +715,9 @@ pub fn get_settings_for_frontend() -> AppSettings {
     if let Some(s3) = &mut settings.s3_sync {
         s3.secret_access_key.clear();
     }
+    if let Some(token) = &mut settings.webui_token {
+        token.clear();
+    }
     settings.webdav_backup = None;
     settings
 }

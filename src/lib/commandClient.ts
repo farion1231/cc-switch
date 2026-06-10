@@ -37,11 +37,8 @@ function webUiBaseUrl(): string {
   if (configured) return configured.replace(/\/$/, "");
 
   if (typeof window === "undefined") return "http://127.0.0.1:15722";
-  if (window.location.port === "15722") return window.location.origin;
-
-  const protocol = window.location.protocol || "http:";
-  const hostname = window.location.hostname || "127.0.0.1";
-  return `${protocol}//${hostname}:15722`;
+  const { protocol, hostname, port } = window.location;
+  return `${protocol}//${hostname}${port ? `:${port}` : ""}`;
 }
 
 async function request<T>(
@@ -52,14 +49,11 @@ async function request<T>(
   if (options.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const token = webUiToken();
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
 
   const response = await fetch(`${webUiBaseUrl()}${path}`, {
     ...options,
     headers,
+    credentials: "include",
   });
 
   const text = await response.text();
@@ -178,6 +172,17 @@ export async function invokeCommand<T = unknown>(
     case "get_request_detail":
     case "get_model_pricing":
       return post<T>(`/api/usage/${command}`, args);
+
+    case "get_universal_providers":
+      return request<T>("/api/universal-providers");
+    case "get_universal_provider":
+      return request<T>(`/api/universal-providers/get?id=${encodeURIComponent(String(args.id))}`);
+    case "upsert_universal_provider":
+      return post<T>("/api/universal-providers/upsert", args);
+    case "delete_universal_provider":
+      return post<T>("/api/universal-providers/delete", args);
+    case "sync_universal_provider":
+      return post<T>("/api/universal-providers/sync", args);
 
     case "get_webui_status":
       return request<T>("/api/webui/status");
