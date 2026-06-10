@@ -5311,8 +5311,10 @@ command = "shared-command"
         )
         .expect("set common config snippet");
 
-        let mut proxy_config = ProxyConfig::default();
-        proxy_config.listen_port = 0;
+        let proxy_config = ProxyConfig {
+            listen_port: 0,
+            ..ProxyConfig::default()
+        };
         db.update_proxy_config(proxy_config)
             .await
             .expect("set test proxy config");
@@ -5449,8 +5451,10 @@ requires_openai_auth = true
         let db = Arc::new(Database::memory().expect("init db"));
         let state = crate::store::AppState::new(db.clone());
 
-        let mut proxy_config = ProxyConfig::default();
-        proxy_config.listen_port = 0;
+        let proxy_config = ProxyConfig {
+            listen_port: 0,
+            ..ProxyConfig::default()
+        };
         db.update_proxy_config(proxy_config)
             .await
             .expect("set test proxy config");
@@ -5602,8 +5606,12 @@ requires_openai_auth = true
             restored.contains("model_catalog_json"),
             "restore must preserve the model_catalog_json pointer, got:\n{restored}"
         );
-        assert!(
-            restored.contains(pointer.as_str()),
+        let restored_doc: toml::Value = toml::from_str(&restored).expect("parse restored config");
+        assert_eq!(
+            restored_doc
+                .get("model_catalog_json")
+                .and_then(|value| value.as_str()),
+            Some(pointer.as_str()),
             "restored pointer must still reference the cc-switch generated catalog file"
         );
     }

@@ -4,6 +4,7 @@ import type {
   WebDavSyncSettings,
   S3SyncSettings,
   RemoteSnapshotInfo,
+  ManagementApiSettings,
 } from "@/types";
 import type { AppId } from "./types";
 
@@ -278,6 +279,65 @@ export const settingsApi = {
   async setLogConfig(config: LogConfig): Promise<boolean> {
     return await invoke("set_log_config", { config });
   },
+
+  async getManagementApiStatus(): Promise<ManagementApiStatus> {
+    return await invoke("get_management_api_status");
+  },
+
+  async startManagementApi(): Promise<ManagementApiStatus> {
+    return await invoke("start_management_api");
+  },
+
+  async stopManagementApi(): Promise<ManagementApiStatus> {
+    return await invoke("stop_management_api");
+  },
+
+  async restartManagementApi(): Promise<ManagementApiStatus> {
+    return await invoke("restart_management_api");
+  },
+
+  async listManagementApiTokens(): Promise<ApiTokenRecord[]> {
+    return await invoke("list_management_api_tokens");
+  },
+
+  async createManagementApiToken(
+    request: CreateApiTokenRequest,
+  ): Promise<CreateApiTokenResponse> {
+    return await invoke("create_management_api_token", { request });
+  },
+
+  async revokeManagementApiToken(id: string): Promise<boolean> {
+    return await invoke("revoke_management_api_token", { id });
+  },
+
+  async listManagementApiPairingSessions(
+    includeConsumed = false,
+  ): Promise<ApiPairingSessionRecord[]> {
+    return await invoke("list_management_api_pairing_sessions", {
+      includeConsumed,
+    });
+  },
+
+  async approveManagementApiPairing(params: {
+    pairingId: string;
+    name: string;
+    scopes: string[];
+    expiresAt?: number | null;
+  }): Promise<ApiTokenRecord> {
+    return await invoke("approve_management_api_pairing", params);
+  },
+
+  async rejectManagementApiPairing(pairingId: string): Promise<boolean> {
+    return await invoke("reject_management_api_pairing", { pairingId });
+  },
+
+  async listManagementApiAuditLogs(limit = 100): Promise<ApiAuditLogRecord[]> {
+    return await invoke("list_management_api_audit_logs", { limit });
+  },
+
+  async clearManagementApiAuditLogs(): Promise<number> {
+    return await invoke("clear_management_api_audit_logs");
+  },
 };
 
 /** 单处工具安装的诊断信息（多处安装冲突检测）。字段对应后端 ToolInstallation。 */
@@ -319,6 +379,66 @@ export interface LogConfig {
   enabled: boolean;
   level: "error" | "warn" | "info" | "debug" | "trace";
 }
+
+export interface ManagementApiStatus {
+  enabled: boolean;
+  running: boolean;
+  address: string;
+  port: number;
+  baseUrl: string;
+  lanEnabled: boolean;
+  tlsEnabled: boolean;
+  tokenCount: number;
+  startedAt?: string | null;
+}
+
+export interface ApiTokenRecord {
+  id: string;
+  name: string;
+  scopes: string[];
+  createdAt: number;
+  expiresAt?: number | null;
+  lastUsedAt?: number | null;
+  revokedAt?: number | null;
+  source?: string | null;
+}
+
+export interface ApiPairingSessionRecord {
+  id: string;
+  clientName: string;
+  requestedScopes: string[];
+  approvedScopes?: string[] | null;
+  status: string;
+  createdAt: number;
+  expiresAt: number;
+  approvedTokenId?: string | null;
+  tokenDeliveredAt?: number | null;
+}
+
+export interface ApiAuditLogRecord {
+  id: number;
+  tokenId?: string | null;
+  scope?: string | null;
+  method: string;
+  path: string;
+  status: number;
+  requestId: string;
+  remoteIp?: string | null;
+  createdAt: number;
+}
+
+export interface CreateApiTokenRequest {
+  name: string;
+  scopes: string[];
+  expiresAt?: number | null;
+}
+
+export interface CreateApiTokenResponse {
+  token: string;
+  record: ApiTokenRecord;
+}
+
+export type { ManagementApiSettings };
 
 export interface BackupEntry {
   filename: string;

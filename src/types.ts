@@ -422,6 +422,20 @@ export interface Settings {
       migratedStateRows?: number;
     };
   };
+
+  managementApi?: ManagementApiSettings;
+}
+
+export interface ManagementApiSettings {
+  enabled: boolean;
+  listenAddress: string;
+  port: number;
+  lanEnabled: boolean;
+  allowedCidrs: string[];
+  corsOrigins: string[];
+  tlsEnabled: boolean;
+  certificateFingerprint?: string | null;
+  pairingEnabled: boolean;
 }
 
 export interface SessionMeta {
