@@ -105,63 +105,6 @@ pub struct HermesModelConfig {
 /// 读取 Hermes 配置文件为 serde_yaml::Value
 ///
 /// 如果文件不存在，返回空 Mapping
-/// Remove duplicate top-level YAML keys, keeping only the first occurrence.
-/// Each top-level key line is tracked; subsequent sections with the same key
-/// are removed. This is a safety net against accidental duplicates that would
-/// otherwise cause serde_yaml to fail with "duplicate entry" errors.
-fn deduplicate_top_level_keys(raw: &str) -> String {
-    use std::collections::HashSet;
-
-    let mut seen: HashSet<&str> = HashSet::new();
-    let mut result = String::with_capacity(raw.len());
-    let mut skip_until_next_key = false;
-    let mut dup_key: Option<String> = None;
-
-    for line in raw.split_inclusive('\n') {
-        if skip_until_next_key {
-            // Check if this line starts a new top-level key
-            if is_top_level_key_line(line) {
-                skip_until_next_key = false;
-                // Process this line normally (check for duplicate)
-                if let Some(first_colon) = line.find(':') {
-                    let key = &line[..first_colon];
-                    if seen.contains(key) {
-                        // Another duplicate, stay in skip mode
-                        dup_key = Some(key.to_string());
-                        continue;
-                    } else {
-                        seen.insert(key);
-                    }
-                }
-                result.push_str(line);
-            }
-            // else: still in skip mode, discard this line
-            continue;
-        }
-
-        if is_top_level_key_line(line) {
-            if let Some(first_colon) = line.find(':') {
-                let key = &line[..first_colon];
-                if seen.contains(key) {
-                    // Duplicate top-level key found — skip this section
-                    skip_until_next_key = true;
-                    dup_key = Some(key.to_string());
-                    log::warn!(
-                        "Hermes config: removed duplicate top-level section '{}'",
-                        key
-                    );
-                    continue;
-                }
-                seen.insert(key);
-            }
-        }
-
-        result.push_str(line);
-    }
-
-    result
-}
-
 pub fn read_hermes_config() -> Result<serde_yaml::Value, AppError> {
     let path = get_hermes_config_path();
     if !path.exists() {
@@ -173,12 +116,74 @@ pub fn read_hermes_config() -> Result<serde_yaml::Value, AppError> {
         return Ok(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
     }
 
-    // Deduplicate top-level YAML keys to handle accidental duplicates
-    // (e.g. from a prior write bug). Keep the first occurrence, discard later ones.
+    // Heal duplicate top-level keys left behind by the pre-CRLF-fix append
+    // bug (#3633); serde_yaml rejects them outright, which bricked the panel.
     let deduped = deduplicate_top_level_keys(&content);
 
     serde_yaml::from_str(&deduped)
         .map_err(|e| AppError::Config(format!("Failed to parse Hermes config as YAML: {e}")))
+}
+
+/// Remove duplicate top-level YAML sections, keeping the LAST occurrence of
+/// each key.
+///
+/// Keep-last is deliberate, not arbitrary: the duplicates come from section
+/// replacement degrading into appends (#3633), so the last block is the
+/// newest data — and Hermes itself reads the file with PyYAML, whose
+/// duplicate-key semantics are last-wins. Keeping the first occurrence would
+/// silently roll the user back to stale config and diverge from what Hermes
+/// actually runs with.
+fn deduplicate_top_level_keys(raw: &str) -> String {
+    use std::collections::HashMap;
+
+    // Pass 1: locate every top-level key line as (key, byte offset).
+    let mut sections: Vec<(&str, usize)> = Vec::new();
+    let mut offset = 0;
+    for line in raw.split('\n') {
+        if is_top_level_key_line(line) {
+            if let Some(colon_pos) = line.find(':') {
+                sections.push((&line[..colon_pos], offset));
+            }
+        }
+        offset += line.len() + 1;
+    }
+
+    let mut remaining: HashMap<&str, usize> = HashMap::new();
+    for (key, _) in &sections {
+        *remaining.entry(key).or_insert(0) += 1;
+    }
+    if remaining.values().all(|&count| count <= 1) {
+        return raw.to_string();
+    }
+
+    // Pass 2: re-emit, dropping every section that has a later occurrence of
+    // the same key. A section spans from its key line to the next top-level
+    // key line (or EOF), matching find_yaml_section_range. Content before the
+    // first section (comments, document markers) is always kept.
+    let mut result = String::with_capacity(raw.len());
+    let head_end = sections
+        .first()
+        .map(|&(_, start)| start)
+        .unwrap_or(raw.len());
+    result.push_str(&raw[..head_end]);
+
+    for (i, &(key, start)) in sections.iter().enumerate() {
+        let end = sections
+            .get(i + 1)
+            .map(|&(_, next_start)| next_start)
+            .unwrap_or(raw.len());
+        let count = remaining.get_mut(key).expect("key collected in pass 1");
+        *count -= 1;
+        if *count > 0 {
+            log::warn!(
+                "Hermes config: dropped duplicate top-level section '{key}' (keeping the last occurrence)"
+            );
+            continue;
+        }
+        result.push_str(&raw[start..end]);
+    }
+
+    result
 }
 
 // ============================================================================
@@ -193,6 +198,11 @@ pub fn read_hermes_config() -> Result<serde_yaml::Value, AppError> {
 /// - Not be a comment (starting with `#`)
 /// - Not be a sequence item (starting with `-`)
 /// - Contain `:` followed by space, tab, newline, or end-of-line
+///
+/// Lines may carry a trailing `\r` (CRLF files split on `\n`) or `\n`
+/// (callers using `split_inclusive`); both count as end-of-line after the
+/// colon. Rejecting `\r` here used to make every section lookup miss on
+/// CRLF configs, turning section replacement into endless appends (#3633).
 fn is_top_level_key_line(line: &str) -> bool {
     if line.is_empty() {
         return false;
@@ -203,11 +213,7 @@ fn is_top_level_key_line(line: &str) -> bool {
     }
     if let Some(colon_pos) = line.find(':') {
         let after_colon = &line[colon_pos + 1..];
-        after_colon.is_empty()
-            || after_colon.starts_with(' ')
-            || after_colon.starts_with('\t')
-            || after_colon.starts_with('\r')
-            || after_colon.starts_with('\n')
+        after_colon.is_empty() || after_colon.starts_with([' ', '\t', '\r', '\n'])
     } else {
         false
     }
@@ -261,22 +267,18 @@ fn serialize_yaml_section(key: &str, value: &serde_yaml::Value) -> Result<String
     Ok(yaml_str)
 }
 
-/// Remove all top-level sections with the given key from raw YAML text.
-/// Used to clean up duplicate sections after replacing the primary occurrence.
+/// Remove every top-level section with the given key from raw YAML text.
+/// Used to clean residual duplicates of a key after replacing its first
+/// occurrence; safe values come from the keep-last healed read, so dropping
+/// all on-disk copies here loses nothing.
 fn remove_all_sections(raw: &str, section_key: &str) -> String {
     let mut result = String::with_capacity(raw.len());
-    let mut pos = 0;
-
-    while let Some((start, end)) = find_yaml_section_range(&raw[pos..], section_key) {
-        // Copy content before this occurrence
-        result.push_str(&raw[pos..pos + start]);
-        // Skip the section itself
-        pos += end;
+    let mut rest = raw;
+    while let Some((start, end)) = find_yaml_section_range(rest, section_key) {
+        result.push_str(&rest[..start]);
+        rest = &rest[end..];
     }
-
-    // Copy remaining content
-    result.push_str(&raw[pos..]);
-
+    result.push_str(rest);
     result
 }
 
@@ -292,25 +294,14 @@ fn replace_yaml_section(
         let mut result = String::with_capacity(raw.len());
         result.push_str(&raw[..start]);
         result.push_str(&serialized);
-
-        // Remove duplicate sections with the same key from the remainder
-        let remainder = &raw[end..];
-        let cleaned = remove_all_sections(remainder, section_key);
-        let cleaned_trimmed = cleaned.trim_start_matches(|c: char| c == '\n' || c == '\r');
-        let trimmed_count = cleaned.len() - cleaned_trimmed.len();
-
-        if !cleaned_trimmed.is_empty() {
-            if !serialized.ends_with('\n') {
-                result.push('\n');
-            }
-            // Preserve at most one blank line before the next section
-            if trimmed_count > 1 {
-                result.push('\n');
-            }
-            result.push_str(cleaned_trimmed);
-        } else if !serialized.ends_with('\n') {
+        // Drop duplicate sections of this key from the remainder — configs
+        // written before the CRLF fix may carry several appended copies.
+        let remainder = remove_all_sections(&raw[end..], section_key);
+        // Ensure proper separation between sections
+        if !serialized.ends_with('\n') && !remainder.is_empty() && !remainder.starts_with('\n') {
             result.push('\n');
         }
+        result.push_str(&remainder);
         Ok(result)
     } else {
         // Section not found — append at end
@@ -1301,45 +1292,95 @@ model:
         assert!(!section.starts_with("model_extra:"));
     }
 
+    #[test]
+    fn find_section_handles_crlf() {
+        // Regression for #3633: CRLF line endings must not hide sections.
+        let yaml = "model:\r\n  default: gpt-4\r\nagent:\r\n  max_turns: 10\r\n";
+        let (start, end) = find_yaml_section_range(yaml, "model").unwrap();
+        let section = &yaml[start..end];
+        assert!(section.starts_with("model:"));
+        assert!(section.contains("default: gpt-4"));
+        assert!(!section.contains("agent:"));
+    }
+
     // ---- deduplicate_top_level_keys tests ----
 
     #[test]
-    fn dedup_removes_duplicate_top_level_keys_lf() {
+    fn dedup_keeps_last_occurrence() {
+        // Duplicates come from replace-degraded-to-append, so the last block
+        // is the newest data and must win (PyYAML last-wins, like Hermes).
         let yaml = "\
 model:
   default: gpt-4
-mcp_servers:
-  - name: foo
+agent:
+  max_turns: 10
 model:
-  default: claude
+  default: claude-opus-4-8
 ";
         let result = deduplicate_top_level_keys(yaml);
-        // "model:" should appear exactly once
-        let count = result.lines().filter(|l| l.trim() == "model:").count();
-        assert_eq!(count, 1, "duplicate model: section was not removed");
-        assert!(result.contains("mcp_servers:"));
+        assert_eq!(
+            result.lines().filter(|l| *l == "model:").count(),
+            1,
+            "duplicate model: section was not removed"
+        );
+        assert!(result.contains("claude-opus-4-8"));
+        assert!(!result.contains("gpt-4"));
+        assert!(result.contains("max_turns"));
     }
 
     #[test]
-    fn dedup_removes_duplicate_top_level_keys_crlf() {
-        // Simulate Windows CRLF content as read by fs::read_to_string
+    fn dedup_handles_crlf() {
+        let yaml = "model:\r\n  default: gpt-4\r\nagent:\r\n  max_turns: 10\r\nmodel:\r\n  default: claude\r\n";
+        let result = deduplicate_top_level_keys(yaml);
+        assert_eq!(result.lines().filter(|l| l.trim() == "model:").count(), 1);
+        assert!(result.contains("default: claude"));
+        assert!(!result.contains("gpt-4"));
+    }
+
+    #[test]
+    fn dedup_is_identity_without_duplicates() {
         let yaml = "\
-model:\r
-  default: gpt-4\r
-mcp_servers:\r
-  - name: foo\r
-model:\r
-  default: claude\r
+# Hermes config
+model:
+  default: gpt-4
+
+agent:
+  max_turns: 10
 ";
-        let result = deduplicate_top_level_keys(yaml);
-        // "model:" should appear exactly once (the key line itself)
-        let count = result.lines().filter(|l| l.trim() == "model:").count();
-        assert_eq!(count, 1, "duplicate model: section was not removed for CRLF");
-        assert!(result.contains("mcp_servers:"));
+        assert_eq!(deduplicate_top_level_keys(yaml), yaml);
     }
 
     #[test]
-    fn dedup_preserves_first_occurrence() {
+    fn dedup_result_parses_with_last_value() {
+        // End-to-end: a config that serde_yaml rejects today must parse after
+        // healing, and expose the newest (last) value.
+        let yaml = "\
+custom_providers:
+  - name: old-provider
+model:
+  default: gpt-4
+custom_providers:
+  - name: old-provider
+  - name: new-provider
+";
+        let healed = deduplicate_top_level_keys(yaml);
+        let value: serde_yaml::Value = serde_yaml::from_str(&healed).unwrap();
+        let providers = value
+            .get("custom_providers")
+            .unwrap()
+            .as_sequence()
+            .unwrap();
+        assert_eq!(providers.len(), 2);
+        assert_eq!(
+            providers[1].get("name").unwrap().as_str().unwrap(),
+            "new-provider"
+        );
+    }
+
+    // ---- remove_all_sections tests ----
+
+    #[test]
+    fn remove_all_sections_strips_every_occurrence() {
         let yaml = "\
 model:
   default: gpt-4
@@ -1347,10 +1388,13 @@ agent:
   max_turns: 10
 model:
   default: claude
+model:
+  default: gemini
 ";
-        let result = deduplicate_top_level_keys(yaml);
-        assert!(result.contains("default: gpt-4"));
-        assert!(!result.contains("default: claude"));
+        let result = remove_all_sections(yaml, "model");
+        assert!(!result.contains("model:"));
+        assert!(result.contains("agent:"));
+        assert!(result.contains("max_turns"));
     }
 
     // ---- replace_yaml_section tests ----
@@ -1386,6 +1430,62 @@ agent:
         assert!(result.contains("anthropic"));
         assert!(!result.contains("gpt-4"));
         assert!(!result.contains("openai"));
+    }
+
+    #[test]
+    fn replace_section_in_crlf_config_replaces_in_place() {
+        // Regression for #3633: on CRLF configs every "replace" used to
+        // degrade into an append, piling up duplicate sections.
+        let yaml = "model:\r\n  default: gpt-4\r\nagent:\r\n  max_turns: 10\r\n";
+        let new_model = serde_yaml::Value::Mapping({
+            let mut m = serde_yaml::Mapping::new();
+            m.insert(
+                serde_yaml::Value::String("default".to_string()),
+                serde_yaml::Value::String("claude-opus-4-8".to_string()),
+            );
+            m
+        });
+
+        let result = replace_yaml_section(yaml, "model", &new_model).unwrap();
+        assert_eq!(
+            result.lines().filter(|l| l.trim() == "model:").count(),
+            1,
+            "model: must be replaced in place, not appended"
+        );
+        assert!(result.contains("claude-opus-4-8"));
+        assert!(!result.contains("gpt-4"));
+        assert!(result.contains("max_turns"));
+    }
+
+    #[test]
+    fn replace_section_removes_residual_duplicates() {
+        // A config already broken by the append bug: replacing the section
+        // must also clean the stale duplicate copies after it.
+        let yaml = "\
+model:
+  default: gpt-4
+agent:
+  max_turns: 10
+model:
+  default: stale-copy
+";
+        let new_model = serde_yaml::Value::Mapping({
+            let mut m = serde_yaml::Mapping::new();
+            m.insert(
+                serde_yaml::Value::String("default".to_string()),
+                serde_yaml::Value::String("claude-opus-4-8".to_string()),
+            );
+            m
+        });
+
+        let result = replace_yaml_section(yaml, "model", &new_model).unwrap();
+        assert_eq!(result.lines().filter(|l| *l == "model:").count(), 1);
+        assert!(result.contains("claude-opus-4-8"));
+        assert!(!result.contains("stale-copy"));
+        assert!(result.contains("agent:"));
+        // The healed output must be valid YAML again
+        let parsed: Result<serde_yaml::Value, _> = serde_yaml::from_str(&result);
+        assert!(parsed.is_ok());
     }
 
     #[test]
