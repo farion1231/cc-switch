@@ -1220,11 +1220,6 @@ impl WebUiServer {
 
         let password = sanitize_password(password);
 
-        // Refuse to bind to non-loopback without a password
-        if !addr.ip().is_loopback() && password.is_none() {
-            return Err("WebUI on non-loopback addresses requires a password for security".to_string());
-        }
-
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let listener = tokio::net::TcpListener::bind(addr)
             .await
