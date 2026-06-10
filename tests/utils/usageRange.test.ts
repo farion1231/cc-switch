@@ -119,9 +119,10 @@ describe("resolveUsageRange: custom fallback & 其他 preset", () => {
   /* ── 其他 preset 未受影响 ── */
 
   it("CONTROL: preset today → start = 今天 00:00, end > start", () => {
-    const resolved = resolveUsageRange({ preset: "today" });
+    const nowMs = Date.now();
+    const resolved = resolveUsageRange({ preset: "today" }, nowMs);
     const todayMidnight = (() => {
-      const d = new Date();
+      const d = new Date(nowMs);
       d.setHours(0, 0, 0, 0);
       return Math.floor(d.getTime() / 1000);
     })();
@@ -135,8 +136,9 @@ describe("resolveUsageRange: custom fallback & 其他 preset", () => {
   });
 
   it("CONTROL: preset 7d → start = today-6d, end = now", () => {
-    const resolved = resolveUsageRange({ preset: "7d" });
-    const now = Math.floor(Date.now() / 1000);
+    const nowMs = Date.now();
+    const resolved = resolveUsageRange({ preset: "7d" }, nowMs);
+    const now = Math.floor(nowMs / 1000);
     expect(now - resolved.startDate).toBeGreaterThanOrEqual(86400 * 6);
     expect(now - resolved.startDate).toBeLessThanOrEqual(86400 * 7);
     expect(resolved.endDate).toBe(now);

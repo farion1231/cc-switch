@@ -35,9 +35,13 @@ export function isSameDay(a: Date, b: Date): boolean {
  * 避免 0:00 触发 `pred_opt()` 把 end 推到昨天、start > end 被判为空。
  */
 export function getEndOfLocalDayDate(nowMs: number): Date {
-  const start = getStartOfLocalDayDate(nowMs);
-  // 用时间戳算术 +1 天 -1ms, 避免在 DST 转换日 setHours(23,...) 跨日回绕
-  return new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
+  const date = new Date(nowMs);
+  // 本地日历加 1 天 (自动适配夏令时缩短或拉长的那一天)
+  date.setDate(date.getDate() + 1);
+  // 将明天的这一天归零至 00:00:00.000
+  date.setHours(0, 0, 0, 0);
+  // 减去 1ms，即可安全可靠地得到当天的 23:59:59.999
+  return new Date(date.getTime() - 1);
 }
 
 /**
