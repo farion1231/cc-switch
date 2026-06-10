@@ -210,6 +210,8 @@ jobs:
           set -euo pipefail
           if [ "${APPLE_SIGNING_IDENTITY:-}" = "-" ] || [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
             echo "⚠️ 无签名证书，构建不含签名的 .app 和 .dmg"
+            # 清除公证环境变量，防止 Tauri 尝试公证
+            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
             pnpm tauri build --bundles dmg
             echo "✅ macOS 构建成功（无签名）"
             exit 0
