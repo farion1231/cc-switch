@@ -176,9 +176,7 @@ pub async fn switch_provider(
         }
     };
 
-    let provider_name = providers
-        .get(&req.provider_id)
-        .map(|p| p.name.clone());
+    let provider_name = providers.get(&req.provider_id).map(|p| p.name.clone());
 
     // 创建 AppState 用于 ProviderService::switch
     let app_state = crate::store::AppState::new(state.db.clone());
@@ -193,17 +191,13 @@ pub async fn switch_provider(
             );
 
             // 更新 current_providers
-            state
-                .current_providers
-                .write()
-                .await
-                .insert(
-                    app_type.as_str().to_string(),
-                    (
-                        req.provider_id.clone(),
-                        provider_name.clone().unwrap_or_default(),
-                    ),
-                );
+            state.current_providers.write().await.insert(
+                app_type.as_str().to_string(),
+                (
+                    req.provider_id.clone(),
+                    provider_name.clone().unwrap_or_default(),
+                ),
+            );
 
             (
                 StatusCode::OK,
@@ -244,7 +238,10 @@ pub async fn list_providers(
     State(state): State<ProxyState>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let app = params.get("app").cloned().unwrap_or_else(|| "claude".to_string());
+    let app = params
+        .get("app")
+        .cloned()
+        .unwrap_or_else(|| "claude".to_string());
 
     // 验证 app 类型
     let app_type = match AppType::from_str(&app) {

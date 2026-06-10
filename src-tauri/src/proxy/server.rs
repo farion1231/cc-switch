@@ -98,22 +98,20 @@ impl ProxyServer {
         }
 
         // 确定监听地址：如果允许局域网访问且当前是 localhost，则切换到 0.0.0.0
-        let listen_addr = if self.config.allow_lan_access
-            && self.config.listen_address == "127.0.0.1"
-        {
-            log::info!(
-                "[{}] 局域网访问已启用，监听地址从 127.0.0.1 切换到 0.0.0.0",
-                log_srv::LAN_ENABLED
-            );
-            "0.0.0.0".to_string()
-        } else {
-            self.config.listen_address.clone()
-        };
+        let listen_addr =
+            if self.config.allow_lan_access && self.config.listen_address == "127.0.0.1" {
+                log::info!(
+                    "[{}] 局域网访问已启用，监听地址从 127.0.0.1 切换到 0.0.0.0",
+                    log_srv::LAN_ENABLED
+                );
+                "0.0.0.0".to_string()
+            } else {
+                self.config.listen_address.clone()
+            };
 
-        let addr: SocketAddr =
-            format!("{}:{}", listen_addr, self.config.listen_port)
-                .parse()
-                .map_err(|e| ProxyError::BindFailed(format!("无效的地址: {e}")))?;
+        let addr: SocketAddr = format!("{}:{}", listen_addr, self.config.listen_port)
+            .parse()
+            .map_err(|e| ProxyError::BindFailed(format!("无效的地址: {e}")))?;
 
         // 创建关闭通道
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
