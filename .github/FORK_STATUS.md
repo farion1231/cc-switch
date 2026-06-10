@@ -62,7 +62,7 @@ git remote add upstream https://github.com/farion1231/cc-switch.git
 # 定期同步
 git fetch upstream
 git rebase upstream/main
-git push -f origin main
+git push origin main
 ```
 
 ### 同步检查清单

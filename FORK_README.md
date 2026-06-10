@@ -79,9 +79,9 @@
 代码增删：+788 / −10 行
 
 核心修改文件：
-- src-tauri/src/core/providers/codex/transform_codex_chat.rs
-- src-tauri/src/core/providers/codex/streaming_codex_chat.rs
-- src-tauri/src/core/types.rs
+- src-tauri/src/proxy/providers/transform_codex_chat.rs
+- src-tauri/src/proxy/providers/streaming_codex_chat.rs
+- src-tauri/src/proxy/types.rs
 ```
 
 详见各 Release 的 Changelog。
