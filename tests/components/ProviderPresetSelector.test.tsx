@@ -65,9 +65,10 @@ describe("ProviderPresetSelector", () => {
 
     render(<Wrapper />);
 
+    // Sort button at [0], 自定义 at [1], presets start at [2]
     expect(
       screen.getAllByRole("button").map((button) => button.textContent),
-    ).toEqual(["providerPreset.custom", "First", "Second", "Third", "Fourth"]);
+    ).toEqual(["A-Z Sort", "providerPreset.custom", "First", "Second", "Third", "Fourth"]);
   });
 
   it("搜索 'max' 能匹配到 'MiniMax'（模糊匹配）", async () => {
@@ -158,19 +159,21 @@ describe("ProviderPresetSelector", () => {
     };
     render(<Wrapper />);
 
-    // 默认保持原顺序: Zhipu, MiniMax, Anthropic
+    // Sort=0, 自定义=1, Zhipu=2, MiniMax=3, Anthropic=4
     const buttons = screen.getAllByRole("button");
-    expect(buttons[1].textContent).toMatch(/Zhipu|MiniMax|Anthropic/);
+    expect(buttons[2].textContent).toMatch(/Zhipu/);
+    expect(buttons[3].textContent).toMatch(/MiniMax/);
+    expect(buttons[4].textContent).toMatch(/Anthropic/);
 
     // 点击 Sort 排序按钮
-    const sortButton = screen.getByRole("button", { name: /按首字母排序/i });
+    const sortButton = screen.getByRole("button", { name: /A-Z Sort/i });
     await user.click(sortButton);
 
-    // 排序后: Anthropic, MiniMax, Zhipu
+    // 排序后: Sort=0, 自定义=1, Anthropic=2, MiniMax=3, Zhipu=4
     const sortedButtons = screen.getAllByRole("button");
-    expect(sortedButtons[1].textContent).toMatch(/Anthropic/);
-    expect(sortedButtons[2].textContent).toMatch(/MiniMax/);
-    expect(sortedButtons[3].textContent).toMatch(/Zhipu/);
+    expect(sortedButtons[2].textContent).toMatch(/Anthropic/);
+    expect(sortedButtons[3].textContent).toMatch(/MiniMax/);
+    expect(sortedButtons[4].textContent).toMatch(/Zhipu/);
   });
 
   it("'自定义'按钮始终排在第一位，不受排序影响", async () => {
@@ -209,12 +212,14 @@ describe("ProviderPresetSelector", () => {
     };
     render(<Wrapper />);
 
-    const sortButton = screen.getByRole("button", { name: /按首字母排序/i });
+    const sortButton = screen.getByRole("button", { name: /A-Z Sort/i });
     await user.click(sortButton); // 开启 A-Z 排序
 
+    // Sort=0, 自定义=1, Anthropic=2, Zhipu=3
     const buttons = screen.getAllByRole("button");
-    expect(buttons[0].textContent).toBe("providerPreset.custom"); // 自定义始终第一
-    expect(buttons[1].textContent).toMatch(/Anthropic/); // A-Z 排序
+    expect(buttons[0].textContent).toBe("A-Z Sort"); // Sort 始终第一
+    expect(buttons[1].textContent).toBe("providerPreset.custom"); // 自定义始终第二
+    expect(buttons[2].textContent).toMatch(/Anthropic/); // A-Z 排序
   });
 
   it("多词 OR 搜索 'mini max' 能匹配到 'MiniMax'", async () => {
@@ -339,16 +344,16 @@ describe("ProviderPresetSelector", () => {
     };
     render(<Wrapper />);
 
-    const sortButton = screen.getByRole("button", { name: /按首字母排序/i });
+    const sortButton = screen.getByRole("button", { name: /A-Z Sort/i });
 
-    // 开启排序
+    // 开启排序: Sort=0, 自定义=1, Anthropic=2, Zhipu=3
     await user.click(sortButton);
     let buttons = screen.getAllByRole("button");
-    expect(buttons[1].textContent).toMatch(/Anthropic/); // 排序后
+    expect(buttons[2].textContent).toMatch(/Anthropic/); // 排序后
 
-    // 取消排序
+    // 取消排序: Sort=0, 自定义=1, Zhipu=2, Anthropic=3
     await user.click(sortButton);
     buttons = screen.getAllByRole("button");
-    expect(buttons[1].textContent).toMatch(/Zhipu/); // 恢复原顺序
+    expect(buttons[2].textContent).toMatch(/Zhipu/); // 恢复原顺序
   });
 });

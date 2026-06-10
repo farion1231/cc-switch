@@ -198,7 +198,7 @@ export function ProviderPresetSelector({
           })}
         >
           {t("providerPreset.sortByNameShort", {
-            defaultValue: "按首字母排序",
+            defaultValue: "A-Z Sort",
           })}
         </button>
       </div>
