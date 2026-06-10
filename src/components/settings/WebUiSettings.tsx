@@ -218,12 +218,12 @@ export function WebUiSettings({ settings, onChange }: WebUiSettingsProps) {
           </Button>
         </div>
         {isLan && (
-          <div className="flex items-start gap-2 rounded-md bg-amber-500/10 border border-amber-500/20 p-2 mt-1">
-            <Shield className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
-            <p className="text-xs text-amber-700 dark:text-amber-400">
+          <div className="flex items-start gap-2 rounded-md bg-blue-500/10 border border-blue-500/20 p-2 mt-1">
+            <Shield className="h-4 w-4 text-blue-500 flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-blue-700 dark:text-blue-400">
               {t("settings.webui.lanWarning", {
                 defaultValue:
-                  "局域网模式下强制要求设置访问令牌，以防止未授权访问。",
+                  "局域网模式允许同一网络内的设备访问（基于 RFC 1918 私有地址，无需令牌）。",
               })}
             </p>
           </div>

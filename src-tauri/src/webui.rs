@@ -120,6 +120,19 @@ fn parse_bool_env(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn is_private_ip(addr: &SocketAddr) -> bool {
+    match addr.ip() {
+        std::net::IpAddr::V4(ip) => {
+            ip.is_loopback()
+                || ip.is_private()  // RFC 1918: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+                || ip.is_link_local()  // 169.254.0.0/16
+        }
+        std::net::IpAddr::V6(ip) => {
+            ip.is_loopback() || ip.is_unicast_link_local()
+        }
+    }
+}
+
 fn auth_token() -> Option<String> {
     std::env::var(TOKEN_ENV)
         .ok()
@@ -799,11 +812,17 @@ impl WebUiServer {
             .ok()
             .and_then(|v| v.parse::<u16>().ok())
             .unwrap_or(settings.webui_port);
-        let token = auth_token().or_else(|| settings.webui_token.clone());
 
         let addr: SocketAddr = format!("{host}:{port}")
             .parse()
             .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], DEFAULT_WEBUI_PORT)));
+
+        // Only require token for public IP (non-private) access
+        let token = if is_private_ip(&addr) {
+            None
+        } else {
+            auth_token().or_else(|| settings.webui_token.clone())
+        };
 
         self.start(addr, token).await
     }
@@ -829,9 +848,9 @@ impl WebUiServer {
             return Err("WebUI server is already running".to_string());
         }
 
-        if !addr.ip().is_loopback() && token.is_none() {
+        if !is_private_ip(&addr) && token.is_none() {
             return Err(format!(
-                "Refusing to expose WebUI on {addr} without {TOKEN_ENV}. Set a strong bearer token first."
+                "Refusing to expose WebUI on public IP {addr} without {TOKEN_ENV}. Set a strong bearer token first."
             ));
         }
 
