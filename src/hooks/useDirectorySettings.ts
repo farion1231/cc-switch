@@ -11,6 +11,7 @@ type AppDirectoryKey =
   | "codex"
   | "gemini"
   | "opencode"
+  | "mimo"
   | "openclaw"
   | "hermes";
 type DirectoryKey = "appConfig" | AppDirectoryKey;
@@ -21,6 +22,7 @@ export interface ResolvedDirectories {
   codex: string;
   gemini: string;
   opencode: string;
+  mimo: string;
   openclaw: string;
   hermes: string;
 }
@@ -34,6 +36,7 @@ const APP_DIRECTORY_META: Record<
   codex: { key: "codex", defaultFolder: ".codex" },
   gemini: { key: "gemini", defaultFolder: ".gemini" },
   opencode: { key: "opencode", defaultFolder: ".config/opencode" },
+  mimo: { key: "mimo", defaultFolder: ".config/mimocode" },
   openclaw: { key: "openclaw", defaultFolder: ".openclaw" },
   hermes: { key: "hermes", defaultFolder: ".hermes" },
 };
@@ -46,6 +49,7 @@ const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
   codex: "codexConfigDir",
   gemini: "geminiConfigDir",
   opencode: "opencodeConfigDir",
+  mimo: "mimoConfigDir",
   openclaw: "openclawConfigDir",
   hermes: "hermesConfigDir",
 };
@@ -131,6 +135,7 @@ export function useDirectorySettings({
     codex: "",
     gemini: "",
     opencode: "",
+    mimo: "",
     openclaw: "",
     hermes: "",
   });
@@ -142,6 +147,7 @@ export function useDirectorySettings({
     codex: "",
     gemini: "",
     opencode: "",
+    mimo: "",
     openclaw: "",
     hermes: "",
   });
@@ -160,6 +166,7 @@ export function useDirectorySettings({
           codexDir,
           geminiDir,
           opencodeDir,
+          mimoDir,
           openclawDir,
           hermesDir,
           defaultAppConfig,
@@ -167,6 +174,7 @@ export function useDirectorySettings({
           defaultCodexDir,
           defaultGeminiDir,
           defaultOpencodeDir,
+          defaultMimoDir,
           defaultOpenclawDir,
           defaultHermesDir,
         ] = await Promise.all([
@@ -175,6 +183,7 @@ export function useDirectorySettings({
           settingsApi.getConfigDir("codex"),
           settingsApi.getConfigDir("gemini"),
           settingsApi.getConfigDir("opencode"),
+          settingsApi.getConfigDir("mimo"),
           settingsApi.getConfigDir("openclaw"),
           settingsApi.getConfigDir("hermes"),
           computeDefaultAppConfigDir(),
@@ -182,6 +191,7 @@ export function useDirectorySettings({
           computeDefaultConfigDir("codex"),
           computeDefaultConfigDir("gemini"),
           computeDefaultConfigDir("opencode"),
+          computeDefaultConfigDir("mimo"),
           computeDefaultConfigDir("openclaw"),
           computeDefaultConfigDir("hermes"),
         ]);
@@ -196,6 +206,7 @@ export function useDirectorySettings({
           codex: defaultCodexDir ?? "",
           gemini: defaultGeminiDir ?? "",
           opencode: defaultOpencodeDir ?? "",
+          mimo: defaultMimoDir ?? "",
           openclaw: defaultOpenclawDir ?? "",
           hermes: defaultHermesDir ?? "",
         };
@@ -209,6 +220,7 @@ export function useDirectorySettings({
           codex: codexDir || defaultsRef.current.codex,
           gemini: geminiDir || defaultsRef.current.gemini,
           opencode: opencodeDir || defaultsRef.current.opencode,
+          mimo: mimoDir || defaultsRef.current.mimo,
           openclaw: openclawDir || defaultsRef.current.openclaw,
           hermes: hermesDir || defaultsRef.current.hermes,
         });
@@ -350,6 +362,7 @@ export function useDirectorySettings({
         codex: overrides?.codex ?? defaultsRef.current.codex,
         gemini: overrides?.gemini ?? defaultsRef.current.gemini,
         opencode: overrides?.opencode ?? defaultsRef.current.opencode,
+        mimo: overrides?.mimo ?? defaultsRef.current.mimo,
         openclaw: overrides?.openclaw ?? defaultsRef.current.openclaw,
         hermes: overrides?.hermes ?? defaultsRef.current.hermes,
       });

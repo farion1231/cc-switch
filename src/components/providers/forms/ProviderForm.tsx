@@ -101,7 +101,7 @@ import {
   useCodexOauth,
 } from "./hooks";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { useSettingsQuery } from "@/lib/query";
+import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
   CLAUDE_DEFAULT_CONFIG,
   CODEX_DEFAULT_CONFIG,
@@ -332,6 +332,7 @@ function ProviderFormFull({
   const isOmoCategory = appId === "opencode" && category === "omo";
   const isOmoSlimCategory = appId === "opencode" && category === "omo-slim";
   const isAnyOmoCategory = isOmoCategory || isOmoSlimCategory;
+  const isOpenCodeLikeApp = appId === "opencode" || appId === "mimo";
 
   useEffect(() => {
     setSelectedPresetId(initialData ? null : "custom");
@@ -369,7 +370,7 @@ function ProviderFormFull({
           ? CODEX_DEFAULT_CONFIG
           : appId === "gemini"
             ? GEMINI_DEFAULT_CONFIG
-            : appId === "opencode"
+            : isOpenCodeLikeApp
               ? OPENCODE_DEFAULT_CONFIG
               : appId === "openclaw"
                 ? OPENCLAW_DEFAULT_CONFIG
@@ -379,7 +380,7 @@ function ProviderFormFull({
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     }),
-    [initialData, appId],
+    [initialData, appId, isOpenCodeLikeApp],
   );
 
   const form = useForm<ProviderFormData>({
@@ -615,9 +616,16 @@ function ProviderFormFull({
         id: `gemini-${index}`,
         preset,
       }));
-    } else if (appId === "opencode") {
-      return opencodeProviderPresets.map<PresetEntry>((preset, index) => ({
-        id: `opencode-${index}`,
+    } else if (isOpenCodeLikeApp) {
+      const presets =
+        appId === "mimo"
+          ? opencodeProviderPresets.filter(
+              (preset) =>
+                preset.category !== "omo" && preset.category !== "omo-slim",
+            )
+          : opencodeProviderPresets;
+      return presets.map<PresetEntry>((preset, index) => ({
+        id: `${appId}-${index}`,
         preset,
       }));
     } else if (appId === "openclaw") {
@@ -637,7 +645,7 @@ function ProviderFormFull({
         id: `claude-${index}`,
         preset,
       }));
-  }, [appId]);
+  }, [appId, isOpenCodeLikeApp]);
 
   const {
     templateValues,
@@ -782,14 +790,27 @@ function ProviderFormFull({
     omoPresetMetaMap,
     existingOpencodeKeys,
   } = useOmoModelSource({ isOmoCategory: isAnyOmoCategory, providerId });
+  const { data: mimoProvidersData } = useProvidersQuery("mimo");
+  const existingMimoKeys = useMemo(() => {
+    if (!mimoProvidersData?.providers) return [];
+    return Object.keys(mimoProvidersData.providers).filter(
+      (key) => key !== providerId,
+    );
+  }, [mimoProvidersData?.providers, providerId]);
 
   const {
     data: opencodeLiveProviderIds = [],
     isLoading: isOpencodeLiveProviderIdsLoading,
   } = useQuery({
-    queryKey: ["opencodeLiveProviderIds"],
-    queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
-    enabled: appId === "opencode" && !isAnyOmoCategory,
+    queryKey:
+      appId === "mimo"
+        ? ["mimoLiveProviderIds"]
+        : ["opencodeLiveProviderIds"],
+    queryFn: () =>
+      appId === "mimo"
+        ? providersApi.getMimoLiveProviderIds()
+        : providersApi.getOpenCodeLiveProviderIds(),
+    enabled: isOpenCodeLikeApp && !isAnyOmoCategory,
   });
 
   const opencodeForm = useOpencodeFormState({
@@ -838,10 +859,12 @@ function ProviderFormFull({
   } = useHermesLiveProviderIds(appId === "hermes");
 
   const additiveExistingProviderKeys = useMemo(() => {
-    if (appId === "opencode" && !isAnyOmoCategory) {
+    if (isOpenCodeLikeApp && !isAnyOmoCategory) {
+      const existingProviderKeys =
+        appId === "mimo" ? existingMimoKeys : existingOpencodeKeys;
       return Array.from(
         new Set(
-          [...existingOpencodeKeys, ...opencodeLiveProviderIds].filter(
+          [...existingProviderKeys, ...opencodeLiveProviderIds].filter(
             (key) => key !== providerId,
           ),
         ),
@@ -872,6 +895,7 @@ function ProviderFormFull({
     return [];
   }, [
     appId,
+    existingMimoKeys,
     existingOpencodeKeys,
     hermesForm.existingHermesKeys,
     hermesLiveProviderIds,
@@ -880,11 +904,12 @@ function ProviderFormFull({
     openclawLiveProviderIds,
     opencodeLiveProviderIds,
     providerId,
+    isOpenCodeLikeApp,
   ]);
 
   const isProviderKeyLockStateLoading = useMemo(() => {
     if (!isEditMode) return false;
-    if (appId === "opencode" && !isAnyOmoCategory) {
+    if (isOpenCodeLikeApp && !isAnyOmoCategory) {
       return isOpencodeLiveProviderIdsLoading;
     }
     if (appId === "openclaw") {
@@ -901,11 +926,12 @@ function ProviderFormFull({
     isHermesLiveProviderIdsLoading,
     isOpenclawLiveProviderIdsLoading,
     isOpencodeLiveProviderIdsLoading,
+    isOpenCodeLikeApp,
   ]);
 
   const isProviderKeyLocked = useMemo(() => {
     if (!isEditMode || !providerId) return false;
-    if (appId === "opencode" && !isAnyOmoCategory) {
+    if (isOpenCodeLikeApp && !isAnyOmoCategory) {
       return opencodeLiveProviderIds.includes(providerId);
     }
     if (appId === "openclaw") {
@@ -923,6 +949,7 @@ function ProviderFormFull({
     openclawLiveProviderIds,
     opencodeLiveProviderIds,
     providerId,
+    isOpenCodeLikeApp,
   ]);
 
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
@@ -971,7 +998,7 @@ function ProviderFormFull({
     // A 类（空）归到 issues；B 类（正则不合法 / 重复 / 状态加载中）仍硬拒绝
     const keyPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
-    if (appId === "opencode" && !isAnyOmoCategory) {
+    if (isOpenCodeLikeApp && !isAnyOmoCategory) {
       // providerKey 是 opencode / openclaw / hermes 的主键 ID，空或格式不合法
       // 都属于完整性约束，保留硬拒绝（mutations 层也会 throw，软化只会让错误更晦涩）
       if (!opencodeForm.opencodeProviderKey.trim()) {
@@ -1272,6 +1299,8 @@ function ProviderFormFull({
       } else {
         payload.providerKey = opencodeForm.opencodeProviderKey;
       }
+    } else if (appId === "mimo") {
+      payload.providerKey = opencodeForm.opencodeProviderKey;
     } else if (appId === "openclaw") {
       payload.providerKey = openclawForm.openclawProviderKey;
     } else if (appId === "hermes") {
@@ -1477,7 +1506,7 @@ function ProviderFormFull({
     isPartner: isOpencodePartner,
     partnerPromotionKey: opencodePartnerPromotionKey,
   } = useApiKeyLink({
-    appId: "opencode",
+    appId: isOpenCodeLikeApp ? appId : "opencode",
     category,
     selectedPresetId,
     presetEntries,
@@ -1540,7 +1569,7 @@ function ProviderFormFull({
       if (appId === "gemini") {
         resetGeminiConfig({}, {});
       }
-      if (appId === "opencode") {
+      if (isOpenCodeLikeApp) {
         opencodeForm.resetOpencodeState();
         omoDraft.resetOmoDraftState();
       }
@@ -1606,7 +1635,7 @@ function ProviderFormFull({
       return;
     }
 
-    if (appId === "opencode") {
+    if (isOpenCodeLikeApp) {
       const preset = entry.preset as OpenCodeProviderPreset;
       const config = preset.settingsConfig;
 
@@ -1737,7 +1766,7 @@ function ProviderFormFull({
           <BasicFormFields
             form={form}
             beforeNameSlot={
-              appId === "opencode" && !isAnyOmoCategory ? (
+              isOpenCodeLikeApp && !isAnyOmoCategory ? (
                 <div className="space-y-2">
                   <Label htmlFor="opencode-key">
                     {t("opencode.providerKey")}
@@ -2085,7 +2114,7 @@ function ProviderFormFull({
             />
           )}
 
-          {appId === "opencode" && !isAnyOmoCategory && (
+          {isOpenCodeLikeApp && !isAnyOmoCategory && (
             <OpenCodeFormFields
               npm={opencodeForm.opencodeNpm}
               onNpmChange={opencodeForm.handleOpencodeNpmChange}
@@ -2231,7 +2260,7 @@ function ProviderFormFull({
                 language="json"
               />
             </div>
-          ) : appId === "opencode" &&
+          ) : isOpenCodeLikeApp &&
             category !== "omo" &&
             category !== "omo-slim" ? (
             <>
@@ -2317,6 +2346,7 @@ function ProviderFormFull({
 
           {!isAnyOmoCategory &&
             appId !== "opencode" &&
+            appId !== "mimo" &&
             appId !== "openclaw" &&
             appId !== "hermes" && (
               <ProviderAdvancedConfig

@@ -8,6 +8,7 @@ export type AppType =
   | "codex"
   | "gemini"
   | "opencode"
+  | "mimo"
   | "openclaw"
   | "hermes";
 
@@ -18,6 +19,7 @@ export interface SkillApps {
   codex: boolean;
   gemini: boolean;
   opencode: boolean;
+  mimo: boolean;
   openclaw: boolean;
   hermes: boolean;
 }

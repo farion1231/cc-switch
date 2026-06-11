@@ -44,7 +44,7 @@ export function useProviderCategory({
 
     // 从预设 ID 提取索引
     const match = selectedPresetId.match(
-      /^(claude|codex|gemini|opencode)-(\d+)$/,
+      /^(claude|codex|gemini|opencode|mimo)-(\d+)$/,
     );
     if (!match) return;
 
@@ -72,6 +72,13 @@ export function useProviderCategory({
       }
     } else if (type === "opencode" && appId === "opencode") {
       const preset = opencodeProviderPresets[index];
+      if (preset) {
+        setCategory(preset.category || undefined);
+      }
+    } else if (type === "mimo" && appId === "mimo") {
+      const preset = opencodeProviderPresets.filter(
+        (item) => item.category !== "omo" && item.category !== "omo-slim",
+      )[index];
       if (preset) {
         setCategory(preset.category || undefined);
       }

@@ -45,6 +45,7 @@ export function AddProviderDialog({
   // OpenCode and OpenClaw don't support universal providers
   const showUniversalTab =
     appId !== "opencode" &&
+    appId !== "mimo" &&
     appId !== "openclaw" &&
     appId !== "hermes" &&
     appId !== "claude-desktop";
@@ -123,7 +124,10 @@ export function AddProviderDialog({
 
       // OpenCode/OpenClaw: pass providerKey for ID generation
       if (
-        (appId === "opencode" || appId === "openclaw" || appId === "hermes") &&
+        (appId === "opencode" ||
+          appId === "mimo" ||
+          appId === "openclaw" ||
+          appId === "hermes") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;
@@ -229,7 +233,7 @@ export function AddProviderDialog({
           if (env?.GOOGLE_GEMINI_BASE_URL) {
             addUrl(env.GOOGLE_GEMINI_BASE_URL);
           }
-        } else if (appId === "opencode") {
+        } else if (appId === "opencode" || appId === "mimo") {
           const options = parsedConfig.options as
             | Record<string, any>
             | undefined;

@@ -167,6 +167,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
         codex: false,
         gemini: false,
         opencode: false,
+        mimo: false,
         hermes: false,
     };
 
@@ -176,6 +177,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
             "codex" => apps.codex = true,
             "gemini" => apps.gemini = true,
             "opencode" => apps.opencode = true,
+            "mimo" | "mimocode" | "mimo-code" | "mimo_code" => apps.mimo = true,
             "openclaw" => {
                 // OpenClaw doesn't support MCP, ignore silently
                 log::debug!("OpenClaw doesn't support MCP, ignoring in apps parameter");

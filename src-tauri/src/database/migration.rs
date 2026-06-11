@@ -127,8 +127,8 @@ impl Database {
                 tx.execute(
                     "INSERT OR REPLACE INTO mcp_servers (
                         id, name, server_config, description, homepage, docs, tags,
-                        enabled_claude, enabled_codex, enabled_gemini
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                        enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_mimo, enabled_hermes
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                     params![
                         id,
                         server.name,
@@ -140,6 +140,9 @@ impl Database {
                         server.apps.claude,
                         server.apps.codex,
                         server.apps.gemini,
+                        server.apps.opencode,
+                        server.apps.mimo,
+                        server.apps.hermes,
                     ],
                 )
                 .map_err(|e| AppError::Database(format!("Migrate mcp server failed: {e}")))?;
@@ -183,6 +186,10 @@ impl Database {
         migrate_app_prompts(&config.prompts.claude.prompts, "claude")?;
         migrate_app_prompts(&config.prompts.codex.prompts, "codex")?;
         migrate_app_prompts(&config.prompts.gemini.prompts, "gemini")?;
+        migrate_app_prompts(&config.prompts.opencode.prompts, "opencode")?;
+        migrate_app_prompts(&config.prompts.mimo.prompts, "mimo")?;
+        migrate_app_prompts(&config.prompts.openclaw.prompts, "openclaw")?;
+        migrate_app_prompts(&config.prompts.hermes.prompts, "hermes")?;
 
         Ok(())
     }
@@ -236,6 +243,27 @@ impl Database {
             tx.execute(
                 "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
                 params!["common_config_gemini", snippet],
+            )
+            .map_err(|e| AppError::Database(format!("Migrate settings failed: {e}")))?;
+        }
+        if let Some(snippet) = &config.common_config_snippets.opencode {
+            tx.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+                params!["common_config_opencode", snippet],
+            )
+            .map_err(|e| AppError::Database(format!("Migrate settings failed: {e}")))?;
+        }
+        if let Some(snippet) = &config.common_config_snippets.mimo {
+            tx.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+                params!["common_config_mimo", snippet],
+            )
+            .map_err(|e| AppError::Database(format!("Migrate settings failed: {e}")))?;
+        }
+        if let Some(snippet) = &config.common_config_snippets.openclaw {
+            tx.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+                params!["common_config_openclaw", snippet],
             )
             .map_err(|e| AppError::Database(format!("Migrate settings failed: {e}")))?;
         }

@@ -148,7 +148,7 @@ export interface UsageRangeSelection {
  * the Desktop gateway was logged under app_type "claude", leaving only
  * edge-case rows under "claude-desktop". The backend now attributes all
  * Desktop traffic to "claude-desktop", so it is a first-class filter option.
- * `opencode` / `openclaw` / `hermes` have no proxy handler at all — they
+ * `opencode` / `mimo` / `openclaw` / `hermes` have no proxy handler at all — they
  * appear only as managed apps elsewhere.
  */
 export type AppType =

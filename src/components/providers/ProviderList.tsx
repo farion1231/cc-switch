@@ -104,6 +104,12 @@ export function ProviderList({
     enabled: appId === "opencode",
   });
 
+  const { data: mimoLiveIds } = useQuery({
+    queryKey: ["mimoLiveProviderIds"],
+    queryFn: () => providersApi.getMimoLiveProviderIds(),
+    enabled: appId === "mimo",
+  });
+
   // OpenClaw: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
   const { data: openclawLiveIds } = useOpenClawLiveProviderIds(
     appId === "openclaw",
@@ -122,6 +128,9 @@ export function ProviderList({
       if (appId === "opencode") {
         return opencodeLiveIds?.includes(providerId) ?? false;
       }
+      if (appId === "mimo") {
+        return mimoLiveIds?.includes(providerId) ?? false;
+      }
       if (appId === "openclaw") {
         return openclawLiveIds?.includes(providerId) ?? false;
       }
@@ -130,7 +139,7 @@ export function ProviderList({
       }
       return true; // 其他应用始终返回 true
     },
-    [appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds],
+    [appId, opencodeLiveIds, mimoLiveIds, openclawLiveIds, hermesLiveIds],
   );
 
   // OpenClaw: query default model to determine which provider is default
@@ -243,6 +252,10 @@ export function ProviderList({
     mutationFn: async (): Promise<boolean> => {
       if (appId === "opencode") {
         const count = await providersApi.importOpenCodeFromLive();
+        return count > 0;
+      }
+      if (appId === "mimo") {
+        const count = await providersApi.importMimoFromLive();
         return count > 0;
       }
       if (appId === "openclaw") {

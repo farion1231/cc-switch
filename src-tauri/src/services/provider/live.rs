@@ -40,6 +40,8 @@ pub(crate) fn provider_exists_in_live_config(
     match app_type {
         AppType::OpenCode => crate::opencode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::Mimo => crate::mimocode_config::get_providers()
+            .map(|providers| providers.contains_key(provider_id)),
         AppType::OpenClaw => crate::openclaw_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Hermes => crate::hermes_config::get_providers()
@@ -347,7 +349,11 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
             }
             _ => false,
         },
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => false,
+        AppType::OpenCode
+        | AppType::Mimo
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::ClaudeDesktop => false,
     }
 }
 
@@ -417,9 +423,11 @@ pub(crate) fn remove_common_config_from_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
-            Ok(settings.clone())
-        }
+        AppType::OpenCode
+        | AppType::Mimo
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
 
@@ -474,9 +482,11 @@ fn apply_common_config_to_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
-            Ok(settings.clone())
-        }
+        AppType::OpenCode
+        | AppType::Mimo
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
 
@@ -816,6 +826,59 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 }
             }
         }
+        AppType::Mimo => {
+            // MiMo Code uses OpenCode-shaped additive provider config.
+            use crate::mimocode_config;
+            use crate::provider::OpenCodeProviderConfig;
+
+            let config_to_write = if let Some(obj) = provider.settings_config.as_object() {
+                if obj.contains_key("$schema") || obj.contains_key("provider") {
+                    log::warn!(
+                        "MiMo Code provider '{}' has full config structure in settings_config, attempting to extract fragment",
+                        provider.id
+                    );
+                    obj.get("provider")
+                        .and_then(|p| p.get(&provider.id))
+                        .cloned()
+                        .unwrap_or_else(|| provider.settings_config.clone())
+                } else {
+                    provider.settings_config.clone()
+                }
+            } else {
+                provider.settings_config.clone()
+            };
+
+            let mimo_config_result =
+                serde_json::from_value::<OpenCodeProviderConfig>(config_to_write.clone());
+
+            match mimo_config_result {
+                Ok(config) => {
+                    mimocode_config::set_typed_provider(&provider.id, &config)?;
+                    log::info!("MiMo Code provider '{}' written to live config", provider.id);
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Failed to parse MiMo Code provider config for '{}': {}",
+                        provider.id,
+                        e
+                    );
+                    if config_to_write.get("npm").is_some()
+                        || config_to_write.get("options").is_some()
+                    {
+                        mimocode_config::set_provider(&provider.id, config_to_write)?;
+                        log::info!(
+                            "MiMo Code provider '{}' written as raw JSON to live config",
+                            provider.id
+                        );
+                    } else {
+                        return Err(AppError::Message(format!(
+                            "MiMo Code provider '{}' has invalid config structure for live config (must contain 'npm' or 'options')",
+                            provider.id
+                        )));
+                    }
+                }
+            }
+        }
         AppType::OpenClaw => {
             // OpenClaw uses additive mode - write provider to config
             use crate::openclaw_config;
@@ -1083,6 +1146,21 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = read_opencode_config()?;
             Ok(config)
         }
+        AppType::Mimo => {
+            use crate::mimocode_config::{get_mimo_config_path, read_mimo_config};
+
+            let config_path = get_mimo_config_path();
+            if !config_path.exists() {
+                return Err(AppError::localized(
+                    "mimo.config.missing",
+                    "MiMo Code configuration file not found",
+                    "MiMo Code configuration file not found",
+                ));
+            }
+
+            let config = read_mimo_config()?;
+            Ok(config)
+        }
         AppType::OpenClaw => {
             use crate::openclaw_config::{get_openclaw_config_path, read_openclaw_config};
 
@@ -1204,8 +1282,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
-        // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+        // OpenCode, MiMo Code, OpenClaw and Hermes use additive mode and are handled by early return above
+        AppType::OpenCode | AppType::Mimo | AppType::OpenClaw | AppType::Hermes => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -1369,6 +1447,25 @@ pub(crate) fn remove_opencode_provider_from_live(provider_id: &str) -> Result<()
     Ok(())
 }
 
+/// Remove a MiMo Code provider from the live configuration.
+pub(crate) fn remove_mimo_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+    use crate::mimocode_config;
+
+    if !mimocode_config::get_mimo_config_path().exists()
+        && !mimocode_config::get_mimo_dir().exists()
+    {
+        log::debug!(
+            "MiMo Code config directory doesn't exist, skipping removal of '{provider_id}'"
+        );
+        return Ok(());
+    }
+
+    mimocode_config::remove_provider(provider_id)?;
+    log::info!("MiMo Code provider '{provider_id}' removed from live config");
+
+    Ok(())
+}
+
 /// Import all providers from OpenCode live config to database
 ///
 /// This imports existing providers from ~/.config/opencode/opencode.json
@@ -1421,6 +1518,55 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
 
         imported += 1;
         log::info!("Imported OpenCode provider '{id}' from live config");
+    }
+
+    Ok(imported)
+}
+
+/// Import all providers from MiMo Code live config to database.
+pub fn import_mimo_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    use crate::mimocode_config;
+
+    let providers = mimocode_config::get_typed_providers()?;
+    if providers.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0;
+    let existing_ids = state.db.get_provider_ids("mimo")?;
+
+    for (id, config) in providers {
+        if existing_ids.contains(&id) {
+            log::debug!("MiMo Code provider '{id}' already exists in database, skipping");
+            continue;
+        }
+
+        let settings_config = match serde_json::to_value(&config) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("Failed to serialize MiMo Code provider '{id}': {e}");
+                continue;
+            }
+        };
+
+        let mut provider = Provider::with_id(
+            id.clone(),
+            config.name.clone().unwrap_or_else(|| id.clone()),
+            settings_config,
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+
+        if let Err(e) = state.db.save_provider("mimo", &provider) {
+            log::warn!("Failed to import MiMo Code provider '{id}': {e}");
+            continue;
+        }
+
+        imported += 1;
+        log::info!("Imported MiMo Code provider '{id}' from live config");
     }
 
     Ok(imported)

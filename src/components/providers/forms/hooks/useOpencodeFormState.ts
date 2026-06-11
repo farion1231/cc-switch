@@ -41,30 +41,29 @@ export function useOpencodeFormState({
   onSettingsConfigChange,
   getSettingsConfig,
 }: UseOpencodeFormStateParams): OpencodeFormState {
+  const isOpenCodeLikeApp = appId === "opencode" || appId === "mimo";
   const initialOpencodeConfig =
-    appId === "opencode"
-      ? parseOpencodeConfig(initialData?.settingsConfig)
-      : null;
+    isOpenCodeLikeApp ? parseOpencodeConfig(initialData?.settingsConfig) : null;
   const initialOpencodeOptions = initialOpencodeConfig?.options || {};
 
   const [opencodeProviderKey, setOpencodeProviderKey] = useState<string>(() => {
-    if (appId !== "opencode") return "";
+    if (!isOpenCodeLikeApp) return "";
     return providerId || "";
   });
 
   const [opencodeNpm, setOpencodeNpm] = useState<string>(() => {
-    if (appId !== "opencode") return OPENCODE_DEFAULT_NPM;
+    if (!isOpenCodeLikeApp) return OPENCODE_DEFAULT_NPM;
     return initialOpencodeConfig?.npm || OPENCODE_DEFAULT_NPM;
   });
 
   const [opencodeApiKey, setOpencodeApiKey] = useState<string>(() => {
-    if (appId !== "opencode") return "";
+    if (!isOpenCodeLikeApp) return "";
     const value = initialOpencodeOptions.apiKey;
     return typeof value === "string" ? value : "";
   });
 
   const [opencodeBaseUrl, setOpencodeBaseUrl] = useState<string>(() => {
-    if (appId !== "opencode") return "";
+    if (!isOpenCodeLikeApp) return "";
     const value = initialOpencodeOptions.baseURL;
     return typeof value === "string" ? value : "";
   });
@@ -72,14 +71,14 @@ export function useOpencodeFormState({
   const [opencodeModels, setOpencodeModels] = useState<
     Record<string, OpenCodeModel>
   >(() => {
-    if (appId !== "opencode") return {};
+    if (!isOpenCodeLikeApp) return {};
     return initialOpencodeConfig?.models || {};
   });
 
   const [opencodeExtraOptions, setOpencodeExtraOptions] = useState<
     Record<string, string>
   >(() => {
-    if (appId !== "opencode") return {};
+    if (!isOpenCodeLikeApp) return {};
     return toOpencodeExtraOptions(initialOpencodeOptions);
   });
 

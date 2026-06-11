@@ -210,7 +210,7 @@ impl StreamCheckService {
         // 或 `npm` 字段显式指定。它们不走 get_adapter 路径，而是直接分发。
         if matches!(
             app_type,
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes
+            AppType::OpenCode | AppType::Mimo | AppType::OpenClaw | AppType::Hermes
         ) {
             return Self::check_once_without_adapter(app_type, provider, config, start).await;
         }
@@ -278,7 +278,7 @@ impl StreamCheckService {
                 )
                 .await
             }
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+            AppType::OpenCode | AppType::Mimo | AppType::OpenClaw | AppType::Hermes => {
                 // Already handled via early dispatch above
                 unreachable!("OpenCode/OpenClaw/Hermes 已通过 check_once_without_adapter 处理")
             }
@@ -757,7 +757,7 @@ impl StreamCheckService {
                 )
                 .await
             }
-            AppType::OpenCode => {
+            AppType::OpenCode | AppType::Mimo => {
                 Self::check_opencode_stream(
                     &client,
                     provider,
@@ -1430,7 +1430,7 @@ impl StreamCheckService {
             }
             AppType::Gemini => Self::extract_env_model(provider, "GEMINI_MODEL")
                 .unwrap_or_else(|| config.gemini_model.clone()),
-            AppType::OpenCode => {
+            AppType::OpenCode | AppType::Mimo => {
                 // OpenCode uses models map in settings_config
                 // Try to extract first model from the models object
                 Self::extract_opencode_model(provider).unwrap_or_else(|| "gpt-4o".to_string())

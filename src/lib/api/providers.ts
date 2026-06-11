@@ -169,6 +169,14 @@ export const providersApi = {
    * 获取 OpenClaw live 配置中的供应商 ID 列表
    * 用于前端判断供应商是否已添加到 openclaw.json
    */
+  async importMimoFromLive(): Promise<number> {
+    return await invoke("import_mimo_providers_from_live");
+  },
+
+  async getMimoLiveProviderIds(): Promise<string[]> {
+    return await invoke("get_mimo_live_provider_ids");
+  },
+
   async getOpenClawLiveProviderIds(): Promise<string[]> {
     return await invoke("get_openclaw_live_provider_ids");
   },

@@ -40,6 +40,9 @@ impl McpService {
         if prev_apps.opencode && !server.apps.opencode {
             Self::remove_server_from_app(state, &server.id, &AppType::OpenCode)?;
         }
+        if prev_apps.mimo && !server.apps.mimo {
+            Self::remove_server_from_app(state, &server.id, &AppType::Mimo)?;
+        }
         if prev_apps.hermes && !server.apps.hermes {
             Self::remove_server_from_app(state, &server.id, &AppType::Hermes)?;
         }
@@ -129,6 +132,13 @@ impl McpService {
                     &server.server,
                 )?;
             }
+            AppType::Mimo => {
+                mcp::sync_single_server_to_mimo(
+                    &Default::default(),
+                    &server.id,
+                    &server.server,
+                )?;
+            }
             AppType::OpenClaw => {
                 // OpenClaw MCP support is still in development (Issue #4834)
                 // Skip for now
@@ -164,6 +174,9 @@ impl McpService {
             AppType::Gemini => mcp::remove_server_from_gemini(id)?,
             AppType::OpenCode => {
                 mcp::remove_server_from_opencode(id)?;
+            }
+            AppType::Mimo => {
+                mcp::remove_server_from_mimo(id)?;
             }
             AppType::OpenClaw => {
                 // OpenClaw MCP support is still in development
@@ -397,7 +410,35 @@ impl McpService {
         Ok(new_count)
     }
 
-    /// 从 Hermes 导入 MCP
+    /// Import MCP servers from MiMo Code.
+    pub fn import_from_mimo(state: &AppState) -> Result<usize, AppError> {
+        let mut temp_config = crate::app_config::MultiAppConfig::default();
+        let count = crate::mcp::import_from_mimo(&mut temp_config)?;
+
+        let mut new_count = 0;
+
+        if count > 0 {
+            if let Some(servers) = &temp_config.mcp.servers {
+                let mut existing = state.db.get_all_mcp_servers()?;
+                for server in servers.values() {
+                    let to_save = if let Some(existing_server) = existing.get(&server.id) {
+                        let mut merged = existing_server.clone();
+                        merged.apps.mimo = true;
+                        merged
+                    } else {
+                        new_count += 1;
+                        server.clone()
+                    };
+
+                    state.db.save_mcp_server(&to_save)?;
+                    existing.insert(to_save.id.clone(), to_save.clone());
+                }
+            }
+        }
+
+        Ok(new_count)
+    }
+
     pub fn import_from_hermes(state: &AppState) -> Result<usize, AppError> {
         // 创建临时 MultiAppConfig 用于导入
         let mut temp_config = crate::app_config::MultiAppConfig::default();

@@ -15,18 +15,41 @@ const APP_CONFIG: Array<{
   id: AppId;
   icon: string;
   nameKey: string;
+  defaultName: string;
 }> = [
-  { id: "claude", icon: "claude", nameKey: "apps.claudeCode" },
+  {
+    id: "claude",
+    icon: "claude",
+    nameKey: "apps.claudeCode",
+    defaultName: "Claude Code",
+  },
   {
     id: "claude-desktop",
     icon: "claude",
     nameKey: "apps.claudeDesktop",
+    defaultName: "Claude Desktop",
   },
-  { id: "codex", icon: "openai", nameKey: "apps.codex" },
-  { id: "gemini", icon: "gemini", nameKey: "apps.gemini" },
-  { id: "opencode", icon: "opencode", nameKey: "apps.opencode" },
-  { id: "openclaw", icon: "openclaw", nameKey: "apps.openclaw" },
-  { id: "hermes", icon: "hermes", nameKey: "apps.hermes" },
+  { id: "codex", icon: "openai", nameKey: "apps.codex", defaultName: "Codex" },
+  { id: "gemini", icon: "gemini", nameKey: "apps.gemini", defaultName: "Gemini" },
+  {
+    id: "opencode",
+    icon: "opencode",
+    nameKey: "apps.opencode",
+    defaultName: "OpenCode",
+  },
+  {
+    id: "mimo",
+    icon: "xiaomimimo",
+    nameKey: "apps.mimo",
+    defaultName: "MiMo Code",
+  },
+  {
+    id: "openclaw",
+    icon: "openclaw",
+    nameKey: "apps.openclaw",
+    defaultName: "OpenClaw",
+  },
+  { id: "hermes", icon: "hermes", nameKey: "apps.hermes", defaultName: "Hermes" },
 ];
 
 export function AppVisibilitySettings({
@@ -41,6 +64,7 @@ export function AppVisibilitySettings({
     codex: true,
     gemini: true,
     opencode: true,
+    mimo: true,
     openclaw: true,
     hermes: true,
   };
@@ -76,6 +100,7 @@ export function AppVisibilitySettings({
           const isVisible = visibleApps[app.id];
           // Disable button if this is the last visible app
           const isDisabled = isVisible && visibleCount <= 1;
+          const appName = t(app.nameKey, { defaultValue: app.defaultName });
 
           return (
             <AppButton
@@ -84,9 +109,9 @@ export function AppVisibilitySettings({
               disabled={isDisabled}
               onClick={() => handleToggle(app.id)}
               icon={app.icon}
-              name={t(app.nameKey)}
+              name={appName}
             >
-              {t(app.nameKey)}
+              {appName}
             </AppButton>
           );
         })}

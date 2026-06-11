@@ -86,7 +86,7 @@ export function ProviderActions({
 
   // 累加模式应用（OpenCode 非 OMO / OpenClaw / Hermes）
   const isAdditiveMode =
-    (appId === "opencode" && !isOmo) ||
+    ((appId === "opencode" || appId === "mimo") && !isOmo) ||
     appId === "openclaw" ||
     appId === "hermes";
 

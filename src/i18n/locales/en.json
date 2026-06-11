@@ -740,6 +740,8 @@
     "geminiConfigDirDescription": "Override Gemini configuration directory (.env).",
     "opencodeConfigDir": "OpenCode Configuration Directory",
     "opencodeConfigDirDescription": "Override OpenCode configuration directory (opencode.json).",
+    "mimoConfigDir": "MiMo Code Configuration Directory",
+    "mimoConfigDirDescription": "Override MiMo Code configuration directory (mimocode.json).",
     "openclawConfigDir": "OpenClaw Configuration Directory",
     "openclawConfigDirDescription": "Override OpenClaw configuration directory (openclaw.json).",
     "hermesConfigDir": "Hermes Configuration Directory",
@@ -748,6 +750,7 @@
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
     "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
+    "browsePlaceholderMimo": "e.g., /home/<your-username>/.config/mimocode",
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
     "browseDirectory": "Browse Directory",
@@ -770,7 +773,7 @@
     "officialWebsite": "Official Website",
     "github": "GitHub",
     "manualInstallCommands": "Manual Install Commands",
-    "oneClickInstallHint": "Install or upgrade Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw / Hermes",
+    "oneClickInstallHint": "Install or upgrade Claude Code / Codex / Gemini CLI / OpenCode / MiMo Code / OpenClaw / Hermes",
     "localEnvCheck": "Local environment check",
     "updateAllTools": "Update All ({{count}})",
     "currentVersion": "Current Version",
@@ -858,6 +861,7 @@
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode",
+    "mimo": "MiMo Code",
     "openclaw": "OpenClaw",
     "hermes": "Hermes"
   },
@@ -1604,6 +1608,7 @@
         "codex": "Codex",
         "gemini": "Gemini",
         "opencode": "OpenCode",
+        "mimo": "MiMo Code",
         "openclaw": "OpenClaw",
         "hermes": "Hermes"
       }
@@ -2177,6 +2182,7 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
+      "mimo": "MiMo Code",
       "openclaw": "OpenClaw"
     },
     "installFromZip": {

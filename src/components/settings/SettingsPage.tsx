@@ -321,6 +321,7 @@ export function SettingsPage({
                             codexDir={settings.codexConfigDir}
                             geminiDir={settings.geminiConfigDir}
                             opencodeDir={settings.opencodeConfigDir}
+                            mimoDir={settings.mimoConfigDir}
                             openclawDir={settings.openclawConfigDir}
                             hermesDir={settings.hermesConfigDir}
                             onDirectoryChange={updateDirectory}

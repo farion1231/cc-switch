@@ -66,20 +66,23 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     codex: boolean;
     gemini: boolean;
     opencode: boolean;
+    mimo: boolean;
     openclaw: boolean;
     hermes: boolean;
   }>(() => {
-    if (initialData?.apps) {
-      return { ...initialData.apps };
-    }
-    return {
+    const defaults = {
       claude: defaultEnabledApps.includes("claude"),
       codex: defaultEnabledApps.includes("codex"),
       gemini: defaultEnabledApps.includes("gemini"),
       opencode: defaultEnabledApps.includes("opencode"),
+      mimo: defaultEnabledApps.includes("mimo"),
       openclaw: defaultEnabledApps.includes("openclaw"),
       hermes: defaultEnabledApps.includes("hermes"),
     };
+    if (initialData?.apps) {
+      return { ...defaults, ...initialData.apps };
+    }
+    return defaults;
   });
 
   const isEditing = !!editingId;
@@ -579,6 +582,24 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     className="text-sm text-foreground cursor-pointer select-none"
                   >
                     {t("mcp.unifiedPanel.apps.opencode")}
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="enable-mimo"
+                    checked={enabledApps.mimo}
+                    onCheckedChange={(checked: boolean) =>
+                      setEnabledApps({ ...enabledApps, mimo: checked })
+                    }
+                  />
+                  <label
+                    htmlFor="enable-mimo"
+                    className="text-sm text-foreground cursor-pointer select-none"
+                  >
+                    {t("mcp.unifiedPanel.apps.mimo", {
+                      defaultValue: "MiMo Code",
+                    })}
                   </label>
                 </div>
 

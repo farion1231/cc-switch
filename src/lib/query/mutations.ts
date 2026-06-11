@@ -41,7 +41,12 @@ export const useAddProviderMutation = (appId: AppId) => {
 
       let id: string;
 
-      if (appId === "opencode" || appId === "openclaw" || appId === "hermes") {
+      if (
+        appId === "opencode" ||
+        appId === "mimo" ||
+        appId === "openclaw" ||
+        appId === "hermes"
+      ) {
         if (
           providerInput.category === "omo" ||
           providerInput.category === "omo-slim"
@@ -83,6 +88,11 @@ export const useAddProviderMutation = (appId: AppId) => {
         });
         await queryClient.invalidateQueries({
           queryKey: ["omo-slim", "provider-count"],
+        });
+      }
+      if (appId === "mimo") {
+        await queryClient.invalidateQueries({
+          queryKey: ["mimoLiveProviderIds"],
         });
       }
 
@@ -143,6 +153,11 @@ export const useUpdateProviderMutation = (appId: AppId) => {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      if (appId === "mimo") {
+        await queryClient.invalidateQueries({
+          queryKey: ["mimoLiveProviderIds"],
+        });
+      }
       if (appId === "openclaw") {
         await queryClient.invalidateQueries({
           queryKey: openclawKeys.health,
@@ -195,6 +210,11 @@ export const useDeleteProviderMutation = (appId: AppId) => {
         });
         await queryClient.invalidateQueries({
           queryKey: ["omo-slim", "provider-count"],
+        });
+      }
+      if (appId === "mimo") {
+        await queryClient.invalidateQueries({
+          queryKey: ["mimoLiveProviderIds"],
         });
       }
 
@@ -265,6 +285,11 @@ export const useSwitchProviderMutation = (appId: AppId) => {
         });
         await queryClient.invalidateQueries({
           queryKey: ["omo-slim", "current-provider-id"],
+        });
+      }
+      if (appId === "mimo") {
+        await queryClient.invalidateQueries({
+          queryKey: ["mimoLiveProviderIds"],
         });
       }
       if (appId === "openclaw") {

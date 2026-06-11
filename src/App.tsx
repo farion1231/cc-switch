@@ -123,6 +123,7 @@ const VALID_APPS: AppId[] = [
   "codex",
   "gemini",
   "opencode",
+  "mimo",
   "openclaw",
   "hermes",
 ];
@@ -188,6 +189,7 @@ function App() {
     codex: true,
     gemini: true,
     opencode: true,
+    mimo: true,
     openclaw: true,
     hermes: true,
   };
@@ -198,6 +200,7 @@ function App() {
     if (visibleApps.codex) return "codex";
     if (visibleApps.gemini) return "gemini";
     if (visibleApps.opencode) return "opencode";
+    if (visibleApps.mimo) return "mimo";
     if (visibleApps.openclaw) return "openclaw";
     if (visibleApps.hermes) return "hermes";
     return "claude"; // fallback
@@ -629,13 +632,17 @@ function App() {
     const { provider, action } = confirmAction;
 
     if (action === "remove") {
-      // Remove from live config only (for additive mode apps like OpenCode/OpenClaw)
+      // Remove from live config only (for additive mode apps like OpenCode/MiMo/OpenClaw)
       // Does NOT delete from database - provider remains in the list
       await providersApi.removeFromLiveConfig(provider.id, activeApp);
       // Invalidate queries to refresh the isInConfig state
       if (activeApp === "opencode") {
         await queryClient.invalidateQueries({
           queryKey: ["opencodeLiveProviderIds"],
+        });
+      } else if (activeApp === "mimo") {
+        await queryClient.invalidateQueries({
+          queryKey: ["mimoLiveProviderIds"],
         });
       } else if (activeApp === "openclaw") {
         await queryClient.invalidateQueries({
@@ -698,6 +705,7 @@ function App() {
 
     if (
       activeApp === "opencode" ||
+      activeApp === "mimo" ||
       activeApp === "openclaw" ||
       activeApp === "hermes"
     ) {
@@ -709,6 +717,11 @@ function App() {
                 queryKey: ["opencodeLiveProviderIds"],
                 queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
               })
+            : activeApp === "mimo"
+              ? await queryClient.ensureQueryData({
+                  queryKey: ["mimoLiveProviderIds"],
+                  queryFn: () => providersApi.getMimoLiveProviderIds(),
+                })
             : activeApp === "openclaw"
               ? await queryClient.ensureQueryData({
                   queryKey: openclawKeys.liveProviderIds,
@@ -964,6 +977,7 @@ function App() {
                       }
                       onRemoveFromConfig={
                         activeApp === "opencode" ||
+                        activeApp === "mimo" ||
                         activeApp === "openclaw" ||
                         activeApp === "hermes"
                           ? (provider) =>
@@ -1214,6 +1228,7 @@ function App() {
           <div className="flex flex-1 min-w-0 items-center justify-end gap-1.5">
             {currentView === "providers" &&
               activeApp !== "opencode" &&
+              activeApp !== "mimo" &&
               activeApp !== "openclaw" &&
               activeApp !== "hermes" && (
                 <div

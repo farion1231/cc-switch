@@ -19,6 +19,7 @@ mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
 mod mcp;
+mod mimocode_config;
 mod openclaw_config;
 mod opencode_config;
 mod panic_hook;
@@ -625,6 +626,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No new OpenCode providers to import"),
                 Err(e) => log::warn!("✗ Failed to import OpenCode providers: {e}"),
             }
+            match crate::services::provider::import_mimo_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("Imported {count} MiMo Code provider(s) from live config");
+                }
+                Ok(_) => log::debug!("No new MiMo Code providers to import"),
+                Err(e) => log::warn!("Failed to import MiMo Code providers: {e}"),
+            }
             match crate::services::provider::import_openclaw_providers_from_live(&app_state) {
                 Ok(count) if count > 0 => {
                     log::info!("✓ Imported {count} OpenClaw provider(s) from live config");
@@ -727,6 +735,14 @@ pub fn run() {
                     Err(e) => log::warn!("✗ Failed to import OpenCode MCP: {e}"),
                 }
 
+                match crate::services::mcp::McpService::import_from_mimo(&app_state) {
+                    Ok(count) if count > 0 => {
+                        log::info!("Imported {count} MCP server(s) from MiMo Code");
+                    }
+                    Ok(_) => log::debug!("No MiMo Code MCP servers found to import"),
+                    Err(e) => log::warn!("Failed to import MiMo Code MCP: {e}"),
+                }
+
                 match crate::services::mcp::McpService::import_from_hermes(&app_state) {
                     Ok(count) if count > 0 => {
                         log::info!("✓ Imported {count} MCP server(s) from Hermes");
@@ -745,6 +761,7 @@ pub fn run() {
                     crate::app_config::AppType::Codex,
                     crate::app_config::AppType::Gemini,
                     crate::app_config::AppType::OpenCode,
+                    crate::app_config::AppType::Mimo,
                     crate::app_config::AppType::OpenClaw,
                     crate::app_config::AppType::Hermes,
                 ] {
@@ -1356,6 +1373,9 @@ pub fn run() {
             // OpenCode specific
             commands::import_opencode_providers_from_live,
             commands::get_opencode_live_provider_ids,
+            // MiMo Code specific
+            commands::import_mimo_providers_from_live,
+            commands::get_mimo_live_provider_ids,
             // OpenClaw specific
             commands::import_openclaw_providers_from_live,
             commands::get_openclaw_live_provider_ids,

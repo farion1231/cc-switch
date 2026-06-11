@@ -23,7 +23,7 @@ use crate::store::AppState;
 // Re-export sub-module functions for external access
 pub use live::{
     import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, read_live_settings,
+    import_mimo_providers_from_live, import_opencode_providers_from_live, read_live_settings,
     should_import_default_config_on_startup, sync_current_to_live,
 };
 
@@ -37,7 +37,7 @@ pub(crate) use live::{
 
 // Internal re-exports
 use live::{
-    remove_hermes_provider_from_live, remove_openclaw_provider_from_live,
+    remove_hermes_provider_from_live, remove_mimo_provider_from_live, remove_openclaw_provider_from_live,
     remove_opencode_provider_from_live, write_gemini_live,
 };
 use usage::validate_usage_script;
@@ -1475,6 +1475,7 @@ impl ProviderService {
             if Self::check_live_config_exists(&app_type, id, live_managed)? {
                 match app_type {
                     AppType::OpenCode => remove_opencode_provider_from_live(id)?,
+                    AppType::Mimo => remove_mimo_provider_from_live(id)?,
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
                     _ => {}
@@ -1535,6 +1536,9 @@ impl ProviderService {
                 } else {
                     remove_opencode_provider_from_live(id)?;
                 }
+            }
+            AppType::Mimo => {
+                remove_mimo_provider_from_live(id)?;
             }
             AppType::OpenClaw => {
                 remove_openclaw_provider_from_live(id)?;
@@ -1765,6 +1769,7 @@ impl ProviderService {
             if let Err(e) = state.db.save_provider(app_type.as_str(), &updated) {
                 let rollback_result = match app_type {
                     AppType::OpenCode => remove_opencode_provider_from_live(&provider.id),
+                    AppType::Mimo => remove_mimo_provider_from_live(&provider.id),
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
                     _ => Ok(()),
@@ -1945,6 +1950,7 @@ impl ProviderService {
             AppType::Codex => Self::extract_codex_common_config(&provider.settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
+            AppType::Mimo => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
         }
@@ -1961,6 +1967,7 @@ impl ProviderService {
             AppType::Codex => Self::extract_codex_common_config(settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
+            AppType::Mimo => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
         }
@@ -2319,7 +2326,7 @@ impl ProviderService {
                 use crate::gemini_config::validate_gemini_settings;
                 validate_gemini_settings(&provider.settings_config)?
             }
-            AppType::OpenCode => {
+            AppType::OpenCode | AppType::Mimo => {
                 // OpenCode uses a different config structure: { npm, options, models }
                 // Basic validation - must be an object
                 if !provider.settings_config.is_object() {
@@ -2499,7 +2506,7 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
-            AppType::OpenCode => {
+            AppType::OpenCode | AppType::Mimo => {
                 // OpenCode uses options.apiKey and options.baseURL
                 let options = provider
                     .settings_config

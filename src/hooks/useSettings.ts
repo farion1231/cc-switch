@@ -111,6 +111,7 @@ export function useSettings(): UseSettingsResult {
       codex: sanitizeDir(data?.codexConfigDir),
       gemini: sanitizeDir(data?.geminiConfigDir),
       opencode: sanitizeDir(data?.opencodeConfigDir),
+      mimo: sanitizeDir(data?.mimoConfigDir),
       openclaw: sanitizeDir(data?.openclawConfigDir),
       hermes: sanitizeDir(data?.hermesConfigDir),
     });
@@ -190,6 +191,7 @@ export function useSettings(): UseSettingsResult {
         const sanitizedOpencodeDir = sanitizeDir(
           mergedSettings.opencodeConfigDir,
         );
+        const sanitizedMimoDir = sanitizeDir(mergedSettings.mimoConfigDir);
         const sanitizedOpenclawDir = sanitizeDir(
           mergedSettings.openclawConfigDir,
         );
@@ -205,6 +207,7 @@ export function useSettings(): UseSettingsResult {
           codexConfigDir: sanitizedCodexDir,
           geminiConfigDir: sanitizedGeminiDir,
           opencodeConfigDir: sanitizedOpencodeDir,
+          mimoConfigDir: sanitizedMimoDir,
           openclawConfigDir: sanitizedOpenclawDir,
           language: mergedSettings.language,
         };
@@ -321,6 +324,7 @@ export function useSettings(): UseSettingsResult {
         const sanitizedOpencodeDir = sanitizeDir(
           mergedSettings.opencodeConfigDir,
         );
+        const sanitizedMimoDir = sanitizeDir(mergedSettings.mimoConfigDir);
         const sanitizedOpenclawDir = sanitizeDir(
           mergedSettings.openclawConfigDir,
         );
@@ -329,6 +333,7 @@ export function useSettings(): UseSettingsResult {
         const previousCodexDir = sanitizeDir(data?.codexConfigDir);
         const previousGeminiDir = sanitizeDir(data?.geminiConfigDir);
         const previousOpencodeDir = sanitizeDir(data?.opencodeConfigDir);
+        const previousMimoDir = sanitizeDir(data?.mimoConfigDir);
         const previousOpenclawDir = sanitizeDir(data?.openclawConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
@@ -342,6 +347,7 @@ export function useSettings(): UseSettingsResult {
           codexConfigDir: sanitizedCodexDir,
           geminiConfigDir: sanitizedGeminiDir,
           opencodeConfigDir: sanitizedOpencodeDir,
+          mimoConfigDir: sanitizedMimoDir,
           openclawConfigDir: sanitizedOpenclawDir,
           language: mergedSettings.language,
         };
@@ -428,6 +434,7 @@ export function useSettings(): UseSettingsResult {
         const codexDirChanged = sanitizedCodexDir !== previousCodexDir;
         const geminiDirChanged = sanitizedGeminiDir !== previousGeminiDir;
         const opencodeDirChanged = sanitizedOpencodeDir !== previousOpencodeDir;
+        const mimoDirChanged = sanitizedMimoDir !== previousMimoDir;
         const openclawDirChanged = sanitizedOpenclawDir !== previousOpenclawDir;
         if (
           !pluginSynced &&
@@ -435,6 +442,7 @@ export function useSettings(): UseSettingsResult {
             codexDirChanged ||
             geminiDirChanged ||
             opencodeDirChanged ||
+            mimoDirChanged ||
             openclawDirChanged)
         ) {
           const syncResult = await syncCurrentProvidersLiveSafe();

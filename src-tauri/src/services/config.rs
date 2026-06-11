@@ -125,9 +125,9 @@ impl ConfigService {
                 // Claude Desktop 3P profiles are managed by claude_desktop_config.
             }
             AppType::Gemini => Self::sync_gemini_live(config, &current_id, &provider)?,
-            AppType::OpenCode => {
-                // OpenCode uses additive mode, no live sync needed
-                // OpenCode providers are managed directly in the config file
+            AppType::OpenCode | AppType::Mimo => {
+                // OpenCode/MiMo Code use additive mode, no live sync needed
+                // Providers are managed directly in the config file
             }
             AppType::OpenClaw => {
                 // OpenClaw uses additive mode, no live sync needed
