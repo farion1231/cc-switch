@@ -13,6 +13,7 @@ import {
   type SkillUpdateInfo,
   type SkillsShSearchResult,
 } from "@/lib/api/skills";
+import { isTauriRuntime } from "@/lib/commandClient";
 import type { AppId } from "@/lib/api/types";
 import { mergeImportedSkills } from "@/hooks/useSkills.helpers";
 
@@ -25,6 +26,7 @@ export function useInstalledSkills() {
   return useQuery({
     queryKey: ["skills", "installed"],
     queryFn: () => skillsApi.getInstalled(),
+    enabled: isTauriRuntime(),
     staleTime: Infinity,
     placeholderData: keepPreviousData,
   });

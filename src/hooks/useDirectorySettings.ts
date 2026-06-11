@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { homeDir, join } from "@tauri-apps/api/path";
 import { settingsApi, type AppId } from "@/lib/api";
+import { isTauriRuntime } from "@/lib/commandClient";
 import type { SettingsFormState } from "./useSettingsForm";
 
 export type DirectoryAppId = Exclude<AppId, "claude-desktop">;
@@ -121,6 +122,7 @@ export function useDirectorySettings({
   onUpdateSettings,
 }: UseDirectorySettingsProps): UseDirectorySettingsResult {
   const { t } = useTranslation();
+  const isTauri = isTauriRuntime();
 
   const [appConfigDir, setAppConfigDir] = useState<string | undefined>(
     undefined,
@@ -150,6 +152,13 @@ export function useDirectorySettings({
   // 加载目录信息
   useEffect(() => {
     let active = true;
+    if (!isTauri) {
+      setIsLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+
     setIsLoading(true);
 
     const load = async () => {
@@ -228,7 +237,7 @@ export function useDirectorySettings({
     return () => {
       active = false;
     };
-  }, []);
+  }, [isTauri]);
 
   const updateDirectoryState = useCallback(
     (key: DirectoryKey, value?: string) => {
@@ -268,6 +277,7 @@ export function useDirectorySettings({
 
   const browseDirectory = useCallback(
     async (app: DirectoryAppId) => {
+      if (!isTauri) return;
       const key = APP_DIRECTORY_META[app].key;
       const settingsField = DIRECTORY_KEY_TO_SETTINGS_FIELD[key];
       const currentValue =
@@ -287,10 +297,11 @@ export function useDirectorySettings({
         );
       }
     },
-    [settings, resolvedDirs, t, updateDirectoryState],
+    [isTauri, settings, resolvedDirs, t, updateDirectoryState],
   );
 
   const browseAppConfigDir = useCallback(async () => {
+    if (!isTauri) return;
     const currentValue = appConfigDir ?? resolvedDirs.appConfig;
     try {
       const picked = await settingsApi.selectConfigDirectory(currentValue);
@@ -308,12 +319,12 @@ export function useDirectorySettings({
         }),
       );
     }
-  }, [appConfigDir, resolvedDirs.appConfig, t, updateDirectoryState]);
+  }, [appConfigDir, isTauri, resolvedDirs.appConfig, t, updateDirectoryState]);
 
   const resetDirectory = useCallback(
     async (app: DirectoryAppId) => {
       const key = APP_DIRECTORY_META[app].key;
-      if (!defaultsRef.current[key]) {
+      if (isTauri && !defaultsRef.current[key]) {
         const fallback = await computeDefaultConfigDir(app);
         if (fallback) {
           defaultsRef.current = {
@@ -324,11 +335,11 @@ export function useDirectorySettings({
       }
       updateDirectoryState(key, undefined);
     },
-    [updateDirectoryState],
+    [isTauri, updateDirectoryState],
   );
 
   const resetAppConfigDir = useCallback(async () => {
-    if (!defaultsRef.current.appConfig) {
+    if (isTauri && !defaultsRef.current.appConfig) {
       const fallback = await computeDefaultAppConfigDir();
       if (fallback) {
         defaultsRef.current = {
@@ -338,7 +349,7 @@ export function useDirectorySettings({
       }
     }
     updateDirectoryState("appConfig", undefined);
-  }, [updateDirectoryState]);
+  }, [isTauri, updateDirectoryState]);
 
   const resetAllDirectories = useCallback(
     (overrides?: ResolvedAppDirectoryOverrides) => {

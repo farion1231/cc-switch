@@ -51,6 +51,7 @@ interface ProviderCardProps {
   onDuplicate: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
   onOpenTerminal?: (provider: Provider) => void;
+  isBrowserWebUi?: boolean;
   isTesting?: boolean;
   isProxyRunning: boolean;
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管，切换为热切换）
@@ -150,6 +151,7 @@ export function ProviderCard({
   onDuplicate,
   onTest,
   onOpenTerminal,
+  isBrowserWebUi = false,
   isTesting,
   isProxyRunning,
   isProxyTakeover = false,
@@ -170,7 +172,10 @@ export function ProviderCard({
   const handleDisableAnyOmo = isOmoSlim ? onDisableOmoSlim : onDisableOmo;
   const isAdditiveMode = appId === "opencode" && !isAnyOmo;
 
-  const { data: health } = useProviderHealth(provider.id, appId);
+  const { data: health } = useProviderHealth(
+    isBrowserWebUi ? "" : provider.id,
+    appId,
+  );
 
   const fallbackUrlText = t("provider.notConfigured", {
     defaultValue: "未配置接口地址",
@@ -551,6 +556,7 @@ export function ProviderCard({
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}
               onTest={
+                !isBrowserWebUi &&
                 onTest &&
                 !isOfficial &&
                 !isCopilot &&
@@ -574,7 +580,9 @@ export function ProviderCard({
               }
               onDisableOmo={handleDisableAnyOmo}
               onOpenTerminal={
-                onOpenTerminal ? () => onOpenTerminal(provider) : undefined
+                !isBrowserWebUi && onOpenTerminal
+                  ? () => onOpenTerminal(provider)
+                  : undefined
               }
               isAutoFailoverEnabled={isAutoFailoverEnabled}
               isInFailoverQueue={isInFailoverQueue}

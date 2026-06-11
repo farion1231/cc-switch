@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { invokeCommand } from "@/lib/commandClient";
+import { invokeCommand, isTauriRuntime } from "@/lib/commandClient";
 import type { SettingsFormState } from "@/hooks/useSettings";
 
 interface WebUiSettingsProps {
@@ -22,12 +22,17 @@ interface WebUiStatus {
   port: number;
   host: string;
   tokenSet: boolean;
+  authRequired: boolean;
 }
 
 export function WebUiSettings({ settings, onChange }: WebUiSettingsProps) {
   const { t } = useTranslation();
+  const isTauri = isTauriRuntime();
   const [status, setStatus] = useState<WebUiStatus | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [passwordEnabledOverride, setPasswordEnabledOverride] = useState<
+    boolean | null
+  >(null);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -47,6 +52,7 @@ export function WebUiSettings({ settings, onChange }: WebUiSettingsProps) {
   const handleToggleEnabled = useCallback(
     (enabled: boolean) => {
       onChange({ webuiEnabled: enabled });
+      if (!isTauri) return;
       // If disabling and server is running, stop it
       if (!enabled && status?.running) {
         invokeCommand("stop_webui_server")
@@ -60,7 +66,7 @@ export function WebUiSettings({ settings, onChange }: WebUiSettingsProps) {
           .catch((e) => toast.error(String(e)));
       }
     },
-    [onChange, status, fetchStatus],
+    [isTauri, onChange, status, fetchStatus],
   );
 
   const handleStart = useCallback(async () => {
@@ -123,9 +129,19 @@ export function WebUiSettings({ settings, onChange }: WebUiSettingsProps) {
     }
   }, [status]);
 
-  const accessUrl = status?.address || `http://${settings.webuiHost ?? "127.0.0.1"}:${settings.webuiPort ?? 15722}`;
-  const isPublic = settings.webuiHost !== "127.0.0.1" && settings.webuiHost !== "localhost";
-  const requirePassword = settings.webuiToken !== undefined && settings.webuiToken !== "";
+  const accessUrl =
+    status?.address ||
+    `http://${settings.webuiHost ?? "127.0.0.1"}:${settings.webuiPort ?? 15722}`;
+  const isPublic =
+    settings.webuiHost !== "127.0.0.1" && settings.webuiHost !== "localhost";
+  const hasDraftPassword =
+    typeof settings.webuiToken === "string" &&
+    settings.webuiToken.trim().length > 0;
+  const savedPasswordEnabled = Boolean(
+    status?.tokenSet || status?.authRequired,
+  );
+  const requirePassword =
+    passwordEnabledOverride ?? (hasDraftPassword || savedPasswordEnabled);
 
   return (
     <section className="space-y-4">
@@ -135,7 +151,10 @@ export function WebUiSettings({ settings, onChange }: WebUiSettingsProps) {
           {t("settings.webui.title", { defaultValue: "WebUI 远程管理" })}
         </h3>
         {status?.running ? (
-          <Badge variant="default" className="ml-auto text-xs bg-green-500/20 text-green-600 border-green-500/30">
+          <Badge
+            variant="default"
+            className="ml-auto text-xs bg-green-500/20 text-green-600 border-green-500/30"
+          >
             {t("settings.webui.running", { defaultValue: "运行中" })}
           </Badge>
         ) : (
@@ -243,15 +262,16 @@ export function WebUiSettings({ settings, onChange }: WebUiSettingsProps) {
 
       <ToggleRow
         icon={<Shield className="h-4 w-4 text-amber-500" />}
-        title={t("settings.webui.requirePassword", { defaultValue: "需要密码" })}
+        title={t("settings.webui.requirePassword", {
+          defaultValue: "需要密码",
+        })}
         description={t("settings.webui.requirePasswordDesc", {
           defaultValue: "启用后需要密码才能访问 WebUI",
         })}
         checked={requirePassword}
         onCheckedChange={(checked) => {
-          if (checked) {
-            onChange({ webuiToken: "" });
-          } else {
+          setPasswordEnabledOverride(checked);
+          if (!checked) {
             onChange({ webuiToken: undefined });
           }
         }}
@@ -267,50 +287,50 @@ export function WebUiSettings({ settings, onChange }: WebUiSettingsProps) {
             placeholder={t("settings.webui.passwordPlaceholder", {
               defaultValue: "设置访问密码",
             })}
-            value={settings.webuiToken ?? ""}
-            onChange={(e) => onChange({ webuiToken: e.target.value || undefined })}
+            value={hasDraftPassword ? (settings.webuiToken ?? "") : ""}
+            onChange={(e) => {
+              setPasswordEnabledOverride(true);
+              onChange({ webuiToken: e.target.value });
+            }}
           />
         </div>
       )}
 
-      {/* Control buttons */}
-      <div className="flex items-center gap-2 pt-2">
-        {!status?.running ? (
-          <Button
-            size="sm"
-            onClick={handleStart}
-            disabled={isLoading}
-          >
-            <Play className="h-3.5 w-3.5 mr-1.5" />
-            {t("settings.webui.start", { defaultValue: "启动" })}
-          </Button>
-        ) : (
-          <>
-            <Button
-              size="sm"
-              variant="destructive"
-              onClick={handleStop}
-              disabled={isLoading}
-            >
-              <Square className="h-3.5 w-3.5 mr-1.5" />
-              {t("settings.webui.stop", { defaultValue: "停止" })}
+      {isTauri && (
+        <div className="flex items-center gap-2 pt-2">
+          {!status?.running ? (
+            <Button size="sm" onClick={handleStart} disabled={isLoading}>
+              <Play className="h-3.5 w-3.5 mr-1.5" />
+              {t("settings.webui.start", { defaultValue: "启动" })}
             </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={handleRestart}
-              disabled={isLoading}
-            >
-              {t("settings.webui.restart", { defaultValue: "重启" })}
-            </Button>
-          </>
-        )}
-        <p className="text-xs text-muted-foreground ml-auto">
-          {t("settings.webui.restartHint", {
-            defaultValue: "修改端口或地址后需重启生效",
-          })}
-        </p>
-      </div>
+          ) : (
+            <>
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={handleStop}
+                disabled={isLoading}
+              >
+                <Square className="h-3.5 w-3.5 mr-1.5" />
+                {t("settings.webui.stop", { defaultValue: "停止" })}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleRestart}
+                disabled={isLoading}
+              >
+                {t("settings.webui.restart", { defaultValue: "重启" })}
+              </Button>
+            </>
+          )}
+          <p className="text-xs text-muted-foreground ml-auto">
+            {t("settings.webui.restartHint", {
+              defaultValue: "修改端口或地址后需重启生效",
+            })}
+          </p>
+        </div>
+      )}
     </section>
   );
 }

@@ -61,7 +61,11 @@ export const providersApi = {
     appId: AppId,
     addToLive?: boolean,
   ): Promise<boolean> {
-    return await invokeCommand("add_provider", { provider, app: appId, addToLive });
+    return await invokeCommand("add_provider", {
+      provider,
+      app: appId,
+      addToLive,
+    });
   },
 
   async update(
@@ -85,7 +89,10 @@ export const providersApi = {
    * Does NOT delete from database - provider remains in the list
    */
   async removeFromLiveConfig(id: string, appId: AppId): Promise<boolean> {
-    return await invokeCommand("remove_provider_from_live_config", { id, app: appId });
+    return await invokeCommand("remove_provider_from_live_config", {
+      id,
+      app: appId,
+    });
   },
 
   async switch(id: string, appId: AppId): Promise<SwitchResult> {
@@ -120,7 +127,10 @@ export const providersApi = {
     updates: ProviderSortUpdate[],
     appId: AppId,
   ): Promise<boolean> {
-    return await invokeCommand("update_providers_sort_order", { updates, app: appId });
+    return await invokeCommand("update_providers_sort_order", {
+      updates,
+      app: appId,
+    });
   },
 
   async onSwitched(

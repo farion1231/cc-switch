@@ -15,9 +15,9 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashSet, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc};
+use tauri::{path::BaseDirectory, AppHandle, Manager};
 use tokio::sync::{oneshot, RwLock};
 use tokio::task::JoinHandle;
-use tauri::{path::BaseDirectory, AppHandle, Manager};
 use tower_http::cors::{AllowCredentials, AllowOrigin, CorsLayer};
 use tower_http::services::ServeDir;
 
@@ -105,6 +105,12 @@ struct SwitchProxyProviderRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct UrlRequest {
+    url: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct AppTypeValueRequest {
     app_type: String,
     value: Option<String>,
@@ -141,21 +147,13 @@ struct IdRequest {
 
 fn parse_bool_env(name: &str) -> bool {
     std::env::var(name)
-        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
         .unwrap_or(false)
-}
-
-fn is_private_ip(addr: &SocketAddr) -> bool {
-    match addr.ip() {
-        std::net::IpAddr::V4(ip) => {
-            ip.is_loopback()
-                || ip.is_private()  // RFC 1918: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-                || ip.is_link_local()  // 169.254.0.0/16
-        }
-        std::net::IpAddr::V6(ip) => {
-            ip.is_loopback() || ip.is_unicast_link_local()
-        }
-    }
 }
 
 fn configured_password() -> Option<String> {
@@ -166,7 +164,9 @@ fn configured_password() -> Option<String> {
 }
 
 fn sanitize_password(value: Option<String>) -> Option<String> {
-    value.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+    value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 fn session_from_cookie(headers: &header::HeaderMap) -> Option<String> {
@@ -310,9 +310,21 @@ async fn webui_status(State(state): State<WebUiState>) -> Json<Value> {
     }))
 }
 
-async fn webui_auth_status(State(state): State<WebUiState>) -> Json<Value> {
+async fn webui_auth_status(
+    State(state): State<WebUiState>,
+    headers: header::HeaderMap,
+) -> Json<Value> {
+    let authenticated = if state.password.is_none() {
+        true
+    } else if let Some(session) = session_from_cookie(&headers) {
+        state.sessions.read().await.contains(&session)
+    } else {
+        false
+    };
+
     Json(json!({
         "authRequired": state.password.is_some(),
+        "authenticated": authenticated,
     }))
 }
 
@@ -337,9 +349,8 @@ async fn webui_login(
 
     let session = uuid::Uuid::new_v4().to_string();
     state.sessions.write().await.insert(session.clone());
-    let cookie = format!(
-        "{SESSION_COOKIE}={session}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000"
-    );
+    let cookie =
+        format!("{SESSION_COOKIE}={session}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000");
     (
         StatusCode::OK,
         [(header::SET_COOKIE, cookie)],
@@ -379,10 +390,7 @@ async fn save_settings(Json(settings): Json<crate::settings::AppSettings>) -> Re
     }
 }
 
-async fn get_providers(
-    State(state): State<WebUiState>,
-    Query(query): Query<AppQuery>,
-) -> Response {
+async fn get_providers(State(state): State<WebUiState>, Query(query): Query<AppQuery>) -> Response {
     let app_type = match app_type(&query.app) {
         Ok(v) => v,
         Err(resp) => return resp,
@@ -462,6 +470,20 @@ async fn delete_provider(
     }
 }
 
+async fn remove_provider_from_live_config(
+    State(state): State<WebUiState>,
+    Json(payload): Json<DeleteProviderRequest>,
+) -> Response {
+    let app_type = match app_type(&payload.app) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    match ProviderService::remove_from_live_config(&state.app_state, app_type, &payload.id) {
+        Ok(()) => Json(true).into_response(),
+        Err(e) => command_error(e),
+    }
+}
+
 async fn switch_provider(
     State(state): State<WebUiState>,
     Json(payload): Json<SwitchProviderRequest>,
@@ -490,6 +512,34 @@ async fn import_default_config(
     };
     match commands::import_default_config_test_hook(&state.app_state, app_type) {
         Ok(result) => Json(result).into_response(),
+        Err(e) => command_error(e),
+    }
+}
+
+async fn import_claude_desktop_providers_from_claude(State(state): State<WebUiState>) -> Response {
+    match commands::import_claude_desktop_providers_from_claude_for_state(&state.app_state) {
+        Ok(count) => Json(count).into_response(),
+        Err(e) => command_error(e),
+    }
+}
+
+async fn import_opencode_providers_from_live(State(state): State<WebUiState>) -> Response {
+    match crate::services::provider::import_opencode_providers_from_live(&state.app_state) {
+        Ok(count) => Json(count).into_response(),
+        Err(e) => command_error(e),
+    }
+}
+
+async fn import_openclaw_providers_from_live(State(state): State<WebUiState>) -> Response {
+    match crate::services::provider::import_openclaw_providers_from_live(&state.app_state) {
+        Ok(count) => Json(count).into_response(),
+        Err(e) => command_error(e),
+    }
+}
+
+async fn import_hermes_providers_from_live(State(state): State<WebUiState>) -> Response {
+    match crate::services::provider::import_hermes_providers_from_live(&state.app_state) {
+        Ok(count) => Json(count).into_response(),
         Err(e) => command_error(e),
     }
 }
@@ -570,8 +620,15 @@ async fn stop_proxy_server(State(state): State<WebUiState>) -> Response {
         Err(e) => return command_error(e),
     };
 
-    if takeover.claude || takeover.codex || takeover.gemini || takeover.opencode || takeover.openclaw {
-        return command_error("仍有应用处于代理接管状态，请先在设置中关闭对应应用接管后再停止本地路由。");
+    if takeover.claude
+        || takeover.codex
+        || takeover.gemini
+        || takeover.opencode
+        || takeover.openclaw
+    {
+        return command_error(
+            "仍有应用处于代理接管状态，请先在设置中关闭对应应用接管后再停止本地路由。",
+        );
     }
 
     match state.app_state.proxy_service.stop().await {
@@ -599,7 +656,14 @@ async fn is_proxy_running(State(state): State<WebUiState>) -> Json<bool> {
 }
 
 async fn is_live_takeover_active(State(state): State<WebUiState>) -> Json<bool> {
-    Json(state.app_state.proxy_service.is_takeover_active().await.unwrap_or(false))
+    Json(
+        state
+            .app_state
+            .proxy_service
+            .is_takeover_active()
+            .await
+            .unwrap_or(false),
+    )
 }
 
 async fn get_proxy_takeover_status(State(state): State<WebUiState>) -> Response {
@@ -667,7 +731,12 @@ async fn get_proxy_config_for_app(
     State(state): State<WebUiState>,
     Json(payload): Json<AppTypeRequest>,
 ) -> Response {
-    match state.app_state.db.get_proxy_config_for_app(&payload.app_type).await {
+    match state
+        .app_state
+        .db
+        .get_proxy_config_for_app(&payload.app_type)
+        .await
+    {
         Ok(config) => Json(config).into_response(),
         Err(e) => command_error(e),
     }
@@ -714,11 +783,56 @@ async fn update_global_proxy_config(
     }
 }
 
+async fn get_global_proxy_url(State(state): State<WebUiState>) -> Response {
+    match state.app_state.db.get_global_proxy_url() {
+        Ok(value) => Json(value).into_response(),
+        Err(e) => command_error(e),
+    }
+}
+
+async fn set_global_proxy_url(
+    State(state): State<WebUiState>,
+    Json(payload): Json<UrlRequest>,
+) -> Response {
+    let url_opt = if payload.url.trim().is_empty() {
+        None
+    } else {
+        Some(payload.url.as_str())
+    };
+
+    if let Err(e) = crate::proxy::http_client::validate_proxy(url_opt) {
+        return command_error(e);
+    }
+    if let Err(e) = state.app_state.db.set_global_proxy_url(url_opt) {
+        return command_error(e);
+    }
+    match crate::proxy::http_client::apply_proxy(url_opt) {
+        Ok(()) => Json(Value::Null).into_response(),
+        Err(e) => command_error(e),
+    }
+}
+
+async fn test_proxy_url(Json(payload): Json<UrlRequest>) -> Response {
+    match commands::test_proxy_url(payload.url).await {
+        Ok(result) => Json(result).into_response(),
+        Err(e) => command_error(e),
+    }
+}
+
+async fn get_upstream_proxy_status() -> Json<commands::UpstreamProxyStatus> {
+    Json(commands::get_upstream_proxy_status())
+}
+
 async fn get_default_cost_multiplier(
     State(state): State<WebUiState>,
     Json(payload): Json<AppTypeValueRequest>,
 ) -> Response {
-    match state.app_state.db.get_default_cost_multiplier(&payload.app_type).await {
+    match state
+        .app_state
+        .db
+        .get_default_cost_multiplier(&payload.app_type)
+        .await
+    {
         Ok(value) => Json(value).into_response(),
         Err(e) => command_error(e),
     }
@@ -743,7 +857,12 @@ async fn get_pricing_model_source(
     State(state): State<WebUiState>,
     Json(payload): Json<AppTypeValueRequest>,
 ) -> Response {
-    match state.app_state.db.get_pricing_model_source(&payload.app_type).await {
+    match state
+        .app_state
+        .db
+        .get_pricing_model_source(&payload.app_type)
+        .await
+    {
         Ok(value) => Json(value).into_response(),
         Err(e) => command_error(e),
     }
@@ -756,7 +875,10 @@ async fn set_pricing_model_source(
     match state
         .app_state
         .db
-        .set_pricing_model_source(&payload.app_type, payload.value.as_deref().unwrap_or("response"))
+        .set_pricing_model_source(
+            &payload.app_type,
+            payload.value.as_deref().unwrap_or("response"),
+        )
         .await
     {
         Ok(()) => Json(Value::Null).into_response(),
@@ -785,7 +907,6 @@ async fn upsert_universal_provider(
     State(state): State<WebUiState>,
     Json(payload): Json<UniversalProviderRequest>,
 ) -> Response {
-    let id = payload.provider.id.clone();
     match ProviderService::upsert_universal(&state.app_state, payload.provider) {
         Ok(result) => {
             // TODO: emit universal-provider-synced event
@@ -891,13 +1012,21 @@ async fn usage_command(
             db.get_request_logs(
                 &filters,
                 payload.get("page").and_then(Value::as_u64).unwrap_or(1) as u32,
-                payload.get("pageSize").and_then(Value::as_u64).unwrap_or(50) as u32,
+                payload
+                    .get("pageSize")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(50) as u32,
             )
             .map(|v| json!(v))
             .map_err(|e| e.to_string())
         }
         "get_request_detail" => db
-            .get_request_detail(payload.get("requestId").and_then(Value::as_str).unwrap_or_default())
+            .get_request_detail(
+                payload
+                    .get("requestId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            )
             .map(|v| json!(v))
             .map_err(|e| e.to_string()),
         "queryProviderUsage" => {
@@ -908,7 +1037,10 @@ async fn usage_command(
                 },
                 None => return command_error("missing app"),
             };
-            let provider_id = payload.get("providerId").and_then(Value::as_str).unwrap_or_default();
+            let provider_id = payload
+                .get("providerId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             ProviderService::query_usage(&state.app_state, app_type, provider_id)
                 .await
                 .map(|v| json!(v))
@@ -925,8 +1057,14 @@ async fn usage_command(
             ProviderService::test_usage_script(
                 state.app_state.as_ref(),
                 app_type,
-                payload.get("providerId").and_then(Value::as_str).unwrap_or_default(),
-                payload.get("scriptCode").and_then(Value::as_str).unwrap_or_default(),
+                payload
+                    .get("providerId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                payload
+                    .get("scriptCode")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
                 payload.get("timeout").and_then(Value::as_u64).unwrap_or(10),
                 payload.get("apiKey").and_then(Value::as_str),
                 payload.get("baseUrl").and_then(Value::as_str),
@@ -945,7 +1083,9 @@ async fn usage_command(
                 let db = state.app_state.db.clone();
                 let conn = match db.conn.lock() {
                     Ok(conn) => conn,
-                    Err(e) => return command_error(AppError::Database(format!("Mutex lock failed: {e}"))),
+                    Err(e) => {
+                        return command_error(AppError::Database(format!("Mutex lock failed: {e}")))
+                    }
                 };
                 let mut stmt = match conn.prepare(
                     "SELECT model_id, display_name, input_cost_per_million, output_cost_per_million,
@@ -976,18 +1116,44 @@ async fn usage_command(
             }
         }
         "update_model_pricing" => {
-            let model_id = payload.get("modelId").and_then(Value::as_str).unwrap_or_default().trim().to_string();
-            let display_name = payload.get("displayName").and_then(Value::as_str).unwrap_or_default().trim().to_string();
+            let model_id = payload
+                .get("modelId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            let display_name = payload
+                .get("displayName")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
             if model_id.is_empty() {
                 return command_error("模型 ID 不能为空");
             }
             if display_name.is_empty() {
                 return command_error("显示名称不能为空");
             }
-            let input_cost = payload.get("inputCost").and_then(Value::as_str).unwrap_or_default().trim();
-            let output_cost = payload.get("outputCost").and_then(Value::as_str).unwrap_or_default().trim();
-            let cache_read_cost = payload.get("cacheReadCost").and_then(Value::as_str).unwrap_or_default().trim();
-            let cache_creation_cost = payload.get("cacheCreationCost").and_then(Value::as_str).unwrap_or_default().trim();
+            let input_cost = payload
+                .get("inputCost")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim();
+            let output_cost = payload
+                .get("outputCost")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim();
+            let cache_read_cost = payload
+                .get("cacheReadCost")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim();
+            let cache_creation_cost = payload
+                .get("cacheCreationCost")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim();
             for (label, value) in [
                 ("input_cost", input_cost),
                 ("output_cost", output_cost),
@@ -1010,7 +1176,14 @@ async fn usage_command(
                         model_id, display_name, input_cost_per_million, output_cost_per_million,
                         cache_read_cost_per_million, cache_creation_cost_per_million
                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    rusqlite::params![model_id, display_name, input_cost, output_cost, cache_read_cost, cache_creation_cost],
+                    rusqlite::params![
+                        model_id,
+                        display_name,
+                        input_cost,
+                        output_cost,
+                        cache_read_cost,
+                        cache_creation_cost
+                    ],
                 )
                 .map(|_| Value::Null)
                 .map_err(|e| format!("更新模型定价失败: {e}"))
@@ -1018,37 +1191,57 @@ async fn usage_command(
             result
         }
         "delete_model_pricing" => {
-            let model_id = payload.get("modelId").and_then(Value::as_str).unwrap_or_default();
+            let model_id = payload
+                .get("modelId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             let result = {
                 let conn = match state.app_state.db.conn.lock() {
                     Ok(guard) => guard,
                     Err(e) => return command_error(format!("Database lock failed: {e}")),
                 };
-                conn.execute("DELETE FROM model_pricing WHERE model_id = ?1", rusqlite::params![model_id])
-                    .map(|_| Value::Null)
-                    .map_err(|e| format!("删除模型定价失败: {e}"))
+                conn.execute(
+                    "DELETE FROM model_pricing WHERE model_id = ?1",
+                    rusqlite::params![model_id],
+                )
+                .map(|_| Value::Null)
+                .map_err(|e| format!("删除模型定价失败: {e}"))
             };
             result
         }
-        "check_provider_limits" => state.app_state.db
+        "check_provider_limits" => state
+            .app_state
+            .db
             .check_provider_limits(
-                payload.get("providerId").and_then(Value::as_str).unwrap_or_default(),
-                payload.get("appType").and_then(Value::as_str).unwrap_or_default(),
+                payload
+                    .get("providerId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                payload
+                    .get("appType")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
             )
             .map(|v| json!(v))
             .map_err(|e| e.to_string()),
         "sync_session_usage" => {
-            let mut result = match crate::services::session_usage::sync_claude_session_logs(&state.app_state.db) {
-                Ok(result) => result,
-                Err(e) => return command_error(e),
-            };
-            if let Ok(codex_result) = crate::services::session_usage_codex::sync_codex_usage(&state.app_state.db) {
+            let mut result =
+                match crate::services::session_usage::sync_claude_session_logs(&state.app_state.db)
+                {
+                    Ok(result) => result,
+                    Err(e) => return command_error(e),
+                };
+            if let Ok(codex_result) =
+                crate::services::session_usage_codex::sync_codex_usage(&state.app_state.db)
+            {
                 result.imported += codex_result.imported;
                 result.skipped += codex_result.skipped;
                 result.files_scanned += codex_result.files_scanned;
                 result.errors.extend(codex_result.errors);
             }
-            if let Ok(opencode_result) = crate::services::session_usage_opencode::sync_opencode_usage(&state.app_state.db) {
+            if let Ok(opencode_result) =
+                crate::services::session_usage_opencode::sync_opencode_usage(&state.app_state.db)
+            {
                 result.imported += opencode_result.imported;
                 result.skipped += opencode_result.skipped;
                 result.files_scanned += opencode_result.files_scanned;
@@ -1057,7 +1250,13 @@ async fn usage_command(
             Ok(json!(result))
         }
         "get_usage_data_sources" => Ok(json!([])),
-        _ => return (StatusCode::NOT_FOUND, Json(json!({ "error": "unsupported WebUI command" }))).into_response(),
+        _ => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "unsupported WebUI command" })),
+            )
+                .into_response()
+        }
     };
 
     match result {
@@ -1082,38 +1281,112 @@ fn command_router(state: WebUiState) -> Router {
         .route("/api/providers/add", post(add_provider))
         .route("/api/providers/update", post(update_provider))
         .route("/api/providers/delete", post(delete_provider))
+        .route(
+            "/api/providers/remove-live",
+            post(remove_provider_from_live_config),
+        )
         .route("/api/providers/switch", post(switch_provider))
         .route("/api/providers/import-default", post(import_default_config))
         .route("/api/providers/sort", post(update_sort_order))
         .route("/api/claude-desktop/status", get(get_claude_desktop_status))
-        .route("/api/claude-desktop/default-routes", get(get_claude_desktop_default_routes))
-        .route("/api/opencode/live-provider-ids", get(get_opencode_live_provider_ids))
-        .route("/api/openclaw/live-provider-ids", get(get_openclaw_live_provider_ids))
-        .route("/api/hermes/live-provider-ids", get(get_hermes_live_provider_ids))
+        .route(
+            "/api/claude-desktop/default-routes",
+            get(get_claude_desktop_default_routes),
+        )
+        .route(
+            "/api/claude-desktop/import-from-claude",
+            post(import_claude_desktop_providers_from_claude),
+        )
+        .route(
+            "/api/opencode/import-live",
+            post(import_opencode_providers_from_live),
+        )
+        .route(
+            "/api/opencode/live-provider-ids",
+            get(get_opencode_live_provider_ids),
+        )
+        .route(
+            "/api/openclaw/import-live",
+            post(import_openclaw_providers_from_live),
+        )
+        .route(
+            "/api/openclaw/live-provider-ids",
+            get(get_openclaw_live_provider_ids),
+        )
+        .route(
+            "/api/hermes/import-live",
+            post(import_hermes_providers_from_live),
+        )
+        .route(
+            "/api/hermes/live-provider-ids",
+            get(get_hermes_live_provider_ids),
+        )
         .route("/api/tray/update", post(update_tray_menu))
         .route("/api/proxy/start", post(start_proxy))
         .route("/api/proxy/stop", post(stop_proxy_server))
-        .route("/api/proxy/stop-with-restore", post(stop_proxy_with_restore))
+        .route(
+            "/api/proxy/stop-with-restore",
+            post(stop_proxy_with_restore),
+        )
         .route("/api/proxy/status", get(get_proxy_status))
         .route("/api/proxy/running", get(is_proxy_running))
-        .route("/api/proxy/live-takeover-active", get(is_live_takeover_active))
+        .route(
+            "/api/proxy/live-takeover-active",
+            get(is_live_takeover_active),
+        )
         .route("/api/proxy/takeover-status", get(get_proxy_takeover_status))
         .route("/api/proxy/takeover", post(set_proxy_takeover))
         .route("/api/proxy/switch-provider", post(switch_proxy_provider))
-        .route("/api/proxy/config", get(get_proxy_config).post(update_proxy_config))
-        .route("/api/proxy/global-config", get(get_global_proxy_config).post(update_global_proxy_config))
+        .route(
+            "/api/proxy/config",
+            get(get_proxy_config).post(update_proxy_config),
+        )
+        .route(
+            "/api/proxy/global-config",
+            get(get_global_proxy_config).post(update_global_proxy_config),
+        )
+        .route(
+            "/api/proxy/global-url",
+            get(get_global_proxy_url).post(set_global_proxy_url),
+        )
+        .route("/api/proxy/test-url", post(test_proxy_url))
+        .route("/api/proxy/upstream-status", get(get_upstream_proxy_status))
         .route("/api/proxy/app-config", post(get_proxy_config_for_app))
-        .route("/api/proxy/app-config/update", post(update_proxy_config_for_app))
-        .route("/api/proxy/default-cost-multiplier", post(get_default_cost_multiplier))
-        .route("/api/proxy/default-cost-multiplier/update", post(set_default_cost_multiplier))
-        .route("/api/proxy/pricing-model-source", post(get_pricing_model_source))
-        .route("/api/proxy/pricing-model-source/update", post(set_pricing_model_source))
+        .route(
+            "/api/proxy/app-config/update",
+            post(update_proxy_config_for_app),
+        )
+        .route(
+            "/api/proxy/default-cost-multiplier",
+            post(get_default_cost_multiplier),
+        )
+        .route(
+            "/api/proxy/default-cost-multiplier/update",
+            post(set_default_cost_multiplier),
+        )
+        .route(
+            "/api/proxy/pricing-model-source",
+            post(get_pricing_model_source),
+        )
+        .route(
+            "/api/proxy/pricing-model-source/update",
+            post(set_pricing_model_source),
+        )
         .route("/api/models/fetch", post(fetch_models))
         .route("/api/universal-providers", get(get_universal_providers))
         .route("/api/universal-providers/get", get(get_universal_provider))
-        .route("/api/universal-providers/upsert", post(upsert_universal_provider))
-        .route("/api/universal-providers/delete", post(delete_universal_provider))
-        .route("/api/universal-providers/sync", post(sync_universal_provider))
+        .route(
+            "/api/universal-providers/upsert",
+            post(upsert_universal_provider),
+        )
+        .route(
+            "/api/universal-providers/delete",
+            post(delete_universal_provider),
+        )
+        .route(
+            "/api/universal-providers/sync",
+            post(sync_universal_provider),
+        )
         .route("/api/usage/:command", post(usage_command))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth))
         .with_state(state)
@@ -1144,8 +1417,7 @@ impl WebUiServer {
         let settings = crate::settings::get_settings();
 
         // Env var override takes precedence
-        let host = std::env::var(HOST_ENV)
-            .unwrap_or_else(|_| settings.webui_host.clone());
+        let host = std::env::var(HOST_ENV).unwrap_or_else(|_| settings.webui_host.clone());
         let port = std::env::var(PORT_ENV)
             .ok()
             .and_then(|v| v.parse::<u16>().ok())
@@ -1205,7 +1477,10 @@ impl WebUiServer {
             })
             .or_else(|| {
                 let cwd = std::env::current_dir().ok()?;
-                cwd.parent()?.join("dist").exists().then_some(cwd.parent()?.join("dist"))
+                cwd.parent()?
+                    .join("dist")
+                    .exists()
+                    .then_some(cwd.parent()?.join("dist"))
             })
     }
 
@@ -1216,7 +1491,11 @@ impl WebUiServer {
             .map(|addr| format!("http://{}", public_webui_addr(addr)))
     }
 
-    pub async fn start(&self, addr: SocketAddr, password: Option<String>) -> Result<SocketAddr, String> {
+    pub async fn start(
+        &self,
+        addr: SocketAddr,
+        password: Option<String>,
+    ) -> Result<SocketAddr, String> {
         if self.shutdown_tx.read().await.is_some() {
             return Err("WebUI server is already running".to_string());
         }

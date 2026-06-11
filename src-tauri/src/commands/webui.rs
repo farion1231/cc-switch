@@ -31,7 +31,11 @@ pub async fn get_webui_status(webui: State<'_, Arc<WebUiServer>>) -> Result<WebU
         enabled: settings.webui_enabled,
         port: settings.webui_port,
         host: settings.webui_host.clone(),
-        token_set: settings.webui_token.as_ref().map(|t| !t.trim().is_empty()).unwrap_or(false),
+        token_set: settings
+            .webui_token
+            .as_ref()
+            .map(|t| !t.trim().is_empty())
+            .unwrap_or(false),
     })
 }
 

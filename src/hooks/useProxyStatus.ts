@@ -33,7 +33,8 @@ export function useProxyStatus() {
   // 查询各应用接管状态
   const { data: takeoverStatus } = useQuery({
     queryKey: ["proxyTakeoverStatus"],
-    queryFn: () => invokeCommand<ProxyTakeoverStatus>("get_proxy_takeover_status"),
+    queryFn: () =>
+      invokeCommand<ProxyTakeoverStatus>("get_proxy_takeover_status"),
     placeholderData: (previousData) => previousData,
   });
 

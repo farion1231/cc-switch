@@ -107,7 +107,8 @@ pub fn switch_provider(
     id: String,
 ) -> Result<SwitchResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    let result = switch_provider_internal(&state, app_type.clone(), &id).map_err(|e| e.to_string())?;
+    let result =
+        switch_provider_internal(&state, app_type.clone(), &id).map_err(|e| e.to_string())?;
 
     if let Err(e) = app_handle.emit(
         "provider-switched",
@@ -179,9 +180,8 @@ pub fn get_claude_desktop_default_routes(
     crate::claude_desktop_config::default_proxy_routes()
 }
 
-#[tauri::command]
-pub fn import_claude_desktop_providers_from_claude(
-    state: State<'_, AppState>,
+pub(crate) fn import_claude_desktop_providers_from_claude_for_state(
+    state: &AppState,
 ) -> Result<usize, String> {
     let claude_providers = state
         .db
@@ -231,6 +231,13 @@ pub fn import_claude_desktop_providers_from_claude(
     }
 
     Ok(imported)
+}
+
+#[tauri::command]
+pub fn import_claude_desktop_providers_from_claude(
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
+    import_claude_desktop_providers_from_claude_for_state(&state)
 }
 
 #[tauri::command]
