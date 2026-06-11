@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type ManagedAuthProvider = "github_copilot" | "codex_oauth";
+export type ManagedAuthProvider = "github_copilot" | "codex_oauth" | "kiro";
 
 export interface ManagedAuthAccount {
   id: string;
@@ -32,10 +32,14 @@ export interface ManagedAuthDeviceCodeResponse {
 export async function authStartLogin(
   authProvider: ManagedAuthProvider,
   githubDomain?: string,
+  startUrl?: string,
+  region?: string,
 ): Promise<ManagedAuthDeviceCodeResponse> {
   return invoke<ManagedAuthDeviceCodeResponse>("auth_start_login", {
     authProvider,
     githubDomain: githubDomain || null,
+    startUrl: startUrl || null,
+    region: region || null,
   });
 }
 

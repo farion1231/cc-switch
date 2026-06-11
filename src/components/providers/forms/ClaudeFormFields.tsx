@@ -36,6 +36,7 @@ import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
 import { CopilotAuthSection } from "./CopilotAuthSection";
 import { CodexOAuthSection } from "./CodexOAuthSection";
+import { KiroAuthSection } from "./KiroAuthSection";
 import {
   copilotGetModels,
   copilotGetModelsForAccount,
@@ -43,6 +44,7 @@ import {
 import type { CopilotModel } from "@/lib/api/copilot";
 import {
   fetchCodexOauthModels,
+  fetchKiroModels,
   fetchModelsForConfig,
   showFetchModelsError,
   type FetchedModel,
@@ -96,6 +98,12 @@ interface ClaudeFormFieldsProps {
   onCodexAccountSelect?: (accountId: string | null) => void;
   codexFastMode?: boolean;
   onCodexFastModeChange?: (enabled: boolean) => void;
+
+  // Kiro OAuth (AWS Builder ID / IAM Identity Center)
+  isKiroPreset?: boolean;
+  isKiroAuthenticated?: boolean;
+  selectedKiroAccountId?: string | null;
+  onKiroAccountSelect?: (accountId: string | null) => void;
 
   // Template Values
   templateValueEntries: Array<[string, TemplateValueConfig]>;
@@ -166,6 +174,10 @@ export function ClaudeFormFields({
   onCodexAccountSelect,
   codexFastMode,
   onCodexFastModeChange,
+  isKiroPreset,
+  isKiroAuthenticated,
+  selectedKiroAccountId,
+  onKiroAccountSelect,
   templateValueEntries,
   templateValues,
   templatePresetName,
@@ -226,6 +238,11 @@ export function ClaudeFormFields({
   const [codexOauthModels, setCodexOauthModels] = useState<FetchedModel[]>([]);
   const [codexOauthModelsLoading, setCodexOauthModelsLoading] = useState(false);
   const codexOauthModelsRequestRef = useRef(0);
+
+  // Kiro 可用模型列表
+  const [kiroModels, setKiroModels] = useState<FetchedModel[]>([]);
+  const [kiroModelsLoading, setKiroModelsLoading] = useState(false);
+  const kiroModelsRequestRef = useRef(0);
 
   // 通用模型获取（非 Copilot 供应商）
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
@@ -351,6 +368,42 @@ export function ClaudeFormFields({
     t,
   ]);
 
+  const handleFetchKiroModels = useCallback(() => {
+    if (!isKiroAuthenticated) {
+      toast.error(
+        t("kiro.loginRequired", {
+          defaultValue: "请先登录 Kiro 账号",
+        }),
+      );
+      return;
+    }
+
+    const requestId = kiroModelsRequestRef.current + 1;
+    kiroModelsRequestRef.current = requestId;
+    setKiroModelsLoading(true);
+    fetchKiroModels(selectedKiroAccountId)
+      .then((models) => {
+        if (kiroModelsRequestRef.current !== requestId) return;
+        setKiroModels(models);
+        showModelFetchResult(models.length);
+      })
+      .catch((err) => {
+        if (kiroModelsRequestRef.current !== requestId) return;
+        console.warn("[Kiro] Failed to fetch models:", err);
+        showFetchModelsError(err, t);
+      })
+      .finally(() => {
+        if (kiroModelsRequestRef.current === requestId) {
+          setKiroModelsLoading(false);
+        }
+      });
+  }, [
+    isKiroAuthenticated,
+    selectedKiroAccountId,
+    showModelFetchResult,
+    t,
+  ]);
+
   useEffect(() => {
     copilotModelsRequestRef.current += 1;
     setCopilotModels([]);
@@ -363,16 +416,26 @@ export function ClaudeFormFields({
     setCodexOauthModelsLoading(false);
   }, [isCodexOauthPreset, isCodexOauthAuthenticated, selectedCodexAccountId]);
 
+  useEffect(() => {
+    kiroModelsRequestRef.current += 1;
+    setKiroModels([]);
+    setKiroModelsLoading(false);
+  }, [isKiroPreset, isKiroAuthenticated, selectedKiroAccountId]);
+
   const modelFetchLoading = isCopilotPreset
     ? modelsLoading
     : isCodexOauthPreset
       ? codexOauthModelsLoading
-      : isFetchingModels;
+      : isKiroPreset
+        ? kiroModelsLoading
+        : isFetchingModels;
   const handleModelFetchClick = isCopilotPreset
     ? handleFetchCopilotModels
     : isCodexOauthPreset
       ? handleFetchCodexOauthModels
-      : handleFetchModels;
+      : isKiroPreset
+        ? handleFetchKiroModels
+        : handleFetchModels;
 
   // 模型输入框：支持手动输入 + 下拉选择
   const renderModelInput = (
@@ -394,6 +457,19 @@ export function ClaudeFormFields({
           placeholder={placeholder}
           fetchedModels={codexOauthModels}
           isLoading={codexOauthModelsLoading}
+        />
+      );
+    }
+
+    if (isKiroPreset) {
+      return (
+        <ModelInputWithFetch
+          id={id}
+          value={value}
+          onChange={updateValue}
+          placeholder={placeholder}
+          fetchedModels={kiroModels}
+          isLoading={kiroModelsLoading}
         />
       );
     }
@@ -574,6 +650,14 @@ export function ClaudeFormFields({
           onAccountSelect={onCodexAccountSelect}
           fastModeEnabled={codexFastMode}
           onFastModeChange={onCodexFastModeChange}
+        />
+      )}
+
+      {/* Kiro OAuth 认证 */}
+      {isKiroPreset && (
+        <KiroAuthSection
+          selectedAccountId={selectedKiroAccountId}
+          onAccountSelect={onKiroAccountSelect}
         />
       )}
 

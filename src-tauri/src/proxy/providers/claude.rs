@@ -34,6 +34,9 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
         if meta.provider_type.as_deref() == Some("codex_oauth") {
             return "openai_responses";
         }
+        if meta.provider_type.as_deref() == Some("kiro") {
+            return "kiro";
+        }
     }
 
     // 1) Preferred: meta.apiFormat (SSOT, never written to Claude Code config)
@@ -327,6 +330,7 @@ pub fn transform_claude_request_for_api_format(
     api_format: &str,
     session_id: Option<&str>,
     shadow_store: Option<&super::gemini_shadow::GeminiShadowStore>,
+    profile_arn: Option<String>,
 ) -> Result<serde_json::Value, ProxyError> {
     let is_codex_oauth = provider.is_codex_oauth();
 
@@ -378,6 +382,9 @@ pub fn transform_claude_request_for_api_format(
         (None, "none")
     };
     match api_format {
+        "kiro" => {
+            super::transform_kiro::anthropic_to_kiro(body, provider, session_id, profile_arn)
+        }
         "openai_responses" => {
             log::debug!(
                 "[Cache] OpenAI Responses prompt_cache_key source={cache_key_source}, provider={}, codex_oauth={is_codex_oauth}, has_key={}",
@@ -722,6 +729,15 @@ impl ProviderAdapter for ClaudeAdapter {
             ));
         }
 
+        // Kiro 同样使用占位符
+        // 实际的 access_token 由 KiroAuthManager 动态提供
+        if provider_type == ProviderType::Kiro {
+            return Some(AuthInfo::new(
+                "kiro_placeholder".to_string(),
+                AuthStrategy::Kiro,
+            ));
+        }
+
         let key = self.extract_key(provider)?;
 
         match provider_type {
@@ -888,6 +904,23 @@ impl ProviderAdapter for ClaudeAdapter {
                     (HeaderName::from_static("x-agent-task-id"), hv(&request_id)?),
                 ]
             }
+            AuthStrategy::Kiro => {
+                let bearer = format!("Bearer {}", auth.api_key);
+                let mid = uuid::Uuid::new_v4().to_string().replace("-", "");
+                let ua = format!("aws-sdk-rust/1.0.0 ua/2.1 os/other lang/rust api/codewhispererstreaming#1.28.3 m/E app/AmazonQ-For-CLI md/appVersion-1.28.3-{mid}");
+                vec![
+                    (HeaderName::from_static("content-type"), HeaderValue::from_static("application/x-amz-json-1.0")),
+                    (HeaderName::from_static("accept"), HeaderValue::from_static("application/json")),
+                    (HeaderName::from_static("authorization"), hv(&bearer)?),
+                    (HeaderName::from_static("x-amz-target"), HeaderValue::from_static("AmazonCodeWhispererStreamingService.GenerateAssistantResponse")),
+                    (HeaderName::from_static("x-amzn-codewhisperer-optout"), HeaderValue::from_static("true")),
+                    (HeaderName::from_static("amz-sdk-invocation-id"), hv(&uuid::Uuid::new_v4().to_string())?),
+                    (HeaderName::from_static("amz-sdk-request"), HeaderValue::from_static("attempt=1; max=1")),
+                    (HeaderName::from_static("x-amzn-kiro-agent-mode"), HeaderValue::from_static("vibe")),
+                    (HeaderName::from_static("x-amz-user-agent"), hv(&ua)?),
+                    (HeaderName::from_static("user-agent"), hv(&ua)?),
+                ]
+            }
         })
     }
 
@@ -921,6 +954,7 @@ impl ProviderAdapter for ClaudeAdapter {
             body,
             provider,
             self.get_api_format(provider),
+            None,
             None,
             None,
         )

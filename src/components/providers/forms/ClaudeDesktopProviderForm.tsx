@@ -39,6 +39,7 @@ import { Switch } from "@/components/ui/switch";
 import { BasicFormFields } from "./BasicFormFields";
 import { CodexOAuthSection } from "./CodexOAuthSection";
 import { CopilotAuthSection } from "./CopilotAuthSection";
+import { KiroAuthSection } from "./KiroAuthSection";
 import { EndpointField } from "./shared/EndpointField";
 import { ModelDropdown } from "./shared/ModelDropdown";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
@@ -274,6 +275,9 @@ export function ClaudeDesktopProviderForm({
   const [selectedCodexAccountId, setSelectedCodexAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "codex_oauth"));
+  const [selectedKiroAccountId, setSelectedKiroAccountId] = useState<
+    string | null
+  >(() => resolveManagedAccountId(initialData?.meta, "kiro"));
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
   );
@@ -377,7 +381,8 @@ export function ClaudeDesktopProviderForm({
   const usesManagedOAuth =
     activePreset?.requiresOAuth === true ||
     activeProviderType === "github_copilot" ||
-    activeProviderType === "codex_oauth";
+    activeProviderType === "codex_oauth" ||
+    activeProviderType === "kiro";
 
   const applyDesktopPreset = (preset: ClaudeDesktopProviderPreset) => {
     form.setValue("name", preset.nameKey ? t(preset.nameKey) : preset.name);
@@ -662,7 +667,13 @@ export function ClaudeDesktopProviderForm({
               authProvider: "codex_oauth",
               accountId: selectedCodexAccountId ?? undefined,
             }
-          : undefined;
+          : activeProviderType === "kiro"
+            ? {
+                source: "managed_account",
+                authProvider: "kiro",
+                accountId: selectedKiroAccountId ?? undefined,
+              }
+            : undefined;
     meta.codexFastMode =
       activeProviderType === "codex_oauth" ? codexFastMode : undefined;
 
@@ -751,6 +762,11 @@ export function ClaudeDesktopProviderForm({
                   <CopilotAuthSection
                     selectedAccountId={selectedGitHubAccountId}
                     onAccountSelect={setSelectedGitHubAccountId}
+                  />
+                ) : activeProviderType === "kiro" ? (
+                  <KiroAuthSection
+                    selectedAccountId={selectedKiroAccountId}
+                    onAccountSelect={setSelectedKiroAccountId}
                   />
                 ) : (
                   <CodexOAuthSection

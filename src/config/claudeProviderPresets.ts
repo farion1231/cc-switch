@@ -54,12 +54,14 @@ export interface ProviderPreset {
     | "anthropic"
     | "openai_chat"
     | "openai_responses"
-    | "gemini_native";
+    | "gemini_native"
+    | "kiro";
 
   // 供应商类型标识（用于特殊供应商检测）
   // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）
   // - "codex_oauth": OpenAI Codex via ChatGPT Plus/Pro 反代（需要 OAuth 认证）
-  providerType?: "github_copilot" | "codex_oauth";
+  // - "kiro": Kiro AWS CodeWhisperer/Q 运行时（需要 OIDC/OAuth 设备码认证）
+  providerType?: "github_copilot" | "codex_oauth" | "kiro";
 
   // 是否需要 OAuth 认证（而非 API Key）
   requiresOAuth?: boolean;
@@ -1106,6 +1108,25 @@ export const providerPresets: ProviderPreset[] = [
     requiresOAuth: true,
     icon: "openai",
     iconColor: "#000000",
+  },
+  {
+    name: "Kiro (AWS Q)",
+    websiteUrl: "https://kiro.dev",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://runtime.us-east-1.kiro.dev",
+        ANTHROPIC_MODEL: "anthropic.claude-3-5-sonnet",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "anthropic.claude-3-haiku",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "anthropic.claude-3-5-sonnet",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "anthropic.claude-3-opus",
+      },
+    },
+    category: "third_party",
+    apiFormat: "kiro",
+    providerType: "kiro",
+    requiresOAuth: true,
+    icon: "aws",
+    iconColor: "#FF9900",
   },
   {
     name: "LemonData",

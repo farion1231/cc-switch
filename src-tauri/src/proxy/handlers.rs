@@ -327,6 +327,8 @@ async fn handle_claude_transform(
                 Some(ctx.session_id.clone()),
                 tool_schema_hints.clone(),
             )))
+        } else if api_format == "kiro" {
+            Box::new(Box::pin(super::providers::streaming_kiro::create_anthropic_sse_stream_from_kiro(stream)))
         } else {
             Box::new(Box::pin(create_anthropic_sse_stream(stream)))
         };

@@ -1365,6 +1365,19 @@ impl RequestForwarder {
                 let api_format = resolved_claude_api_format
                     .as_deref()
                     .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
+                let mut profile_arn: Option<String> = None;
+                if api_format == "kiro" {
+                    if let Some(app_handle) = &self.app_handle {
+                        use crate::commands::KiroAuthState;
+                        let kiro_state = app_handle.state::<KiroAuthState>();
+                        let kiro_auth = kiro_state.0.read().await;
+                        let account_id = provider
+                            .meta
+                            .as_ref()
+                            .and_then(|m| m.managed_account_id_for("kiro"));
+                        profile_arn = kiro_auth.get_profile_arn_for_account(account_id.as_deref()).await;
+                    }
+                }
                 super::providers::transform_claude_request_for_api_format(
                     mapped_body,
                     provider,
@@ -1372,6 +1385,7 @@ impl RequestForwarder {
                     self.session_client_provided
                         .then_some(self.session_id.as_str()),
                     Some(self.gemini_shadow.as_ref()),
+                    profile_arn,
                 )?
             } else {
                 adapter.transform_request(mapped_body, provider)?
@@ -1414,6 +1428,56 @@ impl RequestForwarder {
 
         // 获取认证头（提前准备，用于内联替换）
         let mut auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
+            // Kiro 特殊处理：从 KiroAuthManager 获取真实 token
+            if auth.strategy == AuthStrategy::Kiro {
+                if let Some(app_handle) = &self.app_handle {
+                    use crate::commands::KiroAuthState;
+                    let kiro_state = app_handle.state::<KiroAuthState>();
+                    let kiro_auth = kiro_state.0.read().await;
+
+                    // 从 provider.meta 获取关联的 Kiro 账号 ID
+                    let account_id = provider
+                        .meta
+                        .as_ref()
+                        .and_then(|m| m.managed_account_id_for("kiro"));
+
+                    let token_result = match &account_id {
+                        Some(id) => {
+                            log::debug!("[Kiro] 使用指定账号 {id} 获取 token");
+                            kiro_auth.get_valid_token_for_account(id).await
+                        }
+                        None => {
+                            log::debug!("[Kiro] 使用默认账号获取 token");
+                            kiro_auth.get_valid_token().await
+                        }
+                    };
+
+                    match token_result {
+                        Ok(token) => {
+                            auth = AuthInfo::new(token, AuthStrategy::Kiro);
+                            log::debug!(
+                                "[Kiro] 成功获取 token (account={})",
+                                account_id.as_deref().unwrap_or("default")
+                            );
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "[Kiro] 获取 token 失败 (account={}): {e}",
+                                account_id.as_deref().unwrap_or("default")
+                            );
+                            return Err(ProxyError::AuthError(format!(
+                                "Kiro 认证失败: {e}"
+                            )));
+                        }
+                    }
+                } else {
+                    log::error!("[Kiro] AppHandle 不可用");
+                    return Err(ProxyError::AuthError(
+                        "Kiro 认证不可用（无 AppHandle）".to_string(),
+                    ));
+                }
+            }
+
             // GitHub Copilot 特殊处理：从 CopilotAuthManager 获取真实 token
             if auth.strategy == AuthStrategy::GitHubCopilot {
                 if let Some(app_handle) = &self.app_handle {
