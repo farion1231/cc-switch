@@ -47,6 +47,16 @@ pub struct StreamCheckConfig {
     pub test_prompt: String,
 }
 
+/// 判断 baseURL 是否以 OpenAI 风格的版本段 `/v{N}` 结尾（`N` 为一个或多个数字），
+/// 例如 `/v1`、`.../paas/v4`。这类 URL 版本号已在路径中，端点应直接拼在其后
+/// （`{base}/chat/completions`），不能再补 `/v1`（智谱 Coding Plan 即
+/// `.../coding/paas/v4`，否则会得到 `.../v4/v1/chat/completions` 而 404）。
+fn ends_with_version_segment(url: &str) -> bool {
+    let last = url.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+    last.strip_prefix('v')
+        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+}
+
 fn default_test_prompt() -> String {
     "Who are you?".to_string()
 }
@@ -1545,18 +1555,18 @@ impl StreamCheckService {
         } else if is_github_copilot {
             format!("{base}/chat/completions")
         } else if api_format == "openai_responses" {
-            if base.ends_with("/v1") {
+            if ends_with_version_segment(base) {
                 format!("{base}/responses")
             } else {
                 format!("{base}/v1/responses")
             }
         } else if api_format == "openai_chat" {
-            if base.ends_with("/v1") {
+            if ends_with_version_segment(base) {
                 format!("{base}/chat/completions")
             } else {
                 format!("{base}/v1/chat/completions")
             }
-        } else if base.ends_with("/v1") {
+        } else if ends_with_version_segment(base) {
             format!("{base}/messages")
         } else {
             format!("{base}/v1/messages")
@@ -2004,6 +2014,24 @@ mod tests {
         );
 
         assert_eq!(url, "https://example.com/v1/chat/completions");
+    }
+
+    /// 智谱 GLM Coding Plan 的 base_url 以 `/v4` 结尾，已含版本段，
+    /// 不能再补 `/v1`，否则请求会打到 `.../v4/v1/chat/completions` 而 404（issue 复现）。
+    #[test]
+    fn test_resolve_claude_stream_url_for_openai_chat_version_segment() {
+        let url = StreamCheckService::resolve_claude_stream_url(
+            "https://open.bigmodel.cn/api/coding/paas/v4",
+            AuthStrategy::Bearer,
+            "openai_chat",
+            false,
+            "glm-5.1",
+        );
+
+        assert_eq!(
+            url,
+            "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions"
+        );
     }
 
     #[test]
