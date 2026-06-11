@@ -2034,6 +2034,23 @@ mod tests {
         );
     }
 
+    /// `ends_with_version_segment` 必须匹配任意 `/v{N}`（v1/v2/v4/v10…），
+    /// 而不仅是 `/v1`；非纯数字版本段（如 `/v1beta`、`/api`）不算版本段。
+    #[test]
+    fn test_ends_with_version_segment_matches_any_numeric_version() {
+        assert!(ends_with_version_segment("https://example.com/v1"));
+        assert!(ends_with_version_segment("https://example.com/v2"));
+        assert!(ends_with_version_segment("https://example.com/v4"));
+        assert!(ends_with_version_segment("https://example.com/v10"));
+        assert!(ends_with_version_segment(
+            "https://open.bigmodel.cn/api/coding/paas/v4/"
+        ));
+
+        assert!(!ends_with_version_segment("https://example.com/v1beta"));
+        assert!(!ends_with_version_segment("https://example.com/api"));
+        assert!(!ends_with_version_segment("https://example.com"));
+    }
+
     #[test]
     fn test_resolve_claude_stream_url_for_openai_responses() {
         let url = StreamCheckService::resolve_claude_stream_url(
