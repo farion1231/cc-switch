@@ -95,6 +95,8 @@ const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
     onProfileDirChange: vi.fn(),
     activationMode: "legacy",
     onActivationModeChange: vi.fn(),
+    customUserAgent: "",
+    onCustomUserAgentChange: vi.fn(),
     ...overrides,
   };
 

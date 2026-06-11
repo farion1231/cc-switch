@@ -39,7 +39,7 @@ pub(crate) use live::{
     build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
     provider_exists_in_live_config, strip_common_config_from_live_settings,
     sync_current_provider_for_app_to_live, write_claude_profile_with_common_config,
-    write_live_with_common_config,
+    write_live_with_common_config, write_live_with_common_config_for_provider_switch,
 };
 
 // Internal re-exports
@@ -6667,7 +6667,11 @@ impl ProviderService {
 
             if should_write_live {
                 // Sync to live (write_gemini_live handles security flag internally for Gemini)
-                write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
+                write_live_with_common_config_for_provider_switch(
+                    state.db.as_ref(),
+                    &app_type,
+                    provider,
+                )?;
             }
 
             // Hermes is additive, so "switching" doesn't overwrite a live config file

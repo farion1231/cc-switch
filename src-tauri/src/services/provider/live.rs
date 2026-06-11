@@ -512,6 +512,23 @@ pub(crate) fn write_live_with_common_config(
     app_type: &AppType,
     provider: &Provider,
 ) -> Result<(), AppError> {
+    write_live_with_common_config_inner(db, app_type, provider, true)
+}
+
+pub(crate) fn write_live_with_common_config_for_provider_switch(
+    db: &Database,
+    app_type: &AppType,
+    provider: &Provider,
+) -> Result<(), AppError> {
+    write_live_with_common_config_inner(db, app_type, provider, false)
+}
+
+fn write_live_with_common_config_inner(
+    db: &Database,
+    app_type: &AppType,
+    provider: &Provider,
+    use_current_live_codex_model_provider_anchor: bool,
+) -> Result<(), AppError> {
     let mut effective_provider = provider.clone();
     effective_provider.settings_config =
         build_effective_settings_with_common_config(db, app_type, provider)?;
@@ -526,7 +543,11 @@ pub(crate) fn write_live_with_common_config(
         return Ok(());
     }
 
-    write_live_snapshot(app_type, &effective_provider)
+    if use_current_live_codex_model_provider_anchor {
+        write_live_snapshot(app_type, &effective_provider)
+    } else {
+        write_live_snapshot_with_codex_model_provider_anchor(app_type, &effective_provider, None)
+    }
 }
 
 fn claude_settings_path_for_dir(dir: &Path) -> PathBuf {
@@ -753,6 +774,23 @@ impl LiveSnapshot {
 
 /// Write live configuration snapshot for a provider
 pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
+    let model_provider_anchor_config = if matches!(app_type, AppType::Codex) {
+        crate::codex_config::read_codex_config_text().ok()
+    } else {
+        None
+    };
+    write_live_snapshot_with_codex_model_provider_anchor(
+        app_type,
+        provider,
+        model_provider_anchor_config.as_deref(),
+    )
+}
+
+fn write_live_snapshot_with_codex_model_provider_anchor(
+    app_type: &AppType,
+    provider: &Provider,
+    codex_model_provider_anchor_config: Option<&str>,
+) -> Result<(), AppError> {
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
@@ -781,7 +819,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 provider.category.as_deref(),
                 auth,
                 config_str,
-                true,
+                codex_model_provider_anchor_config,
             )?;
         }
         AppType::Gemini => {
@@ -1210,6 +1248,22 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
     // - 用户手动点 ProviderEmptyState 的导入按钮时，与官方 seed 共存而不被阻塞
     if state.db.has_non_official_seed_provider(app_type.as_str())? {
         return Ok(false);
+    }
+
+    // 拒绝把"被代理接管的 Live"导入为供应商：接管期间 Live 里只有
+    // PROXY_MANAGED 占位符和本地代理地址，不是用户的真实配置。一旦导入，
+    // 它会成为 current provider（SSOT），后续"无备份恢复"路径会把占位符
+    // 当真实配置写回 Live，永久卡在已失效的本地代理上。
+    // 典型触发场景：代理接管开启时切换 app_config_dir 并重启，新数据库首启导入。
+    if state
+        .proxy_service
+        .detect_takeover_in_live_config_for_app(&app_type)
+    {
+        return Err(AppError::localized(
+            "provider.import.live_taken_over",
+            "Live 配置当前处于代理接管状态（包含占位符），不能导入为供应商。请先关闭代理接管或恢复 Live 配置后重试。",
+            "The live config is currently taken over by the proxy (contains placeholders) and cannot be imported as a provider. Disable proxy takeover or restore the live config first.",
+        ));
     }
 
     let settings_config = match app_type {
