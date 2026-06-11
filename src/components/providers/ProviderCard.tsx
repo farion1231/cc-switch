@@ -1,15 +1,18 @@
-import { useMemo, useState, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { GripVertical, ChevronDown, ChevronUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import type {
   DraggableAttributes,
   DraggableSyntheticListeners,
 } from "@dnd-kit/core";
 import type { Provider } from "@/types";
-import type { AppId } from "@/lib/api";
+import { sessionsApi, type AppId } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
@@ -26,6 +29,7 @@ import {
 } from "@/utils/providerConfigUtils";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
+import { extractErrorMessage } from "@/utils/errorUtils";
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -164,6 +168,9 @@ export function ProviderCard({
   onSetAsDefault,
 }: ProviderCardProps) {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const [isRepairingCodexHistory, setIsRepairingCodexHistory] = useState(false);
+  const [isRepairConfirmOpen, setIsRepairConfirmOpen] = useState(false);
 
   // OMO and OMO Slim share the same card behavior
   const isAnyOmo = isOmo || isOmoSlim;
@@ -269,6 +276,44 @@ export function ProviderCard({
     }
     onOpenWebsite(displayUrl);
   };
+
+  const canRepairCodexHistory = appId === "codex" && isCurrent;
+
+  const handleRepairCodexHistoryVisibility = useCallback(async () => {
+    if (isRepairingCodexHistory) return;
+    setIsRepairingCodexHistory(true);
+    try {
+      const outcome = await sessionsApi.repairCodexHistoryVisibility();
+      await queryClient.invalidateQueries({ queryKey: ["sessions"] });
+
+      const changed =
+        outcome.migratedJsonlFiles > 0 ||
+        outcome.migratedStateRows > 0 ||
+        outcome.rebuiltSessionIndexEntries > 0;
+
+      if (changed) {
+        toast.success(
+          t("provider.codexHistoryRepairSuccess", {
+            target: outcome.targetProviderId || "current",
+            jsonl: outcome.migratedJsonlFiles,
+            rows: outcome.migratedStateRows,
+            index: outcome.rebuiltSessionIndexEntries,
+          }),
+          { closeButton: true },
+        );
+      } else {
+        toast.success(t("provider.codexHistoryRepairNoChanges"), {
+          closeButton: true,
+        });
+      }
+    } catch (error) {
+      toast.error(
+        extractErrorMessage(error) || t("provider.codexHistoryRepairFailed"),
+      );
+    } finally {
+      setIsRepairingCodexHistory(false);
+    }
+  }, [isRepairingCodexHistory, queryClient, t]);
 
   // 判断是否是"当前使用中"的供应商
   // - OMO/OMO Slim 供应商：使用 isCurrent
@@ -576,6 +621,12 @@ export function ProviderCard({
               onOpenTerminal={
                 onOpenTerminal ? () => onOpenTerminal(provider) : undefined
               }
+              onRepairCodexHistory={
+                canRepairCodexHistory
+                  ? () => setIsRepairConfirmOpen(true)
+                  : undefined
+              }
+              isRepairingCodexHistory={isRepairingCodexHistory}
               isAutoFailoverEnabled={isAutoFailoverEnabled}
               isInFailoverQueue={isInFailoverQueue}
               onToggleFailover={onToggleFailover}
@@ -600,6 +651,18 @@ export function ProviderCard({
           />
         </div>
       )}
+
+      <ConfirmDialog
+        isOpen={isRepairConfirmOpen}
+        title={t("provider.codexHistoryRepairConfirmTitle")}
+        message={t("provider.codexHistoryRepairConfirmMessage")}
+        confirmText={t("provider.codexHistoryRepairConfirmAction")}
+        onConfirm={() => {
+          setIsRepairConfirmOpen(false);
+          void handleRepairCodexHistoryVisibility();
+        }}
+        onCancel={() => setIsRepairConfirmOpen(false)}
+      />
     </div>
   );
 }

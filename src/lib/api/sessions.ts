@@ -12,6 +12,15 @@ export interface DeleteSessionResult extends DeleteSessionOptions {
   error?: string;
 }
 
+export interface CodexHistoryVisibilityRepairOutcome {
+  targetProviderId: string;
+  sourceProviderIds: string[];
+  migratedJsonlFiles: number;
+  migratedStateRows: number;
+  rebuiltSessionIndexEntries: number;
+  skippedReason?: string | null;
+}
+
 export const sessionsApi = {
   async list(): Promise<SessionMeta[]> {
     return await invoke("list_sessions");
@@ -49,6 +58,14 @@ export const sessionsApi = {
       command,
       cwd,
       customConfig,
+    });
+  },
+
+  async repairCodexHistoryVisibility(
+    targetProviderId?: string | null,
+  ): Promise<CodexHistoryVisibilityRepairOutcome> {
+    return await invoke("repair_codex_history_visibility", {
+      targetProviderId,
     });
   },
 };
