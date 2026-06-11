@@ -1,3 +1,4 @@
+use http::header::{HeaderValue, InvalidHeaderValue};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -108,17 +109,13 @@ impl Provider {
             .unwrap_or(false)
     }
 
-    /// Resolve `(base_url, api_key)` for native usage queries (balance /
-    /// coding-plan) from the stored provider config.
+    /// Resolve `(base_url, api_key)` for usage queries (native balance /
+    /// coding-plan and the JS-script `{{apiKey}}`/`{{baseUrl}}` fallback)
+    /// from the stored provider config.
     ///
     /// Each app persists credentials in a different shape, so callers must pass
     /// the owning app type. This mirrors the frontend `getProviderCredentials`
     /// in `UsageScriptModal.tsx`.
-    ///
-    /// TODO: the env-only helpers in `services/provider/usage.rs`
-    /// (`extract_api_key_from_provider` / `extract_base_url_from_provider`)
-    /// duplicate this per-app logic on the JS-script path and could delegate
-    /// here in a follow-up to remove the remaining copy.
     pub fn resolve_usage_credentials(
         &self,
         app_type: &crate::app_config::AppType,
@@ -464,6 +461,9 @@ pub struct ProviderMeta {
     /// Codex Responses -> Chat Completions reasoning capability metadata.
     #[serde(rename = "codexChatReasoning", skip_serializing_if = "Option::is_none")]
     pub codex_chat_reasoning: Option<CodexChatReasoningConfig>,
+    /// Custom User-Agent for local proxy routing.
+    #[serde(rename = "customUserAgent", skip_serializing_if = "Option::is_none")]
+    pub custom_user_agent: Option<String>,
     /// 累加模式应用中，该 provider 是否已写入 live config。
     /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
     #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]
@@ -478,11 +478,40 @@ pub struct ProviderMeta {
     pub github_account_id: Option<String>,
 }
 
+/// 解析 Provider 级自定义 User-Agent 字符串（单一真理来源）。
+///
+/// 转发（forwarder）、流式检测（stream_check）、获取模型列表（model_fetch）三条路径
+/// 共用同一口径，避免出现"某条路径用了 UA、另一条没用 / 报错"的不一致。
+///
+/// 合法性由 `http::HeaderValue::from_str` 按**字节**判定（`b >= 32 && b != 127 || b == '\t'`），
+/// 与前端 `src/lib/userAgent.ts::isValidUserAgentHeader` 严格一致：
+/// - `Ok(None)`：未设置或纯空白（trim 后为空）。
+/// - `Ok(Some(hv))`：合法。制表符、可见 ASCII（0x20–0x7E）、以及任意非 ASCII 字符
+///   （UTF-8 字节均 ≥ 0x80）都合法。
+/// - `Err(_)`：仅含控制字符时——除 `\t` 外的 0x00–0x1F（含换行）与 0x7F（DEL）。
+///
+/// 非法值的处理：三条运行时路径**均静默忽略**（`.ok().flatten()`，绝不让某条路径报错而
+/// 另一条放行）；前端在输入框处给出非阻断提示。当前**不在保存时阻断**——deeplink 导入等
+/// 非表单路径应宽容，运行时静默忽略即为安全网。
+pub fn parse_custom_user_agent(
+    raw: Option<&str>,
+) -> Result<Option<HeaderValue>, InvalidHeaderValue> {
+    match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(ua) => HeaderValue::from_str(ua).map(Some),
+        None => Ok(None),
+    }
+}
+
 impl ProviderMeta {
     /// Codex OAuth FAST mode 是否启用。默认关闭，因为 `service_tier="priority"`
     /// 会按更高速率消耗 ChatGPT 订阅配额，用户需显式开启以换取更低延迟。
     pub fn codex_fast_mode_enabled(&self) -> bool {
         self.codex_fast_mode.unwrap_or(false)
+    }
+
+    /// 经校验的 Provider 级自定义 User-Agent。见 [`parse_custom_user_agent`]。
+    pub fn custom_user_agent_header(&self) -> Result<Option<HeaderValue>, InvalidHeaderValue> {
+        parse_custom_user_agent(self.custom_user_agent.as_deref())
     }
 
     /// 解析指定托管认证供应商绑定的账号 ID。

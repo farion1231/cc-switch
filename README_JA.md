@@ -145,6 +145,16 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 <td>Atlas Cloud は、1 つの API で動画・画像生成や LLM（大規模言語モデル）を利用できる全モーダル対応の AI 推論プラットフォームです。複数のベンダーを個別に管理する手間を省き、一度の接続で 300 以上の厳選されたマルチモーダルモデルにアクセスできます。より低コストで API を利用できる、開発者向けの新しい<a href="https://www.atlascloud.ai/coding-plan?utm_source=github&utm_campaign=cc-switch">「コーディングプラン」</a>プロモーションをぜひチェックしてください！</td>
 </tr>
 
+<tr>
+<td width="180"><a href="https://www.ccsub.net/register?ref=Y6Z8DXEA"><img src="assets/partners/logos/ccsub.jpg" alt="CCSub" width="150"></a></td>
+<td>CCSub のご支援に感謝します！CCSub は安定した低価格の AI API リレープラットフォームで、Claude Code 公式サブスクリプションの強力な代替です。1 つの API キーで Claude Opus 4.8、Sonnet 4.6、Haiku 4.5、GPT-5、Gemini、DeepSeek の全モデルを公式直接利用の約 1/3 のコストでご利用いただけます。VPN 不要で世界中から直接接続可能。Claude Code、Codex、Cursor、Cline、Continue、Windsurf など主要な AI コーディングツールすべてに対応しています。<a href="https://www.ccsub.net/register?ref=Y6Z8DXEA">こちらのリンク</a>から登録すると $5 の無料クレジットがもらえます。</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://unity2.ai/register?source=ccs"><img src="assets/partners/logos/unity2.jpg" alt="Unity2.ai" width="150"></a></td>
+<td>Unity2.ai のご支援に感謝します！Unity2.ai は個人開発者・チーム・企業向けの高性能 AI モデル API リレープラットフォームです。中国の大手企業に長年利用されており、1 日 300 億トークン以上を処理し、5000 RPM クラスの高並列に対応しています。残高課金、初回チャージボーナス、組み合わせサブスクリプション、企業向け請求書発行、専任サポートを提供。<a href="https://unity2.ai/register?source=ccs">こちらのリンク</a>から登録すると $2 のクレジット、公式グループへの参加でさらに $10、最大 $12 の無料クレジットがもらえます！</td>
+</tr>
+
 </table>
 
 </details>
