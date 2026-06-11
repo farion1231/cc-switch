@@ -99,6 +99,240 @@ pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
 }
 
 // ============================================================================
+// Provider Switching API（局域网切换）
+// ============================================================================
+
+use crate::services::provider::ProviderService;
+use std::str::FromStr;
+
+/// Provider 切换请求
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderSwitchRequest {
+    pub app: String,
+    pub provider_id: String,
+}
+
+/// Provider 切换响应
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderSwitchResponse {
+    pub success: bool,
+    pub app: String,
+    pub provider_id: String,
+    pub provider_name: Option<String>,
+    pub warnings: Vec<String>,
+    pub error: Option<String>,
+}
+
+/// Provider 列表项
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderListItem {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub app_type: String,
+}
+
+/// Provider 列表响应
+#[derive(Debug, serde::Serialize)]
+pub struct ProviderListResponse {
+    pub providers: Vec<ProviderListItem>,
+    pub current_provider_id: Option<String>,
+}
+
+/// 切换 Provider
+///
+/// POST /api/provider/switch
+/// Body: { "app": "claude", "providerId": "xxx" }
+pub async fn switch_provider(
+    State(state): State<ProxyState>,
+    Json(req): Json<ProviderSwitchRequest>,
+) -> impl IntoResponse {
+    log::info!(
+        "[API] Provider switch request: app={}, providerId={}",
+        req.app,
+        req.provider_id
+    );
+
+    // 解析 app 类型
+    let app_type = match AppType::from_str(&req.app) {
+        Ok(at) => at,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ProviderSwitchResponse {
+                    success: false,
+                    app: req.app.clone(),
+                    provider_id: req.provider_id,
+                    provider_name: None,
+                    warnings: vec![],
+                    error: Some(format!(
+                        "Invalid app type: {}. Allowed: claude, codex, gemini, opencode, openclaw, hermes",
+                        req.app
+                    )),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    if req.provider_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ProviderSwitchResponse {
+                success: false,
+                app: req.app,
+                provider_id: req.provider_id,
+                provider_name: None,
+                warnings: vec![],
+                error: Some("providerId cannot be empty".to_string()),
+            }),
+        )
+            .into_response();
+    }
+
+    // 获取 provider 名称用于响应
+    let providers = match state.db.get_all_providers(app_type.as_str()) {
+        Ok(p) => p,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ProviderSwitchResponse {
+                    success: false,
+                    app: req.app,
+                    provider_id: req.provider_id,
+                    provider_name: None,
+                    warnings: vec![],
+                    error: Some(format!("Database error: {}", e)),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let provider_name = providers.get(&req.provider_id).map(|p| p.name.clone());
+
+    // 创建 AppState 用于 ProviderService::switch
+    let app_state = crate::store::AppState::new(state.db.clone());
+
+    // 执行切换
+    match ProviderService::switch(&app_state, app_type.clone(), &req.provider_id) {
+        Ok(result) => {
+            log::info!(
+                "[API] Provider switched successfully: {} -> {}",
+                req.provider_id,
+                provider_name.as_deref().unwrap_or("unknown")
+            );
+
+            // 更新 current_providers
+            state.current_providers.write().await.insert(
+                app_type.as_str().to_string(),
+                (
+                    req.provider_id.clone(),
+                    provider_name.clone().unwrap_or_default(),
+                ),
+            );
+
+            (
+                StatusCode::OK,
+                Json(ProviderSwitchResponse {
+                    success: true,
+                    app: req.app,
+                    provider_id: req.provider_id,
+                    provider_name,
+                    warnings: result.warnings,
+                    error: None,
+                }),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            log::error!("[API] Provider switch failed: {}", e);
+
+            (
+                StatusCode::NOT_FOUND,
+                Json(ProviderSwitchResponse {
+                    success: false,
+                    app: req.app,
+                    provider_id: req.provider_id,
+                    provider_name: None,
+                    warnings: vec![],
+                    error: Some(e.to_string()),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// 获取 Provider 列表
+///
+/// GET /api/providers?app=claude
+pub async fn list_providers(
+    State(state): State<ProxyState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let app = params
+        .get("app")
+        .cloned()
+        .unwrap_or_else(|| "claude".to_string());
+
+    // 验证 app 类型
+    let app_type = match AppType::from_str(&app) {
+        Ok(at) => at,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!("Invalid app type: {}. Allowed: claude, codex, gemini, opencode, openclaw, hermes", app)
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    // 获取所有 providers
+    let providers = match state.db.get_all_providers(app_type.as_str()) {
+        Ok(p) => p,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("Failed to get providers: {}", e)
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    // 获取当前 provider
+    let current = state.current_providers.read().await;
+    let current_provider_id = current.get(app_type.as_str()).map(|(id, _)| id.clone());
+
+    // 构建响应
+    let provider_list: Vec<ProviderListItem> = providers
+        .iter()
+        .map(|(id, provider)| ProviderListItem {
+            id: id.clone(),
+            name: provider.name.clone(),
+            enabled: provider.in_failover_queue,
+            app_type: app.clone(),
+        })
+        .collect();
+
+    (
+        StatusCode::OK,
+        Json(ProviderListResponse {
+            providers: provider_list,
+            current_provider_id,
+        }),
+    )
+        .into_response()
+}
+
+// ============================================================================
 // Claude API 处理器（包含格式转换逻辑）
 // ============================================================================
 

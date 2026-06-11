@@ -7,6 +7,9 @@ pub struct ProxyConfig {
     pub listen_address: String,
     /// 监听端口
     pub listen_port: u16,
+    /// 是否允许局域网访问 API（默认 false，仅本地 127.0.0.1）
+    #[serde(default)]
+    pub allow_lan_access: bool,
     /// 最大重试次数
     pub max_retries: u8,
     /// 请求超时时间（秒）- 已废弃，保留兼容
@@ -43,7 +46,8 @@ impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
             listen_address: "127.0.0.1".to_string(),
-            listen_port: 15721, // 使用较少占用的高位端口
+            listen_port: 15721,      // 使用较少占用的高位端口
+            allow_lan_access: false, // 默认不允许局域网访问
             max_retries: 3,
             request_timeout: 600,
             enable_logging: true,

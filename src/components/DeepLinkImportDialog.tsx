@@ -23,6 +23,13 @@ interface DeeplinkError {
   error: string;
 }
 
+interface ProviderSwitchDeepLinkResult {
+  success?: boolean;
+  app?: string;
+  providerId?: string;
+  warnings?: string[];
+}
+
 export function DeepLinkImportDialog() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -85,11 +92,57 @@ export function DeepLinkImportDialog() {
       });
     });
 
+    // Listen for provider switch deep link result events
+    const unlistenProviderSwitch = listen<ProviderSwitchDeepLinkResult>(
+      "provider-switch-deeplink-result",
+      async (event) => {
+        const { app, providerId, warnings = [] } = event.payload;
+
+        if (app) {
+          await queryClient.invalidateQueries({
+            queryKey: ["providers", app],
+            refetchType: "all",
+          });
+        } else {
+          await queryClient.invalidateQueries({
+            queryKey: ["providers"],
+            refetchType: "all",
+          });
+        }
+        await queryClient.invalidateQueries({
+          queryKey: ["proxyStatus"],
+          refetchType: "all",
+        });
+
+        const message = t("deeplink.providerSwitchSuccess", {
+          defaultValue: "Provider switched from deep link",
+        });
+        const description = t("deeplink.providerSwitchSuccessDescription", {
+          app: app ?? t("common.unknown", { defaultValue: "Unknown" }),
+          providerId: providerId ?? t("common.unknown", { defaultValue: "Unknown" }),
+          defaultValue: `App: ${app ?? "Unknown"}, Provider: ${providerId ?? "Unknown"}`,
+        });
+
+        if (warnings.length > 0) {
+          toast.warning(message, {
+            description: `${description}\n${warnings.join("\n")}`,
+            closeButton: true,
+          });
+        } else {
+          toast.success(message, {
+            description,
+            closeButton: true,
+          });
+        }
+      },
+    );
+
     return () => {
       unlistenImport.then((fn) => fn());
       unlistenError.then((fn) => fn());
+      unlistenProviderSwitch.then((fn) => fn());
     };
-  }, [t]);
+  }, [queryClient, t]);
 
   const handleImport = async () => {
     if (!request) return;

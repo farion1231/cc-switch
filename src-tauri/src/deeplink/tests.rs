@@ -121,6 +121,41 @@ fn test_parse_missing_required_field() {
         .contains("Missing 'name' parameter"));
 }
 
+#[test]
+fn test_parse_switch_provider_deeplink() {
+    let url = "ccswitch://v1/import?resource=switch-provider&app=claude&providerId=my-provider";
+
+    let request = parse_deeplink_url(url).unwrap();
+
+    assert_eq!(request.version, "v1");
+    assert_eq!(request.resource, "switch-provider");
+    assert_eq!(request.app, Some("claude".to_string()));
+    assert_eq!(request.provider_id, Some("my-provider".to_string()));
+    assert!(request.name.is_none());
+    assert!(request.api_key.is_none());
+}
+
+#[test]
+fn test_parse_switch_provider_requires_provider_id() {
+    let url = "ccswitch://v1/import?resource=switch-provider&app=claude";
+
+    let result = parse_deeplink_url(url);
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Missing 'providerId' parameter"));
+}
+
+#[test]
+fn test_parse_switch_provider_rejects_invalid_app() {
+    let url = "ccswitch://v1/import?resource=switch-provider&app=invalid&providerId=my-provider";
+
+    let result = parse_deeplink_url(url);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("Invalid app type"));
+}
+
 // =============================================================================
 // Utils Tests
 // =============================================================================
@@ -179,6 +214,7 @@ fn test_build_gemini_provider_with_model() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        provider_id: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -232,6 +268,7 @@ fn test_build_gemini_provider_without_model() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        provider_id: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -280,6 +317,7 @@ fn test_parse_and_merge_config_claude() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        provider_id: None,
         config: Some(config_b64),
         config_format: Some("json".to_string()),
         config_url: None,
@@ -371,6 +409,7 @@ fn test_parse_and_merge_config_url_override() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        provider_id: None,
         config: Some(config_b64),
         config_format: Some("json".to_string()),
         config_url: None,
@@ -434,6 +473,7 @@ fn test_build_claude_provider_preserves_custom_env_fields() {
         haiku_model: Some("haiku-from-url".to_string()),
         sonnet_model: None,
         opus_model: None,
+        provider_id: None,
         config: Some(config_b64),
         config_format: Some("json".to_string()),
         config_url: None,
@@ -489,6 +529,7 @@ fn test_build_claude_provider_without_config_unchanged() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        provider_id: None,
         config: None,
         config_format: None,
         config_url: None,

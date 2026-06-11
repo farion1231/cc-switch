@@ -58,6 +58,7 @@ pub fn parse_deeplink_url(url_str: &str) -> Result<DeepLinkImportRequest, AppErr
     // Dispatch to appropriate parser based on resource type
     match resource.as_str() {
         "provider" => parse_provider_deeplink(&params, version, resource),
+        "switch-provider" => parse_switch_provider_deeplink(&params, version, resource),
         "prompt" => parse_prompt_deeplink(&params, version, resource),
         "mcp" => parse_mcp_deeplink(&params, version, resource),
         "skill" => parse_skill_deeplink(&params, version, resource),
@@ -157,6 +158,7 @@ fn parse_provider_deeplink(
         haiku_model,
         sonnet_model,
         opus_model,
+        provider_id: None,
         content: None,
         description: None,
         apps: None,
@@ -173,6 +175,42 @@ fn parse_provider_deeplink(
         usage_access_token,
         usage_user_id,
         usage_auto_interval,
+    })
+}
+
+/// Parse existing-provider switch deep link parameters
+fn parse_switch_provider_deeplink(
+    params: &HashMap<String, String>,
+    version: String,
+    resource: String,
+) -> Result<DeepLinkImportRequest, AppError> {
+    let app = params
+        .get("app")
+        .ok_or_else(|| AppError::InvalidInput("Missing 'app' parameter".to_string()))?
+        .clone();
+
+    if !matches!(
+        app.as_str(),
+        "claude" | "codex" | "gemini" | "opencode" | "openclaw" | "hermes"
+    ) {
+        return Err(AppError::InvalidInput(format!(
+            "Invalid app type: must be 'claude', 'codex', 'gemini', 'opencode', 'openclaw', or 'hermes', got '{app}'"
+        )));
+    }
+
+    let provider_id = params
+        .get("providerId")
+        .or_else(|| params.get("provider_id"))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| AppError::InvalidInput("Missing 'providerId' parameter".to_string()))?;
+
+    Ok(DeepLinkImportRequest {
+        version,
+        resource,
+        app: Some(app),
+        provider_id: Some(provider_id),
+        ..Default::default()
     })
 }
 
@@ -229,6 +267,7 @@ fn parse_prompt_deeplink(
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        provider_id: None,
         apps: None,
         repo: None,
         directory: None,
@@ -295,6 +334,7 @@ fn parse_mcp_deeplink(
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        provider_id: None,
         content: None,
         description: None,
         repo: None,
@@ -350,6 +390,7 @@ fn parse_skill_deeplink(
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        provider_id: None,
         content: None,
         description: None,
         apps: None,

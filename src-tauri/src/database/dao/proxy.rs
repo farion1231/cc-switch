@@ -411,7 +411,8 @@ impl Database {
             conn.query_row(
                 "SELECT listen_address, listen_port, max_retries,
                         enable_logging,
-                        streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout
+                        streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                        allow_lan_access
                  FROM proxy_config WHERE app_type = 'claude'",
                 [],
                 |row| {
@@ -425,6 +426,7 @@ impl Database {
                         streaming_first_byte_timeout: row.get::<_, i32>(4).unwrap_or(60) as u64,
                         streaming_idle_timeout: row.get::<_, i32>(5).unwrap_or(120) as u64,
                         non_streaming_timeout: row.get::<_, i32>(6).unwrap_or(600) as u64,
+                        allow_lan_access: row.get::<_, Option<i32>>(7)?.unwrap_or(0) != 0,
                     })
                 },
             )
@@ -456,6 +458,7 @@ impl Database {
                 streaming_first_byte_timeout = ?5,
                 streaming_idle_timeout = ?6,
                 non_streaming_timeout = ?7,
+                allow_lan_access = ?8,
                 updated_at = datetime('now')",
             rusqlite::params![
                 config.listen_address,
@@ -465,6 +468,7 @@ impl Database {
                 config.streaming_first_byte_timeout as i32,
                 config.streaming_idle_timeout as i32,
                 config.non_streaming_timeout as i32,
+                if config.allow_lan_access { 1 } else { 0 },
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;

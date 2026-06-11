@@ -97,10 +97,21 @@ impl ProxyServer {
             return Err(ProxyError::AlreadyRunning);
         }
 
-        let addr: SocketAddr =
-            format!("{}:{}", self.config.listen_address, self.config.listen_port)
-                .parse()
-                .map_err(|e| ProxyError::BindFailed(format!("无效的地址: {e}")))?;
+        // 确定监听地址：如果允许局域网访问且当前是 localhost，则切换到 0.0.0.0
+        let listen_addr =
+            if self.config.allow_lan_access && self.config.listen_address == "127.0.0.1" {
+                log::info!(
+                    "[{}] 局域网访问已启用，监听地址从 127.0.0.1 切换到 0.0.0.0",
+                    log_srv::LAN_ENABLED
+                );
+                "0.0.0.0".to_string()
+            } else {
+                self.config.listen_address.clone()
+            };
+
+        let addr: SocketAddr = format!("{}:{}", listen_addr, self.config.listen_port)
+            .parse()
+            .map_err(|e| ProxyError::BindFailed(format!("无效的地址: {e}")))?;
 
         // 创建关闭通道
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -293,6 +304,9 @@ impl ProxyServer {
             // 健康检查
             .route("/health", get(handlers::health_check))
             .route("/status", get(handlers::get_status))
+            // Provider Switching API (局域网切换)
+            .route("/api/provider/switch", post(handlers::switch_provider))
+            .route("/api/providers", get(handlers::list_providers))
             // Claude API (支持带前缀和不带前缀两种格式)
             .route("/v1/messages", post(handlers::handle_messages))
             .route("/claude/v1/messages", post(handlers::handle_messages))

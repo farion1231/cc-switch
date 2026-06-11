@@ -28,6 +28,7 @@ pub mod srv {
     pub const TASK_ERROR: &str = "SRV-004";
     pub const ACCEPT_ERR: &str = "SRV-005";
     pub const CONN_ERR: &str = "SRV-006";
+    pub const LAN_ENABLED: &str = "SRV-007"; // 局域网访问已启用
 }
 
 /// 转发器日志码

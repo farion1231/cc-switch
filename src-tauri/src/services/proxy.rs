@@ -2545,9 +2545,10 @@ impl ProxyService {
             return Ok(());
         }
 
-        // 判断是否需要重启（地址或端口变更）
+        // 判断是否需要重启（地址、端口或局域网访问设置变更）
         let require_restart = new_config.listen_address != previous.listen_address
-            || new_config.listen_port != previous.listen_port;
+            || new_config.listen_port != previous.listen_port
+            || new_config.allow_lan_access != previous.allow_lan_access;
 
         if require_restart {
             if let Some(server) = server_guard.take() {

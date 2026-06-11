@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use cc_switch_lib::{import_provider_from_deeplink, parse_deeplink_url, AppState, Database};
+use cc_switch_lib::{
+    import_provider_from_deeplink, parse_deeplink_url, switch_provider_from_deeplink, AppState,
+    Database, Provider,
+};
 
 #[path = "support.rs"]
 mod support;
@@ -82,5 +85,81 @@ fn deeplink_import_codex_provider_builds_auth_and_config() {
     assert!(
         config_text.contains("model = \"gpt-4o\""),
         "config.toml content should contain model setting"
+    );
+}
+
+#[test]
+fn deeplink_switch_provider_updates_current_provider() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let db = Arc::new(Database::memory().expect("create memory db"));
+    let state = AppState::new(db.clone());
+
+    db.save_provider(
+        "claude",
+        &Provider::with_id(
+            "old-provider".to_string(),
+            "Old Claude".to_string(),
+            serde_json::json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "old-key",
+                    "ANTHROPIC_BASE_URL": "https://old.example/v1"
+                }
+            }),
+            None,
+        ),
+    )
+    .expect("save old provider");
+    db.save_provider(
+        "claude",
+        &Provider::with_id(
+            "new-provider".to_string(),
+            "New Claude".to_string(),
+            serde_json::json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "new-key",
+                    "ANTHROPIC_BASE_URL": "https://new.example/v1"
+                }
+            }),
+            None,
+        ),
+    )
+    .expect("save new provider");
+    db.set_current_provider("claude", "old-provider")
+        .expect("set initial current provider");
+
+    let request = parse_deeplink_url(
+        "ccswitch://v1/import?resource=switch-provider&app=claude&providerId=new-provider",
+    )
+    .expect("parse switch provider deeplink");
+
+    switch_provider_from_deeplink(&state, &request).expect("switch provider from deeplink");
+
+    let current = db
+        .get_current_provider("claude")
+        .expect("get current provider");
+    assert_eq!(current.as_deref(), Some("new-provider"));
+}
+
+#[test]
+fn deeplink_switch_provider_missing_provider_returns_error() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let db = Arc::new(Database::memory().expect("create memory db"));
+    let state = AppState::new(db.clone());
+    let request = parse_deeplink_url(
+        "ccswitch://v1/import?resource=switch-provider&app=claude&providerId=missing-provider",
+    )
+    .expect("parse switch provider deeplink");
+
+    let err =
+        switch_provider_from_deeplink(&state, &request).expect_err("missing provider should fail");
+    assert!(
+        err.to_string().contains("missing-provider") || err.to_string().contains("供应商"),
+        "error should mention missing provider, got: {err}"
     );
 }
