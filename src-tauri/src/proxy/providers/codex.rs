@@ -64,13 +64,25 @@ pub fn codex_provider_uses_chat_completions(provider: &Provider) -> bool {
         return is_chat_completions_url(base_url);
     }
 
-    provider
+    let from_toml = provider
         .settings_config
         .get("config")
         .and_then(|v| v.as_str())
         .and_then(extract_codex_base_url_from_toml)
         .map(|url| is_chat_completions_url(&url))
-        .unwrap_or(false)
+        .unwrap_or(false);
+
+    if from_toml {
+        return true;
+    }
+
+    // Fallback: Ollama 等本地模型即使 meta.apiFormat 被表单覆盖清空，
+    // 也必须走 Chat 转换（Responses API 不被支持）。
+    if is_ollama_provider(provider) {
+        return true;
+    }
+
+    false
 }
 
 pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &str) -> bool {
