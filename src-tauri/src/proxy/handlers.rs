@@ -59,7 +59,7 @@ pub async fn health_check() -> (StatusCode, Json<Value>) {
 
 /// 获取服务状态
 pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxyStatus>, ProxyError> {
-    let status = state.status.read().await.clone();
+    let status = super::server::status_snapshot(&state).await;
     Ok(Json(status))
 }
 

@@ -1,6 +1,12 @@
 import { useTranslation } from "react-i18next";
 import { useState, useEffect } from "react";
-import { ChevronDown, ChevronRight, FlaskConical, Coins } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FlaskConical,
+  Coins,
+  Gauge,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -12,7 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import type { ProviderTestConfig } from "@/types";
+import type { ProviderLoadLimits, ProviderTestConfig } from "@/types";
 
 export type PricingModelSourceOption = "inherit" | "request" | "response";
 
@@ -25,20 +31,27 @@ interface ProviderPricingConfig {
 interface ProviderAdvancedConfigProps {
   testConfig: ProviderTestConfig;
   pricingConfig: ProviderPricingConfig;
+  loadLimits: ProviderLoadLimits;
   onTestConfigChange: (config: ProviderTestConfig) => void;
   onPricingConfigChange: (config: ProviderPricingConfig) => void;
+  onLoadLimitsChange: (config: ProviderLoadLimits) => void;
 }
 
 export function ProviderAdvancedConfig({
   testConfig,
   pricingConfig,
+  loadLimits,
   onTestConfigChange,
   onPricingConfigChange,
+  onLoadLimitsChange,
 }: ProviderAdvancedConfigProps) {
   const { t } = useTranslation();
   const [isTestConfigOpen, setIsTestConfigOpen] = useState(testConfig.enabled);
   const [isPricingConfigOpen, setIsPricingConfigOpen] = useState(
     pricingConfig.enabled,
+  );
+  const [isLoadLimitsOpen, setIsLoadLimitsOpen] = useState(
+    Boolean(loadLimits.maxConcurrent || loadLimits.rpm),
   );
 
   useEffect(() => {
@@ -48,6 +61,12 @@ export function ProviderAdvancedConfig({
   useEffect(() => {
     setIsPricingConfigOpen(pricingConfig.enabled);
   }, [pricingConfig.enabled]);
+
+  useEffect(() => {
+    if (loadLimits.maxConcurrent || loadLimits.rpm) {
+      setIsLoadLimitsOpen(true);
+    }
+  }, [loadLimits.maxConcurrent, loadLimits.rpm]);
 
   return (
     <div className="space-y-4">
@@ -221,6 +240,103 @@ export function ProviderAdvancedConfig({
                   placeholder="2"
                   disabled={!testConfig.enabled}
                 />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-border/50 bg-muted/20">
+        <button
+          type="button"
+          className="flex w-full items-center justify-between p-4 hover:bg-muted/30 transition-colors"
+          onClick={() => setIsLoadLimitsOpen(!isLoadLimitsOpen)}
+        >
+          <div className="flex items-center gap-3">
+            <Gauge className="h-4 w-4 text-muted-foreground" />
+            <span className="font-medium">
+              {t("providerAdvanced.loadLimits", {
+                defaultValue: "负载限制",
+              })}
+            </span>
+          </div>
+          {isLoadLimitsOpen ? (
+            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+          )}
+        </button>
+        <div
+          className={cn(
+            "overflow-hidden transition-all duration-200",
+            isLoadLimitsOpen
+              ? "max-h-[320px] opacity-100"
+              : "max-h-0 opacity-0",
+          )}
+        >
+          <div className="border-t border-border/50 p-4 space-y-4">
+            <p className="text-sm text-muted-foreground">
+              {t("providerAdvanced.loadLimitsDesc", {
+                defaultValue: "本地路由按会话保持后端；限制仅影响新会话分配。",
+              })}
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="load-max-concurrent">
+                  {t("providerAdvanced.maxConcurrent", {
+                    defaultValue: "会话并发上限",
+                  })}
+                </Label>
+                <Input
+                  id="load-max-concurrent"
+                  type="number"
+                  min={0}
+                  max={10000}
+                  value={loadLimits.maxConcurrent ?? ""}
+                  onChange={(e) =>
+                    onLoadLimitsChange({
+                      ...loadLimits,
+                      maxConcurrent: e.target.value
+                        ? parseInt(e.target.value, 10)
+                        : undefined,
+                    })
+                  }
+                  placeholder="20"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("providerAdvanced.maxConcurrentHint", {
+                    defaultValue:
+                      "限制绑定到此供应商的活跃会话数；0 或留空表示不限制。",
+                  })}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="load-rpm">
+                  {t("providerAdvanced.rpm", {
+                    defaultValue: "RPM 上限",
+                  })}
+                </Label>
+                <Input
+                  id="load-rpm"
+                  type="number"
+                  min={0}
+                  max={1000000}
+                  value={loadLimits.rpm ?? ""}
+                  onChange={(e) =>
+                    onLoadLimitsChange({
+                      ...loadLimits,
+                      rpm: e.target.value
+                        ? parseInt(e.target.value, 10)
+                        : undefined,
+                    })
+                  }
+                  placeholder="100"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("providerAdvanced.rpmHint", {
+                    defaultValue: "按最近 60 秒滑动窗口计数。",
+                  })}
+                </p>
               </div>
             </div>
           </div>

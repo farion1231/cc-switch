@@ -11,6 +11,7 @@
 use super::{
     failover_switch::FailoverSwitchManager,
     handlers,
+    load_balancer::ProviderLoadBalancer,
     log_codes::srv as log_srv,
     provider_router::ProviderRouter,
     providers::{codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore},
@@ -24,8 +25,7 @@ use axum::{
     Router,
 };
 use hyper_util::rt::TokioIo;
-use std::net::SocketAddr;
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::{oneshot, RwLock};
 use tokio::task::JoinHandle;
 
@@ -48,6 +48,8 @@ pub struct ProxyState {
     pub app_handle: Option<tauri::AppHandle>,
     /// 故障转移切换管理器
     pub failover_manager: Arc<FailoverSwitchManager>,
+    /// Provider 级运行态负载调度器
+    pub load_balancer: ProviderLoadBalancer,
 }
 
 /// 代理HTTP服务器
@@ -81,6 +83,7 @@ impl ProxyServer {
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             app_handle,
             failover_manager,
+            load_balancer: ProviderLoadBalancer::default(),
         };
 
         Self {
@@ -255,25 +258,7 @@ impl ProxyServer {
     }
 
     pub async fn get_status(&self) -> ProxyStatus {
-        let mut status = self.state.status.read().await.clone();
-
-        // 计算运行时间
-        if let Some(start) = *self.state.start_time.read().await {
-            status.uptime_seconds = start.elapsed().as_secs();
-        }
-
-        // 从 current_providers HashMap 获取每个应用类型当前正在使用的 provider
-        let current_providers = self.state.current_providers.read().await;
-        status.active_targets = current_providers
-            .iter()
-            .map(|(app_type, (provider_id, provider_name))| ActiveTarget {
-                app_type: app_type.clone(),
-                provider_id: provider_id.clone(),
-                provider_name: provider_name.clone(),
-            })
-            .collect();
-
-        status
+        status_snapshot(&self.state).await
     }
 
     /// 更新某个应用类型当前“目标供应商”（用于 UI 展示 active_targets）
@@ -392,4 +377,61 @@ impl ProxyServer {
             .reset_provider_breaker(provider_id, app_type)
             .await;
     }
+}
+
+pub(crate) async fn status_snapshot(state: &ProxyState) -> ProxyStatus {
+    let mut status = state.status.read().await.clone();
+
+    if let Some(start) = *state.start_time.read().await {
+        status.uptime_seconds = start.elapsed().as_secs();
+    }
+
+    let session_targets = state.load_balancer.active_session_targets().await;
+    let current_providers = state.current_providers.read().await.clone();
+
+    let mut active_provider_sessions = Vec::new();
+    for target in session_targets {
+        let provider_name = current_providers
+            .get(&target.app_type)
+            .filter(|(provider_id, _)| provider_id == &target.provider_id)
+            .map(|(_, provider_name)| provider_name.clone())
+            .or_else(|| {
+                state
+                    .db
+                    .get_provider_by_id(&target.provider_id, &target.app_type)
+                    .ok()
+                    .flatten()
+                    .map(|provider| provider.name)
+            })
+            .unwrap_or_else(|| target.provider_id.clone());
+
+        active_provider_sessions.push(ActiveTarget {
+            app_type: target.app_type,
+            provider_id: target.provider_id,
+            provider_name,
+            active_connections: target.session_ids.len(),
+            session_ids: target.session_ids,
+        });
+    }
+
+    active_provider_sessions.sort_by(|a, b| {
+        a.app_type
+            .cmp(&b.app_type)
+            .then_with(|| b.active_connections.cmp(&a.active_connections))
+            .then_with(|| a.provider_id.cmp(&b.provider_id))
+    });
+    status.active_provider_sessions = active_provider_sessions;
+
+    status.active_targets = current_providers
+        .iter()
+        .map(|(app_type, (provider_id, provider_name))| ActiveTarget {
+            app_type: app_type.clone(),
+            provider_id: provider_id.clone(),
+            provider_name: provider_name.clone(),
+            active_connections: 0,
+            session_ids: Vec::new(),
+        })
+        .collect();
+
+    status
 }

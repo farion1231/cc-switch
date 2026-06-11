@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from "react";
-import { GripVertical, ChevronDown, ChevronUp } from "lucide-react";
+import { GripVertical, ChevronDown, ChevronUp, Link2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type {
   DraggableAttributes,
@@ -60,6 +60,8 @@ interface ProviderCardProps {
   isInFailoverQueue?: boolean; // 是否在故障转移队列中
   onToggleFailover?: (enabled: boolean) => void; // 切换故障转移队列
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
+  activeConnectionCount?: number;
+  onShowActiveSessions?: () => void;
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
@@ -159,6 +161,8 @@ export function ProviderCard({
   isInFailoverQueue = false,
   onToggleFailover,
   activeProviderId,
+  activeConnectionCount = 0,
+  onShowActiveSessions,
   // OpenClaw: default model
   isDefaultModel,
   onSetAsDefault,
@@ -276,15 +280,16 @@ export function ProviderCard({
   // - OpenCode（非 OMO）：不存在"当前"概念，返回 false
   // - 故障转移模式：代理实际使用的供应商（activeProviderId）
   // - 普通模式：isCurrent
+  const hasActiveConnections = activeConnectionCount > 0;
   const isActiveProvider = isAnyOmo
     ? isCurrent
     : appId === "openclaw"
-      ? Boolean(isDefaultModel)
+      ? Boolean(isDefaultModel) || hasActiveConnections
       : appId === "opencode"
-        ? false
+        ? hasActiveConnections
         : isAutoFailoverEnabled
-          ? activeProviderId === provider.id
-          : isCurrent;
+          ? activeProviderId === provider.id || hasActiveConnections
+          : isCurrent || hasActiveConnections;
 
   const shouldUseGreen = !isAnyOmo && isProxyTakeover && isActiveProvider;
   const hasPersistentConfigHighlight = isAdditiveMode && isInConfig;
@@ -422,6 +427,32 @@ export function ProviderCard({
                 failoverPriority && (
                   <FailoverPriorityBadge priority={failoverPriority} />
                 )}
+
+              {hasActiveConnections && (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onShowActiveSessions?.();
+                  }}
+                  className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/15 dark:text-emerald-300"
+                  title={t("provider.activeConnectionsHint", {
+                    defaultValue: "查看活跃会话 ID",
+                  })}
+                  aria-label={t("provider.activeConnectionsAriaLabel", {
+                    count: activeConnectionCount,
+                    defaultValue: "查看 {{count}} 个活跃连接",
+                  })}
+                >
+                  <Link2 className="h-3 w-3" />
+                  <span>{activeConnectionCount}</span>
+                  <span>
+                    {t("provider.activeConnectionsShort", {
+                      defaultValue: "连接",
+                    })}
+                  </span>
+                </button>
+              )}
 
               {provider.category === "third_party" &&
                 provider.meta?.isPartner && (
