@@ -44,21 +44,37 @@ use std::sync::{Mutex, OnceLock};
 // Path Functions
 // ============================================================================
 
-/// 获取 Hermes 配置目录
+/// 获取 Hermes 配置目录路径
 ///
-/// 默认路径: `~/.hermes/`
-/// 可通过 settings.hermes_config_dir 覆盖
+/// 通过 CCS 设置中的 `hermes_config_dir` 覆盖
+/// 否则用默认路径（Windows: `%LOCALAPPDATA%\\hermes`，Mac/Linux: `~/.hermes`）
 pub fn get_hermes_dir() -> PathBuf {
     if let Some(override_dir) = get_hermes_override_dir() {
         return override_dir;
     }
 
+    default_hermes_dir()
+}
+
+/// Windows 默认 Hermes 目录：`%LOCALAPPDATA%\\hermes`
+///
+/// 与 Hermes 自身 `get_hermes_home()` 默认值对齐
+#[cfg(target_os = "windows")]
+fn default_hermes_dir() -> PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(|| crate::config::get_home_dir().join("AppData").join("Local"))
+        .join("hermes")
+}
+
+/// Mac/Linux默认 Hermes 目录：`~/.hermes`
+#[cfg(not(target_os = "windows"))]
+fn default_hermes_dir() -> PathBuf {
     crate::config::get_home_dir().join(".hermes")
 }
 
 /// 获取 Hermes 配置文件路径
 ///
-/// 返回 `~/.hermes/config.yaml`
+/// 返回 `<hermes_dir>/config.yaml`
 pub fn get_hermes_config_path() -> PathBuf {
     get_hermes_dir().join("config.yaml")
 }
@@ -2192,5 +2208,44 @@ user_profile_enabled: false
         assert_eq!(memory, MemoryKind::Memory);
         assert_eq!(user, MemoryKind::User);
         assert!(serde_json::from_str::<MemoryKind>("\"bogus\"").is_err());
+    }
+
+    #[test]
+    #[serial]
+    fn default_hermes_dir_without_override() {
+        let _g = test_guard();
+        let dir = get_hermes_dir();
+        #[cfg(target_os = "windows")]
+        assert!(
+            dir.ends_with("hermes"),
+            "Windows 上默认路径应为 %LOCALAPPDATA%\\hermes，实际为 {dir:?}"
+        );
+        #[cfg(not(target_os = "windows"))]
+        assert!(
+            dir.ends_with(".hermes"),
+            "Mac/Linux 上默认路径应为 ~/.hermes，实际为 {dir:?}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn settings_override_takes_precedence_over_default() {
+        let _g = test_guard();
+        let custom_dir = tempfile::tempdir().unwrap();
+        let custom_path = custom_dir.path().to_path_buf();
+
+        let mut settings = crate::settings::get_settings();
+        settings.hermes_config_dir = Some(custom_path.to_string_lossy().to_string());
+        crate::settings::update_settings(settings).unwrap();
+
+        let dir = get_hermes_dir();
+        assert_eq!(
+            dir, custom_path,
+            "settings override 应优先于平台默认路径，实际为 {dir:?}"
+        );
+
+        let mut settings = crate::settings::get_settings();
+        settings.hermes_config_dir = None;
+        crate::settings::update_settings(settings).unwrap();
     }
 }
