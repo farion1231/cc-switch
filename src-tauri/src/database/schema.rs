@@ -66,7 +66,8 @@ impl Database {
             description TEXT, homepage TEXT, docs TEXT, tags TEXT NOT NULL DEFAULT '[]',
             enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
-            enabled_hermes BOOLEAN NOT NULL DEFAULT 0
+            enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_antigravity BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -95,6 +96,7 @@ impl Database {
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_antigravity BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
             updated_at INTEGER NOT NULL DEFAULT 0
@@ -443,6 +445,13 @@ impl Database {
                         log::info!("迁移数据库从 v10 到 v11（usage_daily_rollups 保留 request_model 维度）");
                         Self::migrate_v10_to_v11(conn)?;
                         Self::set_user_version(conn, 11)?;
+                    }
+                    11 => {
+                        log::info!(
+                            "迁移数据库从 v11 到 v12（添加 Antigravity MCP 和 Skills 支持）"
+                        );
+                        Self::migrate_v11_to_v12(conn)?;
+                        Self::set_user_version(conn, 12)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1221,7 +1230,7 @@ impl Database {
     /// SQLite 改主键必须重建表；历史行的 request_model 已不可知，填 ''。
     fn migrate_v10_to_v11(conn: &Connection) -> Result<(), AppError> {
         // proxy_request_logs.pricing_model：NULL = v11 前的历史行（回填走
-        // model → 占位符回退 request_model 的旧逻辑），'' = 未计价的错误行
+        // model → 占位符回退 request_model 的旧逻辑），'' = 未计价 of 错误行
         if Self::table_exists(conn, "proxy_request_logs")? {
             Self::add_column_if_missing(conn, "proxy_request_logs", "pricing_model", "TEXT")?;
         }
@@ -1267,6 +1276,27 @@ impl Database {
         log::info!(
             "v10 -> v11 迁移完成：usage_daily_rollups 已保留 request_model/pricing_model 维度"
         );
+        Ok(())
+    }
+
+    fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
+        Self::add_column_if_missing(
+            conn,
+            "mcp_servers",
+            "enabled_antigravity",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
+
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "enabled_antigravity",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+
+        log::info!("v11 -> v12 迁移完成：已添加 Antigravity MCP 和 Skills 支持");
         Ok(())
     }
 

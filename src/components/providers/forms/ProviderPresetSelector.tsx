@@ -224,6 +224,15 @@ export function ProviderPresetSelector({
         return <CodexIcon size={14} />;
       case "gemini":
         return <GeminiIcon size={14} />;
+      case "antigravity":
+        return (
+          <ProviderIcon
+            icon="antigravity"
+            name="Antigravity 2.0"
+            size={14}
+            showFallback={false}
+          />
+        );
       case "generic":
         return <Zap size={14} />;
       default:

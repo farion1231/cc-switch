@@ -1,6 +1,8 @@
 node_modules/
 dist/
 release/
+/src-tauri/target-*/
+/cc-switch-main/
 .DS_Store
 *.log
 .env

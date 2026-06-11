@@ -208,6 +208,7 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
          WHEN '_codex_session' THEN 'Codex (Session)' \
          WHEN '_gemini_session' THEN 'Gemini (Session)' \
          WHEN '_opencode_session' THEN 'OpenCode (Session)' \
+         WHEN '_antigravity_session' THEN 'Antigravity (Session)' \
          ELSE {log_alias}.provider_id END)"
     )
 }
@@ -228,7 +229,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
     let proxy_data_source = data_source_expr("proxy_dedup");
     format!(
         "NOT (
-            {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
+            {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session', 'antigravity_session')
             AND EXISTS (
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
@@ -243,7 +244,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                       proxy_dedup.cache_creation_tokens = {log_alias}.cache_creation_tokens
                       OR (
                           {log_alias}.cache_creation_tokens = 0
-                          AND {data_source} IN ('codex_session', 'gemini_session', 'opencode_session')
+                          AND {data_source} IN ('codex_session', 'gemini_session', 'opencode_session', 'antigravity_session')
                       )
                   )
                   AND proxy_dedup.created_at BETWEEN
@@ -302,8 +303,10 @@ pub(crate) fn has_matching_proxy_usage_log(
     conn: &Connection,
     key: &DedupKey,
 ) -> Result<bool, AppError> {
-    let allow_missing_cache_creation =
-        matches!(key.app_type, "codex" | "gemini" | "opencode") && key.cache_creation_tokens == 0;
+    let allow_missing_cache_creation = matches!(
+        key.app_type,
+        "codex" | "gemini" | "antigravity" | "opencode"
+    ) && key.cache_creation_tokens == 0;
 
     let l_data_source = data_source_expr("l");
     let sql = format!(
@@ -1573,10 +1576,11 @@ impl Database {
         let million = rust_decimal::Decimal::from(1_000_000u64);
 
         // 与 CostCalculator::calculate_for_app 保持一致的计算逻辑：
-        // 1. Codex/Gemini 的 input_tokens 包含 cache_read_tokens，需要扣除后按输入价计费
+        // 1. Codex/Gemini/Antigravity 的 input_tokens 包含 cache_read_tokens，需要扣除后按输入价计费
         // 2. Claude/Anthropic 的 input_tokens 已经是 fresh input，不能再次扣减
         // 3. 各项成本是基础成本（不含倍率），倍率只作用于最终总价
-        let input_includes_cache_read = matches!(log.app_type.as_str(), "codex" | "gemini");
+        let input_includes_cache_read =
+            matches!(log.app_type.as_str(), "codex" | "gemini" | "antigravity");
         let billable_input_tokens = if input_includes_cache_read {
             (log.input_tokens as u64).saturating_sub(log.cache_read_tokens as u64)
         } else {
@@ -3010,6 +3014,37 @@ mod tests {
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].provider_id, "_opencode_session");
         assert_eq!(stats[0].provider_name, "OpenCode (Session)");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_provider_stats_labels_antigravity_session_provider() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "antigravity-session",
+                "antigravity",
+                "_antigravity_session",
+                "antigravity-model",
+                "antigravity_session",
+                1000,
+                100,
+                50,
+                0,
+                0,
+                200,
+                "0.01",
+            )?;
+        }
+
+        let stats = db.get_provider_stats(None, None, Some("antigravity"))?;
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].provider_id, "_antigravity_session");
+        assert_eq!(stats[0].provider_name, "Antigravity (Session)");
 
         Ok(())
     }

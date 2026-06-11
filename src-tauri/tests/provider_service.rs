@@ -164,6 +164,7 @@ command = "say"
                 claude: false,
                 codex: true,
                 gemini: false,
+                antigravity: false,
                 opencode: false,
                 hermes: false,
             },

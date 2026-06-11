@@ -158,7 +158,7 @@ impl Provider {
                 (base_url, api_key)
             }
             // Gemini uses Google-specific env keys (with a legacy GOOGLE_API_KEY fallback).
-            AppType::Gemini => {
+            AppType::Gemini | AppType::Antigravity => {
                 let env = settings.get("env");
                 let base_url = str_at(env.and_then(|e| e.get("GOOGLE_GEMINI_BASE_URL")));
                 let api_key = first_non_empty(env, &["GEMINI_API_KEY", "GOOGLE_API_KEY"]);

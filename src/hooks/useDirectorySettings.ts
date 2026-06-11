@@ -10,6 +10,7 @@ type AppDirectoryKey =
   | "claude"
   | "codex"
   | "gemini"
+  | "antigravity"
   | "opencode"
   | "openclaw"
   | "hermes";
@@ -20,6 +21,7 @@ export interface ResolvedDirectories {
   claude: string;
   codex: string;
   gemini: string;
+  antigravity: string;
   opencode: string;
   openclaw: string;
   hermes: string;
@@ -33,6 +35,7 @@ const APP_DIRECTORY_META: Record<
   claude: { key: "claude", defaultFolder: ".claude" },
   codex: { key: "codex", defaultFolder: ".codex" },
   gemini: { key: "gemini", defaultFolder: ".gemini" },
+  antigravity: { key: "antigravity", defaultFolder: ".gemini" },
   opencode: { key: "opencode", defaultFolder: ".config/opencode" },
   openclaw: { key: "openclaw", defaultFolder: ".openclaw" },
   hermes: { key: "hermes", defaultFolder: ".hermes" },
@@ -45,6 +48,7 @@ const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
   claude: "claudeConfigDir",
   codex: "codexConfigDir",
   gemini: "geminiConfigDir",
+  antigravity: "antigravityConfigDir",
   opencode: "opencodeConfigDir",
   openclaw: "openclawConfigDir",
   hermes: "hermesConfigDir",
@@ -130,6 +134,7 @@ export function useDirectorySettings({
     claude: "",
     codex: "",
     gemini: "",
+    antigravity: "",
     opencode: "",
     openclaw: "",
     hermes: "",
@@ -141,6 +146,7 @@ export function useDirectorySettings({
     claude: "",
     codex: "",
     gemini: "",
+    antigravity: "",
     opencode: "",
     openclaw: "",
     hermes: "",
@@ -159,6 +165,7 @@ export function useDirectorySettings({
           claudeDir,
           codexDir,
           geminiDir,
+          antigravityDir,
           opencodeDir,
           openclawDir,
           hermesDir,
@@ -166,6 +173,7 @@ export function useDirectorySettings({
           defaultClaudeDir,
           defaultCodexDir,
           defaultGeminiDir,
+          defaultAntigravityDir,
           defaultOpencodeDir,
           defaultOpenclawDir,
           defaultHermesDir,
@@ -174,6 +182,7 @@ export function useDirectorySettings({
           settingsApi.getConfigDir("claude"),
           settingsApi.getConfigDir("codex"),
           settingsApi.getConfigDir("gemini"),
+          settingsApi.getConfigDir("antigravity"),
           settingsApi.getConfigDir("opencode"),
           settingsApi.getConfigDir("openclaw"),
           settingsApi.getConfigDir("hermes"),
@@ -181,6 +190,7 @@ export function useDirectorySettings({
           computeDefaultConfigDir("claude"),
           computeDefaultConfigDir("codex"),
           computeDefaultConfigDir("gemini"),
+          computeDefaultConfigDir("antigravity"),
           computeDefaultConfigDir("opencode"),
           computeDefaultConfigDir("openclaw"),
           computeDefaultConfigDir("hermes"),
@@ -195,6 +205,7 @@ export function useDirectorySettings({
           claude: defaultClaudeDir ?? "",
           codex: defaultCodexDir ?? "",
           gemini: defaultGeminiDir ?? "",
+          antigravity: defaultAntigravityDir ?? "",
           opencode: defaultOpencodeDir ?? "",
           openclaw: defaultOpenclawDir ?? "",
           hermes: defaultHermesDir ?? "",
@@ -208,6 +219,7 @@ export function useDirectorySettings({
           claude: claudeDir || defaultsRef.current.claude,
           codex: codexDir || defaultsRef.current.codex,
           gemini: geminiDir || defaultsRef.current.gemini,
+          antigravity: antigravityDir || defaultsRef.current.antigravity,
           opencode: opencodeDir || defaultsRef.current.opencode,
           openclaw: openclawDir || defaultsRef.current.openclaw,
           hermes: hermesDir || defaultsRef.current.hermes,
@@ -349,6 +361,7 @@ export function useDirectorySettings({
         claude: overrides?.claude ?? defaultsRef.current.claude,
         codex: overrides?.codex ?? defaultsRef.current.codex,
         gemini: overrides?.gemini ?? defaultsRef.current.gemini,
+        antigravity: overrides?.antigravity ?? defaultsRef.current.antigravity,
         opencode: overrides?.opencode ?? defaultsRef.current.opencode,
         openclaw: overrides?.openclaw ?? defaultsRef.current.openclaw,
         hermes: overrides?.hermes ?? defaultsRef.current.hermes,

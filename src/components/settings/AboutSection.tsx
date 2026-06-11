@@ -63,12 +63,17 @@ const TOOL_NAMES = [
   "claude",
   "codex",
   "gemini",
+  "antigravity",
   "opencode",
   "openclaw",
   "hermes",
 ] as const;
 type ToolName = (typeof TOOL_NAMES)[number];
 type ToolLifecycleAction = "install" | "update";
+const READ_ONLY_TOOLS = new Set<ToolName>(["antigravity"]);
+const MANAGED_TOOL_NAMES = TOOL_NAMES.filter(
+  (toolName) => !READ_ONLY_TOOLS.has(toolName),
+);
 
 type WslShellPreference = {
   wslShell?: string | null;
@@ -158,6 +163,7 @@ const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   claude: "Claude Code",
   codex: "Codex",
   gemini: "Gemini CLI",
+  antigravity: "Antigravity 2.0",
   opencode: "OpenCode",
   openclaw: "OpenClaw",
   hermes: "Hermes",
@@ -173,6 +179,7 @@ const TOOL_APP_IDS: Record<ToolName, AppId> = {
   claude: "claude",
   codex: "codex",
   gemini: "gemini",
+  antigravity: "antigravity",
   opencode: "opencode",
   openclaw: "openclaw",
   hermes: "hermes",
@@ -230,7 +237,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
 
   const updatableToolNames = useMemo(
     () =>
-      TOOL_NAMES.filter((toolName) => {
+      MANAGED_TOOL_NAMES.filter((toolName) => {
         const tool = toolVersionByName.get(toolName);
         return isUpdateAvailable(tool?.version, tool?.latest_version);
       }),
@@ -472,7 +479,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   const handleDiagnoseAll = useCallback(async () => {
     setIsDiagnosingAll(true);
     try {
-      const reports = await settingsApi.probeToolInstallations([...TOOL_NAMES]);
+      const reports = await settingsApi.probeToolInstallations([
+        ...MANAGED_TOOL_NAMES,
+      ]);
       const next: Partial<Record<ToolName, ToolInstallation[]>> = {};
       let conflicts = 0;
       for (const report of reports) {
@@ -950,9 +959,10 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             // 已安装却跑不起来（如 Node 版本不达标）：用它区分卡片文案与按钮，避免把
             // "装了跑不起来"误判成"未安装"而给出无用的安装按钮（重装同一版本解决不了）。
             const installedButBroken = Boolean(tool?.installed_but_broken);
+            const isReadOnly = READ_ONLY_TOOLS.has(toolName);
             // loading 和 broken 都没有可执行动作；其余按是否已装/是否过期选择。
             const action: ToolLifecycleAction | null =
-              isToolVersionLoading || installedButBroken
+              isToolVersionLoading || installedButBroken || isReadOnly
                 ? null
                 : !tool?.version
                   ? "install"
@@ -1113,6 +1123,10 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                     // 已安装但跑不起来：重装无济于事，不给按钮，给一句指向环境的提示。
                     <span className="text-xs text-yellow-600 dark:text-yellow-400">
                       {t("settings.toolCheckEnv")}
+                    </span>
+                  ) : isReadOnly ? (
+                    <span className="text-xs text-muted-foreground">
+                      {t("settings.toolManagedExternally")}
                     </span>
                   ) : action ? (
                     <Button

@@ -156,6 +156,7 @@ export type AppType =
   | "claude-desktop"
   | "codex"
   | "gemini"
+  | "antigravity"
   | "opencode";
 
 export type AppTypeFilter = "all" | AppType;
@@ -165,6 +166,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "claude-desktop",
   "codex",
   "gemini",
+  "antigravity",
   "opencode",
 ];
 
@@ -183,6 +185,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
 export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
   "codex",
   "gemini",
+  "antigravity",
 ]);
 
 /** Subset of request-log fields needed to derive cache-normalized input. */

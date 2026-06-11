@@ -738,6 +738,8 @@
     "codexConfigDirDescription": "覆寫 Codex 設定目錄。",
     "geminiConfigDir": "Gemini 設定目錄",
     "geminiConfigDirDescription": "覆寫 Gemini 設定目錄 (.env)。",
+    "antigravityConfigDir": "Antigravity 2.0 設定目錄",
+    "antigravityConfigDirDescription": "覆寫 Antigravity 2.0 設定目錄。",
     "opencodeConfigDir": "OpenCode 設定目錄",
     "opencodeConfigDirDescription": "覆寫 OpenCode 設定目錄 (opencode.json)。",
     "openclawConfigDir": "OpenClaw 設定目錄",
@@ -747,6 +749,7 @@
     "browsePlaceholderClaude": "例如：/home/<您的帳號>/.claude",
     "browsePlaceholderCodex": "例如：/home/<您的帳號>/.codex",
     "browsePlaceholderGemini": "例如：/home/<您的帳號>/.gemini",
+    "browsePlaceholderAntigravity": "例如：%USERPROFILE%/.gemini",
     "browsePlaceholderOpencode": "例如：/home/<您的帳號>/.config/opencode",
     "browsePlaceholderOpenclaw": "例如：/home/<您的帳號>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<您的帳號>/.hermes",
@@ -772,6 +775,7 @@
     "oneClickInstall": "一鍵安裝",
     "oneClickInstallHint": "安裝 Claude Code / Codex / Gemini CLI / OpenCode",
     "localEnvCheck": "本地環境檢查",
+    "toolManagedExternally": "由 Antigravity 2.0 自行更新",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
@@ -821,6 +825,12 @@
     },
     "saveFailedGeneric": "儲存失敗，請重試"
   },
+  "antigravity": {
+    "accountBindingTitle": "綁定目前的 Antigravity 2.0 帳號",
+    "accountBindingDescription": "儲存時會自動讀取 Antigravity 2.0 目前登入帳號的系統憑證。新增其他帳號前，請先在 Antigravity 2.0 中登入該帳號。",
+    "accountBindingEditDescription": "此設定已綁定儲存時的帳號憑證。切換到此設定時，CC Switch 會還原對應憑證。",
+    "emptyDescription": "請先在 Antigravity 2.0 中登入要儲存的帳號，然後點擊「新增供應商」。儲存時會自動讀取並綁定目前帳號的系統憑證。"
+  },
   "apps": {
     "claude": "Claude",
     "claudeCode": "Claude Code",
@@ -828,6 +838,7 @@
     "claude-desktop": "Claude Desktop",
     "codex": "Codex",
     "gemini": "Gemini",
+    "antigravity": "Antigravity 2.0",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes"
@@ -1361,6 +1372,7 @@
       "claude-desktop": "Claude Desktop",
       "codex": "Codex",
       "gemini": "Gemini",
+      "antigravity": "Antigravity 2.0",
       "opencode": "OpenCode"
     },
     "rawInputLabel": "原始",
@@ -1575,6 +1587,7 @@
         "claude": "Claude",
         "codex": "Codex",
         "gemini": "Gemini",
+        "antigravity": "Antigravity 2.0",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes"

@@ -738,6 +738,8 @@
     "codexConfigDirDescription": "Override Codex configuration directory.",
     "geminiConfigDir": "Gemini Configuration Directory",
     "geminiConfigDirDescription": "Override Gemini configuration directory (.env).",
+    "antigravityConfigDir": "Antigravity 2.0 Configuration Directory",
+    "antigravityConfigDirDescription": "Override the Antigravity 2.0 configuration directory.",
     "opencodeConfigDir": "OpenCode Configuration Directory",
     "opencodeConfigDirDescription": "Override OpenCode configuration directory (opencode.json).",
     "openclawConfigDir": "OpenClaw Configuration Directory",
@@ -747,6 +749,7 @@
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
+    "browsePlaceholderAntigravity": "e.g., %USERPROFILE%/.gemini",
     "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
@@ -779,6 +782,7 @@
     "toolInstall": "Install",
     "toolUpdate": "Update",
     "toolReady": "Ready",
+    "toolManagedExternally": "Updated by Antigravity 2.0",
     "toolActionDone": "{{action}} completed for {{count}} tool(s)",
     "toolActionPartial": "{{action}} succeeded for {{succeeded}}, failed for {{failed}}",
     "toolActionFailed": "Install/update command failed",
@@ -850,6 +854,12 @@
     },
     "saveFailedGeneric": "Save failed, please try again"
   },
+  "antigravity": {
+    "accountBindingTitle": "Bind current Antigravity 2.0 account",
+    "accountBindingDescription": "Saving automatically reads the system credential for the account currently signed in to Antigravity 2.0. Sign in to another account in Antigravity 2.0 before adding it here.",
+    "accountBindingEditDescription": "This provider is bound to the credential captured when it was saved. Switching to it restores that credential.",
+    "emptyDescription": "Sign in to the account you want to save in Antigravity 2.0, then click Add Provider. Saving automatically reads and binds the current account's system credential."
+  },
   "apps": {
     "claude": "Claude",
     "claudeCode": "Claude Code",
@@ -857,6 +867,7 @@
     "claude-desktop": "Claude Desktop",
     "codex": "Codex",
     "gemini": "Gemini",
+    "antigravity": "Antigravity 2.0",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes"
@@ -1389,6 +1400,7 @@
       "claude-desktop": "Claude Desktop",
       "codex": "Codex",
       "gemini": "Gemini",
+      "antigravity": "Antigravity 2.0",
       "opencode": "OpenCode"
     },
     "rawInputLabel": "Raw",
@@ -1603,6 +1615,7 @@
         "claude": "Claude",
         "codex": "Codex",
         "gemini": "Gemini",
+        "antigravity": "Antigravity 2.0",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes"

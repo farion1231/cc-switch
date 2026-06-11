@@ -20,22 +20,26 @@ export const APP_IDS: AppId[] = [
   "claude-desktop",
   "codex",
   "gemini",
+  "antigravity",
   "opencode",
   "openclaw",
   "hermes",
 ];
 
 /** App IDs shown in Skills panels (excludes OpenClaw — it doesn't support Skills) */
-export const SKILLS_APP_IDS: AppId[] = [
+export type SharedConfigAppId = Exclude<AppId, "claude-desktop" | "openclaw">;
+
+export const SKILLS_APP_IDS: SharedConfigAppId[] = [
   "claude",
   "codex",
   "gemini",
+  "antigravity",
   "opencode",
   "hermes",
 ];
 
 /** App IDs shown in MCP panels (excludes OpenClaw) */
-export const MCP_APP_IDS: AppId[] = [...SKILLS_APP_IDS];
+export const MCP_APP_IDS: SharedConfigAppId[] = [...SKILLS_APP_IDS];
 
 export const APP_ICON_MAP: Record<AppId, AppConfig> = {
   claude: {
@@ -69,6 +73,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-blue-500/10 ring-1 ring-blue-500/20 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400",
     badgeClass:
       "bg-blue-500/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/20 border-0 gap-1.5",
+  },
+  antigravity: {
+    label: "Antigravity 2.0",
+    icon: (
+      <ProviderIcon
+        icon="antigravity"
+        name="Antigravity 2.0"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-cyan-500/10 ring-1 ring-cyan-500/20 hover:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400",
+    badgeClass:
+      "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 border-0 gap-1.5",
   },
   opencode: {
     label: "OpenCode",

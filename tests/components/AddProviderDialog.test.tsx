@@ -125,4 +125,17 @@ describe("AddProviderDialog", () => {
       },
     });
   });
+
+  it("does not offer universal providers for Antigravity accounts", () => {
+    render(
+      <AddProviderDialog
+        open
+        onOpenChange={vi.fn()}
+        appId="antigravity"
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("provider.tabUniversal")).not.toBeInTheDocument();
+  });
 });

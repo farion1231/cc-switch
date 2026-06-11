@@ -1,6 +1,6 @@
 //! Live configuration operations
 //!
-//! Handles reading and writing live configuration files for Claude, Codex, and Gemini.
+//! Handles reading and writing live configuration for exclusive and additive providers.
 
 use std::collections::HashMap;
 
@@ -347,7 +347,11 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
             }
             _ => false,
         },
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => false,
+        AppType::Antigravity
+        | AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::ClaudeDesktop => false,
     }
 }
 
@@ -417,9 +421,11 @@ pub(crate) fn remove_common_config_from_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
-            Ok(settings.clone())
-        }
+        AppType::Antigravity
+        | AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
 
@@ -474,9 +480,11 @@ fn apply_common_config_to_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
-            Ok(settings.clone())
-        }
+        AppType::Antigravity
+        | AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
 
@@ -575,6 +583,13 @@ fn restore_live_settings_for_provider_backfill(
     provider: &Provider,
     live_settings: Value,
 ) -> Value {
+    if matches!(app_type, AppType::Antigravity) {
+        return crate::antigravity_config::merge_live_settings(
+            &provider.settings_config,
+            &live_settings,
+        );
+    }
+
     if !matches!(app_type, AppType::Codex) {
         return live_settings;
     }
@@ -757,6 +772,9 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly
             write_gemini_live(provider)?;
+        }
+        AppType::Antigravity => {
+            crate::antigravity_config::write_antigravity_live_settings(&provider.settings_config)?;
         }
         AppType::OpenCode => {
             // OpenCode uses additive mode - write provider to config
@@ -1068,6 +1086,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
                 "config": config_obj
             }))
         }
+        AppType::Antigravity => crate::antigravity_config::read_antigravity_live_settings(),
         AppType::OpenCode => {
             use crate::opencode_config::{get_opencode_config_path, read_opencode_config};
 
@@ -1120,8 +1139,9 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
 /// `Ok(false)` if skipped (providers already exist for this app).
 pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
     // Additive mode apps (OpenCode, OpenClaw) should use their dedicated
-    // import_xxx_providers_from_live functions, not this generic default config import
-    if app_type.is_additive_mode() {
+    // import_xxx_providers_from_live functions. Antigravity credentials are
+    // captured only when the user explicitly adds an account configuration.
+    if !supports_generic_default_import(&app_type) {
         return Ok(false);
     }
 
@@ -1204,6 +1224,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
+        AppType::Antigravity => crate::antigravity_config::read_antigravity_live_settings()?,
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
             unreachable!("additive mode apps are handled by early return")
@@ -1217,7 +1238,9 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         None,
     );
     provider.category = Some(
-        if matches!(app_type, AppType::Codex) {
+        if matches!(app_type, AppType::Antigravity) {
+            "official"
+        } else if matches!(app_type, AppType::Codex) {
             let config_text = provider
                 .settings_config
                 .get("config")
@@ -1261,11 +1284,15 @@ pub fn should_import_default_config_on_startup(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<bool, AppError> {
-    if app_type.is_additive_mode() {
+    if !supports_generic_default_import(app_type) {
         return Ok(false);
     }
 
     Ok(!state.db.has_any_provider_for_app(app_type.as_str())?)
+}
+
+fn supports_generic_default_import(app_type: &AppType) -> bool {
+    !app_type.is_additive_mode() && !matches!(app_type, AppType::Antigravity)
 }
 
 /// Write Gemini live configuration with authentication handling
@@ -1586,6 +1613,12 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn antigravity_does_not_use_generic_default_import() {
+        assert!(!supports_generic_default_import(&AppType::Antigravity));
+        assert!(supports_generic_default_import(&AppType::Gemini));
+    }
 
     #[test]
     fn claude_common_config_apply_and_remove_roundtrip_for_non_overlapping_fields() {

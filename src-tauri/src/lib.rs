@@ -1,3 +1,5 @@
+mod antigravity_config;
+mod antigravity_mcp;
 mod app_config;
 mod app_store;
 mod auto_launch;
@@ -45,10 +47,11 @@ pub use database::Database;
 pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkImportRequest};
 pub use error::AppError;
 pub use mcp::{
-    import_from_claude, import_from_codex, import_from_gemini, remove_server_from_claude,
-    remove_server_from_codex, remove_server_from_gemini, sync_enabled_to_claude,
-    sync_enabled_to_codex, sync_enabled_to_gemini, sync_single_server_to_claude,
-    sync_single_server_to_codex, sync_single_server_to_gemini,
+    import_from_antigravity, import_from_claude, import_from_codex, import_from_gemini,
+    remove_server_from_antigravity, remove_server_from_claude, remove_server_from_codex,
+    remove_server_from_gemini, sync_enabled_to_antigravity, sync_enabled_to_claude,
+    sync_enabled_to_codex, sync_enabled_to_gemini, sync_single_server_to_antigravity,
+    sync_single_server_to_claude, sync_single_server_to_codex, sync_single_server_to_gemini,
 };
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
@@ -503,7 +506,7 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to read skills migration flag: {e}"),
             }
 
-            // 1.5. 自动导入 live 配置 + seed 官方预设供应商（Claude / Codex / Gemini）
+            // 1.5. 自动导入 live 配置 + seed 官方预设供应商
             //
             // 先 import 后 seed 是有意为之：先把用户手动配置的 settings.json / auth.json / .env
             // 落成 "default" provider 设为 current，再追加官方预设（is_current=false）。
@@ -737,6 +740,16 @@ pub fn run() {
             }
 
             // 4. 导入提示词文件（表空时触发）
+            // Antigravity support may be added after the unified MCP table already
+            // contains other apps, so its import must be independently idempotent.
+            match crate::services::mcp::McpService::import_from_antigravity(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("Imported {count} MCP server(s) from Antigravity");
+                }
+                Ok(_) => log::debug!("No new Antigravity MCP servers to import"),
+                Err(e) => log::warn!("Failed to import Antigravity MCP: {e}"),
+            }
+
             if app_state.db.is_prompts_table_empty().unwrap_or(false) {
                 log::info!("Prompts table empty, importing from live configurations...");
 
@@ -744,6 +757,7 @@ pub fn run() {
                     crate::app_config::AppType::Claude,
                     crate::app_config::AppType::Codex,
                     crate::app_config::AppType::Gemini,
+                    crate::app_config::AppType::Antigravity,
                     crate::app_config::AppType::OpenCode,
                     crate::app_config::AppType::OpenClaw,
                     crate::app_config::AppType::Hermes,
@@ -762,6 +776,19 @@ pub fn run() {
             }
 
             // 迁移旧的 app_config_dir 配置到 Store
+            // Existing installations already have prompts for other apps. Import
+            // the shared GEMINI.md into Antigravity independently on upgrade.
+            match crate::services::prompt::PromptService::import_from_file_on_first_launch(
+                &app_state,
+                crate::app_config::AppType::Antigravity,
+            ) {
+                Ok(count) if count > 0 => {
+                    log::info!("Imported {count} prompt(s) for antigravity");
+                }
+                Ok(_) => log::debug!("No new Antigravity prompt to import"),
+                Err(e) => log::warn!("Failed to import Antigravity prompt: {e}"),
+            }
+
             if let Err(e) = app_store::migrate_app_config_dir_from_settings(app.handle()) {
                 log::warn!("迁移 app_config_dir 失败: {e}");
             }
@@ -1047,6 +1074,10 @@ pub fn run() {
                         "OpenCode usage initial sync",
                         crate::services::session_usage_opencode::sync_opencode_usage(db),
                     );
+                    run_step(
+                        "Antigravity usage initial sync",
+                        crate::services::session_usage_antigravity::sync_antigravity_usage(db),
+                    );
 
                     // 定期同步
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
@@ -1070,6 +1101,10 @@ pub fn run() {
                         run_step(
                             "OpenCode usage periodic sync",
                             crate::services::session_usage_opencode::sync_opencode_usage(db),
+                        );
+                        run_step(
+                            "Antigravity usage periodic sync",
+                            crate::services::session_usage_antigravity::sync_antigravity_usage(db),
                         );
                     }
                 });
@@ -1712,6 +1747,9 @@ fn initialize_common_config_snippets(state: &store::AppState) {
     // This must run before proxy takeover is restored on startup, otherwise we'd read
     // proxy-placeholder configs instead of the user's actual live settings.
     for app_type in crate::app_config::AppType::all() {
+        if matches!(app_type, crate::app_config::AppType::Antigravity) {
+            continue;
+        }
         if !state
             .db
             .should_auto_extract_config_snippet(app_type.as_str())

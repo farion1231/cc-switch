@@ -300,6 +300,7 @@ command = "say"
                 claude: false,
                 codex: true, // 启用 Codex
                 gemini: false,
+                antigravity: false,
                 opencode: false,
                 hermes: false,
             },

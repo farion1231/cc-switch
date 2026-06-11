@@ -125,6 +125,11 @@ impl ConfigService {
                 // Claude Desktop 3P profiles are managed by claude_desktop_config.
             }
             AppType::Gemini => Self::sync_gemini_live(config, &current_id, &provider)?,
+            AppType::Antigravity => {
+                crate::antigravity_config::write_antigravity_live_settings(
+                    &provider.settings_config,
+                )?;
+            }
             AppType::OpenCode => {
                 // OpenCode uses additive mode, no live sync needed
                 // OpenCode providers are managed directly in the config file
