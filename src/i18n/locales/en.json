@@ -1326,6 +1326,8 @@
   "providerPreset": {
     "label": "Provider Preset",
     "custom": "Custom Configuration",
+    "sortDefault": "Default",
+    "sortAlphabetical": "A-Z",
     "other": "Other",
     "hint": "You can continue to adjust the fields below after selecting a preset."
   },

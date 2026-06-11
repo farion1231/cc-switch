@@ -1,7 +1,9 @@
+import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { ClaudeIcon, CodexIcon, GeminiIcon } from "@/components/BrandIcons";
 import { Zap, Star, Layers, Settings2 } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { ProviderPreset } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
 import type { GeminiProviderPreset } from "@/config/geminiProviderPresets";
@@ -30,6 +32,10 @@ type PresetEntry = {
   preset: AnyPreset;
 };
 
+type PresetSortMode = "default" | "alphabetical";
+
+const PRESET_SORT_MODE_STORAGE_KEY = "provider-preset-sort-mode";
+
 interface ProviderPresetSelectorProps {
   selectedPresetId: string | null;
   presetEntries: PresetEntry[];
@@ -49,7 +55,13 @@ export function ProviderPresetSelector({
   onManageUniversalProviders,
   category,
 }: ProviderPresetSelectorProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const [sortMode, setSortMode] = useState<PresetSortMode>(() => {
+    if (typeof window === "undefined") return "default";
+
+    const stored = window.localStorage.getItem(PRESET_SORT_MODE_STORAGE_KEY);
+    return stored === "alphabetical" ? "alphabetical" : "default";
+  });
 
   const getCategoryHint = (): React.ReactNode => {
     switch (category) {
@@ -128,10 +140,68 @@ export function ProviderPresetSelector({
     };
   };
 
+  const getPresetDisplayName = useCallback(
+    (preset: AnyPreset) => (preset.nameKey ? t(preset.nameKey) : preset.name),
+    [t],
+  );
+
+  const displayedPresetEntries = useMemo(() => {
+    if (sortMode === "default") return presetEntries;
+
+    const collator = new Intl.Collator(i18n.resolvedLanguage || i18n.language, {
+      sensitivity: "base",
+      numeric: true,
+    });
+
+    return [...presetEntries].sort((left, right) =>
+      collator.compare(
+        getPresetDisplayName(left.preset),
+        getPresetDisplayName(right.preset),
+      ),
+    );
+  }, [
+    getPresetDisplayName,
+    i18n.language,
+    i18n.resolvedLanguage,
+    presetEntries,
+    sortMode,
+  ]);
+
+  const handleSortModeChange = (value: string) => {
+    const nextMode: PresetSortMode =
+      value === "alphabetical" ? "alphabetical" : "default";
+    setSortMode(nextMode);
+
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(PRESET_SORT_MODE_STORAGE_KEY, nextMode);
+    }
+  };
+
   return (
     <div className="space-y-3">
-      <FormLabel>{t("providerPreset.label")}</FormLabel>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex items-center justify-between gap-3">
+        <FormLabel>{t("providerPreset.label")}</FormLabel>
+        <Tabs value={sortMode} onValueChange={handleSortModeChange}>
+          <TabsList className="h-auto gap-1 p-1">
+            <TabsTrigger
+              value="default"
+              className="min-w-0 px-3 py-1 text-xs sm:text-sm"
+            >
+              {t("providerPreset.sortDefault")}
+            </TabsTrigger>
+            <TabsTrigger
+              value="alphabetical"
+              className="min-w-0 px-3 py-1 text-xs sm:text-sm"
+            >
+              {t("providerPreset.sortAlphabetical")}
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
+      <div
+        className="flex flex-wrap gap-2"
+        data-testid="provider-preset-options"
+      >
         <button
           type="button"
           onClick={() => onPresetChange("custom")}
@@ -144,7 +214,7 @@ export function ProviderPresetSelector({
           {t("providerPreset.custom")}
         </button>
 
-        {presetEntries.map((entry) => {
+        {displayedPresetEntries.map((entry) => {
           const isSelected = selectedPresetId === entry.id;
           const isPartner = entry.preset.isPartner;
           const presetCategory = entry.preset.category ?? "others";
@@ -161,9 +231,7 @@ export function ProviderPresetSelector({
               }
             >
               {renderPresetIcon(entry.preset)}
-              {entry.preset.nameKey
-                ? t(entry.preset.nameKey)
-                : entry.preset.name}
+              {getPresetDisplayName(entry.preset)}
               {isPartner && (
                 <span className="absolute -top-1 -right-1 flex items-center gap-0.5 rounded-full bg-gradient-to-r from-amber-500 to-yellow-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-md">
                   <Star className="h-2.5 w-2.5 fill-current" />
