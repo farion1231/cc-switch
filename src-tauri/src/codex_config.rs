@@ -54,36 +54,10 @@ pub fn extract_codex_model_provider(config_text: &str) -> Option<String> {
         return None;
     }
 
-    if let Ok(doc) = trimmed.parse::<DocumentMut>() {
-        if let Some(profile_provider) = doc
-            .get("profile")
-            .and_then(|item| item.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .and_then(|profile| {
-                doc.get("profiles")
-                    .and_then(|item| item.as_table_like())
-                    .and_then(|profiles| profiles.get(profile))
-            })
-            .and_then(|item| item.as_table_like())
-            .and_then(|profile| profile.get("model_provider"))
-            .and_then(|item| item.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(|value| value.to_string())
-        {
-            return Some(profile_provider);
-        }
-
-        return doc
-            .get("model_provider")
-            .and_then(|item| item.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(|value| value.to_string());
-    }
-
-    None
+    trimmed
+        .parse::<DocumentMut>()
+        .ok()
+        .and_then(|doc| active_codex_model_provider_id(&doc))
 }
 
 pub fn extract_codex_model(config_text: &str) -> Option<String> {
@@ -216,10 +190,26 @@ pub fn read_and_validate_codex_config_text() -> Result<String, AppError> {
 }
 
 fn active_codex_model_provider_id(doc: &DocumentMut) -> Option<String> {
-    doc.get("model_provider")
+    doc.get("profile")
         .and_then(|item| item.as_str())
         .map(str::trim)
-        .filter(|id| !id.is_empty())
+        .filter(|profile| !profile.is_empty())
+        .and_then(|profile| {
+            doc.get("profiles")
+                .and_then(|item| item.as_table_like())
+                .and_then(|profiles| profiles.get(profile))
+        })
+        .and_then(|item| item.as_table_like())
+        .and_then(|profile| profile.get("model_provider"))
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|provider| !provider.is_empty())
+        .or_else(|| {
+            doc.get("model_provider")
+                .and_then(|item| item.as_str())
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+        })
         .map(str::to_string)
 }
 
@@ -2011,6 +2001,58 @@ wire_api = "responses"
         assert!(
             model_providers.get("openai").is_none(),
             "OpenAI-named custom endpoint should not remain under openai"
+        );
+    }
+
+    #[test]
+    fn normalize_live_config_resolves_selected_profile_provider_before_top_level() {
+        let target = r#"model_provider = "openai"
+model = "gpt-5.4"
+profile = "work"
+
+[model_providers.OpenAI]
+name = "OpenAI"
+base_url = "https://relay.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[profiles.work]
+model_provider = "OpenAI"
+model = "gpt-5.4"
+"#;
+
+        let result = normalize_codex_live_config_model_provider_with_anchors(target, None).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID),
+            "profile-scoped custom endpoint history must use the stable custom key"
+        );
+        assert_eq!(
+            parsed
+                .get("profiles")
+                .and_then(|v| v.get("work"))
+                .and_then(|v| v.get("model_provider"))
+                .and_then(|v| v.as_str()),
+            Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID),
+            "selected profile provider reference should follow the rewritten provider"
+        );
+
+        let model_providers = parsed
+            .get("model_providers")
+            .and_then(|v| v.as_table())
+            .expect("model_providers should exist");
+        assert_eq!(
+            model_providers
+                .get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("https://relay.example/v1")
+        );
+        assert!(
+            model_providers.get("OpenAI").is_none(),
+            "profile provider id should not remain after normalization"
         );
     }
 
