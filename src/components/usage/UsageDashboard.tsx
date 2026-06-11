@@ -7,6 +7,7 @@ import { ProviderStatsTable } from "./ProviderStatsTable";
 import { ModelStatsTable } from "./ModelStatsTable";
 import {
   KNOWN_APP_TYPES,
+  type AppType,
   type AppTypeFilter,
   type UsageRangeSelection,
 } from "@/types/usage";
@@ -17,7 +18,9 @@ import {
   Activity,
   RefreshCw,
   Coins,
+  LayoutGrid,
 } from "lucide-react";
+import { ProviderIcon } from "@/components/ProviderIcon";
 import { Button } from "@/components/ui/button";
 import { useQueryClient } from "@tanstack/react-query";
 import { usageKeys } from "@/lib/query/usage";
@@ -36,6 +39,14 @@ import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const APP_FILTER_OPTIONS: AppTypeFilter[] = ["all", ...KNOWN_APP_TYPES];
+
+// 与 AppSwitcher 的 appIconName 保持一致（codex 复用 openai 图标）
+const APP_FILTER_ICON: Record<AppType, string> = {
+  claude: "claude",
+  codex: "openai",
+  gemini: "gemini",
+  opencode: "opencode",
+};
 
 export function UsageDashboard() {
   const { t, i18n } = useTranslation();
@@ -90,21 +101,34 @@ export function UsageDashboard() {
 
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center p-1 bg-muted/30 rounded-lg border border-border/50">
-            {APP_FILTER_OPTIONS.map((type) => (
-              <button
-                key={type}
-                type="button"
-                onClick={() => setAppType(type)}
-                className={cn(
-                  "px-3 py-1.5 rounded-md text-sm font-medium transition-all",
-                  appType === type
-                    ? "bg-background text-primary shadow-sm"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
-                )}
-              >
-                {t(`usage.appFilter.${type}`)}
-              </button>
-            ))}
+            {APP_FILTER_OPTIONS.map((type) => {
+              const label = t(`usage.appFilter.${type}`);
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => setAppType(type)}
+                  title={label}
+                  aria-label={label}
+                  className={cn(
+                    "flex h-8 items-center justify-center px-2.5 rounded-md transition-all",
+                    appType === type
+                      ? "bg-background text-primary shadow-sm"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                  )}
+                >
+                  {type === "all" ? (
+                    <LayoutGrid className="h-4 w-4" />
+                  ) : (
+                    <ProviderIcon
+                      icon={APP_FILTER_ICON[type]}
+                      name={label}
+                      size={16}
+                    />
+                  )}
+                </button>
+              );
+            })}
           </div>
 
           <div className="flex items-center gap-2 ml-auto lg:ml-0">
