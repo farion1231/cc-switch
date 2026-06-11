@@ -289,6 +289,19 @@ pub fn sync_session_usage(
         }
     }
 
+    // 同步 Antigravity 使用数据
+    match crate::services::session_usage_antigravity::sync_antigravity_usage(&state.db) {
+        Ok(antigravity_result) => {
+            result.imported += antigravity_result.imported;
+            result.skipped += antigravity_result.skipped;
+            result.files_scanned += antigravity_result.files_scanned;
+            result.errors.extend(antigravity_result.errors);
+        }
+        Err(e) => {
+            result.errors.push(format!("Antigravity 同步失败: {e}"));
+        }
+    }
+
     Ok(result)
 }
 
