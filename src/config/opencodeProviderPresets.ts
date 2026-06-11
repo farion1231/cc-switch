@@ -288,7 +288,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "Shengsuanyun",
       options: {
         baseURL: "https://router.shengsuanyun.com/api/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -319,7 +318,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "火山Agentplan",
       options: {
         baseURL: "https://ark.cn-beijing.volces.com/api/coding/v3",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -352,7 +350,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "BytePlus",
       options: {
         baseURL: "https://ark.ap-southeast.bytepluses.com/api/coding/v3",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -385,7 +382,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "DouBaoSeed",
       options: {
         baseURL: "https://ark.cn-beijing.volces.com/api/v3",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -471,7 +467,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       npm: "@ai-sdk/openai-compatible",
       options: {
         baseURL: "https://api.deepseek.com/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -565,7 +560,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "Bailian",
       options: {
         baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {},
@@ -596,7 +590,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "Kimi k2.6",
       options: {
         baseURL: "https://api.moonshot.cn/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -629,7 +622,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "Kimi For Coding",
       options: {
         baseURL: "https://api.kimi.com/coding/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -662,7 +654,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "StepFun",
       options: {
         baseURL: "https://api.stepfun.com/step_plan/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -696,7 +687,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "StepFun en",
       options: {
         baseURL: "https://api.stepfun.ai/step_plan/v1",
-        apiKey: "",
       },
       models: {
         "step-3.5-flash-2603": { name: "Step 3.5 Flash 2603" },
@@ -729,7 +719,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "StepFun Step Plan",
       options: {
         baseURL: "https://api.stepfun.com/step_plan/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -756,7 +745,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "ModelScope",
       options: {
         baseURL: "https://api-inference.modelscope.cn/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -790,7 +778,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       options: {
         baseURL:
           "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/openai",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -830,7 +817,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "Longcat",
       options: {
         baseURL: "https://api.longcat.chat/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -863,7 +849,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "MiniMax",
       options: {
         baseURL: "https://api.minimaxi.com/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -896,7 +881,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "MiniMax en",
       options: {
         baseURL: "https://api.minimax.io/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -928,7 +912,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "BaiLing",
       options: {
         baseURL: "https://api.tbox.cn/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -953,7 +936,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "Xiaomi MiMo",
       options: {
         baseURL: "https://api.xiaomimimo.com/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -989,7 +971,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "Xiaomi MiMo Token Plan (China)",
       options: {
         baseURL: "https://token-plan-cn.xiaomimimo.com/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -1026,7 +1007,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "AiHubMix",
       options: {
         baseURL: "https://aihubmix.com/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -1081,7 +1061,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "DMXAPI",
       options: {
         baseURL: "https://www.dmxapi.cn/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -1109,7 +1088,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "OpenRouter",
       options: {
         baseURL: "https://openrouter.ai/api/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -1137,7 +1115,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "TheRouter",
       options: {
         baseURL: "https://api.therouter.ai/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -1168,7 +1145,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "Novita AI",
       options: {
         baseURL: "https://api.novita.ai/openai",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -1195,7 +1171,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "Nvidia",
       options: {
         baseURL: "https://integrate.api.nvidia.com/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -1222,7 +1197,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "PIPELLM",
       options: {
         baseURL: "https://cc-api.pipellm.ai",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -1251,7 +1225,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "PackyCode",
       options: {
         baseURL: "https://www.packyapi.com/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -1394,7 +1367,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "Cubence",
       options: {
         baseURL: "https://api.cubence.com/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -1424,7 +1396,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "AIGoCode",
       options: {
         baseURL: "https://api.aigocode.com",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -1454,7 +1425,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "RightCode",
       options: {
         baseURL: "https://right.codes/codex/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -1483,7 +1453,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "AICodeMirror",
       options: {
         baseURL: "https://api.aicodemirror.com/api/claudecode",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -1513,7 +1482,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "ClaudeCN",
       options: {
         baseURL: "https://claudecn.top",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -1543,7 +1511,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "RunAPI",
       options: {
         baseURL: "https://runapi.co",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -1565,6 +1532,35 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "AICoding",
+    websiteUrl: "https://aicoding.sh",
+    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "AICoding",
+      options: {
+        baseURL: "https://api.aicoding.sh",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-opus-4-7": { name: "Claude Opus 4.7" },
+      },
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "aicoding",
+    icon: "aicoding",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "CrazyRouter",
     websiteUrl: "https://www.crazyrouter.com",
     apiKeyUrl: "https://www.crazyrouter.com/register?aff=OZcm&ref=cc-switch",
@@ -1573,7 +1569,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "CrazyRouter",
       options: {
         baseURL: "https://cn.crazyrouter.com",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -1633,7 +1628,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "Micu",
       options: {
         baseURL: "https://www.micuapi.ai/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -1663,7 +1657,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "CTok",
       options: {
         baseURL: "https://api.ctok.ai/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -1691,7 +1684,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     settingsConfig: {
       npm: "@ai-sdk/openai",
       options: {
-        apiKey: "",
         baseURL: "https://e-flowcode.cc/v1",
       },
       models: {
@@ -1723,7 +1715,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       name: "LemonData",
       options: {
         baseURL: "https://api.lemondata.cc/v1",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {
@@ -1798,7 +1789,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       npm: "@ai-sdk/openai-compatible",
       options: {
         baseURL: "",
-        apiKey: "",
         setCacheKey: true,
       },
       models: {},
