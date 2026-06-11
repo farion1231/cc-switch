@@ -70,7 +70,12 @@ pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
         || message.contains("modality")
         || message.contains("modalities")
         || message.contains("media")
-        || message.contains("attachment");
+        || message.contains("attachment")
+        || message.contains("图片")
+        || message.contains("图像")
+        || message.contains("多模态")
+        || message.contains("视觉")
+        || message.contains("附件");
 
     if !mentions_image {
         return false;
@@ -96,6 +101,14 @@ pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
         "can't process",
         "can't handle",
         "unable to process",
+        "不支持",
+        "无法识别",
+        "无法处理",
+        "不能处理",
+        "仅支持文本",
+        "只支持文本",
+        "未知的 content",
+        "无效的 content",
     ];
 
     UNSUPPORTED_HINTS.iter().any(|hint| message.contains(hint))
@@ -107,8 +120,7 @@ fn content_has_image_blocks(content: &Value) -> bool {
     };
 
     blocks.iter().any(|block| {
-        is_image_block_type(block.get("type").and_then(Value::as_str))
-            || block.get("content").is_some_and(content_has_image_blocks)
+        is_image_like_block(block) || block.get("content").is_some_and(content_has_image_blocks)
     })
 }
 
@@ -143,7 +155,7 @@ fn replace_images_in_content_with_text_type(content: &mut Value, text_type: &str
 
     let mut replaced = 0usize;
     for block in blocks {
-        if is_image_block_type(block.get("type").and_then(Value::as_str)) {
+        if is_image_like_block(block) {
             replace_image_block_with_text_marker(block, text_type);
             replaced += 1;
             continue;
@@ -210,10 +222,6 @@ fn replace_images_in_responses_input_item(item: &mut Value) -> usize {
     replaced
 }
 
-fn is_image_block_type(block_type: Option<&str>) -> bool {
-    matches!(block_type, Some("image" | "image_url" | "input_image"))
-}
-
 fn replace_image_block_with_text_marker(block: &mut Value, text_type: &str) {
     let cache_control = block.get("cache_control").cloned();
     *block = json!({
@@ -222,6 +230,73 @@ fn replace_image_block_with_text_marker(block: &mut Value, text_type: &str) {
     });
     if let (Some(cache_control), Some(object)) = (cache_control, block.as_object_mut()) {
         object.insert("cache_control".to_string(), cache_control);
+    }
+}
+
+fn is_image_like_block(block: &Value) -> bool {
+    if block
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|block_type| {
+            matches!(
+                block_type.trim().to_ascii_lowercase().as_str(),
+                "image" | "input_image" | "image_url"
+            )
+        })
+    {
+        return true;
+    }
+
+    if image_mime_from_value(block).is_some() || image_url_from_value(block).is_some() {
+        return true;
+    }
+
+    ["source", "file", "image", "input_image"]
+        .into_iter()
+        .filter_map(|key| block.get(key))
+        .any(|value| {
+            image_mime_from_value(value).is_some() || image_url_from_value(value).is_some()
+        })
+}
+
+fn image_mime_from_value(value: &Value) -> Option<&str> {
+    [
+        "media_type",
+        "mediaType",
+        "mime_type",
+        "mimeType",
+        "mime",
+        "type",
+    ]
+    .into_iter()
+    .find_map(|key| {
+        value
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|mime| mime.trim().to_ascii_lowercase().starts_with("image/"))
+    })
+}
+
+fn image_url_from_value(value: &Value) -> Option<&str> {
+    let url = value
+        .get("image_url")
+        .and_then(|image_url| {
+            image_url
+                .as_str()
+                .or_else(|| image_url.get("url").and_then(Value::as_str))
+        })
+        .or_else(|| value.get("url").and_then(Value::as_str))
+        .or_else(|| {
+            value
+                .get("source")
+                .and_then(|source| source.get("url"))
+                .and_then(Value::as_str)
+        })?;
+
+    if url.trim_start().starts_with("data:image/") {
+        Some(url)
+    } else {
+        None
     }
 }
 
@@ -715,6 +790,41 @@ mod tests {
         };
 
         assert!(is_unsupported_image_error(&error));
+    }
+
+    #[test]
+    fn detects_chinese_unsupported_image_errors() {
+        let error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(
+                r#"{"error":{"message":"当前模型不支持图片等多模态内容，messages 中含上游无法识别的 content 类型"}}"#
+                    .to_string(),
+            ),
+        };
+
+        assert!(is_unsupported_image_error(&error));
+    }
+
+    #[test]
+    fn replaces_openai_style_input_image_blocks() {
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "input_image", "image_url": "data:image/png;base64,abc" }
+                ]
+            }]
+        });
+
+        assert!(contains_image_blocks(&body));
+        let count = replace_image_blocks_with_marker(&mut body);
+
+        assert_eq!(count, 1);
+        assert_eq!(
+            body["messages"][0]["content"][0]["text"],
+            UNSUPPORTED_IMAGE_MARKER
+        );
     }
 
     #[test]

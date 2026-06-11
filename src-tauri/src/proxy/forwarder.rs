@@ -53,6 +53,23 @@ pub struct ForwardError {
     pub provider: Option<Provider>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ForwardOptions {
+    apply_model_mapping: bool,
+    image_context: bool,
+    media_prevention: bool,
+}
+
+impl Default for ForwardOptions {
+    fn default() -> Self {
+        Self {
+            apply_model_mapping: true,
+            image_context: true,
+            media_prevention: true,
+        }
+    }
+}
+
 /// 活跃连接 RAII guard
 ///
 /// 构造时把 `ProxyStatus.active_connections` +1；Drop 时在 tokio runtime 上调度
@@ -465,6 +482,7 @@ impl RequestForwarder {
                     &headers,
                     &extensions,
                     adapter.as_ref(),
+                    ForwardOptions::default(),
                 )
                 .await
             {
@@ -564,6 +582,7 @@ impl RequestForwarder {
                                     &headers,
                                     &extensions,
                                     adapter.as_ref(),
+                                    ForwardOptions::default(),
                                 )
                                 .await
                             {
@@ -710,6 +729,7 @@ impl RequestForwarder {
                                         &headers,
                                         &extensions,
                                         adapter.as_ref(),
+                                        ForwardOptions::default(),
                                     )
                                     .await
                                 {
@@ -876,6 +896,7 @@ impl RequestForwarder {
                                     &headers,
                                     &extensions,
                                     adapter.as_ref(),
+                                    ForwardOptions::default(),
                                 )
                                 .await
                             {
@@ -1100,6 +1121,7 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
+        options: ForwardOptions,
     ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
@@ -1121,7 +1143,9 @@ impl RequestForwarder {
         // 应用模型映射（独立于格式转换）
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
         // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
-        let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
+        let mapped_body = if !options.apply_model_mapping {
+            body.clone()
+        } else if matches!(app_type, AppType::ClaudeDesktop) {
             crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
                 .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
         } else {
@@ -1289,7 +1313,22 @@ impl RequestForwarder {
                     provider,
                     api_format,
                 );
-                self.apply_media_prevention(&mut mapped_body, provider);
+                if options.image_context {
+                    self.apply_image_context_if_configured(
+                        app_type,
+                        method,
+                        provider,
+                        endpoint,
+                        &mut mapped_body,
+                        headers,
+                        extensions,
+                        adapter,
+                    )
+                    .await?;
+                }
+                if options.media_prevention {
+                    self.apply_media_prevention(&mut mapped_body, provider);
+                }
             }
         }
         let needs_transform = match resolved_claude_api_format.as_deref() {
@@ -2039,6 +2078,89 @@ impl RequestForwarder {
         }
 
         "openai_chat".to_string()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn apply_image_context_if_configured(
+        &self,
+        app_type: &AppType,
+        method: &http::Method,
+        provider: &Provider,
+        endpoint: &str,
+        mapped_body: &mut Value,
+        headers: &axum::http::HeaderMap,
+        extensions: &Extensions,
+        adapter: &dyn ProviderAdapter,
+    ) -> Result<(), ProxyError> {
+        if !super::image_context::contains_image_blocks(mapped_body) {
+            return Ok(());
+        }
+
+        let image_count = super::image_context::count_image_blocks(mapped_body);
+        let Some(image_model) = super::image_context::image_model_from_provider(provider) else {
+            log::info!(
+                "[ImageContext] 检测到图片但未配置图片处理模型: provider={} images={image_count}",
+                provider.id
+            );
+            return Ok(());
+        };
+
+        let main_model = mapped_body
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        log::info!(
+            "[ImageContext] 准备图片识别: app={:?} provider={} main_model={} image_model={} images={image_count}",
+            app_type,
+            provider.id,
+            main_model,
+            image_model
+        );
+
+        let analysis_request =
+            super::image_context::create_image_analysis_request(mapped_body, &image_model);
+        let image_forward = self.forward(
+            app_type,
+            method,
+            provider,
+            endpoint,
+            &analysis_request,
+            headers,
+            extensions,
+            adapter,
+            ForwardOptions {
+                apply_model_mapping: false,
+                image_context: false,
+                media_prevention: false,
+            },
+        );
+        let (response, _, _) = Box::pin(image_forward)
+            .await
+            .map_err(|error| ProxyError::ForwardFailed(format!("图片识别失败: {error}")))?;
+        let body_bytes = response.bytes().await?;
+        let response_json: Value = serde_json::from_slice(&body_bytes).map_err(|err| {
+            ProxyError::ForwardFailed(format!("图片识别失败: 响应不是有效 JSON: {err}"))
+        })?;
+        let text = super::image_context::extract_text_from_response(&response_json);
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(ProxyError::ForwardFailed(
+                "图片识别失败: 图片处理模型未返回文本描述".to_string(),
+            ));
+        }
+
+        let analysis = super::image_context::parse_image_analysis_response(text, image_count);
+        if let Some(messages) = mapped_body.get("messages").cloned() {
+            mapped_body["messages"] =
+                super::image_context::inject_image_context(&messages, &analysis);
+        }
+        log::info!(
+            "[ImageContext] 图片识别完成: provider={} image_model={} images={image_count}",
+            provider.id,
+            image_model
+        );
+
+        Ok(())
     }
 
     /// 用 Copilot live `/models` 列表确认 model ID 真实可用，找不到时按 family 降级。
