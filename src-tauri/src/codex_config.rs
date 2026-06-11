@@ -192,6 +192,44 @@ pub fn write_codex_live_config_atomic(config_text_opt: Option<&str>) -> Result<(
     write_text_file(&config_path, &cfg_text)
 }
 
+fn clear_codex_live_auth_api_key(preserve_login_material: bool) -> Result<(), AppError> {
+    let auth_path = get_codex_auth_path();
+    if !auth_path.exists() {
+        return Ok(());
+    }
+
+    if !preserve_login_material {
+        return delete_file(&auth_path).or_else(
+            |err| {
+                if auth_path.exists() {
+                    Err(err)
+                } else {
+                    Ok(())
+                }
+            },
+        );
+    }
+
+    let mut auth: Value = read_json_file(&auth_path)?;
+    let Some(obj) = auth.as_object_mut() else {
+        return Ok(());
+    };
+
+    let Some(api_key) = obj.get("OPENAI_API_KEY") else {
+        return Ok(());
+    };
+    if api_key.is_null() {
+        return Ok(());
+    }
+    obj.remove("OPENAI_API_KEY");
+
+    if codex_auth_has_login_material(&auth) {
+        write_json_file(&auth_path, &auth)
+    } else {
+        delete_file(&auth_path).or_else(|err| if auth_path.exists() { Err(err) } else { Ok(()) })
+    }
+}
+
 pub fn extract_codex_auth_api_key(auth: &Value) -> Option<String> {
     auth.get("OPENAI_API_KEY")
         .and_then(|value| value.as_str())
@@ -1043,34 +1081,34 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
     Ok(json!({ "auth": auth, "config": cfg_text }))
 }
 
-/// Route a Codex live write between full auth+config or config-only.
+/// 根据服务商类型决定 Codex Live 写入范围。
 ///
-/// Official providers with usable login material own `auth.json`. Third-party
-/// providers only touch `config.toml` when the compatibility setting is enabled
-/// so the user's ChatGPT login cache survives provider switches.
+/// 官方服务商携带可用登录材料时写入 `auth.json`。第三方服务商的
+/// API Key 写入 `config.toml`，同时避免污染官方登录缓存。
 pub fn write_codex_live_for_provider(
     category: Option<&str>,
     auth: &Value,
     config_text: Option<&str>,
 ) -> Result<(), AppError> {
-    let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
-        || (category != Some("official")
-            && !crate::settings::preserve_codex_official_auth_on_switch());
-
-    if should_write_auth {
+    if category == Some("official") && codex_auth_has_login_material(auth) {
         write_codex_live_atomic(auth, config_text)
     } else {
         let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
-        write_codex_live_config_atomic(Some(&live_config))
+        write_codex_live_config_atomic(Some(&live_config))?;
+        if category != Some("official") {
+            clear_codex_live_auth_api_key(
+                crate::settings::preserve_codex_official_auth_on_switch(),
+            )?;
+        }
+        Ok(())
     }
 }
 
-/// Build the live Codex config for provider switching.
+/// 构建服务商切换时使用的 Codex Live 配置。
 ///
-/// The stored provider keeps its API key in `auth.OPENAI_API_KEY`. Live Codex
-/// requests can use a provider-scoped `experimental_bearer_token`, so switching
-/// providers only needs to update `config.toml`; `auth.json` stays as the user's
-/// long-lived ChatGPT login cache.
+/// 存储态服务商仍把 API Key 放在 `auth.OPENAI_API_KEY`。Live Codex 请求
+/// 可使用服务商作用域的 `experimental_bearer_token`，因此切换服务商只需
+/// 更新 `config.toml`，`auth.json` 保留给用户的官方登录缓存。
 pub fn prepare_codex_provider_live_config(
     auth: &Value,
     config_text: &str,
@@ -1082,6 +1120,43 @@ pub fn prepare_codex_provider_live_config(
         Some(token) => set_codex_experimental_bearer_token(config_text, &token)?,
         None => config_text.to_string(),
     })
+}
+
+pub fn prepare_codex_provider_settings_for_live_snapshot(
+    category: Option<&str>,
+    settings: &Value,
+) -> Result<Value, AppError> {
+    if category == Some("official") {
+        return Ok(settings.clone());
+    }
+
+    let mut live_settings = settings.clone();
+    let Some(obj) = live_settings.as_object_mut() else {
+        return Ok(live_settings);
+    };
+
+    let auth_for_config = obj.get("auth").cloned();
+
+    if let Some(auth_obj) = obj.get_mut("auth").and_then(Value::as_object_mut) {
+        if auth_obj
+            .get("OPENAI_API_KEY")
+            .is_some_and(|value| !value.is_null())
+        {
+            auth_obj.remove("OPENAI_API_KEY");
+        }
+    }
+
+    let Some(auth) = auth_for_config else {
+        return Ok(live_settings);
+    };
+    let Some(config_text) = obj.get("config").and_then(Value::as_str) else {
+        return Ok(live_settings);
+    };
+
+    let prepared_config = prepare_codex_provider_live_config(&auth, config_text)?;
+    obj.insert("config".to_string(), Value::String(prepared_config));
+
+    Ok(live_settings)
 }
 
 /// During DB backfill, lift a live `experimental_bearer_token` back into

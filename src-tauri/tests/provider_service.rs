@@ -179,12 +179,10 @@ command = "say"
     ProviderService::switch(&state, AppType::Codex, "new-provider")
         .expect("switch provider should succeed");
 
-    let auth_value: serde_json::Value =
-        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
-    assert_eq!(
-        auth_value.get("OPENAI_API_KEY").and_then(|v| v.as_str()),
-        Some("legacy-key"),
-        "Codex provider switching should preserve the existing live auth.json"
+    let auth_path = cc_switch_lib::get_codex_auth_path();
+    assert!(
+        !auth_path.exists(),
+        "After switching third-party Codex providers, the provider's API key should not be retained in the live `auth.json` file"
     );
 
     let config_text =
@@ -691,6 +689,89 @@ wire_api = "responses"
 }
 
 #[test]
+fn provider_service_switch_codex_third_party_clears_stale_live_auth_api_key() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let _home = ensure_test_home();
+
+    let live_auth = json!({ "OPENAI_API_KEY": "provider-a-key" });
+    let provider_a_config = r#"model_provider = "provider_a"
+model = "gpt-5.4"
+
+[model_providers.provider_a]
+name = "Provider A"
+base_url = "https://provider-a.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+    write_codex_live_atomic(&live_auth, Some(provider_a_config))
+        .expect("seed provider A live config");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "provider-a".to_string();
+        manager.providers.insert(
+            "provider-a".to_string(),
+            Provider::with_id(
+                "provider-a".to_string(),
+                "Provider A".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "provider-a-key"},
+                    "config": provider_a_config
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "provider-b".to_string(),
+            Provider::with_id(
+                "provider-b".to_string(),
+                "Provider B".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "provider-b-key"},
+                    "config": r#"model_provider = "provider_b"
+model = "gpt-5.4"
+
+[model_providers.provider_b]
+name = "Provider B"
+base_url = "https://provider-b.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "provider-b").expect("switch to provider B");
+
+    assert!(
+        !cc_switch_lib::get_codex_auth_path().exists(),
+        "第三方服务商切换后 live auth.json 不应保留上一个服务商的 OPENAI_API_KEY"
+    );
+
+    let live_config =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    let parsed_live: toml::Value = toml::from_str(&live_config).expect("parse live config");
+    assert_eq!(
+        parsed_live
+            .get("model_providers")
+            .and_then(|v| v.get("provider_b"))
+            .and_then(|v| v.get("experimental_bearer_token"))
+            .and_then(|v| v.as_str()),
+        Some("provider-b-key"),
+        "目标服务商的 API Key 应写入自己的 provider-scoped bearer token"
+    );
+}
+
+#[test]
 fn provider_service_switch_codex_default_overwrites_official_auth_when_preservation_off() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
@@ -765,16 +846,21 @@ requires_openai_auth = true
     ProviderService::switch(&state, AppType::Codex, "third-party")
         .expect("switch to third-party provider should succeed");
 
-    let auth_value: serde_json::Value =
-        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
-    assert_eq!(
-        auth_value.get("OPENAI_API_KEY").and_then(|v| v.as_str()),
-        Some("third-party-key"),
-        "default (preservation off) should overwrite auth.json with the third-party API key"
-    );
     assert!(
-        auth_value.pointer("/tokens/access_token").is_none(),
-        "default switch must clear the official ChatGPT OAuth token from live auth.json"
+        !cc_switch_lib::get_codex_auth_path().exists(),
+        "关闭保留官方登录后，第三方切换应清理 live auth.json"
+    );
+    let live_config =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    let parsed_live: toml::Value = toml::from_str(&live_config).expect("parse live config");
+    assert_eq!(
+        parsed_live
+            .get("model_providers")
+            .and_then(|v| v.get("aihubmix"))
+            .and_then(|v| v.get("experimental_bearer_token"))
+            .and_then(|v| v.as_str()),
+        Some("third-party-key"),
+        "第三方服务商 API Key 应写入目标 provider-scoped bearer token"
     );
 }
 
