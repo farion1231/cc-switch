@@ -11,7 +11,9 @@ use super::validation::{extract_server_spec, validate_server_spec};
 fn should_sync_claude_mcp() -> bool {
     // Claude 未安装/未初始化时：通常 ~/.claude 目录与 ~/.claude.json 都不存在。
     // 按用户偏好：此时跳过写入/删除，不创建任何文件或目录。
-    crate::config::get_claude_config_dir().exists() || crate::config::get_claude_mcp_path().exists()
+    let configured_dir = crate::settings::get_claude_configured_override_dir()
+        .unwrap_or_else(|| crate::config::get_home_dir().join(".claude"));
+    configured_dir.exists() || crate::config::get_claude_configured_mcp_path().exists()
 }
 
 /// 返回已启用的 MCP 服务器（过滤 enabled==true）
@@ -145,4 +147,88 @@ pub fn remove_server_from_claude(id: &str) -> Result<(), AppError> {
 
     // 写回
     crate::claude_mcp::set_mcp_servers_map(&current)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use serial_test::serial;
+    use std::env;
+    use tempfile::TempDir;
+
+    struct TempHome {
+        dir: TempDir,
+        original_test_home: Option<String>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = TempDir::new().expect("create temp home");
+            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
+            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            crate::settings::reload_settings().expect("reload settings");
+
+            Self {
+                dir,
+                original_test_home,
+            }
+        }
+
+        fn path(&self) -> &std::path::Path {
+            self.dir.path()
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            let _ = crate::settings::update_settings(crate::settings::AppSettings::default());
+            match &self.original_test_home {
+                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            let _ = crate::settings::reload_settings();
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn direct_claude_mcp_sync_ignores_provider_only_profile_override() {
+        let home = TempHome::new();
+        let profile_dir = home.path().join("external-profile").join(".claude");
+        let profile_mcp_path = home.path().join("external-profile").join(".claude.json");
+        let default_mcp_path = crate::config::get_default_claude_mcp_path();
+        std::fs::create_dir_all(&profile_dir).expect("create profile dir");
+        std::fs::write(
+            &profile_mcp_path,
+            r#"{"mcpServers":{"external":{"type":"stdio","command":"external-tool"}}}"#,
+        )
+        .expect("seed profile mcp config");
+        crate::settings::update_settings(crate::settings::AppSettings {
+            claude_provider_config_dir: Some(profile_dir.to_string_lossy().into_owned()),
+            ..Default::default()
+        })
+        .expect("set profile override");
+
+        sync_single_server_to_claude(
+            &MultiAppConfig::default(),
+            "managed-mcp",
+            &json!({
+                "type": "stdio",
+                "command": "python",
+                "args": ["-m", "managed_mcp"]
+            }),
+        )
+        .expect("sync should be skipped");
+
+        assert!(
+            !default_mcp_path.exists(),
+            "provider-only profile must not make direct MCP edits create the configured/default MCP file"
+        );
+        let profile_mcp = std::fs::read_to_string(&profile_mcp_path).expect("read profile mcp");
+        assert!(
+            profile_mcp.contains("external-tool") && !profile_mcp.contains("managed_mcp"),
+            "provider-only profile MCP file must not be modified by direct MCP edits"
+        );
+    }
 }

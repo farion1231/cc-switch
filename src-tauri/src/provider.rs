@@ -82,6 +82,43 @@ impl Provider {
             || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
     }
 
+    pub fn is_official_equivalent_for_app(&self, app_type: &crate::app_config::AppType) -> bool {
+        if self.category.as_deref() == Some("official") {
+            return true;
+        }
+
+        match app_type {
+            crate::app_config::AppType::Claude => self
+                .settings_config
+                .pointer("/env/ANTHROPIC_BASE_URL")
+                .is_none_or(|base_url| {
+                    value_is_null_or_blank_string(base_url)
+                        || base_url
+                            .as_str()
+                            .is_some_and(claude_base_url_is_official_equivalent)
+                }),
+            crate::app_config::AppType::Codex => {
+                let config_text = self.settings_config.get("config").and_then(Value::as_str);
+                let custom_base_url = config_text
+                    .and_then(crate::codex_config::extract_codex_base_url)
+                    .is_some_and(|base_url| !codex_base_url_is_official_equivalent(&base_url));
+
+                !custom_base_url
+            }
+            crate::app_config::AppType::Gemini => {
+                let base_url = self.settings_config.pointer("/env/GOOGLE_GEMINI_BASE_URL");
+
+                base_url.is_none_or(|base_url| {
+                    value_is_null_or_blank_string(base_url)
+                        || base_url
+                            .as_str()
+                            .is_some_and(gemini_base_url_is_official_equivalent)
+                })
+            }
+            _ => false,
+        }
+    }
+
     fn provider_type(&self) -> Option<&str> {
         self.meta.as_ref().and_then(|m| m.provider_type.as_deref())
     }
@@ -206,6 +243,43 @@ impl Provider {
         // and `{{baseUrl}}/path` concatenation never produces a double slash.
         (base_url.trim_end_matches('/').to_string(), api_key)
     }
+}
+
+fn value_is_null_or_blank_string(value: &Value) -> bool {
+    value.is_null() || value.as_str().is_some_and(|value| value.trim().is_empty())
+}
+
+fn claude_base_url_is_official_equivalent(base_url: &str) -> bool {
+    let Ok(url) = url::Url::parse(base_url.trim()) else {
+        return false;
+    };
+
+    url.host_str()
+        .is_some_and(|host| host.eq_ignore_ascii_case("api.anthropic.com"))
+}
+
+fn codex_base_url_is_official_equivalent(base_url: &str) -> bool {
+    let Ok(url) = url::Url::parse(base_url.trim()) else {
+        return false;
+    };
+
+    matches!(url.host_str(), Some("api.openai.com") | Some("chatgpt.com"))
+}
+
+fn gemini_base_url_is_official_equivalent(base_url: &str) -> bool {
+    let Ok(url) = url::Url::parse(base_url.trim()) else {
+        return false;
+    };
+
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+
+    host == "generativelanguage.googleapis.com"
+        || host == "aiplatform.googleapis.com"
+        || host.ends_with("-aiplatform.googleapis.com")
+        || host == "vertexai.googleapis.com"
 }
 
 /// 供应商管理器
@@ -476,6 +550,13 @@ pub struct ProviderMeta {
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
+    #[serde(rename = "claudeProfileDir", skip_serializing_if = "Option::is_none")]
+    pub claude_profile_dir: Option<String>,
+    #[serde(
+        rename = "claudeActivationMode",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub claude_activation_mode: Option<ClaudeActivationMode>,
 }
 
 /// 解析 Provider 级自定义 User-Agent 字符串（单一真理来源）。
@@ -1035,6 +1116,247 @@ mod tests {
     }
 
     #[test]
+    fn claude_anthropic_base_url_is_official_equivalent() {
+        let provider = Provider::with_id(
+            "keyed-anthropic-claude".to_string(),
+            "Keyed Anthropic Claude".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-ant-test",
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+                }
+            }),
+            None,
+        );
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Claude));
+    }
+
+    #[test]
+    fn claude_custom_base_url_is_not_official_equivalent() {
+        let provider = Provider::with_id(
+            "third-party-claude".to_string(),
+            "Third Party Claude".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-third-party",
+                    "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic"
+                }
+            }),
+            None,
+        );
+
+        assert!(!provider.is_official_equivalent_for_app(&crate::app_config::AppType::Claude));
+    }
+
+    #[test]
+    fn codex_no_auth_custom_base_url_is_not_official_equivalent() {
+        let provider = Provider::with_id(
+            "local-codex".to_string(),
+            "Local Codex".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": null },
+                "config": r#"model_provider = "ollama"
+
+[model_providers.ollama]
+base_url = "http://localhost:11434/v1"
+wire_api = "responses""#
+            }),
+            None,
+        );
+
+        assert!(!provider.is_official_equivalent_for_app(&crate::app_config::AppType::Codex));
+    }
+
+    #[test]
+    fn codex_profile_custom_base_url_is_not_official_equivalent() {
+        let provider = Provider::with_id(
+            "profile-codex".to_string(),
+            "Profile Codex".to_string(),
+            json!({
+                "auth": {},
+                "config": r#"model_provider = "openai"
+profile = "work"
+
+[profiles.work]
+model_provider = "local"
+
+[model_providers.local]
+base_url = "http://localhost:11434/v1"
+wire_api = "responses""#
+            }),
+            None,
+        );
+
+        assert!(!provider.is_official_equivalent_for_app(&crate::app_config::AppType::Codex));
+    }
+
+    #[test]
+    fn codex_no_auth_top_level_custom_base_url_is_not_official_equivalent() {
+        let provider = Provider::with_id(
+            "vllm-codex".to_string(),
+            "vLLM Codex".to_string(),
+            json!({
+                "auth": {},
+                "config": r#"base_url = "http://127.0.0.1:8000/v1""#
+            }),
+            None,
+        );
+
+        assert!(!provider.is_official_equivalent_for_app(&crate::app_config::AppType::Codex));
+    }
+
+    #[test]
+    fn codex_no_auth_openai_base_url_remains_official_equivalent() {
+        let provider = Provider::with_id(
+            "openai-codex".to_string(),
+            "OpenAI Codex".to_string(),
+            json!({
+                "auth": {},
+                "config": r#"model_provider = "openai"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+wire_api = "responses""#
+            }),
+            None,
+        );
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Codex));
+    }
+
+    #[test]
+    fn codex_keyed_default_endpoint_is_official_equivalent() {
+        let provider = Provider::with_id(
+            "keyed-openai-codex".to_string(),
+            "Keyed OpenAI Codex".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-test" },
+                "config": r#"model_provider = "openai"
+            model = "gpt-5.4""#
+            }),
+            None,
+        );
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Codex));
+    }
+
+    #[test]
+    fn codex_bearer_token_default_endpoint_is_official_equivalent() {
+        let provider = Provider::with_id(
+            "bearer-openai-codex".to_string(),
+            "Bearer OpenAI Codex".to_string(),
+            json!({
+                "auth": {},
+                "config": r#"model_provider = "openai"
+experimental_bearer_token = "ey-token"
+model = "gpt-5.4""#
+            }),
+            None,
+        );
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Codex));
+    }
+
+    #[test]
+    fn codex_official_category_overrides_custom_base_url() {
+        let mut provider = Provider::with_id(
+            "official-codex".to_string(),
+            "Official Codex".to_string(),
+            json!({
+                "auth": {},
+                "config": r#"base_url = "http://localhost:11434/v1""#
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Codex));
+    }
+
+    #[test]
+    fn gemini_keyed_default_endpoint_is_official_equivalent() {
+        let provider = Provider::with_id(
+            "keyed-google-gemini".to_string(),
+            "Keyed Google Gemini".to_string(),
+            json!({
+                "env": { "GEMINI_API_KEY": "gemini-key" }
+            }),
+            None,
+        );
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Gemini));
+    }
+
+    #[test]
+    fn gemini_keyed_blank_endpoint_is_official_equivalent() {
+        let provider = Provider::with_id(
+            "keyed-google-gemini-blank-url".to_string(),
+            "Keyed Google Gemini Blank URL".to_string(),
+            json!({
+                "env": {
+                    "GEMINI_API_KEY": "gemini-key",
+                    "GOOGLE_GEMINI_BASE_URL": ""
+                }
+            }),
+            None,
+        );
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Gemini));
+    }
+
+    #[test]
+    fn gemini_keyed_google_endpoint_is_official_equivalent() {
+        let provider = Provider::with_id(
+            "keyed-google-gemini-url".to_string(),
+            "Keyed Google Gemini URL".to_string(),
+            json!({
+                "env": {
+                    "GEMINI_API_KEY": "gemini-key",
+                    "GOOGLE_GEMINI_BASE_URL": "https://generativelanguage.googleapis.com"
+                }
+            }),
+            None,
+        );
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Gemini));
+    }
+
+    #[test]
+    fn gemini_keyed_vertex_regional_endpoint_is_official_equivalent() {
+        let provider = Provider::with_id(
+            "keyed-google-vertex-url".to_string(),
+            "Keyed Google Vertex URL".to_string(),
+            json!({
+                "env": {
+                    "GEMINI_API_KEY": "gemini-key",
+                    "GOOGLE_GEMINI_BASE_URL": "https://us-central1-aiplatform.googleapis.com/v1"
+                }
+            }),
+            None,
+        );
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Gemini));
+    }
+
+    #[test]
+    fn gemini_keyed_custom_base_url_is_not_official_equivalent() {
+        let provider = Provider::with_id(
+            "keyed-packy-gemini".to_string(),
+            "Keyed Packy Gemini".to_string(),
+            json!({
+                "env": {
+                    "GEMINI_API_KEY": "gemini-key",
+                    "GOOGLE_GEMINI_BASE_URL": "https://www.packyapi.com"
+                }
+            }),
+            None,
+        );
+
+        assert!(!provider.is_official_equivalent_for_app(&crate::app_config::AppType::Gemini));
+    }
+
+    #[test]
     fn provider_manager_get_all_providers_returns_map() {
         let mut manager = ProviderManager::default();
         let provider = Provider::with_id(
@@ -1473,4 +1795,13 @@ mod tests {
             (String::new(), String::new())
         );
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ClaudeActivationMode {
+    #[default]
+    Legacy,
+    ProfileOnly,
+    ProfileAndConfig,
 }

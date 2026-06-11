@@ -340,6 +340,7 @@ fn prune_sessions_index(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use tempfile::tempdir;
 
     #[test]
@@ -446,7 +447,7 @@ mod tests {
         .expect("write session");
         std::fs::write(
             sessions_dir.join("sessions.json"),
-            serde_json::to_string(&serde_json::json!({
+            serde_json::to_string(&json!({
                 "agent:main:main": {
                     "sessionId": "session-123",
                     "sessionFile": session_path.to_string_lossy(),
