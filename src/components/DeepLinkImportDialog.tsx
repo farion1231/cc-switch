@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { listenEvent } from "@/lib/commandClient";
 import { DeepLinkImportRequest, deeplinkApi } from "@/lib/api/deeplink";
 import {
   Dialog,
@@ -50,7 +50,7 @@ export function DeepLinkImportDialog() {
 
   useEffect(() => {
     // Listen for deep link import events
-    const unlistenImport = listen<DeepLinkImportRequest>(
+    const unlistenImport = listenEvent<DeepLinkImportRequest>(
       "deeplink-import",
       async (event) => {
         // If config is present, merge it to get the complete configuration
@@ -78,12 +78,15 @@ export function DeepLinkImportDialog() {
     );
 
     // Listen for deep link error events
-    const unlistenError = listen<DeeplinkError>("deeplink-error", (event) => {
-      console.error("Deep link error:", event.payload);
-      toast.error(t("deeplink.parseError"), {
-        description: event.payload.error,
-      });
-    });
+    const unlistenError = listenEvent<DeeplinkError>(
+      "deeplink-error",
+      (event) => {
+        console.error("Deep link error:", event.payload);
+        toast.error(t("deeplink.parseError"), {
+          description: event.payload.error,
+        });
+      },
+    );
 
     return () => {
       unlistenImport.then((fn) => fn());

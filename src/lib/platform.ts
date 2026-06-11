@@ -1,3 +1,5 @@
+import { isTauriRuntime } from "@/lib/commandClient";
+
 // 轻量平台检测，避免在 SSR 或无 navigator 的环境报错
 export const isMac = (): boolean => {
   try {
@@ -37,7 +39,7 @@ export const isLinux = (): boolean => {
 // 这些常量设计为通过 JSX 属性 spread 消费（`{...DRAG_REGION_ATTR}`），
 // 因为 `data-tauri-drag-region` 是 wry 侧的 attribute 存在性检测，必须
 // 完全不渲染属性才算禁用；空字符串或 "false" 仍会触发。
-export const DRAG_REGION_ENABLED = !isLinux();
+export const DRAG_REGION_ENABLED = isTauriRuntime() && !isLinux();
 
 export const DRAG_REGION_ATTR: Record<string, unknown> = DRAG_REGION_ENABLED
   ? { "data-tauri-drag-region": true }

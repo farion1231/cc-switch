@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listenEvent } from "@/lib/commandClient";
+type UnlistenFn = () => void;
 
 /**
  * 在 useEffect 中监听 Tauri 事件，自动管理异步注册和卸载清理。
@@ -18,7 +19,7 @@ export function useTauriEvent<P>(
 
     void (async () => {
       try {
-        const off = await listen<P>(eventName, (event) => {
+        const off = await listenEvent<P>(eventName, (event) => {
           void handlerRef.current(event.payload);
         });
         if (disposed) {

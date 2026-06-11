@@ -1,5 +1,5 @@
 use indexmap::IndexMap;
-use tauri::{Emitter, State};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::app_config::AppType;
 use crate::commands::copilot::CopilotAuthState;
@@ -101,12 +101,26 @@ pub fn switch_provider_test_hook(
 
 #[tauri::command]
 pub fn switch_provider(
+    app_handle: AppHandle,
     state: State<'_, AppState>,
     app: String,
     id: String,
 ) -> Result<SwitchResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    switch_provider_internal(&state, app_type, &id).map_err(|e| e.to_string())
+    let result =
+        switch_provider_internal(&state, app_type.clone(), &id).map_err(|e| e.to_string())?;
+
+    if let Err(e) = app_handle.emit(
+        "provider-switched",
+        serde_json::json!({
+            "appType": app_type.as_str(),
+            "providerId": id,
+        }),
+    ) {
+        log::warn!("发射 provider-switched 事件失败: {e}");
+    }
+
+    Ok(result)
 }
 
 fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
@@ -166,9 +180,8 @@ pub fn get_claude_desktop_default_routes(
     crate::claude_desktop_config::default_proxy_routes()
 }
 
-#[tauri::command]
-pub fn import_claude_desktop_providers_from_claude(
-    state: State<'_, AppState>,
+pub(crate) fn import_claude_desktop_providers_from_claude_for_state(
+    state: &AppState,
 ) -> Result<usize, String> {
     let claude_providers = state
         .db
@@ -218,6 +231,13 @@ pub fn import_claude_desktop_providers_from_claude(
     }
 
     Ok(imported)
+}
+
+#[tauri::command]
+pub fn import_claude_desktop_providers_from_claude(
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
+    import_claude_desktop_providers_from_claude_for_state(&state)
 }
 
 #[tauri::command]
@@ -754,7 +774,6 @@ pub fn update_providers_sort_order(
 
 use crate::provider::UniversalProvider;
 use std::collections::HashMap;
-use tauri::AppHandle;
 
 #[derive(Clone, serde::Serialize)]
 pub struct UniversalProviderSyncedEvent {

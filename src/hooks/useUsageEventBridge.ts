@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listenEvent } from "@/lib/commandClient";
+type UnlistenFn = () => void;
 import { useQueryClient } from "@tanstack/react-query";
 import { usageKeys } from "@/lib/query/usage";
 
@@ -20,7 +21,7 @@ export function useUsageEventBridge() {
     let disposed = false;
 
     (async () => {
-      const off = await listen("usage-log-recorded", () => {
+      const off = await listenEvent("usage-log-recorded", () => {
         // invalidate 整个 usage 命名空间：summary / trends / providerStats /
         // modelStats / logs 全部跟着重拉
         queryClient.invalidateQueries({ queryKey: usageKeys.all });

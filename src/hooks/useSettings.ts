@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { providersApi, settingsApi } from "@/lib/api";
+import { isTauriRuntime } from "@/lib/commandClient";
 import { syncCurrentProvidersLiveSafe } from "@/utils/postChangeSync";
 import { useSettingsQuery, useSaveSettingsMutation } from "@/lib/query";
 import type { Settings } from "@/types";
@@ -62,6 +63,7 @@ const sanitizeDir = (value?: string | null): string | undefined => {
 export function useSettings(): UseSettingsResult {
   const { t } = useTranslation();
   const { data } = useSettingsQuery();
+  const isTauri = isTauriRuntime();
   const saveMutation = useSaveSettingsMutation();
   const queryClient = useQueryClient();
 
@@ -133,6 +135,7 @@ export function useSettings(): UseSettingsResult {
       enabled: boolean | undefined,
       prevEnabled: boolean | undefined,
     ): Promise<boolean> => {
+      if (!isTauri) return false;
       if (enabled === undefined || enabled === prevEnabled) return false;
       try {
         if (enabled) {
@@ -173,7 +176,7 @@ export function useSettings(): UseSettingsResult {
         return false;
       }
     },
-    [t],
+    [isTauri, t],
   );
 
   // 即时保存设置（用于 General 标签页的实时更新）
@@ -221,7 +224,8 @@ export function useSettings(): UseSettingsResult {
         // 如果开机自启状态改变，调用系统 API
         if (
           payload.launchOnStartup !== undefined &&
-          payload.launchOnStartup !== data?.launchOnStartup
+          payload.launchOnStartup !== data?.launchOnStartup &&
+          isTauri
         ) {
           try {
             await settingsApi.setAutoLaunch(payload.launchOnStartup);
@@ -240,7 +244,8 @@ export function useSettings(): UseSettingsResult {
         const nextSkipClaudeOnboarding = updates.skipClaudeOnboarding;
         if (
           nextSkipClaudeOnboarding !== undefined &&
-          nextSkipClaudeOnboarding !== (data?.skipClaudeOnboarding ?? false)
+          nextSkipClaudeOnboarding !== (data?.skipClaudeOnboarding ?? false) &&
+          isTauri
         ) {
           try {
             if (nextSkipClaudeOnboarding) {
@@ -283,10 +288,12 @@ export function useSettings(): UseSettingsResult {
         }
 
         // 更新托盘菜单
-        try {
-          await providersApi.updateTrayMenu();
-        } catch (error) {
-          console.warn("[useSettings] Failed to refresh tray menu", error);
+        if (isTauri) {
+          try {
+            await providersApi.updateTrayMenu();
+          } catch (error) {
+            console.warn("[useSettings] Failed to refresh tray menu", error);
+          }
         }
 
         return { requiresRestart: false };
@@ -301,7 +308,15 @@ export function useSettings(): UseSettingsResult {
         throw error;
       }
     },
-    [data, queryClient, saveMutation, settings, syncClaudePluginIfChanged, t],
+    [
+      data,
+      isTauri,
+      queryClient,
+      saveMutation,
+      settings,
+      syncClaudePluginIfChanged,
+      t,
+    ],
   );
 
   // 完整保存设置（用于 Advanced 标签页的手动保存）
@@ -354,12 +369,15 @@ export function useSettings(): UseSettingsResult {
 
         await saveMutation.mutateAsync(payload);
 
-        await settingsApi.setAppConfigDirOverride(sanitizedAppDir ?? null);
+        if (isTauri) {
+          await settingsApi.setAppConfigDirOverride(sanitizedAppDir ?? null);
+        }
 
         // 只在开机自启状态真正改变时调用系统 API
         if (
           payload.launchOnStartup !== undefined &&
-          payload.launchOnStartup !== data?.launchOnStartup
+          payload.launchOnStartup !== data?.launchOnStartup &&
+          isTauri
         ) {
           try {
             await settingsApi.setAutoLaunch(payload.launchOnStartup);
@@ -376,7 +394,7 @@ export function useSettings(): UseSettingsResult {
         // Claude Code 初次安装确认：开=写入 hasCompletedOnboarding=true；关=删除该字段
         const prevSkipClaudeOnboarding = data?.skipClaudeOnboarding ?? false;
         const nextSkipClaudeOnboarding = payload.skipClaudeOnboarding ?? false;
-        if (nextSkipClaudeOnboarding !== prevSkipClaudeOnboarding) {
+        if (nextSkipClaudeOnboarding !== prevSkipClaudeOnboarding && isTauri) {
           try {
             if (nextSkipClaudeOnboarding) {
               await settingsApi.applyClaudeOnboardingSkip();
@@ -416,10 +434,12 @@ export function useSettings(): UseSettingsResult {
           );
         }
 
-        try {
-          await providersApi.updateTrayMenu();
-        } catch (error) {
-          console.warn("[useSettings] Failed to refresh tray menu", error);
+        if (isTauri) {
+          try {
+            await providersApi.updateTrayMenu();
+          } catch (error) {
+            console.warn("[useSettings] Failed to refresh tray menu", error);
+          }
         }
 
         // 如果 Claude/Codex/Gemini/OpenCode/OpenClaw 的目录覆盖发生变化，则立即将"当前使用的供应商"写回对应应用的 live 配置
@@ -431,6 +451,7 @@ export function useSettings(): UseSettingsResult {
         const openclawDirChanged = sanitizedOpenclawDir !== previousOpenclawDir;
         if (
           !pluginSynced &&
+          isTauri &&
           (claudeDirChanged ||
             codexDirChanged ||
             geminiDirChanged ||
@@ -474,6 +495,7 @@ export function useSettings(): UseSettingsResult {
       appConfigDir,
       data,
       initialAppConfigDir,
+      isTauri,
       queryClient,
       saveMutation,
       settings,

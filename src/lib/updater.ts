@@ -1,4 +1,4 @@
-import { getVersion } from "@tauri-apps/api/app";
+import { isTauriRuntime } from "@/lib/commandClient";
 
 // 可选导入：在未注册插件或非 Tauri 环境下，调用时会抛错，外层需做兜底
 // 我们按需加载并在运行时捕获错误，避免构建期类型问题
@@ -83,7 +83,12 @@ function mapUpdateHandle(raw: Update): UpdateHandle {
 }
 
 export async function getCurrentVersion(): Promise<string> {
+  if (!isTauriRuntime()) {
+    return "";
+  }
+
   try {
+    const { getVersion } = await import("@tauri-apps/api/app");
     return await getVersion();
   } catch {
     return "";
@@ -96,6 +101,10 @@ export async function checkForUpdate(
   | { status: "up-to-date" }
   | { status: "available"; info: UpdateInfo; update: UpdateHandle }
 > {
+  if (!isTauriRuntime()) {
+    return { status: "up-to-date" };
+  }
+
   // 动态引入，避免在未安装插件时导致打包期问题
   const { check } = await import("@tauri-apps/plugin-updater");
 
@@ -118,6 +127,7 @@ export async function checkForUpdate(
 }
 
 export async function relaunchApp(): Promise<void> {
+  if (!isTauriRuntime()) return;
   const { relaunch } = await import("@tauri-apps/plugin-process");
   await relaunch();
 }

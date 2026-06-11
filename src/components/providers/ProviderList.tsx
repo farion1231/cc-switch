@@ -47,6 +47,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi } from "@/lib/api/settings";
+import { isTauriRuntime } from "@/lib/commandClient";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -92,6 +93,7 @@ export function ProviderList({
   onSetAsDefault,
 }: ProviderListProps) {
   const { t } = useTranslation();
+  const isBrowserWebUi = !isTauriRuntime();
   const { checkProvider, isChecking } = useStreamCheck(appId);
   const { sortedProviders, sensors, handleDragEnd } = useDragSort(
     providers,
@@ -113,7 +115,9 @@ export function ProviderList({
   const { data: hermesLiveIds } = useHermesLiveProviderIds(appId === "hermes");
 
   // Hermes: 读取当前 model.provider，用于判断哪个供应商是"当前激活"（高亮）
-  const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
+  const { data: hermesModelConfig } = useHermesModelConfig(
+    !isBrowserWebUi && appId === "hermes",
+  );
   const hermesCurrentProviderId = hermesModelConfig?.provider;
 
   // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes）
@@ -135,7 +139,7 @@ export function ProviderList({
 
   // OpenClaw: query default model to determine which provider is default
   const { data: openclawDefaultModel } = useOpenClawDefaultModel(
-    appId === "openclaw",
+    !isBrowserWebUi && appId === "openclaw",
   );
 
   const isProviderDefaultModel = useCallback(
@@ -155,7 +159,7 @@ export function ProviderList({
   const isFailoverModeActive =
     isProxyTakeover === true && isAutoFailoverEnabled === true;
 
-  const isOpenCode = appId === "opencode";
+  const isOpenCode = !isBrowserWebUi && appId === "opencode";
   const { data: currentOmoId } = useCurrentOmoProviderId(isOpenCode);
   const { data: currentOmoSlimId } = useCurrentOmoSlimProviderId(isOpenCode);
 
@@ -441,6 +445,7 @@ export function ProviderList({
                 onOpenWebsite={onOpenWebsite}
                 onOpenTerminal={onOpenTerminal}
                 onTest={handleTest}
+                isBrowserWebUi={isBrowserWebUi}
                 isTesting={isChecking(provider.id)}
                 isProxyRunning={isProxyRunning}
                 isProxyTakeover={isProxyTakeover}
@@ -593,6 +598,7 @@ interface SortableProviderCardProps {
   onOpenWebsite: (url: string) => void;
   onOpenTerminal?: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
+  isBrowserWebUi: boolean;
   isTesting: boolean;
   isProxyRunning: boolean;
   isProxyTakeover: boolean;
@@ -624,6 +630,7 @@ function SortableProviderCard({
   onOpenWebsite,
   onOpenTerminal,
   onTest,
+  isBrowserWebUi,
   isTesting,
   isProxyRunning,
   isProxyTakeover,
@@ -671,6 +678,7 @@ function SortableProviderCard({
         onOpenWebsite={onOpenWebsite}
         onOpenTerminal={onOpenTerminal}
         onTest={onTest}
+        isBrowserWebUi={isBrowserWebUi}
         isTesting={isTesting}
         isProxyRunning={isProxyRunning}
         isProxyTakeover={isProxyTakeover}

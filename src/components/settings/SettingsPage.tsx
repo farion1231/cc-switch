@@ -27,6 +27,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { settingsApi } from "@/lib/api";
+import { isTauriRuntime } from "@/lib/commandClient";
 import { LanguageSettings } from "@/components/settings/LanguageSettings";
 import { ThemeSettings } from "@/components/settings/ThemeSettings";
 import { WindowSettings } from "@/components/settings/WindowSettings";
@@ -39,6 +40,7 @@ import { ImportExportSection } from "@/components/settings/ImportExportSection";
 import { BackupListSection } from "@/components/settings/BackupListSection";
 import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
 import { AboutSection } from "@/components/settings/AboutSection";
+import { WebUiSettings } from "@/components/settings/WebUiSettings";
 import { ProxyTabContent } from "@/components/settings/ProxyTabContent";
 import { ModelTestConfigPanel } from "@/components/usage/ModelTestConfigPanel";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
@@ -65,6 +67,8 @@ export function SettingsPage({
   defaultTab = "general",
 }: SettingsDialogProps) {
   const { t } = useTranslation();
+  const isTauri = isTauriRuntime();
+  const isBrowserWebUi = !isTauri;
   const {
     settings,
     isLoading,
@@ -105,10 +109,18 @@ export function SettingsPage({
 
   useEffect(() => {
     if (open) {
-      setActiveTab(defaultTab);
+      setActiveTab(
+        isBrowserWebUi && defaultTab === "about" ? "general" : defaultTab,
+      );
       resetStatus();
     }
-  }, [open, resetStatus, defaultTab]);
+  }, [open, resetStatus, defaultTab, isBrowserWebUi]);
+
+  useEffect(() => {
+    if (isBrowserWebUi && ["auth", "advanced", "about"].includes(activeTab)) {
+      setActiveTab("general");
+    }
+  }, [activeTab, isBrowserWebUi]);
 
   useEffect(() => {
     if (requiresRestart) {
@@ -195,19 +207,27 @@ export function SettingsPage({
           onValueChange={setActiveTab}
           className="flex flex-col h-full"
         >
-          <TabsList className="grid w-full grid-cols-6 mb-6 glass rounded-lg">
+          <TabsList
+            className={`grid w-full ${isBrowserWebUi ? "grid-cols-3" : "grid-cols-6"} mb-6 glass rounded-lg`}
+          >
             <TabsTrigger value="general">
               {t("settings.tabGeneral")}
             </TabsTrigger>
             <TabsTrigger value="proxy">{t("settings.tabProxy")}</TabsTrigger>
-            <TabsTrigger value="auth">
-              {t("settings.tabAuth", { defaultValue: "认证" })}
-            </TabsTrigger>
-            <TabsTrigger value="advanced">
-              {t("settings.tabAdvanced")}
-            </TabsTrigger>
+            {!isBrowserWebUi && (
+              <>
+                <TabsTrigger value="auth">
+                  {t("settings.tabAuth", { defaultValue: "认证" })}
+                </TabsTrigger>
+                <TabsTrigger value="advanced">
+                  {t("settings.tabAdvanced")}
+                </TabsTrigger>
+              </>
+            )}
             <TabsTrigger value="usage">{t("usage.title")}</TabsTrigger>
-            <TabsTrigger value="about">{t("common.about")}</TabsTrigger>
+            {!isBrowserWebUi && (
+              <TabsTrigger value="about">{t("common.about")}</TabsTrigger>
+            )}
           </TabsList>
 
           <div className="flex-1 min-h-0 flex flex-col">
@@ -229,32 +249,44 @@ export function SettingsPage({
                       settings={settings}
                       onChange={handleAutoSave}
                     />
-                    <SkillStorageLocationSettings
-                      value={settings.skillStorageLocation ?? "cc_switch"}
-                      installedCount={installedSkills?.length ?? 0}
-                      onMigrated={(location) =>
-                        updateSettings({ skillStorageLocation: location })
-                      }
-                    />
-                    <SkillSyncMethodSettings
-                      value={settings.skillSyncMethod ?? "auto"}
-                      onChange={(method) =>
-                        handleAutoSave({ skillSyncMethod: method })
-                      }
-                    />
+                    {!isBrowserWebUi && (
+                      <>
+                        <SkillStorageLocationSettings
+                          value={settings.skillStorageLocation ?? "cc_switch"}
+                          installedCount={installedSkills?.length ?? 0}
+                          onMigrated={(location) =>
+                            updateSettings({ skillStorageLocation: location })
+                          }
+                        />
+                        <SkillSyncMethodSettings
+                          value={settings.skillSyncMethod ?? "auto"}
+                          onChange={(method) =>
+                            handleAutoSave({ skillSyncMethod: method })
+                          }
+                        />
+                      </>
+                    )}
                     <CodexAuthSettings
                       settings={settings}
                       onChange={handleAutoSave}
                     />
-                    <WindowSettings
+                    {!isBrowserWebUi && (
+                      <>
+                        <WindowSettings
+                          settings={settings}
+                          onChange={handleAutoSave}
+                        />
+                        <TerminalSettings
+                          value={settings.preferredTerminal}
+                          onChange={(terminal) =>
+                            handleAutoSave({ preferredTerminal: terminal })
+                          }
+                        />
+                      </>
+                    )}
+                    <WebUiSettings
                       settings={settings}
                       onChange={handleAutoSave}
-                    />
-                    <TerminalSettings
-                      value={settings.preferredTerminal}
-                      onChange={(terminal) =>
-                        handleAutoSave({ preferredTerminal: terminal })
-                      }
                     />
                   </motion.div>
                 ) : null}

@@ -16,6 +16,7 @@ import {
   useScanProxies,
   type DetectedProxy,
 } from "@/hooks/useGlobalProxy";
+import { isTauriRuntime } from "@/lib/commandClient";
 
 /** 从完整 URL 提取认证信息 */
 function extractAuth(url: string): {
@@ -71,6 +72,7 @@ function mergeAuth(
 
 export function GlobalProxySettings() {
   const { t } = useTranslation();
+  const isTauri = isTauriRuntime();
   const { data: savedUrl, isLoading } = useGlobalProxyUrl();
   const setMutation = useSetGlobalProxyUrl();
   const testMutation = useTestProxy();
@@ -169,7 +171,7 @@ export function GlobalProxySettings() {
         <Button
           variant="outline"
           size="icon"
-          disabled={scanMutation.isPending}
+          disabled={!isTauri || scanMutation.isPending}
           onClick={handleScan}
           title={t("settings.globalProxy.scan")}
         >

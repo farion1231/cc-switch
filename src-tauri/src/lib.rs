@@ -31,6 +31,7 @@ mod services;
 mod session_manager;
 mod settings;
 mod store;
+mod webui;
 
 mod tray;
 mod usage_events;
@@ -888,7 +889,31 @@ pub fn run() {
                 app.handle().clone(),
             );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
+            let webui_state = Arc::new(app_state.clone());
             app.manage(app_state);
+
+            // WebUI server - use settings (with env var override for backward compat)
+            let webui_server = Arc::new(crate::webui::WebUiServer::new(webui_state, app.handle().clone()));
+            app.manage(webui_server.clone());
+
+            // Determine if WebUI should auto-start:
+            // 1. Env var CC_SWITCH_WEBUI=0 force-disables
+            // 2. Otherwise use settings.webui_enabled (default true)
+            let should_start = if matches!(std::env::var("CC_SWITCH_WEBUI").as_deref(), Ok("0") | Ok("false") | Ok("off")) {
+                false
+            } else {
+                crate::settings::get_settings().webui_enabled
+            };
+
+            if should_start {
+                let webui_server_clone = webui_server.clone();
+                tauri::async_runtime::spawn(async move {
+                    match webui_server_clone.start_from_settings().await {
+                        Ok(addr) => log::info!("WebUI server listening on http://{addr}"),
+                        Err(e) => log::error!("WebUI server failed to start: {e}"),
+                    }
+                });
+            }
 
             // 从数据库加载日志配置并应用
             {
@@ -1434,6 +1459,11 @@ pub fn run() {
             commands::enter_lightweight_mode,
             commands::exit_lightweight_mode,
             commands::is_lightweight_mode,
+            // WebUI server management
+            commands::get_webui_status,
+            commands::start_webui_server,
+            commands::stop_webui_server,
+            commands::restart_webui_server,
         ]);
 
     let app = builder

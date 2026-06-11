@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { commandClient } from "@/lib/commandClient";
 import type { TFunction } from "i18next";
 import { toast } from "sonner";
 
@@ -20,7 +20,7 @@ export async function fetchModelsForConfig(
   modelsUrl?: string,
   customUserAgent?: string,
 ): Promise<FetchedModel[]> {
-  return invoke("fetch_models_for_config", {
+  return commandClient.invoke("fetch_models_for_config", {
     baseUrl,
     apiKey,
     isFullUrl,
@@ -37,7 +37,7 @@ export async function fetchModelsForConfig(
 export async function fetchCodexOauthModels(
   accountId?: string | null,
 ): Promise<FetchedModel[]> {
-  return invoke("get_codex_oauth_models", {
+  return commandClient.invoke("get_codex_oauth_models", {
     accountId: accountId || null,
   });
 }

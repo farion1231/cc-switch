@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/select";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { getVersion } from "@tauri-apps/api/app";
+import { getCurrentVersion } from "@/lib/updater";
 import { settingsApi } from "@/lib/api";
 import type {
   ToolInstallation,
@@ -335,7 +335,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     const load = async () => {
       try {
         const [appVersion] = await Promise.all([
-          getVersion(),
+          getCurrentVersion(),
           loadAllToolVersions(),
         ]);
 

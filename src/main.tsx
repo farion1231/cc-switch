@@ -9,8 +9,13 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "@/components/theme-provider";
 import { queryClient } from "@/lib/query";
 import { Toaster } from "@/components/ui/sonner";
-import { listen } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
+import {
+  getWebUiAuthStatus,
+  invokeCommand,
+  isTauriRuntime,
+  listenEvent,
+  loginWebUi,
+} from "@/lib/commandClient";
 import { message } from "@tauri-apps/plugin-dialog";
 import { exit } from "@tauri-apps/plugin-process";
 
@@ -62,7 +67,7 @@ async function handleConfigLoadError(
 
 // 监听后端的配置加载错误事件：仅提醒用户并强制退出，不修改任何配置文件
 try {
-  void listen("configLoadError", async (evt) => {
+  void listenEvent("configLoadError", async (evt) => {
     await handleConfigLoadError(evt.payload as ConfigLoadErrorPayload | null);
   });
 } catch (e) {
@@ -73,7 +78,7 @@ try {
 async function bootstrap() {
   // 启动早期主动查询后端初始化错误，避免事件竞态
   try {
-    const initError = (await invoke(
+    const initError = (await invokeCommand(
       "get_init_error",
     )) as ConfigLoadErrorPayload | null;
     if (initError && (initError.path || initError.error)) {
@@ -91,7 +96,9 @@ async function bootstrap() {
       <QueryClientProvider client={queryClient}>
         <ThemeProvider defaultTheme="system" storageKey="cc-switch-theme">
           <UpdateProvider>
-            <App />
+            <WebUiAuthGate>
+              <App />
+            </WebUiAuthGate>
             <Toaster />
           </UpdateProvider>
         </ThemeProvider>
@@ -101,3 +108,89 @@ async function bootstrap() {
 }
 
 void bootstrap();
+
+function WebUiAuthGate({ children }: { children: React.ReactNode }) {
+  const isTauri = isTauriRuntime();
+  const [authState, setAuthState] = React.useState<
+    "checking" | "login" | "ready"
+  >(isTauri ? "ready" : "checking");
+  const [password, setPassword] = React.useState("");
+  const [error, setError] = React.useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+
+  React.useEffect(() => {
+    if (isTauri) return;
+
+    let cancelled = false;
+    getWebUiAuthStatus()
+      .then((status) => {
+        if (cancelled) return;
+        setAuthState(
+          !status.authRequired || status.authenticated ? "ready" : "login",
+        );
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : String(e));
+        setAuthState("login");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isTauri]);
+
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      await loginWebUi(password);
+      setAuthState("ready");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (authState === "ready") {
+    return <>{children}</>;
+  }
+
+  return (
+    <div className="min-h-screen bg-background text-foreground flex items-center justify-center p-6">
+      <form
+        onSubmit={handleSubmit}
+        className="w-full max-w-sm space-y-4 rounded-lg border border-border/70 bg-card p-6 shadow-sm"
+      >
+        <div className="space-y-1">
+          <h1 className="text-lg font-semibold">CC Switch WebUI</h1>
+          <p className="text-sm text-muted-foreground">
+            {authState === "checking" ? "正在检查登录状态" : "请输入访问密码"}
+          </p>
+        </div>
+        {authState === "login" && (
+          <>
+            <input
+              autoFocus
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            {error && <p className="text-sm text-destructive">{error}</p>}
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="h-10 w-full rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-60"
+            >
+              {isSubmitting ? "登录中" : "登录"}
+            </button>
+          </>
+        )}
+      </form>
+    </div>
+  );
+}

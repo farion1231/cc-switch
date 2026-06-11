@@ -3,7 +3,7 @@
  */
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "@/lib/commandClient";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import type {
@@ -23,7 +23,7 @@ export function useProxyStatus() {
   // 查询状态（自动轮询）
   const { data: status, isLoading } = useQuery({
     queryKey: ["proxyStatus"],
-    queryFn: () => invoke<ProxyStatus>("get_proxy_status"),
+    queryFn: () => invokeCommand<ProxyStatus>("get_proxy_status"),
     // 仅在服务运行时轮询
     refetchInterval: (query) => (query.state.data?.running ? 2000 : false),
     // 保持之前的数据，避免闪烁
@@ -33,13 +33,14 @@ export function useProxyStatus() {
   // 查询各应用接管状态
   const { data: takeoverStatus } = useQuery({
     queryKey: ["proxyTakeoverStatus"],
-    queryFn: () => invoke<ProxyTakeoverStatus>("get_proxy_takeover_status"),
+    queryFn: () =>
+      invokeCommand<ProxyTakeoverStatus>("get_proxy_takeover_status"),
     placeholderData: (previousData) => previousData,
   });
 
   // 启动服务器（总开关：仅启动服务，不接管）
   const startProxyServerMutation = useMutation({
-    mutationFn: () => invoke<ProxyServerInfo>("start_proxy_server"),
+    mutationFn: () => invokeCommand<ProxyServerInfo>("start_proxy_server"),
     onSuccess: (info) => {
       toast.success(
         t("proxy.server.started", {
@@ -66,7 +67,7 @@ export function useProxyStatus() {
 
   // 停止服务器（仅停止服务，不改写/恢复其它应用接管状态）
   const stopProxyServerMutation = useMutation({
-    mutationFn: () => invoke("stop_proxy_server"),
+    mutationFn: () => invokeCommand("stop_proxy_server"),
     onSuccess: () => {
       toast.success(
         t("proxy.server.stopped", {
@@ -91,7 +92,7 @@ export function useProxyStatus() {
 
   // 停止服务器（总开关关闭：强制恢复所有已接管的 Live 配置）
   const stopWithRestoreMutation = useMutation({
-    mutationFn: () => invoke("stop_proxy_with_restore"),
+    mutationFn: () => invokeCommand("stop_proxy_with_restore"),
     onSuccess: () => {
       toast.success(
         t("proxy.stoppedWithRestore", {
@@ -123,7 +124,7 @@ export function useProxyStatus() {
   // 按应用开启/关闭接管
   const setTakeoverForAppMutation = useMutation({
     mutationFn: ({ appType, enabled }: { appType: string; enabled: boolean }) =>
-      invoke("set_proxy_takeover_for_app", { appType, enabled }),
+      invokeCommand("set_proxy_takeover_for_app", { appType, enabled }),
     onSuccess: (_data, variables) => {
       const appLabel =
         variables.appType === "claude"
@@ -171,7 +172,7 @@ export function useProxyStatus() {
     }: {
       appType: string;
       providerId: string;
-    }) => invoke("switch_proxy_provider", { appType, providerId }),
+    }) => invokeCommand("switch_proxy_provider", { appType, providerId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
     },
@@ -191,7 +192,7 @@ export function useProxyStatus() {
   // 检查是否运行中
   const checkRunning = async () => {
     try {
-      return await invoke<boolean>("is_proxy_running");
+      return await invokeCommand<boolean>("is_proxy_running");
     } catch {
       return false;
     }
@@ -200,7 +201,7 @@ export function useProxyStatus() {
   // 检查接管状态
   const checkTakeoverActive = async () => {
     try {
-      return await invoke<boolean>("is_live_takeover_active");
+      return await invokeCommand<boolean>("is_live_takeover_active");
     } catch {
       return false;
     }

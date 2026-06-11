@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { providersApi, settingsApi, openclawApi, type AppId } from "@/lib/api";
+import { isTauriRuntime } from "@/lib/commandClient";
 import type {
   Provider,
   UsageScript,
@@ -34,6 +35,7 @@ export function useProviderActions(
   isProxyTakeover?: boolean,
 ) {
   const { t } = useTranslation();
+  const isTauri = isTauriRuntime();
   const queryClient = useQueryClient();
 
   const addProviderMutation = useAddProviderMutation(activeApp);
@@ -44,6 +46,7 @@ export function useProviderActions(
   // Claude 插件同步逻辑
   const syncClaudePlugin = useCallback(
     async (provider: Provider) => {
+      if (!isTauri) return;
       if (activeApp !== "claude") return;
 
       try {
@@ -65,7 +68,7 @@ export function useProviderActions(
         toast.error(detail, { duration: 4200 });
       }
     },
-    [activeApp, t],
+    [activeApp, isTauri, t],
   );
 
   // 添加供应商
@@ -82,7 +85,7 @@ export function useProviderActions(
       await addProviderMutation.mutateAsync(enhanced);
 
       // OpenClaw: register models to allowlist after adding provider
-      if (activeApp === "openclaw" && provider.suggestedDefaults) {
+      if (isTauri && activeApp === "openclaw" && provider.suggestedDefaults) {
         const { model, modelCatalog } = provider.suggestedDefaults;
         let modelsRegistered = false;
 
@@ -127,7 +130,7 @@ export function useProviderActions(
         }
       }
     },
-    [addProviderMutation, activeApp, queryClient, t],
+    [addProviderMutation, activeApp, isTauri, queryClient, t],
   );
 
   // 更新供应商
@@ -136,16 +139,18 @@ export function useProviderActions(
       await updateProviderMutation.mutateAsync({ provider, originalId });
 
       // 更新托盘菜单（失败不影响主操作）
-      try {
-        await providersApi.updateTrayMenu();
-      } catch (trayError) {
-        console.error(
-          "Failed to update tray menu after updating provider",
-          trayError,
-        );
+      if (isTauri) {
+        try {
+          await providersApi.updateTrayMenu();
+        } catch (trayError) {
+          console.error(
+            "Failed to update tray menu after updating provider",
+            trayError,
+          );
+        }
       }
     },
-    [updateProviderMutation],
+    [isTauri, updateProviderMutation],
   );
 
   // 切换供应商

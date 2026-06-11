@@ -424,6 +424,16 @@ export interface Settings {
       migratedStateRows?: number;
     };
   };
+
+  // ===== WebUI 设置 =====
+  // 是否启用 WebUI 管理服务器（默认启用）
+  webuiEnabled?: boolean;
+  // WebUI 监听端口（默认 15722）
+  webuiPort?: number;
+  // WebUI 监听地址（默认 127.0.0.1，设为 0.0.0.0 可局域网访问）
+  webuiHost?: string;
+  // WebUI 访问令牌（空表示不验证，局域网模式下强制要求）
+  webuiToken?: string;
 }
 
 export interface SessionMeta {

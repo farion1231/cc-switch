@@ -35,6 +35,14 @@ fn merge_settings_for_save(
         }
         _ => {}
     }
+    // Restore webui_token if incoming is empty but existing has one
+    if let (Some(incoming_token), Some(existing_token)) =
+        (&incoming.webui_token, &existing.webui_token)
+    {
+        if incoming_token.is_empty() && !existing_token.is_empty() {
+            incoming.webui_token = existing.webui_token.clone();
+        }
+    }
     if incoming.local_migrations.is_none() {
         incoming.local_migrations = existing.local_migrations.clone();
     } else if let (Some(incoming_migrations), Some(existing_migrations)) =

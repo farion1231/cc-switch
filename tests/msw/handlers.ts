@@ -44,6 +44,18 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/get_skills_migration_result`, () =>
     success(null),
   ),
+  http.post(`${TAURI_ENDPOINT}/get_installed_skills`, () => success([])),
+  http.post(`${TAURI_ENDPOINT}/get_webui_status`, () =>
+    success({
+      running: false,
+      enabled: false,
+      port: 15722,
+      host: "127.0.0.1",
+      address: null,
+      tokenSet: false,
+      authRequired: false,
+    }),
+  ),
   http.post(`${TAURI_ENDPOINT}/get_providers`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);
     return success(getProviders(app));
