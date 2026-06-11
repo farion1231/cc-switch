@@ -2620,18 +2620,47 @@ exec bash --norc --noprofile
     result
 }
 
+/// macOS: Terminal.app AppleScript
+///
+/// 冷启动去重：Terminal 未运行时 `activate` 会自动创建一个默认窗口，若随后再无条件
+/// `do script` 会再开第二个窗口 → 出现一个多余的空 bash 窗口。
+/// 故按 `was_running` 分支（与 iTerm2 同源做法）：
+/// - 已运行：`do script` 直接开新窗口（不复用，避免劫持用户既有窗口）；
+/// - 未运行：`activate` 后轮询等待自动创建的默认窗口就绪（0.1s×30，规避窗口创建竞态），
+///   再 `do script … in window 1` 复用它，保证只开一个窗口。
+#[cfg(target_os = "macos")]
+fn build_macos_terminal_applescript(script_file: &std::path::Path) -> String {
+    format!(
+        r#"set launcher_script to "bash '{}'"
+set was_running to application "Terminal" is running
+tell application "Terminal"
+    activate
+    if was_running then
+        do script launcher_script
+    else
+        set waited to 0
+        repeat while (count of windows) = 0
+            delay 0.1
+            set waited to waited + 1
+            if waited >= 30 then exit repeat
+        end repeat
+        if (count of windows) = 0 then
+            do script launcher_script
+        else
+            do script launcher_script in window 1
+        end if
+    end if
+end tell"#,
+        script_file.display()
+    )
+}
+
 /// macOS: Terminal.app
 #[cfg(target_os = "macos")]
 fn launch_macos_terminal_app(script_file: &std::path::Path) -> Result<(), String> {
     use std::process::Command;
 
-    let applescript = format!(
-        r#"tell application "Terminal"
-    activate
-    do script "bash '{}'"
-end tell"#,
-        script_file.display()
-    );
+    let applescript = build_macos_terminal_applescript(script_file);
 
     let output = Command::new("osascript")
         .arg("-e")
@@ -4691,6 +4720,40 @@ mod tests {
         assert!(running_branch.contains("if (count of windows) = 0 then"));
         assert!(running_branch.contains("create window with default profile"));
         assert!(running_branch.contains("create tab with default profile"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn terminal_applescript_cold_start_reuses_auto_created_window() {
+        let script = build_macos_terminal_applescript(Path::new("/tmp/cc_switch_launcher.sh"));
+
+        let cold_start_branch = script
+            .split("if was_running then")
+            .nth(1)
+            .expect("was_running branch should be present")
+            .splitn(2, "else")
+            .nth(1)
+            .expect("cold start branch should be present");
+
+        assert!(cold_start_branch.contains("repeat while (count of windows) = 0"));
+        assert!(cold_start_branch.contains("do script launcher_script in window 1"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn terminal_applescript_opens_new_window_when_already_running() {
+        let script = build_macos_terminal_applescript(Path::new("/tmp/cc_switch_launcher.sh"));
+
+        let running_branch = script
+            .split("if was_running then")
+            .nth(1)
+            .expect("was_running branch should be present")
+            .splitn(2, "else")
+            .next()
+            .expect("already-running branch should end before cold start branch");
+
+        assert!(running_branch.contains("do script launcher_script"));
+        assert!(!running_branch.contains("in window"));
     }
 
     #[test]
