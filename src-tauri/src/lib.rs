@@ -838,23 +838,58 @@ pub fn run() {
             // 构建托盘
             let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
                 .tooltip("CC Switch") // 鼠标悬停提示
-                .on_tray_icon_event(|tray, event| match event {
+                .on_tray_icon_event(|tray, event| {
                     // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
                     // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
                     // refresh_all_usage_in_tray 内部有 10 秒防抖。
-                    TrayIconEvent::Enter { .. } | TrayIconEvent::Click { .. } => {
+                    let spawn_refresh_usage = |tray: &tauri::tray::TrayIcon| {
                         let app = tray.app_handle().clone();
                         tauri::async_runtime::spawn(async move {
                             crate::tray::refresh_all_usage_in_tray(&app).await;
                         });
+                    };
+
+                    match event {
+                        TrayIconEvent::Enter { .. } => {
+                            spawn_refresh_usage(tray);
+                        }
+                        TrayIconEvent::Click { button, .. } => {
+                            spawn_refresh_usage(tray);
+
+                            // 左键点击打开主界面
+                            if matches!(button, tauri::tray::MouseButton::Left) {
+                                let app = tray.app_handle().clone();
+                                if let Some(window) = app.get_webview_window("main") {
+                                    #[cfg(target_os = "windows")]
+                                    {
+                                        let _ = window.set_skip_taskbar(false);
+                                    }
+                                    let _ = window.unminimize();
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                    #[cfg(target_os = "linux")]
+                                    {
+                                        crate::linux_fix::nudge_main_window(window.clone());
+                                    }
+                                    #[cfg(target_os = "macos")]
+                                    {
+                                        crate::tray::apply_tray_policy(&app, true);
+                                    }
+                                } else if crate::lightweight::is_lightweight_mode() {
+                                    if let Err(e) = crate::lightweight::exit_lightweight_mode(&app) {
+                                        log::error!("退出轻量模式重建窗口失败: {e}");
+                                    }
+                                }
+                            }
+                        }
+                        _ => log::debug!("unhandled event {event:?}"),
                     }
-                    _ => log::debug!("unhandled event {event:?}"),
                 })
                 .menu(&menu)
                 .on_menu_event(|app, event| {
                     tray::handle_tray_menu_event(app, &event.id.0);
                 })
-                .show_menu_on_left_click(true);
+                .show_menu_on_left_click(false);
 
             // 使用平台对应的托盘图标（macOS 使用模板图标适配深浅色）
             #[cfg(target_os = "macos")]
