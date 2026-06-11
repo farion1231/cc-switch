@@ -115,10 +115,13 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
 
     #[cfg(target_os = "windows")]
     {
-        // Windows updater 会在 install() 内启动安装器并直接退出当前进程。
-        // 因此清理只能放在 install 前执行。
+        // Windows updater 会在 install() 内启动安装器并直接退出当前进程
+        // （插件内部 std::process::exit(0)，绕过 TrayIcon::drop、不发
+        // NIM_DELETE，会残留死图标——与托盘"退出"路径相同的问题）。
+        // 因此清理只能放在 install 前执行，且必须显式移除托盘图标。
         crate::save_window_state_before_exit(&app);
         crate::cleanup_before_exit(&app).await;
+        crate::remove_tray_icon_before_exit(&app);
         crate::destroy_single_instance_lock(&app);
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         update.install(bytes).map_err(|e| {
