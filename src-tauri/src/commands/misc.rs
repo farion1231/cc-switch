@@ -111,8 +111,8 @@ pub struct ToolVersion {
     wsl_distro: Option<String>,
 }
 
-const VALID_TOOLS: [&str; 6] = [
-    "claude", "codex", "gemini", "opencode", "openclaw", "hermes",
+const VALID_TOOLS: [&str; 7] = [
+    "claude", "codex", "gemini", "opencode", "mimo", "openclaw", "hermes",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -425,6 +425,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "codex" => "Codex",
         "gemini" => "Gemini CLI",
         "opencode" => "OpenCode",
+        "mimo" => "MiMo Code",
         "openclaw" => "OpenClaw",
         "hermes" => "Hermes",
         _ => "Unknown",
@@ -440,6 +441,8 @@ const CLAUDE_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://claude.ai/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 const OPENCODE_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://opencode.ai/install -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+const MIMO_INSTALL_UNIX: &str =
+    "bash -c 'tmp=$(mktemp) && curl -fsSL https://mimo.xiaomi.com/install -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 
 /// Hermes 官方安装器会自带/选择合适的 Python 运行时。不要再用
 /// `python3 -m pip ... || python -m pip ...`:Hermes PyPI 包要求 Python >=3.11,
@@ -493,6 +496,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "codex" => Some("npm i -g @openai/codex@latest"),
         "gemini" => Some("npm i -g @google/gemini-cli@latest"),
         "opencode" => Some("npm i -g opencode-ai@latest"),
+        "mimo" => Some("npm i -g @mimo-ai/cli@latest"),
         "openclaw" => Some("npm i -g openclaw@latest"),
         _ => None,
     }
@@ -502,7 +506,7 @@ fn official_update_args(tool: &str) -> Option<&'static str> {
     match tool {
         "claude" | "codex" | "hermes" => Some("update"),
         "openclaw" => Some("update --yes"),
-        "opencode" => Some("upgrade"),
+        "opencode" | "mimo" => Some("upgrade"),
         _ => None,
     }
 }
@@ -771,6 +775,7 @@ async fn get_single_tool_version_impl(
                 fetch_github_latest_version(&client, "anomalyco/opencode").await
             }
         }
+        "mimo" => fetch_npm_latest_for_tool(&client, "@mimo-ai/cli", tool, local).await,
         "openclaw" => fetch_npm_latest_for_tool(&client, "openclaw", tool, local).await,
         "hermes" => fetch_pypi_latest_version(&client, "hermes-agent").await,
         _ => None,
@@ -1813,6 +1818,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "codex" => Some("@openai/codex"),
         "gemini" => Some("@google/gemini-cli"),
         "opencode" => Some("opencode-ai"),
+        "mimo" => Some("@mimo-ai/cli"),
         "openclaw" => Some("openclaw"),
         _ => None,
     }
@@ -1988,7 +1994,10 @@ fn anchored_official_update_command(tool: &str, bin_path: &str) -> Option<String
 fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
     match shell {
         LifecycleCommandShell::Posix => {
-            matches!(tool, "claude" | "codex" | "opencode" | "openclaw")
+            matches!(
+                tool,
+                "claude" | "codex" | "opencode" | "mimo" | "openclaw"
+            )
         }
         LifecycleCommandShell::WindowsBatch => {
             matches!(
@@ -2237,6 +2246,7 @@ fn posix_install_command_for(tool: &str) -> String {
     match tool {
         "claude" => installer_with_npm_fallback(CLAUDE_INSTALL_UNIX, tool),
         "opencode" => installer_with_npm_fallback(OPENCODE_INSTALL_UNIX, tool),
+        "mimo" => installer_with_npm_fallback(MIMO_INSTALL_UNIX, tool),
         "hermes" => HERMES_INSTALL_UNIX.to_string(),
         _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
     }
@@ -4352,6 +4362,24 @@ mod tests {
         }
 
         #[test]
+        fn mimo_install_prefers_native_with_npm_fallback() {
+            let cmd = install_command_for("mimo");
+            assert!(
+                cmd.contains("https://mimo.xiaomi.com/install"),
+                "should include official installer URL: {cmd}"
+            );
+            assert!(
+                cmd.contains("@mimo-ai/cli@latest"),
+                "should keep npm package as fallback: {cmd}"
+            );
+            assert!(cmd.contains("||"), "should chain fallback: {cmd}");
+            assert!(
+                !cmd.split("||").next().unwrap_or_default().contains('|'),
+                "native installer should avoid pipe: {cmd}"
+            );
+        }
+
+        #[test]
         fn codex_install_keeps_static_npm() {
             // OpenAI 暂无独立 native installer,保持原裸 npm,不引入兜底链(无东西可兜底)。
             let cmd = install_command_for("codex");
@@ -4392,6 +4420,10 @@ mod tests {
             assert_eq!(
                 static_fallback_command("opencode"),
                 "opencode upgrade || npm i -g opencode-ai@latest"
+            );
+            assert_eq!(
+                static_fallback_command("mimo"),
+                "mimo upgrade || npm i -g @mimo-ai/cli@latest"
             );
             assert_eq!(
                 static_fallback_command("openclaw"),

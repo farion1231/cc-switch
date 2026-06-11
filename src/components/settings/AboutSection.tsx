@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   Download,
   Copy,
@@ -36,7 +42,7 @@ import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
 import appIcon from "@/assets/icons/app-icon.png";
 import { APP_ICON_MAP } from "@/config/appConfig";
-import type { AppId } from "@/lib/api/types";
+import { ProviderIcon } from "@/components/ProviderIcon";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isWindows } from "@/lib/platform";
 import { isUpdateAvailable } from "@/lib/version";
@@ -64,6 +70,7 @@ const TOOL_NAMES = [
   "codex",
   "gemini",
   "opencode",
+  "mimo",
   "openclaw",
   "hermes",
 ] as const;
@@ -132,6 +139,8 @@ npm i -g @openai/codex@latest
 npm i -g @google/gemini-cli@latest
 # OpenCode
 ${posixScriptInstallCommand("https://opencode.ai/install")} || npm i -g opencode-ai@latest
+# MiMo Code
+${posixScriptInstallCommand("https://mimo.xiaomi.com/install")} || npm i -g @mimo-ai/cli@latest
 # OpenClaw
 npm i -g openclaw@latest
 # Hermes
@@ -145,6 +154,8 @@ npm i -g @openai/codex@latest
 npm i -g @google/gemini-cli@latest
 # OpenCode
 npm i -g opencode-ai@latest
+# MiMo Code
+npm i -g @mimo-ai/cli@latest
 # OpenClaw
 npm i -g openclaw@latest
 # Hermes
@@ -159,6 +170,7 @@ const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   codex: "Codex",
   gemini: "Gemini CLI",
   opencode: "OpenCode",
+  mimo: "MiMo Code",
   openclaw: "OpenClaw",
   hermes: "Hermes",
 };
@@ -169,13 +181,21 @@ function toolDisplayName(tool: string): string {
   return TOOL_DISPLAY_NAMES[tool as ToolName] ?? tool;
 }
 
-const TOOL_APP_IDS: Record<ToolName, AppId> = {
-  claude: "claude",
-  codex: "codex",
-  gemini: "gemini",
-  opencode: "opencode",
-  openclaw: "openclaw",
-  hermes: "hermes",
+const TOOL_ICONS: Record<ToolName, ReactNode> = {
+  claude: APP_ICON_MAP.claude.icon,
+  codex: APP_ICON_MAP.codex.icon,
+  gemini: APP_ICON_MAP.gemini.icon,
+  opencode: APP_ICON_MAP.opencode.icon,
+  mimo: (
+    <ProviderIcon
+      icon="xiaomimimo"
+      name="MiMo Code"
+      size={14}
+      showFallback={false}
+    />
+  ),
+  openclaw: APP_ICON_MAP.openclaw.icon,
+  hermes: APP_ICON_MAP.hermes.icon,
 };
 
 export function AboutSection({ isPortable }: AboutSectionProps) {
@@ -939,7 +959,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         <div className="grid gap-3 px-1 sm:grid-cols-2 xl:grid-cols-3">
           {TOOL_NAMES.map((toolName, index) => {
             const tool = toolVersionByName.get(toolName);
-            const appConfig = APP_ICON_MAP[TOOL_APP_IDS[toolName]];
+            const toolIcon = TOOL_ICONS[toolName];
             const displayName = TOOL_DISPLAY_NAMES[toolName];
             const isToolVersionLoading =
               isLoadingTools || Boolean(loadingTools[toolName]);
@@ -974,7 +994,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-background/80 text-muted-foreground">
-                      {appConfig?.icon ?? <Terminal className="h-4 w-4" />}
+                      {toolIcon ?? <Terminal className="h-4 w-4" />}
                     </span>
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium">
