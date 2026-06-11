@@ -1092,15 +1092,57 @@ impl RequestForwarder {
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
     ) -> Result<(ProxyResponse, Option<String>, Provider), ProxyError> {
+        let codex_trace_id =
+            matches!(app_type, AppType::Codex).then(|| uuid::Uuid::new_v4().to_string());
+        let route_started_at = std::time::Instant::now();
+        let request_model_for_log = body
+            .get("model")
+            .and_then(|value| value.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let outer_provider_id = provider.id.clone();
+        let outer_provider_name = provider.name.clone();
+
         // Codex v2 是一个复合 provider：Codex 客户端只看到一个 provider bucket，
         // Rust proxy 根据请求模型临时解析真实上游 provider，后续 base_url/auth/转换逻辑
         // 都使用这个 effective provider。
+        let codex_router_configured =
+            matches!(app_type, AppType::Codex) && codex_provider_has_routing_config(provider);
         let routed_provider = if matches!(app_type, AppType::Codex) {
             super::providers::resolve_codex_model_routed_provider(provider, body)
         } else {
             None
         };
+        let codex_route_missed = codex_router_configured && routed_provider.is_none();
         let provider = routed_provider.as_ref().unwrap_or(provider);
+
+        if let Some(trace_id) = codex_trace_id.as_deref() {
+            let route_id = provider
+                .settings_config
+                .get("codexResolvedRouteId")
+                .and_then(|value| value.as_str())
+                .unwrap_or("<none>");
+            super::codex_router_log::append_event(
+                "route_resolved",
+                &[
+                    ("trace", trace_id.to_string()),
+                    ("session", self.session_id.clone()),
+                    ("endpoint", endpoint.to_string()),
+                    ("model", request_model_for_log.clone()),
+                    ("outer_provider", outer_provider_id.clone()),
+                    ("outer_name", outer_provider_name.clone()),
+                    ("effective_provider", provider.id.clone()),
+                    ("effective_name", provider.name.clone()),
+                    ("route_id", route_id.to_string()),
+                    ("routing_configured", codex_router_configured.to_string()),
+                    ("route_missed", codex_route_missed.to_string()),
+                    (
+                        "elapsed_ms",
+                        route_started_at.elapsed().as_millis().to_string(),
+                    ),
+                ],
+            );
+        }
 
         if let Some(routed_provider) = routed_provider.as_ref() {
             let request_model = body
@@ -1117,6 +1159,29 @@ impl RequestForwarder {
 
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
+        if codex_route_missed && codex_base_url_points_to_local_proxy(&base_url) {
+            let request_model = body
+                .get("model")
+                .and_then(|value| value.as_str())
+                .unwrap_or("unknown");
+            if let Some(trace_id) = codex_trace_id.as_deref() {
+                super::codex_router_log::append_event(
+                    "route_error",
+                    &[
+                        ("trace", trace_id.to_string()),
+                        ("session", self.session_id.clone()),
+                        ("endpoint", endpoint.to_string()),
+                        ("model", request_model.to_string()),
+                        ("outer_provider", outer_provider_id.clone()),
+                        ("fallback_base_url", base_url.clone()),
+                        ("reason", "route_miss_local_proxy_fallback".to_string()),
+                    ],
+                );
+            }
+            return Err(ProxyError::InvalidRequest(format!(
+                "Codex router provider did not match model '{request_model}', and its fallback base_url points to the local proxy. Refusing to forward recursively; add a route/defaultRouteId or switch away from the router provider."
+            )));
+        }
 
         let is_full_url = provider
             .meta
@@ -1351,6 +1416,7 @@ impl RequestForwarder {
         };
 
         // 转换请求体（如果需要）
+        let request_prepare_started_at = std::time::Instant::now();
         let request_body = if codex_responses_to_chat || codex_responses_to_messages {
             let mut mapped_body = mapped_body;
             let restored = self
@@ -1409,11 +1475,38 @@ impl RequestForwarder {
             || codex_responses_to_messages
             || request_is_streaming;
 
+        if let Some(trace_id) = codex_trace_id.as_deref() {
+            super::codex_router_log::append_event(
+                "request_prepared",
+                &[
+                    ("trace", trace_id.to_string()),
+                    ("session", self.session_id.clone()),
+                    ("endpoint", endpoint.to_string()),
+                    ("effective_endpoint", effective_endpoint.clone()),
+                    ("model", request_model_for_log.clone()),
+                    ("provider", provider.id.clone()),
+                    ("upstream_url", url.clone()),
+                    ("responses_to_chat", codex_responses_to_chat.to_string()),
+                    (
+                        "responses_to_messages",
+                        codex_responses_to_messages.to_string(),
+                    ),
+                    ("streaming", request_is_streaming.to_string()),
+                    (
+                        "elapsed_ms",
+                        request_prepare_started_at.elapsed().as_millis().to_string(),
+                    ),
+                ],
+            );
+        }
+
         // Codex OAuth 需要注入的 ChatGPT-Account-Id（在动态 token 获取期间填充）
         let mut codex_oauth_account_id: Option<String> = None;
         let mut should_send_codex_oauth_session_headers = false;
 
         // 获取认证头（提前准备，用于内联替换）
+        let auth_started_at = std::time::Instant::now();
+        let mut auth_strategy_for_log = "none".to_string();
         let mut auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
             // GitHub Copilot 特殊处理：从 CopilotAuthManager 获取真实 token
             if auth.strategy == AuthStrategy::GitHubCopilot {
@@ -1519,6 +1612,7 @@ impl RequestForwarder {
                 }
             }
 
+            auth_strategy_for_log = format!("{:?}", auth.strategy);
             adapter.get_auth_headers(&auth)?
         } else {
             Vec::new()
@@ -1537,6 +1631,28 @@ impl RequestForwarder {
             } else {
                 Vec::new()
             };
+
+        if let Some(trace_id) = codex_trace_id.as_deref() {
+            super::codex_router_log::append_event(
+                "auth_prepared",
+                &[
+                    ("trace", trace_id.to_string()),
+                    ("session", self.session_id.clone()),
+                    ("model", request_model_for_log.clone()),
+                    ("provider", provider.id.clone()),
+                    ("auth_strategy", auth_strategy_for_log.clone()),
+                    ("auth_header_count", auth_headers.len().to_string()),
+                    (
+                        "oauth_session_header_count",
+                        codex_oauth_session_headers.len().to_string(),
+                    ),
+                    (
+                        "elapsed_ms",
+                        auth_started_at.elapsed().as_millis().to_string(),
+                    ),
+                ],
+            );
+        }
 
         // --- Copilot 优化器：动态 header 注入 ---
         if let Some((ref classification, ref det_request_id, ref interaction_id)) =
@@ -1793,6 +1909,7 @@ impl RequestForwarder {
                 ProxyError::Internal(format!("Failed to serialize request body: {e}"))
             })?
         };
+        let request_bytes_len = body_bytes.len();
 
         // 确保 content-type 存在
         if !ordered_headers.contains_key(http::header::CONTENT_TYPE) {
@@ -1812,13 +1929,11 @@ impl RequestForwarder {
             .unwrap_or("<none>");
         log::info!("[{tag}] >>> 请求 URL: {url} (model={request_model})");
         if log::log_enabled!(log::Level::Debug) {
-            if let Ok(body_str) = serde_json::to_string(&filtered_body) {
-                log::debug!(
-                    "[{tag}] >>> 请求体内容 ({}字节): {}",
-                    body_str.len(),
-                    body_str
-                );
-            }
+            log::debug!(
+                "[{tag}] >>> 请求体摘要: bytes={}, body_hash={}",
+                request_bytes_len,
+                short_value_hash(Some(&filtered_body))
+            );
         }
 
         // 确定超时
@@ -1843,6 +1958,32 @@ impl RequestForwarder {
             resolved_claude_api_format.as_deref(),
             is_copilot,
         );
+        let transport_for_log = if is_socks_proxy || !preserve_exact_header_case {
+            "reqwest"
+        } else {
+            "hyper"
+        };
+        let upstream_started_at = std::time::Instant::now();
+        if let Some(trace_id) = codex_trace_id.as_deref() {
+            super::codex_router_log::append_event(
+                "upstream_send",
+                &[
+                    ("trace", trace_id.to_string()),
+                    ("session", self.session_id.clone()),
+                    ("model", request_model_for_log.clone()),
+                    ("provider", provider.id.clone()),
+                    ("transport", transport_for_log.to_string()),
+                    ("request_bytes", request_bytes_len.to_string()),
+                    ("header_count", ordered_headers.len().to_string()),
+                    ("streaming", request_is_streaming.to_string()),
+                    ("timeout_ms", timeout.as_millis().to_string()),
+                    (
+                        "uses_upstream_proxy",
+                        upstream_proxy_url.is_some().to_string(),
+                    ),
+                ],
+            );
+        }
 
         // 发送请求
         let response = if is_socks_proxy || !preserve_exact_header_case {
@@ -1870,18 +2011,58 @@ impl RequestForwarder {
                 } else {
                     self.streaming_first_byte_timeout
                 };
-                tokio::time::timeout(header_timeout, send)
-                    .await
-                    .map_err(|_| {
-                        ProxyError::Timeout(format!(
+                match tokio::time::timeout(header_timeout, send).await {
+                    Ok(result) => result,
+                    Err(_) => {
+                        if let Some(trace_id) = codex_trace_id.as_deref() {
+                            super::codex_router_log::append_event(
+                                "upstream_send_error",
+                                &[
+                                    ("trace", trace_id.to_string()),
+                                    ("session", self.session_id.clone()),
+                                    ("model", request_model_for_log.clone()),
+                                    ("provider", provider.id.clone()),
+                                    ("transport", "reqwest".to_string()),
+                                    (
+                                        "elapsed_ms",
+                                        upstream_started_at.elapsed().as_millis().to_string(),
+                                    ),
+                                    ("error", "streaming_response_header_timeout".to_string()),
+                                ],
+                            );
+                        }
+                        return Err(ProxyError::Timeout(format!(
                             "流式响应首包超时: {}s（上游未返回响应头）",
                             header_timeout.as_secs()
-                        ))
-                    })?
+                        )));
+                    }
+                }
             } else {
                 send.await
             };
-            let reqwest_resp = send_result.map_err(map_reqwest_send_error)?;
+            let reqwest_resp = match send_result {
+                Ok(resp) => resp,
+                Err(err) => {
+                    if let Some(trace_id) = codex_trace_id.as_deref() {
+                        super::codex_router_log::append_event(
+                            "upstream_send_error",
+                            &[
+                                ("trace", trace_id.to_string()),
+                                ("session", self.session_id.clone()),
+                                ("model", request_model_for_log.clone()),
+                                ("provider", provider.id.clone()),
+                                ("transport", "reqwest".to_string()),
+                                (
+                                    "elapsed_ms",
+                                    upstream_started_at.elapsed().as_millis().to_string(),
+                                ),
+                                ("error", err.to_string()),
+                            ],
+                        );
+                    }
+                    return Err(map_reqwest_send_error(err));
+                }
+            };
             ProxyResponse::Reqwest(reqwest_resp)
         } else {
             // HTTP 代理或直连：走 hyper raw write（保持 header 大小写）
@@ -1889,7 +2070,7 @@ impl RequestForwarder {
             let uri: http::Uri = url
                 .parse()
                 .map_err(|e| ProxyError::ForwardFailed(format!("Invalid URL '{url}': {e}")))?;
-            super::hyper_client::send_request(
+            match super::hyper_client::send_request(
                 uri,
                 method.clone(),
                 ordered_headers,
@@ -1898,20 +2079,98 @@ impl RequestForwarder {
                 timeout,
                 upstream_proxy_url.as_deref(),
             )
-            .await?
+            .await
+            {
+                Ok(response) => response,
+                Err(err) => {
+                    if let Some(trace_id) = codex_trace_id.as_deref() {
+                        super::codex_router_log::append_event(
+                            "upstream_send_error",
+                            &[
+                                ("trace", trace_id.to_string()),
+                                ("session", self.session_id.clone()),
+                                ("model", request_model_for_log.clone()),
+                                ("provider", provider.id.clone()),
+                                ("transport", "hyper".to_string()),
+                                (
+                                    "elapsed_ms",
+                                    upstream_started_at.elapsed().as_millis().to_string(),
+                                ),
+                                ("error", err.to_string()),
+                            ],
+                        );
+                    }
+                    return Err(err);
+                }
+            }
         };
 
         // 检查响应状态
         let status = response.status();
+        let upstream_elapsed_ms = upstream_started_at.elapsed().as_millis().to_string();
+        if let Some(trace_id) = codex_trace_id.as_deref() {
+            super::codex_router_log::append_event(
+                "upstream_status",
+                &[
+                    ("trace", trace_id.to_string()),
+                    ("session", self.session_id.clone()),
+                    ("model", request_model_for_log.clone()),
+                    ("provider", provider.id.clone()),
+                    ("status", status.as_u16().to_string()),
+                    ("streaming", request_is_streaming.to_string()),
+                    ("elapsed_ms", upstream_elapsed_ms.clone()),
+                ],
+            );
+        }
 
         if status.is_success() {
+            let response_prepare_started_at = std::time::Instant::now();
             let response = self
                 .prepare_success_response_for_failover(response, request_is_streaming)
                 .await?;
+            if let Some(trace_id) = codex_trace_id.as_deref() {
+                super::codex_router_log::append_event(
+                    "response_ready",
+                    &[
+                        ("trace", trace_id.to_string()),
+                        ("session", self.session_id.clone()),
+                        ("model", request_model_for_log.clone()),
+                        ("provider", provider.id.clone()),
+                        ("status", status.as_u16().to_string()),
+                        ("streaming", request_is_streaming.to_string()),
+                        (
+                            "elapsed_ms",
+                            response_prepare_started_at
+                                .elapsed()
+                                .as_millis()
+                                .to_string(),
+                        ),
+                    ],
+                );
+            }
             Ok((response, resolved_claude_api_format, provider.clone()))
         } else {
             let status_code = status.as_u16();
             let body_text = String::from_utf8(response.bytes().await?.to_vec()).ok();
+            if let Some(trace_id) = codex_trace_id.as_deref() {
+                super::codex_router_log::append_event(
+                    "upstream_error",
+                    &[
+                        ("trace", trace_id.to_string()),
+                        ("session", self.session_id.clone()),
+                        ("model", request_model_for_log.clone()),
+                        ("provider", provider.id.clone()),
+                        ("status", status_code.to_string()),
+                        (
+                            "body_summary",
+                            body_text
+                                .as_deref()
+                                .map(summarize_upstream_body)
+                                .unwrap_or_else(|| "<empty>".to_string()),
+                        ),
+                    ],
+                );
+            }
 
             Err(ProxyError::UpstreamError {
                 status: status_code,
@@ -2584,6 +2843,28 @@ fn value_for_log(value: &Value) -> String {
     }
 }
 
+/// 判断 Codex provider 是否声明了本地模型路由。
+///
+/// 这个标记用于区分普通 Codex provider 与“外层 bucket router”。只有 router
+/// provider 发生 route miss 时，才需要额外防止回退到自身本地代理地址。
+fn codex_provider_has_routing_config(provider: &Provider) -> bool {
+    provider.settings_config.get("codexRouting").is_some()
+        || provider.settings_config.get("codexModelRoutes").is_some()
+        || provider.settings_config.get("modelRoutes").is_some()
+}
+
+/// 判断 fallback base_url 是否指向本机代理入口。
+///
+/// 这里不依赖端口固定值，因为历史配置里出现过 15721 Rust proxy 和 15722
+/// Node sidecar；只要 router provider 在 route miss 后回到本机地址，就有递归或
+/// 未运行服务导致超时的风险。
+fn codex_base_url_points_to_local_proxy(base_url: &str) -> bool {
+    let normalized = base_url.trim().to_ascii_lowercase();
+    normalized.contains("://127.0.0.1")
+        || normalized.contains("://localhost")
+        || normalized.contains("://[::1]")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2705,6 +2986,31 @@ mod tests {
         let summary = summarize_text_for_log("line1\n\n line2   line3", 12);
 
         assert_eq!(summary, "line1 line2...");
+    }
+
+    #[test]
+    fn codex_local_router_fallback_detection_covers_known_loopback_urls() {
+        assert!(codex_base_url_points_to_local_proxy(
+            "http://127.0.0.1:15721/v1"
+        ));
+        assert!(codex_base_url_points_to_local_proxy(
+            "http://localhost:15722/v1"
+        ));
+        assert!(!codex_base_url_points_to_local_proxy(
+            "https://api.openai.com/v1"
+        ));
+    }
+
+    #[test]
+    fn codex_routing_config_detection_reads_new_and_legacy_fields() {
+        let mut provider = test_provider_with_type(None);
+        assert!(!codex_provider_has_routing_config(&provider));
+
+        provider.settings_config = json!({ "codexRouting": { "routes": [] } });
+        assert!(codex_provider_has_routing_config(&provider));
+
+        provider.settings_config = json!({ "modelRoutes": [] });
+        assert!(codex_provider_has_routing_config(&provider));
     }
 
     #[test]

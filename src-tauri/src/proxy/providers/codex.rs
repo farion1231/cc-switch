@@ -402,6 +402,9 @@ fn build_codex_routed_provider(
             meta.auth_binding = Some(binding);
         }
     }
+    if let Some(reasoning_config) = codex_route_chat_reasoning_config(upstream, route) {
+        meta.codex_chat_reasoning = Some(reasoning_config);
+    }
     routed.meta = Some(meta);
 
     routed
@@ -539,6 +542,23 @@ fn codex_route_auth_binding(upstream: &JsonValue, route: &JsonValue) -> Option<A
 
     None
 }
+
+/// 从单条 Codex route 中读取 Responses -> Chat reasoning 覆盖配置。
+///
+/// 用途：复合路由 provider 可能同时包含 OpenAI、DeepSeek、Qwen 等不同上游；
+/// 每个上游的 thinking/effort 参数语义不同，必须允许 route 层覆盖全局推断结果。
+fn codex_route_chat_reasoning_config(
+    upstream: &JsonValue,
+    route: &JsonValue,
+) -> Option<CodexChatReasoningConfig> {
+    upstream
+        .get("codexChatReasoning")
+        .or_else(|| upstream.get("codex_chat_reasoning"))
+        .or_else(|| route.get("codexChatReasoning"))
+        .or_else(|| route.get("codex_chat_reasoning"))
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
+        .map(normalize_codex_chat_reasoning_config)
+}
 /// Extract the real upstream model configured for a Codex provider.
 pub fn codex_provider_upstream_model(provider: &Provider) -> Option<String> {
     provider
@@ -669,6 +689,7 @@ fn infer_codex_chat_reasoning_config(
             thinking_param: Some("thinking".to_string()),
             effort_param: Some("reasoning_effort".to_string()),
             effort_value_mode: Some("deepseek".to_string()),
+            min_output_tokens: None,
             output_format: Some("reasoning_content".to_string()),
         });
     }
@@ -683,6 +704,7 @@ fn infer_codex_chat_reasoning_config(
             thinking_param: Some("none".to_string()),
             effort_param: Some("reasoning_effort".to_string()),
             effort_value_mode: Some("low_high".to_string()),
+            min_output_tokens: None,
             output_format: Some("reasoning".to_string()),
         });
     }
@@ -694,6 +716,7 @@ fn infer_codex_chat_reasoning_config(
             thinking_param: Some("thinking".to_string()),
             effort_param: Some("none".to_string()),
             effort_value_mode: None,
+            min_output_tokens: None,
             output_format: Some("reasoning_content".to_string()),
         });
     }
@@ -705,6 +728,23 @@ fn infer_codex_chat_reasoning_config(
             thinking_param: Some("thinking".to_string()),
             effort_param: Some("none".to_string()),
             effort_value_mode: None,
+            min_output_tokens: None,
+            output_format: Some("reasoning_content".to_string()),
+        });
+    }
+
+    // 本地 / vLLM 托管的 Qwen 兼容端点会先输出 reasoning；
+    // Codex 小 `max_output_tokens` 请求容易被思考内容吃满，所以保持 thinking 开启并设置最小输出预算。
+    if haystack.contains("qwen")
+        && (haystack.contains("vllm") || haystack.contains("matrixminecraft"))
+    {
+        return Some(CodexChatReasoningConfig {
+            supports_thinking: Some(true),
+            supports_effort: Some(false),
+            thinking_param: Some("enable_thinking".to_string()),
+            effort_param: Some("none".to_string()),
+            effort_value_mode: None,
+            min_output_tokens: Some(2048),
             output_format: Some("reasoning_content".to_string()),
         });
     }
@@ -716,6 +756,7 @@ fn infer_codex_chat_reasoning_config(
             thinking_param: Some("enable_thinking".to_string()),
             effort_param: Some("none".to_string()),
             effort_value_mode: None,
+            min_output_tokens: None,
             output_format: Some("reasoning_content".to_string()),
         });
     }
@@ -727,6 +768,7 @@ fn infer_codex_chat_reasoning_config(
             thinking_param: Some("reasoning_split".to_string()),
             effort_param: Some("none".to_string()),
             effort_value_mode: None,
+            min_output_tokens: None,
             output_format: Some("reasoning_details".to_string()),
         });
     }
@@ -738,6 +780,7 @@ fn infer_codex_chat_reasoning_config(
             thinking_param: Some("thinking".to_string()),
             effort_param: Some("none".to_string()),
             effort_value_mode: None,
+            min_output_tokens: None,
             output_format: Some("reasoning_content".to_string()),
         });
     }
@@ -767,6 +810,7 @@ fn infer_aggregator_platform_config(
             thinking_param: Some("none".to_string()),
             effort_param: Some("reasoning.effort".to_string()),
             effort_value_mode: Some("openrouter".to_string()),
+            min_output_tokens: None,
             output_format: Some("auto".to_string()),
         });
     }
@@ -781,6 +825,7 @@ fn infer_aggregator_platform_config(
             thinking_param: Some("enable_thinking".to_string()),
             effort_param: Some("none".to_string()),
             effort_value_mode: None,
+            min_output_tokens: None,
             output_format: Some("reasoning_content".to_string()),
         });
     }
@@ -981,17 +1026,8 @@ impl ProviderAdapter for CodexAdapter {
 
             // 尝试解析 TOML 字符串格式
             if let Some(config_str) = config.as_str() {
-                if let Some(start) = config_str.find("base_url = \"") {
-                    let rest = &config_str[start + 12..];
-                    if let Some(end) = rest.find('"') {
-                        return Ok(rest[..end].trim_end_matches('/').to_string());
-                    }
-                }
-                if let Some(start) = config_str.find("base_url = '") {
-                    let rest = &config_str[start + 12..];
-                    if let Some(end) = rest.find('\'') {
-                        return Ok(rest[..end].trim_end_matches('/').to_string());
-                    }
+                if let Some(url) = extract_codex_base_url_from_toml(config_str) {
+                    return Ok(url.trim_end_matches('/').to_string());
                 }
             }
         }
@@ -1168,6 +1204,66 @@ mod tests {
             routed.settings_config["base_url"],
             "https://www.matrixminecraft.cn:24443/vllm/v1"
         );
+    }
+
+    #[test]
+    fn test_codex_model_route_overrides_chat_reasoning_config() {
+        let provider = create_provider(json!({
+            "modelRoutes": [
+                {
+                    "id": "qwen",
+                    "name": "Qwen",
+                    "models": ["qwen3.6"],
+                    "base_url": "https://www.matrixminecraft.cn:24443/vllm/v1",
+                    "wire_api": "chat",
+                    "codexChatReasoning": {
+                        "supportsThinking": true,
+                        "supportsEffort": false,
+                        "thinkingParam": "enable_thinking",
+                        "effortParam": "none",
+                        "minOutputTokens": 2048,
+                        "outputFormat": "reasoning_content"
+                    }
+                }
+            ]
+        }));
+
+        let routed = resolve_codex_model_routed_provider(&provider, &json!({ "model": "qwen3.6" }))
+            .expect("qwen route");
+        let config = resolve_codex_chat_reasoning_config(&routed, &json!({ "model": "qwen3.6" }))
+            .expect("route reasoning config");
+
+        assert_eq!(config.supports_thinking, Some(true));
+        assert_eq!(config.supports_effort, Some(false));
+        assert_eq!(config.thinking_param.as_deref(), Some("enable_thinking"));
+        assert_eq!(config.effort_param.as_deref(), Some("none"));
+        assert_eq!(config.min_output_tokens, Some(2048));
+    }
+
+    #[test]
+    fn test_qwen_vllm_route_infers_thinking_with_larger_budget() {
+        let provider = create_provider(json!({
+            "modelRoutes": [
+                {
+                    "id": "qwen",
+                    "name": "Qwen",
+                    "models": ["qwen3.6"],
+                    "base_url": "https://www.matrixminecraft.cn:24443/vllm/v1",
+                    "wire_api": "chat"
+                }
+            ]
+        }));
+
+        let routed = resolve_codex_model_routed_provider(&provider, &json!({ "model": "qwen3.6" }))
+            .expect("qwen route");
+        let config = resolve_codex_chat_reasoning_config(&routed, &json!({ "model": "qwen3.6" }))
+            .expect("inferred qwen vllm reasoning config");
+
+        assert_eq!(config.supports_thinking, Some(true));
+        assert_eq!(config.supports_effort, Some(false));
+        assert_eq!(config.thinking_param.as_deref(), Some("enable_thinking"));
+        assert_eq!(config.effort_param.as_deref(), Some("none"));
+        assert_eq!(config.min_output_tokens, Some(2048));
     }
 
     #[test]
@@ -1548,6 +1644,49 @@ experimental_bearer_token = "sk-config-key"
     }
 
     #[test]
+    fn test_extract_base_url_uses_active_model_provider_only() {
+        let adapter = CodexAdapter::new();
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "openai"
+
+[model_providers.router]
+name = "Inactive Router"
+base_url = "http://127.0.0.1:15721/v1"
+
+[mcp_servers.local]
+base_url = "http://localhost:15722"
+
+[model_providers.openai]
+name = "OpenAI"
+base_url = "https://api.openai.com/v1"
+wire_api = "responses"
+"#
+        }));
+
+        let base_url = adapter.extract_base_url(&provider).unwrap();
+        assert_eq!(base_url, "https://api.openai.com/v1");
+    }
+
+    #[test]
+    fn test_extract_base_url_uses_openai_base_url_for_builtin_openai() {
+        let adapter = CodexAdapter::new();
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "openai"
+openai_base_url = "http://127.0.0.1:15721/v1"
+
+[model_providers.router]
+name = "Inactive Router"
+base_url = "http://127.0.0.1:9999/v1"
+"#
+        }));
+
+        let base_url = adapter.extract_base_url(&provider).unwrap();
+        assert_eq!(base_url, "http://127.0.0.1:15721/v1");
+    }
+
+    #[test]
     fn test_build_url() {
         let adapter = CodexAdapter::new();
         let url = adapter.build_url("https://api.openai.com/v1", "/responses");
@@ -1787,6 +1926,7 @@ wire_api = "chat"
                 thinking_param: Some("none".to_string()),
                 effort_param: Some("none".to_string()),
                 effort_value_mode: None,
+                min_output_tokens: None,
                 output_format: Some("auto".to_string()),
             }),
             ..Default::default()

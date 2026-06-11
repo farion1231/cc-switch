@@ -688,8 +688,7 @@ pub fn create_logged_passthrough_stream(
         let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut collector = usage_collector;
         let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
-        let inspect_sse_events =
-            collector.is_some() || log::log_enabled!(log::Level::Debug);
+        let inspect_sse_events = collector.is_some();
         let mut is_first_chunk = true;
 
         // 超时配置
@@ -763,9 +762,10 @@ pub fn create_logged_passthrough_stream(
                                                 _ => false,
                                             };
                                             if collected {
-                                                log::debug!("[{tag}] <<< SSE 事件: {data}");
-                                            } else {
-                                                log::debug!("[{tag}] <<< SSE 数据: {data}");
+                                                log::debug!(
+                                                    "[{tag}] <<< SSE usage event collected bytes={}",
+                                                    data.len()
+                                                );
                                             }
                                         } else {
                                             log::debug!("[{tag}] <<< SSE: [DONE]");

@@ -5,9 +5,11 @@
 pub mod body_filter;
 pub mod cache_injector;
 pub mod circuit_breaker;
+pub(crate) mod codex_router_log;
 pub mod copilot_optimizer;
 pub mod error;
 pub mod error_mapper;
+pub mod external_openai_api;
 pub(crate) mod failover_switch;
 mod forwarder;
 pub mod gemini_url;

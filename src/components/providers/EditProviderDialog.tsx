@@ -148,10 +148,16 @@ export function EditProviderDialog({
       provider?.settingsConfig &&
       typeof provider.settingsConfig === "object"
     ) {
-      const dbCatalog = (provider.settingsConfig as Record<string, unknown>)
-        .modelCatalog;
-      if (dbCatalog !== undefined) {
-        return { ...base, modelCatalog: dbCatalog };
+      const dbConfig = provider.settingsConfig as Record<string, unknown>;
+      let merged = base;
+      for (const privateField of ["modelCatalog", "codexRouting"]) {
+        const dbValue = dbConfig[privateField];
+        if (dbValue !== undefined) {
+          merged = { ...merged, [privateField]: dbValue };
+        }
+      }
+      if (merged !== base) {
+        return merged;
       }
     }
 

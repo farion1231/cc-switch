@@ -100,6 +100,16 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
   return false;
 }
 
+// Codex router 的官方 OAuth 写在 route 里，外层 provider 仍然要通过本地代理接管。
+function hasCodexRoutingConfig(provider: Provider): boolean {
+  const routing = (provider.settingsConfig as Record<string, any>)?.codexRouting;
+  if (!routing || typeof routing !== "object") return false;
+  return (
+    routing.enabled !== false ||
+    (Array.isArray(routing.routes) && routing.routes.length > 0)
+  );
+}
+
 const extractApiUrl = (provider: Provider, fallbackText: string) => {
   if (provider.notes?.trim()) {
     return provider.notes.trim();
@@ -218,8 +228,12 @@ export function ProviderCard({
     appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
   const isCodexOauth =
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
+  const codexHasRouting =
+    appId === "codex" && hasCodexRoutingConfig(provider);
   const codexNeedsRouting = useMemo(() => {
-    if (appId !== "codex" || provider.category === "official") return false;
+    if (appId !== "codex") return false;
+    if (hasCodexRoutingConfig(provider)) return true;
+    if (provider.category === "official") return false;
     if (provider.meta?.apiFormat === "openai_chat") return true;
     const config = (provider.settingsConfig as Record<string, any>)?.config;
     return (
@@ -231,6 +245,7 @@ export function ProviderCard({
     provider.category,
     provider.meta?.apiFormat,
     (provider.settingsConfig as Record<string, any>)?.config,
+    (provider.settingsConfig as Record<string, any>)?.codexRouting,
   ]);
   const isClaudeThirdParty =
     appId === "claude" && provider.category === "third_party";
@@ -402,7 +417,9 @@ export function ProviderCard({
                 </span>
               )}
 
-              {appId === "codex" && provider.category === "official" && (
+              {appId === "codex" &&
+                provider.category === "official" &&
+                !codexHasRouting && (
                 <span className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200">
                   {t("codex.noRoutingSupport", {
                     defaultValue: "不支持路由",

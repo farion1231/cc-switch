@@ -323,10 +323,22 @@ impl ProxyServer {
             .route("/models", get(handlers::handle_models))
             .route("/v1/models", get(handlers::handle_models))
             // OpenAI Responses API (Codex CLI，支持带前缀和不带前缀)
-            .route("/responses", post(handlers::handle_responses))
-            .route("/v1/responses", post(handlers::handle_responses))
-            .route("/v1/v1/responses", post(handlers::handle_responses))
-            .route("/codex/v1/responses", post(handlers::handle_responses))
+            .route(
+                "/responses",
+                get(handlers::handle_responses_websocket_fallback).post(handlers::handle_responses),
+            )
+            .route(
+                "/v1/responses",
+                get(handlers::handle_responses_websocket_fallback).post(handlers::handle_responses),
+            )
+            .route(
+                "/v1/v1/responses",
+                get(handlers::handle_responses_websocket_fallback).post(handlers::handle_responses),
+            )
+            .route(
+                "/codex/v1/responses",
+                get(handlers::handle_responses_websocket_fallback).post(handlers::handle_responses),
+            )
             // OpenAI Responses Compact API (Codex CLI 远程压缩，透传)
             .route(
                 "/responses/compact",
@@ -391,5 +403,396 @@ impl ProxyServer {
             .provider_router
             .reset_provider_breaker(provider_id, app_type)
             .await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        provider::Provider,
+        proxy::external_openai_api::{
+            self, ExternalOpenAiApiBackendType, ExternalOpenAiApiProfileUpdate,
+        },
+    };
+    use axum::{body::Body, response::IntoResponse, Json};
+    use http::{header, Method, Request, StatusCode};
+    use http_body_util::BodyExt;
+    use serde_json::{json, Value};
+    use tower::ServiceExt;
+
+    /// 构造只用于 router 测试的内存数据库和 proxy server。
+    fn build_test_server() -> (ProxyServer, Arc<Database>) {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let config = ProxyConfig {
+            listen_address: "127.0.0.1".to_string(),
+            listen_port: 15721,
+            ..ProxyConfig::default()
+        };
+        (ProxyServer::new(config, db.clone(), None), db)
+    }
+
+    /// 读取 Axum 响应体为 JSON，方便断言 OpenAI-compatible 响应结构。
+    async fn response_json(response: axum::response::Response) -> Value {
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("collect body")
+            .to_bytes();
+        serde_json::from_slice(&body).expect("json body")
+    }
+
+    #[tokio::test]
+    async fn v1_models_requires_external_api_key_for_non_codex_clients() {
+        let (server, _db) = build_test_server();
+        let response = server
+            .build_router()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/v1/models")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = response_json(response).await;
+        assert_eq!(body["error"]["type"], "authentication_error");
+        assert_eq!(body["error"]["code"], "external_openai_api_disabled");
+    }
+
+    #[tokio::test]
+    async fn v1_models_returns_profile_backend_models_with_valid_key() {
+        let (server, db) = build_test_server();
+        db.save_provider(
+            "hermes",
+            &Provider::with_id(
+                "selected".to_string(),
+                "Selected".to_string(),
+                json!({
+                    "base_url": "https://selected.example/v1",
+                    "api_key": "sk-selected",
+                    "models": ["visible-model"]
+                }),
+                None,
+            ),
+        )
+        .expect("save provider");
+        let generated = external_openai_api::regenerate_api_key(&db).expect("generate key");
+        external_openai_api::update_profile(
+            &db,
+            ExternalOpenAiApiProfileUpdate {
+                enabled: true,
+                backend_type: ExternalOpenAiApiBackendType::Provider,
+                app_type: Some("hermes".to_string()),
+                provider_id: Some("selected".to_string()),
+                route_id: None,
+                default_model: Some("default-visible".to_string()),
+            },
+        )
+        .expect("enable profile");
+
+        let response = server
+            .build_router()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/v1/models")
+                    .header(
+                        header::AUTHORIZATION,
+                        format!("Bearer {}", generated.api_key),
+                    )
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        let ids: Vec<_> = body["data"]
+            .as_array()
+            .expect("data array")
+            .iter()
+            .filter_map(|model| model.get("id").and_then(|id| id.as_str()))
+            .collect();
+
+        assert!(ids.contains(&"visible-model"));
+        assert!(ids.contains(&"default-visible"));
+        assert_eq!(body["object"], "list");
+    }
+
+    #[tokio::test]
+    async fn v1_chat_completions_forwards_to_profile_backend() {
+        let (upstream_base_url, _upstream_task) = spawn_openai_chat_mock().await;
+        let (server, db) = build_test_server();
+        db.save_provider(
+            "hermes",
+            &Provider::with_id(
+                "selected".to_string(),
+                "Selected".to_string(),
+                json!({
+                    "base_url": upstream_base_url,
+                    "api_key": "sk-selected",
+                    "models": ["visible-model"]
+                }),
+                None,
+            ),
+        )
+        .expect("save provider");
+        let generated = external_openai_api::regenerate_api_key(&db).expect("generate key");
+        external_openai_api::update_profile(
+            &db,
+            ExternalOpenAiApiProfileUpdate {
+                enabled: true,
+                backend_type: ExternalOpenAiApiBackendType::Provider,
+                app_type: Some("hermes".to_string()),
+                provider_id: Some("selected".to_string()),
+                route_id: None,
+                default_model: Some("visible-model".to_string()),
+            },
+        )
+        .expect("enable profile");
+
+        let response = server
+            .build_router()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/chat/completions")
+                    .header(
+                        header::AUTHORIZATION,
+                        format!("Bearer {}", generated.api_key),
+                    )
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "model": "visible-model",
+                            "messages": [{ "role": "user", "content": "ping" }]
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        let status = response.status();
+        let body = response_json(response).await;
+        assert_eq!(status, StatusCode::OK, "unexpected response body: {body}");
+        assert_eq!(body["object"], "chat.completion");
+        assert_eq!(body["choices"][0]["message"]["content"], "pong");
+    }
+
+    #[tokio::test]
+    async fn v1_chat_completions_stream_forwards_sse_chunks() {
+        let (upstream_base_url, _upstream_task) = spawn_openai_chat_mock().await;
+        let (server, db) = build_test_server();
+        db.save_provider(
+            "hermes",
+            &Provider::with_id(
+                "selected".to_string(),
+                "Selected".to_string(),
+                json!({
+                    "base_url": upstream_base_url,
+                    "api_key": "sk-selected",
+                    "models": ["visible-model"]
+                }),
+                None,
+            ),
+        )
+        .expect("save provider");
+        let generated = external_openai_api::regenerate_api_key(&db).expect("generate key");
+        external_openai_api::update_profile(
+            &db,
+            ExternalOpenAiApiProfileUpdate {
+                enabled: true,
+                backend_type: ExternalOpenAiApiBackendType::Provider,
+                app_type: Some("hermes".to_string()),
+                provider_id: Some("selected".to_string()),
+                route_id: None,
+                default_model: Some("visible-model".to_string()),
+            },
+        )
+        .expect("enable profile");
+
+        let response = server
+            .build_router()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/chat/completions")
+                    .header(
+                        header::AUTHORIZATION,
+                        format!("Bearer {}", generated.api_key),
+                    )
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "model": "visible-model",
+                            "stream": true,
+                            "messages": [{ "role": "user", "content": "ping" }]
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&http::HeaderValue::from_static("text/event-stream"))
+        );
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("collect stream")
+            .to_bytes();
+        let text = String::from_utf8(body.to_vec()).expect("utf8 stream");
+
+        assert!(text.contains("\"object\":\"chat.completion.chunk\""));
+        assert!(text.contains("\"content\":\"pong\""));
+        assert!(text.contains("data: [DONE]"));
+    }
+
+    #[tokio::test]
+    async fn v1_responses_requires_external_api_key_for_non_codex_clients() {
+        let (server, _db) = build_test_server();
+        let response = server
+            .build_router()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/responses")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "model": "visible-model",
+                            "input": "ping"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = response_json(response).await;
+        assert_eq!(body["error"]["type"], "authentication_error");
+        assert_eq!(body["error"]["code"], "external_openai_api_disabled");
+    }
+
+    #[tokio::test]
+    async fn v1_responses_rejects_chat_only_backend_with_openai_style_error() {
+        let (server, db) = build_test_server();
+        db.save_provider(
+            "hermes",
+            &Provider::with_id(
+                "selected".to_string(),
+                "Selected".to_string(),
+                json!({
+                    "base_url": "https://selected.example/v1",
+                    "api_key": "sk-selected",
+                    "models": ["visible-model"]
+                }),
+                None,
+            ),
+        )
+        .expect("save provider");
+        let generated = external_openai_api::regenerate_api_key(&db).expect("generate key");
+        external_openai_api::update_profile(
+            &db,
+            ExternalOpenAiApiProfileUpdate {
+                enabled: true,
+                backend_type: ExternalOpenAiApiBackendType::Provider,
+                app_type: Some("hermes".to_string()),
+                provider_id: Some("selected".to_string()),
+                route_id: None,
+                default_model: Some("visible-model".to_string()),
+            },
+        )
+        .expect("enable profile");
+
+        let response = server
+            .build_router()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/responses")
+                    .header(
+                        header::AUTHORIZATION,
+                        format!("Bearer {}", generated.api_key),
+                    )
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "model": "visible-model",
+                            "input": "ping"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response_json(response).await;
+        assert_eq!(body["error"]["type"], "invalid_request_error");
+        assert_eq!(
+            body["error"]["code"],
+            "external_openai_api_unsupported_backend"
+        );
+    }
+
+    /// 启动一个只服务 OpenAI Chat Completions 的本地 mock upstream。
+    async fn spawn_openai_chat_mock() -> (String, tokio::task::JoinHandle<()>) {
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(|Json(body): Json<Value>| async move {
+                if body.get("stream").and_then(|value| value.as_bool()) == Some(true) {
+                    return (
+                        [(header::CONTENT_TYPE, "text/event-stream")],
+                        "data: {\"id\":\"chatcmpl_mock\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"visible-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"pong\"},\"finish_reason\":null}]}\n\n\
+                         data: [DONE]\n\n",
+                    )
+                        .into_response();
+                }
+                Json(json!({
+                    "id": "chatcmpl_mock",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": "visible-model",
+                    "choices": [{
+                        "index": 0,
+                        "message": { "role": "assistant", "content": "pong" },
+                        "finish_reason": "stop"
+                    }],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2
+                    }
+                }))
+                .into_response()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock upstream");
+        let addr = listener.local_addr().expect("mock upstream addr");
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("mock upstream serve");
+        });
+        (format!("http://{addr}/v1"), task)
     }
 }

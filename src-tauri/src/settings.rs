@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
 
@@ -284,6 +283,9 @@ impl S3SyncSettings {
 pub struct LocalMigrations {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_third_party_history_provider_bucket_v1:
+        Option<CodexThirdPartyHistoryProviderBucketMigration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_openai_history_provider_bucket_v2:
         Option<CodexThirdPartyHistoryProviderBucketMigration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_provider_template_v1: Option<CodexProviderTemplateMigration>,
@@ -737,6 +739,25 @@ pub fn mark_codex_third_party_history_provider_bucket_migrated(
             .local_migrations
             .get_or_insert_with(Default::default);
         migrations.codex_third_party_history_provider_bucket_v1 = Some(migration);
+    })
+}
+
+pub fn is_codex_openai_history_provider_bucket_migrated() -> bool {
+    get_settings()
+        .local_migrations
+        .as_ref()
+        .and_then(|migrations| migrations.codex_openai_history_provider_bucket_v2.as_ref())
+        .is_some_and(|m| m.scanned_history_files)
+}
+
+pub fn mark_codex_openai_history_provider_bucket_migrated(
+    migration: CodexThirdPartyHistoryProviderBucketMigration,
+) -> Result<(), AppError> {
+    mutate_settings(|settings| {
+        let migrations = settings
+            .local_migrations
+            .get_or_insert_with(Default::default);
+        migrations.codex_openai_history_provider_bucket_v2 = Some(migration);
     })
 }
 

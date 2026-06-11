@@ -138,3 +138,51 @@ export interface AppProxyConfig {
   circuitErrorRateThreshold: number;
   circuitMinRequests: number;
 }
+
+export interface ExternalOpenAIAPIProfile {
+  enabled: boolean;
+  backendType: "provider" | "codex_router_route";
+  appType?: string | null;
+  providerId?: string | null;
+  routeId?: string | null;
+  defaultModel?: string | null;
+  apiKeyPrefix?: string | null;
+  hasApiKey: boolean;
+}
+
+export interface ExternalOpenAIAPIProfileUpdate {
+  enabled: boolean;
+  backendType: "provider" | "codex_router_route";
+  appType?: string | null;
+  providerId?: string | null;
+  routeId?: string | null;
+  defaultModel?: string | null;
+}
+
+export interface GeneratedExternalOpenAIAPIKey {
+  profile: ExternalOpenAIAPIProfile;
+  apiKey: string;
+}
+
+export interface ExternalOpenAIAPIBackendOption {
+  key: string;
+  backendType: "provider" | "codex_router_route";
+  appType: string;
+  providerId: string;
+  routeId?: string | null;
+  label: string;
+  description: string;
+  models: string[];
+  isManagedOAuth: boolean;
+  available: boolean;
+  error?: string | null;
+}
+
+export interface ExternalOpenAIAPIRuntimeStatus {
+  profile: ExternalOpenAIAPIProfile;
+  selectedBackend?: ExternalOpenAIAPIBackendOption | null;
+  backendOptions: ExternalOpenAIAPIBackendOption[];
+  effectiveModel?: string | null;
+  ready: boolean;
+  issues: string[];
+}

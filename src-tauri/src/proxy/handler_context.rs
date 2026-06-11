@@ -170,6 +170,65 @@ impl RequestContext {
         })
     }
 
+    /// 使用指定 provider 创建请求上下文。
+    ///
+    /// 该构造器用于第三方 OpenAI-compatible API：外部请求的后端已经由
+    /// External API profile 明确指定，因此不能再依赖 Codex current provider
+    /// 或数据库中的 failover/current provider 选择。它仍复用应用级超时、优化器、
+    /// 整流器和 session 提取配置，但 provider 链只包含传入的临时 provider。
+    pub async fn new_with_provider(
+        state: &ProxyState,
+        body: &serde_json::Value,
+        headers: &HeaderMap,
+        app_type: AppType,
+        tag: &'static str,
+        app_type_str: &'static str,
+        provider: Provider,
+    ) -> Result<Self, ProxyError> {
+        let start_time = Instant::now();
+        let app_config = state
+            .db
+            .get_proxy_config_for_app(app_type_str)
+            .await
+            .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+        let rectifier_config = state.db.get_rectifier_config().unwrap_or_default();
+        let optimizer_config = state.db.get_optimizer_config().unwrap_or_default();
+        let copilot_optimizer_config = state.db.get_copilot_optimizer_config().unwrap_or_default();
+        let request_model = body
+            .get("model")
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let session_result = extract_session_id(headers, body, app_type_str);
+        let session_id = session_result.session_id.clone();
+        let current_provider_id = provider.id.clone();
+
+        log::debug!(
+            "[{}] External provider: {}, model: {}, session: {}",
+            tag,
+            provider.name,
+            request_model,
+            session_id
+        );
+
+        Ok(Self {
+            start_time,
+            app_config,
+            provider: provider.clone(),
+            providers: vec![provider],
+            current_provider_id,
+            request_model,
+            tag,
+            app_type_str,
+            app_type,
+            session_id,
+            session_client_provided: session_result.client_provided,
+            rectifier_config,
+            optimizer_config,
+            copilot_optimizer_config,
+        })
+    }
+
     /// 从 URI 提取模型名称（Gemini 专用）
     ///
     /// Gemini API 的模型名称在 URI 中，格式如：

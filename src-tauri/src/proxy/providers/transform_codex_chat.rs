@@ -269,11 +269,11 @@ pub fn responses_to_chat_completions_with_reasoning_and_text_only(
 ) -> Result<Value, ProxyError> {
     let mut result = json!({});
     let tool_context = build_codex_tool_context_from_request(&body);
-    let text_only_model = text_only_override.unwrap_or_else(|| {
-        body.get("model")
+    let text_only_model = text_only_override.unwrap_or(false)
+        || body
+            .get("model")
             .and_then(|value| value.as_str())
-            .is_some_and(codex_chat_model_is_text_only)
-    });
+            .is_some_and(codex_chat_model_is_text_only);
 
     if let Some(model) = body.get("model") {
         result["model"] = model.clone();
@@ -315,6 +315,7 @@ pub fn responses_to_chat_completions_with_reasoning_and_text_only(
     if let Some(max_tokens) = body.get("max_completion_tokens") {
         result["max_completion_tokens"] = max_tokens.clone();
     }
+    apply_min_output_tokens(&mut result, model, reasoning_config);
 
     for key in ["temperature", "top_p", "stream"] {
         if let Some(value) = body.get(key) {
@@ -375,6 +376,34 @@ pub fn responses_to_chat_completions_with_reasoning_and_text_only(
     Ok(result)
 }
 
+/// 根据 provider/route 声明抬高 Chat 上游的最小输出预算。
+///
+/// 某些 Chat 兼容上游在小 `max_tokens` 请求下会先生成内部思考并直接触发 length，
+/// 导致 Codex 侧看不到正文。该函数只在显式配置 `minOutputTokens` 时生效。
+fn apply_min_output_tokens(
+    result: &mut Value,
+    model: &str,
+    config: Option<&CodexChatReasoningConfig>,
+) {
+    let Some(min_output_tokens) = config.and_then(|config| config.min_output_tokens) else {
+        return;
+    };
+    let token_field = if super::transform::is_openai_o_series(model) {
+        "max_completion_tokens"
+    } else {
+        "max_tokens"
+    };
+
+    let should_raise = result
+        .get(token_field)
+        .and_then(|value| value.as_u64())
+        .map(|current| current < min_output_tokens)
+        .unwrap_or(true);
+    if should_raise {
+        result[token_field] = json!(min_output_tokens);
+    }
+}
+
 fn apply_reasoning_options(
     result: &mut Value,
     body: &Value,
@@ -392,19 +421,23 @@ fn apply_reasoning_options(
 
     let supports_effort = config.supports_effort.unwrap_or(false);
     let supports_thinking = config.supports_thinking.unwrap_or(false) || supports_effort;
+    let thinking_param = config
+        .thinking_param
+        .as_deref()
+        .unwrap_or("thinking")
+        .trim()
+        .to_ascii_lowercase();
+
+    if !supports_thinking && thinking_param == "enable_thinking" {
+        result["enable_thinking"] = json!(false);
+    }
+
     let Some(reasoning_enabled) = reasoning_requested(body) else {
         return;
     };
 
     if supports_thinking {
-        match config
-            .thinking_param
-            .as_deref()
-            .unwrap_or("thinking")
-            .trim()
-            .to_ascii_lowercase()
-            .as_str()
-        {
+        match thinking_param.as_str() {
             "thinking" => {
                 result["thinking"] = json!({
                     "type": if reasoning_enabled { "enabled" } else { "disabled" }
@@ -972,9 +1005,13 @@ fn responses_item_reasoning_text(item: &Value) -> Option<String> {
 }
 
 fn codex_chat_model_is_text_only(model: &str) -> bool {
-    model.eq_ignore_ascii_case("gpt-5.3-codex-spark")
-        || model.eq_ignore_ascii_case("deepseek-v4-flash")
-        || model.eq_ignore_ascii_case("deepseek-v4-pro")
+    let normalized = model
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect::<String>();
+
+    normalized == "gpt53codexspark" || normalized.starts_with("deepseekv4")
 }
 
 fn responses_reasoning_item_text(item: &Value) -> Option<String> {
@@ -2036,6 +2073,54 @@ mod tests {
     }
 
     #[test]
+    fn responses_request_to_chat_downgrades_images_for_deepseekv4_aliases() {
+        let input = json!({
+            "model": "deepseekv4",
+            "input": [{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Describe this."},
+                    {"type": "input_image", "image_url": "data:image/png;base64,abc"}
+                ]
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let content = result["messages"][0]["content"].as_str().unwrap();
+
+        assert!(content.contains("Describe this."));
+        assert!(content.contains("text-only"));
+        assert!(!content.contains("image_url"));
+    }
+
+    #[test]
+    fn responses_request_to_chat_downgrades_deepseekv4_images_even_with_false_override() {
+        let input = json!({
+            "model": "DeepSeek V4 Pro",
+            "input": [{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Describe this."},
+                    {"type": "input_image", "image_url": "data:image/png;base64,abc"}
+                ]
+            }]
+        });
+
+        let reasoning = None;
+        let result = responses_to_chat_completions_with_reasoning_and_text_only(
+            input,
+            reasoning.as_ref(),
+            Some(false),
+        )
+        .unwrap();
+        let content = result["messages"][0]["content"].as_str().unwrap();
+
+        assert!(content.contains("Describe this."));
+        assert!(content.contains("text-only"));
+        assert!(!content.contains("image_url"));
+    }
+
+    #[test]
     fn responses_request_to_chat_downgrades_images_with_text_only_override() {
         let input = json!({
             "model": "gpt-5.4",
@@ -2235,6 +2320,7 @@ mod tests {
             thinking_param: Some("thinking".to_string()),
             effort_param: Some("reasoning_effort".to_string()),
             effort_value_mode: Some("deepseek".to_string()),
+            min_output_tokens: None,
             output_format: Some("reasoning_content".to_string()),
         };
 
@@ -2254,6 +2340,7 @@ mod tests {
             thinking_param: Some("none".to_string()),
             effort_param: Some("reasoning.effort".to_string()),
             effort_value_mode: Some("openrouter".to_string()),
+            min_output_tokens: None,
             output_format: Some("auto".to_string()),
         };
 
@@ -2295,6 +2382,7 @@ mod tests {
             thinking_param: Some("none".to_string()),
             effort_param: Some("reasoning.effort".to_string()),
             effort_value_mode: Some("openrouter".to_string()),
+            min_output_tokens: None,
             output_format: Some("auto".to_string()),
         };
 
@@ -2322,6 +2410,7 @@ mod tests {
             thinking_param: Some("thinking".to_string()),
             effort_param: Some("reasoning_effort".to_string()),
             effort_value_mode: Some("deepseek".to_string()),
+            min_output_tokens: None,
             output_format: Some("reasoning_content".to_string()),
         };
 
@@ -2351,6 +2440,7 @@ mod tests {
             thinking_param: Some("thinking".to_string()),
             effort_param: Some("none".to_string()),
             effort_value_mode: None,
+            min_output_tokens: None,
             output_format: Some("reasoning_content".to_string()),
         };
 
@@ -2373,6 +2463,7 @@ mod tests {
             thinking_param: Some("enable_thinking".to_string()),
             effort_param: Some("none".to_string()),
             effort_value_mode: None,
+            min_output_tokens: None,
             output_format: Some("reasoning_content".to_string()),
         };
 
@@ -2380,6 +2471,56 @@ mod tests {
 
         assert_eq!(result["enable_thinking"], true);
         assert!(result.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn responses_request_to_chat_applies_configured_min_output_tokens() {
+        let input = json!({
+            "model": "qwen3.6",
+            "input": "hello",
+            "max_output_tokens": 32,
+            "reasoning": {"effort": "medium"}
+        });
+        let config = CodexChatReasoningConfig {
+            supports_thinking: Some(false),
+            supports_effort: Some(false),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("none".to_string()),
+            effort_value_mode: None,
+            min_output_tokens: Some(1024),
+            output_format: Some("reasoning_content".to_string()),
+        };
+
+        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+
+        assert_eq!(result["max_tokens"], 1024);
+        assert!(result.get("enable_thinking").is_none());
+        assert!(result.get("thinking").is_none());
+    }
+
+    #[test]
+    fn responses_request_to_chat_keeps_qwen_thinking_with_larger_budget() {
+        let input = json!({
+            "model": "qwen3.6",
+            "input": "hello",
+            "max_output_tokens": 32,
+            "reasoning": {"effort": "medium"}
+        });
+        let config = CodexChatReasoningConfig {
+            supports_thinking: Some(true),
+            supports_effort: Some(false),
+            thinking_param: Some("enable_thinking".to_string()),
+            effort_param: Some("none".to_string()),
+            effort_value_mode: None,
+            min_output_tokens: Some(2048),
+            output_format: Some("reasoning_content".to_string()),
+        };
+
+        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+
+        assert_eq!(result["max_tokens"], 2048);
+        assert_eq!(result["enable_thinking"], true);
+        assert!(result.get("thinking").is_none());
     }
 
     #[test]

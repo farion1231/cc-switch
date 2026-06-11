@@ -17,6 +17,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tauri::Emitter;
 use tokio::sync::RwLock;
+use toml_edit::DocumentMut;
 
 /// 用于接管 Live 配置时的占位符（避免客户端提示缺少 key，同时不泄露真实 Token）
 const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
@@ -781,10 +782,74 @@ impl ProxyService {
         Ok(())
     }
 
-    /// 同步 Live 配置中的 Token 到数据库
+    /// 在 provider 切换锁内关闭单个 app 的代理接管。
     ///
-    /// 在清空 Live Token 之前调用，确保数据库中的 Provider 配置有最新的 Token。
-    /// 这样代理才能从数据库读取到正确的认证信息。
+    /// 调用方已经持有锁，因此这里直接执行恢复、清备份和停服判断。
+    // ProviderService 已经持有 app 切换锁时使用；只关闭当前 app 的接管态，
+    // 避免再次调用公开 takeover API 导致同一把锁重入死锁。
+    pub(crate) async fn disable_takeover_for_app_after_switch_lock(
+        &self,
+        app: &AppType,
+    ) -> Result<(), String> {
+        let app_type_str = app.as_str();
+        let current_config = self
+            .db
+            .get_proxy_config_for_app(app_type_str)
+            .await
+            .map_err(|e| format!("鑾峰彇 {app_type_str} 閰嶇疆澶辫触: {e}"))?;
+        let has_backup = self
+            .db
+            .get_live_backup(app_type_str)
+            .await
+            .map_err(|e| format!("璇诲彇 {app_type_str} Live 澶囦唤澶辫触: {e}"))?
+            .is_some();
+        let live_taken_over = self.detect_takeover_in_live_config_for_app(app);
+
+        if !current_config.enabled && !has_backup && !live_taken_over {
+            return Ok(());
+        }
+
+        self.restore_live_config_for_app_with_fallback_inner(app)
+            .await?;
+
+        self.db
+            .delete_live_backup(app_type_str)
+            .await
+            .map_err(|e| format!("鍒犻櫎 {app_type_str} Live 澶囦唤澶辫触: {e}"))?;
+
+        let mut updated_config = self
+            .db
+            .get_proxy_config_for_app(app_type_str)
+            .await
+            .map_err(|e| format!("鑾峰彇 {app_type_str} 閰嶇疆澶辫触: {e}"))?;
+        updated_config.enabled = false;
+        self.db
+            .update_proxy_config_for_app(updated_config)
+            .await
+            .map_err(|e| format!("娓呴櫎 {app_type_str} enabled 鐘舵€佸け璐? {e}"))?;
+
+        self.db
+            .clear_provider_health_for_app(app_type_str)
+            .await
+            .map_err(|e| format!("娓呴櫎 {app_type_str} 鍋ュ悍鐘舵€佸け璐? {e}"))?;
+
+        let any_enabled = self
+            .db
+            .is_live_takeover_active()
+            .await
+            .map_err(|e| format!("妫€鏌ユ帴绠＄姸鎬佸け璐? {e}"))?;
+
+        if !any_enabled {
+            let _ = self.db.set_live_takeover_active(false).await;
+
+            if self.is_running().await {
+                let _ = self.stop().await;
+            }
+        }
+
+        Ok(())
+    }
+
     async fn sync_live_to_provider(&self, app_type: &AppType) -> Result<(), String> {
         let live_config = match app_type {
             AppType::Claude => self.read_claude_live()?,
@@ -1702,6 +1767,15 @@ impl ProxyService {
             .filter(|id| !id.is_empty());
 
         if let Some(provider_id) = active_provider {
+            if provider_id.eq_ignore_ascii_case("openai")
+                && doc
+                    .get("openai_base_url")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(&predicate)
+            {
+                return true;
+            }
+
             if doc
                 .get("model_providers")
                 .and_then(|value| value.get(provider_id))
@@ -1711,6 +1785,15 @@ impl ProxyService {
             {
                 return true;
             }
+        }
+
+        if active_provider.is_none()
+            && doc
+                .get("openai_base_url")
+                .and_then(|value| value.as_str())
+                .is_some_and(&predicate)
+        {
+            return true;
         }
 
         doc.get("base_url")
@@ -2152,53 +2235,63 @@ impl ProxyService {
             .get("config")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let mut target_doc = if target_config.trim().is_empty() {
-            toml_edit::DocumentMut::new()
-        } else {
-            target_config
-                .parse::<toml_edit::DocumentMut>()
-                .map_err(|e| format!("解析新的 Codex config.toml 失败: {e}"))?
-        };
-
-        let existing_config = existing_config
+        let existing_config_text = existing_config
             .get("config")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        if existing_config.trim().is_empty() {
-            target_obj.insert("config".to_string(), json!(target_doc.to_string()));
-            return Ok(());
+        let merged = Self::merge_missing_codex_mcp_servers(target_config, existing_config_text)?;
+
+        target_obj.insert("config".to_string(), json!(merged));
+        Ok(())
+    }
+
+    /// 将旧备份里的 Codex MCP server 作为缺省值补到新 provider 配置里。
+    ///
+    /// `update_live_backup_from_provider` 是用新 provider/common-config 重建 restore
+    /// backup，因此冲突时必须保留新配置；旧备份只负责提供新配置缺失的 MCP
+    /// 条目，避免历史 live config 覆盖用户刚选择的 provider 或 common config。
+    fn merge_missing_codex_mcp_servers(
+        target_config_text: &str,
+        existing_config_text: &str,
+    ) -> Result<String, String> {
+        if existing_config_text.trim().is_empty() {
+            return Ok(target_config_text.to_string());
         }
 
-        let existing_doc = existing_config
-            .parse::<toml_edit::DocumentMut>()
-            .map_err(|e| format!("解析现有 Codex 备份失败: {e}"))?;
+        let mut target_doc = if target_config_text.trim().is_empty() {
+            DocumentMut::new()
+        } else {
+            target_config_text
+                .parse::<DocumentMut>()
+                .map_err(|e| format!("解析 Codex 新配置失败: {e}"))?
+        };
+        let existing_doc = existing_config_text
+            .parse::<DocumentMut>()
+            .map_err(|e| format!("解析 Codex 旧备份配置失败: {e}"))?;
+        let Some(existing_mcp_servers) = existing_doc
+            .get("mcp_servers")
+            .and_then(|item| item.as_table())
+        else {
+            return Ok(target_doc.to_string());
+        };
 
-        if let Some(existing_mcp_servers) = existing_doc.get("mcp_servers") {
-            match target_doc.get_mut("mcp_servers") {
-                Some(target_mcp_servers) => {
-                    if let (Some(target_table), Some(existing_table)) = (
-                        target_mcp_servers.as_table_like_mut(),
-                        existing_mcp_servers.as_table_like(),
-                    ) {
-                        for (server_id, server_item) in existing_table.iter() {
-                            if target_table.get(server_id).is_none() {
-                                target_table.insert(server_id, server_item.clone());
-                            }
-                        }
-                    } else {
-                        log::warn!(
-                            "Codex config contains a non-table mcp_servers section; skipping MCP merge"
-                        );
-                    }
-                }
-                None => {
-                    target_doc["mcp_servers"] = existing_mcp_servers.clone();
-                }
+        if target_doc.get("mcp_servers").is_none() {
+            target_doc["mcp_servers"] = toml_edit::table();
+        }
+        let Some(target_mcp_servers) = target_doc
+            .get_mut("mcp_servers")
+            .and_then(|item| item.as_table_mut())
+        else {
+            return Ok(target_doc.to_string());
+        };
+
+        for (server_name, server_item) in existing_mcp_servers.iter() {
+            if !target_mcp_servers.contains_key(server_name) {
+                target_mcp_servers.insert(server_name, server_item.clone());
             }
         }
 
-        target_obj.insert("config".to_string(), json!(target_doc.to_string()));
-        Ok(())
+        Ok(target_doc.to_string())
     }
 
     fn preserve_codex_oauth_auth_in_backup(
@@ -2365,7 +2458,12 @@ impl ProxyService {
                             auth, config_str,
                         )
                         .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
-                        crate::codex_config::write_codex_live_config_atomic(Some(&live_config))
+                        let merged_config =
+                            crate::codex_config::merge_codex_provider_config_with_live(
+                                &live_config,
+                            )
+                            .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
+                        crate::codex_config::write_codex_live_config_atomic(Some(&merged_config))
                             .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
                         return Ok(());
                     }
@@ -2412,7 +2510,10 @@ impl ProxyService {
                 let live_config =
                     crate::codex_config::prepare_codex_provider_live_config(auth, &prepared_config)
                         .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
-                crate::codex_config::write_codex_live_config_atomic(Some(&live_config))
+                let merged_config =
+                    crate::codex_config::merge_codex_provider_config_with_live(&live_config)
+                        .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
+                crate::codex_config::write_codex_live_config_atomic(Some(&merged_config))
                     .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
                 return Ok(());
             }
@@ -4022,6 +4123,66 @@ requires_openai_auth = true
     }
 
     #[test]
+    fn update_toml_base_url_uses_openai_base_url_for_builtin_openai() {
+        let input = r#"
+model_provider = "openai"
+model = "gpt-5.5"
+"#;
+
+        let new_url = "http://127.0.0.1:5000/v1";
+        let output = ProxyService::update_toml_base_url(input, new_url);
+
+        let parsed: toml::Value =
+            toml::from_str(&output).expect("updated config should be valid TOML");
+
+        assert_eq!(
+            parsed.get("openai_base_url").and_then(|v| v.as_str()),
+            Some(new_url)
+        );
+        assert!(parsed.get("base_url").is_none());
+        assert!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("openai"))
+                .is_none(),
+            "Codex ignores configured model_providers.openai, so proxy mode must use openai_base_url"
+        );
+    }
+
+    #[test]
+    fn codex_base_url_matching_checks_openai_base_url_for_builtin_openai() {
+        let input = r#"
+model_provider = "openai"
+model = "gpt-5.5"
+openai_base_url = "http://127.0.0.1:15721/v1"
+"#;
+
+        assert!(ProxyService::codex_config_has_base_url_matching(
+            input,
+            |url| ProxyService::proxy_urls_match(url, "http://127.0.0.1:15721/v1")
+        ));
+    }
+
+    #[test]
+    fn remove_local_toml_base_url_cleans_openai_base_url() {
+        let input = r#"
+model_provider = "openai"
+model = "gpt-5.5"
+openai_base_url = "http://127.0.0.1:15721/v1"
+"#;
+
+        let output = ProxyService::remove_local_toml_base_url(input);
+        let parsed: toml::Value =
+            toml::from_str(&output).expect("updated config should be valid TOML");
+
+        assert!(parsed.get("openai_base_url").is_none());
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("openai")
+        );
+    }
+
+    #[test]
     fn apply_codex_proxy_toml_config_forces_local_responses_wire_api() {
         let input = r#"
 model_provider = "chat_only"
@@ -5542,6 +5703,128 @@ requires_openai_auth = true
             message.contains("写入 Codex 配置失败") || message.contains("原子替换失败"),
             "switch should surface catalog write failure, got: {message}"
         );
+    }
+
+    /// Regression: switching the Codex backup official provider while proxy takeover
+    /// is active must leave takeover mode instead of hot-switching through the
+    /// local router. The written live config should keep user/project sections but
+    /// clear CC Switch router fields so Codex returns to its official defaults.
+    #[tokio::test]
+    #[serial]
+    async fn codex_switch_to_official_during_takeover_exits_proxy_and_cleans_router_fields() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        seed_codex_model_template();
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = crate::store::AppState::new(db.clone());
+
+        let router_config = r#"model_provider = "router"
+model = "deepseek-v4-flash"
+model_catalog_json = "cc-switch-model-catalog.json"
+
+[model_providers.router]
+name = "Router"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+        let mut router = Provider::with_id(
+            "router".to_string(),
+            "Router".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "router-key" },
+                "config": router_config,
+                "modelCatalog": { "models": [{ "model": "deepseek-v4-flash" }] }
+            }),
+            None,
+        );
+        router.category = Some("custom".to_string());
+
+        let mut official = Provider::with_id(
+            "official-backup".to_string(),
+            "OpenAI Official Backup".to_string(),
+            json!({
+                "auth": {},
+                "config": ""
+            }),
+            None,
+        );
+        official.category = Some("official".to_string());
+
+        db.save_provider("codex", &router).expect("save router");
+        db.save_provider("codex", &official)
+            .expect("save official backup");
+        db.set_current_provider("codex", "router")
+            .expect("set current router");
+        crate::settings::set_current_provider(&AppType::Codex, Some("router"))
+            .expect("set local current router");
+
+        let live_before_takeover = r#"approval_policy = "on-request"
+model_provider = "router"
+model = "deepseek-v4-flash"
+model_catalog_json = "cc-switch-model-catalog.json"
+
+[projects."C:/work"]
+trust_level = "trusted"
+
+[model_providers.router]
+name = "Router"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+"#;
+        let backup_json = serde_json::to_string(&json!({
+            "auth": { "OPENAI_API_KEY": "oauth-placeholder" },
+            "config": live_before_takeover,
+        }))
+        .expect("serialize live backup");
+        db.save_live_backup("codex", &backup_json)
+            .await
+            .expect("seed live backup");
+
+        let mut proxy_config = db
+            .get_proxy_config_for_app("codex")
+            .await
+            .expect("get codex proxy config");
+        proxy_config.enabled = true;
+        db.update_proxy_config_for_app(proxy_config)
+            .await
+            .expect("enable codex takeover flag");
+
+        crate::services::provider::ProviderService::switch(
+            &state,
+            AppType::Codex,
+            "official-backup",
+        )
+        .expect("switch to official backup");
+
+        assert_eq!(
+            crate::settings::get_effective_current_provider(&db, &AppType::Codex)
+                .expect("effective current"),
+            Some("official-backup".to_string())
+        );
+        assert!(
+            db.get_live_backup("codex")
+                .await
+                .expect("read live backup")
+                .is_none(),
+            "official switch should clear takeover backup"
+        );
+        assert!(
+            !db.get_proxy_config_for_app("codex")
+                .await
+                .expect("read proxy config")
+                .enabled,
+            "official switch should disable Codex takeover"
+        );
+
+        let live = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read restored official live config");
+        assert!(live.contains("approval_policy"));
+        assert!(live.contains("[projects.\"C:/work\"]"));
+        assert!(!live.contains("model_provider"));
+        assert!(!live.contains("model_catalog_json"));
+        assert!(!live.contains("127.0.0.1:15721"));
     }
 
     /// Regression: turning proxy takeover off restores Live from the backup. The

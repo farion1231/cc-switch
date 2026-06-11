@@ -401,6 +401,8 @@ export const hasTomlCommonConfigSnippet = (
 const TOML_SECTION_HEADER_PATTERN = /^\s*\[([^\]\r\n]+)\]\s*$/;
 const TOML_BASE_URL_PATTERN =
   /^\s*base_url\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
+const TOML_OPENAI_BASE_URL_PATTERN =
+  /^\s*openai_base_url\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
 const TOML_EXPERIMENTAL_BEARER_TOKEN_PATTERN =
   /^\s*experimental_bearer_token\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
 const TOML_EXPERIMENTAL_BEARER_TOKEN_REPLACE_PATTERN =
@@ -425,6 +427,7 @@ const CODEX_RESERVED_MODEL_PROVIDER_IDS = new Set([
   "oss",
   "ollama-chat",
 ]);
+const CODEX_OPENAI_MODEL_PROVIDER_ID = "openai";
 
 interface TomlSectionRange {
   bodyEndIndex: number;
@@ -529,6 +532,11 @@ const getCodexProviderSectionName = (
   const providerName = getCodexModelProviderName(configText);
   return providerName ? `model_providers.${providerName}` : undefined;
 };
+
+const isCodexBuiltinOpenAiProviderName = (
+  providerName: string | undefined,
+): boolean =>
+  providerName?.trim().toLowerCase() === CODEX_OPENAI_MODEL_PROVIDER_ID;
 
 const isCustomCodexModelProviderId = (providerName: string): boolean => {
   const id = providerName.trim().toLowerCase();
@@ -1025,6 +1033,21 @@ export const extractCodexBaseUrl = (
     if (!text) return undefined;
 
     const lines = text.split("\n");
+    const providerName = getCodexModelProviderName(text);
+    const isBuiltinOpenAi = isCodexBuiltinOpenAiProviderName(providerName);
+
+    if (isBuiltinOpenAi || !providerName) {
+      const openAiBaseUrlMatch = findTomlAssignmentInRange(
+        lines,
+        TOML_OPENAI_BASE_URL_PATTERN,
+        0,
+        getTopLevelEndIndex(lines),
+      );
+      if (openAiBaseUrlMatch?.value) {
+        return openAiBaseUrlMatch.value;
+      }
+    }
+
     const targetSectionName = getCodexProviderSectionName(text);
 
     if (targetSectionName) {
@@ -1216,6 +1239,8 @@ export const setCodexBaseUrl = (
   const trimmed = baseUrl.trim();
   const normalizedText = normalizeTomlText(configText);
   const lines = normalizedText ? normalizedText.split("\n") : [];
+  const providerName = getCodexModelProviderName(normalizedText);
+  const isBuiltinOpenAi = isCodexBuiltinOpenAiProviderName(providerName);
   const targetSectionName = getCodexProviderSectionName(normalizedText);
   const allAssignments = findTomlAssignments(lines, TOML_BASE_URL_PATTERN);
   const recoverableAssignments = getRecoverableBaseUrlAssignments(
@@ -1225,6 +1250,26 @@ export const setCodexBaseUrl = (
 
   if (!trimmed) {
     if (!normalizedText) return normalizedText;
+
+    if (isBuiltinOpenAi) {
+      const removalIndexes = [
+        ...findTomlAssignments(lines, TOML_OPENAI_BASE_URL_PATTERN)
+          .filter((match) => !match.sectionName)
+          .map((match) => match.index),
+        ...allAssignments
+          .filter(
+            (match) =>
+              !match.sectionName ||
+              match.sectionName ===
+                `model_providers.${CODEX_OPENAI_MODEL_PROVIDER_ID}`,
+          )
+          .map((match) => match.index),
+      ];
+      [...new Set(removalIndexes)]
+        .sort((a, b) => b - a)
+        .forEach((index) => lines.splice(index, 1));
+      return finalizeTomlText(lines);
+    }
 
     if (targetSectionName) {
       const sectionRange = getTomlSectionRange(lines, targetSectionName);
@@ -1253,6 +1298,46 @@ export const setCodexBaseUrl = (
   }
 
   const normalizedUrl = trimmed.replace(/\s+/g, "");
+  if (isBuiltinOpenAi) {
+    const staleBaseUrlIndexes = allAssignments
+      .filter(
+        (match) =>
+          !match.sectionName ||
+          match.sectionName ===
+            `model_providers.${CODEX_OPENAI_MODEL_PROVIDER_ID}`,
+      )
+      .map((match) => match.index);
+    [...new Set(staleBaseUrlIndexes)]
+      .sort((a, b) => b - a)
+      .forEach((index) => lines.splice(index, 1));
+
+    const openAiReplacementLine = `openai_base_url = "${normalizedUrl}"`;
+    const topLevelEndIndex = getTopLevelEndIndex(lines);
+    const openAiBaseUrlMatch = findTomlAssignmentInRange(
+      lines,
+      TOML_OPENAI_BASE_URL_PATTERN,
+      0,
+      topLevelEndIndex,
+    );
+    if (openAiBaseUrlMatch) {
+      lines[openAiBaseUrlMatch.index] = openAiReplacementLine;
+      return finalizeTomlText(lines);
+    }
+
+    const modelProviderIndex = getTopLevelModelProviderLineIndex(lines);
+    if (modelProviderIndex !== -1) {
+      lines.splice(modelProviderIndex + 1, 0, openAiReplacementLine);
+      return finalizeTomlText(lines);
+    }
+
+    if (lines.length === 0) {
+      return `${openAiReplacementLine}\n`;
+    }
+
+    lines.splice(getTopLevelEndIndex(lines), 0, openAiReplacementLine);
+    return finalizeTomlText(lines);
+  }
+
   const replacementLine = `base_url = "${normalizedUrl}"`;
 
   if (targetSectionName) {

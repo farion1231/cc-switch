@@ -175,6 +175,10 @@ fn explicit_model_image_support(provider: &Provider, model: &str) -> Option<bool
 fn known_text_only_model(model: &str) -> bool {
     let normalized = normalize_model_id(model);
     let tail = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
+    let compact_tail = tail
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect::<String>();
 
     const EXACT_TAILS: &[&str] = &[
         "ark-code-latest",
@@ -197,7 +201,9 @@ fn known_text_only_model(model: &str) -> bool {
 
     const TAIL_PREFIXES: &[&str] = &["minimax-m2.7", "qwen3-coder", "step-3.5-flash"];
 
-    EXACT_TAILS.contains(&tail) || TAIL_PREFIXES.iter().any(|prefix| tail.starts_with(prefix))
+    compact_tail.starts_with("deepseekv4")
+        || EXACT_TAILS.contains(&tail)
+        || TAIL_PREFIXES.iter().any(|prefix| tail.starts_with(prefix))
 }
 
 fn explicit_model_image_support_in_value(value: &Value, model: &str) -> Option<bool> {
@@ -352,6 +358,28 @@ mod tests {
         let provider = provider(json!({}));
         let mut body = json!({
             "model": "deepseek/deepseek-v4-pro",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "abc" } }
+                ]
+            }]
+        });
+
+        let count = replace_images_for_text_only_model(&mut body, &provider, true);
+
+        assert_eq!(count, 1);
+        assert_eq!(
+            body["messages"][0]["content"][0]["text"],
+            UNSUPPORTED_IMAGE_MARKER
+        );
+    }
+
+    #[test]
+    fn deepseekv4_aliases_replace_images_before_send() {
+        let provider = provider(json!({}));
+        let mut body = json!({
+            "model": "DeepSeek V4 Pro",
             "messages": [{
                 "role": "user",
                 "content": [

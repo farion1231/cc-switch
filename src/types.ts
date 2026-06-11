@@ -169,6 +169,8 @@ export interface CodexChatReasoning {
   thinkingParam?: CodexChatThinkingParam;
   effortParam?: CodexChatEffortParam;
   effortValueMode?: CodexChatEffortValueMode;
+  // Chat Completions 上游的最小输出 token 预算，用于避免小预算请求被 reasoning 吃空正文。
+  minOutputTokens?: number;
   // 声明性字段：标注上游 reasoning 回传位置。当前提取靠穷举字段，未读取此值（think_tags 尚未接线）。
   outputFormat?: CodexChatReasoningOutputFormat;
 }

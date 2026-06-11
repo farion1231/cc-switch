@@ -164,13 +164,29 @@ export function useProviderActions(
                 (provider.settingsConfig as Record<string, any>).config,
               ),
             )));
+      const codexRouting = (provider.settingsConfig as Record<string, any>)
+        ?.codexRouting;
+      // 有 codexRouting 的 provider 必须通过 CC Switch 本地代理分流，即使 route 内使用官方 OAuth。
+      const isCodexRouterProvider =
+        activeApp === "codex" &&
+        codexRouting &&
+        typeof codexRouting === "object" &&
+        (codexRouting.enabled !== false ||
+          (Array.isArray(codexRouting.routes) && codexRouting.routes.length > 0));
 
       // Determine why this provider requires the proxy
       let proxyRequiredReason: string | null = null;
-      if (!isProxyRunning && provider.category !== "official") {
+      if (
+        !isProxyRunning &&
+        (provider.category !== "official" || isCodexRouterProvider)
+      ) {
         if (isCopilotProvider) {
           proxyRequiredReason = t("notifications.proxyReasonCopilot", {
             defaultValue: "使用 GitHub Copilot 作为 Claude 供应商",
+          });
+        } else if (isCodexRouterProvider) {
+          proxyRequiredReason = t("notifications.proxyReasonCodexRouter", {
+            defaultValue: "使用 Codex 本地模型路由",
           });
         } else if (
           provider.meta?.apiFormat === "openai_chat" &&
@@ -218,7 +234,11 @@ export function useProviderActions(
       }
 
       // Block official providers when proxy takeover is active
-      if (isProxyTakeover && provider.category === "official") {
+      if (
+        isProxyTakeover &&
+        provider.category === "official" &&
+        !isCodexRouterProvider
+      ) {
         toast.error(
           t("notifications.officialBlockedByProxy", {
             defaultValue:

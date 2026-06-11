@@ -24,7 +24,9 @@ use std::time::{Duration, SystemTime};
 use toml_edit::DocumentMut;
 
 const MIGRATION_NAME: &str = "codex-history-provider-migration-v1";
+const OPENAI_HISTORY_MIGRATION_NAME: &str = "codex-history-openai-provider-migration-v2";
 const CODEX_STATE_DB_FILENAME: &str = "state_5.sqlite";
+const OPENAI_CODEX_MODEL_PROVIDER_ID: &str = "openai";
 const LEGACY_CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "ccswitch";
 // If a Codex preset ever used a temporary routing key, keep that old key here
 // so local history can be bucketed under the current custom provider id.
@@ -76,6 +78,14 @@ const CC_SWITCH_LEGACY_CODEX_MODEL_PROVIDER_IDS: &[&str] = &[
     "xiaomi_mimo_token_plan",
     "zhipu_glm",
     "zhipu_glm_en",
+    "codex_model_router",
+    "codex_model_router_v2",
+];
+const CC_SWITCH_OPENAI_HISTORY_SOURCE_PROVIDER_IDS: &[&str] = &[
+    CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+    LEGACY_CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+    "codex_model_router",
+    "codex_model_router_v2",
 ];
 
 #[derive(Debug, Clone, Default)]
@@ -132,6 +142,57 @@ pub fn maybe_migrate_codex_third_party_history_provider_bucket(
         CodexThirdPartyHistoryProviderBucketMigration {
             completed_at: Utc::now().to_rfc3339(),
             target_provider_id: CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string(),
+            source_provider_ids: source_provider_ids_vec.clone(),
+            migrated_jsonl_files,
+            migrated_state_rows,
+            scanned_history_files: true,
+        },
+    )?;
+
+    Ok(CodexHistoryProviderBucketMigrationOutcome {
+        source_provider_ids: source_provider_ids_vec,
+        migrated_jsonl_files,
+        migrated_state_rows,
+        skipped_reason: None,
+    })
+}
+
+pub fn maybe_migrate_codex_openai_history_provider_bucket(
+    db: &Database,
+) -> Result<CodexHistoryProviderBucketMigrationOutcome, AppError> {
+    if crate::settings::is_codex_openai_history_provider_bucket_migrated() {
+        return Ok(CodexHistoryProviderBucketMigrationOutcome {
+            skipped_reason: Some("already_migrated".to_string()),
+            ..Default::default()
+        });
+    }
+
+    let mut source_provider_ids = collect_source_model_provider_ids(db)?;
+    for provider_id in CC_SWITCH_OPENAI_HISTORY_SOURCE_PROVIDER_IDS {
+        source_provider_ids.insert((*provider_id).to_string());
+    }
+    source_provider_ids.remove(OPENAI_CODEX_MODEL_PROVIDER_ID);
+
+    let backup_root = openai_history_migration_backup_root();
+    let codex_dir = get_codex_config_dir();
+    let migrated_jsonl_files = migrate_codex_jsonl_files_to_target(
+        &codex_dir,
+        &source_provider_ids,
+        &backup_root,
+        OPENAI_CODEX_MODEL_PROVIDER_ID,
+    )?;
+    let migrated_state_rows = migrate_codex_state_dbs_to_target(
+        &codex_dir,
+        &source_provider_ids,
+        &backup_root,
+        OPENAI_CODEX_MODEL_PROVIDER_ID,
+    )?;
+
+    let source_provider_ids_vec: Vec<String> = source_provider_ids.iter().cloned().collect();
+    crate::settings::mark_codex_openai_history_provider_bucket_migrated(
+        CodexThirdPartyHistoryProviderBucketMigration {
+            completed_at: Utc::now().to_rfc3339(),
+            target_provider_id: OPENAI_CODEX_MODEL_PROVIDER_ID.to_string(),
             source_provider_ids: source_provider_ids_vec.clone(),
             migrated_jsonl_files,
             migrated_state_rows,
@@ -261,6 +322,13 @@ fn migration_backup_root() -> PathBuf {
     get_app_config_dir()
         .join("backups")
         .join(MIGRATION_NAME)
+        .join(Local::now().format("%Y%m%d_%H%M%S").to_string())
+}
+
+fn openai_history_migration_backup_root() -> PathBuf {
+    get_app_config_dir()
+        .join("backups")
+        .join(OPENAI_HISTORY_MIGRATION_NAME)
         .join(Local::now().format("%Y%m%d_%H%M%S").to_string())
 }
 
@@ -474,6 +542,20 @@ fn migrate_codex_jsonl_files(
     source_provider_ids: &BTreeSet<String>,
     backup_root: &Path,
 ) -> Result<usize, AppError> {
+    migrate_codex_jsonl_files_to_target(
+        codex_dir,
+        source_provider_ids,
+        backup_root,
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+    )
+}
+
+fn migrate_codex_jsonl_files_to_target(
+    codex_dir: &Path,
+    source_provider_ids: &BTreeSet<String>,
+    backup_root: &Path,
+    target_provider_id: &str,
+) -> Result<usize, AppError> {
     let mut files = Vec::new();
     collect_jsonl_files(&codex_dir.join("sessions"), &mut files, 0, 8);
     collect_jsonl_files(&codex_dir.join("archived_sessions"), &mut files, 0, 4);
@@ -481,11 +563,12 @@ fn migrate_codex_jsonl_files(
     let source_provider_ids: HashSet<String> = source_provider_ids.iter().cloned().collect();
     let mut migrated = 0;
     for file_path in files {
-        if rewrite_codex_session_file_for_provider_bucket(
+        if rewrite_codex_session_file_for_provider_bucket_to_target(
             &file_path,
             codex_dir,
             &source_provider_ids,
             backup_root,
+            target_provider_id,
         )? {
             migrated += 1;
         }
@@ -519,11 +602,28 @@ fn collect_jsonl_files(dir: &Path, files: &mut Vec<PathBuf>, depth: u8, max_dept
     }
 }
 
+#[cfg(test)]
 fn rewrite_codex_session_file_for_provider_bucket(
     path: &Path,
     codex_dir: &Path,
     source_provider_ids: &HashSet<String>,
     backup_root: &Path,
+) -> Result<bool, AppError> {
+    rewrite_codex_session_file_for_provider_bucket_to_target(
+        path,
+        codex_dir,
+        source_provider_ids,
+        backup_root,
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+    )
+}
+
+fn rewrite_codex_session_file_for_provider_bucket_to_target(
+    path: &Path,
+    codex_dir: &Path,
+    source_provider_ids: &HashSet<String>,
+    backup_root: &Path,
+    target_provider_id: &str,
 ) -> Result<bool, AppError> {
     let metadata_before = fs::metadata(path).map_err(|e| AppError::io(path, e))?;
     let modified_before = metadata_before.modified().ok();
@@ -537,7 +637,9 @@ fn rewrite_codex_session_file_for_provider_bucket(
             .strip_suffix('\n')
             .map(|line| (line, "\n"))
             .unwrap_or((segment, ""));
-        if let Some(next_line) = rewrite_codex_session_meta_line(line, source_provider_ids) {
+        if let Some(next_line) =
+            rewrite_codex_session_meta_line_to_target(line, source_provider_ids, target_provider_id)
+        {
             rewritten.push_str(&next_line);
             changed = true;
         } else {
@@ -572,9 +674,10 @@ fn ensure_codex_session_file_unchanged(
     Ok(())
 }
 
-fn rewrite_codex_session_meta_line(
+fn rewrite_codex_session_meta_line_to_target(
     line: &str,
     source_provider_ids: &HashSet<String>,
+    target_provider_id: &str,
 ) -> Option<String> {
     if !line.contains("\"session_meta\"") || !line.contains("\"model_provider\"") {
         return None;
@@ -593,7 +696,7 @@ fn rewrite_codex_session_meta_line(
 
     payload.insert(
         "model_provider".to_string(),
-        Value::String(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string()),
+        Value::String(target_provider_id.to_string()),
     );
     serde_json::to_string(&value).ok()
 }
@@ -603,14 +706,29 @@ fn migrate_codex_state_dbs(
     source_provider_ids: &BTreeSet<String>,
     backup_root: &Path,
 ) -> Result<usize, AppError> {
+    migrate_codex_state_dbs_to_target(
+        codex_dir,
+        source_provider_ids,
+        backup_root,
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+    )
+}
+
+fn migrate_codex_state_dbs_to_target(
+    codex_dir: &Path,
+    source_provider_ids: &BTreeSet<String>,
+    backup_root: &Path,
+    target_provider_id: &str,
+) -> Result<usize, AppError> {
     let config_text = read_codex_config_text().unwrap_or_default();
     let mut migrated = 0;
     for db_path in codex_state_db_paths(codex_dir, &config_text) {
-        migrated += migrate_codex_state_db_provider_bucket(
+        migrated += migrate_codex_state_db_provider_bucket_to_target(
             &db_path,
             codex_dir,
             source_provider_ids,
             backup_root,
+            target_provider_id,
         )?;
     }
     Ok(migrated)
@@ -649,11 +767,28 @@ fn resolve_user_path(raw: &str) -> PathBuf {
     PathBuf::from(raw)
 }
 
+#[cfg(test)]
 fn migrate_codex_state_db_provider_bucket(
     db_path: &Path,
     codex_dir: &Path,
     source_provider_ids: &BTreeSet<String>,
     backup_root: &Path,
+) -> Result<usize, AppError> {
+    migrate_codex_state_db_provider_bucket_to_target(
+        db_path,
+        codex_dir,
+        source_provider_ids,
+        backup_root,
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+    )
+}
+
+fn migrate_codex_state_db_provider_bucket_to_target(
+    db_path: &Path,
+    codex_dir: &Path,
+    source_provider_ids: &BTreeSet<String>,
+    backup_root: &Path,
+    target_provider_id: &str,
 ) -> Result<usize, AppError> {
     if !db_path.exists() || source_provider_ids.is_empty() {
         return Ok(0);
@@ -689,7 +824,7 @@ fn migrate_codex_state_db_provider_bucket(
     let update_sql =
         format!("UPDATE threads SET model_provider = ? WHERE model_provider IN ({placeholders})");
     let mut values = Vec::with_capacity(source_provider_ids.len() + 1);
-    values.push(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
+    values.push(target_provider_id.to_string());
     values.extend(source_provider_ids.iter().cloned());
     let tx = conn
         .transaction()
@@ -1126,6 +1261,42 @@ base_url = "https://proxy.example/v1"
     }
 
     #[test]
+    fn rewrites_router_session_meta_provider_ids_to_openai_for_v2() {
+        let dir = tempdir().expect("tempdir");
+        let codex_dir = dir.path().join(".codex");
+        let backup_root = dir.path().join("backup");
+        let session_dir = codex_dir.join("sessions/2026/06/09");
+        fs::create_dir_all(&session_dir).expect("create session dir");
+        let path = session_dir.join("rollout-router.jsonl");
+        fs::write(
+            &path,
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s1\",\"model_provider\":\"codex_model_router_v2\"}}\n",
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s2\",\"model_provider\":\"custom\"}}\n",
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s3\",\"model_provider\":\"openai\"}}\n"
+            ),
+        )
+        .expect("write session");
+
+        let changed = rewrite_codex_session_file_for_provider_bucket_to_target(
+            &path,
+            &codex_dir,
+            &HashSet::from(["codex_model_router_v2".to_string(), "custom".to_string()]),
+            &backup_root,
+            OPENAI_CODEX_MODEL_PROVIDER_ID,
+        )
+        .expect("rewrite");
+
+        assert!(changed);
+        let next = fs::read_to_string(&path).expect("read rewritten");
+        assert_eq!(next.matches("\"model_provider\":\"openai\"").count(), 3);
+        assert!(!next.contains("codex_model_router_v2"));
+        assert!(backup_root
+            .join("jsonl/sessions/2026/06/09/rollout-router.jsonl")
+            .exists());
+    }
+
+    #[test]
     fn does_not_rewrite_unknown_jsonl_history_without_trusted_source_id() {
         let dir = tempdir().expect("tempdir");
         let codex_dir = dir.path().join(".codex");
@@ -1255,6 +1426,52 @@ base_url = "https://proxy.example/v1"
             )
             .expect("count backed up source providers");
         assert_eq!(backed_up_source_count, 2);
+    }
+
+    #[test]
+    fn updates_router_state_db_thread_provider_ids_to_openai_for_v2() {
+        let dir = tempdir().expect("tempdir");
+        let codex_dir = dir.path().join(".codex");
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+        let db_path = codex_dir.join(CODEX_STATE_DB_FILENAME);
+        let conn = Connection::open(&db_path).expect("open db");
+        conn.execute_batch(
+            "CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                model_provider TEXT NOT NULL
+            );
+            INSERT INTO threads (id, model_provider) VALUES
+                ('a', 'codex_model_router_v2'),
+                ('b', 'custom'),
+                ('c', 'openai');",
+        )
+        .expect("seed db");
+        drop(conn);
+
+        let backup_root = dir.path().join("backup");
+        let changed = migrate_codex_state_db_provider_bucket_to_target(
+            &db_path,
+            &codex_dir,
+            &source_ids(&["codex_model_router_v2", "custom"]),
+            &backup_root,
+            OPENAI_CODEX_MODEL_PROVIDER_ID,
+        )
+        .expect("migrate state db");
+
+        assert_eq!(changed, 2);
+        let conn = Connection::open(&db_path).expect("reopen db");
+        let openai_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM threads WHERE model_provider = 'openai'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count openai");
+        assert_eq!(openai_count, 3);
+        assert!(backup_root
+            .join("state")
+            .join(CODEX_STATE_DB_FILENAME)
+            .exists());
     }
 
     #[test]

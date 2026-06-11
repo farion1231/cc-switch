@@ -26,6 +26,8 @@ import {
   Shield,
   Cpu,
   LayoutDashboard,
+  Network,
+  Route as RouteIcon,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -90,6 +92,8 @@ import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
+import { OpenAICompatibleApiPage } from "@/components/openai/OpenAICompatibleApiPage";
+import { CodexRouterWorkspacePage } from "@/components/codex/CodexRouterWorkspacePage";
 
 type View =
   | "providers"
@@ -105,7 +109,9 @@ type View =
   | "openclawEnv"
   | "openclawTools"
   | "openclawAgents"
-  | "hermesMemory";
+  | "hermesMemory"
+  | "codexRouter"
+  | "openaiApi";
 
 interface SyncStatusUpdatedPayload {
   source?: string;
@@ -151,6 +157,7 @@ const VALID_VIEWS: View[] = [
   "openclawTools",
   "openclawAgents",
   "hermesMemory",
+  "openaiApi",
 ];
 
 const getInitialView = (): View => {
@@ -880,6 +887,22 @@ function App() {
           );
         case "hermesMemory":
           return <HermesMemoryPanel />;
+        case "openaiApi":
+          return <OpenAICompatibleApiPage />;
+        case "codexRouter":
+          return (
+            <CodexRouterWorkspacePage
+              providers={Object.values(providers)}
+              onEditProvider={(provider) => {
+                setActiveApp("codex");
+                setEditingProvider(provider);
+              }}
+              onCreateProvider={() => {
+                setActiveApp("codex");
+                setIsAddOpen(true);
+              }}
+            />
+          );
         case "skills":
           return (
             <UnifiedSkillsPanel
@@ -1154,6 +1177,8 @@ function App() {
                   {currentView === "openclawAgents" &&
                     t("openclaw.agents.title")}
                   {currentView === "hermesMemory" && t("hermes.memory.title")}
+                  {currentView === "codexRouter" && "Codex 多模型路由"}
+                  {currentView === "openaiApi" && "第三方 Agent API"}
                 </h1>
               </div>
             ) : (
@@ -1170,7 +1195,7 @@ function App() {
                         : "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300",
                     )}
                   >
-                    CC Switch
+                    CCSwitchMulti
                   </a>
                 </div>
                 <Button
@@ -1456,6 +1481,26 @@ function App() {
                             </>
                           ) : (
                             <>
+                              {activeApp === "codex" && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setCurrentView("codexRouter")}
+                                  className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                  title="Codex 多模型路由"
+                                >
+                                  <RouteIcon className="w-4 h-4" />
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("openaiApi")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title="第三方 Agent API"
+                              >
+                                <Network className="w-4 h-4" />
+                              </Button>
                               <Button
                                 variant="ghost"
                                 size="sm"

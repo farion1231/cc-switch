@@ -3,6 +3,10 @@
 //! 提供前端调用的 API 接口
 
 use crate::error::AppError;
+use crate::proxy::external_openai_api::{
+    self, ExternalOpenAiApiProfileUpdate, ExternalOpenAiApiProfileView,
+    ExternalOpenAiApiRuntimeStatusView, GeneratedExternalOpenAiApiKey,
+};
 use crate::proxy::types::*;
 use crate::proxy::{CircuitBreakerConfig, CircuitBreakerStats};
 use crate::store::AppState;
@@ -81,6 +85,49 @@ pub async fn update_proxy_config(
     state.proxy_service.update_config(&config).await
 }
 
+/// 获取 External OpenAI-compatible API profile。
+///
+/// 该 profile 是旁路 API 的独立配置，不代表 Codex current provider 或 takeover。
+#[tauri::command]
+pub async fn get_external_openai_api_profile(
+    state: tauri::State<'_, AppState>,
+) -> Result<ExternalOpenAiApiProfileView, String> {
+    let profile = external_openai_api::load_profile(&state.db).map_err(|e| e.to_string())?;
+    Ok(external_openai_api::profile_view(&profile))
+}
+
+/// 读取 External OpenAI-compatible API 的运行时状态。
+///
+/// 该命令只做 DB 读取和后端选项解析，供前端展示实际可用 backend/model/issue，
+/// 不会切换 provider、写 live config 或打开 takeover。
+#[tauri::command]
+pub async fn get_external_openai_api_runtime_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<ExternalOpenAiApiRuntimeStatusView, String> {
+    external_openai_api::runtime_status(&state.db).map_err(|e| e.to_string())
+}
+
+/// 更新 External OpenAI-compatible API profile。
+///
+/// 只保存启用状态、默认 router 和默认 model，不接受明文 API key。
+#[tauri::command]
+pub async fn update_external_openai_api_profile(
+    state: tauri::State<'_, AppState>,
+    profile: ExternalOpenAiApiProfileUpdate,
+) -> Result<ExternalOpenAiApiProfileView, String> {
+    external_openai_api::update_profile(&state.db, profile).map_err(|e| e.to_string())
+}
+
+/// 重新生成 External OpenAI-compatible API 的本地访问 key。
+///
+/// 明文 key 只在本次返回值中出现；数据库只保存 hash 和 prefix。
+#[tauri::command]
+pub async fn regenerate_external_openai_api_key(
+    state: tauri::State<'_, AppState>,
+) -> Result<GeneratedExternalOpenAiApiKey, String> {
+    external_openai_api::regenerate_api_key(&state.db).map_err(|e| e.to_string())
+}
+
 // ==================== Global & Per-App Config ====================
 
 /// 获取全局代理配置
@@ -105,6 +152,22 @@ pub async fn update_global_proxy_config(
     config: GlobalProxyConfig,
 ) -> Result<(), String> {
     let db = &state.db;
+    // 全局开关只控制本地服务是否应运行，不能绕过 per-app takeover 的恢复流程。
+    // 如果直接在接管中关掉总开关，Codex/Claude/Gemini 的 live 配置会继续指向
+    // 127.0.0.1，但代理服务不再启动，客户端侧表现就是所有模型请求超时。
+    if !config.proxy_enabled {
+        let takeover_active = db
+            .is_live_takeover_active()
+            .await
+            .map_err(|e| e.to_string())?;
+        if takeover_active {
+            return Err(
+                "仍有应用处于代理接管状态，请先关闭对应应用接管或使用停止并恢复 Live 配置。"
+                    .to_string(),
+            );
+        }
+    }
+
     db.update_global_proxy_config(config)
         .await
         .map_err(|e| e.to_string())

@@ -4,6 +4,7 @@ import {
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
   extractCodexTopLevelInt,
+  extractCodexWireApi,
   isCodexGoalModeEnabled,
   removeCodexTopLevelField,
   setCodexBaseUrl,
@@ -61,6 +62,86 @@ describe("Codex TOML utils", () => {
 
     const output2 = setCodexModelName(output1, " new-model \n");
     expect(extractCodexModelName(output2)).toBe("new-model");
+  });
+
+  it("writes built-in OpenAI base URL through openai_base_url", () => {
+    const input = [
+      'model_provider = "openai"',
+      'model = "gpt-5.5"',
+      "",
+    ].join("\n");
+
+    const output = setCodexBaseUrl(input, " http://127.0.0.1:15721/v1 ");
+
+    expect(output).toMatch(
+      /^openai_base_url = "http:\/\/127\.0\.0\.1:15721\/v1"$/m,
+    );
+    expect(output).not.toMatch(/^\s*base_url\s*=/m);
+    expect(output).not.toContain("[model_providers.openai]");
+    expect(extractCodexBaseUrl(output)).toBe("http://127.0.0.1:15721/v1");
+  });
+
+  it("cleans stale OpenAI base_url entries when writing openai_base_url", () => {
+    const input = [
+      'model_provider = "openai"',
+      'base_url = "https://stale-top-level.example/v1"',
+      "",
+      "[model_providers.openai]",
+      'name = "OpenAI"',
+      'base_url = "https://stale-table.example/v1"',
+      "",
+    ].join("\n");
+
+    const output = setCodexBaseUrl(input, "http://127.0.0.1:15721/v1");
+
+    expect(output).toContain(
+      'openai_base_url = "http://127.0.0.1:15721/v1"',
+    );
+    expect(output).not.toContain("stale-top-level");
+    expect(output).not.toContain("stale-table");
+    expect(output).not.toMatch(/^\s*base_url\s*=/m);
+    expect(output).toContain("[model_providers.openai]\nname = \"OpenAI\"");
+  });
+
+  it("prefers openai_base_url over stale built-in OpenAI provider tables", () => {
+    const input = [
+      'model_provider = "openai"',
+      'openai_base_url = "http://127.0.0.1:15721/v1"',
+      "",
+      "[model_providers.openai]",
+      'base_url = "https://stale-table.example/v1"',
+      "",
+    ].join("\n");
+
+    expect(extractCodexBaseUrl(input)).toBe("http://127.0.0.1:15721/v1");
+  });
+
+  it("does not treat built-in OpenAI openai_base_url as wire_api", () => {
+    const input = [
+      'model_provider = "openai"',
+      'openai_base_url = "http://127.0.0.1:15721/v1"',
+      "",
+    ].join("\n");
+
+    expect(extractCodexWireApi(input)).toBeUndefined();
+  });
+
+  it("removes built-in OpenAI openai_base_url and legacy base_url entries", () => {
+    const input = [
+      'model_provider = "openai"',
+      'openai_base_url = "http://127.0.0.1:15721/v1"',
+      'base_url = "https://stale-top-level.example/v1"',
+      "",
+      "[model_providers.openai]",
+      'base_url = "https://stale-table.example/v1"',
+      "",
+    ].join("\n");
+
+    const output = setCodexBaseUrl(input, "");
+
+    expect(output).not.toMatch(/^\s*openai_base_url\s*=/m);
+    expect(output).not.toMatch(/^\s*base_url\s*=/m);
+    expect(extractCodexBaseUrl(output)).toBeUndefined();
   });
 
   it("reads and writes base_url in the active provider section", () => {

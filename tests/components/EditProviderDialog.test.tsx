@@ -108,6 +108,22 @@ describe("EditProviderDialog", () => {
         },
       ],
     };
+    const dbCodexRouting = {
+      enabled: true,
+      defaultRouteId: "openai-official",
+      routes: [
+        {
+          id: "deepseek",
+          enabled: true,
+          match: { models: ["deepseek-v4-flash"], prefixes: [] },
+          upstream: {
+            baseUrl: "https://api.deepseek.com",
+            apiFormat: "openai_chat",
+            auth: { source: "provider_config" },
+          },
+        },
+      ],
+    };
     const provider: Provider = {
       id: "deepseek",
       name: "DeepSeek",
@@ -118,6 +134,7 @@ describe("EditProviderDialog", () => {
         },
         config: 'model_provider = "custom"\nmodel = "deepseek-v4-flash"\n',
         modelCatalog: dbModelCatalog,
+        codexRouting: dbCodexRouting,
       },
     };
     const liveSettings = {
@@ -147,6 +164,7 @@ describe("EditProviderDialog", () => {
       ).toEqual({
         ...liveSettings,
         modelCatalog: dbModelCatalog,
+        codexRouting: dbCodexRouting,
       });
     });
 
@@ -156,6 +174,7 @@ describe("EditProviderDialog", () => {
     expect(handleSubmit.mock.calls[0][0].provider.settingsConfig).toEqual({
       ...liveSettings,
       modelCatalog: dbModelCatalog,
+      codexRouting: dbCodexRouting,
     });
   });
 

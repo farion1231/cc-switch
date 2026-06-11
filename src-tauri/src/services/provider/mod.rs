@@ -8,7 +8,6 @@ mod live;
 mod usage;
 
 use indexmap::IndexMap;
-use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -1623,11 +1622,20 @@ impl ProviderService {
         // Block switching to official providers when proxy takeover is active.
         // Using a proxy with official APIs (Anthropic/OpenAI/Google) may cause account bans.
         if should_hot_switch && _provider.category.as_deref() == Some("official") {
-            return Err(AppError::localized(
-                "switch.official_blocked_by_proxy",
-                "代理接管模式下不能切换到官方供应商，使用代理访问官方 API 可能导致账号被封禁。请先关闭代理接管，或选择第三方供应商。",
-                "Cannot switch to official provider while proxy takeover is active. Using proxy with official APIs may cause account bans.",
-            ));
+            // 官方兜底 provider 不是走本地代理热切，而是退出当前 app 的接管态后
+            // 写回干净 live 配置；否则 Codex 会继续命中旧的本地 router。
+            futures::executor::block_on(
+                state
+                    .proxy_service
+                    .disable_takeover_for_app_after_switch_lock(&app_type),
+            )
+            .map_err(|e| AppError::Message(format!("关闭代理接管失败: {e}")))?;
+
+            crate::settings::set_current_provider(&app_type, Some(id))?;
+            state.db.set_current_provider(app_type.as_str(), id)?;
+            write_live_with_common_config(state.db.as_ref(), &app_type, _provider)?;
+            McpService::sync_all_enabled(state)?;
+            return Ok(SwitchResult::default());
         }
 
         if should_hot_switch {
@@ -2042,6 +2050,9 @@ impl ProviderService {
         let root = doc.as_table_mut();
         root.remove("model");
         root.remove("model_provider");
+        // `openai_base_url` is provider-specific for Codex's built-in OpenAI
+        // bucket; keeping it in common config would leak a router into official.
+        root.remove("openai_base_url");
         // Legacy/alt formats might use a top-level base_url.
         root.remove("base_url");
 
@@ -2451,31 +2462,14 @@ impl ProviderService {
                     )
                 })?;
 
-                let base_url = if config_toml.contains("base_url") {
-                    let re = Regex::new(r#"base_url\s*=\s*["']([^"']+)["']"#).map_err(|e| {
+                let base_url = crate::codex_config::extract_codex_base_url(config_toml)
+                    .ok_or_else(|| {
                         AppError::localized(
-                            "provider.regex_init_failed",
-                            format!("正则初始化失败: {e}"),
-                            format!("Failed to initialize regex: {e}"),
+                            "provider.codex.base_url.missing",
+                            "config.toml 中缺少 base_url 配置",
+                            "base_url is missing from config.toml",
                         )
                     })?;
-                    re.captures(config_toml)
-                        .and_then(|caps| caps.get(1))
-                        .map(|m| m.as_str().to_string())
-                        .ok_or_else(|| {
-                            AppError::localized(
-                                "provider.codex.base_url.invalid",
-                                "config.toml 中 base_url 格式错误",
-                                "base_url in config.toml has invalid format",
-                            )
-                        })?
-                } else {
-                    return Err(AppError::localized(
-                        "provider.codex.base_url.missing",
-                        "config.toml 中缺少 base_url 配置",
-                        "base_url is missing from config.toml",
-                    ));
-                };
 
                 Ok((api_key, base_url))
             }

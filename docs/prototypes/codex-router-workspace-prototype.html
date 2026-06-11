@@ -1,0 +1,1556 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CC Switch - Codex Model Router Workspace Prototype v3</title>
+  <style>
+    :root {
+      --app-bg: #1d1d21;
+      --card: #27272c;
+      --card-soft: #232328;
+      --card-strong: #2d2d34;
+      --border: #3c3c44;
+      --border-soft: #313139;
+      --text: #fafafa;
+      --muted: #a1a1aa;
+      --muted-soft: #74747f;
+      --blue: #2f8cff;
+      --blue-soft: rgba(47, 140, 255, 0.14);
+      --orange: #ff7a1a;
+      --orange-soft: rgba(255, 122, 26, 0.13);
+      --green: #34d399;
+      --green-soft: rgba(52, 211, 153, 0.12);
+      --amber: #fbbf24;
+      --amber-soft: rgba(251, 191, 36, 0.12);
+      --red: #fb7185;
+      --red-soft: rgba(251, 113, 133, 0.12);
+      --radius-lg: 22px;
+      --radius: 16px;
+      --radius-sm: 11px;
+      color-scheme: dark;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Microsoft YaHei", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #101014;
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+      color: inherit;
+    }
+
+    input,
+    select {
+      min-height: 34px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 6px 10px;
+      background: #1f1f24;
+      outline: none;
+    }
+
+    .desktop {
+      width: 100vw;
+      height: 100vh;
+      padding: 18px 14px;
+      background: #111114;
+      display: grid;
+      place-items: center;
+    }
+
+    .window {
+      width: min(1664px, calc(100vw - 28px));
+      height: min(1038px, calc(100vh - 36px));
+      min-height: 760px;
+      border: 1px solid #8f8f93;
+      border-radius: 11px;
+      overflow: hidden;
+      background: var(--app-bg);
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+      display: grid;
+      grid-template-rows: 44px 1fr;
+    }
+
+    .titlebar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 26px 0 16px;
+      background: #b2b2b2;
+      color: #171717;
+      user-select: none;
+    }
+
+    .titlebar-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 16px;
+      letter-spacing: 0;
+    }
+
+    .app-mark {
+      color: var(--orange);
+      font-weight: 900;
+    }
+
+    .window-controls {
+      display: flex;
+      align-items: center;
+      gap: 34px;
+      font-size: 22px;
+      line-height: 1;
+    }
+
+    .app {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: 106px 1fr;
+      background: var(--app-bg);
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: 320px minmax(0, 1fr) 74px;
+      align-items: center;
+      gap: 18px;
+      padding: 20px 28px 12px 36px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      min-width: 0;
+    }
+
+    .back {
+      width: 34px;
+      height: 34px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: transparent;
+      color: var(--muted);
+      display: grid;
+      place-items: center;
+    }
+
+    .brand-title {
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+    }
+
+    .brand-title h1 {
+      margin: 0;
+      font-size: 29px;
+      font-weight: 700;
+      color: #4c9cff;
+      letter-spacing: 0;
+      white-space: nowrap;
+    }
+
+    .brand-title span {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .pill-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      height: 60px;
+      padding: 6px;
+      border-radius: 19px;
+      background: #2a2a30;
+    }
+
+    .tool-pill {
+      width: 48px;
+      height: 48px;
+      border: 0;
+      border-radius: 14px;
+      background: transparent;
+      color: var(--muted);
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+      font-size: 18px;
+    }
+
+    .tool-pill.active {
+      background: #33333b;
+      color: #ffffff;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+    }
+
+    .tool-pill.orange {
+      color: #ff8750;
+    }
+
+    .tool-pill.blue {
+      color: #4c9cff;
+    }
+
+    .round-add {
+      width: 48px;
+      height: 48px;
+      border: 0;
+      border-radius: 999px;
+      background: var(--orange);
+      color: white;
+      font-size: 30px;
+      line-height: 1;
+      display: grid;
+      place-items: center;
+      box-shadow: 0 12px 28px rgba(255, 122, 26, 0.34);
+    }
+
+    .switches {
+      display: flex;
+      gap: 10px;
+      margin-left: 2px;
+    }
+
+    .switch {
+      width: 114px;
+      height: 48px;
+      border-radius: 18px;
+      background: #242429;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 0 13px;
+      color: var(--muted);
+    }
+
+    .knob {
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      background: #a1a1aa;
+    }
+
+    .workspace {
+      min-height: 0;
+      padding: 16px 42px 38px;
+      display: grid;
+      grid-template-columns: 268px minmax(0, 1fr);
+      gap: 20px;
+    }
+
+    .side {
+      min-height: 0;
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius-lg);
+      background: #202025;
+      padding: 18px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 16px;
+    }
+
+    .side-head {
+      display: grid;
+      gap: 6px;
+    }
+
+    .side-head strong {
+      font-size: 18px;
+    }
+
+    .side-head span {
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 12px;
+    }
+
+    .page-tabs {
+      display: grid;
+      gap: 10px;
+      align-content: start;
+    }
+
+    .page-tabs label {
+      min-height: 72px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: #27272d;
+      padding: 12px;
+      display: grid;
+      gap: 5px;
+      cursor: pointer;
+      transition: 150ms ease;
+    }
+
+    .page-tabs b {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+    }
+
+    .page-tabs span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .side-foot {
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: #27272d;
+      padding: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .stage-radio {
+      position: fixed;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    #stage-overview:checked ~ .app .for-overview,
+    #stage-sources:checked ~ .app .for-sources,
+    #stage-models:checked ~ .app .for-models,
+    #stage-routes:checked ~ .app .for-routes,
+    #stage-api:checked ~ .app .for-api,
+    #stage-test:checked ~ .app .for-test {
+      border-color: rgba(47, 140, 255, 0.65);
+      background: linear-gradient(90deg, rgba(47, 140, 255, 0.18), rgba(47, 140, 255, 0.04));
+      box-shadow: 0 0 0 1px rgba(47, 140, 255, 0.14);
+    }
+
+    .main {
+      min-width: 0;
+      min-height: 0;
+      display: grid;
+    }
+
+    .page {
+      min-width: 0;
+      min-height: 0;
+      display: none;
+      grid-template-rows: auto 1fr;
+      gap: 16px;
+    }
+
+    #stage-overview:checked ~ .app .page-overview,
+    #stage-sources:checked ~ .app .page-sources,
+    #stage-models:checked ~ .app .page-models,
+    #stage-routes:checked ~ .app .page-routes,
+    #stage-api:checked ~ .app .page-api,
+    #stage-test:checked ~ .app .page-test {
+      display: grid;
+    }
+
+    .page-head {
+      min-height: 78px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: linear-gradient(90deg, rgba(47, 140, 255, 0.15), rgba(39, 39, 44, 0.78) 44%, rgba(255, 122, 26, 0.07));
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .page-head h2 {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+
+    .page-head p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .head-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .btn {
+      min-height: 36px;
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      background: #292930;
+      padding: 0 13px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      color: var(--text);
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .btn.primary {
+      border-color: var(--orange);
+      background: var(--orange);
+      color: #fff;
+    }
+
+    .btn.blue {
+      border-color: rgba(47, 140, 255, 0.55);
+      background: var(--blue-soft);
+      color: #93c5fd;
+    }
+
+    .canvas {
+      min-width: 0;
+      min-height: 0;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: #202025;
+      padding: 18px;
+      overflow: hidden;
+    }
+
+    .page-api .canvas,
+    .page-api .panel-body {
+      overflow: auto;
+    }
+
+    .wide-stack {
+      display: grid;
+      gap: 16px;
+      height: 100%;
+      align-content: start;
+    }
+
+    .provider-row {
+      position: relative;
+      min-height: 128px;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      background: var(--card);
+      padding: 20px 22px;
+      display: grid;
+      grid-template-columns: 24px 44px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 18px;
+      overflow: hidden;
+    }
+
+    .provider-row.active {
+      border-color: rgba(47, 140, 255, 0.75);
+      background: linear-gradient(90deg, rgba(47, 140, 255, 0.13), rgba(39, 39, 44, 0.96) 36%);
+      box-shadow: inset 0 0 0 1px rgba(47, 140, 255, 0.12);
+    }
+
+    .drag {
+      color: var(--muted-soft);
+      font-size: 24px;
+      letter-spacing: -4px;
+    }
+
+    .avatar {
+      width: 48px;
+      height: 48px;
+      border-radius: 17px;
+      border: 1px solid var(--border);
+      background: #2f2f37;
+      display: grid;
+      place-items: center;
+      color: #d4d4d8;
+      font-weight: 800;
+      flex-shrink: 0;
+    }
+
+    .provider-info {
+      min-width: 0;
+      display: grid;
+      gap: 9px;
+    }
+
+    .provider-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .provider-title h3 {
+      margin: 0;
+      font-size: 23px;
+      line-height: 1.1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .url {
+      color: #2f8cff;
+      font-size: 18px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      align-items: center;
+    }
+
+    .badge {
+      min-height: 24px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: #303039;
+      padding: 2px 9px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .badge.blue {
+      border-color: rgba(47, 140, 255, 0.5);
+      background: var(--blue-soft);
+      color: #93c5fd;
+    }
+
+    .badge.green {
+      border-color: rgba(52, 211, 153, 0.42);
+      background: var(--green-soft);
+      color: #86efac;
+    }
+
+    .badge.amber {
+      border-color: rgba(251, 191, 36, 0.45);
+      background: var(--amber-soft);
+      color: #fde68a;
+    }
+
+    .badge.red {
+      border-color: rgba(251, 113, 133, 0.45);
+      background: var(--red-soft);
+      color: #fecdd3;
+    }
+
+    .row-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .metric {
+      min-height: 112px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: var(--card);
+      padding: 16px;
+      display: grid;
+      align-content: center;
+      gap: 8px;
+    }
+
+    .metric strong {
+      font-size: 32px;
+      line-height: 1;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .two-col {
+      height: 100%;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(360px, 0.8fr);
+      gap: 16px;
+    }
+
+    .panel {
+      min-width: 0;
+      min-height: 0;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      background: var(--card);
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    .panel-head {
+      min-height: 60px;
+      border-bottom: 1px solid var(--border-soft);
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .panel-head strong {
+      font-size: 16px;
+    }
+
+    .panel-body {
+      min-height: 0;
+      padding: 14px;
+      overflow: hidden;
+    }
+
+    .guide-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .guide-item {
+      min-height: 72px;
+      border: 1px solid var(--border-soft);
+      border-radius: 16px;
+      background: #232329;
+      padding: 12px;
+      display: grid;
+      grid-template-columns: 32px minmax(0, 1fr);
+      gap: 12px;
+      align-items: start;
+    }
+
+    .num {
+      width: 32px;
+      height: 32px;
+      border-radius: 10px;
+      background: var(--blue-soft);
+      color: #93c5fd;
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+    }
+
+    .guide-item b {
+      display: block;
+      margin-bottom: 3px;
+    }
+
+    .guide-item span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .source-card {
+      min-height: 108px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: #24242a;
+      padding: 14px;
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 11px;
+    }
+
+    .source-card.selected {
+      border-color: rgba(47, 140, 255, 0.65);
+      background: linear-gradient(90deg, rgba(47, 140, 255, 0.12), #24242a 42%);
+    }
+
+    .source-card h4 {
+      margin: 0 0 6px;
+      font-size: 17px;
+    }
+
+    .source-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .model-table,
+    .route-table {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      overflow: hidden;
+      background: var(--card);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    th,
+    td {
+      height: 64px;
+      border-bottom: 1px solid var(--border-soft);
+      padding: 10px 14px;
+      text-align: left;
+      vertical-align: middle;
+    }
+
+    th {
+      height: 42px;
+      color: var(--muted);
+      background: #232329;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .check {
+      width: 22px;
+      height: 22px;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      display: grid;
+      place-items: center;
+      color: transparent;
+      font-weight: 900;
+    }
+
+    .check.on {
+      background: var(--blue);
+      border-color: var(--blue);
+      color: #fff;
+    }
+
+    .model-name {
+      font-weight: 800;
+      font-size: 15px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .model-sub {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .route-row {
+      min-height: 94px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: #24242a;
+      padding: 15px;
+      display: grid;
+      grid-template-columns: 190px minmax(0, 1fr) 150px 190px;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .route-row strong {
+      display: block;
+      font-size: 16px;
+      margin-bottom: 5px;
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .pipe-card {
+      min-height: 142px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: #24242a;
+      padding: 16px;
+      display: grid;
+      align-content: start;
+      gap: 10px;
+    }
+
+    .pipe-card .dot {
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      background: var(--green);
+      color: #07130f;
+      font-weight: 900;
+    }
+
+    .pipe-card.warn .dot {
+      background: var(--amber);
+      color: #1f1600;
+    }
+
+    .publish-stack {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 14px;
+    }
+
+    .api-publish-card {
+      border: 1px solid rgba(47, 140, 255, 0.55);
+      border-radius: 18px;
+      background: linear-gradient(135deg, rgba(47, 140, 255, 0.14), rgba(36, 36, 42, 0.96) 48%, rgba(255, 122, 26, 0.08));
+      padding: 16px;
+      display: grid;
+      gap: 13px;
+    }
+
+    .api-publish-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .api-publish-head h3 {
+      margin: 0 0 5px;
+      font-size: 18px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    .endpoint-bar {
+      min-height: 42px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #16161a;
+      color: #93c5fd;
+      padding: 10px 12px;
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .api-config-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 9px;
+    }
+
+    .api-config-cell {
+      min-height: 64px;
+      border: 1px solid var(--border-soft);
+      border-radius: 13px;
+      background: rgba(22, 22, 26, 0.62);
+      padding: 10px;
+      display: grid;
+      gap: 5px;
+    }
+
+    .api-config-cell b {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .api-config-cell span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 800;
+      font-size: 13px;
+    }
+
+    .api-status-strip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .api-status-item {
+      min-height: 78px;
+      border: 1px solid var(--border-soft);
+      border-radius: 14px;
+      background: #202026;
+      padding: 12px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .api-status-item b {
+      font-size: 13px;
+    }
+
+    .api-status-item span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .api-enable-row {
+      min-height: 58px;
+      border: 1px solid rgba(52, 211, 153, 0.4);
+      border-radius: 14px;
+      background: rgba(52, 211, 153, 0.08);
+      padding: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .api-enable-row strong {
+      display: block;
+      margin-bottom: 3px;
+    }
+
+    .api-enable-row .switch {
+      flex: 0 0 auto;
+      background: rgba(52, 211, 153, 0.24);
+    }
+
+    .api-endpoint-stack {
+      display: grid;
+      gap: 9px;
+      margin-top: 14px;
+    }
+
+    .api-endpoint-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .api-policy-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .api-policy-card {
+      min-height: 86px;
+      border: 1px solid var(--border-soft);
+      border-radius: 14px;
+      background: #202026;
+      padding: 12px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .api-policy-card b {
+      font-size: 13px;
+    }
+
+    .api-policy-card span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .json {
+      height: 100%;
+      border: 1px solid #3f3f46;
+      border-radius: 18px;
+      background: #151519;
+      color: #d4d4d8;
+      padding: 14px;
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      overflow: hidden;
+    }
+
+    @media (max-width: 1180px) {
+      .window {
+        height: calc(100vh - 36px);
+        min-height: 720px;
+      }
+
+      .topbar {
+        grid-template-columns: 260px minmax(0, 1fr) 64px;
+        padding-left: 24px;
+      }
+
+      .workspace {
+        grid-template-columns: 220px minmax(0, 1fr);
+        padding: 12px 24px 28px;
+      }
+
+      .two-col {
+        grid-template-columns: 1fr;
+      }
+
+      .pipeline,
+      .summary-grid,
+      .api-config-grid,
+      .api-status-strip,
+      .api-policy-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="desktop">
+    <div class="window">
+      <div class="titlebar">
+        <div class="titlebar-title"><span class="app-mark">✳</span><span>CC Switch</span></div>
+        <div class="window-controls"><span>−</span><span>□</span><span>×</span></div>
+      </div>
+
+      <input class="stage-radio" type="radio" name="stage" id="stage-overview" checked />
+      <input class="stage-radio" type="radio" name="stage" id="stage-sources" />
+      <input class="stage-radio" type="radio" name="stage" id="stage-models" />
+      <input class="stage-radio" type="radio" name="stage" id="stage-routes" />
+      <input class="stage-radio" type="radio" name="stage" id="stage-api" />
+      <input class="stage-radio" type="radio" name="stage" id="stage-test" />
+
+      <div class="app">
+        <header class="topbar">
+          <div class="brand">
+            <button class="back" aria-label="返回 Provider 列表">←</button>
+            <div class="brand-title">
+              <h1>CC Switch</h1>
+              <span>Codex Model Router workspace</span>
+            </div>
+          </div>
+
+          <div class="toolbar">
+            <div class="switches">
+              <div class="switch"><span>◉</span><span class="knob"></span></div>
+              <div class="switch"><span>⇄</span><span class="knob"></span></div>
+            </div>
+            <div class="pill-group" aria-label="应用切换">
+              <button class="tool-pill orange active">✳</button>
+              <button class="tool-pill orange">✳</button>
+              <button class="tool-pill">◎</button>
+              <button class="tool-pill blue">◆</button>
+              <button class="tool-pill">▣</button>
+              <button class="tool-pill">HM</button>
+            </div>
+            <div class="pill-group" aria-label="工具">
+              <button class="tool-pill">⌘</button>
+              <button class="tool-pill">▯</button>
+              <button class="tool-pill">↺</button>
+              <button class="tool-pill blue">API</button>
+            </div>
+          </div>
+
+          <button class="round-add" aria-label="新增">+</button>
+        </header>
+
+        <main class="workspace">
+          <aside class="side">
+            <div class="side-head">
+              <strong>Model Router</strong>
+              <span>保持 Codex 只连接 CC Switch local proxy，通过请求里的 model 自动选择上游。</span>
+            </div>
+
+            <nav class="page-tabs" aria-label="路由配置页面">
+              <label class="for-overview" for="stage-overview">
+                <b>1 Overview</b>
+                <span>入口、出口、当前 router provider 摘要</span>
+              </label>
+              <label class="for-sources" for="stage-sources">
+                <b>2 Sources</b>
+                <span>导入或创建 Provider，测试连接和能力</span>
+              </label>
+              <label class="for-models" for="stage-models">
+                <b>3 Models</b>
+                <span>拉取模型列表，选择对 Codex 可见的模型</span>
+              </label>
+              <label class="for-routes" for="stage-routes">
+                <b>4 Routes</b>
+                <span>生成 exact/prefix/default route 和模型映射</span>
+              </label>
+              <label class="for-api" for="stage-api">
+                <b>5 Agent API</b>
+                <span>选择 backend profile，生成 OpenAI-compatible endpoint</span>
+              </label>
+              <label class="for-test" for="stage-test">
+                <b>6 Test & Publish</b>
+                <span>跑通 local proxy、resolver、protocol transform</span>
+              </label>
+            </nav>
+
+            <div class="side-foot">
+              入口：Codex Provider 列表、Codex 表单、Universal Provider。出口：发布到 Codex，或暴露 OpenAI-compatible API 给第三方 Agent。
+            </div>
+          </aside>
+
+          <section class="main">
+            <article class="page page-overview">
+              <div class="page-head">
+                <div>
+                  <h2>Codex Local Model Router</h2>
+                  <p>宽屏工作区，不再把所有配置塞进一个竖向长页。每个步骤都是独立页面。</p>
+                </div>
+                <div class="head-actions">
+                  <button class="btn">从 Codex 表单进入</button>
+                  <button class="btn primary">发布到 Codex</button>
+                </div>
+              </div>
+
+              <div class="canvas">
+                <div class="wide-stack">
+                  <div class="provider-row active">
+                    <div class="drag">⋮⋮</div>
+                    <div class="avatar">MR</div>
+                    <div class="provider-info">
+                      <div class="provider-title">
+                        <h3>Codex Local Model Router</h3>
+                        <span class="badge blue">当前 router provider</span>
+                        <span class="badge green">local proxy running</span>
+                      </div>
+                      <div class="url">http://127.0.0.1:3456/v1/responses · route by body.model</div>
+                    </div>
+                    <div class="row-actions">
+                      <button class="btn blue">打开 Router</button>
+                      <button class="btn">返回列表</button>
+                    </div>
+                  </div>
+
+                  <div class="provider-row">
+                    <div class="drag">⋮⋮</div>
+                    <div class="avatar">DS</div>
+                    <div class="provider-info">
+                      <div class="provider-title">
+                        <h3>DeepSeek API Source</h3>
+                        <span class="badge amber">text-only</span>
+                        <span class="badge green">Key OK</span>
+                      </div>
+                      <div class="url">https://api.deepseek.com/v1 · chat format · modelMap deepseek-v4-flash → deepseek-chat</div>
+                    </div>
+                    <div class="row-actions">
+                      <button class="btn">编辑源</button>
+                      <button class="btn">实测能力</button>
+                    </div>
+                  </div>
+
+                  <div class="summary-grid">
+                    <div class="metric"><strong>3</strong><span>已加入模型源</span></div>
+                    <div class="metric"><strong>7</strong><span>Codex 可见模型</span></div>
+                    <div class="metric"><strong>5</strong><span>route 规则</span></div>
+                    <div class="metric"><strong>2</strong><span>发布前待实测项</span></div>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <article class="page page-sources">
+              <div class="page-head">
+                <div>
+                  <h2>Sources: Provider 配置库</h2>
+                  <p>每个 source 都先完成 base URL、auth、API format、连接测试、模型拉取和能力确认。</p>
+                </div>
+                <div class="head-actions">
+                  <button class="btn">导入现有 Provider</button>
+                  <button class="btn primary">创建新 Provider</button>
+                </div>
+              </div>
+
+              <div class="canvas">
+                <div class="two-col">
+                  <div class="panel">
+                    <div class="panel-head">
+                      <strong>Source Library</strong>
+                      <span class="badge blue">3 selected / 4 total</span>
+                    </div>
+                    <div class="panel-body">
+                      <div class="source-card selected">
+                        <div class="avatar">AI</div>
+                        <div>
+                          <h4>OpenAI / Codex OAuth</h4>
+                          <p>managed_codex_oauth · responses · image · reasoning</p>
+                          <div class="badges"><span class="badge green">模型已拉取 4</span><span class="badge green">能力实测通过</span></div>
+                        </div>
+                        <button class="btn">重新拉取</button>
+                      </div>
+                      <div class="source-card selected">
+                        <div class="avatar">DS</div>
+                        <div>
+                          <h4>DeepSeek API</h4>
+                          <p>provider_config key · chat · text-only · reasoning</p>
+                          <div class="badges"><span class="badge green">Key OK</span><span class="badge amber">防 image_url</span></div>
+                        </div>
+                        <button class="btn">实测能力</button>
+                      </div>
+                      <div class="source-card selected">
+                        <div class="avatar">VM</div>
+                        <div>
+                          <h4>VM Local Qwen</h4>
+                          <p>http://10.0.0.12:8000/v1 · chat · 用户新建草稿</p>
+                          <div class="badges"><span class="badge amber">待连接测试</span><span class="badge amber">模型待拉取</span></div>
+                        </div>
+                        <button class="btn blue">继续配置</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="panel">
+                    <div class="panel-head">
+                      <strong>新 Provider 引导</strong>
+                      <span class="badge amber">source wizard</span>
+                    </div>
+                    <div class="panel-body">
+                      <div class="guide-list">
+                        <div class="guide-item"><div class="num">1</div><div><b>选择平台或兼容协议</b><span>OpenAI-compatible、Responses、Messages、Ollama/vLLM、本地 VM、第三方网关。</span></div></div>
+                        <div class="guide-item"><div class="num">2</div><div><b>填写 base URL 和 auth</b><span>支持 provider_config API key、managed_codex_oauth、managed_account。</span></div></div>
+                        <div class="guide-item"><div class="num">3</div><div><b>测试连接并拉取模型</b><span>先验证 `/models` 或兼容接口，再把结果写入 source 模型库。</span></div></div>
+                        <div class="guide-item"><div class="num">4</div><div><b>能力查询、手动修改、真实请求实测</b><span>能力状态区分 queried/manual/tested，未知能力会在发布前提醒。</span></div></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <article class="page page-models">
+              <div class="page-head">
+                <div>
+                  <h2>Models: 可见模型选择</h2>
+                  <p>一个 Provider 可能暴露几十个模型，只有勾选的模型会进入 Codex model catalog。</p>
+                </div>
+                <div class="head-actions">
+                  <button class="btn">拉取全部模型</button>
+                  <button class="btn blue">能力批量检测</button>
+                </div>
+              </div>
+
+              <div class="canvas">
+                <div class="wide-stack">
+                  <div class="summary-grid">
+                    <div class="metric"><strong>26</strong><span>上游可用模型</span></div>
+                    <div class="metric"><strong>7</strong><span>Codex 可见模型</span></div>
+                    <div class="metric"><strong>4</strong><span>已实测能力</span></div>
+                    <div class="metric"><strong>1</strong><span>能力未知模型</span></div>
+                  </div>
+                  <div class="model-table">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th style="width:64px;">可见</th>
+                          <th>模型</th>
+                          <th style="width:210px;">来源</th>
+                          <th style="width:240px;">能力</th>
+                          <th style="width:220px;">操作</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td><span class="check on">✓</span></td>
+                          <td><div class="model-name">gpt-5.5</div><div class="model-sub">显示名：GPT-5.5 · context 400k</div></td>
+                          <td>OpenAI OAuth</td>
+                          <td><div class="badges"><span class="badge blue">image</span><span class="badge blue">reasoning</span></div></td>
+                          <td><button class="btn">测试</button> <button class="btn">改名</button></td>
+                        </tr>
+                        <tr>
+                          <td><span class="check on">✓</span></td>
+                          <td><div class="model-name">deepseek-v4-flash</div><div class="model-sub">upstream: deepseek-chat</div></td>
+                          <td>DeepSeek API</td>
+                          <td><div class="badges"><span class="badge amber">text-only</span><span class="badge blue">reasoning</span></div></td>
+                          <td><button class="btn">测试</button> <button class="btn">映射</button></td>
+                        </tr>
+                        <tr>
+                          <td><span class="check on">✓</span></td>
+                          <td><div class="model-name">qwen3.6-local</div><div class="model-sub">用户自定义 Codex 可见名</div></td>
+                          <td>VM Local Qwen</td>
+                          <td><div class="badges"><span class="badge amber">text-only</span><span class="badge red">未实测</span></div></td>
+                          <td><button class="btn blue">实测</button> <button class="btn">编辑</button></td>
+                        </tr>
+                        <tr>
+                          <td><span class="check">✓</span></td>
+                          <td><div class="model-name">openrouter/anthropic/claude-sonnet</div><div class="model-sub">保留在 source，不暴露给 Codex</div></td>
+                          <td>OpenRouter Backup</td>
+                          <td><div class="badges"><span class="badge blue">image</span></div></td>
+                          <td><button class="btn">加入可见</button></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <article class="page page-routes">
+              <div class="page-head">
+                <div>
+                  <h2>Routes: 汇总配置</h2>
+                  <p>从可见模型自动生成 route，用户只调整 exact/prefix、default route、model mapping。</p>
+                </div>
+                <div class="head-actions">
+                  <select><option>默认 route: openai-official</option></select>
+                  <button class="btn primary">自动生成 route</button>
+                </div>
+              </div>
+
+              <div class="canvas">
+                <div class="wide-stack">
+                  <div class="route-row">
+                    <div><strong>openai-official</strong><span class="muted">exact: gpt-5.5, gpt-5-codex</span></div>
+                    <div><b>OpenAI / Codex OAuth</b><div class="muted">managed_codex_oauth，不继承 stale Bearer key</div></div>
+                    <span class="badge blue">responses</span>
+                    <span class="badge green">能力实测通过</span>
+                  </div>
+                  <div class="route-row">
+                    <div><strong>deepseek</strong><span class="muted">prefix: deepseek-</span></div>
+                    <div><b>DeepSeek API</b><div class="muted">modelMap: deepseek-v4-flash → deepseek-chat</div></div>
+                    <span class="badge blue">chat</span>
+                    <span class="badge amber">text-only 防 image_url</span>
+                  </div>
+                  <div class="route-row">
+                    <div><strong>vm-qwen</strong><span class="muted">exact: qwen3.6-local</span></div>
+                    <div><b>VM Local Qwen</b><div class="muted">http://10.0.0.12:8000/v1</div></div>
+                    <span class="badge blue">chat</span>
+                    <span class="badge amber">待 route test</span>
+                  </div>
+                  <div class="provider-row">
+                    <div class="drag">⋮⋮</div>
+                    <div class="avatar">CF</div>
+                    <div class="provider-info">
+                      <div class="provider-title"><h3>Codex Form 只显示摘要</h3><span class="badge blue">generated config</span></div>
+                      <div class="url">route 数、可见模型数、默认 route、未测试项，以及“打开 Model Router”按钮</div>
+                    </div>
+                    <button class="btn">查看 codexRouting</button>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <article class="page page-api">
+              <div class="page-head">
+                <div>
+                  <h2>Agent API: 第三方接入 Profile</h2>
+                  <p>外部 agent 只配置 base_url、api_key、model；CC Switch 内部选择 provider、router route 或 OpenAI Official OAuth。</p>
+                </div>
+                <div class="head-actions">
+                  <button class="btn">重新生成 Key</button>
+                  <button class="btn primary">保存 Profile</button>
+                </div>
+              </div>
+
+              <div class="canvas">
+                <div class="two-col">
+                  <div class="panel">
+                    <div class="panel-head">
+                      <strong>Backend Picker</strong>
+                      <span class="badge green">runtime status ready</span>
+                    </div>
+                    <div class="panel-body">
+                      <div class="api-status-strip">
+                        <div class="api-status-item">
+                          <b>Listener</b>
+                          <span>127.0.0.1:15721，独立于 Codex takeover。</span>
+                        </div>
+                        <div class="api-status-item">
+                          <b>Auth</b>
+                          <span>Bearer 或 x-api-key，校验 profile hash。</span>
+                        </div>
+                        <div class="api-status-item">
+                          <b>Routes</b>
+                          <span>chat completions 优先，responses 复用同一 profile。</span>
+                        </div>
+                      </div>
+                      <div class="source-card selected">
+                        <div class="avatar">RT</div>
+                        <div>
+                          <h4>Codex Router Route / openai-official</h4>
+                          <p>backendType=codex_router_route · provider=codex-openai-router · route=openai-official</p>
+                          <div class="badges"><span class="badge green">OAuth managed</span><span class="badge blue">responses capable</span></div>
+                        </div>
+                        <button class="btn blue">Selected</button>
+                      </div>
+                      <div class="source-card">
+                        <div class="avatar">OP</div>
+                        <div>
+                          <h4>OpenAI-compatible Provider / DeepSeek</h4>
+                          <p>backendType=provider · appType=codex · providerId=codex-deepseek</p>
+                          <div class="badges"><span class="badge blue">chat completions</span><span class="badge amber">responses unsupported</span></div>
+                        </div>
+                        <button class="btn">Use</button>
+                      </div>
+                      <div class="source-card">
+                        <div class="avatar">OA</div>
+                        <div>
+                          <h4>OpenAI Official / Codex OAuth</h4>
+                          <p>managed account · ChatGPT Codex backend · tokens stay inside CC Switch</p>
+                          <div class="badges"><span class="badge green">no token export</span><span class="badge blue">chat bridge</span></div>
+                        </div>
+                        <button class="btn">Use</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="panel">
+                    <div class="panel-head">
+                      <strong>OpenAI-Compatible Profile</strong>
+                      <span class="badge amber">key visible once</span>
+                    </div>
+                    <div class="panel-body">
+                      <div class="api-enable-row">
+                        <div>
+                          <strong>External API Profile Enabled</strong>
+                          <span class="muted">只控制第三方 Agent endpoint，不切换任何 app 当前 provider。</span>
+                        </div>
+                        <div class="switch"><span>ON</span><span class="knob"></span></div>
+                      </div>
+                      <div class="guide-list">
+                        <div class="guide-item"><div class="num">1</div><div><b>Endpoint</b><span>base_url 固定为 http://127.0.0.1:15721/v1，默认只监听本机。</span></div></div>
+                        <div class="guide-item"><div class="num">2</div><div><b>API key</b><span>生成 ccsw_ 前缀 key；明文只显示一次，数据库只存 hash 和 prefix。</span></div></div>
+                        <div class="guide-item"><div class="num">3</div><div><b>Model</b><span>可选 router route 模型名或 backend 可见模型；/v1/models 只返回 profile 允许模型。</span></div></div>
+                        <div class="guide-item"><div class="num">4</div><div><b>Isolation</b><span>不写 providers.is_current，不写 Codex live config，不打开 takeover，不写 proxy_config.enabled。</span></div></div>
+                      </div>
+                      <div class="api-endpoint-stack">
+                        <div class="api-endpoint-label">SDK config preview</div>
+                        <div class="endpoint-bar">OpenAI({ baseURL: "http://127.0.0.1:15721/v1", apiKey: "ccsw_••••••", model: "gpt-5.4-mini" })</div>
+                      </div>
+                      <div class="api-policy-grid">
+                        <div class="api-policy-card"><b>No secret export</b><span>OAuth token、refresh token、真实上游 API key 永远不进入外部 agent 配置片段。</span></div>
+                        <div class="api-policy-card"><b>No silent fallback</b><span>backend 缺失、模型未命中或协议不支持时返回 OpenAI-style 错误。</span></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <article class="page page-test">
+              <div class="page-head">
+                <div>
+                  <h2>Test & Publish: 发布前路由实测</h2>
+                  <p>不是只写配置，发布前必须验证 local proxy 到上游的真实链路。</p>
+                </div>
+                <div class="head-actions">
+                  <select><option>deepseek-v4-flash</option><option>qwen3.6-local</option></select>
+                  <button class="btn primary">运行全部测试</button>
+                </div>
+              </div>
+
+              <div class="canvas">
+                <div class="two-col">
+                  <div>
+                    <div class="pipeline">
+                      <div class="pipe-card"><div class="dot">✓</div><b>Codex local proxy</b><span class="muted">请求进入 /v1/responses，body.model = deepseek-v4-flash。</span></div>
+                      <div class="pipe-card"><div class="dot">✓</div><b>Route resolver</b><span class="muted">匹配 prefix deepseek-，生成 effective provider。</span></div>
+                      <div class="pipe-card"><div class="dot">✓</div><b>Protocol transform</b><span class="muted">Responses → Chat，并按 text-only capability 移除 image_url。</span></div>
+                      <div class="pipe-card warn"><div class="dot">!</div><b>VM Qwen route</b><span class="muted">连接成功但能力未实测，发布前建议真实请求。</span></div>
+                    </div>
+                    <div class="provider-row active" style="margin-top:16px;">
+                      <div class="drag">⋮⋮</div>
+                      <div class="avatar">OK</div>
+                      <div class="provider-info">
+                        <div class="provider-title"><h3>发布出口</h3><span class="badge green">ready with warnings</span></div>
+                        <div class="url">写入 Router Provider → 返回 Codex Provider 列表 → 高亮 Codex Local Model Router</div>
+                      </div>
+                      <button class="btn primary">发布并返回</button>
+                    </div>
+                  </div>
+                  <div class="publish-stack">
+                    <div class="api-publish-card">
+                      <div class="api-publish-head">
+                        <div>
+                          <h3>Third-party Agents API</h3>
+                          <div class="muted">同一个 backend picker 面向外部 agent，不写 Codex current provider，不打开 takeover。</div>
+                        </div>
+                        <span class="badge green">profile ready</span>
+                      </div>
+                      <div class="endpoint-bar">base_url = http://127.0.0.1:15721/v1</div>
+                      <div class="api-config-grid">
+                        <div class="api-config-cell"><b>API key</b><span>ccsw_live_••••••</span></div>
+                        <div class="api-config-cell"><b>Backend</b><span>Router route: openai-official</span></div>
+                        <div class="api-config-cell"><b>Model</b><span>gpt-5.4-mini</span></div>
+                      </div>
+                      <div class="badges">
+                        <span class="badge blue">/v1/chat/completions</span>
+                        <span class="badge blue">/v1/models</span>
+                        <span class="badge amber">key shown once</span>
+                        <span class="badge green">hash stored only</span>
+                      </div>
+                    </div>
+                    <div class="json">settings_config.codexRouting
+enabled = true
+defaultRouteId = "openai-official"
+visibleModels = 7
+
+routes:
+- exact gpt-5.5 → OpenAI responses
+- prefix deepseek- → DeepSeek chat
+- exact qwen3.6-local → VM chat
+
+publish gate:
+- route test failed: block
+- text-only image conflict: block
+- capability unknown: warning
+
+external_openai_api_profile_v1:
+- backendType: codex_router_route
+- providerId: codex-openai-router
+- routeId: openai-official
+- enabled: true
+- apiKeyHash only</div>
+                  </div>
+                </div>
+              </div>
+            </article>
+          </section>
+        </main>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

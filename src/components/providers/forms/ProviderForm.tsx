@@ -1202,12 +1202,18 @@ function ProviderFormFull({
     if (appId === "codex") {
       try {
         const authJson = JSON.parse(codexAuth);
+        // Codex router 自身使用 Responses 接入本地代理，但仍需要保存 catalog/routing。
+        const hasCodexRouting =
+          codexRouting.enabled || (codexRouting.routes?.length ?? 0) > 0;
+        const shouldPersistCodexLocalConfig =
+          category !== "official" || hasCodexRouting;
         let normalizedCodexConfig =
-          category !== "official" && (codexConfig ?? "").trim()
+          shouldPersistCodexLocalConfig && (codexConfig ?? "").trim()
             ? setCodexWireApi(codexConfig ?? "", "responses")
             : (codexConfig ?? "");
         const normalizedCatalogModels =
-          category !== "official" && localCodexApiFormat === "openai_chat"
+          shouldPersistCodexLocalConfig &&
+          (localCodexApiFormat === "openai_chat" || hasCodexRouting)
             ? normalizeCodexCatalogModelsForSave(codexCatalogModels)
             : [];
         // Sync first catalog row's model into config.toml so Codex uses it as default
@@ -1229,10 +1235,7 @@ function ProviderFormFull({
         if (normalizedCatalogModels.length > 0) {
           configObj.modelCatalog = { models: normalizedCatalogModels };
         }
-        if (
-          category !== "official" &&
-          (codexRouting.enabled || (codexRouting.routes?.length ?? 0) > 0)
-        ) {
+        if (shouldPersistCodexLocalConfig && hasCodexRouting) {
           configObj.codexRouting = codexRouting;
         }
         settingsConfig = JSON.stringify(configObj);

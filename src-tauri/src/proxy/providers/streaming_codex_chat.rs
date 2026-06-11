@@ -983,10 +983,10 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
                     yield Ok(event);
                 }
             } else if state.has_substantive_output() {
-                state.finish_reason = Some("length".to_string());
-                for event in state.finalize() {
-                    yield Ok(event);
-                }
+                yield Ok(state.failed_event(
+                    "Upstream Chat Completions stream ended after partial output but before sending finish_reason".to_string(),
+                    Some("stream_truncated".to_string()),
+                ));
             } else {
                 yield Ok(state.failed_event(
                     "Upstream Chat Completions stream ended before sending finish_reason".to_string(),
@@ -1267,16 +1267,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stream_end_with_output_without_finish_reason_emits_incomplete_without_failed() {
+    async fn stream_end_with_output_without_finish_reason_emits_failed_without_completed() {
         let output = collect(vec![
             "data: {\"id\":\"chatcmpl_truncated\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n",
         ])
         .await;
 
-        assert!(output.contains("event: response.completed"));
-        assert!(output.contains("\"status\":\"incomplete\""));
-        assert!(output.contains("\"incomplete_details\":{\"reason\":\"max_output_tokens\"}"));
-        assert!(!output.contains("event: response.failed"));
+        assert!(output.contains("event: response.failed"));
+        assert!(output.contains("stream_truncated"));
+        assert!(!output.contains("event: response.completed"));
+        assert!(!output.contains("\"incomplete_details\":{\"reason\":\"max_output_tokens\"}"));
     }
 
     #[tokio::test]

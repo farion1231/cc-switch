@@ -6,6 +6,10 @@ import type {
   ProxyTakeoverStatus,
   GlobalProxyConfig,
   AppProxyConfig,
+  ExternalOpenAIAPIProfile,
+  ExternalOpenAIAPIProfileUpdate,
+  ExternalOpenAIAPIRuntimeStatus,
+  GeneratedExternalOpenAIAPIKey,
 } from "@/types/proxy";
 
 export const proxyApi = {
@@ -69,6 +73,26 @@ export const proxyApi = {
   // 更新代理配置（旧版 v2 兼容接口）
   async updateProxyConfig(config: ProxyConfig): Promise<void> {
     return invoke("update_proxy_config", { config });
+  },
+
+  // ========== External OpenAI-compatible API Profile ==========
+
+  async getExternalOpenAIAPIProfile(): Promise<ExternalOpenAIAPIProfile> {
+    return invoke("get_external_openai_api_profile");
+  },
+
+  async getExternalOpenAIAPIRuntimeStatus(): Promise<ExternalOpenAIAPIRuntimeStatus> {
+    return invoke("get_external_openai_api_runtime_status");
+  },
+
+  async updateExternalOpenAIAPIProfile(
+    profile: ExternalOpenAIAPIProfileUpdate,
+  ): Promise<ExternalOpenAIAPIProfile> {
+    return invoke("update_external_openai_api_profile", { profile });
+  },
+
+  async regenerateExternalOpenAIAPIKey(): Promise<GeneratedExternalOpenAIAPIKey> {
+    return invoke("regenerate_external_openai_api_key");
   },
 
   // ========== v3+ 全局/应用级配置 API ==========

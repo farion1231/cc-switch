@@ -306,6 +306,31 @@ fn remove_toml_table_like(target: &mut dyn TableLike, source: &dyn TableLike) {
     }
 }
 
+// Codex common config 只允许保存跨 provider 的用户偏好；provider 私有字段必须过滤，
+// 否则 official/provider 切换时会继承旧 router 的模型目录或本地 base_url。
+fn strip_codex_common_config_provider_fields(doc: &mut DocumentMut) {
+    for key in [
+        "model",
+        "model_provider",
+        "model_context_window",
+        "model_catalog_json",
+        "openai_base_url",
+        "experimental_bearer_token",
+    ] {
+        doc.as_table_mut().remove(key);
+    }
+    doc.as_table_mut().remove("model_providers");
+}
+
+// 解析并净化 Codex common config，调用方再决定是 merge、remove 还是 subset 检测。
+fn parse_codex_common_config_snippet(snippet: &str) -> Result<DocumentMut, AppError> {
+    let mut doc = snippet
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex common config snippet: {e}")))?;
+    strip_codex_common_config_provider_fields(&mut doc);
+    Ok(doc)
+}
+
 fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet: &str) -> bool {
     let trimmed = snippet.trim();
     if trimmed.is_empty() {
@@ -328,7 +353,13 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
                 Err(_) => return false,
             };
             let source_doc = match trimmed.parse::<DocumentMut>() {
-                Ok(doc) => doc,
+                Ok(mut doc) => {
+                    strip_codex_common_config_provider_fields(&mut doc);
+                    if doc.as_table().is_empty() {
+                        return false;
+                    }
+                    doc
+                }
                 Err(_) => return false,
             };
 
@@ -398,9 +429,10 @@ pub(crate) fn remove_common_config_from_settings(
                     ))
                 })?
             };
-            let source_doc = trimmed.parse::<DocumentMut>().map_err(|e| {
-                AppError::Message(format!("Invalid Codex common config snippet: {e}"))
-            })?;
+            let source_doc = parse_codex_common_config_snippet(trimmed)?;
+            if source_doc.as_table().is_empty() {
+                return Ok(settings.clone());
+            }
 
             remove_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
             if let Some(obj) = result.as_object_mut() {
@@ -453,9 +485,10 @@ fn apply_common_config_to_settings(
                     ))
                 })?
             };
-            let source_doc = trimmed.parse::<DocumentMut>().map_err(|e| {
-                AppError::Message(format!("Invalid Codex common config snippet: {e}"))
-            })?;
+            let source_doc = parse_codex_common_config_snippet(trimmed)?;
+            if source_doc.as_table().is_empty() {
+                return Ok(settings.clone());
+            }
 
             merge_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
             if let Some(obj) = result.as_object_mut() {
@@ -603,9 +636,13 @@ fn restore_live_settings_for_provider_backfill(
     // absent. Never let a switch-away backfill from Live erase the stored
     // mapping: prefer the DB provider's `modelCatalog`, falling back to whatever
     // Live reconstructed only when the DB has none.
-    if let Some(stored_catalog) = provider.settings_config.get("modelCatalog") {
-        if let Some(obj) = settings.as_object_mut() {
-            obj.insert("modelCatalog".to_string(), stored_catalog.clone());
+    // `codexRouting` 同样只存在于 DB/UI 配置中，Live 快照没有这个字段。
+    // 这里统一保护 Codex 的 DB 专有字段，避免切回 backup 时把 router 路由表擦掉。
+    for private_field in ["modelCatalog", "codexRouting"] {
+        if let Some(stored_value) = provider.settings_config.get(private_field) {
+            if let Some(obj) = settings.as_object_mut() {
+                obj.insert(private_field.to_string(), stored_value.clone());
+            }
         }
     }
 
@@ -1616,6 +1653,60 @@ mod tests {
     }
 
     #[test]
+    fn codex_common_config_does_not_import_provider_owned_router_fields() {
+        let settings = json!({
+            "auth": {
+                "OPENAI_API_KEY": "sk-test"
+            },
+            "config": "model_provider = \"openai\"\n[model_providers.openai]\nbase_url = \"https://api.openai.com/v1\"\n"
+        });
+        let snippet = r#"model_provider = "router"
+model_catalog_json = "cc-switch-model-catalog.json"
+openai_base_url = "http://127.0.0.1:15721/v1"
+experimental_bearer_token = "sk-router"
+
+[model_providers.router]
+base_url = "http://127.0.0.1:15721/v1"
+
+[features]
+web_search = true
+"#;
+
+        let applied = apply_common_config_to_settings(&AppType::Codex, &settings, snippet).unwrap();
+        let applied_config = applied["config"].as_str().unwrap_or_default();
+
+        assert!(applied_config.contains("model_provider = \"openai\""));
+        assert!(applied_config.contains("https://api.openai.com/v1"));
+        assert!(applied_config.contains("[features]"));
+        assert!(applied_config.contains("web_search = true"));
+        assert!(!applied_config.contains("model_catalog_json"));
+        assert!(!applied_config.contains("openai_base_url"));
+        assert!(!applied_config.contains("experimental_bearer_token"));
+        assert!(!applied_config.contains("127.0.0.1:15721"));
+        assert!(!applied_config.contains("[model_providers.router]"));
+    }
+
+    #[test]
+    fn codex_common_config_provider_only_snippet_is_not_detected_or_removed() {
+        let settings = json!({
+            "auth": {
+                "OPENAI_API_KEY": "sk-test"
+            },
+            "config": "model_provider = \"router\"\nmodel_catalog_json = \"cc-switch-model-catalog.json\"\n[model_providers.router]\nbase_url = \"http://127.0.0.1:15721/v1\"\n"
+        });
+        let snippet = "model_provider = \"router\"\n[model_providers.router]\nbase_url = \"http://127.0.0.1:15721/v1\"\n";
+
+        assert!(!settings_contain_common_config(
+            &AppType::Codex,
+            &settings,
+            snippet
+        ));
+        let stripped =
+            remove_common_config_from_settings(&AppType::Codex, &settings, snippet).unwrap();
+        assert_eq!(stripped, settings);
+    }
+
+    #[test]
     fn explicit_common_config_flag_overrides_legacy_subset_detection() {
         let mut provider = Provider::with_id(
             "claude-test".to_string(),
@@ -1730,6 +1821,50 @@ mod tests {
             result.get("modelCatalog"),
             provider.settings_config.get("modelCatalog"),
             "switch-away backfill must keep the DB-stored modelCatalog when Live has none"
+        );
+    }
+
+    #[test]
+    fn codex_switch_backfill_preserves_stored_codex_routing_when_live_lacks_it() {
+        // Codex router 的路由表只存在于 DB settings_config，config.toml/live snapshot
+        // 无法表达该字段；切换到 backup/official 时不能把它回填成空。
+        let mut provider = Provider::with_id(
+            "codex-openai-router".to_string(),
+            "OpenAI Multi-Model Router".to_string(),
+            json!({
+                "auth": {},
+                "config": "model_provider = \"codex_model_router_v2\"\n",
+                "codexRouting": {
+                    "enabled": true,
+                    "defaultRouteId": "openai",
+                    "routes": [
+                        {
+                            "id": "deepseek",
+                            "match": { "models": ["deepseek-v4-flash"] },
+                            "upstream": {
+                                "baseUrl": "https://api.deepseek.com",
+                                "apiFormat": "openai_chat"
+                            }
+                        }
+                    ]
+                }
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+
+        let live_settings = json!({
+            "auth": {},
+            "config": "model_provider = \"codex_model_router_v2\"\n"
+        });
+
+        let result =
+            restore_live_settings_for_provider_backfill(&AppType::Codex, &provider, live_settings);
+
+        assert_eq!(
+            result.get("codexRouting"),
+            provider.settings_config.get("codexRouting"),
+            "switch-away backfill must keep the DB-stored codexRouting when Live has none"
         );
     }
 

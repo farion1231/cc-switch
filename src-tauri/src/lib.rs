@@ -329,10 +329,6 @@ pub fn run() {
                     eprintln!("创建日志目录失败: {e}");
                 }
 
-                // 启动时删除旧日志文件，实现单文件覆盖效果
-                let log_file_path = log_dir.join("cc-switch.log");
-                let _ = std::fs::remove_file(&log_file_path);
-
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
                         // 初始化为 Trace，允许后续通过 log::set_max_level() 动态调整级别
@@ -344,7 +340,8 @@ pub fn run() {
                                 file_name: Some("cc-switch".into()),
                             }),
                         ])
-                        // 单文件模式：启动时删除旧文件，达到大小时轮转
+                        // 保留启动前后的同一份日志，避免 router 切换早期错误被重启清空。
+                        // 达到大小上限后仍交给插件轮转。
                         // 注意：KeepSome(n) 内部会做 n-2 运算，n=1 会导致 usize 下溢
                         // KeepSome(2) 是最小安全值，表示不保留轮转文件
                         .rotation_strategy(RotationStrategy::KeepSome(2))
@@ -600,6 +597,26 @@ pub fn run() {
                             log::warn!("✗ Codex provider template bucket migration failed: {e}");
                         }
                     }
+
+                    match crate::codex_history_migration::maybe_migrate_codex_openai_history_provider_bucket(
+                        &db_for_codex_history_migration,
+                    ) {
+                        Ok(outcome) => {
+                            if let Some(reason) = outcome.skipped_reason {
+                                log::debug!("Codex OpenAI history bucket migration skipped: {reason}");
+                            } else if !outcome.source_provider_ids.is_empty() {
+                                log::info!(
+                                    "Codex OpenAI history bucket migration completed: sources={}, jsonl_files={}, state_rows={}",
+                                    outcome.source_provider_ids.len(),
+                                    outcome.migrated_jsonl_files,
+                                    outcome.migrated_state_rows
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("Codex OpenAI history bucket migration failed: {e}");
+                        }
+                    }
                 });
             }
 
@@ -837,7 +854,7 @@ pub fn run() {
 
             // 构建托盘
             let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
-                .tooltip("CC Switch") // 鼠标悬停提示
+                .tooltip("CCSwitchMulti") // 鼠标悬停提示
                 .on_tray_icon_event(|tray, event| match event {
                     // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
                     // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
@@ -1290,6 +1307,10 @@ pub fn run() {
             commands::get_proxy_status,
             commands::get_proxy_config,
             commands::update_proxy_config,
+            commands::get_external_openai_api_profile,
+            commands::get_external_openai_api_runtime_status,
+            commands::update_external_openai_api_profile,
+            commands::regenerate_external_openai_api_key,
             // Global & Per-App Config
             commands::get_global_proxy_config,
             commands::update_global_proxy_config,
@@ -1652,7 +1673,20 @@ async fn restore_proxy_state_on_startup(state: &store::AppState) {
     }
 
     if apps_to_restore.is_empty() {
-        log::debug!("启动时无需恢复代理状态");
+        // 第三方 Agent API 只需要本地代理服务运行，不应该伪装成任何 app takeover。
+        // 因此当全局 proxy_enabled 为 true 但没有 app enabled 时，仅恢复监听服务。
+        match state.db.get_global_proxy_config().await {
+            Ok(config) if config.proxy_enabled => match state.proxy_service.start().await {
+                Ok(info) => log::info!(
+                    "✓ 已恢复第三方 Agent API 本地监听服务: {}:{}",
+                    info.address,
+                    info.port
+                ),
+                Err(e) => log::error!("✗ 恢复第三方 Agent API 本地监听服务失败: {e}"),
+            },
+            Ok(_) => log::debug!("启动时无需恢复代理状态"),
+            Err(e) => log::warn!("读取全局代理开关失败，跳过第三方 Agent API 自动恢复: {e}"),
+        }
         return;
     }
 

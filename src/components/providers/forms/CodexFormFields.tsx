@@ -151,11 +151,7 @@ function createRoutingRow(seed?: Partial<CodexRoutingRoute>): CodexRoutingRow {
       apiKey: seed?.upstream?.apiKey ?? "",
       modelMap: seed?.upstream?.modelMap,
     },
-    capabilities: {
-      textOnly: seed?.capabilities?.textOnly ?? false,
-      inputModalities: seed?.capabilities?.inputModalities ?? ["text", "image"],
-      supportsReasoning: seed?.capabilities?.supportsReasoning ?? false,
-    },
+    capabilities: seed?.capabilities,
   };
 }
 
@@ -531,13 +527,13 @@ export function CodexFormFields({
             <div className="space-y-1">
               <FormLabel>
                 {t("codexConfig.localModelRoutingTitle", {
-                  defaultValue: "Local model routing",
+                  defaultValue: "Codex 多模型路由",
                 })}
               </FormLabel>
               <p className="text-xs leading-relaxed text-muted-foreground">
                 {t("codexConfig.localModelRoutingHint", {
                   defaultValue:
-                    "Route Codex requests by body.model while Codex keeps one local CC Switch proxy endpoint.",
+                    "Codex 仍然连接一个本地 CC Switch 代理端点，但可按请求里的 body.model 分流到不同上游模型。",
                 })}
               </p>
             </div>
@@ -545,7 +541,7 @@ export function CodexFormFields({
               checked={codexRouting.enabled ?? false}
               onCheckedChange={handleRoutingEnabledChange}
               aria-label={t("codexConfig.localModelRoutingTitle", {
-                defaultValue: "Local model routing",
+                defaultValue: "Codex 多模型路由",
               })}
             />
           </div>
@@ -560,7 +556,7 @@ export function CodexFormFields({
                 })
               }
               placeholder={t("codexConfig.defaultRoutePlaceholder", {
-                defaultValue: "Default route id",
+                defaultValue: "默认路由 ID",
               })}
               className="max-w-xs"
             />
@@ -572,7 +568,7 @@ export function CodexFormFields({
               className="h-8 gap-1"
             >
               <Plus className="h-3.5 w-3.5" />
-              {t("codexConfig.addRoute", { defaultValue: "Add route" })}
+              {t("codexConfig.addRoute", { defaultValue: "添加路由" })}
             </Button>
           </div>
 
@@ -580,8 +576,8 @@ export function CodexFormFields({
             const matchedModels = route.match.models?.join(", ") || "-";
             const matchedPrefixes = route.match.prefixes?.join(", ") || "-";
             const capabilityLabels = [
-              route.capabilities?.textOnly ? "text-only" : "image",
-              route.capabilities?.supportsReasoning ? "reasoning" : null,
+              route.capabilities?.textOnly ? "仅文本" : "图文",
+              route.capabilities?.supportsReasoning ? "推理" : null,
             ].filter(Boolean);
 
             return (
@@ -592,14 +588,14 @@ export function CodexFormFields({
                 <div className="min-w-0 space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium text-sm">
-                      {route.label || route.id || "route"}
+                      {route.label || route.id || "路由"}
                     </span>
                     <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
                       {route.upstream.apiFormat}
                     </span>
                     {route.enabled === false && (
                       <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                        disabled
+                        已停用
                       </span>
                     )}
                     {capabilityLabels.map((label) => (
@@ -612,10 +608,10 @@ export function CodexFormFields({
                     ))}
                   </div>
                   <p className="truncate text-xs text-muted-foreground">
-                    models: {matchedModels} · prefixes: {matchedPrefixes}
+                    匹配模型：{matchedModels}；匹配前缀：{matchedPrefixes}
                   </p>
                   <p className="truncate text-xs text-muted-foreground">
-                    {route.upstream.baseUrl || "No upstream base URL"}
+                    {route.upstream.baseUrl || "尚未填写上游 Base URL"}
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
@@ -625,7 +621,7 @@ export function CodexFormFields({
                       handleUpdateRoute(index, { enabled: checked })
                     }
                     aria-label={t("codexConfig.routeEnabled", {
-                      defaultValue: "Route enabled",
+                      defaultValue: "启用路由",
                     })}
                   />
                   <Button
@@ -635,7 +631,7 @@ export function CodexFormFields({
                     className="h-9 w-9 text-muted-foreground"
                     onClick={() => setEditingRouteIndex(index)}
                     title={t("codexConfig.editRoute", {
-                      defaultValue: "Edit route",
+                      defaultValue: "编辑路由",
                     })}
                   >
                     <Pencil className="h-4 w-4" />
@@ -646,7 +642,7 @@ export function CodexFormFields({
                     size="icon"
                     className="h-9 w-9 text-muted-foreground hover:text-destructive"
                     onClick={() => handleRemoveRoute(index)}
-                    title={t("common.delete", { defaultValue: "Delete" })}
+                    title={t("common.delete", { defaultValue: "删除" })}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -666,12 +662,12 @@ export function CodexFormFields({
         <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle>
-              {t("codexConfig.editRoute", { defaultValue: "Edit route" })}
+              {t("codexConfig.editRoute", { defaultValue: "编辑路由" })}
             </DialogTitle>
             <DialogDescription>
               {t("codexConfig.editRouteHint", {
                 defaultValue:
-                  "Configure matching, upstream API format, auth, model mapping, and capabilities for this route.",
+                  "配置这条路由的匹配规则、上游 API 格式、认证方式、模型映射和能力标记。",
               })}
             </DialogDescription>
           </DialogHeader>
@@ -687,7 +683,7 @@ export function CodexFormFields({
                     })
                   }
                   placeholder={t("codexConfig.routeIdPlaceholder", {
-                    defaultValue: "route-id",
+                    defaultValue: "路由 ID",
                   })}
                 />
                 <Input
@@ -698,7 +694,7 @@ export function CodexFormFields({
                     })
                   }
                   placeholder={t("codexConfig.routeLabelPlaceholder", {
-                    defaultValue: "Route label",
+                    defaultValue: "路由名称",
                   })}
                 />
                 <label className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
@@ -709,7 +705,7 @@ export function CodexFormFields({
                     }
                   />
                   {t("codexConfig.routeEnabled", {
-                    defaultValue: "Route enabled",
+                    defaultValue: "启用路由",
                   })}
                 </label>
               </div>
@@ -726,7 +722,7 @@ export function CodexFormFields({
                     })
                   }
                   placeholder={t("codexConfig.matchModelsPlaceholder", {
-                    defaultValue: "Matched models, comma separated",
+                    defaultValue: "匹配模型，多个用英文逗号分隔",
                   })}
                 />
                 <Input
@@ -740,7 +736,7 @@ export function CodexFormFields({
                     })
                   }
                   placeholder={t("codexConfig.matchPrefixesPlaceholder", {
-                    defaultValue: "Matched prefixes, comma separated",
+                    defaultValue: "匹配前缀，多个用英文逗号分隔",
                   })}
                 />
               </div>
@@ -757,7 +753,7 @@ export function CodexFormFields({
                     })
                   }
                   placeholder={t("codexConfig.routeBaseUrlPlaceholder", {
-                    defaultValue: "Upstream base URL",
+                    defaultValue: "上游 Base URL",
                   })}
                 />
                 <Select
@@ -775,9 +771,15 @@ export function CodexFormFields({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="openai_responses">responses</SelectItem>
-                    <SelectItem value="openai_chat">chat</SelectItem>
-                    <SelectItem value="openai_messages">messages</SelectItem>
+                    <SelectItem value="openai_responses">
+                      OpenAI Responses
+                    </SelectItem>
+                    <SelectItem value="openai_chat">
+                      OpenAI Chat Completions
+                    </SelectItem>
+                    <SelectItem value="openai_messages">
+                      OpenAI Messages
+                    </SelectItem>
                   </SelectContent>
                 </Select>
                 <Select
@@ -811,11 +813,13 @@ export function CodexFormFields({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="provider_config">provider_config</SelectItem>
-                    <SelectItem value="managed_codex_oauth">
-                      managed_codex_oauth
+                    <SelectItem value="provider_config">
+                      使用路由 API Key
                     </SelectItem>
-                    <SelectItem value="managed_account">managed_account</SelectItem>
+                    <SelectItem value="managed_codex_oauth">
+                      托管 Codex OAuth
+                    </SelectItem>
+                    <SelectItem value="managed_account">托管账号</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -834,7 +838,7 @@ export function CodexFormFields({
                       })
                     }
                     placeholder={t("codexConfig.routeApiKeyPlaceholder", {
-                      defaultValue: "Route API key",
+                      defaultValue: "路由 API Key",
                     })}
                   />
                 ) : (
@@ -853,7 +857,7 @@ export function CodexFormFields({
                       })
                     }
                     placeholder={t("codexConfig.routeAccountPlaceholder", {
-                      defaultValue: "Managed account id (optional)",
+                      defaultValue: "托管账号 ID（可选）",
                     })}
                   />
                 )}
@@ -868,7 +872,7 @@ export function CodexFormFields({
                     })
                   }
                   placeholder={t("codexConfig.modelMapPlaceholder", {
-                    defaultValue: "codex-model=upstream-model",
+                    defaultValue: "codex模型=上游模型",
                   })}
                 />
               </div>
@@ -888,7 +892,7 @@ export function CodexFormFields({
                     }
                   />
                   {t("codexConfig.textOnlyCapability", {
-                    defaultValue: "text-only",
+                    defaultValue: "仅文本",
                   })}
                 </label>
                 <label className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -904,7 +908,7 @@ export function CodexFormFields({
                       })
                     }
                   />
-                  {t("codexConfig.imageCapability", { defaultValue: "image" })}
+                  {t("codexConfig.imageCapability", { defaultValue: "图文" })}
                 </label>
                 <label className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Switch
@@ -919,7 +923,7 @@ export function CodexFormFields({
                     }
                   />
                   {t("codexConfig.reasoningCapability", {
-                    defaultValue: "reasoning",
+                    defaultValue: "推理",
                   })}
                 </label>
               </div>
@@ -928,7 +932,7 @@ export function CodexFormFields({
 
           <DialogFooter>
             <Button type="button" onClick={() => setEditingRouteIndex(null)}>
-              {t("common.done", { defaultValue: "Done" })}
+              {t("common.done", { defaultValue: "完成" })}
             </Button>
           </DialogFooter>
         </DialogContent>

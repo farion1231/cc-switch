@@ -79,6 +79,7 @@ impl Provider {
         self.is_github_copilot()
             || self.is_codex_oauth()
             || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
+            || self.codex_base_url_contains("chatgpt.com/backend-api/codex")
     }
 
     fn provider_type(&self) -> Option<&str> {
@@ -89,6 +90,15 @@ impl Provider {
         self.settings_config
             .pointer("/env/ANTHROPIC_BASE_URL")
             .and_then(|value| value.as_str())
+            .map(|base_url| base_url.contains(needle))
+            .unwrap_or(false)
+    }
+
+    fn codex_base_url_contains(&self, needle: &str) -> bool {
+        self.settings_config
+            .get("config")
+            .and_then(|value| value.as_str())
+            .and_then(crate::codex_config::extract_codex_base_url)
             .map(|base_url| base_url.contains(needle))
             .unwrap_or(false)
     }
@@ -376,6 +386,12 @@ pub struct CodexChatReasoningConfig {
     pub effort_param: Option<String>,
     #[serde(rename = "effortValueMode", skip_serializing_if = "Option::is_none")]
     pub effort_value_mode: Option<String>,
+    /// Chat Completions 上游的最小输出 token 预算。
+    ///
+    /// 某些上游模型在过小 `max_tokens` 下会先消耗预算生成内部思考，导致正文为空；
+    /// 该字段允许 provider/route 声明安全下限，避免 Codex 探测类小预算请求被截断。
+    #[serde(rename = "minOutputTokens", skip_serializing_if = "Option::is_none")]
+    pub min_output_tokens: Option<u64>,
     /// 声明性字段：标注上游 reasoning 的回传位置（reasoning_content / reasoning /
     /// reasoning_details / think_tags）。当前响应侧 `extract_reasoning_field_text`
     /// 靠穷举字段提取、并不读取本字段；保留作文档说明与未来按格式分发（如 think_tags）的预留。

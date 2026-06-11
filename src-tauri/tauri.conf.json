@@ -1,13 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "CC Switch",
-  "version": "3.16.2",
-  "identifier": "com.ccswitch.desktop",
+  "productName": "CCSwitchMulti",
+  "version": "3.16.2-1",
+  "identifier": "com.ccswitchmulti.desktop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:3000",
-    "beforeDevCommand": "pnpm run dev:renderer",
-    "beforeBuildCommand": "pnpm run build:renderer"
+    "beforeDevCommand": "node ./node_modules/vite/bin/vite.js",
+    "beforeBuildCommand": "node ./node_modules/vite/bin/vite.js build"
   },
   "app": {
     "windows": [
@@ -56,7 +56,7 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["ccswitch"]
+        "schemes": ["ccswitchmulti"]
       }
     },
     "updater": {

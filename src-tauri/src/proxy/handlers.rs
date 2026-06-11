@@ -9,6 +9,9 @@
 
 use super::{
     error_mapper::{get_error_message, map_proxy_error_to_status},
+    external_openai_api::{
+        self, ExternalOpenAiApiAuthError, ExternalOpenAiApiBackendType, ExternalOpenAiApiProfile,
+    },
     forwarder::ActiveConnectionGuard,
     handler_config::{
         claude_stream_usage_event_filter, codex_stream_usage_event_filter, CLAUDE_PARSER_CONFIG,
@@ -17,7 +20,7 @@ use super::{
     handler_context::RequestContext,
     providers::{
         codex_chat_history::record_responses_sse_stream, get_adapter, get_claude_api_format,
-        streaming::create_anthropic_sse_stream,
+        openai_compat, streaming::create_anthropic_sse_stream,
         streaming_codex_chat::create_responses_sse_stream_from_chat_with_context,
         streaming_gemini::create_anthropic_sse_stream_from_gemini,
         streaming_responses::create_anthropic_sse_stream_from_responses, transform,
@@ -36,7 +39,12 @@ use super::{
 };
 use crate::app_config::AppType;
 use crate::database::PRICING_SOURCE_REQUEST;
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+    Json,
+};
 use bytes::Bytes;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
@@ -72,7 +80,10 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// Only serves the catalog when the live config.toml still references the
 /// cc-switch–owned `model_catalog_json`, using the same path ownership rules as
 /// Codex live-setting import.
-pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
+pub async fn handle_models(
+    State(state): State<ProxyState>,
+    headers: HeaderMap,
+) -> Result<axum::response::Response, ProxyError> {
     let generated_path = crate::codex_config::get_codex_model_catalog_path();
     let active_catalog_path = match crate::codex_config::read_codex_config_text() {
         Ok(config_text) => {
@@ -81,20 +92,62 @@ pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
         Err(_) => None,
     };
 
-    let catalog = if let Some(catalog_path) =
-        active_catalog_path.as_ref().filter(|path| path.exists())
-    {
-        let text = std::fs::read_to_string(catalog_path).unwrap_or_default();
-        serde_json::from_str(&text).unwrap_or(json!({"models": []}))
-    } else {
-        if active_catalog_path.is_none() {
-            log::debug!(
-                "[models] stale guard: catalog not served (model_catalog_json not set to cc-switch catalog)"
-            );
-        }
-        json!({"models": []})
+    if should_handle_as_codex_client(&headers) {
+        let catalog = if let Some(catalog_path) =
+            active_catalog_path.as_ref().filter(|path| path.exists())
+        {
+            let text = std::fs::read_to_string(catalog_path).unwrap_or_default();
+            serde_json::from_str(&text).unwrap_or(json!({"models": []}))
+        } else {
+            if active_catalog_path.is_none() {
+                log::debug!(
+                    "[models] stale guard: catalog not served (model_catalog_json not set to cc-switch catalog)"
+                );
+            }
+            json!({"models": []})
+        };
+        return Ok(Json(catalog).into_response());
+    }
+
+    let external_api_profile = match external_openai_api::validate_request(&state.db, &headers) {
+        Ok(profile) => profile,
+        Err(err) => return Ok(external_openai_api_auth_error_response(err)),
     };
-    Ok(Json(catalog))
+    let models = external_openai_api_models_response(&state, &external_api_profile)?;
+
+    Ok(Json(models).into_response())
+}
+
+/// 判断 `/v1/models` 调用方是否是 Codex 自身。
+fn is_codex_model_catalog_client(headers: &HeaderMap) -> bool {
+    headers
+        .get(axum::http::header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .map(|user_agent| user_agent.to_ascii_lowercase().contains("codex"))
+        .unwrap_or(false)
+}
+
+/// 判断请求是否应按 Codex 自身客户端处理。
+///
+/// External API key 优先级高于 User-Agent，避免第三方 agent 名称中包含
+/// `codex` 时绕过 External API profile。
+fn should_handle_as_codex_client(headers: &HeaderMap) -> bool {
+    is_codex_model_catalog_client(headers) && !external_openai_api::has_external_api_key(headers)
+}
+
+/// 告诉 Codex 客户端本地代理不支持 Responses WebSocket。
+pub async fn handle_responses_websocket_fallback() -> axum::response::Response {
+    (
+        StatusCode::UPGRADE_REQUIRED,
+        Json(json!({
+            "error": {
+                "message": "CC Switch local proxy does not expose Responses WebSocket; use HTTP Responses instead.",
+                "type": "cc_switch_websocket_not_supported",
+                "code": "responses_websocket_not_supported"
+            }
+        })),
+    )
+        .into_response()
 }
 
 // ============================================================================
@@ -333,7 +386,7 @@ async fn handle_claude_transform(
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
-            let model = ctx.request_model.clone();
+            let request_model = ctx.request_model.clone();
             let status_code = status.as_u16();
             let start_time = ctx.start_time;
             let session_id = ctx.session_id.clone();
@@ -343,11 +396,12 @@ async fn handle_claude_transform(
                 Some(claude_stream_usage_event_filter),
                 move |events, first_token_ms| {
                     if let Some(usage) = TokenUsage::from_claude_stream_events(&events) {
+                        let model = usage.model.clone().unwrap_or(request_model.clone());
                         let latency_ms = start_time.elapsed().as_millis() as u64;
                         let state = state.clone();
                         let provider_id = provider_id.clone();
-                        let model = model.clone();
                         let session_id = session_id.clone();
+                        let request_model = request_model.clone();
 
                         tokio::spawn(async move {
                             log_usage(
@@ -355,7 +409,7 @@ async fn handle_claude_transform(
                                 &provider_id,
                                 "claude",
                                 &model,
-                                &model,
+                                &request_model,
                                 usage,
                                 latency_ms,
                                 first_token_ms,
@@ -529,14 +583,54 @@ pub async fn handle_chat_completions(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
-    let endpoint = endpoint_with_query(&uri, "/chat/completions");
+    let is_external_openai_client = !should_handle_as_codex_client(&headers);
+    let mut ctx = if is_external_openai_client {
+        let external_api_profile = match external_openai_api::validate_request(&state.db, &headers)
+        {
+            Ok(profile) => profile,
+            Err(err) => return Ok(external_openai_api_auth_error_response(err)),
+        };
+        let provider = match resolve_external_openai_compatible_provider(
+            &state,
+            &body,
+            &external_api_profile,
+        )? {
+            Some(provider) => provider,
+            None => {
+                return Ok(external_openai_api_route_error_response(
+                    &request_model_from_body(&body),
+                ))
+            }
+        };
+        RequestContext::new_with_provider(
+            &state,
+            &body,
+            &headers,
+            AppType::Codex,
+            "Codex",
+            "codex",
+            provider,
+        )
+        .await?
+    } else {
+        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?
+    };
 
     let is_stream = body
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let codex_chat_to_responses = ctx.provider.is_codex_oauth();
+    let endpoint = if codex_chat_to_responses {
+        endpoint_with_query(&uri, "/responses")
+    } else {
+        endpoint_with_query(&uri, "/chat/completions")
+    };
+    let outbound_body = if codex_chat_to_responses {
+        openai_compat::chat_completions_request_to_codex_responses(body)?
+    } else {
+        body
+    };
 
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
@@ -544,7 +638,7 @@ pub async fn handle_chat_completions(
             &AppType::Codex,
             method,
             &endpoint,
-            body,
+            outbound_body,
             headers,
             extensions,
             ctx.get_providers(),
@@ -557,6 +651,9 @@ pub async fn handle_chat_completions(
                 ctx.provider = provider;
             }
             log_forward_error(&state, &ctx, is_stream, &err.error);
+            if codex_chat_to_responses {
+                return build_chat_proxy_error_response(&ctx, &endpoint, &err.error);
+            }
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
         }
     };
@@ -564,6 +661,17 @@ pub async fn handle_chat_completions(
     let connection_guard = result.connection_guard.take();
     ctx.provider = result.provider;
     let response = result.response;
+
+    if codex_chat_to_responses {
+        return handle_codex_responses_to_chat_transform(
+            response,
+            &ctx,
+            &state,
+            is_stream,
+            connection_guard,
+        )
+        .await;
+    }
 
     process_response(
         response,
@@ -573,6 +681,590 @@ pub async fn handle_chat_completions(
         connection_guard,
     )
     .await
+}
+
+/// 为第三方 Agent OpenAI-compatible API 解析本次请求的后端 provider。
+fn resolve_external_openai_compatible_provider(
+    state: &ProxyState,
+    body: &Value,
+    profile: &ExternalOpenAiApiProfile,
+) -> Result<Option<crate::provider::Provider>, ProxyError> {
+    match profile.backend_type {
+        ExternalOpenAiApiBackendType::Provider => resolve_external_provider_target(state, profile),
+        ExternalOpenAiApiBackendType::CodexRouterRoute => {
+            resolve_external_codex_router_target(state, body, profile)
+        }
+    }
+}
+
+/// 从请求体中提取模型名，仅用于尚未创建 RequestContext 时构造错误响应。
+fn request_model_from_body(body: &Value) -> String {
+    body.get("model")
+        .and_then(|value| value.as_str())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+/// 解析普通 provider target；非 Codex provider 会被临时包装成 OpenAI wire provider。
+fn resolve_external_provider_target(
+    state: &ProxyState,
+    profile: &ExternalOpenAiApiProfile,
+) -> Result<Option<crate::provider::Provider>, ProxyError> {
+    let Some(app_type) = profile.app_type.as_deref() else {
+        return Ok(None);
+    };
+    let Some(provider_id) = profile.provider_id.as_deref() else {
+        return Ok(None);
+    };
+    let providers = state
+        .db
+        .get_all_providers(app_type)
+        .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+    let Some(provider) = providers.get(provider_id).cloned() else {
+        return Ok(None);
+    };
+    if app_type == AppType::Codex.as_str() {
+        if is_codex_official_managed_oauth_provider(&provider) {
+            return Ok(Some(build_external_codex_official_oauth_provider(provider)));
+        }
+        return Ok(Some(provider));
+    }
+    let app_type = app_type
+        .parse::<AppType>()
+        .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
+    Ok(Some(build_external_openai_provider_from_app_provider(
+        provider, &app_type,
+    )))
+}
+
+/// 判断 Codex 内置官方源是否表示“使用 CC Switch 托管的 Codex OAuth 登录态”。
+fn is_codex_official_managed_oauth_provider(provider: &crate::provider::Provider) -> bool {
+    provider.id == "codex-official"
+}
+
+/// 解析 Codex router route target。
+fn resolve_external_codex_router_target(
+    state: &ProxyState,
+    body: &Value,
+    profile: &ExternalOpenAiApiProfile,
+) -> Result<Option<crate::provider::Provider>, ProxyError> {
+    let providers = state
+        .db
+        .get_all_providers("codex")
+        .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+    for provider in providers.values() {
+        if !is_codex_router_provider(provider) {
+            continue;
+        }
+        if profile
+            .provider_id
+            .as_deref()
+            .is_some_and(|id| id != provider.id)
+        {
+            continue;
+        }
+        if !codex_router_contains_route(provider, profile.route_id.as_deref()) {
+            continue;
+        }
+        if let Some(resolved) =
+            super::providers::resolve_codex_model_routed_provider(provider, body)
+        {
+            if profile.route_id.is_some()
+                && resolved
+                    .settings_config
+                    .get("routeId")
+                    .and_then(|value| value.as_str())
+                    != profile.route_id.as_deref()
+            {
+                continue;
+            }
+            return Ok(Some(resolved));
+        }
+    }
+    Ok(None)
+}
+
+/// 判断 provider 是否是显式开启的 Codex router。
+fn is_codex_router_provider(provider: &crate::provider::Provider) -> bool {
+    provider
+        .settings_config
+        .get("codexRouting")
+        .and_then(|routing| routing.get("enabled"))
+        .and_then(|enabled| enabled.as_bool())
+        .unwrap_or(false)
+}
+
+/// 判断 Codex router 是否包含指定 route。
+fn codex_router_contains_route(
+    provider: &crate::provider::Provider,
+    route_id: Option<&str>,
+) -> bool {
+    let Some(route_id) = route_id else {
+        return true;
+    };
+    provider
+        .settings_config
+        .pointer("/codexRouting/routes")
+        .and_then(|routes| routes.as_array())
+        .map(|routes| {
+            routes.iter().any(|route| {
+                route.get("enabled").and_then(|value| value.as_bool()) != Some(false)
+                    && route.get("id").and_then(|value| value.as_str()) == Some(route_id)
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// 生成第三方 Agent API 可见的模型列表。
+fn external_openai_api_models_response(
+    state: &ProxyState,
+    profile: &ExternalOpenAiApiProfile,
+) -> Result<Value, ProxyError> {
+    let models = match profile.backend_type {
+        ExternalOpenAiApiBackendType::Provider => {
+            let provider = resolve_external_provider_source(state, profile)?.ok_or_else(|| {
+                ProxyError::InvalidRequest("External API provider target not found".to_string())
+            })?;
+            external_provider_model_entries(&provider, profile)
+        }
+        ExternalOpenAiApiBackendType::CodexRouterRoute => {
+            external_codex_router_model_entries(state, profile)?
+        }
+    };
+    Ok(json!({
+        "object": "list",
+        "data": models,
+        "models": models
+            .iter()
+            .filter_map(|model| model.get("id").and_then(|id| id.as_str()))
+            .map(|id| json!({ "id": id }))
+            .collect::<Vec<_>>()
+    }))
+}
+
+/// 解析原始 provider target；用于展示模型列表，避免 synthetic provider 丢失模型 catalog。
+fn resolve_external_provider_source(
+    state: &ProxyState,
+    profile: &ExternalOpenAiApiProfile,
+) -> Result<Option<crate::provider::Provider>, ProxyError> {
+    let Some(app_type) = profile.app_type.as_deref() else {
+        return Ok(None);
+    };
+    let Some(provider_id) = profile.provider_id.as_deref() else {
+        return Ok(None);
+    };
+    let providers = state
+        .db
+        .get_all_providers(app_type)
+        .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+    Ok(providers.get(provider_id).cloned())
+}
+
+/// 从普通 provider 配置中提取可展示模型。
+fn external_provider_model_entries(
+    provider: &crate::provider::Provider,
+    profile: &ExternalOpenAiApiProfile,
+) -> Vec<Value> {
+    let mut ids = Vec::new();
+    collect_string_array(&mut ids, provider.settings_config.get("models"));
+    collect_string_array(&mut ids, provider.settings_config.get("modelList"));
+    collect_model_objects(&mut ids, provider.settings_config.get("models"));
+    collect_model_objects(&mut ids, provider.settings_config.get("modelCatalog"));
+    if let Some(model) = provider
+        .settings_config
+        .get("model")
+        .and_then(|value| value.as_str())
+    {
+        ids.push(model.to_string());
+    }
+    if let Some(model) = profile.default_model.as_deref() {
+        ids.push(model.to_string());
+    }
+    ids.sort();
+    ids.dedup();
+    ids.into_iter()
+        .filter(|id| !id.trim().is_empty())
+        .map(|id| openai_model_entry(&id, "cc-switch"))
+        .collect()
+}
+
+/// 从 Codex router route 中提取可展示模型。
+fn external_codex_router_model_entries(
+    state: &ProxyState,
+    profile: &ExternalOpenAiApiProfile,
+) -> Result<Vec<Value>, ProxyError> {
+    let Some(provider_id) = profile.provider_id.as_deref() else {
+        return Ok(Vec::new());
+    };
+    let providers = state
+        .db
+        .get_all_providers("codex")
+        .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+    let Some(provider) = providers.get(provider_id) else {
+        return Ok(Vec::new());
+    };
+    let mut ids = Vec::new();
+    if let Some(routes) = provider
+        .settings_config
+        .pointer("/codexRouting/routes")
+        .and_then(|routes| routes.as_array())
+    {
+        for route in routes {
+            if route.get("enabled").and_then(|value| value.as_bool()) == Some(false) {
+                continue;
+            }
+            if profile.route_id.is_some()
+                && route.get("id").and_then(|value| value.as_str()) != profile.route_id.as_deref()
+            {
+                continue;
+            }
+            collect_string_array(&mut ids, route.pointer("/match/models"));
+            if ids.is_empty() {
+                collect_string_array(&mut ids, route.pointer("/match/prefixes"));
+            }
+        }
+    }
+    if let Some(model) = profile.default_model.as_deref() {
+        ids.push(model.to_string());
+    }
+    ids.sort();
+    ids.dedup();
+    Ok(ids
+        .into_iter()
+        .filter(|id| !id.trim().is_empty())
+        .map(|id| openai_model_entry(&id, "cc-switch"))
+        .collect())
+}
+
+/// 收集字符串数组里的模型 id。
+fn collect_string_array(ids: &mut Vec<String>, value: Option<&Value>) {
+    if let Some(values) = value.and_then(|value| value.as_array()) {
+        for value in values {
+            if let Some(id) = value.as_str() {
+                ids.push(id.to_string());
+            }
+        }
+    }
+}
+
+/// 收集对象数组里的模型 id。
+fn collect_model_objects(ids: &mut Vec<String>, value: Option<&Value>) {
+    if let Some(values) = value.and_then(|value| value.as_array()) {
+        for value in values {
+            if let Some(id) = value
+                .get("id")
+                .or_else(|| value.get("model"))
+                .or_else(|| value.get("name"))
+                .and_then(|value| value.as_str())
+            {
+                ids.push(id.to_string());
+            }
+        }
+    }
+}
+
+/// 构造 OpenAI-compatible model entry。
+fn openai_model_entry(id: &str, owner: &str) -> Value {
+    json!({
+        "id": id,
+        "object": "model",
+        "created": 0,
+        "owned_by": owner
+    })
+}
+
+/// 从其他 app provider 构造本次请求专用的 OpenAI wire provider。
+fn build_external_openai_provider_from_app_provider(
+    provider: crate::provider::Provider,
+    app_type: &AppType,
+) -> crate::provider::Provider {
+    let (base_url, api_key) = provider.resolve_usage_credentials(app_type);
+    let model = provider
+        .settings_config
+        .get("model")
+        .or_else(|| provider.settings_config.get("defaultModel"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("default");
+    let mut synthetic = provider.clone();
+    synthetic.id = format!(
+        "external-openai-api::{}::{}",
+        app_type.as_str(),
+        provider.id
+    );
+    synthetic.name = format!("{} via OpenAI API", provider.name);
+    synthetic.settings_config = json!({
+        "base_url": base_url,
+        "auth": { "OPENAI_API_KEY": api_key },
+        "model": model,
+        "apiFormat": "openai_chat"
+    });
+    synthetic
+}
+
+/// 为第三方 Agent API 构造只在本次请求内使用的 Codex 官方 OAuth provider。
+///
+/// 内置 `codex-official` 在数据库里故意保存为空 config/auth，用于表达“恢复官方登录态”。
+/// 代理请求需要显式标记 `codex_oauth`，这样下游适配器会注入托管 OAuth 并转到 ChatGPT Codex 后端。
+fn build_external_codex_official_oauth_provider(
+    provider: crate::provider::Provider,
+) -> crate::provider::Provider {
+    let mut synthetic = provider.clone();
+    let mut meta = synthetic.meta.unwrap_or_default();
+    meta.provider_type = Some("codex_oauth".to_string());
+    synthetic.meta = Some(meta);
+    synthetic.settings_config = json!({
+        "config": "model_provider = \"openai\"\nmodel = \"gpt-5.4-mini\"\n",
+        "auth": {},
+        "models": ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark"]
+    });
+    synthetic
+}
+
+/// 生成 External OpenAI-compatible API 的鉴权错误响应。
+fn external_openai_api_auth_error_response(
+    err: ExternalOpenAiApiAuthError,
+) -> axum::response::Response {
+    let (status, message, code) = match err {
+        ExternalOpenAiApiAuthError::Disabled => (
+            StatusCode::FORBIDDEN,
+            "External OpenAI-compatible API is disabled in CC Switch.",
+            "external_openai_api_disabled",
+        ),
+        ExternalOpenAiApiAuthError::MissingKey => (
+            StatusCode::UNAUTHORIZED,
+            "Missing External OpenAI-compatible API key.",
+            "external_openai_api_key_missing",
+        ),
+        ExternalOpenAiApiAuthError::InvalidKey => (
+            StatusCode::UNAUTHORIZED,
+            "Invalid External OpenAI-compatible API key.",
+            "external_openai_api_key_invalid",
+        ),
+    };
+    (
+        status,
+        Json(json!({
+            "error": {
+                "message": message,
+                "type": "authentication_error",
+                "code": code,
+                "param": Value::Null
+            }
+        })),
+    )
+        .into_response()
+}
+
+/// 生成 External OpenAI-compatible API 的路由错误响应。
+fn external_openai_api_route_error_response(model: &str) -> axum::response::Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({
+            "error": {
+                "message": format!(
+                    "External OpenAI-compatible API has no enabled backend route for model `{model}`."
+                ),
+                "type": "invalid_request_error",
+                "code": "external_openai_api_route_not_found",
+                "param": "model"
+            }
+        })),
+    )
+        .into_response()
+}
+
+/// 生成 External OpenAI-compatible API 的暂不支持能力错误响应。
+fn external_openai_api_unsupported_response(
+    message: impl Into<String>,
+    param: &str,
+) -> axum::response::Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({
+            "error": {
+                "message": message.into(),
+                "type": "invalid_request_error",
+                "code": "external_openai_api_unsupported_backend",
+                "param": param
+            }
+        })),
+    )
+        .into_response()
+}
+
+async fn handle_codex_responses_to_chat_transform(
+    response: super::hyper_client::ProxyResponse,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    is_stream: bool,
+    connection_guard: Option<ActiveConnectionGuard>,
+) -> Result<axum::response::Response, ProxyError> {
+    let status = response.status();
+    if !status.is_success() {
+        return handle_codex_responses_error_response(response, ctx, status).await;
+    }
+    if is_stream {
+        let stream = response.bytes_stream();
+        let sse_stream = openai_compat::create_chat_sse_stream_from_codex_responses(
+            stream,
+            ctx.request_model.clone(),
+        );
+        let logged_stream = create_logged_passthrough_stream(
+            sse_stream,
+            ctx.tag,
+            None,
+            ctx.streaming_timeout_config(),
+            connection_guard,
+        );
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::CONTENT_TYPE,
+            axum::http::HeaderValue::from_static("text/event-stream"),
+        );
+        headers.insert(
+            "Cache-Control",
+            axum::http::HeaderValue::from_static("no-cache"),
+        );
+        let body = axum::body::Body::from_stream(logged_stream);
+        return Ok((headers, body).into_response());
+    }
+
+    let _connection_guard = connection_guard;
+    let body_timeout =
+        if ctx.app_config.auto_failover_enabled && ctx.app_config.non_streaming_timeout > 0 {
+            std::time::Duration::from_secs(ctx.app_config.non_streaming_timeout as u64)
+        } else {
+            std::time::Duration::ZERO
+        };
+    let (mut response_headers, status, body_bytes) =
+        read_decoded_body(response, ctx.tag, body_timeout).await?;
+    let body_str = String::from_utf8_lossy(&body_bytes);
+    let responses_response = if body_str.contains("event:") || body_str.contains("data:") {
+        responses_sse_to_response_value(&body_str)?
+    } else {
+        serde_json::from_slice::<Value>(&body_bytes).map_err(|e| {
+            ProxyError::TransformError(format!("Failed to parse upstream responses body: {e}"))
+        })?
+    };
+    let chat_response =
+        openai_compat::codex_responses_to_chat_completion(responses_response, &ctx.request_model)?;
+
+    if let Some(usage) = TokenUsage::from_openai_response(&chat_response) {
+        let model = chat_response
+            .get("model")
+            .and_then(|m| m.as_str())
+            .unwrap_or(&ctx.request_model);
+        let request_model = ctx.request_model.clone();
+        tokio::spawn({
+            let state = state.clone();
+            let provider_id = ctx.provider.id.clone();
+            let model = model.to_string();
+            let session_id = ctx.session_id.clone();
+            let latency_ms = ctx.latency_ms();
+            async move {
+                log_usage(
+                    &state,
+                    &provider_id,
+                    "codex",
+                    &model,
+                    &request_model,
+                    usage,
+                    latency_ms,
+                    None,
+                    false,
+                    status.as_u16(),
+                    Some(session_id),
+                )
+                .await;
+            }
+        });
+    }
+
+    strip_entity_headers_for_rebuilt_body(&mut response_headers);
+    strip_hop_by_hop_response_headers(&mut response_headers);
+    response_headers.remove(axum::http::header::CONTENT_TYPE);
+    let mut builder = axum::response::Response::builder().status(status);
+    for (key, value) in response_headers.iter() {
+        builder = builder.header(key, value);
+    }
+    builder = builder.header(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/json"),
+    );
+    let response_body = serde_json::to_vec(&chat_response).map_err(|e| {
+        ProxyError::TransformError(format!("Failed to serialize chat response: {e}"))
+    })?;
+    builder
+        .body(axum::body::Body::from(response_body))
+        .map_err(|e| ProxyError::Internal(format!("Failed to build response: {e}")))
+}
+
+async fn handle_codex_responses_error_response(
+    response: super::hyper_client::ProxyResponse,
+    ctx: &RequestContext,
+    status: axum::http::StatusCode,
+) -> Result<axum::response::Response, ProxyError> {
+    let body_timeout =
+        if ctx.app_config.auto_failover_enabled && ctx.app_config.non_streaming_timeout > 0 {
+            std::time::Duration::from_secs(ctx.app_config.non_streaming_timeout as u64)
+        } else {
+            std::time::Duration::ZERO
+        };
+    let (mut response_headers, _status, body_bytes) =
+        read_decoded_body(response, ctx.tag, body_timeout).await?;
+    let parsed_value: Value = serde_json::from_slice(&body_bytes)
+        .unwrap_or_else(|_| json!(String::from_utf8_lossy(&body_bytes).to_string()));
+    let chat_error = openai_compat::responses_error_to_chat_error(Some(&parsed_value));
+    strip_entity_headers_for_rebuilt_body(&mut response_headers);
+    strip_hop_by_hop_response_headers(&mut response_headers);
+    response_headers.remove(axum::http::header::CONTENT_TYPE);
+    let mut builder = axum::response::Response::builder().status(status);
+    for (key, value) in response_headers.iter() {
+        builder = builder.header(key, value);
+    }
+    builder = builder.header(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/json"),
+    );
+    let body = serde_json::to_vec(&chat_error).map_err(|e| {
+        ProxyError::TransformError(format!("Failed to serialize chat error response: {e}"))
+    })?;
+    builder
+        .body(axum::body::Body::from(body))
+        .map_err(|e| ProxyError::Internal(format!("Failed to build chat error response: {e}")))
+}
+
+fn build_chat_proxy_error_response(
+    ctx: &RequestContext,
+    endpoint: &str,
+    error: &ProxyError,
+) -> Result<axum::response::Response, ProxyError> {
+    let status = axum::http::StatusCode::from_u16(map_proxy_error_to_status(error))
+        .unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+    let body = json!({
+        "error": {
+            "message": format!(
+                "{} (provider={}, model={}, endpoint={})",
+                get_error_message(error),
+                ctx.provider.name,
+                ctx.request_model,
+                endpoint
+            ),
+            "type": "proxy_error",
+            "code": codex_proxy_error_code(error),
+            "param": Value::Null
+        }
+    });
+    let body = serde_json::to_vec(&body)
+        .map_err(|e| ProxyError::Internal(format!("Failed to serialize proxy error: {e}")))?;
+    axum::response::Response::builder()
+        .status(status)
+        .header(
+            axum::http::header::CONTENT_TYPE,
+            axum::http::HeaderValue::from_static("application/json"),
+        )
+        .body(axum::body::Body::from(body))
+        .map_err(|e| ProxyError::Internal(format!("Failed to build proxy error response: {e}")))
 }
 
 /// 处理 /v1/responses 请求（OpenAI Responses API - Codex CLI 透传）
@@ -593,9 +1285,44 @@ pub async fn handle_responses(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
     let endpoint = endpoint_with_query(&uri, "/responses");
+    let mut ctx = if !is_codex_model_catalog_client(&headers) {
+        let external_api_profile = match external_openai_api::validate_request(&state.db, &headers)
+        {
+            Ok(profile) => profile,
+            Err(err) => return Ok(external_openai_api_auth_error_response(err)),
+        };
+        let provider = match resolve_external_openai_compatible_provider(
+            &state,
+            &body,
+            &external_api_profile,
+        )? {
+            Some(provider) => provider,
+            None => {
+                return Ok(external_openai_api_route_error_response(
+                    &request_model_from_body(&body),
+                ))
+            }
+        };
+        if !provider.is_codex_oauth() {
+            return Ok(external_openai_api_unsupported_response(
+                "/v1/responses is only available for OpenAI Official/Codex OAuth backends in the External OpenAI-compatible API. Use /v1/chat/completions for this backend.",
+                "backend",
+            ));
+        }
+        RequestContext::new_with_provider(
+            &state,
+            &body,
+            &headers,
+            AppType::Codex,
+            "Codex",
+            "codex",
+            provider,
+        )
+        .await?
+    } else {
+        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?
+    };
 
     let is_stream = body
         .get("stream")
@@ -1257,6 +1984,7 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
     let mut buffer = body.to_string();
     let mut completed_response: Option<Value> = None;
     let mut output_items = Vec::new();
+    let mut output_text_deltas = Vec::new();
 
     while let Some(block) = take_sse_block(&mut buffer) {
         let mut event_name = "";
@@ -1284,6 +2012,11 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
         })?;
 
         match event_name {
+            "response.output_text.delta" => {
+                if let Some(delta) = data.get("delta").and_then(|value| value.as_str()) {
+                    output_text_deltas.push(delta.to_string());
+                }
+            }
             "response.output_item.done" => {
                 if let Some(item) = data.get("item") {
                     output_items.push(item.clone());
@@ -1306,6 +2039,19 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
     let mut response = completed_response.ok_or_else(|| {
         ProxyError::TransformError("No response.completed event in upstream SSE".to_string())
     })?;
+
+    if output_items.is_empty() && !output_text_deltas.is_empty() {
+        // Codex OAuth 的文本流可能只发送 output_text.delta，不发送完整 output_item.done。
+        // 非流式聚合时需要把 delta 合成 Responses output message，供下游 Chat 转换器读取。
+        output_items.push(json!({
+            "type": "message",
+            "role": "assistant",
+            "content": [{
+                "type": "output_text",
+                "text": output_text_deltas.join("")
+            }]
+        }));
+    }
 
     if !output_items.is_empty() {
         if let Some(obj) = response.as_object_mut() {
@@ -1409,10 +2155,32 @@ async fn log_usage(
 #[cfg(test)]
 mod tests {
     use super::{
-        codex_proxy_error_json, responses_sse_to_response_value,
-        should_use_claude_transform_streaming,
+        codex_proxy_error_json, external_openai_api_models_response,
+        external_openai_api_unsupported_response, responses_sse_to_response_value,
+        should_handle_as_codex_client, should_use_claude_transform_streaming,
     };
-    use crate::proxy::ProxyError;
+    use crate::{
+        database::Database,
+        provider::Provider,
+        proxy::{
+            external_openai_api::{
+                self, ExternalOpenAiApiBackendType, ExternalOpenAiApiProfileUpdate,
+            },
+            failover_switch::FailoverSwitchManager,
+            provider_router::ProviderRouter,
+            providers::{
+                codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore,
+            },
+            server::ProxyState,
+            types::{ProxyConfig, ProxyStatus},
+            ProxyError,
+        },
+    };
+    use axum::http::{HeaderMap, HeaderValue, StatusCode};
+    use http_body_util::BodyExt;
+    use serde_json::{json, Value};
+    use std::{collections::HashMap, sync::Arc};
+    use tokio::sync::RwLock;
 
     #[test]
     fn codex_oauth_responses_force_streaming_even_if_client_sent_false() {
@@ -1442,6 +2210,21 @@ mod tests {
             "openai_responses",
             false,
         ));
+    }
+
+    #[test]
+    fn external_api_key_takes_precedence_over_codex_user_agent() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::USER_AGENT,
+            HeaderValue::from_static("codex-compatible-agent"),
+        );
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer ccsw_test"),
+        );
+
+        assert!(!should_handle_as_codex_client(&headers));
     }
 
     #[test]
@@ -1477,6 +2260,24 @@ data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_crlf\",\"stat
         assert_eq!(response["id"], "resp_crlf");
         assert_eq!(response["output"][0]["type"], "message");
         assert_eq!(response["output"][0]["content"][0]["text"], "hi");
+    }
+
+    #[test]
+    fn responses_sse_to_response_value_collects_output_text_deltas() {
+        // Codex OAuth 真实文本响应会以 response.output_text.delta 增量下发；
+        // 非流式 OpenAI Chat 兼容层必须能把这些 delta 聚合成完整 assistant message。
+        let sse = "event: response.output_text.delta\n\
+data: {\"type\":\"response.output_text.delta\",\"delta\":\"po\"}\n\n\
+event: response.output_text.delta\n\
+data: {\"type\":\"response.output_text.delta\",\"delta\":\"ng\"}\n\n\
+event: response.completed\n\
+data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_delta\",\"status\":\"completed\",\"model\":\"gpt-5.4\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n\n";
+
+        let response = responses_sse_to_response_value(sse).unwrap();
+
+        assert_eq!(response["id"], "resp_delta");
+        assert_eq!(response["output"][0]["type"], "message");
+        assert_eq!(response["output"][0]["content"][0]["text"], "pong");
     }
 
     #[test]
@@ -1563,5 +2364,104 @@ data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n
         assert_eq!(body["error"]["provider"], "HCAI");
         assert_eq!(body["error"]["model"], "gpt-5.5");
         assert_eq!(body["error"]["endpoint"], "/responses");
+    }
+
+    #[test]
+    fn external_models_response_only_exposes_profile_backend_models() {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        db.save_provider(
+            "hermes",
+            &Provider::with_id(
+                "selected".to_string(),
+                "Selected".to_string(),
+                json!({
+                    "base_url": "https://selected.example/v1",
+                    "api_key": "sk-selected",
+                    "models": ["visible-model"]
+                }),
+                None,
+            ),
+        )
+        .expect("save selected provider");
+        db.save_provider(
+            "hermes",
+            &Provider::with_id(
+                "other".to_string(),
+                "Other".to_string(),
+                json!({
+                    "base_url": "https://other.example/v1",
+                    "api_key": "sk-other",
+                    "models": ["hidden-model"]
+                }),
+                None,
+            ),
+        )
+        .expect("save other provider");
+        external_openai_api::regenerate_api_key(&db).expect("generate key");
+        external_openai_api::update_profile(
+            &db,
+            ExternalOpenAiApiProfileUpdate {
+                enabled: true,
+                backend_type: ExternalOpenAiApiBackendType::Provider,
+                app_type: Some("hermes".to_string()),
+                provider_id: Some("selected".to_string()),
+                route_id: None,
+                default_model: Some("default-visible".to_string()),
+            },
+        )
+        .expect("save profile");
+        let profile = external_openai_api::load_profile(&db).expect("load profile");
+        let state = build_state(db);
+
+        let response = external_openai_api_models_response(&state, &profile).expect("models");
+        let ids: Vec<_> = response["data"]
+            .as_array()
+            .expect("data array")
+            .iter()
+            .filter_map(|model| model.get("id").and_then(|id| id.as_str()))
+            .collect();
+
+        assert!(ids.contains(&"visible-model"));
+        assert!(ids.contains(&"default-visible"));
+        assert!(!ids.contains(&"hidden-model"));
+    }
+
+    #[tokio::test]
+    async fn unsupported_responses_backend_returns_openai_style_error() {
+        let response = external_openai_api_unsupported_response(
+            "/v1/responses is not available for this backend.",
+            "backend",
+        );
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("collect body")
+            .to_bytes();
+        let value: Value = serde_json::from_slice(&body).expect("json body");
+
+        assert_eq!(value["error"]["type"], "invalid_request_error");
+        assert_eq!(
+            value["error"]["code"],
+            "external_openai_api_unsupported_backend"
+        );
+        assert_eq!(value["error"]["param"], "backend");
+    }
+
+    fn build_state(db: Arc<Database>) -> ProxyState {
+        ProxyState {
+            db: db.clone(),
+            config: Arc::new(RwLock::new(ProxyConfig::default())),
+            status: Arc::new(RwLock::new(ProxyStatus::default())),
+            start_time: Arc::new(RwLock::new(None)),
+            current_providers: Arc::new(RwLock::new(HashMap::new())),
+            provider_router: Arc::new(ProviderRouter::new(db.clone())),
+            gemini_shadow: Arc::new(GeminiShadowStore::default()),
+            codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
+            app_handle: None,
+            failover_manager: Arc::new(FailoverSwitchManager::new(db)),
+        }
     }
 }

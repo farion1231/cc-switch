@@ -24,6 +24,7 @@ mod gemini;
 pub(crate) mod gemini_schema;
 pub mod gemini_shadow;
 pub mod models;
+pub mod openai_compat;
 pub mod streaming;
 pub mod streaming_codex_chat;
 pub mod streaming_gemini;

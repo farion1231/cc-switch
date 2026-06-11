@@ -9,11 +9,12 @@ use crate::error::AppError;
 use serde_json::{json, Value};
 use std::fs;
 use std::process::Command;
-use toml_edit::DocumentMut;
+use toml_edit::{DocumentMut, Item, TableLike};
 
 pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
 const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
+const CODEX_OPENAI_MODEL_PROVIDER_ID: &str = "openai";
 
 /// Reserved built-in provider IDs from OpenAI Codex's config/model-provider
 /// catalog. Keep in sync with Codex `RESERVED_MODEL_PROVIDER_IDS` and legacy
@@ -212,7 +213,21 @@ pub fn extract_codex_api_key(auth: Option<&Value>, config_text: Option<&str>) ->
 pub fn extract_codex_base_url(config_text: &str) -> Option<String> {
     let doc = config_text.parse::<toml::Value>().ok()?;
 
-    if let Some(active_provider) = doc.get("model_provider").and_then(|v| v.as_str()) {
+    let active_provider = doc
+        .get("model_provider")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty());
+
+    if active_provider
+        .is_none_or(|provider| provider.eq_ignore_ascii_case(CODEX_OPENAI_MODEL_PROVIDER_ID))
+    {
+        if let Some(base_url) = doc.get("openai_base_url").and_then(|v| v.as_str()) {
+            return Some(base_url.to_string());
+        }
+    }
+
+    if let Some(active_provider) = active_provider {
         if let Some(base_url) = doc
             .get("model_providers")
             .and_then(|providers| providers.get(active_provider))
@@ -314,9 +329,23 @@ fn extract_codex_top_level_u64(config_text: &str, field: &str) -> Option<u64> {
 /// `input_modalities` 里的 `image` 自动注入 hosted `image_generation` 工具；
 /// 这些模型不支持该工具，所以生成 catalog 时必须覆盖模板里的图片模态。
 fn codex_catalog_model_name_is_text_only(model: &str) -> bool {
-    model.eq_ignore_ascii_case("gpt-5.3-codex-spark")
-        || model.eq_ignore_ascii_case("deepseek-v4-flash")
-        || model.eq_ignore_ascii_case("deepseek-v4-pro")
+    let normalized = model
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect::<String>();
+
+    normalized == "gpt53codexspark" || normalized.starts_with("deepseekv4")
+}
+
+/// 判断生成 catalog 时是否保留 OpenAI 官方 GPT 的速度/服务档。
+///
+/// 第三方和本地模型不应该继承 GPT 官方的 priority/fast 展示项，否则 UI 会暗示
+/// 上游支持 Codex 官方服务档；但 OpenAI 官方 GPT 模型需要保留这些字段，避免
+/// router catalog 吃掉 Codex 原生的速度选择。
+fn codex_catalog_model_preserves_openai_service_tiers(model: &str) -> bool {
+    let lower = model.trim().to_ascii_lowercase();
+    matches!(lower.as_str(), "gpt-5.5" | "gpt-5.4")
 }
 
 /// 从 `codexRouting.routes` 中读取指定模型的能力声明。
@@ -430,8 +459,10 @@ fn codex_catalog_model_entry(
     entry_obj.insert("context_window".to_string(), json!(spec.context_window));
     entry_obj.insert("max_context_window".to_string(), json!(spec.context_window));
     entry_obj.insert("priority".to_string(), json!(1000 + priority));
-    entry_obj.insert("additional_speed_tiers".to_string(), json!([]));
-    entry_obj.insert("service_tiers".to_string(), json!([]));
+    if !codex_catalog_model_preserves_openai_service_tiers(&spec.model) {
+        entry_obj.insert("additional_speed_tiers".to_string(), json!([]));
+        entry_obj.insert("service_tiers".to_string(), json!([]));
+    }
     entry_obj.insert("availability_nux".to_string(), Value::Null);
     entry_obj.insert("upgrade".to_string(), Value::Null);
     if spec.text_only {
@@ -798,10 +829,7 @@ fn set_codex_model_catalog_json_field(
             let should_remove = doc
                 .get("model_catalog_json")
                 .and_then(|item| item.as_str())
-                .map(|path| {
-                    Path::new(path).file_name().and_then(|name| name.to_str())
-                        == Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
-                })
+                .map(codex_model_catalog_path_is_cc_switch_owned)
                 .unwrap_or(false);
             if should_remove {
                 doc.as_table_mut().remove("model_catalog_json");
@@ -810,6 +838,11 @@ fn set_codex_model_catalog_json_field(
     }
 
     Ok(doc.to_string())
+}
+
+fn codex_model_catalog_path_is_cc_switch_owned(path: &str) -> bool {
+    Path::new(path).file_name().and_then(|name| name.to_str())
+        == Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
 }
 
 /// Generate Codex `model_catalog_json` from provider settings and inject/remove
@@ -988,6 +1021,211 @@ pub fn prepare_codex_live_config_text_with_optional_catalog(
     }
 }
 
+/// 判断 TOML 节点是否是表结构。
+///
+/// provider 切换时，顶层标量（model / model_provider / catalog 指针等）
+/// 属于当前 provider；而 `[features]`、`[desktop]`、`[memories]`、
+/// `[projects]`、`[mcp_servers]` 等表结构属于用户全局配置，不能被历史
+/// provider 快照覆盖。
+fn codex_toml_item_is_table_like(item: &toml_edit::Item) -> bool {
+    item.as_table().is_some() || item.as_array_of_tables().is_some()
+}
+
+/// 将 provider 表结构里 live 缺失的子项补进 live 配置，已有项一律保留 live。
+///
+/// 这用于兼容 CC Switch 的 common config snippet：snippet 可能给 Codex 增加
+/// `[mcp_servers.*]` 等表段；但如果用户 live 配置已经有同名项，历史 provider
+/// 快照不能覆盖用户当前值。
+fn merge_missing_codex_toml_item(target: &mut Item, source: &Item) {
+    if let Some(source_table) = source.as_table_like() {
+        if let Some(target_table) = target.as_table_like_mut() {
+            merge_missing_codex_toml_table_like(target_table, source_table);
+            return;
+        }
+    }
+
+    if target.is_none() {
+        *target = source.clone();
+    }
+}
+
+/// 递归补齐 TOML 表中缺失的键，冲突时保留 target。
+fn merge_missing_codex_toml_table_like(target: &mut dyn TableLike, source: &dyn TableLike) {
+    for (key, source_item) in source.iter() {
+        match target.get_mut(key) {
+            Some(target_item) => merge_missing_codex_toml_item(target_item, source_item),
+            None => {
+                target.insert(key, source_item.clone());
+            }
+        }
+    }
+}
+
+// 只移除 CC Switch 自己生成的模型目录指针，避免误删用户手写的 catalog。
+fn remove_cc_switch_model_catalog_json_if_stale(doc: &mut DocumentMut) {
+    let should_remove = doc
+        .get("model_catalog_json")
+        .and_then(|item| item.as_str())
+        .map(codex_model_catalog_path_is_cc_switch_owned)
+        .unwrap_or(false);
+    if should_remove {
+        doc.as_table_mut().remove("model_catalog_json");
+    }
+}
+
+// 退出官方兜底时清掉当前自定义 provider 表，避免旧 router 的本地 base_url 残留。
+fn remove_active_custom_codex_model_provider_section(doc: &mut DocumentMut) {
+    let Some(provider_id) = active_codex_model_provider_id(doc) else {
+        return;
+    };
+    if !is_custom_codex_model_provider_id(&provider_id) {
+        return;
+    }
+
+    let should_remove_container = doc
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_like_mut())
+        .map(|table| {
+            table.remove(&provider_id);
+            table.is_empty()
+        })
+        .unwrap_or(false);
+
+    if should_remove_container {
+        doc.as_table_mut().remove("model_providers");
+    }
+}
+
+// provider 未声明的私有字段不能沿用 live 里的旧值，否则 official 会残留 router。
+fn remove_codex_provider_owned_fields_missing_from_provider(
+    live_doc: &mut DocumentMut,
+    provider_doc: &DocumentMut,
+) {
+    if provider_doc.get("model_provider").is_none() {
+        remove_active_custom_codex_model_provider_section(live_doc);
+    }
+
+    for key in ["model", "model_provider", "model_context_window"] {
+        if provider_doc.get(key).is_none() {
+            live_doc.as_table_mut().remove(key);
+        }
+    }
+
+    if provider_doc.get("openai_base_url").is_none() {
+        live_doc.as_table_mut().remove("openai_base_url");
+    }
+
+    if provider_doc.get("model_catalog_json").is_none() {
+        remove_cc_switch_model_catalog_json_if_stale(live_doc);
+    }
+
+    if provider_doc.get("experimental_bearer_token").is_none() {
+        live_doc.as_table_mut().remove("experimental_bearer_token");
+    }
+}
+
+// 空 official provider 配置表示回到 Codex 默认 provider，同时保留用户全局配置。
+fn strip_codex_provider_owned_fields_from_live(live_config_text: &str) -> Result<String, AppError> {
+    if live_config_text.trim().is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut live_doc = live_config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid live Codex config.toml: {e}")))?;
+
+    remove_active_custom_codex_model_provider_section(&mut live_doc);
+    for key in [
+        "model",
+        "model_provider",
+        "model_context_window",
+        "openai_base_url",
+        "experimental_bearer_token",
+    ] {
+        live_doc.as_table_mut().remove(key);
+    }
+    remove_cc_switch_model_catalog_json_if_stale(&mut live_doc);
+
+    Ok(live_doc.to_string())
+}
+
+/// 将待切换 provider 的 Codex 配置叠加到当前 live `config.toml`。
+///
+/// CC Switch 的 provider 记录只应该负责 provider 相关的字段；如果直接把
+/// DB 中保存的 `config` 原样写回 `~/.codex/config.toml`，会清空用户后来新增
+/// 的 memories、desktop、projects、MCP 和插件等配置，导致切换模型后 Codex
+/// 行为突然退回旧状态。这里以 live 配置为底，叠加 provider 顶层标量和当前
+/// provider 的 `[model_providers.<id>]` 表，从而既完成模型切换，又保留用户配置。
+pub(crate) fn merge_codex_provider_config_texts(
+    live_config_text: &str,
+    provider_config_text: &str,
+) -> Result<String, AppError> {
+    if provider_config_text.trim().is_empty() {
+        return strip_codex_provider_owned_fields_from_live(live_config_text);
+    }
+
+    if live_config_text.trim().is_empty() {
+        return Ok(provider_config_text.to_string());
+    }
+
+    let mut live_doc = live_config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid live Codex config.toml: {e}")))?;
+    let provider_doc = provider_config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid provider Codex config.toml: {e}")))?;
+
+    remove_codex_provider_owned_fields_missing_from_provider(&mut live_doc, &provider_doc);
+
+    for (key, item) in provider_doc.as_table().iter() {
+        if key == "model_providers" || codex_toml_item_is_table_like(item) {
+            continue;
+        }
+        live_doc[key] = item.clone();
+    }
+
+    for (key, item) in provider_doc.as_table().iter() {
+        if key == "model_providers" || !codex_toml_item_is_table_like(item) {
+            continue;
+        }
+
+        match live_doc.as_table_mut().get_mut(key) {
+            Some(live_item) => merge_missing_codex_toml_item(live_item, item),
+            None => {
+                live_doc.as_table_mut().insert(key, item.clone());
+            }
+        }
+    }
+
+    let provider_id = active_codex_model_provider_id(&provider_doc);
+    if let Some(provider_id) = provider_id.as_deref() {
+        if let Some(provider_item) = provider_doc
+            .get("model_providers")
+            .and_then(|item| item.as_table())
+            .and_then(|table| table.get(provider_id))
+            .cloned()
+        {
+            if live_doc.get("model_providers").is_none() {
+                live_doc["model_providers"] = toml_edit::table();
+            }
+            if let Some(live_providers) = live_doc
+                .get_mut("model_providers")
+                .and_then(|item| item.as_table_mut())
+            {
+                live_providers.insert(provider_id, provider_item);
+            }
+        }
+    }
+
+    Ok(live_doc.to_string())
+}
+
+/// 读取当前 live 配置，并把 provider 配置叠加进去。
+pub(crate) fn merge_codex_provider_config_with_live(config_text: &str) -> Result<String, AppError> {
+    let live_config = read_codex_config_text()?;
+    merge_codex_provider_config_texts(&live_config, config_text)
+}
+
 pub fn write_codex_provider_live_with_catalog(
     settings: &Value,
     category: Option<&str>,
@@ -997,7 +1235,6 @@ pub fn write_codex_provider_live_with_catalog(
     let prepared_config = config_text
         .map(|text| prepare_codex_config_text_with_model_catalog(settings, text))
         .transpose()?;
-
     write_codex_live_for_provider(category, auth, prepared_config.as_deref())
 }
 
@@ -1160,11 +1397,15 @@ pub fn write_codex_live_for_provider(
     let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
         || (category != Some("official")
             && !crate::settings::preserve_codex_official_auth_on_switch());
+    let merged_config = config_text
+        .map(merge_codex_provider_config_with_live)
+        .transpose()?;
 
     if should_write_auth {
-        write_codex_live_atomic(auth, config_text)
+        write_codex_live_atomic(auth, merged_config.as_deref())
     } else {
-        let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
+        let live_config =
+            prepare_codex_provider_live_config(auth, merged_config.as_deref().unwrap_or(""))?;
         write_codex_live_config_atomic(Some(&live_config))
     }
 }
@@ -1263,7 +1504,23 @@ pub fn update_codex_toml_field(toml_str: &str, field: &str, value: &str) -> Resu
             let model_provider = doc
                 .get("model_provider")
                 .and_then(|item| item.as_str())
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
                 .map(str::to_string);
+
+            if model_provider
+                .as_deref()
+                .is_some_and(|id| id.eq_ignore_ascii_case(CODEX_OPENAI_MODEL_PROVIDER_ID))
+            {
+                if field == "base_url" {
+                    if trimmed.is_empty() {
+                        doc.as_table_mut().remove("openai_base_url");
+                    } else {
+                        doc["openai_base_url"] = toml_edit::value(trimmed);
+                    }
+                }
+                return Ok(doc.to_string());
+            }
 
             if let Some(provider_key) = model_provider {
                 // Ensure [model_providers] table exists
@@ -1351,6 +1608,15 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
         .unwrap_or(false);
     if should_remove_root {
         doc.as_table_mut().remove("base_url");
+    }
+
+    let should_remove_openai = doc
+        .get("openai_base_url")
+        .and_then(|item| item.as_str())
+        .map(&predicate)
+        .unwrap_or(false);
+    if should_remove_openai {
+        doc.as_table_mut().remove("openai_base_url");
     }
 
     doc.to_string()
@@ -1461,6 +1727,297 @@ model = "gpt-5"
             parsed.get("model_providers").is_none(),
             "missing provider tables should not be synthesized without endpoint fields"
         );
+    }
+
+    #[test]
+    fn merge_provider_config_preserves_live_user_sections() {
+        let live_config = r#"model = "gpt-5.5"
+model_provider = "openai"
+approval_policy = "on-request"
+experimental_bearer_token = "old-top-level-token"
+
+[features]
+goals = true
+memories = true
+
+[desktop]
+show-context-window-usage = true
+
+[memories]
+generate_memories = true
+use_memories = true
+
+[projects."C:\\Users\\sunda\\Documents\\trace"]
+trust_level = "trusted"
+
+[mcp_servers.matrix]
+command = "matrix-websearch"
+
+[model_providers.openai]
+name = "OpenAI"
+"#;
+
+        let provider_config = r#"model = "gpt-5.4"
+model_provider = "codex_model_router_v2"
+model_catalog_json = "cc-switch-model-catalog.json"
+
+[features]
+memories = false
+
+[mcp_servers.matrix]
+command = "stale-matrix"
+
+[mcp_servers.shared]
+command = "shared-command"
+
+[model_providers.codex_model_router_v2]
+name = "OpenAI Multi-Model Router"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+experimental_bearer_token = "provider-token"
+"#;
+
+        let merged =
+            merge_codex_provider_config_texts(live_config, provider_config).expect("merge config");
+        let parsed: toml::Value = toml::from_str(&merged).expect("parse merged config");
+
+        assert_eq!(
+            parsed
+                .get("model_provider")
+                .and_then(|value| value.as_str()),
+            Some("codex_model_router_v2")
+        );
+        assert_eq!(
+            parsed.get("model").and_then(|value| value.as_str()),
+            Some("gpt-5.4")
+        );
+        assert_eq!(
+            parsed
+                .get("model_catalog_json")
+                .and_then(|value| value.as_str()),
+            Some("cc-switch-model-catalog.json")
+        );
+        assert!(
+            parsed.get("experimental_bearer_token").is_none(),
+            "stale live top-level provider token should not survive a provider-scoped switch"
+        );
+        assert_eq!(
+            parsed
+                .get("features")
+                .and_then(|value| value.get("memories"))
+                .and_then(|value| value.as_bool()),
+            Some(true),
+            "live user feature flags should win over stale provider snapshots"
+        );
+        assert_eq!(
+            parsed
+                .get("desktop")
+                .and_then(|value| value.get("show-context-window-usage"))
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            parsed
+                .get("memories")
+                .and_then(|value| value.get("use_memories"))
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert!(
+            parsed
+                .get("projects")
+                .and_then(|value| value.get(r"C:\Users\sunda\Documents\trace"))
+                .is_some(),
+            "project trust table should be preserved"
+        );
+        assert!(
+            parsed
+                .get("mcp_servers")
+                .and_then(|value| value.get("matrix"))
+                .is_some(),
+            "live MCP tables should be preserved"
+        );
+        assert_eq!(
+            parsed
+                .get("mcp_servers")
+                .and_then(|value| value.get("matrix"))
+                .and_then(|value| value.get("command"))
+                .and_then(|value| value.as_str()),
+            Some("matrix-websearch"),
+            "provider snapshots should not overwrite existing live MCP entries"
+        );
+        assert_eq!(
+            parsed
+                .get("mcp_servers")
+                .and_then(|value| value.get("shared"))
+                .and_then(|value| value.get("command"))
+                .and_then(|value| value.as_str()),
+            Some("shared-command"),
+            "common config snippets should still be able to add missing MCP entries"
+        );
+        assert!(
+            parsed
+                .get("model_providers")
+                .and_then(|value| value.get("openai"))
+                .is_some(),
+            "existing provider tables should remain available"
+        );
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|value| value.get("codex_model_router_v2"))
+                .and_then(|value| value.get("experimental_bearer_token"))
+                .and_then(|value| value.as_str()),
+            Some("provider-token")
+        );
+    }
+
+    #[test]
+    fn merge_empty_official_config_clears_provider_fields_but_keeps_user_sections() {
+        let live_config = r#"model = "deepseek-v4-flash"
+model_provider = "codex_model_router_v2"
+model_catalog_json = "cc-switch-model-catalog.json"
+openai_base_url = "http://127.0.0.1:15721/v1"
+experimental_bearer_token = "stale-token"
+approval_policy = "on-request"
+
+[projects."C:\\Users\\sunda\\Documents\\LLMservice"]
+trust_level = "trusted"
+
+[mcp_servers.matrix]
+command = "matrix-websearch"
+
+[model_providers.codex_model_router_v2]
+name = "OpenAI Multi-Model Router"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+"#;
+
+        let merged =
+            merge_codex_provider_config_texts(live_config, "").expect("merge official config");
+        let parsed: toml::Value = toml::from_str(&merged).expect("parse merged config");
+
+        assert!(parsed.get("model").is_none());
+        assert!(parsed.get("model_provider").is_none());
+        assert!(parsed.get("model_catalog_json").is_none());
+        assert!(parsed.get("openai_base_url").is_none());
+        assert!(parsed.get("experimental_bearer_token").is_none());
+        assert!(
+            parsed
+                .get("model_providers")
+                .and_then(|value| value.get("codex_model_router_v2"))
+                .is_none(),
+            "official fallback must remove the active cc-switch router table"
+        );
+        assert_eq!(
+            parsed
+                .get("approval_policy")
+                .and_then(|value| value.as_str()),
+            Some("on-request")
+        );
+        assert!(
+            parsed
+                .get("projects")
+                .and_then(|value| value.get(r"C:\Users\sunda\Documents\LLMservice"))
+                .is_some(),
+            "official fallback must preserve Codex project trust/history context"
+        );
+        assert!(
+            parsed
+                .get("mcp_servers")
+                .and_then(|value| value.get("matrix"))
+                .is_some(),
+            "official fallback must preserve MCP servers"
+        );
+    }
+
+    #[test]
+    fn merge_openai_router_config_uses_builtin_openai_history_bucket() {
+        let live_config = r#"model = "gpt-5.5"
+approval_policy = "on-request"
+
+[projects."C:\\Users\\sunda\\Documents\\LLMservice"]
+trust_level = "trusted"
+"#;
+        let provider_config = r#"model = "gpt-5.5"
+model_provider = "openai"
+openai_base_url = "http://127.0.0.1:15721/v1"
+model_catalog_json = "cc-switch-model-catalog.json"
+"#;
+
+        let merged = merge_codex_provider_config_texts(live_config, provider_config)
+            .expect("merge openai router config");
+        let parsed: toml::Value = toml::from_str(&merged).expect("parse merged config");
+
+        assert_eq!(
+            parsed
+                .get("model_provider")
+                .and_then(|value| value.as_str()),
+            Some("openai")
+        );
+        assert_eq!(
+            parsed
+                .get("openai_base_url")
+                .and_then(|value| value.as_str()),
+            Some("http://127.0.0.1:15721/v1")
+        );
+        assert!(
+            parsed
+                .get("model_providers")
+                .and_then(|value| value.get("openai"))
+                .is_none(),
+            "built-in OpenAI must not be shadowed by an ignored configured table"
+        );
+        assert!(
+            parsed
+                .get("projects")
+                .and_then(|value| value.get(r"C:\Users\sunda\Documents\LLMservice"))
+                .is_some(),
+            "router switch must preserve Codex project history context"
+        );
+    }
+
+    #[test]
+    fn merge_provider_without_catalog_removes_stale_cc_switch_catalog_pointer() {
+        let live_config = r#"model = "gpt-5.5"
+model_provider = "codex_model_router_v2"
+model_catalog_json = "cc-switch-model-catalog.json"
+
+[projects."C:\\Users\\sunda\\Documents\\LLMservice"]
+trust_level = "trusted"
+
+[model_providers.codex_model_router_v2]
+name = "OpenAI Multi-Model Router"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+"#;
+        let provider_config = r#"model = "gpt-5.4"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "Plain Custom"
+base_url = "https://plain.example/v1"
+wire_api = "responses"
+"#;
+
+        let merged = merge_codex_provider_config_texts(live_config, provider_config)
+            .expect("merge provider config");
+        let parsed: toml::Value = toml::from_str(&merged).expect("parse merged config");
+
+        assert_eq!(
+            parsed
+                .get("model_provider")
+                .and_then(|value| value.as_str()),
+            Some("custom")
+        );
+        assert!(
+            parsed.get("model_catalog_json").is_none(),
+            "stale cc-switch catalog pointer must not survive provider switches"
+        );
+        assert!(parsed
+            .get("projects")
+            .and_then(|value| value.get(r"C:\Users\sunda\Documents\LLMservice"))
+            .is_some());
     }
 
     #[test]
@@ -1636,6 +2193,54 @@ model = "gpt-4"
     }
 
     #[test]
+    fn base_url_uses_openai_base_url_for_builtin_openai_provider() {
+        let input = r#"model_provider = "openai"
+model = "gpt-5.5"
+"#;
+
+        let result =
+            update_codex_toml_field(input, "base_url", "http://127.0.0.1:15721/v1").unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("openai_base_url").and_then(|v| v.as_str()),
+            Some("http://127.0.0.1:15721/v1")
+        );
+        assert!(parsed.get("base_url").is_none());
+        assert!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("openai"))
+                .is_none(),
+            "configured model_providers.openai is ignored by Codex and must not be generated"
+        );
+    }
+
+    #[test]
+    fn wire_api_noops_for_builtin_openai_provider() {
+        let input = r#"model_provider = "openai"
+model = "gpt-5.5"
+openai_base_url = "http://127.0.0.1:15721/v1"
+"#;
+
+        let result = update_codex_toml_field(input, "wire_api", "responses").unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert!(parsed.get("wire_api").is_none());
+        assert!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("openai"))
+                .is_none(),
+            "built-in OpenAI already uses Responses and must not get a shadow table"
+        );
+        assert_eq!(
+            parsed.get("openai_base_url").and_then(|v| v.as_str()),
+            Some("http://127.0.0.1:15721/v1")
+        );
+    }
+
+    #[test]
     fn base_url_falls_back_to_top_level_without_model_provider() {
         let input = r#"model = "gpt-4"
 "#;
@@ -1796,6 +2401,24 @@ base_url = "https://production.api/v1"
             .and_then(|v| v.get("base_url"))
             .and_then(|v| v.as_str());
         assert_eq!(base_url, Some("https://production.api/v1"));
+    }
+
+    #[test]
+    fn remove_base_url_if_cleans_openai_base_url() {
+        let input = r#"model_provider = "openai"
+openai_base_url = "http://127.0.0.1:15721/v1"
+"#;
+
+        let result =
+            remove_codex_toml_base_url_if(input, |url| url.starts_with("http://127.0.0.1"));
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert!(parsed.get("openai_base_url").is_none());
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("openai"),
+            "cleanup should remove the local proxy URL without changing the history bucket"
+        );
     }
 
     #[test]
@@ -1961,6 +2584,90 @@ base_url = "https://production.api/v1"
     }
 
     #[test]
+    fn codex_model_catalog_preserves_openai_gpt_speed_tiers() {
+        let template = json!({
+            "slug": "gpt-5.5",
+            "display_name": "GPT-5.5",
+            "context_window": 272000,
+            "max_context_window": 272000,
+            "additional_speed_tiers": ["fast"],
+            "service_tiers": [
+                {
+                    "id": "priority",
+                    "name": "Fast",
+                    "description": "1.5x speed, increased usage"
+                }
+            ],
+            "availability_nux": {
+                "message": "GPT-5.5 is now available."
+            },
+            "upgrade": {
+                "target": "gpt-5.5"
+            }
+        });
+        let spec = CodexCatalogModelSpec {
+            model: "gpt-5.4".to_string(),
+            display_name: "GPT-5.4".to_string(),
+            context_window: 272_000,
+            text_only: false,
+        };
+        let entry = codex_catalog_model_entry(&template, &spec, 0);
+
+        assert_eq!(
+            entry.get("additional_speed_tiers"),
+            Some(&json!(["fast"])),
+            "OpenAI official GPT entries must keep Codex speed choices"
+        );
+        assert_eq!(
+            entry.get("service_tiers"),
+            template.get("service_tiers"),
+            "OpenAI official GPT entries must keep Codex service tiers"
+        );
+        assert!(
+            entry
+                .get("availability_nux")
+                .is_some_and(|value| value.is_null()),
+            "generated entries should still drop template launch messaging"
+        );
+    }
+
+    #[test]
+    fn codex_model_catalog_clears_non_priority_gpt_speed_tiers() {
+        let template = json!({
+            "slug": "gpt-5.5",
+            "display_name": "GPT-5.5",
+            "context_window": 272000,
+            "max_context_window": 272000,
+            "additional_speed_tiers": ["fast"],
+            "service_tiers": [
+                {
+                    "id": "priority",
+                    "name": "Fast",
+                    "description": "1.5x speed, increased usage"
+                }
+            ]
+        });
+        let spec = CodexCatalogModelSpec {
+            model: "gpt-5.4-mini".to_string(),
+            display_name: "GPT-5.4 Mini".to_string(),
+            context_window: 128_000,
+            text_only: false,
+        };
+        let entry = codex_catalog_model_entry(&template, &spec, 0);
+
+        assert_eq!(
+            entry.get("additional_speed_tiers"),
+            Some(&json!([])),
+            "GPT mini entries should not inherit GPT-5.5 speed choices"
+        );
+        assert_eq!(
+            entry.get("service_tiers"),
+            Some(&json!([])),
+            "GPT mini entries should not inherit GPT-5.5 service tiers"
+        );
+    }
+
+    #[test]
     fn codex_catalog_text_only_capabilities_override_hardcoded_name() {
         let template = json!({
             "slug": "gpt-5.5",
@@ -2023,6 +2730,25 @@ base_url = "https://production.api/v1"
         );
         assert_eq!(fallback.len(), 1);
         assert!(fallback[0].text_only);
+    }
+
+    #[test]
+    fn codex_model_catalog_marks_deepseekv4_aliases_text_only() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "DeepSeek V4 Pro",
+                        "displayName": "DeepSeek V4 Pro"
+                    }
+                ]
+            }
+        });
+
+        let specs = codex_catalog_model_specs(&settings, r#"model_context_window = 64000"#);
+
+        assert_eq!(specs.len(), 1);
+        assert!(specs[0].text_only);
     }
 
     #[test]
