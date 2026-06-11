@@ -67,6 +67,10 @@ fn decompress_body(content_encoding: &str, body: &[u8]) -> Result<Option<Vec<u8>
             brotli::BrotliDecompress(&mut std::io::Cursor::new(body), &mut decompressed)?;
             Ok(Some(decompressed))
         }
+        "zstd" => {
+            // 部分上游/CDN（如 Cloudflare、Fastly）会对响应体做 zstd 压缩。
+            zstd::stream::decode_all(std::io::Cursor::new(body))
+        }
         _ => {
             log::warn!("未知的 content-encoding: {content_encoding}，跳过解压");
             Ok(None)
@@ -81,6 +85,24 @@ fn get_content_encoding(headers: &HeaderMap) -> Option<String> {
         .and_then(|v| v.to_str().ok())
         .map(|s| s.trim().to_lowercase())
         .filter(|s| !s.is_empty() && s != "identity")
+}
+
+/// 当上游压缩了响应体却没（正确）声明 `content-encoding` 时，按帧魔数嗅探压缩格式。
+///
+/// 现实中存在无视 `accept-encoding: identity`、或在 CDN/缓存链路里把
+/// `content-encoding` 头丢掉的上游（如 Cloudflare + Fastly/Varnish 前置的中转），
+/// 这会让非流式响应是压缩字节但 `content-encoding` 缺失，导致下游按 JSON 解析失败。
+///
+/// 合法的 JSON/文本响应体恒以 `{` / `[` / 空白字符开头，绝不会撞上这些压缩魔数，
+/// 因此按魔数嗅探零误判。brotli 没有固定帧魔数，无法嗅探（仍依赖 `content-encoding: br`）。
+fn sniff_compression(body: &[u8]) -> Option<&'static str> {
+    if body.starts_with(&[0x1f, 0x8b]) {
+        Some("gzip")
+    } else if body.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
+        Some("zstd")
+    } else {
+        None
+    }
 }
 
 /// RFC 2616 / RFC 7230 中定义的不应被代理继续转发的响应头。
@@ -172,6 +194,24 @@ pub(crate) async fn read_decoded_body(
             Ok(None) => {}
             Err(e) => {
                 log::warn!("[{tag}] 解压失败 ({encoding}): {e}，使用原始数据");
+            }
+        }
+    }
+
+    // content-encoding 缺失/不可识别，但响应体仍是压缩字节（上游/CDN 无视
+    // accept-encoding: identity，或在链路里把 content-encoding 头丢掉）。
+    // 按帧魔数嗅探兜底：若上面已正确解压成文本/JSON，sniff 必返回 None（不以魔数开头）。
+    if let Some(sniffed) = sniff_compression(&body_bytes) {
+        match decompress_body(sniffed, &body_bytes) {
+            Ok(decompressed) => {
+                log::debug!(
+                    "[{tag}] 嗅探到 {sniffed} 压缩响应（content-encoding 缺失/不符），已解压"
+                );
+                body_bytes = Bytes::from(decompressed);
+                decoded = true;
+            }
+            Err(e) => {
+                log::warn!("[{tag}] 嗅探解压失败 ({sniffed}): {e}，使用原始数据");
             }
         }
     }
@@ -877,6 +917,134 @@ mod tests {
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::RwLock;
+
+    fn zstd_compress(data: &[u8]) -> Vec<u8> {
+        zstd::stream::encode_all(std::io::Cursor::new(data), 0).expect("zstd encode")
+    }
+
+    fn gzip_compress(data: &[u8]) -> Vec<u8> {
+        use std::io::Write;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(data).expect("gzip write");
+        encoder.finish().expect("gzip finish")
+    }
+
+    /// 用 reqwest::Response 包一个合成的非流式上游响应，便于测试 read_decoded_body。
+    fn make_response(status: u16, headers: &[(&str, &str)], body: Vec<u8>) -> ProxyResponse {
+        let mut builder = http::Response::builder().status(status);
+        for (k, v) in headers {
+            builder = builder.header(*k, *v);
+        }
+        let http_resp = builder.body(body).expect("build http response");
+        ProxyResponse::Reqwest(reqwest::Response::from(http_resp))
+    }
+
+    #[test]
+    fn test_decompress_body_zstd_roundtrip() {
+        let original = br#"{"type":"message","role":"assistant"}"#;
+        let compressed = zstd_compress(original);
+        // 真实 zstd 帧应以魔数开头
+        assert_eq!(&compressed[..4], &[0x28, 0xb5, 0x2f, 0xfd]);
+        let decompressed = super::decompress_body("zstd", &compressed).expect("zstd decode");
+        assert_eq!(decompressed, original);
+    }
+
+    #[test]
+    fn test_decompress_body_existing_codecs_still_work() {
+        let original = br#"{"ok":true}"#;
+        assert_eq!(
+            super::decompress_body("gzip", &gzip_compress(original)).expect("gzip"),
+            original
+        );
+    }
+
+    #[test]
+    fn test_sniff_compression_detects_magic() {
+        assert_eq!(
+            super::sniff_compression(&[0x1f, 0x8b, 0x08, 0x00]),
+            Some("gzip")
+        );
+        assert_eq!(
+            super::sniff_compression(&[0x28, 0xb5, 0x2f, 0xfd, 0x00]),
+            Some("zstd")
+        );
+        // 合法 JSON/文本恒以 `{`/`[`/空白开头，不会误判
+        assert_eq!(super::sniff_compression(br#"{"a":1}"#), None);
+        assert_eq!(super::sniff_compression(b"[1,2]"), None);
+        assert_eq!(super::sniff_compression(b"  {}"), None);
+        assert_eq!(super::sniff_compression(b""), None);
+    }
+
+    #[tokio::test]
+    async fn test_read_decoded_body_sniffs_undeclared_zstd() {
+        // 复刻本故障：200 + content-type application/json + 无 content-encoding 头，body 是 zstd。
+        let original = br#"{"type":"message","content":[]}"#;
+        let response = make_response(
+            200,
+            &[("content-type", "application/json")],
+            zstd_compress(original),
+        );
+
+        let (headers, status, body) = read_decoded_body(response, "test", Duration::ZERO)
+            .await
+            .expect("read_decoded_body");
+
+        assert_eq!(status.as_u16(), 200);
+        // 解压成功 → 可被 serde_json 解析
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("parse json");
+        assert_eq!(json["type"], "message");
+        // 重建响应体后实体头被剥离
+        assert!(headers.get("content-length").is_none());
+        assert!(headers.get("content-encoding").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_read_decoded_body_declared_zstd() {
+        let original = br#"{"ok":1}"#;
+        let response = make_response(
+            200,
+            &[
+                ("content-type", "application/json"),
+                ("content-encoding", "zstd"),
+            ],
+            zstd_compress(original),
+        );
+
+        let (_headers, _status, body) = read_decoded_body(response, "test", Duration::ZERO)
+            .await
+            .expect("read_decoded_body");
+        assert_eq!(&body[..], original);
+    }
+
+    #[tokio::test]
+    async fn test_read_decoded_body_sniffs_undeclared_gzip() {
+        let original = br#"{"ok":2}"#;
+        let response = make_response(
+            200,
+            &[("content-type", "application/json")],
+            gzip_compress(original),
+        );
+
+        let (_headers, _status, body) = read_decoded_body(response, "test", Duration::ZERO)
+            .await
+            .expect("read_decoded_body");
+        assert_eq!(&body[..], original);
+    }
+
+    #[tokio::test]
+    async fn test_read_decoded_body_plain_json_unchanged() {
+        let original = br#"{"plain":true}"#.to_vec();
+        let response = make_response(
+            200,
+            &[("content-type", "application/json")],
+            original.clone(),
+        );
+
+        let (_headers, _status, body) = read_decoded_body(response, "test", Duration::ZERO)
+            .await
+            .expect("read_decoded_body");
+        assert_eq!(body.as_ref(), original.as_slice());
+    }
 
     #[test]
     fn decompress_body_deflate_handles_zlib_wrapped_per_rfc9110() {
