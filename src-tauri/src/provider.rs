@@ -1169,6 +1169,29 @@ wire_api = "responses""#
     }
 
     #[test]
+    fn codex_profile_custom_base_url_is_not_official_equivalent() {
+        let provider = Provider::with_id(
+            "profile-codex".to_string(),
+            "Profile Codex".to_string(),
+            json!({
+                "auth": {},
+                "config": r#"model_provider = "openai"
+profile = "work"
+
+[profiles.work]
+model_provider = "local"
+
+[model_providers.local]
+base_url = "http://localhost:11434/v1"
+wire_api = "responses""#
+            }),
+            None,
+        );
+
+        assert!(!provider.is_official_equivalent_for_app(&crate::app_config::AppType::Codex));
+    }
+
+    #[test]
     fn codex_no_auth_top_level_custom_base_url_is_not_official_equivalent() {
         let provider = Provider::with_id(
             "vllm-codex".to_string(),

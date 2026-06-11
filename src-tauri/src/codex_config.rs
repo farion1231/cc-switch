@@ -476,15 +476,37 @@ pub fn extract_codex_api_key(auth: Option<&Value>, config_text: Option<&str>) ->
 
 /// Extract the upstream base URL from a Codex `config.toml` string.
 ///
-/// Prefers the active `[model_providers.<model_provider>].base_url`, falling
-/// back to a top-level `base_url`. Deliberately never reads a non-active
-/// `[model_providers.*]` section — the frontend `extractCodexBaseUrl`
-/// (`getRecoverableBaseUrlAssignments`) excludes those too, and a leftover
-/// section unrelated to the active provider must not leak into `{{baseUrl}}`.
+/// Prefers the selected profile's provider, then the active top-level
+/// `[model_providers.<model_provider>].base_url`, falling back to a top-level
+/// `base_url`. Deliberately never reads a non-active `[model_providers.*]`
+/// section — the frontend `extractCodexBaseUrl` (`getRecoverableBaseUrlAssignments`)
+/// excludes those too, and a leftover section unrelated to the active provider
+/// must not leak into `{{baseUrl}}`.
 pub fn extract_codex_base_url(config_text: &str) -> Option<String> {
     let doc = config_text.parse::<toml::Value>().ok()?;
 
-    if let Some(active_provider) = doc.get("model_provider").and_then(|v| v.as_str()) {
+    let active_profile_provider = doc
+        .get("profile")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|profile| !profile.is_empty())
+        .and_then(|profile| {
+            doc.get("profiles")
+                .and_then(|profiles| profiles.get(profile))
+        })
+        .and_then(|profile| profile.get("model_provider"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|provider| !provider.is_empty());
+    let active_provider = active_profile_provider
+        .or_else(|| {
+            doc.get("model_provider")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+        })
+        .filter(|provider| !provider.is_empty());
+
+    if let Some(active_provider) = active_provider {
         if let Some(base_url) = doc
             .get("model_providers")
             .and_then(|providers| providers.get(active_provider))
@@ -1645,6 +1667,27 @@ base_url = "https://other.example.com/v1"
         assert_eq!(
             extract_codex_base_url(input).as_deref(),
             Some("https://azure.example.com/v1")
+        );
+    }
+
+    #[test]
+    fn extract_base_url_prefers_selected_profile_provider_section() {
+        let input = r#"model_provider = "openai"
+profile = "work"
+
+[profiles.work]
+model_provider = "local"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+
+[model_providers.local]
+base_url = "http://localhost:11434/v1"
+"#;
+
+        assert_eq!(
+            extract_codex_base_url(input).as_deref(),
+            Some("http://localhost:11434/v1")
         );
     }
 
