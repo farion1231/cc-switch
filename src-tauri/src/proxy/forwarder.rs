@@ -396,8 +396,11 @@ impl RequestForwarder {
         let mut last_provider = None;
         let mut attempted_providers = 0usize;
 
-        // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
-        let bypass_circuit_breaker = providers.len() == 1;
+        // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）。
+        // 模型路由匹配的 provider 不能跳过：它只是当前请求恰好命中这一家，
+        // 不代表用户愿意在它已熔断时无视熔断继续发请求。
+        let bypass_circuit_breaker =
+            providers.len() == 1 && !self.provider_selected_by_model_route;
 
         // 依次尝试每个供应商
         for provider in providers.iter() {
