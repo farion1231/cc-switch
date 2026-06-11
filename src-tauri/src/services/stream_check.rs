@@ -558,10 +558,19 @@ impl StreamCheckService {
         // 必须改打 /chat/completions 并发送 Chat 格式 body，否则 Stream Check 与代理路径不一致，
         // 会把"实际可用"的供应商误报为不可用（典型如 DeepSeek、MiniMax、Kimi 等 Chat 兼容厂商）。
         let uses_chat = crate::proxy::providers::codex_provider_uses_chat_completions(provider);
-        let urls = if uses_chat {
-            Self::resolve_codex_chat_stream_urls(base_url, is_full_url)
+        // isFullUrl=true 时健康检查会把 base_url 当完整地址直接请求，
+        // 但 Ollama 等本地模型的 base_url (如 http://127.0.0.1:11434/v1)
+        // 不含 /chat/completions 路径，会导致 404。
+        // 此处兜底：若设为 fullUrl 但 URL 实际不含 chat 端点，自动退化为非 full 模式。
+        let effective_is_full = if uses_chat && is_full_url {
+            base_url.to_ascii_lowercase().contains("chat/completions")
         } else {
-            Self::resolve_codex_stream_urls(base_url, is_full_url)
+            is_full_url
+        };
+        let urls = if uses_chat {
+            Self::resolve_codex_chat_stream_urls(base_url, effective_is_full)
+        } else {
+            Self::resolve_codex_stream_urls(base_url, effective_is_full)
         };
 
         // 解析模型名和推理等级 (支持 model@level 或 model#level 格式)

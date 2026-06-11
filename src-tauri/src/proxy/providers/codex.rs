@@ -151,15 +151,46 @@ pub fn resolve_codex_chat_reasoning_config(
     provider: &Provider,
     body: &JsonValue,
 ) -> Option<CodexChatReasoningConfig> {
-    if let Some(config) = provider
+    let mut config = if let Some(config) = provider
         .meta
         .as_ref()
         .and_then(|meta| meta.codex_chat_reasoning.clone())
     {
-        return Some(normalize_codex_chat_reasoning_config(config));
+        normalize_codex_chat_reasoning_config(config)
+    } else {
+        infer_codex_chat_reasoning_config(provider, body)?
+    };
+
+    // 本地模型（Ollama 等）不支持 reasoning_effort 参数。
+    // meta.codexChatReasoning 可能被 UI 表单覆盖为 supportsEffort=true，
+    // 在此兜底强制关闭，避免透传 reasoning.effort 到上游导致 400。
+    if is_ollama_provider(provider) {
+        config.supports_effort = Some(false);
     }
 
-    infer_codex_chat_reasoning_config(provider, body)
+    Some(config)
+}
+
+fn is_ollama_provider(provider: &Provider) -> bool {
+    let id = provider.id.to_ascii_lowercase();
+    if id == "ollama" || id == "ollama-local" || id == "ollama-chat" {
+        return true;
+    }
+    let name = provider.name.to_ascii_lowercase();
+    if name.contains("ollama") {
+        return true;
+    }
+    // Ollama 的 base_url 特征：127.0.0.1:11434 或 localhost:11434
+    let base_url = provider
+        .settings_config
+        .get("base_url")
+        .or_else(|| provider.settings_config.get("baseURL"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    base_url.contains("127.0.0.1:11434")
+        || base_url.contains("localhost:11434")
+        || base_url.contains("host.docker.internal:11434")
 }
 
 fn normalize_codex_chat_reasoning_config(
