@@ -13,7 +13,11 @@ const PROVIDER_ID: &str = "antigravity";
 
 pub fn session_roots() -> Vec<PathBuf> {
     let root = crate::antigravity_config::get_antigravity_dir();
-    vec![root.join("antigravity"), root.join("antigravity-ide")]
+    vec![
+        root.join("antigravity"),
+        root.join("antigravity-ide"),
+        root.join("antigravity-cli"),
+    ]
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
@@ -204,7 +208,7 @@ fn parse_session(transcript: &Path, session_id: &str) -> Option<SessionMeta> {
         created_at,
         last_active_at,
         source_path: Some(transcript.to_string_lossy().to_string()),
-        resume_command: None,
+        resume_command: Some(format!("agy --conversation {session_id}")),
     })
 }
 

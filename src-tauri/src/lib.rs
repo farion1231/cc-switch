@@ -1074,6 +1074,10 @@ pub fn run() {
                         "OpenCode usage initial sync",
                         crate::services::session_usage_opencode::sync_opencode_usage(db),
                     );
+                    run_step(
+                        "Antigravity usage initial sync",
+                        crate::services::session_usage_antigravity::sync_antigravity_usage(db),
+                    );
 
                     // 定期同步
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
@@ -1097,6 +1101,10 @@ pub fn run() {
                         run_step(
                             "OpenCode usage periodic sync",
                             crate::services::session_usage_opencode::sync_opencode_usage(db),
+                        );
+                        run_step(
+                            "Antigravity usage periodic sync",
+                            crate::services::session_usage_antigravity::sync_antigravity_usage(db),
                         );
                     }
                 });

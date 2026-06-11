@@ -14,13 +14,35 @@ pub fn get_antigravity_dir() -> PathBuf {
     crate::config::get_home_dir().join(".gemini")
 }
 
+fn read_antigravity_credential_helper() -> Result<Value, AppError> {
+    if let Ok(password) = read_password() {
+        if let Ok(credential) = parse_credential(&password) {
+            return Ok(credential);
+        }
+    }
+
+    // 回退到读取 ~/.gemini/oauth_creds.json
+    let oauth_path = get_antigravity_dir().join("oauth_creds.json");
+    if oauth_path.is_file() {
+        if let Ok(content) = std::fs::read_to_string(&oauth_path) {
+            if let Ok(credential) = serde_json::from_str::<Value>(&content) {
+                if credential.is_object() && !credential.as_object().unwrap().is_empty() {
+                    return Ok(credential);
+                }
+            }
+        }
+    }
+
+    Err(credential_not_found())
+}
+
 pub fn read_antigravity_live_settings() -> Result<Value, AppError> {
-    let credential = parse_credential(&read_password()?)?;
+    let credential = read_antigravity_credential_helper()?;
     Ok(json!({ "credential": credential }))
 }
 
 pub fn capture_antigravity_credential(settings: &mut Value) -> Result<(), AppError> {
-    let credential = parse_credential(&read_password()?)?;
+    let credential = read_antigravity_credential_helper()?;
     merge_credential(settings, credential)
 }
 
