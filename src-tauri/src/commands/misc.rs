@@ -2622,34 +2622,18 @@ exec bash --norc --noprofile
 
 /// macOS: Terminal.app AppleScript
 ///
-/// 冷启动去重：Terminal 未运行时 `activate` 会自动创建一个默认窗口，若随后再无条件
-/// `do script` 会再开第二个窗口 → 出现一个多余的空 bash 窗口。
-/// 故按 `was_running` 分支（与 iTerm2 同源做法）：
-/// - 已运行：`do script` 直接开新窗口（不复用，避免劫持用户既有窗口）；
-/// - 未运行：`activate` 后轮询等待自动创建的默认窗口就绪（0.1s×30，规避窗口创建竞态），
-///   再 `do script … in window 1` 复用它，保证只开一个窗口。
+/// 直接使用未指定目标窗口的 `do script`，让 Terminal.app 为启动命令创建专用窗口：
+/// - 避免先 `activate` 冷启动时自动创建一个空默认窗口，随后 `do script` 再开第二个窗口；
+/// - 避免 `do script ... in window 1` 把启动命令注入 macOS 恢复出来的旧 Terminal 会话。
+///
+/// `activate` 放在 `do script` 之后，只负责把已创建的命令窗口带到前台。
 #[cfg(target_os = "macos")]
 fn build_macos_terminal_applescript(script_file: &std::path::Path) -> String {
     format!(
         r#"set launcher_script to "bash '{}'"
-set was_running to application "Terminal" is running
 tell application "Terminal"
+    do script launcher_script
     activate
-    if was_running then
-        do script launcher_script
-    else
-        set waited to 0
-        repeat while (count of windows) = 0
-            delay 0.1
-            set waited to waited + 1
-            if waited >= 30 then exit repeat
-        end repeat
-        if (count of windows) = 0 then
-            do script launcher_script
-        else
-            do script launcher_script in window 1
-        end if
-    end if
 end tell"#,
         script_file.display()
     )
@@ -4743,36 +4727,30 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn terminal_applescript_cold_start_reuses_auto_created_window() {
+    fn terminal_applescript_runs_script_before_activate() {
         let script = build_macos_terminal_applescript(Path::new("/tmp/cc_switch_launcher.sh"));
 
-        let cold_start_branch = script
-            .split("if was_running then")
-            .nth(1)
-            .expect("was_running branch should be present")
-            .splitn(2, "else")
-            .nth(1)
-            .expect("cold start branch should be present");
+        let do_script_pos = script
+            .find("do script launcher_script")
+            .expect("Terminal launcher should run the script");
+        let activate_pos = script
+            .find("activate")
+            .expect("Terminal launcher should activate Terminal after creating the command window");
 
-        assert!(cold_start_branch.contains("repeat while (count of windows) = 0"));
-        assert!(cold_start_branch.contains("do script launcher_script in window 1"));
+        assert!(do_script_pos < activate_pos);
     }
 
+    /// 回归：Codex review (PR #4054) 指出冷启动若遇 macOS「恢复窗口」会把启动脚本注入被
+    /// 还原的既有会话。不能用 `window 1` 或 `current window` 作为目标；未指定目标窗口的
+    /// `do script` 才会创建专用命令窗口。
     #[cfg(target_os = "macos")]
     #[test]
-    fn terminal_applescript_opens_new_window_when_already_running() {
+    fn terminal_applescript_does_not_target_existing_windows() {
         let script = build_macos_terminal_applescript(Path::new("/tmp/cc_switch_launcher.sh"));
 
-        let running_branch = script
-            .split("if was_running then")
-            .nth(1)
-            .expect("was_running branch should be present")
-            .splitn(2, "else")
-            .next()
-            .expect("already-running branch should end before cold start branch");
-
-        assert!(running_branch.contains("do script launcher_script"));
-        assert!(!running_branch.contains("in window"));
+        assert!(script.contains("do script launcher_script"));
+        assert!(!script.contains("in window"));
+        assert!(!script.contains("current window"));
     }
 
     #[cfg(target_os = "macos")]
