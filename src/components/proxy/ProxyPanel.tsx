@@ -537,6 +537,23 @@ export function ProxyPanel({
                         "代理服务器监听的 IP 地址（推荐 127.0.0.1）",
                     })}
                   </p>
+                  {(() => {
+                    const addr = listenAddress.trim();
+                    const isLoopback =
+                      addr === "" ||
+                      addr === "localhost" ||
+                      addr === "::1" ||
+                      addr.startsWith("127.");
+                    if (isLoopback) return null;
+                    return (
+                      <p className="text-xs text-amber-600 dark:text-amber-500">
+                        {t("proxy.settings.fields.listenAddress.lanWarning", {
+                          defaultValue:
+                            "0.0.0.0 会把路由暴露到局域网，且服务无身份验证——同一网络下的任何设备都能使用你的密钥和额度。请仅在可信网络中使用，或配合防火墙限制访问。",
+                        })}
+                      </p>
+                    );
+                  })()}
                 </div>
 
                 <div className="space-y-2">

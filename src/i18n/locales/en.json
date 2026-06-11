@@ -2358,7 +2358,8 @@
         "listenAddress": {
           "label": "Listen Address",
           "placeholder": "127.0.0.1",
-          "description": "IP address the routing server listens on (recommended: 127.0.0.1)"
+          "description": "IP address the routing server listens on (recommended: 127.0.0.1)",
+          "lanWarning": "0.0.0.0 exposes the router to your LAN, and the service has no authentication—any device on the same network can use your keys and quota. Use only on trusted networks, or restrict access with a firewall."
         },
         "listenPort": {
           "label": "Listen Port",
