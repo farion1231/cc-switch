@@ -7,6 +7,7 @@ const tauriDir = path.join(repoRoot, "src-tauri");
 const tests = [
   "responses_request_to_chat_does_not_emit_unanswered_tool_calls",
   "responses_request_to_chat_keeps_multiple_tool_calls_adjacent_to_outputs",
+  "responses_request_to_chat_keeps_trailing_unanswered_tool_call_after_unmatched_tool_output",
   "codex_chat_history::tests",
 ];
 

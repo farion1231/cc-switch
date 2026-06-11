@@ -574,9 +574,9 @@ fn sanitize_chat_tool_message_sequence(messages: Vec<Value>) -> Vec<Value> {
             .cloned()
             .collect::<Vec<_>>();
 
-        if answered_call_ids.is_empty() && tool_block_end == messages.len() {
+        if filtered_calls.is_empty() && tool_block_end == messages.len() {
             sanitized.push(message);
-            index += 1;
+            index = tool_block_end;
             continue;
         }
 
@@ -2783,6 +2783,33 @@ mod tests {
         assert_eq!(tool_calls[0]["id"], "call_1");
         assert_eq!(messages[1]["role"], "tool");
         assert_eq!(messages[1]["tool_call_id"], "call_1");
+    }
+
+    #[test]
+    fn responses_request_to_chat_keeps_trailing_unanswered_tool_call_after_unmatched_tool_output() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "read_file",
+                    "arguments": "{\"path\":\"README.md\"}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "stale_call",
+                    "output": "stale output"
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call_1");
     }
 
     #[test]
