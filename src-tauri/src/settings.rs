@@ -357,6 +357,14 @@ pub struct AppSettings {
     /// Opt-in: defaults to false so third-party switches cleanly overwrite auth.json.
     #[serde(default)]
     pub preserve_codex_official_auth_on_switch: bool,
+    /// Force all third-party Codex model_provider names to a single value (e.g. "custom")
+    /// to prevent chat history fragmentation when switching between providers with
+    /// different provider IDs. When None (default), the original provider ID is kept.
+    /// Set to Some("custom") (or any other ID) to unify all non-reserved provider IDs
+    /// into one bucket so chat history survives provider switches.
+    /// See: https://github.com/farion1231/cc-switch/issues/3967
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub force_codex_model_provider_id: Option<String>,
     /// User has confirmed the failover toggle first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failover_confirmed: Option<bool>,
@@ -475,6 +483,7 @@ impl Default for AppSettings {
             stream_check_confirmed: None,
             enable_failover_toggle: false,
             preserve_codex_official_auth_on_switch: false,
+            force_codex_model_provider_id: None,
             failover_confirmed: None,
             first_run_notice_confirmed: None,
             common_config_confirmed: None,
@@ -827,6 +836,19 @@ pub fn preserve_codex_official_auth_on_switch() -> bool {
             e.into_inner()
         })
         .preserve_codex_official_auth_on_switch
+}
+
+/// Returns the user-configured target model_provider ID for Codex.
+///
+/// When `Some`, all non-reserved (third-party) model_provider IDs in Codex
+/// `config.toml` will be rewritten to this value on every provider switch,
+/// keeping chat history in a single bucket.  When `None` (default), the
+/// original provider ID is preserved.
+pub fn force_codex_model_provider_id() -> Option<String> {
+    settings_store()
+        .read()
+        .map(|s| s.force_codex_model_provider_id.clone())
+        .unwrap_or(None)
 }
 
 // ===== 当前供应商管理函数 =====
