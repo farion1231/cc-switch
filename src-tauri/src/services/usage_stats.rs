@@ -223,6 +223,25 @@ fn data_source_expr(log_alias: &str) -> String {
     format!("COALESCE({log_alias}.data_source, 'proxy')")
 }
 
+/// SQL 标量表达式：把 Claude Desktop 网关的 `claude-desktop` app_type 在“展示口径”
+/// 上折叠进 `claude`，其余 app_type 原样返回。
+///
+/// 背景：Desktop 网关流量在记账层按各自入口写为 `app_type='claude-desktop'`，
+/// 以保留路由接管的账单审计精度（不要回退这一点）。但 Dashboard 把它当作
+/// Claude Code 呈现——它本质就是跑在 Desktop 壳里的内嵌 Claude Code 运行时，
+/// 且 Desktop 聊天用量永远不经过本软件，单列只会让用户误以为是“桌面版全部用量”。
+///
+/// 用法：把任一参与“按应用筛选/分组”的 `app_type` 列包进此表达式即可，
+/// 这样 `= 'claude'` 过滤会同时命中 `claude-desktop`、`GROUP BY` 会把两者合并，
+/// 而不改动任何已存储的行（详情面板仍读原始 `app_type`）。
+///
+/// 注意：包裹后该列上的索引在此比较中失效，但这些都是已带时间过滤的聚合扫描，
+/// app_type 本就不是主访问路径，可接受。仅用于读侧；去重匹配（`has_matching_
+/// proxy_usage_log`）与额度检查（`check_provider_limits`）必须保留原始精确比较。
+fn folded_app_type_sql(column: &str) -> String {
+    format!("CASE WHEN {column} = 'claude-desktop' THEN 'claude' ELSE {column} END")
+}
+
 pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
     let data_source = data_source_expr(log_alias);
     let proxy_data_source = data_source_expr("proxy_dedup");
@@ -458,7 +477,7 @@ impl Database {
             params_vec.push(Box::new(end));
         }
         if let Some(at) = app_type {
-            conditions.push("l.app_type = ?".to_string());
+            conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
             params_vec.push(Box::new(at.to_string()));
         }
 
@@ -480,7 +499,7 @@ impl Database {
             &rollup_bounds,
         );
         if let Some(at) = app_type {
-            rollup_conditions.push("app_type = ?".to_string());
+            rollup_conditions.push(format!("{} = ?", folded_app_type_sql("app_type")));
             rollup_params.push(Box::new(at.to_string()));
         }
 
@@ -606,6 +625,9 @@ impl Database {
 
         let fresh_input_detail = fresh_input_sql("l");
         let fresh_input_rollup = fresh_input_sql("");
+        // 折叠 claude-desktop → claude：内层投影成同一桶名，外层 GROUP BY 自然合并。
+        let detail_app_type = folded_app_type_sql("l.app_type");
+        let rollup_app_type = folded_app_type_sql("app_type");
 
         let sql = format!(
             "SELECT app_type,
@@ -617,7 +639,7 @@ impl Database {
                 SUM(cache_read_t) as cache_read_t,
                 SUM(success_count) as success_count
             FROM (
-                SELECT l.app_type,
+                SELECT {detail_app_type} as app_type,
                     COUNT(*) as req_count,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as cost,
                     COALESCE(SUM({fresh_input_detail}), 0) as input_t,
@@ -628,7 +650,7 @@ impl Database {
                 FROM proxy_request_logs l {detail_where}
                 GROUP BY l.app_type
                 UNION ALL
-                SELECT app_type,
+                SELECT {rollup_app_type} as app_type,
                     COALESCE(SUM(request_count), 0),
                     COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0),
                     COALESCE(SUM({fresh_input_rollup}), 0),
@@ -731,9 +753,9 @@ impl Database {
             }
 
             let app_type_filter = if app_type.is_some() {
-                "AND l.app_type = ?4"
+                format!("AND {} = ?4", folded_app_type_sql("l.app_type"))
             } else {
-                ""
+                String::new()
             };
 
             let effective_filter = effective_usage_log_filter("l");
@@ -821,9 +843,9 @@ impl Database {
         let bucket_count = (end_day.signed_duration_since(start_day).num_days() + 1) as usize;
 
         let app_type_filter = if app_type.is_some() {
-            "AND l.app_type = ?3"
+            format!("AND {} = ?3", folded_app_type_sql("l.app_type"))
         } else {
-            ""
+            String::new()
         };
 
         let effective_filter = effective_usage_log_filter("l");
@@ -886,7 +908,7 @@ impl Database {
             &rollup_bounds,
         );
         if let Some(at) = app_type {
-            rollup_conditions.push("app_type = ?".to_string());
+            rollup_conditions.push(format!("{} = ?", folded_app_type_sql("app_type")));
             rollup_params.push(Box::new(at.to_string()));
         }
 
@@ -1003,7 +1025,7 @@ impl Database {
             detail_params.push(Box::new(end));
         }
         if let Some(at) = app_type {
-            detail_conditions.push("l.app_type = ?".to_string());
+            detail_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
             detail_params.push(Box::new(at.to_string()));
         }
         let detail_where = if detail_conditions.is_empty() {
@@ -1022,7 +1044,7 @@ impl Database {
             &rollup_bounds,
         );
         if let Some(at) = app_type {
-            rollup_conditions.push("r.app_type = ?".to_string());
+            rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
             rollup_params.push(Box::new(at.to_string()));
         }
         let rollup_where = if rollup_conditions.is_empty() {
@@ -1129,7 +1151,7 @@ impl Database {
             detail_params.push(Box::new(end));
         }
         if let Some(at) = app_type {
-            detail_conditions.push("l.app_type = ?".to_string());
+            detail_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
             detail_params.push(Box::new(at.to_string()));
         }
         let detail_where = if detail_conditions.is_empty() {
@@ -1148,7 +1170,7 @@ impl Database {
             &rollup_bounds,
         );
         if let Some(at) = app_type {
-            rollup_conditions.push("r.app_type = ?".to_string());
+            rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
             rollup_params.push(Box::new(at.to_string()));
         }
         let rollup_where = if rollup_conditions.is_empty() {
@@ -1237,7 +1259,9 @@ impl Database {
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
         if let Some(ref app_type) = filters.app_type {
-            conditions.push("l.app_type = ?".to_string());
+            // 仅过滤口径折叠 claude-desktop→claude；行投影仍返回原始 app_type，
+            // 详情面板据此展示真实入口（路由接管账单审计需要）。
+            conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
             params.push(Box::new(app_type.clone()));
         }
         if let Some(ref provider_name) = filters.provider_name {
@@ -2100,6 +2124,82 @@ mod tests {
             created_at: 1000,
         };
         assert!(has_matching_proxy_usage_log(&conn, &key)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_claude_desktop_folds_into_claude_for_display() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let ts = local_ts(2026, 6, 10, 12, 0, 0);
+
+        {
+            let conn = lock_conn!(db.conn);
+            // 一条 Claude Code 行 + 一条 Claude Desktop 网关行，同一时间窗。
+            insert_usage_log(
+                &conn,
+                "cc-1",
+                "claude",
+                "p-claude",
+                "claude-sonnet-4-5",
+                "proxy",
+                ts,
+                100,
+                10,
+                0,
+                0,
+                200,
+                "0.5",
+            )?;
+            insert_usage_log(
+                &conn,
+                "cd-1",
+                "claude-desktop",
+                "p-desktop",
+                "claude-opus-4-8",
+                "proxy",
+                ts,
+                200,
+                20,
+                0,
+                0,
+                200,
+                "1.5",
+            )?;
+        }
+
+        // ① 分应用汇总：desktop 折叠进 claude，不再单列 claude-desktop 桶。
+        let by_app = db.get_usage_summary_by_app(None, None)?;
+        assert_eq!(by_app.len(), 1, "应只剩一个合并后的 claude 桶");
+        assert_eq!(by_app[0].app_type, "claude");
+        assert_eq!(by_app[0].summary.total_requests, 2, "两条行都计入 claude");
+        assert!(
+            !by_app.iter().any(|a| a.app_type == "claude-desktop"),
+            "不应再出现 claude-desktop 桶"
+        );
+
+        // ② 选中 claude 过滤：汇总应同时覆盖 desktop 行。
+        let claude_summary = db.get_usage_summary(None, None, Some("claude"))?;
+        assert_eq!(claude_summary.total_requests, 2);
+
+        // ③ 请求日志按 claude 过滤返回两行，且 desktop 行投影仍是原始 app_type。
+        let logs = db.get_request_logs(
+            &LogFilters {
+                app_type: Some("claude".to_string()),
+                ..Default::default()
+            },
+            0, // 页码从 0 开始
+            50,
+        )?;
+        assert_eq!(logs.total, 2, "claude 过滤含 desktop 行");
+        assert!(
+            logs.data.iter().any(|r| r.app_type == "claude-desktop"),
+            "详情面板需要看到真实入口，行投影不可被折叠"
+        );
+
+        // ④ 折叠不外溢：codex 过滤为空。
+        let codex_summary = db.get_usage_summary(None, None, Some("codex"))?;
+        assert_eq!(codex_summary.total_requests, 0);
 
         Ok(())
     }

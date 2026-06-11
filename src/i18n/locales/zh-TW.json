@@ -1358,7 +1358,6 @@
     "appFilter": {
       "all": "全部",
       "claude": "Claude Code",
-      "claude-desktop": "Claude Desktop",
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode"
