@@ -1632,7 +1632,7 @@ impl ProxyService {
     ///
     /// 返回值：
     /// - Ok(true)：已成功写回
-    /// - Ok(false)：缺少当前供应商/供应商不存在，无法写回
+    /// - Ok(false)：缺少当前供应商/供应商不存在/供应商本身含占位符，无法写回
     fn restore_live_from_ssot_for_app(&self, app_type: &AppType) -> Result<bool, String> {
         let current_id = crate::settings::get_effective_current_provider(&self.db, app_type)
             .map_err(|e| format!("获取 {app_type:?} 当前供应商失败: {e}"))?;
@@ -1649,6 +1649,16 @@ impl ProxyService {
         let Some(provider) = providers.get(&current_id) else {
             return Ok(false);
         };
+
+        // 供应商配置本身含接管占位符时不可写回（历史异常：接管期间 Live 被
+        // 误导入成了供应商）。写回只会把占位符固化进 Live；返回 Ok(false)
+        // 让调用方落到"清理占位符"兜底。
+        if Self::live_has_proxy_placeholder_for_app(app_type, &provider.settings_config) {
+            log::warn!(
+                "{app_type:?} 当前供应商配置含代理接管占位符（疑似接管期间被导入的残留），跳过 SSOT 写回，改走占位符清理"
+            );
+            return Ok(false);
+        }
 
         write_live_with_common_config(self.db.as_ref(), app_type, provider)
             .map_err(|e| format!("写入 {app_type:?} Live 配置失败: {e}"))?;
