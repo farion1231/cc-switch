@@ -307,6 +307,37 @@ export function useUpdateModelPricing() {
   });
 }
 
+export interface ModelPricingImportItem {
+  modelId: string;
+  displayName: string;
+  inputCost: string;
+  outputCost: string;
+  cacheReadCost: string;
+  cacheCreationCost: string;
+}
+
+/** 批量导入模型定价：逐条调用与手动添加相同的 update_model_pricing 命令 */
+export function useImportModelPricing() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (items: ModelPricingImportItem[]) => {
+      for (const item of items) {
+        await usageApi.updateModelPricing(
+          item.modelId,
+          item.displayName,
+          item.inputCost,
+          item.outputCost,
+          item.cacheReadCost,
+          item.cacheCreationCost,
+        );
+      }
+    },
+    // 中途失败时前面的条目已写入数据库，所以成功与否都要刷新
+    onSettled: () => queryClient.invalidateQueries({ queryKey: usageKeys.all }),
+  });
+}
+
 export function useDeleteModelPricing() {
   const queryClient = useQueryClient();
 
