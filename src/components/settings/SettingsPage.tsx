@@ -255,6 +255,14 @@ export function SettingsPage({
                       onChange={(terminal) =>
                         handleAutoSave({ preferredTerminal: terminal })
                       }
+                      dangerousSkipPermissions={
+                        settings.claudeDangerousSkipPermissions
+                      }
+                      onDangerousSkipPermissionsChange={(value) =>
+                        handleAutoSave({
+                          claudeDangerousSkipPermissions: value,
+                        })
+                      }
                     />
                   </motion.div>
                 ) : null}

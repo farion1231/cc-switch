@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { ShieldAlert } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -6,6 +7,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ToggleRow } from "@/components/ui/toggle-row";
 import { isMac, isWindows, isLinux } from "@/lib/platform";
 
 // Terminal options per platform
@@ -76,9 +78,16 @@ function getDefaultTerminal(): string {
 export interface TerminalSettingsProps {
   value?: string;
   onChange: (value: string) => void;
+  dangerousSkipPermissions?: boolean;
+  onDangerousSkipPermissionsChange: (value: boolean) => void;
 }
 
-export function TerminalSettings({ value, onChange }: TerminalSettingsProps) {
+export function TerminalSettings({
+  value,
+  onChange,
+  dangerousSkipPermissions,
+  onDangerousSkipPermissionsChange,
+}: TerminalSettingsProps) {
   const { t } = useTranslation();
   const terminals = getTerminalOptions();
   const defaultTerminal = getDefaultTerminal();
@@ -87,7 +96,7 @@ export function TerminalSettings({ value, onChange }: TerminalSettingsProps) {
   const currentValue = value || defaultTerminal;
 
   return (
-    <section className="space-y-2">
+    <section className="space-y-3">
       <header className="space-y-1">
         <h3 className="text-sm font-medium">{t("settings.terminal.title")}</h3>
         <p className="text-xs text-muted-foreground">
@@ -109,6 +118,14 @@ export function TerminalSettings({ value, onChange }: TerminalSettingsProps) {
       <p className="text-xs text-muted-foreground">
         {t("settings.terminal.fallbackHint")}
       </p>
+
+      <ToggleRow
+        icon={<ShieldAlert className="h-4 w-4 text-red-500" />}
+        title={t("settings.terminal.dangerousSkipPermissions")}
+        description={t("settings.terminal.dangerousSkipPermissionsDescription")}
+        checked={!!dangerousSkipPermissions}
+        onCheckedChange={onDangerousSkipPermissionsChange}
+      />
     </section>
   );
 }

@@ -701,6 +701,8 @@
       "title": "優先ターミナル",
       "description": "ターミナルボタンをクリックした時に使用するターミナルアプリを選択",
       "fallbackHint": "選択したターミナルが利用できない場合、システムのデフォルトが使用されます",
+      "dangerousSkipPermissions": "Claude Code で権限確認をスキップ",
+      "dangerousSkipPermissionsDescription": "有効にすると、Claude Code ターミナルを開く際に --dangerously-skip-permissions を付けて起動します。Claude はファイルの編集やコマンドの実行時に確認を求めなくなります。信頼できるディレクトリでのみ使用してください。",
       "options": {
         "macos": {
           "terminal": "Terminal.app",

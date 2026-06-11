@@ -413,6 +413,9 @@ export interface Settings {
   // Windows: "cmd" | "powershell" | "wt"
   // Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
   preferredTerminal?: string;
+  // 在 Claude Code 终端中追加 --dangerously-skip-permissions（默认关闭）
+  // 仅作用于 Claude / Claude Desktop 的"打开终端"
+  claudeDangerousSkipPermissions?: boolean;
 
   // ===== 本机自动迁移状态 =====
   localMigrations?: {

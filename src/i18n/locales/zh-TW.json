@@ -701,6 +701,8 @@
       "title": "首選終端機",
       "description": "選擇點擊終端機按鈕時使用的終端機應用程式",
       "fallbackHint": "如果選擇的終端機不可用，將自動使用系統預設終端機",
+      "dangerousSkipPermissions": "Claude Code 跳過權限確認",
+      "dangerousSkipPermissionsDescription": "啟用後，從 Claude 供應商打開終端機時會以 --dangerously-skip-permissions 啟動 Claude Code，跳過操作確認。請謹慎使用。",
       "options": {
         "macos": {
           "terminal": "Terminal.app",
