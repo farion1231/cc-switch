@@ -55,6 +55,26 @@ pub fn extract_codex_model_provider(config_text: &str) -> Option<String> {
     }
 
     if let Ok(doc) = trimmed.parse::<DocumentMut>() {
+        if let Some(profile_provider) = doc
+            .get("profile")
+            .and_then(|item| item.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .and_then(|profile| {
+                doc.get("profiles")
+                    .and_then(|item| item.as_table_like())
+                    .and_then(|profiles| profiles.get(profile))
+            })
+            .and_then(|item| item.as_table_like())
+            .and_then(|profile| profile.get("model_provider"))
+            .and_then(|item| item.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string())
+        {
+            return Some(profile_provider);
+        }
+
         return doc
             .get("model_provider")
             .and_then(|item| item.as_str())
@@ -2409,6 +2429,22 @@ name = "OpenAI"
         assert_eq!(
             extract_codex_model_provider(input).as_deref(),
             Some("OpenAI")
+        );
+    }
+
+    #[test]
+    fn extract_codex_model_provider_reads_selected_profile_provider_key() {
+        let input = r#"model = "gpt-5.4"
+model_provider = "openai"
+profile = "work"
+
+[profiles.work]
+model_provider = "vendor_alpha"
+"#;
+
+        assert_eq!(
+            extract_codex_model_provider(input).as_deref(),
+            Some("vendor_alpha")
         );
     }
 
