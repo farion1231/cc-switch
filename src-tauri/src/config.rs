@@ -47,7 +47,16 @@ pub fn get_default_claude_mcp_path() -> PathBuf {
     get_home_dir().join(".claude.json")
 }
 
-fn derive_mcp_path_from_override(dir: &Path) -> Option<PathBuf> {
+/// 旧版（v3.15.x 及更早）在设置了覆盖目录时，将 MCP 配置写到目录**同级**的位置，
+/// 例如覆盖目录为 `/tmp/profile/.claude` 时写到 `/tmp/profile/.claude.json`。
+///
+/// 该假设在默认布局（`~/.claude` 目录与 `~/.claude.json` 平级）下成立，但与
+/// Claude Code 在 `CLAUDE_CONFIG_DIR` 模式下的实际行为不符——Claude Code 读取
+/// 的是 `$CLAUDE_CONFIG_DIR/.claude.json`，即目录**内部**。
+///
+/// 该函数已不再用于决定新的写入位置，仅在迁移逻辑中用于定位旧版本写错的位置，
+/// 以便把它们搬到 [`get_claude_mcp_path`] 返回的正确位置。
+pub(crate) fn derive_legacy_sibling_mcp_path(dir: &Path) -> Option<PathBuf> {
     let file_name = dir
         .file_name()
         .map(|name| name.to_string_lossy().to_string())?
@@ -60,12 +69,14 @@ fn derive_mcp_path_from_override(dir: &Path) -> Option<PathBuf> {
     Some(parent.join(format!("{file_name}.json")))
 }
 
-/// 获取 Claude MCP 配置文件路径，若设置了目录覆盖则与覆盖目录同级
+/// 获取 Claude MCP 配置文件路径。
+///
+/// - 默认（未设置覆盖目录）：`~/.claude.json`
+/// - 设置了覆盖目录（对应 Claude Code 的 `CLAUDE_CONFIG_DIR`）：返回该目录**内部**的
+///   `.claude.json`，与 Claude Code 自身读取 `$CLAUDE_CONFIG_DIR/.claude.json` 的行为一致。
 pub fn get_claude_mcp_path() -> PathBuf {
     if let Some(custom_dir) = crate::settings::get_claude_override_dir() {
-        if let Some(path) = derive_mcp_path_from_override(&custom_dir) {
-            return path;
-        }
+        return custom_dir.join(".claude.json");
     }
     get_default_claude_mcp_path()
 }
@@ -263,33 +274,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn derive_mcp_path_from_override_preserves_folder_name() {
+    fn derive_legacy_sibling_mcp_path_preserves_folder_name() {
         let override_dir = PathBuf::from("/tmp/profile/.claude");
-        let derived = derive_mcp_path_from_override(&override_dir)
+        let derived = derive_legacy_sibling_mcp_path(&override_dir)
             .expect("should derive path for nested dir");
         assert_eq!(derived, PathBuf::from("/tmp/profile/.claude.json"));
     }
 
     #[test]
-    fn derive_mcp_path_from_override_handles_non_hidden_folder() {
+    fn derive_legacy_sibling_mcp_path_handles_non_hidden_folder() {
         let override_dir = PathBuf::from("/data/claude-config");
-        let derived = derive_mcp_path_from_override(&override_dir)
+        let derived = derive_legacy_sibling_mcp_path(&override_dir)
             .expect("should derive path for standard dir");
         assert_eq!(derived, PathBuf::from("/data/claude-config.json"));
     }
 
     #[test]
-    fn derive_mcp_path_from_override_supports_relative_rootless_dir() {
+    fn derive_legacy_sibling_mcp_path_supports_relative_rootless_dir() {
         let override_dir = PathBuf::from("claude");
-        let derived = derive_mcp_path_from_override(&override_dir)
+        let derived = derive_legacy_sibling_mcp_path(&override_dir)
             .expect("should derive path for single segment");
         assert_eq!(derived, PathBuf::from("claude.json"));
     }
 
     #[test]
-    fn derive_mcp_path_from_root_like_dir_returns_none() {
+    fn derive_legacy_sibling_mcp_path_from_root_like_dir_returns_none() {
         let override_dir = PathBuf::from("/");
-        assert!(derive_mcp_path_from_override(&override_dir).is_none());
+        assert!(derive_legacy_sibling_mcp_path(&override_dir).is_none());
     }
 
     #[test]
