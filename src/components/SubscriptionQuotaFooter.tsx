@@ -5,11 +5,14 @@ import type { AppId } from "@/lib/api";
 import { useSubscriptionQuota } from "@/lib/query/subscription";
 import type { QuotaTier, SubscriptionQuota } from "@/types/subscription";
 
+export type QuotaDisplayMode = "used" | "remaining";
+
 interface SubscriptionQuotaFooterProps {
   appId: AppId;
   inline?: boolean;
   isCurrent?: boolean;
   autoQueryInterval?: number;
+  displayMode?: QuotaDisplayMode;
 }
 
 interface SubscriptionQuotaViewProps {
@@ -19,6 +22,29 @@ interface SubscriptionQuotaViewProps {
   /** 用于 `subscription.expiredHint` 的 {tool} 插值；解耦了 hook 的 appId */
   appIdForExpiredHint: string;
   inline?: boolean;
+  displayMode?: QuotaDisplayMode;
+}
+
+function getDisplayPercent(
+  utilization: number,
+  displayMode: QuotaDisplayMode,
+): number {
+  return displayMode === "remaining"
+    ? Math.max(0, 100 - utilization)
+    : utilization;
+}
+
+function displayPercentColor(
+  utilization: number,
+  displayMode: QuotaDisplayMode,
+): string {
+  const value = getDisplayPercent(utilization, displayMode);
+  if (displayMode === "remaining") {
+    if (value <= 10) return "text-red-500 dark:text-red-400";
+    if (value <= 30) return "text-orange-500 dark:text-orange-400";
+    return "text-green-600 dark:text-green-400";
+  }
+  return utilizationColor(value);
 }
 
 /** 已知 tier 名称的显示映射（官方订阅 + Token Plan 共用） */
@@ -103,8 +129,10 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
   refetch,
   appIdForExpiredHint,
   inline = false,
+  displayMode: configuredDisplayMode,
 }) => {
   const { t } = useTranslation();
+  const displayMode = configuredDisplayMode ?? "used";
 
   // 定期更新相对时间显示
   const [now, setNow] = React.useState(Date.now());
@@ -241,7 +269,12 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
           {tiers
             .filter((tier) => !HIDDEN_INLINE_TIERS.has(tier.name))
             .map((tier) => (
-              <TierBadge key={tier.name} tier={tier} t={t} />
+              <TierBadge
+                key={tier.name}
+                tier={tier}
+                t={t}
+                displayMode={displayMode}
+              />
             ))}
         </div>
       </div>
@@ -275,7 +308,12 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
 
       <div className="flex flex-col gap-2">
         {tiers.map((tier) => (
-          <TierBar key={tier.name} tier={tier} t={t} />
+          <TierBar
+            key={tier.name}
+            tier={tier}
+            t={t}
+            displayMode={displayMode}
+          />
         ))}
       </div>
 
@@ -304,11 +342,15 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
 export const TierBadge: React.FC<{
   tier: QuotaTier;
   t: (key: string, options?: Record<string, unknown>) => string;
-}> = ({ tier, t }) => {
+  displayMode?: QuotaDisplayMode;
+}> = ({ tier, t, displayMode = "used" }) => {
   const label = TIER_I18N_KEYS[tier.name]
     ? t(TIER_I18N_KEYS[tier.name])
     : tier.name;
   const countdown = countdownStr(tier.resetsAt);
+  const displayValue = Math.round(
+    getDisplayPercent(tier.utilization, displayMode),
+  );
 
   const hasUsd = tier.usedValueUsd != null && tier.maxValueUsd != null;
 
@@ -316,9 +358,17 @@ export const TierBadge: React.FC<{
     <div className="flex items-center gap-0.5">
       <span className="text-gray-500 dark:text-gray-400">{label}:</span>
       <span
-        className={`font-semibold tabular-nums ${utilizationColor(tier.utilization)}`}
+        className={`font-semibold tabular-nums ${displayPercentColor(
+          tier.utilization,
+          displayMode,
+        )}`}
+        title={t(
+          displayMode === "remaining"
+            ? "subscription.remainingPercentHint"
+            : "subscription.usedPercentHint",
+        )}
       >
-        {t("subscription.utilization", { value: Math.round(tier.utilization) })}
+        {t("subscription.utilization", { value: displayValue })}
       </span>
       {hasUsd && (
         <span className="text-muted-foreground/60">
@@ -339,11 +389,13 @@ export const TierBadge: React.FC<{
 const TierBar: React.FC<{
   tier: QuotaTier;
   t: (key: string, options?: Record<string, unknown>) => string;
-}> = ({ tier, t }) => {
+  displayMode: QuotaDisplayMode;
+}> = ({ tier, t, displayMode }) => {
   const label = TIER_I18N_KEYS[tier.name]
     ? t(TIER_I18N_KEYS[tier.name])
     : tier.name;
   const resetText = formatResetTime(tier.resetsAt, t);
+  const displayPercent = getDisplayPercent(tier.utilization, displayMode);
 
   return (
     <div className="flex items-center gap-3 text-xs">
@@ -358,13 +410,19 @@ const TierBar: React.FC<{
       <div className="flex-1 h-2 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${
-            tier.utilization >= 90
-              ? "bg-red-500"
-              : tier.utilization >= 70
-                ? "bg-orange-500"
-                : "bg-green-500"
+            displayMode === "remaining"
+              ? displayPercent <= 10
+                ? "bg-red-500"
+                : displayPercent <= 30
+                  ? "bg-orange-500"
+                  : "bg-green-500"
+              : tier.utilization >= 90
+                ? "bg-red-500"
+                : tier.utilization >= 70
+                  ? "bg-orange-500"
+                  : "bg-green-500"
           }`}
-          style={{ width: `${Math.min(tier.utilization, 100)}%` }}
+          style={{ width: `${Math.min(displayPercent, 100)}%` }}
         />
       </div>
 
@@ -373,9 +431,17 @@ const TierBar: React.FC<{
         style={{ width: "30%" }}
       >
         <span
-          className={`font-semibold tabular-nums ${utilizationColor(tier.utilization)}`}
+          className={`font-semibold tabular-nums ${displayPercentColor(
+            tier.utilization,
+            displayMode,
+          )}`}
+          title={t(
+            displayMode === "remaining"
+              ? "subscription.remainingPercentHint"
+              : "subscription.usedPercentHint",
+          )}
         >
-          {Math.round(tier.utilization)}%
+          {Math.round(displayPercent)}%
         </span>
         {resetText && (
           <span
@@ -399,6 +465,7 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
   inline = false,
   isCurrent = false,
   autoQueryInterval = 5,
+  displayMode,
 }) => {
   const {
     data: quota,
@@ -420,6 +487,7 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
       refetch={refetch}
       appIdForExpiredHint={appId}
       inline={inline}
+      displayMode={displayMode}
     />
   );
 };
