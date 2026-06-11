@@ -33,6 +33,8 @@ import {
 interface UsageHeroProps {
   range: UsageRangeSelection;
   appType?: string;
+  providerName?: string;
+  model?: string;
   refreshIntervalMs: number;
 }
 
@@ -159,14 +161,20 @@ function AppGlyph({
 export function UsageHero({
   range,
   appType,
+  providerName,
+  model,
   refreshIntervalMs,
 }: UsageHeroProps) {
   const { t, i18n } = useTranslation();
   const lang = getResolvedLang(i18n);
 
-  const { data, isLoading } = useUsageSummaryByApp(range, {
-    refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
-  });
+  const { data, isLoading } = useUsageSummaryByApp(
+    range,
+    { providerName, model },
+    {
+      refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
+    },
+  );
 
   // No client-side filtering: Hero's totals must match the Trend/Logs/Stats
   // below, which all go through the backend's full set of app_types. The
