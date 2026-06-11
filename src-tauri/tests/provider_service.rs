@@ -779,84 +779,72 @@ requires_openai_auth = true
 }
 
 #[test]
-fn provider_service_switch_codex_supports_official_login_provider_without_auth_write() {
+fn provider_service_switch_codex_empty_official_profile_clears_live_auth() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
     let _home = ensure_test_home();
 
-    let live_auth = json!({
+    let live_auth_a = json!({
         "auth_mode": "chatgpt",
         "OPENAI_API_KEY": null,
         "tokens": {
-            "access_token": "official-oauth-token",
-            "account_id": "acct-official"
+            "access_token": "official-a-live-token",
+            "account_id": "acct-a"
         }
     });
-    write_codex_live_atomic(&live_auth, Some("")).expect("seed official OAuth live config");
+    write_codex_live_atomic(&live_auth_a, Some("")).expect("seed official account A live auth");
+
+    let mut official_a = Provider::with_id(
+        "official-a".to_string(),
+        "Official A".to_string(),
+        json!({
+            "auth": {
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": null,
+                "tokens": {
+                    "access_token": "stale-a-token",
+                    "account_id": "acct-a"
+                }
+            },
+            "config": ""
+        }),
+        None,
+    );
+    official_a.category = Some("official".to_string());
+
+    let mut official_b = Provider::with_id(
+        "official-b".to_string(),
+        "Official B".to_string(),
+        json!({
+            "auth": {},
+            "config": ""
+        }),
+        None,
+    );
+    official_b.category = Some("official".to_string());
 
     let mut initial_config = MultiAppConfig::default();
     {
         let manager = initial_config
             .get_manager_mut(&AppType::Codex)
             .expect("codex manager");
-        manager.current = "legacy-provider".to_string();
-        manager.providers.insert(
-            "legacy-provider".to_string(),
-            Provider::with_id(
-                "legacy-provider".to_string(),
-                "Legacy".to_string(),
-                json!({
-                    "auth": {"OPENAI_API_KEY": "legacy-key"},
-                    "config": r#"model_provider = "legacy"
-
-[model_providers.legacy]
-name = "Legacy"
-base_url = "https://legacy.example/v1"
-wire_api = "responses"
-requires_openai_auth = true
-"#
-                }),
-                None,
-            ),
-        );
-        let mut official_provider = Provider::with_id(
-            "official-provider".to_string(),
-            "OpenAI Official".to_string(),
-            json!({
-                "auth": {},
-                "config": ""
-            }),
-            None,
-        );
-        official_provider.category = Some("official".to_string());
+        manager.current = "official-a".to_string();
         manager
             .providers
-            .insert("official-provider".to_string(), official_provider);
+            .insert("official-a".to_string(), official_a);
+        manager
+            .providers
+            .insert("official-b".to_string(), official_b);
     }
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    ProviderService::switch(&state, AppType::Codex, "official-provider")
-        .expect("switch to official provider should succeed without API key");
+    ProviderService::switch(&state, AppType::Codex, "official-b")
+        .expect("switch to empty official profile should clear live auth");
 
-    let auth_value: serde_json::Value =
-        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
-    assert_eq!(
-        auth_value.get("auth_mode").and_then(|v| v.as_str()),
-        Some("chatgpt")
-    );
     assert!(
-        auth_value
-            .get("OPENAI_API_KEY")
-            .is_some_and(|v| v.is_null()),
-        "official provider switching should keep OPENAI_API_KEY null"
-    );
-    assert_eq!(
-        auth_value
-            .pointer("/tokens/access_token")
-            .and_then(|v| v.as_str()),
-        Some("official-oauth-token"),
-        "official provider should preserve the existing ChatGPT OAuth token"
+        !cc_switch_lib::get_codex_auth_path().exists(),
+        "empty official profiles must remove stale auth.json so Codex shows login"
     );
 
     let live_config =
@@ -864,6 +852,87 @@ requires_openai_auth = true
     assert!(
         !live_config.contains("experimental_bearer_token"),
         "official login provider has no API key to inject"
+    );
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
+        .expect("read providers after switch");
+    let stored_a = providers
+        .get("official-a")
+        .expect("official A should still exist");
+    assert_eq!(
+        stored_a
+            .settings_config
+            .pointer("/auth/tokens/access_token")
+            .and_then(|v| v.as_str()),
+        Some("official-a-live-token"),
+        "backfill should save account A's latest live auth before clearing for account B"
+    );
+}
+
+#[test]
+fn provider_service_add_codex_empty_official_profile_does_not_backfill_stale_live_auth() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let stale_live_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": {
+            "access_token": "stale-existing-account-token",
+            "account_id": "acct-existing"
+        }
+    });
+    write_codex_live_atomic(&stale_live_auth, Some(""))
+        .expect("seed existing Codex account live auth");
+
+    let state = create_test_state().expect("create test state");
+    let mut new_official = Provider::with_id(
+        "openai-official-empty".to_string(),
+        "OpenAI Official".to_string(),
+        json!({
+            "auth": {},
+            "config": ""
+        }),
+        None,
+    );
+    new_official.category = Some("official".to_string());
+
+    ProviderService::add(&state, AppType::Codex, new_official, true)
+        .expect("adding first empty official profile should sync to live");
+
+    assert!(!cc_switch_lib::get_codex_auth_path().exists());
+
+    let err = ProviderService::read_live_settings(AppType::Codex)
+        .expect_err("empty official live state should not expose stale auth");
+    assert!(
+        matches!(
+            err,
+            AppError::Localized {
+                key: "codex.live.missing",
+                ..
+            }
+        ),
+        "cleared empty official live state should be treated as missing, got {err:?}"
+    );
+
+    let current_id =
+        ProviderService::current(&state, AppType::Codex).expect("read current provider");
+    assert_eq!(current_id, "openai-official-empty");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
+        .expect("read providers after add");
+    let stored = providers
+        .get("openai-official-empty")
+        .expect("stored empty official provider");
+    assert_eq!(
+        stored.settings_config.get("auth"),
+        Some(&json!({})),
+        "edit fallback to stored config must keep the new official profile auth empty"
     );
 }
 

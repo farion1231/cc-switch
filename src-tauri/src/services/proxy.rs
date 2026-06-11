@@ -2422,7 +2422,7 @@ impl ProxyService {
     }
 
     fn write_codex_live_verbatim(&self, config: &Value) -> Result<(), String> {
-        use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
+        use crate::codex_config::get_codex_config_path;
 
         let auth = config.get("auth");
         let config_str = config.get("config").and_then(|v| v.as_str());
@@ -2451,20 +2451,16 @@ impl ProxyService {
 
         match (auth, prepared_cfg.as_deref()) {
             (Some(auth), Some(cfg)) => {
-                let auth_path = get_codex_auth_path();
                 if auth.as_object().is_some_and(|obj| obj.is_empty()) {
-                    let _ = crate::config::delete_file(&auth_path);
-                    let config_path = get_codex_config_path();
-                    crate::config::write_text_file(&config_path, cfg)
-                        .map_err(|e| format!("写入 Codex config 失败: {e}"))?;
+                    crate::codex_config::clear_codex_live_auth_and_write_config(Some(cfg))
+                        .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
                 } else {
                     crate::codex_config::write_codex_live_atomic(auth, Some(cfg))
                         .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
                 }
             }
             (Some(auth), None) => {
-                let auth_path = get_codex_auth_path();
-                write_json_file(&auth_path, auth)
+                crate::codex_config::write_codex_live_auth_atomic(auth)
                     .map_err(|e| format!("写入 Codex auth 失败: {e}"))?;
             }
             (None, Some(cfg)) => {

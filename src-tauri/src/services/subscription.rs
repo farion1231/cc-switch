@@ -462,7 +462,7 @@ type CodexCredentials = (
 /// 读取 Codex OAuth 凭据
 ///
 /// 按优先级尝试以下来源：
-/// 1. macOS Keychain (service: "Codex Auth")
+/// 1. macOS Keychain (service: "Codex Auth", account: current CODEX_HOME hash)
 /// 2. 凭据文件 ~/.codex/auth.json
 ///
 /// 仅 auth_mode == "chatgpt" (OAuth) 时有效，API key 模式不支持用量查询。
@@ -480,22 +480,10 @@ fn read_codex_credentials() -> CodexCredentials {
 /// 从 macOS Keychain 读取 Codex 凭据
 #[cfg(target_os = "macos")]
 fn read_codex_credentials_from_keychain() -> Option<CodexCredentials> {
-    let output = std::process::Command::new("security")
-        .args(["find-generic-password", "-s", "Codex Auth", "-w"])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let json_str = String::from_utf8(output.stdout).ok()?;
-    let json_str = json_str.trim();
-    if json_str.is_empty() {
-        return None;
-    }
-
-    Some(parse_codex_credentials_json(json_str))
+    let auth = crate::codex_config::read_codex_keychain_auth()
+        .ok()
+        .flatten()?;
+    Some(parse_codex_credentials_json(&auth.to_string()))
 }
 
 /// 从文件读取 Codex 凭据
