@@ -185,7 +185,7 @@ impl ProxyService {
                     env.remove(key);
                 }
                 env.insert(
-                    "ANTHROPIC_API_KEY".to_string(),
+                    "ANTHROPIC_AUTH_TOKEN".to_string(),
                     json!(PROXY_TOKEN_PLACEHOLDER),
                 );
             }
@@ -2757,7 +2757,7 @@ mod tests {
     }
 
     #[test]
-    fn managed_account_claude_takeover_uses_api_key_placeholder() {
+    fn managed_account_claude_takeover_uses_auth_token_placeholder() {
         let mut provider = Provider::with_id(
             "copilot".to_string(),
             "GitHub Copilot".to_string(),
@@ -2786,13 +2786,13 @@ mod tests {
             .and_then(|value| value.as_object())
             .expect("env should exist");
         assert_eq!(
-            env.get("ANTHROPIC_API_KEY")
+            env.get("ANTHROPIC_AUTH_TOKEN")
                 .and_then(|value| value.as_str()),
             Some(PROXY_TOKEN_PLACEHOLDER)
         );
         assert!(
-            env.get("ANTHROPIC_AUTH_TOKEN").is_none(),
-            "managed OAuth providers should avoid Claude Auth Token login semantics"
+            env.get("ANTHROPIC_API_KEY").is_none(),
+            "managed OAuth providers should not set ANTHROPIC_API_KEY"
         );
     }
 
@@ -2867,8 +2867,8 @@ mod tests {
             "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
             Some("claude-sonnet-4.6"),
         );
-        assert_env_str(env, "ANTHROPIC_API_KEY", Some(PROXY_TOKEN_PLACEHOLDER));
-        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", None);
+        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
+        assert_env_str(env, "ANTHROPIC_API_KEY", None);
     }
 
     #[test]
@@ -2934,8 +2934,8 @@ mod tests {
         assert_env_str(env, "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", Some("gpt-5.4"));
         assert_env_str(env, "ANTHROPIC_DEFAULT_OPUS_MODEL", Some("claude-opus-4-8"));
         assert_env_str(env, "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME", Some("gpt-5.4"));
-        assert_env_str(env, "ANTHROPIC_API_KEY", Some(PROXY_TOKEN_PLACEHOLDER));
-        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", None);
+        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
+        assert_env_str(env, "ANTHROPIC_API_KEY", None);
     }
 
     #[test]
