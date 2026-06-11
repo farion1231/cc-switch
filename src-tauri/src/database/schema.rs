@@ -156,7 +156,7 @@ impl Database {
                 streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
                 circuit_error_rate_threshold, circuit_min_requests)
-                VALUES ('codex', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
+                VALUES ('codex', 3, 60, 300, 600, 4, 2, 60, 0.6, 10)",
                 [],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -325,7 +325,7 @@ impl Database {
             [],
         );
         let _ = conn.execute(
-            "ALTER TABLE proxy_config ADD COLUMN streaming_idle_timeout INTEGER NOT NULL DEFAULT 120",
+            "ALTER TABLE proxy_config ADD COLUMN streaming_idle_timeout INTEGER NOT NULL DEFAULT 300",
             [],
         );
         let _ = conn.execute(
@@ -440,6 +440,7 @@ impl Database {
                         Self::set_user_version(conn, 10)?;
                     }
                     10 => {
+                        log::info!("迁移数据库从 v10 到 v11（提高 Codex 流式静默超时默认值到 300 秒，避免 MiMo 等长任务被截断）");
                         log::info!("迁移数据库从 v10 到 v11（usage_daily_rollups 保留 request_model 维度）");
                         Self::migrate_v10_to_v11(conn)?;
                         Self::set_user_version(conn, 11)?;
@@ -1012,6 +1013,25 @@ impl Database {
                 "pricing_model_source",
                 "TEXT NOT NULL DEFAULT 'response'",
             )?;
+            // 添加超时配置列，后续 v10→v11 迁移会更新 streaming_idle_timeout
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "streaming_first_byte_timeout",
+                "INTEGER NOT NULL DEFAULT 60",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "streaming_idle_timeout",
+                "INTEGER NOT NULL DEFAULT 300",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "non_streaming_timeout",
+                "INTEGER NOT NULL DEFAULT 600",
+            )?;
         }
         if Self::table_exists(conn, "proxy_request_logs")? {
             Self::add_column_if_missing(conn, "proxy_request_logs", "request_model", "TEXT")?;
@@ -1213,15 +1233,32 @@ impl Database {
         Ok(())
     }
 
-    /// v10 -> v11：usage_daily_rollups 增加 request_model 维度（进入主键），
-    /// proxy_request_logs 增加 pricing_model 列（写入时的计价基准，回填依据）。
+    /// v10 -> v11 迁移：提高 Codex 流式静默超时默认值到 300 秒
     ///
-    /// 路由接管下 model（真实上游模型）≠ request_model（客户端别名），
-    /// 旧 rollup 只按 model 聚合，明细 prune 后映射关系永久丢失、计费不可审计。
-    /// SQLite 改主键必须重建表；历史行的 request_model 已不可知，填 ''。
+    /// 旧默认 120 秒在 MiMo / DeepSeek-reasoner 这类思考时间长的模型上会
+    /// 经常把"两段 reasoning 之间"误判成静默超时，把流掐断。这里只把
+    /// v10 -> v11：
+    ///   1. 还在用旧默认（且 app_type = codex）的 streaming_idle_timeout 从 120 提到 300
+    ///   2. usage_daily_rollups 增加 request_model 维度（进入主键）
+    ///   3. proxy_request_logs 增加 pricing_model 列
     fn migrate_v10_to_v11(conn: &Connection) -> Result<(), AppError> {
-        // proxy_request_logs.pricing_model：NULL = v11 前的历史行（回填走
-        // model → 占位符回退 request_model 的旧逻辑），'' = 未计价的错误行
+        // 1) 提升 codex 静默超时默认值
+        if Self::table_exists(conn, "proxy_config")? {
+            let updated = conn
+                .execute(
+                    "UPDATE proxy_config
+                     SET streaming_idle_timeout = 300
+                     WHERE app_type = 'codex' AND streaming_idle_timeout = 120",
+                    [],
+                )
+                .map_err(|e| AppError::Database(format!("提升 codex 静默超时默认值失败: {e}")))?;
+            log::info!(
+                "v10 -> v11 迁移完成：已将 {} 行 codex 静默超时从 120 提升到 300",
+                updated
+            );
+        }
+
+        // 2) proxy_request_logs.pricing_model：NULL = v11 前的历史行
         if Self::table_exists(conn, "proxy_request_logs")? {
             Self::add_column_if_missing(conn, "proxy_request_logs", "pricing_model", "TEXT")?;
         }
