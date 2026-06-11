@@ -21,7 +21,6 @@ import {
   LayoutGrid,
 } from "lucide-react";
 import { ProviderIcon } from "@/components/ProviderIcon";
-import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -46,6 +45,9 @@ import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const APP_FILTER_OPTIONS: AppTypeFilter[] = ["all", ...KNOWN_APP_TYPES];
+
+// 0 表示关闭自动刷新（refetchInterval=false）
+const REFRESH_INTERVAL_OPTIONS_MS = [0, 5000, 10000, 30000, 60000] as const;
 
 // 与 AppSwitcher 的 appIconName 保持一致（codex 复用 openai 图标）
 const APP_FILTER_ICON: Record<AppType, string> = {
@@ -93,14 +95,7 @@ export function UsageDashboard() {
   // usage 查询，实现实时刷新（仅在 Dashboard 挂载时生效，离开页面自动取消监听）
   useUsageEventBridge();
 
-  const refreshIntervalOptionsMs = [0, 5000, 10000, 30000, 60000] as const;
-  const changeRefreshInterval = () => {
-    const currentIndex = refreshIntervalOptionsMs.indexOf(
-      refreshIntervalMs as (typeof refreshIntervalOptionsMs)[number],
-    );
-    const safeIndex = currentIndex >= 0 ? currentIndex : 3;
-    const nextIndex = (safeIndex + 1) % refreshIntervalOptionsMs.length;
-    const next = refreshIntervalOptionsMs[nextIndex];
+  const changeRefreshInterval = (next: number) => {
     setRefreshIntervalMs(next);
     queryClient.invalidateQueries({ queryKey: usageKeys.all });
   };
@@ -211,7 +206,7 @@ export function UsageDashboard() {
             onValueChange={(v) => changeProviderName(decodeOptionValue(v))}
           >
             <SelectTrigger
-              className="h-9 w-[110px] bg-background text-xs [&>span]:min-w-0 [&>span]:truncate"
+              className="h-9 w-[120px] bg-background text-xs [&>span]:min-w-0 [&>span]:truncate"
               title={providerName ?? t("usage.filterBySource")}
             >
               <SelectValue />
@@ -257,17 +252,28 @@ export function UsageDashboard() {
           </Select>
 
           <div className="flex items-center gap-2 ml-auto lg:ml-0">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-9 px-3 text-xs"
-              title={t("common.refresh", "刷新")}
-              onClick={changeRefreshInterval}
+            <Select
+              value={String(refreshIntervalMs)}
+              onValueChange={(v) => changeRefreshInterval(Number(v))}
             >
-              <RefreshCw className="mr-2 h-3.5 w-3.5" />
-              {refreshIntervalMs > 0 ? `${refreshIntervalMs / 1000}s` : "--"}
-            </Button>
+              <SelectTrigger
+                className="h-9 w-[150px] bg-background text-xs"
+                title={t("usage.refreshInterval")}
+                aria-label={t("usage.refreshInterval")}
+              >
+                <span className="flex items-center gap-2">
+                  <RefreshCw className="h-3.5 w-3.5 shrink-0" />
+                  <SelectValue />
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                {REFRESH_INTERVAL_OPTIONS_MS.map((ms) => (
+                  <SelectItem key={ms} value={String(ms)}>
+                    {ms > 0 ? `${ms / 1000}s` : t("usage.refreshOff")}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
             <UsageDateRangePicker
               selection={range}

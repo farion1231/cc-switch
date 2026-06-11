@@ -1446,6 +1446,8 @@
     "allModels": "All Models",
     "filterBySource": "Filter by source",
     "filterByModel": "Filter by model",
+    "refreshInterval": "Auto-refresh interval",
+    "refreshOff": "Off",
     "timeRange": "Time Range",
     "customRange": "Calendar Filter",
     "customRangeHint": "Supports both date and time",

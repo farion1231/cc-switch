@@ -1446,6 +1446,8 @@
     "allModels": "全部模型",
     "filterBySource": "按来源筛选",
     "filterByModel": "按模型筛选",
+    "refreshInterval": "自动刷新间隔",
+    "refreshOff": "关闭",
     "timeRange": "时间范围",
     "customRange": "日历筛选",
     "customRangeHint": "支持日期与时间",

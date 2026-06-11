@@ -273,9 +273,10 @@ export function UsageDateRangePicker({
         <Button
           type="button"
           variant={selection.preset === "custom" ? "default" : "outline"}
-          className="justify-start gap-2"
+          className="w-[150px] justify-start gap-2"
+          title={triggerLabel}
         >
-          <CalendarDays className="h-4 w-4" />
+          <CalendarDays className="h-4 w-4 shrink-0" />
           <span className="truncate">{triggerLabel}</span>
         </Button>
       </PopoverTrigger>

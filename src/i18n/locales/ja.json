@@ -1446,6 +1446,8 @@
     "allModels": "すべてのモデル",
     "filterBySource": "ソースで絞り込む",
     "filterByModel": "モデルで絞り込む",
+    "refreshInterval": "自動更新間隔",
+    "refreshOff": "オフ",
     "timeRange": "期間",
     "customRange": "カレンダーフィルター",
     "customRangeHint": "日付と時刻の両方に対応",
