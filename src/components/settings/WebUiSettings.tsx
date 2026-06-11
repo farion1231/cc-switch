@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { settingsApi } from "@/lib/api/settings";
 import { invokeCommand, isTauriRuntime } from "@/lib/commandClient";
 import type { SettingsFormState } from "@/hooks/useSettings";
 
@@ -123,9 +124,13 @@ export function WebUiSettings({ settings, onChange }: WebUiSettingsProps) {
     }
   }, [status, t]);
 
-  const handleOpenInBrowser = useCallback(() => {
+  const handleOpenInBrowser = useCallback(async () => {
     if (status?.address) {
-      window.open(status.address, "_blank", "noopener");
+      try {
+        await settingsApi.openExternal(status.address);
+      } catch (e) {
+        toast.error(String(e));
+      }
     }
   }, [status]);
 
@@ -142,6 +147,16 @@ export function WebUiSettings({ settings, onChange }: WebUiSettingsProps) {
   );
   const requirePassword =
     passwordEnabledOverride ?? (hasDraftPassword || savedPasswordEnabled);
+
+  const handleRequirePasswordChange = useCallback(
+    (checked: boolean) => {
+      setPasswordEnabledOverride(checked);
+      onChange({
+        webuiToken: checked ? (settings.webuiToken ?? "") : undefined,
+      });
+    },
+    [onChange, settings.webuiToken],
+  );
 
   return (
     <section className="space-y-4">
@@ -269,12 +284,7 @@ export function WebUiSettings({ settings, onChange }: WebUiSettingsProps) {
           defaultValue: "启用后需要密码才能访问 WebUI",
         })}
         checked={requirePassword}
-        onCheckedChange={(checked) => {
-          setPasswordEnabledOverride(checked);
-          if (!checked) {
-            onChange({ webuiToken: undefined });
-          }
-        }}
+        onCheckedChange={handleRequirePasswordChange}
       />
 
       {requirePassword && (
