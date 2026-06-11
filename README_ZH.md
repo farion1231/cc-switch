@@ -424,6 +424,9 @@ pnpm test:unit
 # 监听模式运行测试（推荐开发时使用）
 pnpm test:unit:watch
 
+# 运行 Codex Chat 工具调用序列回归测试
+pnpm test:codex-chat-tools
+
 # 构建应用
 pnpm build
 
@@ -471,6 +474,9 @@ pnpm test:unit:watch
 
 # 带覆盖率报告
 pnpm test:unit --coverage
+
+# Codex Chat 工具调用序列回归测试
+pnpm test:codex-chat-tools
 ```
 
 ### 技术栈

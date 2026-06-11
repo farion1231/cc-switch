@@ -13,7 +13,8 @@
     "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "test:unit": "vitest run",
-    "test:unit:watch": "vitest watch"
+    "test:unit:watch": "vitest watch",
+    "test:codex-chat-tools": "node scripts/test-codex-chat-tool-sequence.cjs"
   },
   "keywords": [],
   "author": "Jason Young",

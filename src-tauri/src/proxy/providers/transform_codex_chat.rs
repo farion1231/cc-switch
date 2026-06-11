@@ -278,7 +278,7 @@ pub fn responses_to_chat_completions_with_reasoning(
     if let Some(input) = body.get("input") {
         append_responses_input_as_chat_messages(input, &mut messages, &tool_context)?;
     }
-    let messages = collapse_system_messages_to_head(messages);
+    let messages = sanitize_chat_tool_message_sequence(collapse_system_messages_to_head(messages));
     result["messages"] = json!(messages);
 
     let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
@@ -516,6 +516,121 @@ fn collapse_system_messages_to_head(messages: Vec<Value>) -> Vec<Value> {
     }
     out.extend(rest);
     out
+}
+
+/// Chat Completions requires every assistant `tool_calls` entry to be followed
+/// by tool messages for those exact call ids. Codex Responses history can carry
+/// abandoned or partially completed parallel calls, so drop unanswered calls
+/// before forwarding to strict Chat-compatible upstreams.
+fn sanitize_chat_tool_message_sequence(messages: Vec<Value>) -> Vec<Value> {
+    let mut sanitized = Vec::with_capacity(messages.len());
+    let mut index = 0usize;
+
+    while index < messages.len() {
+        let mut message = messages[index].clone();
+        if message.get("role").and_then(|v| v.as_str()) != Some("assistant") {
+            if message.get("role").and_then(|v| v.as_str()) != Some("tool") {
+                sanitized.push(message);
+            }
+            index += 1;
+            continue;
+        }
+
+        let Some(tool_calls) = message
+            .get("tool_calls")
+            .and_then(|value| value.as_array())
+            .filter(|calls| !calls.is_empty())
+        else {
+            sanitized.push(message);
+            index += 1;
+            continue;
+        };
+
+        let mut tool_block_end = index + 1;
+        let mut answered_call_ids = HashSet::new();
+        while tool_block_end < messages.len()
+            && messages[tool_block_end]
+                .get("role")
+                .and_then(|value| value.as_str())
+                == Some("tool")
+        {
+            if let Some(call_id) = messages[tool_block_end]
+                .get("tool_call_id")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+            {
+                answered_call_ids.insert(call_id.to_string());
+            }
+            tool_block_end += 1;
+        }
+
+        let filtered_calls = tool_calls
+            .iter()
+            .filter(|call| {
+                call.get("id")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|call_id| answered_call_ids.contains(call_id))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if answered_call_ids.is_empty() && tool_block_end == messages.len() {
+            sanitized.push(message);
+            index += 1;
+            continue;
+        }
+
+        if filtered_calls.is_empty() {
+            remove_tool_calls(&mut message);
+            if chat_message_has_content(&message) {
+                sanitized.push(message);
+            }
+            index = tool_block_end;
+            continue;
+        }
+
+        let kept_call_ids = filtered_calls
+            .iter()
+            .filter_map(|call| call.get("id").and_then(|value| value.as_str()))
+            .map(ToString::to_string)
+            .collect::<HashSet<_>>();
+
+        if let Some(object) = message.as_object_mut() {
+            object.insert("tool_calls".to_string(), Value::Array(filtered_calls));
+        }
+        sanitized.push(message);
+
+        while index + 1 < tool_block_end {
+            index += 1;
+            let tool_message = &messages[index];
+            if tool_message
+                .get("tool_call_id")
+                .and_then(|value| value.as_str())
+                .is_some_and(|call_id| kept_call_ids.contains(call_id))
+            {
+                sanitized.push(tool_message.clone());
+            }
+        }
+        index = tool_block_end;
+    }
+
+    sanitized
+}
+
+fn remove_tool_calls(message: &mut Value) {
+    if let Some(object) = message.as_object_mut() {
+        object.remove("tool_calls");
+    }
+}
+
+fn chat_message_has_content(message: &Value) -> bool {
+    match message.get("content") {
+        Some(Value::String(text)) => !text.trim().is_empty(),
+        Some(Value::Array(parts)) => !parts.is_empty(),
+        Some(Value::Object(obj)) => !obj.is_empty(),
+        Some(value) => !value.is_null(),
+        None => false,
+    }
 }
 
 fn instruction_text(value: &Value) -> String {
@@ -2628,6 +2743,46 @@ mod tests {
         assert_eq!(messages[2]["tool_call_id"], "call_2");
         assert_eq!(messages[2]["content"], "[\"main.rs\",\"lib.rs\"]");
         assert_eq!(messages[3]["role"], "user");
+    }
+
+    #[test]
+    fn responses_request_to_chat_does_not_emit_unanswered_tool_calls() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "read_file",
+                    "arguments": "{\"path\":\"README.md\"}"
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_2",
+                    "name": "list_files",
+                    "arguments": "{\"path\":\"src\"}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "Readme content"
+                },
+                {
+                    "role": "user",
+                    "content": "Continue"
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages[0]["role"], "assistant");
+        let tool_calls = messages[0]["tool_calls"].as_array().unwrap();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0]["id"], "call_1");
+        assert_eq!(messages[1]["role"], "tool");
+        assert_eq!(messages[1]["tool_call_id"], "call_1");
     }
 
     #[test]
