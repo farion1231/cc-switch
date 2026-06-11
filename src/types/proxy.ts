@@ -138,3 +138,22 @@ export interface AppProxyConfig {
   circuitErrorRateThreshold: number;
   circuitMinRequests: number;
 }
+
+export interface ModelRoute {
+  id: string;
+  appType: string;
+  pattern: string;
+  providerId: string;
+  priority: number;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ModelRouteInput {
+  appType: string;
+  pattern: string;
+  providerId: string;
+  priority: number;
+  enabled: boolean;
+}

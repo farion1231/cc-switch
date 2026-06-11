@@ -2492,7 +2492,26 @@
       "startFailed": "启动路由服务失败: {{detail}}"
     },
     "stoppedWithRestore": "路由服务已关闭，已恢复所有路由配置",
-    "stopWithRestoreFailed": "停止失败: {{detail}}"
+    "stopWithRestoreFailed": "停止失败: {{detail}}",
+    "modelRoutes": {
+      "title": "模型路由",
+      "description": "按 Claude Code 请求中的 model 字段选择现有 Provider；未匹配时保持默认路由。",
+      "pattern": "Pattern",
+      "provider": "Provider",
+      "priority": "优先级",
+      "enabled": "启用",
+      "selectProvider": "选择 Provider",
+      "conflict": "Pattern 与 Priority 不能同时重复。",
+      "empty": "还没有模型路由。添加一条规则后，匹配的模型会走指定 Provider。",
+      "toast": {
+        "created": "模型路由已创建",
+        "createFailed": "创建模型路由失败: {{error}}",
+        "updated": "模型路由已更新",
+        "updateFailed": "更新模型路由失败: {{error}}",
+        "deleted": "模型路由已删除",
+        "deleteFailed": "删除模型路由失败: {{error}}"
+      }
+    }
   },
   "streamCheck": {
     "configSaved": "健康检查配置已保存",

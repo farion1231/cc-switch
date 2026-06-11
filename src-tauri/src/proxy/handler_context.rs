@@ -41,6 +41,8 @@ pub struct RequestContext {
     pub provider: Provider,
     /// 完整的 Provider 列表（用于故障转移）
     providers: Vec<Provider>,
+    /// Provider 是否由模型路由命中，而不是常规 app 级 provider 选择。
+    provider_selected_by_model_route: bool,
     /// 请求开始时的"当前供应商"（用于判断是否需要同步 UI/托盘）
     ///
     /// 这里使用本地 settings 的设备级 current provider。
@@ -129,19 +131,42 @@ impl RequestContext {
             session_result.client_provided
         );
 
+        // 先尝试按请求模型路由到指定 Provider；没有匹配时保持原有 app 级路由行为。
+        let routed_provider = state
+            .model_router
+            .select_provider(app_type_str, &request_model)
+            .await
+            .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+
         // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
         // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
-        let providers = state
-            .provider_router
-            .select_providers(app_type_str)
-            .await
-            .map_err(|e| match e {
-                crate::error::AppError::AllProvidersCircuitOpen => {
-                    ProxyError::AllProvidersCircuitOpen
-                }
-                crate::error::AppError::NoProvidersConfigured => ProxyError::NoProvidersConfigured,
-                _ => ProxyError::DatabaseError(e.to_string()),
-            })?;
+        let (providers, provider_selected_by_model_route) = if let Some(provider) = routed_provider
+        {
+            log::info!(
+                "[{}] Model route selected provider '{}' for model '{}'",
+                tag,
+                provider.name,
+                request_model
+            );
+            (vec![provider], true)
+        } else {
+            (
+                state
+                    .provider_router
+                    .select_providers(app_type_str)
+                    .await
+                    .map_err(|e| match e {
+                        crate::error::AppError::AllProvidersCircuitOpen => {
+                            ProxyError::AllProvidersCircuitOpen
+                        }
+                        crate::error::AppError::NoProvidersConfigured => {
+                            ProxyError::NoProvidersConfigured
+                        }
+                        _ => ProxyError::DatabaseError(e.to_string()),
+                    })?,
+                false,
+            )
+        };
 
         let provider = providers
             .first()
@@ -162,6 +187,7 @@ impl RequestContext {
             app_config,
             provider,
             providers,
+            provider_selected_by_model_route,
             current_provider_id,
             request_model,
             outbound_model: None,
@@ -233,6 +259,7 @@ impl RequestContext {
             state.failover_manager.clone(),
             state.app_handle.clone(),
             self.current_provider_id.clone(),
+            self.provider_selected_by_model_route,
             self.session_id.clone(),
             self.session_client_provided,
             first_byte_timeout,
@@ -300,7 +327,118 @@ pub(crate) fn extract_gemini_model_from_path(endpoint: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_gemini_model_from_path;
+    use super::{extract_gemini_model_from_path, RequestContext};
+    use crate::app_config::AppType;
+    use crate::database::Database;
+    use crate::provider::{ModelRouteInput, Provider};
+    use crate::proxy::{
+        failover_switch::FailoverSwitchManager,
+        model_router::ModelRouter,
+        provider_router::ProviderRouter,
+        providers::{codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore},
+        server::ProxyState,
+        types::{ProxyConfig, ProxyStatus},
+    };
+    use axum::http::HeaderMap;
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    fn build_state(db: Arc<Database>) -> ProxyState {
+        ProxyState {
+            db: db.clone(),
+            config: Arc::new(RwLock::new(ProxyConfig::default())),
+            status: Arc::new(RwLock::new(ProxyStatus::default())),
+            start_time: Arc::new(RwLock::new(None)),
+            current_providers: Arc::new(RwLock::new(HashMap::new())),
+            provider_router: Arc::new(ProviderRouter::new(db.clone())),
+            model_router: Arc::new(ModelRouter::new(db.clone())),
+            gemini_shadow: Arc::new(GeminiShadowStore::default()),
+            codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
+            app_handle: None,
+            failover_manager: Arc::new(FailoverSwitchManager::new(db)),
+        }
+    }
+
+    fn test_provider(id: &str, name: &str) -> Provider {
+        Provider::with_id(
+            id.to_string(),
+            name.to_string(),
+            json!({ "env": { "ANTHROPIC_BASE_URL": "https://example.com" } }),
+            None,
+        )
+    }
+
+    #[tokio::test]
+    async fn request_context_selects_model_routed_provider() {
+        let db = Arc::new(Database::memory().expect("create memory db"));
+        db.save_provider("claude", &test_provider("default", "Default"))
+            .expect("save default provider");
+        db.save_provider("claude", &test_provider("opus", "Opus"))
+            .expect("save opus provider");
+        db.set_current_provider("claude", "default")
+            .expect("set current provider");
+        db.create_model_route(ModelRouteInput {
+            app_type: "claude".to_string(),
+            pattern: "*opus*".to_string(),
+            provider_id: "opus".to_string(),
+            priority: 100,
+            enabled: true,
+        })
+        .expect("create model route");
+
+        let state = build_state(db);
+        let ctx = RequestContext::new(
+            &state,
+            &json!({ "model": "claude-opus-4-8" }),
+            &HeaderMap::new(),
+            AppType::Claude,
+            "Claude",
+            "claude",
+        )
+        .await
+        .expect("create request context");
+
+        assert_eq!(ctx.provider.id, "opus");
+        assert_eq!(ctx.get_providers().len(), 1);
+        assert!(ctx.provider_selected_by_model_route);
+    }
+
+    #[tokio::test]
+    async fn request_context_falls_back_to_app_provider_when_no_model_route_matches() {
+        let db = Arc::new(Database::memory().expect("create memory db"));
+        db.save_provider("claude", &test_provider("default", "Default"))
+            .expect("save default provider");
+        db.save_provider("claude", &test_provider("opus", "Opus"))
+            .expect("save opus provider");
+        db.set_current_provider("claude", "default")
+            .expect("set current provider");
+        db.create_model_route(ModelRouteInput {
+            app_type: "claude".to_string(),
+            pattern: "*opus*".to_string(),
+            provider_id: "opus".to_string(),
+            priority: 100,
+            enabled: true,
+        })
+        .expect("create model route");
+
+        let state = build_state(db);
+        let ctx = RequestContext::new(
+            &state,
+            &json!({ "model": "claude-sonnet-4-5" }),
+            &HeaderMap::new(),
+            AppType::Claude,
+            "Claude",
+            "claude",
+        )
+        .await
+        .expect("create request context");
+
+        assert_eq!(ctx.provider.id, "default");
+        assert_eq!(ctx.get_providers().len(), 1);
+        assert!(!ctx.provider_selected_by_model_route);
+    }
 
     #[test]
     fn extract_model_with_action() {

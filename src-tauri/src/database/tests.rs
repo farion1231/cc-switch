@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::app_config::MultiAppConfig;
-use crate::provider::{Provider, ProviderManager};
+use crate::provider::{ModelRouteInput, Provider, ProviderManager};
 use indexmap::IndexMap;
 use rusqlite::{params, Connection};
 use serde_json::json;
@@ -289,6 +289,68 @@ fn schema_create_tables_include_pricing_model_columns() {
     let request_model = get_column_info(&conn, "proxy_request_logs", "request_model");
     assert_eq!(request_model.r#type, "TEXT");
     assert_eq!(request_model.notnull, 0);
+}
+
+#[test]
+fn schema_create_tables_include_empty_model_routes() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+
+    assert!(
+        Database::table_exists(&conn, "model_routes").expect("check model_routes"),
+        "model_routes table should exist"
+    );
+
+    for column in [
+        "id",
+        "app_type",
+        "pattern",
+        "provider_id",
+        "priority",
+        "enabled",
+        "created_at",
+        "updated_at",
+    ] {
+        assert!(
+            Database::has_column(&conn, "model_routes", column).expect("check column"),
+            "model_routes.{column} should exist"
+        );
+    }
+
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM model_routes", [], |row| row.get(0))
+        .expect("count model_routes");
+    assert_eq!(count, 0, "model_routes should be empty by default");
+}
+
+#[test]
+fn schema_migration_v11_adds_model_routes() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE providers (
+            id TEXT NOT NULL,
+            app_type TEXT NOT NULL,
+            name TEXT NOT NULL,
+            settings_config TEXT NOT NULL DEFAULT '{}',
+            meta TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (id, app_type)
+        );
+        "#,
+    )
+    .expect("seed v11 schema");
+
+    Database::set_user_version(&conn, 11).expect("set user_version=11");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    assert!(
+        Database::table_exists(&conn, "model_routes").expect("check model_routes"),
+        "model_routes should exist after v11 -> v12 migration"
+    );
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after migration"),
+        SCHEMA_VERSION
+    );
 }
 
 #[test]
@@ -829,5 +891,107 @@ fn ensure_incremental_auto_vacuum_rebuilds_existing_file_db() {
         Database::get_auto_vacuum_mode(&reopened).expect("auto_vacuum after rebuild"),
         2,
         "file db should persist INCREMENTAL auto_vacuum after VACUUM rebuild"
+    );
+}
+
+fn test_provider(id: &str, name: &str) -> Provider {
+    Provider {
+        id: id.to_string(),
+        name: name.to_string(),
+        settings_config: json!({ "env": { "ANTHROPIC_BASE_URL": "https://example.com" } }),
+        website_url: None,
+        category: None,
+        created_at: None,
+        sort_index: None,
+        notes: None,
+        meta: None,
+        icon: None,
+        icon_color: None,
+        in_failover_queue: false,
+    }
+}
+
+#[test]
+fn model_route_dao_crud_and_priority_ordering() {
+    let db = Database::memory().expect("create memory db");
+    db.save_provider("claude", &test_provider("p-low", "Low Priority"))
+        .expect("save low provider");
+    db.save_provider("claude", &test_provider("p-high", "High Priority"))
+        .expect("save high provider");
+
+    assert!(
+        db.get_model_routes("claude")
+            .expect("list empty routes")
+            .is_empty(),
+        "model route list should be empty by default"
+    );
+
+    let low = db
+        .create_model_route(ModelRouteInput {
+            app_type: "claude".to_string(),
+            pattern: "*haiku*".to_string(),
+            provider_id: "p-low".to_string(),
+            priority: 10,
+            enabled: true,
+        })
+        .expect("create low route");
+    let high = db
+        .create_model_route(ModelRouteInput {
+            app_type: "claude".to_string(),
+            pattern: "*opus*".to_string(),
+            provider_id: "p-high".to_string(),
+            priority: 100,
+            enabled: true,
+        })
+        .expect("create high route");
+
+    let routes = db.get_model_routes("claude").expect("list routes");
+    assert_eq!(routes.len(), 2);
+    assert_eq!(routes[0].id, high.id);
+    assert_eq!(routes[1].id, low.id);
+
+    let updated = db
+        .update_model_route(
+            &low.id,
+            ModelRouteInput {
+                app_type: "claude".to_string(),
+                pattern: "*sonnet*".to_string(),
+                provider_id: "p-high".to_string(),
+                priority: 200,
+                enabled: false,
+            },
+        )
+        .expect("update route");
+    assert_eq!(updated.pattern, "*sonnet*");
+    assert_eq!(updated.provider_id, "p-high");
+    assert_eq!(updated.priority, 200);
+    assert!(!updated.enabled);
+
+    assert!(db.delete_model_route(&high.id).expect("delete route"));
+    assert!(!db
+        .delete_model_route(&high.id)
+        .expect("delete missing route"));
+}
+
+#[test]
+fn model_route_dao_rejects_provider_from_other_app() {
+    let db = Database::memory().expect("create memory db");
+    db.save_provider("codex", &test_provider("codex-provider", "Codex Provider"))
+        .expect("save codex provider");
+
+    let err = db
+        .create_model_route(ModelRouteInput {
+            app_type: "claude".to_string(),
+            pattern: "*opus*".to_string(),
+            provider_id: "codex-provider".to_string(),
+            priority: 100,
+            enabled: true,
+        })
+        .expect_err("provider from another app should be rejected");
+
+    assert!(
+        err.to_string()
+            .contains("Provider 'codex-provider' does not exist for app 'claude'"),
+        "unexpected error: {err}"
     );
 }
