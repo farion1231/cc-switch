@@ -249,34 +249,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         {
-          id: "claude-opus-4-8",
-          name: "Claude Opus 4.8",
-          context_length: 1000000,
-        },
-        {
-          id: "claude-sonnet-4-6",
-          name: "Claude Sonnet 4.6",
-          context_length: 1000000,
-        },
-        {
           id: "gpt-5.5",
           name: "GPT-5.5",
           context_length: 400000,
-        },
-        {
-          id: "o3",
-          name: "o3",
-          context_length: 200000,
-        },
-        {
-          id: "gemini-3.1-pro",
-          name: "Gemini 3.1 Pro",
-          context_length: 1000000,
-        },
-        {
-          id: "deepseek-v4-flash",
-          name: "DeepSeek V4 Flash",
-          context_length: 1000000,
         },
       ],
     },
@@ -285,7 +260,32 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     partnerPromotionKey: "ccsub",
     icon: "ccsub",
     suggestedDefaults: {
-      model: { default: "claude-opus-4-8", provider: "ccsub" },
+      model: { default: "gpt-5.5", provider: "ccsub" },
+    },
+  },
+  {
+    name: "Unity2.ai",
+    websiteUrl: "https://unity2.ai",
+    apiKeyUrl: "https://unity2.ai/register?source=ccs",
+    settingsConfig: {
+      name: "unity2",
+      base_url: "https://api.unity2.ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          context_length: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "unity2",
+    icon: "unity2",
+    suggestedDefaults: {
+      model: { default: "gpt-5.5", provider: "unity2" },
     },
   },
   {

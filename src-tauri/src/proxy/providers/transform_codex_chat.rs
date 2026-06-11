@@ -336,21 +336,8 @@ pub fn responses_to_chat_completions_with_reasoning(
     // include_usage 才会在末尾吐 usage chunk。Codex CLI 用 Responses 协议、
     // 自身不带 stream_options，缺这一注入会导致 kimi/MiniMax 等第三方流式请求的
     // token/成本/缓存命中率全部漏记（input/output/cache 全为 0）。
-    let is_stream = result
-        .get("stream")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    if is_stream {
-        match result.get_mut("stream_options") {
-            // 保留客户端可能透传的其它 stream_options 字段，仅补 include_usage。
-            Some(Value::Object(opts)) => {
-                opts.insert("include_usage".to_string(), json!(true));
-            }
-            _ => {
-                result["stream_options"] = json!({ "include_usage": true });
-            }
-        }
-    }
+    // 与 Claude→openai_chat 路径共用同一 helper，保证两个客户端方向一致。
+    super::transform::inject_openai_stream_include_usage(&mut result);
 
     Ok(result)
 }

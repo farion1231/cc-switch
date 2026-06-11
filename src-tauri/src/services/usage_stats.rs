@@ -149,17 +149,20 @@ pub struct RequestLogDetail {
     pub created_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data_source: Option<String>,
+    /// 写入时实际用于计价的模型名。None = v11 前的历史行，"" = 未计价的错误行。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pricing_model: Option<String>,
 }
 
-/// 把 24 列的查询结果映射为 `RequestLogDetail`。
+/// 把 25 列的查询结果映射为 `RequestLogDetail`。
 ///
-/// 调用方的 SELECT **必须**按以下顺序返回 24 列：
+/// 调用方的 SELECT **必须**按以下顺序返回 25 列：
 /// `request_id, provider_id, provider_name, app_type, model, request_model,
 ///  cost_multiplier, input_tokens, output_tokens, cache_read_tokens,
 ///  cache_creation_tokens, input_cost_usd, output_cost_usd, cache_read_cost_usd,
 ///  cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
 ///  first_token_ms, duration_ms, status_code, error_message, created_at,
-///  data_source`
+///  data_source, pricing_model`
 ///
 /// 不需要 provider_name 时（如 backfill）SELECT `NULL AS provider_name` 占位即可。
 fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestLogDetail> {
@@ -190,6 +193,7 @@ fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reques
         error_message: row.get(21)?,
         created_at: row.get(22)?,
         data_source: row.get(23)?,
+        pricing_model: row.get(24)?,
     })
 }
 
@@ -1154,6 +1158,11 @@ impl Database {
         };
 
         // UNION detail logs + rollup data
+        //
+        // 分组键用「有效计价模型」：pricing_model 非空时优先（成本就是按它的
+        // 定价算的，金额与定价表自洽），NULL/'' 回落 model。默认 response 计价
+        // 模式下两者相同，行为不变；request 模式 + 路由接管下，钱挂在实际计价
+        // 基准名下，而不是上游回显/客户端别名名下。
         let fresh_input_detail = fresh_input_sql("l");
         let fresh_input_rollup = fresh_input_sql("r");
         let sql = format!(
@@ -1163,21 +1172,21 @@ impl Database {
                 SUM(total_tokens) as total_tokens,
                 SUM(total_cost) as total_cost
             FROM (
-                SELECT l.model,
+                SELECT COALESCE(NULLIF(l.pricing_model, ''), l.model) as model,
                     COUNT(*) as request_count,
                     COALESCE(SUM({fresh_input_detail} + l.output_tokens), 0) as total_tokens,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost
                 FROM proxy_request_logs l
                 {detail_where}
-                GROUP BY l.model
+                GROUP BY COALESCE(NULLIF(l.pricing_model, ''), l.model)
                 UNION ALL
-                SELECT r.model,
+                SELECT COALESCE(NULLIF(r.pricing_model, ''), r.model),
                     COALESCE(SUM(r.request_count), 0),
                     COALESCE(SUM({fresh_input_rollup} + r.output_tokens), 0),
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0)
                 FROM usage_daily_rollups r
                 {rollup_where}
-                GROUP BY r.model
+                GROUP BY COALESCE(NULLIF(r.pricing_model, ''), r.model)
             )
             GROUP BY model
             ORDER BY total_cost DESC"
@@ -1281,7 +1290,7 @@ impl Database {
                     l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
                     l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
-                    l.status_code, l.error_message, l.created_at, l.data_source
+                    l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              {where_clause}
@@ -1324,7 +1333,7 @@ impl Database {
                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                     input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                     is_streaming, latency_ms, first_token_ms, duration_ms,
-                    status_code, error_message, created_at, l.data_source
+                    status_code, error_message, created_at, l.data_source, l.pricing_model
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              WHERE l.request_id = ?"
@@ -1469,7 +1478,7 @@ impl Database {
         Self::backfill_missing_usage_costs_on_conn(&conn, Some(model_id))
     }
 
-    fn backfill_missing_usage_costs_on_conn(
+    pub(crate) fn backfill_missing_usage_costs_on_conn(
         conn: &Connection,
         only_model_id: Option<&str>,
     ) -> Result<u64, AppError> {
@@ -1480,7 +1489,7 @@ impl Database {
                         input_cost_usd, output_cost_usd, cache_read_cost_usd,
                         cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
                         first_token_ms, duration_ms, status_code, error_message, created_at,
-                        data_source
+                        data_source, pricing_model
              FROM proxy_request_logs
              WHERE CAST(total_cost_usd AS REAL) <= 0
                AND (input_tokens > 0 OR output_tokens > 0
@@ -1489,7 +1498,9 @@ impl Database {
         let mut logs = {
             match only_model_id {
                 Some(model) => {
-                    let sql = format!("{BASE_SQL} AND (model = ?1 OR request_model = ?1)");
+                    let sql = format!(
+                        "{BASE_SQL} AND (model = ?1 OR request_model = ?1 OR pricing_model = ?1)"
+                    );
                     let mut stmt = conn.prepare(&sql)?;
                     let rows = stmt.query_map([model], row_to_request_log_detail)?;
                     rows.collect::<Result<Vec<_>, _>>()?
@@ -1647,8 +1658,30 @@ impl Database {
         cache: &mut HashMap<String, PricingInfo>,
         log: &RequestLogDetail,
     ) -> Result<Option<PricingInfo>, AppError> {
+        // 写入时的计价基准已落库（v11+）：回填只按它重算，找不到就保持 0 成本
+        // 等补价。不能换用 model/request_model 猜——路由接管 + request 计价模式下
+        // 三者可能各不相同（model=上游回显、request_model=客户端别名、
+        // pricing_model=实际出站模型），换基准会按错误价格永久固化。
+        // 占位符（"" = 未计价错误行 / "unknown"）视同缺失，走历史行逻辑。
+        if let Some(pricing_model) = log
+            .pricing_model
+            .as_deref()
+            .filter(|pm| !is_placeholder_pricing_model(pm))
+        {
+            return Self::get_model_pricing_cached(conn, cache, pricing_model);
+        }
+
         if let Some(pricing) = Self::get_model_pricing_cached(conn, cache, &log.model)? {
             return Ok(Some(pricing));
+        }
+
+        // 仅当 model 列是占位符（解析失败留下的 ""/"unknown" 等）时才回退到
+        // request_model 定价。model 是真实模型名但缺定价时必须保持 0 成本等待
+        // 补价：路由接管下 request_model 是客户端别名（如 claude-sonnet-4-6），
+        // 按别名回填会把真实上游模型的 tokens 按错误价格永久固化（行一旦有成本
+        // 就不再进入回填范围）。
+        if !is_placeholder_pricing_model(&log.model) {
+            return Ok(None);
         }
 
         let Some(request_model) = log.request_model.as_deref() else {
@@ -2186,6 +2219,123 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(total_cost, "5.000000");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_backfill_skips_request_model_fallback_for_real_unpriced_model() -> Result<(), AppError>
+    {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            // 路由接管场景：model 是上游回显的真实模型（缺定价），request_model
+            // 是客户端别名（有定价）。回填不得按别名定价，必须保持 0 成本等待补价。
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
+                    total_cost_usd, latency_ms, status_code, created_at, data_source
+                ) VALUES (
+                    'takeover-unpriced-model', 'provider-1', 'claude',
+                    'takeover-real-model-unpriced', 'claude-sonnet-4-6',
+                    1000000, 0, 0, 0,
+                    '0', '0', '0', '0',
+                    '0', 100, 200, 1000, 'proxy'
+                )",
+                [],
+            )?;
+        }
+
+        // request_model（claude-sonnet-4-6）有定价，但 model 是真实模型名：不得回退
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+
+        {
+            let conn = lock_conn!(db.conn);
+            let total_cost: String = conn.query_row(
+                "SELECT total_cost_usd
+                 FROM proxy_request_logs WHERE request_id = 'takeover-unpriced-model'",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(total_cost, "0");
+
+            // 补上真实模型定价后，回填必须按真实模型价格修复（0 成本行未被污染固化）
+            conn.execute(
+                "INSERT INTO model_pricing (model_id, display_name, input_cost_per_million, output_cost_per_million)
+                 VALUES ('takeover-real-model-unpriced', 'Takeover Real Model', '0.6', '2.5')",
+                [],
+            )?;
+        }
+
+        assert_eq!(db.backfill_missing_usage_costs()?, 1);
+
+        let conn = lock_conn!(db.conn);
+        let total_cost: String = conn.query_row(
+            "SELECT total_cost_usd
+             FROM proxy_request_logs WHERE request_id = 'takeover-unpriced-model'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(total_cost, "0.600000");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_backfill_uses_persisted_pricing_model() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            // request 计价模式 + 接管：写入时锚定出站模型 kimi-k2-novel（当时缺价），
+            // 但上游回显了别名 → model/request_model 都是 claude-sonnet-4-6（有定价）。
+            // 回填必须按落库的 pricing_model 重算，不得换用 model 列的别名价格。
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model, pricing_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
+                    total_cost_usd, latency_ms, status_code, created_at, data_source
+                ) VALUES (
+                    'persisted-pricing-model', 'provider-1', 'claude',
+                    'claude-sonnet-4-6', 'claude-sonnet-4-6', 'kimi-k2-novel',
+                    1000000, 0, 0, 0,
+                    '0', '0', '0', '0',
+                    '0', 100, 200, 1000, 'proxy'
+                )",
+                [],
+            )?;
+        }
+
+        // pricing_model（kimi-k2-novel）缺价：不得回退到 model 列的别名价格
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO model_pricing (model_id, display_name, input_cost_per_million, output_cost_per_million)
+                 VALUES ('kimi-k2-novel', 'Kimi K2 Novel', '0.6', '2.5')",
+                [],
+            )?;
+        }
+
+        // 按 pricing_model 也能定位到该行（model/request_model 都不是 kimi-k2-novel）
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("kimi-k2-novel")?,
+            1
+        );
+
+        let conn = lock_conn!(db.conn);
+        let total_cost: String = conn.query_row(
+            "SELECT total_cost_usd
+             FROM proxy_request_logs WHERE request_id = 'persisted-pricing-model'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(total_cost, "0.600000");
 
         Ok(())
     }

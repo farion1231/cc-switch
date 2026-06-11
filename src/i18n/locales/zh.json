@@ -1002,7 +1002,8 @@
       "doubaoseed": "豆包大模型为 CC Switch 的用户提供了专属福利：通过此链接注册即可获取豆包全系列文本模型 50万tokens推理额度以及Seedance2.0的500万tokens免费额度",
       "volcengine_agentplan": "火山方舟 Agent Plan 为 CC Switch 的用户提供了专属福利：通过此链接订阅方舟AgentPlan，新客户首月40元起。",
       "byteplus": "通过此链接注册即可获取每个模型50万tokens的免费推理额度。",
-      "ccsub": "CCSub 是稳定、实惠的 AI API 中转平台，Claude Code 官方订阅的超强平替，一个 Key 覆盖全部模型，价格约为官方 1/3。"
+      "ccsub": "CCSub 是稳定、实惠的 AI API 中转平台，Claude Code 官方订阅的超强平替，一个 Key 覆盖全部模型，价格约为官方 1/3。",
+      "unity2": "Unity2.ai 为 CC Switch 用户提供专属福利：通过此链接注册可领取 $2 余额，加入官方群再送 $10，最高可领 $12 免费额度！"
     },
     "presets": {
       "ucloud": "优云智算",
@@ -1043,6 +1044,10 @@
     "anthropicSmallFastModel": "快速模型",
     "apiFormat": "API 格式",
     "apiFormatHint": "选择供应商 API 的输入格式",
+    "customUserAgent": "自定义 User-Agent",
+    "customUserAgentHint": "仅在开启本地路由/代理接管后生效，会替换转发到供应商 API 请求中的 User-Agent。",
+    "customUserAgentInvalid": "User-Agent 不能包含控制字符（如换行符），否则将被忽略。",
+    "customUserAgentPresets": "预设",
     "fullUrlLabel": "完整 URL",
     "fullUrlEnabled": "完整 URL 模式",
     "fullUrlDisabled": "标记为完整 URL",
@@ -1257,8 +1262,9 @@
     "reasoningModeHint": "上游 Chat Completions 接口支持开启或关闭 thinking 时启用。Kimi、GLM、Qwen 等通常属于这一类。",
     "reasoningEffortToggle": "支持思考等级",
     "reasoningEffortHint": "上游支持 low/high/max 等思考深度控制时启用。启用后会自动启用思考模式，并把 Codex 的 reasoning.effort 转成上游 Chat 参数。",
-    "reasoningSectionToggle": "思考能力（高级·通常自动识别）",
-    "reasoningSectionHint": "预设供应商已自动配置；自定义供应商会按名称/地址自动推断。仅当自动识别不准时才需展开手动覆盖。"
+    "reasoningGroupTitle": "思考能力",
+    "reasoningSectionHint": "预设供应商已自动配置；自定义供应商会按名称/地址自动推断。仅当自动识别不准时才需手动覆盖。",
+    "advancedSectionHint": "包含本地路由映射、模型映射、思考能力与自定义 User-Agent。供应商使用 Chat Completions 协议或非 GPT 模型时，需在此开启本地路由映射。"
   },
   "geminiConfig": {
     "envFile": "环境变量 (.env)",
@@ -1373,6 +1379,7 @@
     "appFilter": {
       "all": "全部",
       "claude": "Claude Code",
+      "claude-desktop": "Claude Desktop",
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode"
@@ -1403,6 +1410,7 @@
     "modelPricingDesc": "配置各模型的 Token 成本",
     "noPricingData": "暂无定价数据。点击\"新增\"添加模型定价配置。",
     "model": "模型",
+    "pricingModel": "计价模型",
     "displayName": "显示名称",
     "inputCost": "输入成本",
     "outputCost": "输出成本",

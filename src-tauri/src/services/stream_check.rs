@@ -293,6 +293,20 @@ impl StreamCheckService {
         ))
     }
 
+    /// Provider 级自定义 User-Agent（`meta.customUserAgent`），经 `parse_custom_user_agent` 校验。
+    ///
+    /// 与 forwarder 转发路径（`RequestForwarder::forward`）、model_fetch 共用单一口径：trim、
+    /// 空串视为未设置、**非法值静默忽略**（返回 `None`，不报错）。Stream Check 必须复用同一个
+    /// UA 去探测，否则会与真实流量用不同的 User-Agent（例如 Kimi Coding Plan 的 UA 白名单），
+    /// 导致"检测失败但代理可用"或反之的分歧——非法 UA 时尤甚（转发静默丢弃、检测却会因
+    /// reqwest 非法头在 `.send()` 报错）。
+    fn custom_user_agent(provider: &Provider) -> Option<reqwest::header::HeaderValue> {
+        provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.custom_user_agent_header().ok().flatten())
+    }
+
     /// Claude 流式检查
     ///
     /// 根据供应商的 api_format 选择请求格式：
@@ -489,6 +503,14 @@ impl StreamCheckService {
             }
         }
 
+        // Provider 级自定义 User-Agent（meta.customUserAgent）覆盖默认 UA，与 forwarder
+        // 转发路径口径一致；Copilot 指纹 UA 不可被覆盖。
+        if !is_github_copilot {
+            if let Some(ua) = Self::custom_user_agent(provider) {
+                request_builder = request_builder.header("user-agent", ua);
+            }
+        }
+
         let response = request_builder
             .timeout(timeout)
             .json(&body)
@@ -549,6 +571,15 @@ impl StreamCheckService {
         let os_name = Self::get_os_name();
         let arch_name = Self::get_arch_name();
 
+        // Provider 级自定义 User-Agent（meta.customUserAgent）覆盖默认 codex UA，与 forwarder
+        // 转发路径口径一致——否则 Stream Check 会用与真实流量不同的 UA 探测（如 Kimi UA 白名单）。
+        let user_agent = Self::custom_user_agent(provider).unwrap_or_else(|| {
+            reqwest::header::HeaderValue::from_str(&format!(
+                "codex_cli_rs/0.80.0 ({os_name} 15.7.2; {arch_name}) Terminal"
+            ))
+            .unwrap_or_else(|_| reqwest::header::HeaderValue::from_static("codex_cli_rs/0.80.0"))
+        });
+
         let mut body = if uses_chat {
             // Chat Completions 请求体（与 transform_codex_chat::responses_to_chat_completions 对齐）
             json!({
@@ -586,10 +617,7 @@ impl StreamCheckService {
                 .header("content-type", "application/json")
                 .header("accept", "text/event-stream")
                 .header("accept-encoding", "identity")
-                .header(
-                    "user-agent",
-                    format!("codex_cli_rs/0.80.0 ({os_name} 15.7.2; {arch_name}) Terminal"),
-                )
+                .header("user-agent", user_agent.clone())
                 .header("originator", "codex_cli_rs")
                 .timeout(timeout)
                 .json(&body)
@@ -1628,6 +1656,53 @@ mod tests {
             "api": "openai-completions",
         }));
         assert!(!StreamCheckService::additive_app_uses_auth_header(&p));
+    }
+
+    #[test]
+    fn test_custom_user_agent_trims_and_filters_empty() {
+        use crate::provider::ProviderMeta;
+
+        let mut p = make_provider(serde_json::json!({
+            "baseUrl": "https://api.kimi.com/coding",
+            "apiKey": "k",
+        }));
+
+        // 未设置 meta → None
+        assert!(StreamCheckService::custom_user_agent(&p).is_none());
+
+        // 带首尾空格的 UA → 去空格后返回合法 HeaderValue
+        p.meta = Some(ProviderMeta {
+            custom_user_agent: Some("  claude-cli/2.1.161  ".to_string()),
+            ..Default::default()
+        });
+        assert_eq!(
+            StreamCheckService::custom_user_agent(&p)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "claude-cli/2.1.161"
+        );
+
+        // 纯空白 → 视为未设置（与 forwarder 路径口径一致）
+        p.meta = Some(ProviderMeta {
+            custom_user_agent: Some("   ".to_string()),
+            ..Default::default()
+        });
+        assert!(StreamCheckService::custom_user_agent(&p).is_none());
+
+        // 非 ASCII 字符其实合法（UTF-8 字节均 ≥ 0x80，HeaderValue 按字节放行）→ 应返回 Some
+        p.meta = Some(ProviderMeta {
+            custom_user_agent: Some("claude-cli/2.1.161 \u{4e2d}".to_string()),
+            ..Default::default()
+        });
+        assert!(StreamCheckService::custom_user_agent(&p).is_some());
+
+        // 含控制字符（内嵌换行）才非法 → None（静默忽略，与 forwarder 一致，不让 Stream Check 报错）
+        p.meta = Some(ProviderMeta {
+            custom_user_agent: Some("claude-cli/2.1.161\nX".to_string()),
+            ..Default::default()
+        });
+        assert!(StreamCheckService::custom_user_agent(&p).is_none());
     }
 
     #[test]

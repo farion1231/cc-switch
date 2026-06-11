@@ -1002,7 +1002,8 @@
       "doubaoseed": "DouBao offers exclusive benefits for CC Switch users: register via this link to get 500K tokens of inference credits for all DouBao text models and 5M tokens of free Seedance 2.0 credits.",
       "volcengine_agentplan": "Volcengine Ark Agent Plan offers exclusive benefits for CC Switch users: subscribe via this link, starting from ¥40/month for new customers.",
       "byteplus": "Register via this link to get 500,000 tokens of free inference quota per model.",
-      "ccsub": "CCSub is a stable, affordable AI API relay — a drop-in replacement for Claude.ai & OpenAI subscriptions, with one key for all models at ~30% of direct API cost."
+      "ccsub": "CCSub is a stable, affordable AI API relay — a drop-in replacement for Claude.ai & OpenAI subscriptions, with one key for all models at ~30% of direct API cost.",
+      "unity2": "Unity2.ai offers exclusive benefits for CC Switch users: register via this link to get $2 in credits, plus another $10 for joining the official group — up to $12 in free credits!"
     },
     "presets": {
       "ucloud": "Compshare",
@@ -1043,6 +1044,10 @@
     "anthropicSmallFastModel": "Fast Model",
     "apiFormat": "API Format",
     "apiFormatHint": "Select the input format for the provider's API",
+    "customUserAgent": "Custom User-Agent",
+    "customUserAgentHint": "Only takes effect when local routing/proxy takeover is enabled; replaces the User-Agent in requests forwarded to the provider API.",
+    "customUserAgentInvalid": "User-Agent must not contain control characters (e.g. line breaks); otherwise it will be ignored.",
+    "customUserAgentPresets": "Presets",
     "fullUrlLabel": "Full URL",
     "fullUrlEnabled": "Full URL Mode",
     "fullUrlDisabled": "Mark as Full URL",
@@ -1257,8 +1262,9 @@
     "reasoningModeHint": "Enable when the upstream Chat Completions API supports toggling thinking on/off. Providers like Kimi, GLM and Qwen usually fall into this category.",
     "reasoningEffortToggle": "Supports Reasoning Effort",
     "reasoningEffortHint": "Enable when the upstream supports thinking-depth control such as low/high/max. Enabling this also turns on thinking mode and converts Codex's reasoning.effort into the upstream Chat parameter.",
-    "reasoningSectionToggle": "Reasoning Capability (Advanced · usually auto-detected)",
-    "reasoningSectionHint": "Preset providers are configured automatically; custom providers are inferred from name/URL. Expand to override manually only when auto-detection is wrong."
+    "reasoningGroupTitle": "Reasoning Capability",
+    "reasoningSectionHint": "Preset providers are configured automatically; custom providers are inferred from name/URL. Override manually only when auto-detection is wrong.",
+    "advancedSectionHint": "Includes local routing, model mapping, reasoning overrides and custom User-Agent. Enable local routing here when your provider uses the Chat Completions protocol or non-GPT models."
   },
   "geminiConfig": {
     "envFile": "Environment Variables (.env)",
@@ -1373,6 +1379,7 @@
     "appFilter": {
       "all": "All",
       "claude": "Claude Code",
+      "claude-desktop": "Claude Desktop",
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode"
@@ -1403,6 +1410,7 @@
     "modelPricingDesc": "Configure token costs for each model",
     "noPricingData": "No pricing data. Click \"Add\" to add model pricing configuration.",
     "model": "Model",
+    "pricingModel": "Pricing Model",
     "displayName": "Display Name",
     "inputCost": "Input Cost",
     "outputCost": "Output Cost",

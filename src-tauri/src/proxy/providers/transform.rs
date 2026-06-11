@@ -225,6 +225,33 @@ pub fn anthropic_to_openai_with_reasoning_content(
     Ok(result)
 }
 
+/// 为 OpenAI Chat Completions 流式请求注入 `stream_options.include_usage`。
+///
+/// OpenAI 兼容上游在流式下默认不在 SSE 里返回 usage，必须显式声明 include_usage
+/// 才会在末尾吐 usage chunk。缺这一注入会导致流式请求的 token/成本/缓存全部漏记
+/// （input/output/cache 全为 0）。保留客户端可能透传的其它 stream_options 字段，
+/// 仅补 include_usage；非流式请求不动。
+///
+/// 由 Claude→openai_chat（claude.rs）与 Codex Responses→Chat（transform_codex_chat.rs）
+/// 两条转换路径共用，确保两个客户端方向行为一致。
+pub(crate) fn inject_openai_stream_include_usage(result: &mut Value) {
+    let is_stream = result
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if !is_stream {
+        return;
+    }
+    match result.get_mut("stream_options") {
+        Some(Value::Object(opts)) => {
+            opts.insert("include_usage".to_string(), json!(true));
+        }
+        _ => {
+            result["stream_options"] = json!({ "include_usage": true });
+        }
+    }
+}
+
 /// Translate an Anthropic `tool_choice` into the OpenAI Chat Completions form.
 ///
 /// Anthropic forms:
@@ -617,10 +644,31 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
 
     // usage — map cache tokens from OpenAI format to Anthropic format
     let usage = body.get("usage").cloned().unwrap_or(json!({}));
+    // OpenAI prompt_tokens 含缓存命中，Anthropic input_tokens 不含 → 减去 cache_read 与
+    // cache_creation，使 input 成为 fresh input。本路径以 app_type="claude" 记账（calculator
+    // 不再扣减），若不减则缓存会被计入 input 与各 cache 桶两次。三桶互斥，恒等：
+    // input + cache_read + cache_creation == prompt_tokens（inclusive 上游）。
+    // 与流式 build_anthropic_usage_json (#2774) 及 transform_gemini 的 saturating_sub 对称。
+    // 最终 cache_read：直传字段优先于 nested；cache_creation 仅来自直传字段（OpenAI 无此概念）。
+    let cached = usage
+        .get("cache_read_input_tokens")
+        .and_then(|v| v.as_u64())
+        .or_else(|| {
+            usage
+                .pointer("/prompt_tokens_details/cached_tokens")
+                .and_then(|v| v.as_u64())
+        })
+        .unwrap_or(0);
+    let cache_creation = usage
+        .get("cache_creation_input_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
     let input_tokens = usage
         .get("prompt_tokens")
         .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32;
+        .unwrap_or(0)
+        .saturating_sub(cached)
+        .saturating_sub(cache_creation) as u32;
     let output_tokens = usage
         .get("completion_tokens")
         .and_then(|v| v.as_u64())
@@ -631,19 +679,11 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
         "output_tokens": output_tokens
     });
 
-    // OpenAI standard: prompt_tokens_details.cached_tokens
-    if let Some(cached) = usage
-        .pointer("/prompt_tokens_details/cached_tokens")
-        .and_then(|v| v.as_u64())
-    {
+    if cached > 0 {
         usage_json["cache_read_input_tokens"] = json!(cached);
     }
-    // Some compatible servers return these fields directly
-    if let Some(v) = usage.get("cache_read_input_tokens") {
-        usage_json["cache_read_input_tokens"] = v.clone();
-    }
-    if let Some(v) = usage.get("cache_creation_input_tokens") {
-        usage_json["cache_creation_input_tokens"] = v.clone();
+    if cache_creation > 0 {
+        usage_json["cache_creation_input_tokens"] = json!(cache_creation);
     }
 
     let result = json!({
@@ -1287,7 +1327,8 @@ mod tests {
         });
 
         let result = openai_to_anthropic(input).unwrap();
-        assert_eq!(result["usage"]["input_tokens"], 100);
+        // prompt_tokens(100) 含 cached(80)，转换后 input 应为 fresh = 100 - 80 = 20
+        assert_eq!(result["usage"]["input_tokens"], 20);
         assert_eq!(result["usage"]["output_tokens"], 50);
         assert_eq!(result["usage"]["cache_read_input_tokens"], 80);
     }
@@ -1311,8 +1352,36 @@ mod tests {
         });
 
         let result = openai_to_anthropic(input).unwrap();
+        // cache_read(60)+cache_creation(20) 均从 prompt(100) 扣除，fresh = 100 - 60 - 20 = 20
+        // 守恒：input(20) + cache_read(60) + cache_creation(20) == prompt(100)
+        assert_eq!(result["usage"]["input_tokens"], 20);
         assert_eq!(result["usage"]["cache_read_input_tokens"], 60);
         assert_eq!(result["usage"]["cache_creation_input_tokens"], 20);
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_clamps_input_when_cache_exceeds_prompt() {
+        // prompt(100) < cache_read(60)+cache_creation(50)=110：saturating 钳到 0，防下溢。
+        // 钉桩：阻止未来把 saturating_sub 误改成普通减法(debug panic / release wrap)。
+        let input = json!({
+            "id": "chatcmpl-uf",
+            "model": "gpt-4",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "x"},
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 10,
+                "cache_read_input_tokens": 60,
+                "cache_creation_input_tokens": 50
+            }
+        });
+        let result = openai_to_anthropic(input).unwrap();
+        assert_eq!(result["usage"]["input_tokens"], 0);
+        assert_eq!(result["usage"]["cache_read_input_tokens"], 60);
+        assert_eq!(result["usage"]["cache_creation_input_tokens"], 50);
     }
 
     #[test]

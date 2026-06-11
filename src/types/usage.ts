@@ -14,6 +14,8 @@ export interface RequestLog {
   appType: string;
   model: string;
   requestModel?: string;
+  /** 写入时实际用于计价的模型名；路由接管 + request 计价模式下可能与 model 不同 */
+  pricingModel?: string;
   costMultiplier: string;
   inputTokens: number;
   outputTokens: number;
@@ -141,17 +143,26 @@ export interface UsageRangeSelection {
 /**
  * App types whose token usage is reliably collected by the proxy.
  *
- * The proxy has handlers for `claude-desktop` too, but in practice those
- * requests overwhelmingly fail (500/503) and contribute near-zero tokens, so
- * it is hidden from the Dashboard. `opencode` / `openclaw` / `hermes` have
- * no proxy handler at all — they appear only as managed apps elsewhere.
+ * `claude-desktop` was previously hidden because its rows looked like pure
+ * failure noise — that was an accounting bug: streaming/transform usage of
+ * the Desktop gateway was logged under app_type "claude", leaving only
+ * edge-case rows under "claude-desktop". The backend now attributes all
+ * Desktop traffic to "claude-desktop", so it is a first-class filter option.
+ * `opencode` / `openclaw` / `hermes` have no proxy handler at all — they
+ * appear only as managed apps elsewhere.
  */
-export type AppType = "claude" | "codex" | "gemini" | "opencode";
+export type AppType =
+  | "claude"
+  | "claude-desktop"
+  | "codex"
+  | "gemini"
+  | "opencode";
 
 export type AppTypeFilter = "all" | AppType;
 
 export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "claude",
+  "claude-desktop",
   "codex",
   "gemini",
   "opencode",
