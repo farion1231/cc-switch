@@ -496,6 +496,9 @@
       "lastSync": "前回の同期：{{time}}",
       "autoSyncLastErrorTitle": "前回の自動同期に失敗しました",
       "autoSyncLastErrorHint": "ネットワークまたは WebDAV 設定を確認してください。次回の変更時に自動再試行されます。",
+      "autoSyncRemoteChangedTitle": "同期方向を選択してください",
+      "autoSyncRemoteChangedMessage": "クラウド同期データが更新されたため、自動同期を一時停止しました。",
+      "autoSyncRemoteChangedHint": "このデバイスでクラウドを上書きするか、クラウド版でこのデバイスを上書きするかを選択してください。",
       "missingUrl": "WebDAV サーバー URL を入力してください",
       "presets": {
         "label": "サービス",
@@ -544,6 +547,13 @@
         "warning": "リモートの既存同期データが上書きされます",
         "legacyNotice": "旧レイアウトのリモートデータを検出しました。今回のアップロードは新しい v2/db-v6 パスに書き込み、旧パスは上書きしません。",
         "confirm": "アップロードを実行"
+      },
+      "conflictDialog": {
+        "title": "WebDAV 同期には選択が必要です",
+        "message": "ローカルとクラウドの同期スナップショットが異なるため、どちらも上書きしないよう自動同期を一時停止しました。",
+        "warning": "ローカル版を使うとクラウドを上書きします。クラウド版を使うとローカルのデータベースとスキル設定を上書きします。",
+        "useLocal": "ローカル版を使う",
+        "useRemote": "クラウド版を使う"
       }
     },
     "syncType": {
@@ -608,6 +618,7 @@
       "uploadSuccess": "S3 にアップロードしました",
       "uploadFailed": "S3 アップロードに失敗しました：{{error}}",
       "autoSyncFailedToast": "S3 自動同期に失敗しました：{{error}}",
+      "autoSyncRemoteChangedToast": "S3 クラウドデータが更新されているため、自動同期を一時停止しました。同期方向を手動で選択してください。",
       "download": "クラウドからダウンロード",
       "downloading": "ダウンロード中...",
       "downloadSuccess": "S3 からダウンロード・復元しました",
@@ -615,6 +626,9 @@
       "lastSync": "前回の同期：{{time}}",
       "autoSyncLastErrorTitle": "前回の S3 自動同期に失敗しました",
       "autoSyncLastErrorHint": "ネットワークまたは S3 設定を確認してください。次回の変更時に自動再試行されます。",
+      "autoSyncRemoteChangedTitle": "S3 同期方向を選択してください",
+      "autoSyncRemoteChangedMessage": "S3 クラウド同期データが更新されたため、自動同期を一時停止しました。",
+      "autoSyncRemoteChangedHint": "このデバイスでクラウドを上書きするか、クラウド版でこのデバイスを上書きするかを選択してください。",
       "missingBucket": "S3 バケットを入力してください",
       "noRemoteData": "S3 バケットに同期データが見つかりません",
       "incompatibleVersion": "リモートデータに互換性がありません（バージョン {{version}}）。このクライアントは protocol v2 / db-v6 をサポートしています。",

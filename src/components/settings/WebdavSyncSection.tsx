@@ -147,6 +147,15 @@ const S3_PRESETS: S3Preset[] = [
   },
 ];
 
+const CONFLICT_SYNC_ERROR_KEY = "sync.conflict_detected";
+const REMOTE_CHANGED_SYNC_ERROR_KEY = "sync.remote_changed_since_last_sync";
+const MANUAL_RESOLUTION_SYNC_ERROR_KEY = "sync.manual_resolution_required";
+const MANUAL_RESOLUTION_SYNC_ERROR_KEYS = new Set([
+  CONFLICT_SYNC_ERROR_KEY,
+  REMOTE_CHANGED_SYNC_ERROR_KEY,
+  MANUAL_RESOLUTION_SYNC_ERROR_KEY,
+]);
+
 /** Format an RFC 3339 date string for display; falls back to raw string. */
 function formatDate(rfc3339: string): string {
   const d = new Date(rfc3339);
@@ -941,6 +950,18 @@ export function WebdavSyncSection({
   const lastError = config?.status?.lastError?.trim();
   const showAutoSyncError =
     !!lastError && config?.status?.lastErrorSource === "auto";
+  const isManualResolutionAutoSyncError =
+    !!config?.status?.lastErrorKey &&
+    MANUAL_RESOLUTION_SYNC_ERROR_KEYS.has(config.status.lastErrorKey);
+  const autoSyncErrorTitleKey = isManualResolutionAutoSyncError
+    ? "settings.webdavSync.autoSyncRemoteChangedTitle"
+    : "settings.webdavSync.autoSyncLastErrorTitle";
+  const autoSyncErrorMessage = isManualResolutionAutoSyncError
+    ? t("settings.webdavSync.autoSyncRemoteChangedMessage")
+    : lastError;
+  const autoSyncErrorHintKey = isManualResolutionAutoSyncError
+    ? "settings.webdavSync.autoSyncRemoteChangedHint"
+    : "settings.webdavSync.autoSyncLastErrorHint";
   const currentRemotePath = `/${form.remoteRoot.trim() || "cc-switch-sync"}/v2/db-v6/${form.profile.trim() || "default"}`;
   const currentS3RemotePath = `${s3Bucket.trim() || "bucket"}/${s3RemoteRoot.trim() || "cc-switch-sync"}/v2/db-v6/${s3Profile.trim() || "default"}`;
   const remoteDbCompatDisplay = formatDbCompatVersion(
@@ -955,6 +976,17 @@ export function WebdavSyncSection({
   const s3LastError = s3Config?.status?.lastError?.trim();
   const s3ShowAutoSyncError =
     !!s3LastError && s3Config?.status?.lastErrorSource === "auto";
+  const s3IsRemoteChangedAutoSyncError =
+    s3Config?.status?.lastErrorKey === REMOTE_CHANGED_SYNC_ERROR_KEY;
+  const s3AutoSyncErrorTitleKey = s3IsRemoteChangedAutoSyncError
+    ? "settings.s3Sync.autoSyncRemoteChangedTitle"
+    : "settings.s3Sync.autoSyncLastErrorTitle";
+  const s3AutoSyncErrorMessage = s3IsRemoteChangedAutoSyncError
+    ? t("settings.s3Sync.autoSyncRemoteChangedMessage")
+    : s3LastError;
+  const s3AutoSyncErrorHintKey = s3IsRemoteChangedAutoSyncError
+    ? "settings.s3Sync.autoSyncRemoteChangedHint"
+    : "settings.s3Sync.autoSyncLastErrorHint";
 
   // ─── Render ─────────────────────────────────────────────
 
@@ -1132,12 +1164,12 @@ export function WebdavSyncSection({
           )}
           {showAutoSyncError && (
             <div className="rounded-lg border border-red-300/70 bg-red-50/80 px-3 py-2 text-xs text-red-900 dark:border-red-500/50 dark:bg-red-950/30 dark:text-red-200">
-              <p className="font-medium">
-                {t("settings.webdavSync.autoSyncLastErrorTitle")}
+              <p className="font-medium">{t(autoSyncErrorTitleKey)}</p>
+              <p className="mt-1 break-all whitespace-pre-wrap">
+                {autoSyncErrorMessage}
               </p>
-              <p className="mt-1 break-all whitespace-pre-wrap">{lastError}</p>
               <p className="mt-1 text-[11px] text-red-700/90 dark:text-red-300/80">
-                {t("settings.webdavSync.autoSyncLastErrorHint")}
+                {t(autoSyncErrorHintKey)}
               </p>
             </div>
           )}
@@ -1443,14 +1475,12 @@ export function WebdavSyncSection({
           )}
           {s3ShowAutoSyncError && (
             <div className="rounded-lg border border-red-300/70 bg-red-50/80 px-3 py-2 text-xs text-red-900 dark:border-red-500/50 dark:bg-red-950/30 dark:text-red-200">
-              <p className="font-medium">
-                {t("settings.s3Sync.autoSyncLastErrorTitle")}
-              </p>
+              <p className="font-medium">{t(s3AutoSyncErrorTitleKey)}</p>
               <p className="mt-1 break-all whitespace-pre-wrap">
-                {s3LastError}
+                {s3AutoSyncErrorMessage}
               </p>
               <p className="mt-1 text-[11px] text-red-700/90 dark:text-red-300/80">
-                {t("settings.s3Sync.autoSyncLastErrorHint")}
+                {t(s3AutoSyncErrorHintKey)}
               </p>
             </div>
           )}

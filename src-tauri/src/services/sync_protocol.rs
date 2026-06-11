@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
 use crate::error::AppError;
+use crate::settings::WebDavSyncStatus;
 
 // Re-export archive functions for use by transport layers.
 pub(crate) use super::webdav_sync::archive::{
@@ -32,6 +33,9 @@ pub(crate) const REMOTE_MANIFEST: &str = "manifest.json";
 pub(crate) const MAX_DEVICE_NAME_LEN: usize = 64;
 pub(crate) const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_SYNC_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
+pub(crate) const SYNC_CONFLICT_DETECTED_KEY: &str = "sync.conflict_detected";
+pub(crate) const SYNC_REMOTE_CHANGED_KEY: &str = "sync.remote_changed_since_last_sync";
+pub(crate) const SYNC_MANUAL_RESOLUTION_REQUIRED_KEY: &str = "sync.manual_resolution_required";
 
 // ─── Error helpers ───────────────────────────────────────────
 
@@ -83,6 +87,16 @@ pub(crate) struct LocalSnapshot {
     pub skills_zip: Vec<u8>,
     pub manifest_bytes: Vec<u8>,
     pub manifest_hash: String,
+    pub snapshot_id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SnapshotSyncState {
+    RemoteMissing,
+    InSync,
+    LocalOnlyChanged,
+    RemoteOnlyChanged,
+    Conflict,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,7 +161,7 @@ pub(crate) fn build_local_snapshot(
         device_name: detect_system_device_name().unwrap_or_else(|| "Unknown Device".to_string()),
         created_at: Utc::now().to_rfc3339(),
         artifacts,
-        snapshot_id,
+        snapshot_id: snapshot_id.clone(),
     };
     let manifest_bytes =
         serde_json::to_vec_pretty(&manifest).map_err(|e| AppError::JsonSerialize { source: e })?;
@@ -158,6 +172,7 @@ pub(crate) fn build_local_snapshot(
         skills_zip,
         manifest_bytes,
         manifest_hash,
+        snapshot_id,
     })
 }
 
@@ -398,18 +413,128 @@ pub(crate) fn normalize_device_name(raw: &str) -> Option<String> {
 pub(crate) fn persist_sync_success_best_effort<S, F>(
     settings: &mut S,
     manifest_hash: String,
+    snapshot_id: String,
     etag: Option<String>,
     persist_fn: F,
 ) -> bool
 where
-    F: FnOnce(&mut S, String, Option<String>) -> Result<(), AppError>,
+    F: FnOnce(&mut S, String, String, Option<String>) -> Result<(), AppError>,
 {
-    match persist_fn(settings, manifest_hash, etag) {
+    match persist_fn(settings, manifest_hash, snapshot_id, etag) {
         Ok(()) => true,
         Err(err) => {
             log::warn!("[Sync] Persist sync status failed, keep operation success: {err}");
             false
         }
+    }
+}
+
+fn last_synced_snapshot_id(status: &WebDavSyncStatus) -> Option<&str> {
+    match (
+        status.last_local_snapshot_id.as_deref(),
+        status.last_remote_snapshot_id.as_deref(),
+    ) {
+        (Some(local), Some(remote)) if local == remote => Some(local),
+        (Some(snapshot_id), None) | (None, Some(snapshot_id)) => Some(snapshot_id),
+        _ => None,
+    }
+}
+
+fn remote_matches_legacy_manifest_baseline(
+    status: &WebDavSyncStatus,
+    remote_manifest_hash: Option<&str>,
+) -> bool {
+    matches!(
+        (
+            status.last_remote_manifest_hash.as_deref(),
+            remote_manifest_hash,
+        ),
+        (Some(last_hash), Some(remote_hash)) if last_hash == remote_hash
+    )
+}
+
+pub(crate) fn has_remote_sync_baseline(status: &WebDavSyncStatus) -> bool {
+    status.last_remote_snapshot_id.is_some()
+        || status.last_remote_manifest_hash.is_some()
+        || status.last_remote_etag.is_some()
+}
+
+pub(crate) fn assess_snapshot_sync_state(
+    status: &WebDavSyncStatus,
+    local_snapshot_id: &str,
+    remote_snapshot_id: Option<&str>,
+    remote_manifest_hash: Option<&str>,
+) -> SnapshotSyncState {
+    let Some(remote_snapshot_id) = remote_snapshot_id else {
+        if let Some(base_snapshot_id) = last_synced_snapshot_id(status) {
+            return if local_snapshot_id == base_snapshot_id {
+                SnapshotSyncState::RemoteOnlyChanged
+            } else {
+                SnapshotSyncState::Conflict
+            };
+        }
+        if has_remote_sync_baseline(status) {
+            return SnapshotSyncState::RemoteOnlyChanged;
+        }
+        return SnapshotSyncState::RemoteMissing;
+    };
+
+    if local_snapshot_id == remote_snapshot_id {
+        return SnapshotSyncState::InSync;
+    }
+
+    let Some(base_snapshot_id) = last_synced_snapshot_id(status) else {
+        if remote_matches_legacy_manifest_baseline(status, remote_manifest_hash) {
+            return SnapshotSyncState::LocalOnlyChanged;
+        }
+        return SnapshotSyncState::Conflict;
+    };
+
+    let local_changed = local_snapshot_id != base_snapshot_id;
+    let remote_changed = remote_snapshot_id != base_snapshot_id;
+
+    match (local_changed, remote_changed) {
+        (false, false) => SnapshotSyncState::InSync,
+        (true, false) => SnapshotSyncState::LocalOnlyChanged,
+        (false, true) => SnapshotSyncState::RemoteOnlyChanged,
+        (true, true) => SnapshotSyncState::Conflict,
+    }
+}
+
+pub(crate) fn manual_resolution_required_error(state: SnapshotSyncState) -> AppError {
+    match state {
+        SnapshotSyncState::RemoteOnlyChanged => localized(
+            SYNC_REMOTE_CHANGED_KEY,
+            "云端同步数据已更新，自动同步已暂停。请确认是下载云端版本，还是上传本机版本覆盖云端。",
+            "Remote sync data changed, so auto sync paused. Choose whether to download the cloud version or upload this device to overwrite the cloud data.",
+        ),
+        SnapshotSyncState::Conflict => localized(
+            SYNC_CONFLICT_DETECTED_KEY,
+            "本机和云端都有更改，自动同步已暂停。请手动选择保留本机版本或云端版本。",
+            "Both local and cloud sync data changed, so auto sync paused. Choose whether to keep the local version or the cloud version.",
+        ),
+        _ => localized(
+            SYNC_MANUAL_RESOLUTION_REQUIRED_KEY,
+            "自动同步需要手动选择同步方向。",
+            "Auto sync requires choosing a sync direction manually.",
+        ),
+    }
+}
+
+pub(crate) fn ensure_remote_manifest_unchanged_since_last_sync(
+    status: &WebDavSyncStatus,
+    remote_manifest_hash: &str,
+    remote_snapshot_id: &str,
+) -> Result<(), AppError> {
+    match (
+        status.last_remote_snapshot_id.as_deref(),
+        status.last_remote_manifest_hash.as_deref(),
+    ) {
+        (Some(last_snapshot_id), _) if last_snapshot_id == remote_snapshot_id => Ok(()),
+        (None, Some(last_hash)) if last_hash == remote_manifest_hash => Ok(()),
+        _ => Err(manual_resolution_required_error(
+            SnapshotSyncState::RemoteOnlyChanged,
+        )),
     }
 }
 
@@ -463,8 +588,9 @@ mod tests {
         let ok = persist_sync_success_best_effort(
             &mut dummy,
             "hash".to_string(),
+            "snapshot".to_string(),
             Some("etag".to_string()),
-            |_settings, _hash, _etag| Ok(()),
+            |_settings, _hash, _snapshot, _etag| Ok(()),
         );
         assert!(ok);
     }
@@ -475,10 +601,107 @@ mod tests {
         let ok = persist_sync_success_best_effort(
             &mut dummy,
             "hash".to_string(),
+            "snapshot".to_string(),
             None,
-            |_settings, _hash, _etag| Err(AppError::Config("boom".to_string())),
+            |_settings, _hash, _snapshot, _etag| Err(AppError::Config("boom".to_string())),
         );
         assert!(!ok);
+    }
+
+    fn synced_status() -> WebDavSyncStatus {
+        WebDavSyncStatus {
+            last_local_snapshot_id: Some("base".to_string()),
+            last_remote_snapshot_id: Some("base".to_string()),
+            ..WebDavSyncStatus::default()
+        }
+    }
+
+    #[test]
+    fn snapshot_sync_state_detects_local_only_change() {
+        assert_eq!(
+            assess_snapshot_sync_state(&synced_status(), "local-new", Some("base"), None),
+            SnapshotSyncState::LocalOnlyChanged
+        );
+    }
+
+    #[test]
+    fn snapshot_sync_state_detects_remote_only_change() {
+        assert_eq!(
+            assess_snapshot_sync_state(&synced_status(), "base", Some("remote-new"), None),
+            SnapshotSyncState::RemoteOnlyChanged
+        );
+    }
+
+    #[test]
+    fn snapshot_sync_state_detects_conflict_when_both_changed() {
+        assert_eq!(
+            assess_snapshot_sync_state(&synced_status(), "local-new", Some("remote-new"), None),
+            SnapshotSyncState::Conflict
+        );
+    }
+
+    #[test]
+    fn snapshot_sync_state_treats_new_missing_remote_as_uploadable() {
+        assert_eq!(
+            assess_snapshot_sync_state(&WebDavSyncStatus::default(), "local-new", None, None),
+            SnapshotSyncState::RemoteMissing
+        );
+    }
+
+    #[test]
+    fn snapshot_sync_state_detects_missing_remote_after_sync_as_remote_change() {
+        assert_eq!(
+            assess_snapshot_sync_state(&synced_status(), "base", None, None),
+            SnapshotSyncState::RemoteOnlyChanged
+        );
+    }
+
+    #[test]
+    fn snapshot_sync_state_detects_missing_remote_with_local_change_as_conflict() {
+        assert_eq!(
+            assess_snapshot_sync_state(&synced_status(), "local-new", None, None),
+            SnapshotSyncState::Conflict
+        );
+    }
+
+    #[test]
+    fn snapshot_sync_state_accepts_equal_content_without_baseline() {
+        assert_eq!(
+            assess_snapshot_sync_state(&WebDavSyncStatus::default(), "same", Some("same"), None),
+            SnapshotSyncState::InSync
+        );
+    }
+
+    #[test]
+    fn snapshot_sync_state_requires_choice_without_baseline() {
+        assert_eq!(
+            assess_snapshot_sync_state(&WebDavSyncStatus::default(), "local", Some("remote"), None),
+            SnapshotSyncState::Conflict
+        );
+    }
+
+    #[test]
+    fn snapshot_sync_state_uses_legacy_manifest_hash_for_local_only_change() {
+        let status = WebDavSyncStatus {
+            last_remote_manifest_hash: Some("remote-hash".to_string()),
+            ..WebDavSyncStatus::default()
+        };
+        assert_eq!(
+            assess_snapshot_sync_state(&status, "local", Some("remote"), Some("remote-hash")),
+            SnapshotSyncState::LocalOnlyChanged
+        );
+    }
+
+    #[test]
+    fn snapshot_sync_state_requires_choice_when_legacy_manifest_hash_changed() {
+        let status = WebDavSyncStatus {
+            last_remote_manifest_hash: Some("remote-hash".to_string()),
+            ..WebDavSyncStatus::default()
+        };
+        assert_eq!(
+            assess_snapshot_sync_state(&status, "local", Some("remote"), Some("new-remote-hash")),
+            SnapshotSyncState::Conflict
+        );
     }
 
     fn manifest_with(format: &str, version: u32, db_compat_version: Option<u32>) -> SyncManifest {
