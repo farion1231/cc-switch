@@ -1284,6 +1284,14 @@ impl Database {
                 "1.00",
                 "12.50",
             ),
+            (
+                "claude-mythos-5",
+                "Claude Mythos 5",
+                "10",
+                "50",
+                "1.00",
+                "12.50",
+            ),
             // Claude 4.8 系列
             (
                 "claude-opus-4-8",
