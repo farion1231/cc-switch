@@ -2741,6 +2741,21 @@ fn launch_macos_iterm2(script_file: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+/// 把启动脚本路径包进 `bash -c` 的字符串参数，供 `open -na <App> --args … bash -c <该串>` 使用。
+///
+/// `open -na <App> --args … -e bash <裸 .sh 路径>` 中，末尾的裸脚本路径会被当成
+/// 「待打开的文档」再打开一次（`.sh` 的默认处理器是登录 shell，会直接执行该文件）
+/// → 一次点击起两个终端窗口（实测 Ghostty 8 次中 6 次双开），且「文档方式」那次
+/// 直接执行脚本还会触发 macOS 的 "Allow … to execute" 弹窗。把路径包进 `-c`
+/// 字符串后它不再是独立 argv，也就不会再被当文档打开（实测 8/8 单窗口）。
+#[cfg(target_os = "macos")]
+fn build_macos_dash_c_command(script_file: &std::path::Path) -> String {
+    format!(
+        "exec bash {}",
+        shell_single_quote(&script_file.to_string_lossy())
+    )
+}
+
 /// macOS: Ghostty — use --quit-after-last-window-closed to avoid cloning existing tabs
 #[cfg(target_os = "macos")]
 fn launch_macos_ghostty(script_file: &std::path::Path) -> Result<(), String> {
@@ -2754,8 +2769,9 @@ fn launch_macos_ghostty(script_file: &std::path::Path) -> Result<(), String> {
             "--quit-after-last-window-closed=true",
             "-e",
             "bash",
+            "-c",
         ])
-        .arg(script_file)
+        .arg(build_macos_dash_c_command(script_file))
         .output()
         .map_err(|e| format!("启动 Ghostty 失败: {e}"))?;
 
@@ -2786,7 +2802,10 @@ fn launch_macos_open_app(
     if use_e_flag {
         cmd.arg("-e");
     }
-    cmd.arg("bash").arg(script_file);
+    // 同 Ghostty：脚本路径包进 `bash -c`，避免末尾裸 `.sh` 路径被 `open` 当文档再打开一次。
+    cmd.arg("bash")
+        .arg("-c")
+        .arg(build_macos_dash_c_command(script_file));
 
     let output = cmd
         .output()
@@ -4754,6 +4773,19 @@ mod tests {
 
         assert!(running_branch.contains("do script launcher_script"));
         assert!(!running_branch.contains("in window"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn dash_c_command_wraps_script_path_inside_quoted_arg() {
+        // 关键不变量:脚本路径必须出现在 `-c` 的字符串参数内部(单引号包裹),
+        // 而非作为独立的裸文件 argv —— 否则 `open` 会把它当文档再打开一次。
+        let s = build_macos_dash_c_command(Path::new("/tmp/cc_switch_launcher_1.sh"));
+        assert_eq!(s, "exec bash '/tmp/cc_switch_launcher_1.sh'");
+
+        // 含空格/单引号的路径也必须整体安全包裹。
+        let s2 = build_macos_dash_c_command(Path::new("/Users/me/it's dir/x.sh"));
+        assert_eq!(s2, r#"exec bash '/Users/me/it'"'"'s dir/x.sh'"#);
     }
 
     #[test]
