@@ -351,11 +351,23 @@ describe("useProviderActions", () => {
       wrapper,
     });
 
-    await expect(
-      result.current.switchProvider(provider),
-    ).resolves.toBeUndefined();
+    // switchProvider swallows the mutation error and resolves to `false`
+    // (success flag the routing guard relies on to NOT enable takeover).
+    await expect(result.current.switchProvider(provider)).resolves.toBe(false);
     expect(settingsApiGetMock).not.toHaveBeenCalled();
     expect(settingsApiApplyMock).not.toHaveBeenCalled();
+  });
+
+  it("resolves true on a successful switch (success flag for the routing guard)", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider();
+
+    const { result } = renderHook(() => useProviderActions("codex"), {
+      wrapper,
+    });
+
+    await expect(result.current.switchProvider(provider)).resolves.toBe(true);
   });
 
   it("should call delete mutation when calling deleteProvider", async () => {
