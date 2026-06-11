@@ -2560,6 +2560,57 @@ fn write_claude_config(
     std::fs::write(config_file, config_json).map_err(|e| format!("写入配置文件失败: {e}"))
 }
 
+/// Resolve the absolute path to a CLI tool's executable by searching common
+/// installation directories and the current PATH (via [`build_tool_search_paths`]).
+/// Returns `None` when the tool cannot be located at a known path.
+fn find_cli_executable(tool: &str) -> Option<std::path::PathBuf> {
+    let search_paths = build_tool_search_paths(tool);
+    for dir in &search_paths {
+        for candidate in tool_executable_candidates(tool, dir) {
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+/// Build the command string for launching a CLI tool inside a terminal script.
+///
+/// When the tool is found at an absolute path through
+/// [`find_cli_executable`], the returned string is that path suitably quoted
+/// for the target shell (batch-safe quoting on Windows, POSIX single-quoting
+/// on macOS/Linux).  On Windows, `.cmd`/`.bat` entries are additionally
+/// prefixed with `call` so the batch interpreter returns to the calling
+/// script instead of transferring control.
+///
+/// Falls back to the bare tool name when no absolute path can be resolved, so
+/// the terminal still has a chance to locate it via its own `PATH`.
+#[cfg(target_os = "windows")]
+fn cli_command_for_script(tool: &str) -> String {
+    if let Some(path) = find_cli_executable(tool) {
+        let path_str = path.to_string_lossy().to_string();
+        if is_windows_command_script(&path) {
+            // .cmd/.bat must be invoked with `call` inside a batch file
+            // otherwise the current script is replaced.
+            format!("call {}", win_quote_path_for_batch(&path_str))
+        } else {
+            win_quote_path_for_batch(&path_str)
+        }
+    } else {
+        tool.to_string()
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn cli_command_for_script(tool: &str) -> String {
+    if let Some(path) = find_cli_executable(tool) {
+        quote_path_if_spaced(&path.to_string_lossy())
+    } else {
+        tool.to_string()
+    }
+}
+
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
 fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
@@ -2573,6 +2624,10 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
 
+    // Resolve the absolute path to claude so the script doesn't depend on
+    // PATH being inherited correctly by the terminal app.
+    let claude_cmd = cli_command_for_script("claude");
+
     // Write the shell script to a temp file
     let script_content = format!(
         r#"#!/bin/bash
@@ -2580,12 +2635,13 @@ trap 'rm -f "{config_path}" "{script_file}"' EXIT
 {cd_command}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
-claude --settings "{config_path}"
+{claude_cmd} --settings "{config_path}"
 exec bash --norc --noprofile
 "#,
         config_path = config_path,
         script_file = script_file.display(),
         cd_command = cd_command,
+        claude_cmd = claude_cmd,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -2853,18 +2909,23 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
 
+    // Resolve the absolute path to claude so the script doesn't depend on
+    // PATH being inherited correctly by the terminal emulator.
+    let claude_cmd = cli_command_for_script("claude");
+
     let script_content = format!(
         r#"#!/bin/bash
 trap 'rm -f "{config_path}" "{script_file}"' EXIT
 {cd_command}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
-claude --settings "{config_path}"
+{claude_cmd} --settings "{config_path}"
 exec bash --norc --noprofile
 "#,
         config_path = config_path,
         script_file = script_file.display(),
         cd_command = cd_command,
+        claude_cmd = claude_cmd,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -2952,19 +3013,21 @@ fn launch_windows_terminal(
     let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
     let cwd_command = build_windows_cwd_command(cwd);
 
+    // Resolve the absolute path to claude so the batch script doesn't depend
+    // on PATH being inherited correctly by `start` / the spawned terminal.
+    let claude_cmd = cli_command_for_script("claude");
+
     let content = format!(
-        "@echo off
-{cwd_command}
-echo Using provider-specific claude config:
-echo {}
-claude --settings \"{}\"
-del \"{}\" >nul 2>&1
-del \"%~f0\" >nul 2>&1
-",
-        config_path_for_batch,
-        config_path_for_batch,
-        config_path_for_batch,
+        "@echo off\r\n\
+{cwd_command}\r\n\
+echo Using provider-specific claude config:\r\n\
+echo {config_path}\r\n\
+{claude_cmd} --settings \"{config_path}\"\r\n\
+del \"{config_path}\" >nul 2>&1\r\n\
+del \"%~f0\" >nul 2>&1\r\n",
         cwd_command = cwd_command,
+        config_path = config_path_for_batch,
+        claude_cmd = claude_cmd,
     );
 
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
