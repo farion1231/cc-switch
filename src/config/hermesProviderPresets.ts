@@ -916,8 +916,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
     icon: "sudocode",
     suggestedDefaults: {
       model: { default: "gpt-5.5", provider: "sudocode" },
@@ -1239,25 +1237,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#000000",
     suggestedDefaults: {
       model: { default: "claude-opus-4-8", provider: "eflowcode" },
-    },
-  },
-  {
-    name: "LemonData",
-    websiteUrl: "https://lemondata.cc",
-    apiKeyUrl: "https://lemondata.cc/r/FFX1ZDUP",
-    settingsConfig: {
-      name: "lemondata",
-      base_url: "https://api.lemondata.cc/v1",
-      api_key: "",
-      api_mode: "chat_completions",
-      models: [{ id: "gpt-5.5", name: "GPT-5.5" }],
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "lemondata",
-    icon: "lemondata",
-    suggestedDefaults: {
-      model: { default: "gpt-5.5", provider: "lemondata" },
     },
   },
   {

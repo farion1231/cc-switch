@@ -1667,8 +1667,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
     icon: "sudocode",
     templateValues: {
       apiKey: {
@@ -2174,42 +2172,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         "eflowcode/gpt-5.5": { alias: "gpt-5.5" },
         "eflowcode/gpt-5.2-codex": { alias: "gpt-5.2-codex" },
         "eflowcode/gpt-5.2": { alias: "gpt-5.2" },
-      },
-    },
-  },
-  {
-    name: "LemonData",
-    websiteUrl: "https://lemondata.cc",
-    apiKeyUrl: "https://lemondata.cc/r/FFX1ZDUP",
-    settingsConfig: {
-      baseUrl: "https://api.lemondata.cc/v1",
-      apiKey: "",
-      api: "openai-completions",
-      models: [
-        {
-          id: "gpt-5.5",
-          name: "GPT-5.5",
-          contextWindow: 400000,
-        },
-      ],
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "lemondata",
-    icon: "lemondata",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: {
-        primary: "lemondata/gpt-5.5",
-      },
-      modelCatalog: {
-        "lemondata/gpt-5.5": { alias: "GPT-5.5" },
       },
     },
   },

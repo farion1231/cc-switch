@@ -1374,8 +1374,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
     icon: "sudocode",
     templateValues: {
       apiKey: {
@@ -1710,34 +1708,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       apiKey: {
         label: "API Key",
         placeholder: "sk-...",
-        editorValue: "",
-      },
-    },
-  },
-  {
-    name: "LemonData",
-    websiteUrl: "https://lemondata.cc",
-    apiKeyUrl: "https://lemondata.cc/r/FFX1ZDUP",
-    settingsConfig: {
-      npm: "@ai-sdk/openai-compatible",
-      name: "LemonData",
-      options: {
-        baseURL: "https://api.lemondata.cc/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "gpt-5.5": { name: "GPT-5.5" },
-      },
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "lemondata",
-    icon: "lemondata",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
         editorValue: "",
       },
     },
