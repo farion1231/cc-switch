@@ -701,6 +701,8 @@
       "title": "首选终端",
       "description": "选择点击终端按钮时使用的终端应用",
       "fallbackHint": "如果选择的终端不可用，将自动使用系统默认终端",
+      "dangerousSkipPermissions": "跳过 Claude Code 权限确认",
+      "dangerousSkipPermissionsDescription": "开启后，从 Claude Code 终端打开时会附加 --dangerously-skip-permissions，跳过所有操作的权限确认。请谨慎使用。",
       "options": {
         "macos": {
           "terminal": "Terminal.app",

@@ -2407,9 +2407,20 @@ pub async fn open_provider_terminal(
     let config = &provider.settings_config;
     let env_vars = extract_env_vars_from_config(config, &app_type);
 
+    // 仅对 Claude Code 终端（运行 `claude` CLI）启用
+    // `--dangerously-skip-permissions`，且需用户在设置中显式开启。
+    // Claude Desktop 不走 `claude` CLI，因此不适用。
+    let dangerous_skip_permissions = matches!(app_type, AppType::Claude)
+        && crate::settings::get_claude_dangerous_skip_permissions();
+
     // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
-    launch_terminal_with_env(env_vars, &providerId, launch_cwd.as_deref())
-        .map_err(|e| format!("启动终端失败: {e}"))?;
+    launch_terminal_with_env(
+        env_vars,
+        &providerId,
+        launch_cwd.as_deref(),
+        dangerous_skip_permissions,
+    )
+    .map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
 }
@@ -2507,6 +2518,7 @@ fn launch_terminal_with_env(
     env_vars: Vec<(String, String)>,
     provider_id: &str,
     cwd: Option<&Path>,
+    dangerous_skip_permissions: bool,
 ) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
     let config_file = temp_dir.join(format!(
@@ -2520,24 +2532,27 @@ fn launch_terminal_with_env(
 
     #[cfg(target_os = "macos")]
     {
-        launch_macos_terminal(&config_file, cwd)?;
+        launch_macos_terminal(&config_file, cwd, dangerous_skip_permissions)?;
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
     {
-        launch_linux_terminal(&config_file, cwd)?;
+        launch_linux_terminal(&config_file, cwd, dangerous_skip_permissions)?;
         Ok(())
     }
 
     #[cfg(target_os = "windows")]
     {
-        launch_windows_terminal(&temp_dir, &config_file, cwd)?;
+        launch_windows_terminal(&temp_dir, &config_file, cwd, dangerous_skip_permissions)?;
         return Ok(());
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    Err("不支持的操作系统".to_string())
+    {
+        let _ = dangerous_skip_permissions;
+        Err("不支持的操作系统".to_string())
+    }
 }
 
 /// 写入 claude 配置文件
@@ -2562,7 +2577,11 @@ fn write_claude_config(
 
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
+fn launch_macos_terminal(
+    config_file: &std::path::Path,
+    cwd: Option<&Path>,
+    dangerous_skip_permissions: bool,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
     let preferred = crate::settings::get_preferred_terminal();
@@ -2572,6 +2591,7 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
+    let dangerous_flag = claude_dangerous_flag(dangerous_skip_permissions);
 
     // Write the shell script to a temp file
     let script_content = format!(
@@ -2580,12 +2600,13 @@ trap 'rm -f "{config_path}" "{script_file}"' EXIT
 {cd_command}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
-claude --settings "{config_path}"
+claude --settings "{config_path}"{dangerous_flag}
 exec bash --norc --noprofile
 "#,
         config_path = config_path,
         script_file = script_file.display(),
         cd_command = cd_command,
+        dangerous_flag = dangerous_flag,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -2829,7 +2850,11 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 
 /// Linux: 根据用户首选终端启动
 #[cfg(target_os = "linux")]
-fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
+fn launch_linux_terminal(
+    config_file: &std::path::Path,
+    cwd: Option<&Path>,
+    dangerous_skip_permissions: bool,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
@@ -2852,6 +2877,7 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
+    let dangerous_flag = claude_dangerous_flag(dangerous_skip_permissions);
 
     let script_content = format!(
         r#"#!/bin/bash
@@ -2859,12 +2885,13 @@ trap 'rm -f "{config_path}" "{script_file}"' EXIT
 {cd_command}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
-claude --settings "{config_path}"
+claude --settings "{config_path}"{dangerous_flag}
 exec bash --norc --noprofile
 "#,
         config_path = config_path,
         script_file = script_file.display(),
         cd_command = cd_command,
+        dangerous_flag = dangerous_flag,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -2944,6 +2971,7 @@ fn launch_windows_terminal(
     temp_dir: &std::path::Path,
     config_file: &std::path::Path,
     cwd: Option<&Path>,
+    dangerous_skip_permissions: bool,
 ) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("cmd");
@@ -2951,13 +2979,14 @@ fn launch_windows_terminal(
     let bat_file = temp_dir.join(format!("cc_switch_claude_{}.bat", std::process::id()));
     let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
     let cwd_command = build_windows_cwd_command(cwd);
+    let dangerous_flag = claude_dangerous_flag(dangerous_skip_permissions);
 
     let content = format!(
         "@echo off
 {cwd_command}
 echo Using provider-specific claude config:
 echo {}
-claude --settings \"{}\"
+claude --settings \"{}\"{dangerous_flag}
 del \"{}\" >nul 2>&1
 del \"%~f0\" >nul 2>&1
 ",
@@ -2965,6 +2994,7 @@ del \"%~f0\" >nul 2>&1
         config_path_for_batch,
         config_path_for_batch,
         cwd_command = cwd_command,
+        dangerous_flag = dangerous_flag,
     );
 
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
@@ -2993,6 +3023,21 @@ del \"%~f0\" >nul 2>&1
     }
 
     result
+}
+
+/// 当开关开启时返回 ` --dangerously-skip-permissions`（含前导空格，直接拼到
+/// `claude --settings "..."` 之后）；关闭时返回空串。flag 为静态字面量，不含
+/// 用户输入，可安全拼入 shell/batch 脚本。
+#[cfg_attr(
+    not(any(target_os = "macos", target_os = "linux", target_os = "windows")),
+    allow(dead_code)
+)]
+fn claude_dangerous_flag(enabled: bool) -> &'static str {
+    if enabled {
+        " --dangerously-skip-permissions"
+    } else {
+        ""
+    }
 }
 
 fn build_shell_cd_command(cwd: Option<&Path>) -> String {

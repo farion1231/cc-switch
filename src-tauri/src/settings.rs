@@ -446,6 +446,11 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_terminal: Option<String>,
 
+    /// 在 Claude Code 终端中追加 `--dangerously-skip-permissions`（默认关闭）
+    /// 仅作用于 Claude / Claude Desktop 的"打开终端"，是设备级开关。
+    #[serde(default)]
+    pub claude_dangerous_skip_permissions: bool,
+
     // ===== 本机自动迁移状态 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_migrations: Option<LocalMigrations>,
@@ -501,6 +506,7 @@ impl Default for AppSettings {
             backup_interval_hours: None,
             backup_retain_count: None,
             preferred_terminal: None,
+            claude_dangerous_skip_permissions: false,
             local_migrations: None,
         }
     }
@@ -972,6 +978,17 @@ pub fn get_preferred_terminal() -> Option<String> {
         })
         .preferred_terminal
         .clone()
+}
+
+/// 是否在 Claude Code 终端中追加 `--dangerously-skip-permissions`
+pub fn get_claude_dangerous_skip_permissions() -> bool {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .claude_dangerous_skip_permissions
 }
 
 // ===== WebDAV 同步设置管理函数 =====

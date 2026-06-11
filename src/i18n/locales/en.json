@@ -701,6 +701,8 @@
       "title": "Preferred Terminal",
       "description": "Choose which terminal app to use when clicking the terminal button",
       "fallbackHint": "If the selected terminal is unavailable, the system default will be used",
+      "dangerousSkipPermissions": "Skip permission prompts (Claude Code)",
+      "dangerousSkipPermissionsDescription": "When enabled, opening a Claude Code terminal runs claude with --dangerously-skip-permissions. Use with caution: it bypasses Claude Code's permission confirmations.",
       "options": {
         "macos": {
           "terminal": "Terminal.app",
