@@ -514,6 +514,7 @@ pub(crate) fn write_live_with_common_config(
     let mut effective_provider = provider.clone();
     effective_provider.settings_config =
         build_effective_settings_with_common_config(db, app_type, provider)?;
+    preserve_live_codex_common_config(app_type, &mut effective_provider.settings_config)?;
 
     if matches!(app_type, AppType::ClaudeDesktop) {
         crate::claude_desktop_config::apply_provider(db, &effective_provider)?;
@@ -526,6 +527,78 @@ pub(crate) fn write_live_with_common_config(
     }
 
     write_live_snapshot(app_type, &effective_provider)
+}
+
+fn preserve_live_codex_common_config(
+    app_type: &AppType,
+    settings: &mut Value,
+) -> Result<(), AppError> {
+    if !matches!(app_type, AppType::Codex) {
+        return Ok(());
+    }
+
+    let live_settings = match crate::codex_config::read_codex_live_settings() {
+        Ok(settings) => settings,
+        Err(err) => {
+            log::debug!("Skipping live Codex common config preservation: {err}");
+            return Ok(());
+        }
+    };
+    let Some(live_config) = live_settings.get("config").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    let live_common = extract_codex_live_common_config(live_config)?;
+    if live_common.trim().is_empty() {
+        return Ok(());
+    }
+
+    let Some(obj) = settings.as_object_mut() else {
+        return Ok(());
+    };
+    let target_config = obj.get("config").and_then(Value::as_str).unwrap_or("");
+    let mut target_doc = if target_config.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        target_config.parse::<DocumentMut>().map_err(|e| {
+            AppError::Message(format!(
+                "Invalid Codex config.toml while preserving live common config: {e}"
+            ))
+        })?
+    };
+    let source_doc = live_common.parse::<DocumentMut>().map_err(|e| {
+        AppError::Message(format!(
+            "Invalid Codex live common config while preserving provider write: {e}"
+        ))
+    })?;
+
+    merge_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
+    obj.insert("config".to_string(), Value::String(target_doc.to_string()));
+    Ok(())
+}
+
+fn extract_codex_live_common_config(config_toml: &str) -> Result<String, AppError> {
+    if config_toml.trim().is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut doc = config_toml.parse::<DocumentMut>().map_err(|e| {
+        AppError::Message(format!(
+            "Invalid Codex config.toml while extracting live common config: {e}"
+        ))
+    })?;
+    let root = doc.as_table_mut();
+    for key in [
+        "OPENAI_API_KEY",
+        "model",
+        "model_provider",
+        "base_url",
+        "experimental_bearer_token",
+        "model_catalog_json",
+    ] {
+        root.remove(key);
+    }
+    root.remove("model_providers");
+    Ok(doc.to_string())
 }
 
 pub(crate) fn strip_common_config_from_live_settings(
