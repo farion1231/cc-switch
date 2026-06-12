@@ -1,51 +1,19 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Settings2, Plus, Trash2 } from "lucide-react";
+import { Settings2, Trash2, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
-
-interface StrategyRule {
-  id: string;
-  name: string;
-  type: "route" | "cascade" | "debate" | "moa";
-  complexityRange: [number, number];
-  riskLevels: string[];
-  models: string[];
-  qualityThreshold: number;
-}
-
-const MOCK_STRATEGIES: StrategyRule[] = [
-  {
-    id: "1",
-    name: "route",
-    type: "route",
-    complexityRange: [0, 0.4],
-    riskLevels: ["low"],
-    models: ["cheap_executor_fast"],
-    qualityThreshold: 0.65,
-  },
-  {
-    id: "2",
-    name: "cascade",
-    type: "cascade",
-    complexityRange: [0.4, 0.7],
-    riskLevels: ["medium", "high"],
-    models: ["cheap_executor_code", "mid_executor_code", "frontier_planner"],
-    qualityThreshold: 0.65,
-  },
-  {
-    id: "3",
-    name: "debate",
-    type: "debate",
-    complexityRange: [0.7, 1.0],
-    riskLevels: ["high", "critical"],
-    models: ["mid_executor_code", "cheap_executor_code", "frontier_planner"],
-    qualityThreshold: 0.75,
-  },
-];
+import {
+  type OrchestrationConfig,
+  type StrategyRule,
+  getConfig,
+  saveConfig,
+  getConfigPath,
+  configToStrategyRules,
+} from "@/lib/api/orchestration";
 
 const TYPE_COLORS: Record<string, string> = {
   route: "bg-blue-500/15 text-blue-600",
@@ -56,11 +24,79 @@ const TYPE_COLORS: Record<string, string> = {
 
 export function StrategyEditor() {
   const { t } = useTranslation();
-  const [strategies, setStrategies] = useState<StrategyRule[]>(MOCK_STRATEGIES);
+  const [strategies, setStrategies] = useState<StrategyRule[]>([]);
+  const [configPath, setConfigPath] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadConfig = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const config = await getConfig();
+      const rules = configToStrategyRules(config);
+      setStrategies(rules);
+      try {
+        const path = await getConfigPath();
+        setConfigPath(path);
+      } catch {
+        setConfigPath("configs/strategies.yaml");
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadConfig();
+  }, [loadConfig]);
+
+  const handleSave = useCallback(async () => {
+    try {
+      setSaving(true);
+      setError(null);
+      // Rebuild config from current strategy rules
+      const config: OrchestrationConfig = {
+        enabled: true,
+        models: {},
+        strategies: {},
+      };
+      for (const s of strategies) {
+        const action = buildAction(s);
+        if (!action) continue;
+        config.strategies[s.name] = {
+          description: s.description ?? s.name,
+          when: {
+            complexity: s.complexityRange,
+            risk: s.riskLevels,
+          },
+          action: action as OrchestrationConfig["strategies"][string]["action"],
+        };
+      }
+      await saveConfig(config);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [strategies]);
 
   const removeStrategy = (id: string) => {
-    setStrategies((prev) => prev.filter((s) => s.id !== id));
+    setStrategies((prev) => prev.filter((s) => s.name !== id));
   };
+
+  if (loading) {
+    return (
+      <Card className="border-border/50">
+        <CardContent className="p-4 text-sm text-muted-foreground">
+          {t("orchestration.loading", { defaultValue: "Loading strategies..." })}
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card className="border-border/50">
@@ -68,27 +104,52 @@ export function StrategyEditor() {
         <div className="flex items-center gap-2">
           <Settings2 className="h-4 w-4 text-muted-foreground" />
           <CardTitle className="text-sm font-medium">
-            {t("orchestration.strategyEditor", {
-              defaultValue: "Strategy Editor",
-            })}
+            {t("orchestration.strategyEditor", { defaultValue: "Strategy Editor" })}
           </CardTitle>
+          {configPath && (
+            <span className="text-xs text-muted-foreground">({configPath})</span>
+          )}
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7 text-xs gap-1"
-          title={t("orchestration.addStrategy", {
-            defaultValue: "Add Strategy",
-          })}
-        >
-          <Plus className="h-3 w-3" />
-          {t("orchestration.addStrategy", { defaultValue: "Add Strategy" })}
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs gap-1"
+            onClick={loadConfig}
+            title={t("orchestration.reload", { defaultValue: "Reload" })}
+          >
+            <RefreshCw className="h-3 w-3" />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs gap-1"
+            disabled={saving}
+            onClick={handleSave}
+            title={t("orchestration.save", { defaultValue: "Save to YAML" })}
+          >
+            {saving
+              ? t("orchestration.saving", { defaultValue: "Saving..." })
+              : t("orchestration.save", { defaultValue: "Save" })}
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="space-y-3">
+        {error && (
+          <div className="text-xs text-destructive bg-destructive/10 rounded p-2">
+            {error}
+          </div>
+        )}
+        {strategies.length === 0 && (
+          <div className="text-xs text-muted-foreground">
+            {t("orchestration.noStrategies", {
+              defaultValue: "No strategies defined. Edit configs/strategies.yaml to add some.",
+            })}
+          </div>
+        )}
         {strategies.map((strategy) => (
           <div
-            key={strategy.id}
+            key={strategy.name}
             className="rounded-lg border border-border/50 p-3 space-y-2"
           >
             <div className="flex items-center justify-between">
@@ -105,7 +166,7 @@ export function StrategyEditor() {
                 variant="ghost"
                 size="icon"
                 className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                onClick={() => removeStrategy(strategy.id)}
+                onClick={() => removeStrategy(strategy.name)}
                 title={t("orchestration.removeStrategy", {
                   defaultValue: "Remove strategy",
                 })}
@@ -117,9 +178,7 @@ export function StrategyEditor() {
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div>
                 <Label className="text-muted-foreground">
-                  {t("orchestration.complexity", {
-                    defaultValue: "Complexity",
-                  })}
+                  {t("orchestration.complexity", { defaultValue: "Complexity" })}
                 </Label>
                 <div className="flex items-center gap-1 mt-0.5">
                   <Input
@@ -145,17 +204,22 @@ export function StrategyEditor() {
               </div>
               <div>
                 <Label className="text-muted-foreground">
-                  {t("orchestration.risk", { defaultValue: "Risk" })}
+                  {t("orchestration.description", { defaultValue: "Description" })}
                 </Label>
-                <div className="flex gap-1 mt-0.5">
-                  {strategy.riskLevels.map((r) => (
-                    <Badge key={r} variant="outline" className="text-xs">
-                      {r}
-                    </Badge>
-                  ))}
-                </div>
+                <div className="text-xs mt-0.5">{strategy.description}</div>
               </div>
             </div>
+
+            {strategy.judge && (
+              <div className="text-xs text-muted-foreground">
+                Judge: <Badge variant="outline" className="text-xs">{strategy.judge}</Badge>
+              </div>
+            )}
+            {strategy.aggregator && (
+              <div className="text-xs text-muted-foreground">
+                Aggregator: <Badge variant="outline" className="text-xs">{strategy.aggregator}</Badge>
+              </div>
+            )}
 
             <div>
               <Label className="text-muted-foreground text-xs">
@@ -174,4 +238,42 @@ export function StrategyEditor() {
       </CardContent>
     </Card>
   );
+}
+
+function buildAction(
+  s: StrategyRule,
+): Record<string, unknown> | null {
+  switch (s.type) {
+    case "route":
+      return {
+        type: "route",
+        use_model: s.models[0] ?? "unknown",
+        verify: false,
+      };
+    case "cascade":
+      return {
+        type: "cascade",
+        models: s.models,
+        verify_each: true,
+        escalate_on_fail: true,
+        quality_threshold: s.qualityThreshold,
+      };
+    case "debate":
+      return {
+        type: "debate",
+        debaters: s.models,
+        judge: s.judge ?? s.models[0] ?? "unknown",
+        quality_threshold: s.qualityThreshold,
+      };
+    case "moa":
+      return {
+        type: "moa",
+        proposers: s.models,
+        aggregator: s.aggregator ?? s.models[0] ?? "unknown",
+        verify_each: true,
+        quality_threshold: s.qualityThreshold,
+      };
+    default:
+      return null;
+  }
 }

@@ -259,6 +259,10 @@ impl OrchestrationEngine {
         }
     }
 
+    pub async fn get_config(&self) -> crate::orchestration::config::OrchestrationConfig {
+        self.loader.get_config().await
+    }
+
     pub async fn reload_config(&self) -> Result<(), String> {
         self.loader.reload().await
     }

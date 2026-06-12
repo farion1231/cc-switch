@@ -1322,6 +1322,9 @@ pub fn run() {
             commands::orchestration_status,
             commands::orchestration_reload,
             commands::orchestration_toggle,
+            commands::get_strategies_config,
+            commands::save_strategies_config,
+            commands::get_strategies_config_path,
             // Session manager
             commands::list_sessions,
             commands::get_session_messages,
