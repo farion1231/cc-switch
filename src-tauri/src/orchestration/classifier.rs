@@ -87,12 +87,19 @@ impl TaskClassifier {
 
     fn calc_complexity(text: &str, msg_count: usize, has_tools: bool) -> f64 {
         let token_estimate = text.len() as f64 / 4.0;
-        let mut score = (token_estimate / 4000.0).min(0.5);
+        // Text length contributes up to 0.6 (not capped at 0.5, so long non-tool
+        // messages can still reach high complexity).
+        let mut score = (token_estimate / 3000.0).min(0.6);
         if has_tools {
-            score += 0.3;
+            score += 0.25;
         }
         if msg_count > 6 {
-            score += 0.2;
+            score += 0.15;
+        }
+        // Detect multi-file / multi-task complexity from markdown headers
+        let header_count = text.matches("\n#").count();
+        if header_count > 3 {
+            score += 0.1;
         }
         score.min(1.0)
     }

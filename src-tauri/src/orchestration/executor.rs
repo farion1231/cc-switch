@@ -103,7 +103,8 @@ impl StrategyExecutor {
         let start = std::time::Instant::now();
         let mut total_input = 0u64;
         let mut total_output = 0u64;
-        let mut last_error = None;
+        let mut last_error: Option<String> = None;
+        let mut last_success: Option<(String, ExecutionResult)> = None;
         let mut attempts = 0u32;
 
         for model_key in model_keys {
@@ -143,18 +144,41 @@ impl StrategyExecutor {
                         });
                     }
 
+                    // Save this response as fallback — even though quality is below threshold,
+                    // it's better to return it than an error if nothing else works.
                     log::info!(
                         "[Cascade] Model '{}' below threshold (score={:.2} < {:.2}), escalating",
                         model_key,
                         score,
                         quality_threshold
                     );
+                    let fallback_result = ExecutionResult {
+                        content: resp.content,
+                        model_used: resp.model,
+                        strategy: "cascade".to_string(),
+                        total_latency_ms: start.elapsed().as_millis() as u64,
+                        total_input_tokens: total_input,
+                        total_output_tokens: total_output,
+                        cascade_attempts: attempts,
+                        verified: false,
+                        judge_score: Some(score),
+                    };
+                    last_success = Some((model_key.clone(), fallback_result));
                 }
                 Err(e) => {
                     log::warn!("[Cascade] Model '{}' failed: {}, trying next", model_key, e);
                     last_error = Some(e);
                 }
             }
+        }
+
+        // Prefer returning the last (below-threshold) successful response over a hard error.
+        if let Some((model_key, result)) = last_success {
+            log::warn!(
+                "[Cascade] All models below threshold. Returning last response from '{}' (verified=false)",
+                model_key
+            );
+            return Ok(result);
         }
 
         Err(last_error.unwrap_or_else(|| "All cascade models exhausted".to_string()))
