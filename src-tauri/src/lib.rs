@@ -441,7 +441,7 @@ pub fn run() {
                         Default::default()
                     }
                 };
-                let executor = StrategyExecutor::new(config.models.clone());
+                let executor = StrategyExecutor::new(config.models.clone())?;
                 let engine = Arc::new(OrchestrationEngine::with_executor(strategies_path, executor));
 
                 // Share the same Arc with ProxyService
