@@ -14,4 +14,9 @@ describe("usage format helpers", () => {
     expect(getLocaleFromLanguage("zh_TW")).toBe("zh-TW");
     expect(getLocaleFromLanguage("zh-HK")).toBe("zh-TW");
   });
+
+  it("resolves Vietnamese locale aliases", () => {
+    expect(getLocaleFromLanguage("vi")).toBe("vi-VN");
+    expect(getLocaleFromLanguage("vi-VN")).toBe("vi-VN");
+  });
 });
