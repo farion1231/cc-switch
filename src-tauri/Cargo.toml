@@ -1,5 +1,5 @@
 [package]
-name = "cc-switch"
+name = "ec-switch"
 version = "3.15.0"
 description = "Desktop manager for Claude Code, Codex, Gemini CLI, OpenCode, OpenClaw, Hermes, providers, proxy, MCP, prompts, skills, and sessions"
 authors = ["OmniAgent Contributors"]
@@ -11,7 +11,7 @@ rust-version = "1.85.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-name = "cc_switch_lib"
+name = "ec_switch_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 doctest = false
 

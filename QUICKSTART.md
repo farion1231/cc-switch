@@ -1,4 +1,4 @@
-# CC Switch — 快速上手指南
+# EC Switch — 快速上手指南
 
 ## 启动应用
 
@@ -14,7 +14,7 @@ export INCLUDE="/c/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/V
 pnpm dev
 
 # 或直接运行编译好的产品
-./src-tauri/target/release/cc-switch.exe
+./src-tauri/target/release/ec-switch.exe
 ```
 
 ---

@@ -1961,12 +1961,12 @@ check-model-skills 作为任务分配闸门
 
 是的，现在 GitHub 上已经有非常接近你目标的开源底座。你的目标可以明确为：
 
-做一个本地 AI Coding Gateway，像 CC Switch 一样，把 Claude Code、Codex、Gemini CLI、OpenCode 等客户端统一接到本地网关，再由本地网关按规则路由到 GPT、Claude、DeepSeek、GLM、Qwen、Ollama、vLLM、OpenRouter、LiteLLM 等模型，并记录成本、成功率、失败率，用来测试“多模型组合是否更划算”。
+做一个本地 AI Coding Gateway，像 EC Switch 一样，把 Claude Code、Codex、Gemini CLI、OpenCode 等客户端统一接到本地网关，再由本地网关按规则路由到 GPT、Claude、DeepSeek、GLM、Qwen、Ollama、vLLM、OpenRouter、LiteLLM 等模型，并记录成本、成功率、失败率，用来测试“多模型组合是否更划算”。
 
 我建议你不要从零开始，直接选下面这个组合。
 
 结论：最适合你的开发底座
-第一选择：直接 Fork cc-switch
+第一选择：直接 Fork ec-switch
 
 这是最接近你目标的项目。它本身就是一个跨平台桌面 App，用来管理 Claude Code、Codex、Gemini CLI、OpenCode、OpenClaw、Hermes Agent 等工具。项目是 MIT license，技术栈是 Tauri 2.8 + Rust 后端、React + TypeScript 前端，并且已有本地 proxy、provider 管理、MCP 管理、使用统计、会话管理等模块。
 
@@ -1979,9 +1979,9 @@ pnpm dev
 
 它的本地路由机制已经非常接近你的目标：开启 routing 后，它会把 Claude Code 的 ANTHROPIC_BASE_URL 改成本地地址，把 Codex 的 base_url 改成 http://127.0.0.1:15721/v1，然后本地 routing service 负责识别请求来源、选择 provider、转发请求、记录日志，并支持 failover。
 
-所以如果你要做“类似 CC Switch 的本地网关”，最优路线不是重新造 UI，而是：
+所以如果你要做“类似 EC Switch 的本地网关”，最优路线不是重新造 UI，而是：
 
-Fork cc-switch，然后重点增强它的 Router / ProxyService / Usage Statistics / Evaluation Harness。
+Fork ec-switch，然后重点增强它的 Router / ProxyService / Usage Statistics / Evaluation Harness。
 
 你要加的不是普通模型切换，而是：
 
@@ -2042,7 +2042,7 @@ litellm --config litellm_config.yaml --port 4000
 
 但是 LiteLLM 本身不是专门为 Claude Code / Codex 做桌面配置切换的。所以最佳组合是：
 
-CC Switch / 你的本地 App
+EC Switch / 你的本地 App
   ↓
 本地统一 Gateway
   ↓
@@ -2115,7 +2115,7 @@ wire_api = "chat"
 
 Claude Code / Codex / Gemini CLI / OpenCode
         ↓
-本地 App：Fork cc-switch
+本地 App：Fork ec-switch
         ↓
 Local Gateway Core
         ↓
@@ -2210,7 +2210,7 @@ git clone https://github.com/musistudio/claude-code-router.git
 支持 transformers；
 支持 /model 动态切换。
 
-但它不够像完整 CC Switch。
+但它不够像完整 EC Switch。
 
 如果你要做稳定企业级 Gateway
 
@@ -2232,14 +2232,14 @@ provider 支持最广；
 
 最实际、最快、最符合你目标的组合是：
 
-主 App：Fork cc-switch
+主 App：Fork ec-switch
 Claude Code 路由参考：claude-code-router
 底层 provider 网关：LiteLLM
 协议转换参考：claude-code-proxy
 测试客户端：Claude Code + Codex CLI
 评测框架：SWE-bench + Aider benchmark + 自己的真实项目测试集
 第一阶段开发路线：7 天 MVP
-Day 1：跑通 cc-switch
+Day 1：跑通 ec-switch
 git clone https://github.com/farion1231/cc-switch.git
 cd cc-switch
 pnpm install
@@ -2318,7 +2318,7 @@ Claude Code 的核心是 Anthropic API 风格，所以你需要支持：
 
 /v1/messages
 
-cc-switch 已经通过修改 ANTHROPIC_BASE_URL 把 Claude Code 请求导向本地 routing service；文档明确写了启用 routing 后会把 ANTHROPIC_BASE_URL 改到 http://127.0.0.1:15721。
+ec-switch 已经通过修改 ANTHROPIC_BASE_URL 把 Claude Code 请求导向本地 routing service；文档明确写了启用 routing 后会把 ANTHROPIC_BASE_URL 改到 http://127.0.0.1:15721。
 
 你需要在 proxy 里实现：
 
@@ -2335,7 +2335,7 @@ LiteLLM / OpenAI / Gemini / DeepSeek
 git clone https://github.com/1rgs/claude-code-proxy.git
 第二阶段：加智能路由
 
-你要在 cc-switch 的 ProxyService 或单独新建 SmartRouterService。
+你要在 ec-switch 的 ProxyService 或单独新建 SmartRouterService。
 
 路由策略建议：
 
@@ -2426,7 +2426,7 @@ evals/
   python_refactor/
 你真正要改 cc-switch 的哪些地方
 
-cc-switch 现有结构里，最关键的是这些模块：
+ec-switch 现有结构里，最关键的是这些模块：
 
 src-tauri/src/proxy/
 src-tauri/src/services/

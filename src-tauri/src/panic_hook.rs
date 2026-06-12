@@ -1,6 +1,6 @@
 //! Panic Hook 模块
 //!
-//! 在应用崩溃时捕获 panic 信息并记录到 `<app_config_dir>/crash.log` 文件中（默认 `~/.cc-switch/crash.log`）。
+//! 在应用崩溃时捕获 panic 信息并记录到 `<app_config_dir>/crash.log` 文件中（默认 `~/.ec-switch/crash.log`）。
 //! 便于用户和开发者诊断闪退问题。
 
 use std::fs::OpenOptions;
@@ -22,7 +22,7 @@ pub fn init_app_config_dir(dir: PathBuf) {
 fn default_app_config_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".cc-switch")
+        .join(".ec-switch")
 }
 
 /// 获取应用配置目录（优先使用初始化时写入的值；不会 panic）
@@ -192,7 +192,7 @@ mod tests {
     fn test_crash_log_path() {
         let path = get_crash_log_path();
         assert!(path.ends_with("crash.log"));
-        assert!(path.to_string_lossy().contains(".cc-switch"));
+        assert!(path.to_string_lossy().contains(".ec-switch"));
     }
 
     #[test]

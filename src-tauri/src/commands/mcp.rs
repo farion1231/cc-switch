@@ -47,7 +47,7 @@ pub struct McpConfigResponse {
     pub servers: HashMap<String, serde_json::Value>,
 }
 
-/// 获取 MCP 配置（来自 ~/.cc-switch/config.json）
+/// 获取 MCP 配置（来自 ~/.ec-switch/config.json）
 use std::str::FromStr;
 
 #[tauri::command]

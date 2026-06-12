@@ -919,7 +919,7 @@ export function ClaudeDesktopProviderForm({
                     <p className="text-xs leading-relaxed text-muted-foreground">
                       {t("claudeDesktop.routeMapHint", {
                         defaultValue:
-                          "选择模型角色后，CC Switch 会自动生成 Claude Desktop 兼容路由；菜单显示名可以写 DeepSeek、Kimi 等品牌模型，实际请求模型按右侧填写内容发送。",
+                          "选择模型角色后，EC Switch 会自动生成 Claude Desktop 兼容路由；菜单显示名可以写 DeepSeek、Kimi 等品牌模型，实际请求模型按右侧填写内容发送。",
                       })}
                     </p>
                   </div>

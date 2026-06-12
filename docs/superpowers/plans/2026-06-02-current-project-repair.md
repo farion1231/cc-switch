@@ -23,7 +23,7 @@
 - `configs/strategies.yaml` owns the shipped editable orchestration strategies.
 - `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `QUICKSTART.md`, and `docs/architecture/overview.md` own project identity and user-facing naming.
 - `src/components/orchestration/*.tsx` and `src/components/proxy/ProxyPanel.tsx` require Prettier formatting.
-- `cc-switch-main/src/config/universalProviderPresets.ts` is an unused duplicate tree and should be removed if `rg -n 'cc-switch-main'` still returns no references.
+- `ec-switch-main/src/config/universalProviderPresets.ts` is an unused duplicate tree and should be removed if `rg -n 'ec-switch-main'` still returns no references.
 
 ## Scope Check
 
@@ -796,10 +796,10 @@ git -c safe.directory=D:/14-OneAgentSwithc commit -m "fix(orchestration): valida
 Run:
 
 ```powershell
-rg -n '"productName"|"version"|# CC Switch|# OmniAgent Workbench' package.json src-tauri\Cargo.toml src-tauri\tauri.conf.json README_ZH.md QUICKSTART.md docs\architecture\overview.md
+rg -n '"productName"|"version"|# EC Switch|# OmniAgent Workbench' package.json src-tauri\Cargo.toml src-tauri\tauri.conf.json README_ZH.md QUICKSTART.md docs\architecture\overview.md
 ```
 
-Expected before the fix: `CC Switch 3.15.0` in Tauri/README and `omniagent-workbench 0.1.0` in package/Cargo docs.
+Expected before the fix: `EC Switch 3.15.0` in Tauri/README and `omniagent-workbench 0.1.0` in package/Cargo docs.
 
 - [ ] **Step 2: Update `package.json` metadata**
 
@@ -807,7 +807,7 @@ Change the first fields in `package.json` to:
 
 ```json
 {
-  "name": "cc-switch",
+  "name": "ec-switch",
   "version": "3.15.0",
   "description": "Desktop manager for Claude Code, Codex, Gemini CLI, OpenCode, OpenClaw, Hermes, providers, proxy, MCP, prompts, skills, and sessions",
 ```
@@ -818,7 +818,7 @@ Change the first fields in `src-tauri/Cargo.toml` to:
 
 ```toml
 [package]
-name = "cc-switch"
+name = "ec-switch"
 version = "3.15.0"
 description = "Desktop manager for Claude Code, Codex, Gemini CLI, OpenCode, OpenClaw, Hermes, providers, proxy, MCP, prompts, skills, and sessions"
 authors = ["OmniAgent Contributors"]
@@ -832,7 +832,7 @@ Leave the lib section unchanged:
 
 ```toml
 [lib]
-name = "cc_switch_lib"
+name = "ec_switch_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 doctest = false
 ```
@@ -848,7 +848,7 @@ In `QUICKSTART.md`, replace:
 with:
 
 ```markdown
-# CC Switch — 快速上手指南
+# EC Switch — 快速上手指南
 ```
 
 Replace:
@@ -860,7 +860,7 @@ Replace:
 with:
 
 ```markdown
-./src-tauri/target/release/cc-switch.exe
+./src-tauri/target/release/ec-switch.exe
 ```
 
 - [ ] **Step 5: Update architecture title and diagram label**
@@ -874,7 +874,7 @@ In `docs/architecture/overview.md`, replace:
 with:
 
 ```markdown
-# CC Switch — Architecture Overview
+# EC Switch — Architecture Overview
 ```
 
 Replace the diagram label:
@@ -886,7 +886,7 @@ Replace the diagram label:
 with:
 
 ```text
-│  │              CC Switch                       │                 │
+│  │              EC Switch                       │                 │
 ```
 
 - [ ] **Step 6: Refresh lock files after package rename**
@@ -910,17 +910,17 @@ git -c safe.directory=D:/14-OneAgentSwithc commit -m "chore: align project ident
 ### Task 8: Remove Unused Duplicate Source Tree
 
 **Files:**
-- Delete: `cc-switch-main/src/config/universalProviderPresets.ts`
-- Delete directory if empty: `cc-switch-main/src/config`
-- Delete directory if empty: `cc-switch-main/src`
-- Delete directory if empty: `cc-switch-main`
+- Delete: `ec-switch-main/src/config/universalProviderPresets.ts`
+- Delete directory if empty: `ec-switch-main/src/config`
+- Delete directory if empty: `ec-switch-main/src`
+- Delete directory if empty: `ec-switch-main`
 
 - [ ] **Step 1: Prove the duplicate tree is unreferenced**
 
 Run:
 
 ```powershell
-rg -n 'cc-switch-main' .gitignore package.json pnpm-workspace.yaml tsconfig.json vite.config.ts src tests docs src-tauri
+rg -n 'ec-switch-main' .gitignore package.json pnpm-workspace.yaml tsconfig.json vite.config.ts src tests docs src-tauri
 ```
 
 Expected before deletion: no matches.
@@ -931,7 +931,7 @@ Use PowerShell with path checks:
 
 ```powershell
 $root = (Resolve-Path .).Path
-$file = Join-Path $root 'cc-switch-main\src\config\universalProviderPresets.ts'
+$file = Join-Path $root 'ec-switch-main\src\config\universalProviderPresets.ts'
 if ((Test-Path -LiteralPath $file) -and $file.StartsWith($root)) {
   Remove-Item -LiteralPath $file -Force
 }
@@ -943,7 +943,7 @@ Use PowerShell with path checks:
 
 ```powershell
 $root = (Resolve-Path .).Path
-foreach ($relative in @('cc-switch-main\src\config', 'cc-switch-main\src', 'cc-switch-main')) {
+foreach ($relative in @('ec-switch-main\src\config', 'ec-switch-main\src', 'ec-switch-main')) {
   $path = Join-Path $root $relative
   if ((Test-Path -LiteralPath $path) -and $path.StartsWith($root)) {
     $children = Get-ChildItem -LiteralPath $path -Force
@@ -959,7 +959,7 @@ foreach ($relative in @('cc-switch-main\src\config', 'cc-switch-main\src', 'cc-s
 Run:
 
 ```powershell
-Test-Path .\cc-switch-main
+Test-Path .\ec-switch-main
 ```
 
 Expected after deletion: `False`.
@@ -967,7 +967,7 @@ Expected after deletion: `False`.
 - [ ] **Step 5: Commit**
 
 ```powershell
-git -c safe.directory=D:/14-OneAgentSwithc add -A cc-switch-main
+git -c safe.directory=D:/14-OneAgentSwithc add -A ec-switch-main
 git -c safe.directory=D:/14-OneAgentSwithc commit -m "chore: remove unused duplicate source tree"
 ```
 

@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use cc_switch_lib::{
+use ec_switch_lib::{
     get_claude_settings_path, read_json_file, write_codex_live_atomic, AppError, AppType, McpApps,
     McpServer, MultiAppConfig, Provider, ProviderMeta, ProviderService,
 };
@@ -178,7 +178,7 @@ command = "say"
         .expect("switch provider should succeed");
 
     let auth_value: serde_json::Value =
-        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
+        read_json_file(&ec_switch_lib::get_codex_auth_path()).expect("read auth.json");
     assert_eq!(
         auth_value.get("OPENAI_API_KEY").and_then(|v| v.as_str()),
         Some("legacy-key"),
@@ -186,7 +186,7 @@ command = "say"
     );
 
     let config_text =
-        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+        std::fs::read_to_string(ec_switch_lib::get_codex_config_path()).expect("read config.toml");
     assert!(
         config_text.contains("mcp_servers.echo-server"),
         "config.toml should contain synced MCP servers"
@@ -308,7 +308,7 @@ requires_openai_auth = true
         .expect("switch provider should succeed");
 
     let config_text =
-        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+        std::fs::read_to_string(ec_switch_lib::get_codex_config_path()).expect("read config.toml");
     let parsed: toml::Value = toml::from_str(&config_text).expect("parse config.toml");
 
     assert_eq!(
@@ -444,7 +444,7 @@ requires_openai_auth = true
         .expect("switch to bridge provider should succeed");
 
     let auth_value: serde_json::Value =
-        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
+        read_json_file(&ec_switch_lib::get_codex_auth_path()).expect("read auth.json");
     assert_eq!(
         auth_value.get("auth_mode").and_then(|v| v.as_str()),
         Some("chatgpt")
@@ -464,7 +464,7 @@ requires_openai_auth = true
     );
 
     let live_config =
-        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+        std::fs::read_to_string(ec_switch_lib::get_codex_config_path()).expect("read config.toml");
     let parsed_live: toml::Value = toml::from_str(&live_config).expect("parse live config");
     assert_eq!(
         parsed_live
@@ -581,7 +581,7 @@ requires_openai_auth = true
         .expect("switch to official provider should succeed without API key");
 
     let auth_value: serde_json::Value =
-        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
+        read_json_file(&ec_switch_lib::get_codex_auth_path()).expect("read auth.json");
     assert_eq!(
         auth_value.get("auth_mode").and_then(|v| v.as_str()),
         Some("chatgpt")
@@ -601,7 +601,7 @@ requires_openai_auth = true
     );
 
     let live_config =
-        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+        std::fs::read_to_string(ec_switch_lib::get_codex_config_path()).expect("read config.toml");
     assert!(
         !live_config.contains("experimental_bearer_token"),
         "official login provider has no API key to inject"
@@ -679,7 +679,7 @@ fn provider_service_switch_codex_official_accounts_write_auth_json() {
     ProviderService::switch(&state, AppType::Codex, "official-b")
         .expect("switch to official account B should write auth.json");
     let auth_b: serde_json::Value =
-        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth B");
+        read_json_file(&ec_switch_lib::get_codex_auth_path()).expect("read auth B");
     assert_eq!(
         auth_b
             .pointer("/tokens/access_token")
@@ -691,7 +691,7 @@ fn provider_service_switch_codex_official_accounts_write_auth_json() {
     ProviderService::switch(&state, AppType::Codex, "official-a")
         .expect("switch back to official account A should use backfilled live auth");
     let auth_a: serde_json::Value =
-        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth A");
+        read_json_file(&ec_switch_lib::get_codex_auth_path()).expect("read auth A");
     assert_eq!(
         auth_a
             .pointer("/tokens/access_token")
@@ -1039,7 +1039,7 @@ fn switch_packycode_gemini_updates_security_selected_type() {
     ProviderService::switch(&state, AppType::Gemini, "packy-gemini")
         .expect("switching to PackyCode Gemini should succeed");
 
-    // Gemini security settings are written to ~/.gemini/settings.json, not ~/.cc-switch/settings.json
+    // Gemini security settings are written to ~/.gemini/settings.json, not ~/.ec-switch/settings.json
     let settings_path = home.join(".gemini").join("settings.json");
     assert!(
         settings_path.exists(),
@@ -1094,7 +1094,7 @@ fn packycode_partner_meta_triggers_security_flag_even_without_keywords() {
     ProviderService::switch(&state, AppType::Gemini, "packy-meta")
         .expect("switching to partner meta provider should succeed");
 
-    // Gemini security settings are written to ~/.gemini/settings.json, not ~/.cc-switch/settings.json
+    // Gemini security settings are written to ~/.gemini/settings.json, not ~/.ec-switch/settings.json
     let settings_path = home.join(".gemini").join("settings.json");
     assert!(
         settings_path.exists(),

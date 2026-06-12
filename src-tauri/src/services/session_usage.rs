@@ -659,7 +659,7 @@ mod tests {
 
     #[test]
     fn test_collect_jsonl_files_includes_subagents() {
-        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        let tmp = std::env::temp_dir().join(format!("ec-switch-test-{}", uuid::Uuid::new_v4()));
         let project = tmp.join("project");
         let session_dir = project.join("test-session");
         let subagents_dir = session_dir.join("subagents");

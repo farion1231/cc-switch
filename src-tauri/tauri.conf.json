@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "CC Switch",
+  "productName": "EC Switch",
   "version": "3.15.0",
-  "identifier": "com.ccswitch.desktop",
+  "identifier": "com.ecswitch.desktop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:3000",
@@ -56,13 +56,13 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["ccswitch"]
+        "schemes": ["ecswitch"]
       }
     },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM4MDI4QzlBNTczOTI4RTMKUldUaktEbFhtb3dDeUM5US9kT0FmdGR5Ti9vQzcwa2dTMlpibDVDUmQ2M0VGTzVOWnd0SGpFVlEK",
       "endpoints": [
-        "https://github.com/farion1231/cc-switch/releases/latest/download/latest.json"
+        "https://github.com/farion1231/ec-switch/releases/latest/download/latest.json"
       ]
     }
   }

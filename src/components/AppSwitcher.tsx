@@ -27,7 +27,7 @@ const ALL_APPS: AppId[] = [
   "openclaw",
   "hermes",
 ];
-const STORAGE_KEY = "cc-switch-last-app";
+const STORAGE_KEY = "ec-switch-last-app";
 
 export function AppSwitcher({
   activeApp,

@@ -1,4 +1,4 @@
-# CC Switch — Architecture Overview
+# EC Switch — Architecture Overview
 
 ---
 
@@ -16,7 +16,7 @@
 │        └───────────────┼───────────────┘                         │
 │                        │ localhost:15721                          │
 │  ┌─────────────────────▼──────────────────────┐                 │
-│  │              CC Switch                      │                 │
+│  │              EC Switch                      │                 │
 │  │         (Tauri 2.x Desktop App)             │                 │
 │  └─────────────────────┬──────────────────────┘                 │
 │                        │                                         │

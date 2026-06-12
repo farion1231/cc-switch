@@ -91,7 +91,7 @@ const baseConfig: WebDavSyncSettings = {
   baseUrl: "https://dav.example.com/dav/",
   username: "alice",
   password: "secret",
-  remoteRoot: "cc-switch-sync",
+  remoteRoot: "ec-switch-sync",
   profile: "default",
   autoSync: false,
   status: {},
@@ -421,7 +421,7 @@ describe("WebdavSyncSection", () => {
       expect(settingsApiMock.webdavSyncFetchRemoteInfo).toHaveBeenCalledTimes(1);
     });
 
-    fireEvent.change(screen.getByPlaceholderText("cc-switch-sync"), {
+    fireEvent.change(screen.getByPlaceholderText("ec-switch-sync"), {
       target: { value: "new-root" },
     });
     fireEvent.click(

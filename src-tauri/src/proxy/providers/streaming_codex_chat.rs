@@ -82,7 +82,7 @@ impl Default for ChatToResponsesState {
         Self {
             response_started: false,
             completed: false,
-            response_id: "resp_ccswitch".to_string(),
+            response_id: "resp_ecswitch".to_string(),
             model: String::new(),
             created_at: 0,
             next_output_index: 0,

@@ -1,17 +1,17 @@
 <div align="center">
 
-# CC Switch
+# EC Switch
 
 ### Der All-in-One-Manager für Claude Code, Codex, Gemini CLI, OpenCode, OpenClaw & Hermes Agent
 
-[![Version](https://img.shields.io/github/v/release/farion1231/cc-switch?color=blue&label=version)](https://github.com/farion1231/cc-switch/releases)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
+[![Version](https://img.shields.io/github/v/release/farion1231/ec-switch?color=blue&label=version)](https://github.com/farion1231/ec-switch/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/ec-switch/releases)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
-[![Downloads](https://img.shields.io/github/downloads/farion1231/cc-switch/total)](https://github.com/farion1231/cc-switch/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/farion1231/ec-switch/total)](https://github.com/farion1231/ec-switch/releases/latest)
 
-<a href="https://trendshift.io/repositories/15372" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15372" alt="farion1231%2Fcc-switch | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+<a href="https://trendshift.io/repositories/15372" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15372" alt="farion1231%2Fec-switch | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
-### 🌐 Die einzige offizielle Website: **[ccswitch.io](https://ccswitch.io)**
+### 🌐 Die einzige offizielle Website: **[ecswitch.io](https://ecswitch.io)**
 
 [English](README.md) | [中文](README_ZH.md) | [日本語](README_JA.md) | Deutsch | [Changelog](CHANGELOG.md)
 
@@ -34,8 +34,8 @@ MiniMax-M2.7 ist ein großes Sprachmodell der nächsten Generation, das auf auto
 
 <table>
 <tr>
-<td width="180"><a href="https://www.packyapi.com/register?aff=cc-switch"><img src="assets/partners/logos/packycode.png" alt="PackyCode" width="150"></a></td>
-<td>Danke an PackyCode für die Unterstützung dieses Projekts! PackyCode ist ein zuverlässiger und effizienter API-Relay-Anbieter, der Relay-Dienste für Claude Code, Codex, Gemini und mehr bereitstellt. PackyCode bietet Sonderrabatte für Nutzer unserer Software: Registrieren Sie sich über <a href="https://www.packyapi.com/register?aff=cc-switch">diesen Link</a> und geben Sie beim ersten Aufladen den Gutscheincode „cc-switch" ein, um 10 % Rabatt zu erhalten.</td>
+<td width="180"><a href="https://www.packyapi.com/register?aff=ec-switch"><img src="assets/partners/logos/packycode.png" alt="PackyCode" width="150"></a></td>
+<td>Danke an PackyCode für die Unterstützung dieses Projekts! PackyCode ist ein zuverlässiger und effizienter API-Relay-Anbieter, der Relay-Dienste für Claude Code, Codex, Gemini und mehr bereitstellt. PackyCode bietet Sonderrabatte für Nutzer unserer Software: Registrieren Sie sich über <a href="https://www.packyapi.com/register?aff=ec-switch">diesen Link</a> und geben Sie beim ersten Aufladen den Gutscheincode „ec-switch" ein, um 10 % Rabatt zu erhalten.</td>
 </tr>
 
 <tr>
@@ -62,8 +62,8 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch"><img src="assets/partners/logos/byteplus.png" alt="BytePlus" width="150"></a></td>
-<td>Danke an Dola seed für die Unterstützung dieses Projekts! Dola Seed 2.0 ist ein voll-modales Allzweck-Großmodell, das von ByteDance eigenständig für den globalen Markt entwickelt wurde. Aufbauend auf einer einheitlichen multimodalen Architektur unterstützt es das gemeinsame Verstehen und Generieren von Text, Bildern, Audio und Video. Es ermöglicht von Haus aus die Zusammenarbeit von Agenten und verfügt über starke Fähigkeiten in den Bereichen Schlussfolgern, Ausführung langer Aufgaben, Werkzeugintegration und Programmierung. Es ist breit einsetzbar — etwa für intelligente Cockpits, persönliche Assistenten, Bildung, Kundensupport, Marketing, Einzelhandel und weitere Szenarien. Es überzeugt bei multimodaler Wahrnehmung, der Ende-zu-Ende-Bewältigung komplexer Aufgaben, stabiler Interaktion und Datensicherheit und ist über die ModelArk-Plattform einfach zugänglich und bereitstellbar. Registrieren Sie sich über <a href="https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch">diesen Link</a> und erhalten Sie pro Modell ein kostenloses Inferenzkontingent von 500.000 Token.<a href="https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch"> >>中国大陆地区的开发者请点击这里</a></td>
+<td width="180"><a href="https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ecswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ecswitch"><img src="assets/partners/logos/byteplus.png" alt="BytePlus" width="150"></a></td>
+<td>Danke an Dola seed für die Unterstützung dieses Projekts! Dola Seed 2.0 ist ein voll-modales Allzweck-Großmodell, das von ByteDance eigenständig für den globalen Markt entwickelt wurde. Aufbauend auf einer einheitlichen multimodalen Architektur unterstützt es das gemeinsame Verstehen und Generieren von Text, Bildern, Audio und Video. Es ermöglicht von Haus aus die Zusammenarbeit von Agenten und verfügt über starke Fähigkeiten in den Bereichen Schlussfolgern, Ausführung langer Aufgaben, Werkzeugintegration und Programmierung. Es ist breit einsetzbar — etwa für intelligente Cockpits, persönliche Assistenten, Bildung, Kundensupport, Marketing, Einzelhandel und weitere Szenarien. Es überzeugt bei multimodaler Wahrnehmung, der Ende-zu-Ende-Bewältigung komplexer Aufgaben, stabiler Interaktion und Datensicherheit und ist über die ModelArk-Plattform einfach zugänglich und bereitstellbar. Registrieren Sie sich über <a href="https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ecswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ecswitch">diesen Link</a> und erhalten Sie pro Modell ein kostenloses Inferenzkontingent von 500.000 Token.<a href="https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ecswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ecswitch"> >>中国大陆地区的开发者请点击这里</a></td>
 </tr>
 
 <tr>
@@ -82,13 +82,13 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch"><img src="assets/partners/logos/ucloud.png" alt="Compshare" width="150"></a></td>
-<td>Danke an Compshare für die Unterstützung dieses Projekts! Compshare ist die KI-Cloud-Plattform von UCloud, die mit nur einem Schlüssel stabile und umfassende in- und ausländische Modell-APIs bereitstellt. Sie bietet kostengünstige Coding-Plan-Pakete für inländische Modelle mit monatlicher und nutzungsbasierter Abrechnung sowie stabile, offiziell gerelayte ausländische Modelle. Unterstützt Claude Code, Codex und API-Zugriff. Unternehmensgerechte hohe Nebenläufigkeit, technischer Support rund um die Uhr und Self-Service-Rechnungsstellung. Wer sich über <a href="https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch">diesen Link</a> registriert, erhält ein kostenloses Plattform-Testguthaben von 5 CNY!</td>
+<td width="180"><a href="https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_ec-switch"><img src="assets/partners/logos/ucloud.png" alt="Compshare" width="150"></a></td>
+<td>Danke an Compshare für die Unterstützung dieses Projekts! Compshare ist die KI-Cloud-Plattform von UCloud, die mit nur einem Schlüssel stabile und umfassende in- und ausländische Modell-APIs bereitstellt. Sie bietet kostengünstige Coding-Plan-Pakete für inländische Modelle mit monatlicher und nutzungsbasierter Abrechnung sowie stabile, offiziell gerelayte ausländische Modelle. Unterstützt Claude Code, Codex und API-Zugriff. Unternehmensgerechte hohe Nebenläufigkeit, technischer Support rund um die Uhr und Self-Service-Rechnungsstellung. Wer sich über <a href="https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_ec-switch">diesen Link</a> registriert, erhält ein kostenloses Plattform-Testguthaben von 5 CNY!</td>
 </tr>
 
 <tr>
-<td width="180"><a href="https://crazyrouter.com/register?aff=OZcm&ref=cc-switch"><img src="assets/partners/logos/crazyrouter.png" alt="Crazyrouter" width="150"></a></td>
-<td>Danke an Crazyrouter für die Unterstützung dieses Projekts! Crazyrouter ist eine leistungsstarke KI-API-Aggregationsplattform — ein API-Schlüssel für mehr als 300 Modelle, darunter Claude Code, Codex, Gemini CLI und weitere. Alle Modelle zu 55 % des offiziellen Preises, mit automatischem Failover, intelligentem Routing und unbegrenzter Nebenläufigkeit. Crazyrouter bietet ein exklusives Angebot für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://crazyrouter.com/register?aff=OZcm&ref=cc-switch">diesen Link</a> und kontaktieren Sie den Kundensupport, um <strong>2 $ Gratisguthaben</strong> zu erhalten; geben Sie zusätzlich bei Ihrer ersten Aufladung den Gutscheincode `CCSWITCH` ein, um <strong>30 % Bonusguthaben</strong> zu bekommen! </td>
+<td width="180"><a href="https://crazyrouter.com/register?aff=OZcm&ref=ec-switch"><img src="assets/partners/logos/crazyrouter.png" alt="Crazyrouter" width="150"></a></td>
+<td>Danke an Crazyrouter für die Unterstützung dieses Projekts! Crazyrouter ist eine leistungsstarke KI-API-Aggregationsplattform — ein API-Schlüssel für mehr als 300 Modelle, darunter Claude Code, Codex, Gemini CLI und weitere. Alle Modelle zu 55 % des offiziellen Preises, mit automatischem Failover, intelligentem Routing und unbegrenzter Nebenläufigkeit. Crazyrouter bietet ein exklusives Angebot für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://crazyrouter.com/register?aff=OZcm&ref=ec-switch">diesen Link</a> und kontaktieren Sie den Kundensupport, um <strong>2 $ Gratisguthaben</strong> zu erhalten; geben Sie zusätzlich bei Ihrer ersten Aufladung den Gutscheincode `CCSWITCH` ein, um <strong>30 % Bonusguthaben</strong> zu bekommen! </td>
 </tr>
 
 <tr>
@@ -103,7 +103,7 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 
 <tr>
 <td width="180"><a href="https://www.micuapi.ai/register?aff=aOYQ"><img src="assets/partners/logos/mikubanner.svg" alt="Micu" width="150"></a></td>
-<td>Danke an Micu API für die Unterstützung dieses Projekts! Micu API ist ein globaler LLM-Relay-Anbieter, der sich der Bereitstellung des besten Preis-Leistungs-Verhältnisses bei hoher Stabilität widmet. Gestützt auf ein eingetragenes Unternehmen als Kernabsicherung wird jedes Risiko einer Diensteinstellung ausgeschlossen, mit schneller offizieller Rechnungsstellung! Wir stehen für „kostenloses Ausprobieren": Aufladungen sind schon ab ¥1 ohne Mindestbetrag möglich, und gebührenfreie Rückerstattungen sind jederzeit möglich! Micu API bietet ein exklusives Angebot für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://www.micuapi.ai/register?aff=aOYQ">diesen Link</a> und geben Sie beim Aufladen den Gutscheincode „ccswitch" ein, um <strong>10 % Rabatt</strong> zu erhalten!</td>
+<td>Danke an Micu API für die Unterstützung dieses Projekts! Micu API ist ein globaler LLM-Relay-Anbieter, der sich der Bereitstellung des besten Preis-Leistungs-Verhältnisses bei hoher Stabilität widmet. Gestützt auf ein eingetragenes Unternehmen als Kernabsicherung wird jedes Risiko einer Diensteinstellung ausgeschlossen, mit schneller offizieller Rechnungsstellung! Wir stehen für „kostenloses Ausprobieren": Aufladungen sind schon ab ¥1 ohne Mindestbetrag möglich, und gebührenfreie Rückerstattungen sind jederzeit möglich! Micu API bietet ein exklusives Angebot für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://www.micuapi.ai/register?aff=aOYQ">diesen Link</a> und geben Sie beim Aufladen den Gutscheincode „ecswitch" ein, um <strong>10 % Rabatt</strong> zu erhalten!</td>
 </tr>
 
 <tr>
@@ -138,7 +138,7 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 
 <tr>
 <td width="180"><a href="https://apinebula.com/02rw5X"><img src="assets/partners/logos/apinebula_banner.png" alt="APINebula" width="150"></a></td>
-<td>Danke an APINEBULA für die Unterstützung dieses Projekts! APINEBULA ist eine Enterprise-KI-Aggregationsplattform unter Galaxy Video Bureau und nutzt umfangreiche Plattformressourcen, um Entwicklern, Teams und Unternehmen stabilen und kosteneffizienten Zugang zu APIs großer Sprachmodelle zu bieten. Die Plattform bündelt führende vollwertige Modelle wie Claude, GPT und Gemini. Über eine einzige API erhalten Sie Zugriff auf weltweit führende KI-Modelle, mit Preisen ab 10 % des Originalpreises. APINEBULA ist für KI-Programmierung, Agent-Entwicklung und Integration in Geschäftssysteme ausgelegt und unterstützt enterprise-grade hohe Parallelität, formale Verträge, Firmenüberweisungen und Rechnungsstellung. APINEBULA bietet Nutzern dieser Software besondere Rabatte: Registrieren Sie sich über <a href="https://apinebula.com/02rw5X">diesen Link</a> und geben Sie beim ersten Aufladen den Aktionscode <strong>"ccswitch"</strong> ein, um <strong>10 % Rabatt</strong> zu erhalten.</td>
+<td>Danke an APINEBULA für die Unterstützung dieses Projekts! APINEBULA ist eine Enterprise-KI-Aggregationsplattform unter Galaxy Video Bureau und nutzt umfangreiche Plattformressourcen, um Entwicklern, Teams und Unternehmen stabilen und kosteneffizienten Zugang zu APIs großer Sprachmodelle zu bieten. Die Plattform bündelt führende vollwertige Modelle wie Claude, GPT und Gemini. Über eine einzige API erhalten Sie Zugriff auf weltweit führende KI-Modelle, mit Preisen ab 10 % des Originalpreises. APINEBULA ist für KI-Programmierung, Agent-Entwicklung und Integration in Geschäftssysteme ausgelegt und unterstützt enterprise-grade hohe Parallelität, formale Verträge, Firmenüberweisungen und Rechnungsstellung. APINEBULA bietet Nutzern dieser Software besondere Rabatte: Registrieren Sie sich über <a href="https://apinebula.com/02rw5X">diesen Link</a> und geben Sie beim ersten Aufladen den Aktionscode <strong>"ecswitch"</strong> ein, um <strong>10 % Rabatt</strong> zu erhalten.</td>
 </tr>
 
 <tr>
@@ -150,11 +150,11 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 
 </details>
 
-## Warum CC Switch?
+## Warum EC Switch?
 
 Modernes KI-gestütztes Programmieren stützt sich auf CLI-Werkzeuge wie Claude Code, Codex, Gemini CLI, OpenCode und OpenClaw — doch jedes hat sein eigenes Konfigurationsformat. Der Wechsel des API-Anbieters bedeutet, JSON-, TOML- oder `.env`-Dateien von Hand zu bearbeiten, und es gibt keine einheitliche Möglichkeit, MCP und Skills über mehrere Werkzeuge hinweg zu verwalten.
 
-**CC Switch** gibt Ihnen eine einzige Desktop-App, um alle fünf CLI-Werkzeuge zu verwalten. Statt Konfigurationsdateien von Hand zu bearbeiten, erhalten Sie eine visuelle Oberfläche, um Anbieter mit einem Klick zu importieren und sofort zwischen ihnen zu wechseln — mit 50+ integrierten Anbieter-Presets, einheitlicher MCP- und Skills-Verwaltung und schnellem Umschalten über das System-Tray. Das Ganze gestützt auf eine zuverlässige SQLite-Datenbank mit atomaren Schreibvorgängen, die Ihre Konfigurationen vor Beschädigung schützen.
+**EC Switch** gibt Ihnen eine einzige Desktop-App, um alle fünf CLI-Werkzeuge zu verwalten. Statt Konfigurationsdateien von Hand zu bearbeiten, erhalten Sie eine visuelle Oberfläche, um Anbieter mit einem Klick zu importieren und sofort zwischen ihnen zu wechseln — mit 50+ integrierten Anbieter-Presets, einheitlicher MCP- und Skills-Verwaltung und schnellem Umschalten über das System-Tray. Das Ganze gestützt auf eine zuverlässige SQLite-Datenbank mit atomaren Schreibvorgängen, die Ihre Konfigurationen vor Beschädigung schützen.
 
 - **Eine App, fünf CLI-Werkzeuge** — Verwalten Sie Claude Code, Codex, Gemini CLI, OpenCode und OpenClaw über eine einzige Oberfläche
 - **Kein manuelles Bearbeiten mehr** — 50+ Anbieter-Presets einschließlich AWS Bedrock, NVIDIA NIM und Community-Relays; einfach auswählen und umschalten
@@ -203,15 +203,15 @@ Modernes KI-gestütztes Programmieren stützt sich auf CLI-Werkzeuge wie Claude 
 ### System & Plattform
 
 - **Cloud-Synchronisierung** — Eigenes Konfigurationsverzeichnis (Dropbox, OneDrive, iCloud, NAS) und WebDAV-Server-Synchronisierung
-- **Deep Link** (`ccswitch://`) — Importieren Sie Anbieter, MCP-Server, Prompts und Skills per URL
+- **Deep Link** (`ecswitch://`) — Importieren Sie Anbieter, MCP-Server, Prompts und Skills per URL
 - Dunkles / Helles / System-Theme, automatischer Start, automatischer Updater, atomare Schreibvorgänge, automatische Backups, i18n (zh/en/ja)
 
 ## FAQ
 
 <details>
-<summary><strong>Welche KI-CLI-Werkzeuge unterstützt CC Switch?</strong></summary>
+<summary><strong>Welche KI-CLI-Werkzeuge unterstützt EC Switch?</strong></summary>
 
-CC Switch unterstützt fünf Werkzeuge: **Claude Code**, **Codex**, **Gemini CLI**, **OpenCode** und **OpenClaw**. Jedes Werkzeug verfügt über dedizierte Anbieter-Presets und Konfigurationsverwaltung.
+EC Switch unterstützt fünf Werkzeuge: **Claude Code**, **Codex**, **Gemini CLI**, **OpenCode** und **OpenClaw**. Jedes Werkzeug verfügt über dedizierte Anbieter-Presets und Konfigurationsverwaltung.
 
 </details>
 
@@ -225,21 +225,21 @@ Bei den meisten Werkzeugen ja — starten Sie Ihr Terminal oder das CLI-Werkzeug
 <details>
 <summary><strong>Meine Plugin-Konfiguration ist nach einem Anbieterwechsel verschwunden — was ist passiert?</strong></summary>
 
-CC Switch bietet eine Funktion „Gemeinsames Konfigurations-Snippet", um gemeinsame Daten (über API-Schlüssel und Endpunkte hinaus) zwischen Anbietern weiterzugeben. Gehen Sie zu „Anbieter bearbeiten" → „Panel für gemeinsame Konfiguration" → klicken Sie auf „Aus aktuellem Anbieter extrahieren", um alle gemeinsamen Daten zu speichern. Aktivieren Sie beim Anlegen eines neuen Anbieters die Option „Gemeinsame Konfiguration schreiben" (standardmäßig aktiviert), um die Plugin-Daten in den neuen Anbieter aufzunehmen. Alle Ihre Konfigurationspunkte bleiben im Standardanbieter erhalten, der beim ersten Start der App importiert wurde.
+EC Switch bietet eine Funktion „Gemeinsames Konfigurations-Snippet", um gemeinsame Daten (über API-Schlüssel und Endpunkte hinaus) zwischen Anbietern weiterzugeben. Gehen Sie zu „Anbieter bearbeiten" → „Panel für gemeinsame Konfiguration" → klicken Sie auf „Aus aktuellem Anbieter extrahieren", um alle gemeinsamen Daten zu speichern. Aktivieren Sie beim Anlegen eines neuen Anbieters die Option „Gemeinsame Konfiguration schreiben" (standardmäßig aktiviert), um die Plugin-Daten in den neuen Anbieter aufzunehmen. Alle Ihre Konfigurationspunkte bleiben im Standardanbieter erhalten, der beim ersten Start der App importiert wurde.
 
 </details>
 
 <details>
 <summary><strong>Installation unter macOS</strong></summary>
 
-CC Switch für macOS ist von Apple code-signiert und notarisiert. Sie können es direkt herunterladen und installieren — es sind keine zusätzlichen Schritte erforderlich. Wir empfehlen die Verwendung des `.dmg`-Installationsprogramms.
+EC Switch für macOS ist von Apple code-signiert und notarisiert. Sie können es direkt herunterladen und installieren — es sind keine zusätzlichen Schritte erforderlich. Wir empfehlen die Verwendung des `.dmg`-Installationsprogramms.
 
 </details>
 
 <details>
 <summary><strong>Warum kann ich den aktuell aktiven Anbieter nicht löschen?</strong></summary>
 
-CC Switch folgt dem Designprinzip der „minimalen Eingriffstiefe" — selbst wenn Sie die App deinstallieren, funktionieren Ihre CLI-Werkzeuge weiterhin normal. Das System behält immer eine aktive Konfiguration bei, da das Löschen aller Konfigurationen das entsprechende CLI-Werkzeug unbrauchbar machen würde. Wenn Sie ein bestimmtes CLI-Werkzeug selten verwenden, können Sie es in den Einstellungen ausblenden. Wie Sie zurück zum offiziellen Login wechseln, erfahren Sie in der nächsten Frage.
+EC Switch folgt dem Designprinzip der „minimalen Eingriffstiefe" — selbst wenn Sie die App deinstallieren, funktionieren Ihre CLI-Werkzeuge weiterhin normal. Das System behält immer eine aktive Konfiguration bei, da das Löschen aller Konfigurationen das entsprechende CLI-Werkzeug unbrauchbar machen würde. Wenn Sie ein bestimmtes CLI-Werkzeug selten verwenden, können Sie es in den Einstellungen ausblenden. Wie Sie zurück zum offiziellen Login wechseln, erfahren Sie in der nächsten Frage.
 
 </details>
 
@@ -253,11 +253,11 @@ Fügen Sie einen offiziellen Anbieter aus der Preset-Liste hinzu. Führen Sie na
 <details>
 <summary><strong>Wo werden meine Daten gespeichert?</strong></summary>
 
-- **Datenbank**: `~/.cc-switch/cc-switch.db` (SQLite — Anbieter, MCP, Prompts, Skills)
-- **Lokale Einstellungen**: `~/.cc-switch/settings.json` (gerätebezogene UI-Einstellungen)
-- **Backups**: `~/.cc-switch/backups/` (automatisch rotiert, behält die 10 neuesten)
-- **Skills**: `~/.cc-switch/skills/` (standardmäßig per Symlink mit den entsprechenden Apps verbunden)
-- **Skill-Backups**: `~/.cc-switch/skill-backups/` (vor der Deinstallation automatisch erstellt, behält die 20 neuesten)
+- **Datenbank**: `~/.ec-switch/ec-switch.db` (SQLite — Anbieter, MCP, Prompts, Skills)
+- **Lokale Einstellungen**: `~/.ec-switch/settings.json` (gerätebezogene UI-Einstellungen)
+- **Backups**: `~/.ec-switch/backups/` (automatisch rotiert, behält die 10 neuesten)
+- **Skills**: `~/.ec-switch/skills/` (standardmäßig per Symlink mit den entsprechenden Apps verbunden)
+- **Skill-Backups**: `~/.ec-switch/skill-backups/` (vor der Deinstallation automatisch erstellt, behält die 20 neuesten)
 
 </details>
 
@@ -302,27 +302,27 @@ Laden Sie das neueste Installationsprogramm `CC-Switch-v{version}-Windows.msi` o
 **Methode 1: Installation über Homebrew (empfohlen)**
 
 ```bash
-brew install --cask cc-switch
+brew install --cask ec-switch
 ```
 
 Aktualisieren:
 
 ```bash
-brew upgrade --cask cc-switch
+brew upgrade --cask ec-switch
 ```
 
 **Methode 2: Manueller Download**
 
 Laden Sie `CC-Switch-v{version}-macOS.dmg` (empfohlen) oder `.zip` von der Seite [Releases](../../releases) herunter.
 
-> **Hinweis**: CC Switch für macOS ist von Apple code-signiert und notarisiert. Sie können es direkt installieren und öffnen.
+> **Hinweis**: EC Switch für macOS ist von Apple code-signiert und notarisiert. Sie können es direkt installieren und öffnen.
 
 ### Arch-Linux-Nutzer
 
 **Installation über paru (empfohlen)**
 
 ```bash
-paru -S cc-switch-bin
+paru -S ec-switch-bin
 ```
 
 ### Linux-Nutzer
@@ -360,7 +360,7 @@ Laden Sie den neuesten Linux-Build von der Seite [Releases](../../releases) heru
 
 **Kern-Designmuster**
 
-- **SSOT** (Single Source of Truth): Alle Daten werden in `~/.cc-switch/cc-switch.db` (SQLite) gespeichert
+- **SSOT** (Single Source of Truth): Alle Daten werden in `~/.ec-switch/ec-switch.db` (SQLite) gespeichert
 - **Zweischichtiger Speicher**: SQLite für synchronisierbare Daten, JSON für gerätebezogene Einstellungen
 - **Bidirektionale Synchronisierung**: Schreiben in Live-Dateien beim Umschalten, Backfill aus den Live-Dateien beim Bearbeiten des aktiven Anbieters
 - **Atomare Schreibvorgänge**: Das Muster aus temporärer Datei + Umbenennen verhindert die Beschädigung von Konfigurationen
@@ -526,7 +526,7 @@ Eröffnen Sie für neue Funktionen bitte vor dem Einreichen eines PR ein Issue z
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=farion1231/cc-switch&type=Date)](https://www.star-history.com/#farion1231/cc-switch&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=farion1231/ec-switch&type=Date)](https://www.star-history.com/#farion1231/ec-switch&Date)
 
 ## Lizenz
 
