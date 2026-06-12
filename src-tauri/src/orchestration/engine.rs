@@ -135,6 +135,10 @@ impl OrchestrationEngine {
     pub fn set_enabled(&self, enabled: bool) {
         self.loader.set_enabled(enabled);
     }
+
+    pub async fn persist_enabled(&self, enabled: bool) -> Result<(), String> {
+        self.loader.persist_enabled(enabled)
+    }
 }
 
 #[derive(Debug)]

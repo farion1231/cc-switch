@@ -14,7 +14,13 @@ pub struct StrategyLoader {
 
 impl StrategyLoader {
     pub fn new(path: PathBuf) -> Self {
-        let config = Self::load_from_file(&path).unwrap_or_default();
+        let config = Self::load_from_file(&path).unwrap_or_else(|e| {
+            log::warn!(
+                "[Orchestration] Failed to load config from {:?}: {}. Using defaults (enabled=false).",
+                path, e
+            );
+            OrchestrationConfig::default()
+        });
         let enabled = config.enabled;
         Self {
             config: Arc::new(RwLock::new(config)),
@@ -45,6 +51,23 @@ impl StrategyLoader {
     pub fn set_enabled(&self, enabled: bool) {
         self.override_enabled.store(enabled, Ordering::Relaxed);
         log::info!("[Orchestration] Enabled state set to: {}", enabled);
+    }
+
+    /// Persist the enabled flag to the strategies YAML file so it survives restarts.
+    pub fn persist_enabled(&self, enabled: bool) -> Result<(), String> {
+        let mut config = self.config.blocking_read().clone();
+        config.enabled = enabled;
+        let yaml = serde_yaml::to_string(&config)
+            .map_err(|e| format!("Failed to serialize config: {}", e))?;
+        std::fs::write(&self.path, yaml)
+            .map_err(|e| format!("Failed to write config to {:?}: {}", self.path, e))?;
+        self.override_enabled.store(enabled, Ordering::Relaxed);
+        log::info!(
+            "[Orchestration] Persisted enabled={} to {:?}",
+            enabled,
+            self.path
+        );
+        Ok(())
     }
 
     pub fn load_from_file(path: &PathBuf) -> Result<OrchestrationConfig, anyhow::Error> {

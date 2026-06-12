@@ -26,6 +26,6 @@ pub async fn orchestration_toggle(
     enable: bool,
 ) -> Result<bool, String> {
     let engine = &state.0;
-    engine.set_enabled(enable);
+    engine.persist_enabled(enable).await?;
     Ok(enable)
 }
