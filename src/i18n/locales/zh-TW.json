@@ -81,7 +81,8 @@
     "enableTeammates": "Teammates 模式",
     "enableToolSearch": "啟用 Tool Search",
     "effortMax": "最大強度思考",
-    "disableAutoUpgrade": "停用自動升級"
+    "disableAutoUpgrade": "停用自動升級",
+    "enableAdvisor": "啟用 Advisor 工具"
   },
   "header": {
     "viewOnGithub": "在 GitHub 上檢視",

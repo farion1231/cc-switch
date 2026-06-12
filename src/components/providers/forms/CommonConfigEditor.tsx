@@ -85,6 +85,9 @@ export function CommonConfigEditor({
         disableAutoUpgrade:
           config?.env?.DISABLE_AUTOUPDATER === "1" ||
           config?.env?.DISABLE_AUTOUPDATER === 1,
+        enableAdvisor:
+          config?.env?.CLAUDE_CODE_ENABLE_EXPERIMENTAL_ADVISOR_TOOL === "1" ||
+          config?.env?.CLAUDE_CODE_ENABLE_EXPERIMENTAL_ADVISOR_TOOL === 1,
       };
     } catch {
       return {
@@ -93,6 +96,7 @@ export function CommonConfigEditor({
         enableToolSearch: false,
         effortMax: false,
         disableAutoUpgrade: false,
+        enableAdvisor: false,
       };
     }
   }, [localValue]);
@@ -143,6 +147,15 @@ export function CommonConfigEditor({
               config.env.DISABLE_AUTOUPDATER = "1";
             } else {
               delete config.env.DISABLE_AUTOUPDATER;
+              if (Object.keys(config.env).length === 0) delete config.env;
+            }
+            break;
+          case "enableAdvisor":
+            if (!config.env) config.env = {};
+            if (checked) {
+              config.env.CLAUDE_CODE_ENABLE_EXPERIMENTAL_ADVISOR_TOOL = "1";
+            } else {
+              delete config.env.CLAUDE_CODE_ENABLE_EXPERIMENTAL_ADVISOR_TOOL;
               if (Object.keys(config.env).length === 0) delete config.env;
             }
             break;
@@ -245,6 +258,17 @@ export function CommonConfigEditor({
               className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
             />
             <span>{t("claudeConfig.disableAutoUpgrade")}</span>
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={toggleStates.enableAdvisor}
+              onChange={(e) =>
+                handleToggle("enableAdvisor", e.target.checked)
+              }
+              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            />
+            <span>{t("claudeConfig.enableAdvisor")}</span>
           </label>
         </div>
         <JsonEditor

@@ -81,7 +81,8 @@
     "enableTeammates": "Teammates Mode",
     "enableToolSearch": "Enable Tool Search",
     "effortMax": "Max Effort Thinking",
-    "disableAutoUpgrade": "Disable Auto-Upgrade"
+    "disableAutoUpgrade": "Disable Auto-Upgrade",
+    "enableAdvisor": "Enable Advisor Tool"
   },
   "header": {
     "viewOnGithub": "View on GitHub",
