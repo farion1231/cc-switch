@@ -362,6 +362,8 @@ export interface Settings {
   commonConfigConfirmed?: boolean;
   // 首选语言（可选，默认中文）
   language?: "en" | "zh" | "zh-TW" | "ja";
+  // 用量显示顺序（可选，默认剩余优先）
+  usageDisplayOrder?: "remaining-first" | "used-first";
 
   // 主页面显示的应用（默认全部显示）
   visibleApps?: VisibleApps;
