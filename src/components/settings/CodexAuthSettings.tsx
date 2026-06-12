@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { KeyRound } from "lucide-react";
+import { History, KeyRound } from "lucide-react";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import { ToggleRow } from "@/components/ui/toggle-row";
 
@@ -28,6 +28,16 @@ export function CodexAuthSettings({
         checked={settings.preserveCodexOfficialAuthOnSwitch ?? false}
         onCheckedChange={(value) =>
           onChange({ preserveCodexOfficialAuthOnSwitch: value })
+        }
+      />
+
+      <ToggleRow
+        icon={<History className="h-4 w-4 text-sky-500" />}
+        title={t("settings.unifyCodexSessionHistory")}
+        description={t("settings.unifyCodexSessionHistoryDescription")}
+        checked={settings.unifyCodexSessionHistory ?? false}
+        onCheckedChange={(value) =>
+          onChange({ unifyCodexSessionHistory: value })
         }
       />
     </section>

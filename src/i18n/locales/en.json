@@ -670,6 +670,8 @@
     "codexAuth": "Codex App Enhancements",
     "preserveCodexOfficialAuthOnSwitch": "Keep official login when switching third-party providers",
     "preserveCodexOfficialAuthOnSwitchDescription": "When enabled, you can use the Codex app's official plugins, mobile remote control, and other features while using third-party APIs.",
+    "unifyCodexSessionHistory": "Unified Codex session history",
+    "unifyCodexSessionHistoryDescription": "When enabled, the official subscription runs under the shared \"custom\" provider id, so future official sessions appear in the same history list as third-party sessions (existing sessions are not migrated). Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it.",
     "appVisibility": {
       "title": "Homepage Display",
       "description": "Choose which apps to show on the homepage",

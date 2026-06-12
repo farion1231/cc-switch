@@ -670,6 +670,8 @@
     "codexAuth": "Codex 應用增強",
     "preserveCodexOfficialAuthOnSwitch": "切換第三方時保留官方登入",
     "preserveCodexOfficialAuthOnSwitchDescription": "開啟後可以在使用第三方 API 的時候使用 Codex 應用的官方外掛、手機遠端操作等功能",
+    "unifyCodexSessionHistory": "統一 Codex 會話歷史",
+    "unifyCodexSessionHistoryDescription": "開啟後，官方訂閱將以共享的 custom 供應商標識執行，未來的官方會話與第三方會話出現在同一歷史清單中（不遷移既有會話）。注意：跨供應商繼續舊會話時，對方後端可能無法解密會話中的 encrypted_content 推理內容，導致繼續失敗",
     "appVisibility": {
       "title": "主頁面顯示",
       "description": "選擇在主頁面顯示的應用程式",

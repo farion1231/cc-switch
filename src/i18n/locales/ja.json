@@ -670,6 +670,8 @@
     "codexAuth": "Codex アプリ拡張",
     "preserveCodexOfficialAuthOnSwitch": "サードパーティ切替時に公式ログインを保持",
     "preserveCodexOfficialAuthOnSwitchDescription": "オンにすると、サードパーティ API を使用する際に Codex アプリの公式プラグインやスマホからのリモート操作などの機能を利用できます。",
+    "unifyCodexSessionHistory": "Codex セッション履歴を統一",
+    "unifyCodexSessionHistoryDescription": "オンにすると、公式サブスクリプションも共有の custom プロバイダー ID で動作し、今後の公式セッションはサードパーティのセッションと同じ履歴リストに表示されます（既存セッションは移行しません）。注意：プロバイダーをまたいで古いセッションを再開すると、encrypted_content の推論内容を相手のバックエンドが復号できず、再開に失敗する場合があります。",
     "appVisibility": {
       "title": "ホームページ表示",
       "description": "ホームページに表示するアプリを選択",

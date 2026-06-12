@@ -65,10 +65,25 @@ pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
 
 /// 保存设置
 #[tauri::command]
-pub async fn save_settings(settings: crate::settings::AppSettings) -> Result<bool, String> {
+pub async fn save_settings(
+    state: tauri::State<'_, crate::store::AppState>,
+    settings: crate::settings::AppSettings,
+) -> Result<bool, String> {
     let existing = crate::settings::get_settings();
     let merged = merge_settings_for_save(settings, &existing);
+    let unify_codex_changed =
+        merged.unify_codex_session_history != existing.unify_codex_session_history;
     crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
+
+    // 统一会话开关变更时立即重写当前官方 Codex 供应商的 live 配置，
+    // 不必等下一次切换才生效。
+    if unify_codex_changed {
+        if let Err(err) =
+            crate::services::provider::reapply_current_codex_official_live(state.inner())
+        {
+            log::warn!("统一 Codex 会话历史开关变更后重写 live 配置失败: {err}");
+        }
+    }
     Ok(true)
 }
 

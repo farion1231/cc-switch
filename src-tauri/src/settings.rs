@@ -357,6 +357,12 @@ pub struct AppSettings {
     /// Opt-in: defaults to false so third-party switches cleanly overwrite auth.json.
     #[serde(default)]
     pub preserve_codex_official_auth_on_switch: bool,
+    /// Run official Codex providers under the shared "custom" model_provider id
+    /// so future official sessions share one resume-history bucket with
+    /// third-party providers. Forward-only: existing sessions are not migrated.
+    /// Opt-in: defaults to false.
+    #[serde(default)]
+    pub unify_codex_session_history: bool,
     /// User has confirmed the failover toggle first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failover_confirmed: Option<bool>,
@@ -475,6 +481,7 @@ impl Default for AppSettings {
             stream_check_confirmed: None,
             enable_failover_toggle: false,
             preserve_codex_official_auth_on_switch: false,
+            unify_codex_session_history: false,
             failover_confirmed: None,
             first_run_notice_confirmed: None,
             common_config_confirmed: None,
@@ -827,6 +834,16 @@ pub fn preserve_codex_official_auth_on_switch() -> bool {
             e.into_inner()
         })
         .preserve_codex_official_auth_on_switch
+}
+
+pub fn unify_codex_session_history() -> bool {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .unify_codex_session_history
 }
 
 // ===== 当前供应商管理函数 =====
