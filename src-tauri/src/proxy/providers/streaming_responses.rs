@@ -433,7 +433,8 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                             "content_block": {
                                                 "type": "tool_use",
                                                 "id": call_id,
-                                                "name": name
+                                                "name": name,
+                                                "input": {}
                                             }
                                         });
                                         let sse = format!("event: content_block_start\ndata: {}\n\n",
@@ -481,7 +482,8 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                                 "name": data
                                                     .get("name")
                                                     .and_then(|v| v.as_str())
-                                                    .unwrap_or("")
+                                                    .unwrap_or(""),
+                                                "input": {}
                                             }
                                         });
                                         let start_sse = format!("event: content_block_start\ndata: {}\n\n",
@@ -1140,6 +1142,102 @@ mod tests {
         assert_eq!(text_starts, 1);
         assert_eq!(text_stops, 1);
         assert_eq!(text_deltas, vec!["你".to_string(), "好".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_streaming_responses_tool_start_normal_path_includes_empty_input() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_tool\",\"model\":\"gpt-4o\"}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"get_weather\"}}\n\n",
+            "event: response.function_call_arguments.delta\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"delta\":\"{\\\"city\\\":\\\"Tokyo\\\"}\"}\n\n",
+            "event: response.function_call_arguments.done\n",
+            "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_1\"}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
+        );
+
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
+        let converted = create_anthropic_sse_stream_from_responses(upstream);
+        let chunks: Vec<_> = converted.collect().await;
+        let events: Vec<Value> = chunks
+            .into_iter()
+            .flat_map(|chunk| {
+                let bytes = chunk.unwrap();
+                let text = String::from_utf8_lossy(bytes.as_ref()).to_string();
+                text.split("\n\n")
+                    .filter_map(|block| {
+                        block.lines().find_map(|line| {
+                            strip_sse_field(line, "data")
+                                .and_then(|payload| serde_json::from_str::<Value>(payload).ok())
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        let tool_start = events
+            .iter()
+            .find(|event| {
+                event.get("type").and_then(|v| v.as_str()) == Some("content_block_start")
+                    && event
+                        .pointer("/content_block/type")
+                        .and_then(|v| v.as_str())
+                        == Some("tool_use")
+            })
+            .unwrap();
+        assert_eq!(tool_start["content_block"]["input"], json!({}));
+    }
+
+    #[tokio::test]
+    async fn test_streaming_responses_tool_start_fallback_path_includes_empty_input() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_tool\",\"model\":\"gpt-4o\"}}\n\n",
+            "event: response.function_call_arguments.delta\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"get_weather\",\"delta\":\"{\\\"city\\\":\"}\n\n",
+            "event: response.function_call_arguments.done\n",
+            "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_1\"}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
+        );
+
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
+        let converted = create_anthropic_sse_stream_from_responses(upstream);
+        let chunks: Vec<_> = converted.collect().await;
+        let events: Vec<Value> = chunks
+            .into_iter()
+            .flat_map(|chunk| {
+                let bytes = chunk.unwrap();
+                let text = String::from_utf8_lossy(bytes.as_ref()).to_string();
+                text.split("\n\n")
+                    .filter_map(|block| {
+                        block.lines().find_map(|line| {
+                            strip_sse_field(line, "data")
+                                .and_then(|payload| serde_json::from_str::<Value>(payload).ok())
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        let tool_start = events
+            .iter()
+            .find(|event| {
+                event.get("type").and_then(|v| v.as_str()) == Some("content_block_start")
+                    && event
+                        .pointer("/content_block/type")
+                        .and_then(|v| v.as_str())
+                        == Some("tool_use")
+            })
+            .unwrap();
+        assert_eq!(tool_start["content_block"]["input"], json!({}));
     }
 
     #[tokio::test]
