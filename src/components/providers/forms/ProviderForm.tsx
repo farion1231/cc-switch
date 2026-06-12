@@ -177,7 +177,7 @@ export const normalizeCodexCatalogModelsForSave = (
   return normalized;
 };
 
-const providerCustomHeadersToEntries = (
+export const providerCustomHeadersToEntries = (
   meta?: ProviderMeta,
 ): ProviderCustomHeaderEntry[] => {
   const entries = Object.entries(meta?.customHeaders ?? {}).map(
@@ -200,7 +200,7 @@ const providerCustomHeadersToEntries = (
   return entries;
 };
 
-const providerCustomHeadersToRecord = (
+export const providerCustomHeadersToRecord = (
   entries: ProviderCustomHeaderEntry[],
 ): Record<string, string> | undefined => {
   const normalized = Object.fromEntries(
@@ -1431,10 +1431,7 @@ function ProviderFormFull({
         localCodexApiFormat === "openai_chat"
           ? normalizeCodexChatReasoningForSave(codexChatReasoning)
           : undefined,
-      customHeaders:
-        category !== "official"
-          ? providerCustomHeadersToRecord(customHeaders)
-          : undefined,
+      customHeaders: providerCustomHeadersToRecord(customHeaders),
       customUserAgent:
         (appId === "claude" || appId === "codex") && category !== "official"
           ? customUserAgent.trim() || undefined
@@ -2374,12 +2371,7 @@ function ProviderFormFull({
               />
             )}
 
-          {category !== "official" && (
-            <CustomHeadersField
-              value={customHeaders}
-              onChange={setCustomHeaders}
-            />
-          )}
+          <CustomHeadersField value={customHeaders} onChange={setCustomHeaders} />
 
           {showButtons && (
             <div className="flex justify-end gap-2">
