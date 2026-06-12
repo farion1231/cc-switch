@@ -31,6 +31,8 @@ pub enum KiroStreamEvent {
     },
     ToolUseInput(String),
     ToolUseStop(bool),
+    /// 上下文使用百分比（当前仅解析，暂未透传给下游）
+    #[allow(dead_code)]
     ContextUsage(f64),
     Usage {
         input_tokens: Option<u32>,
@@ -416,5 +418,182 @@ pub fn create_anthropic_sse_stream_from_kiro<E: std::error::Error + Send + 'stat
             "type": "message_stop"
         });
         yield Ok(Bytes::from(format!("event: message_stop\ndata: {}\n\n", serde_json::to_string(&msg_stop).unwrap())));
+    }
+}
+
+/// 非流式聚合：把 Kiro 完整 eventstream 响应体解析并聚合成单个 Anthropic
+/// Messages JSON（type:"message"）。
+///
+/// 用于客户端发起 stream:false 请求时（如 Claude Desktop 网关探活），Kiro 仍以
+/// application/vnd.amazon.eventstream 返回多段事件，需在此聚合成一条完整消息。
+pub fn kiro_eventstream_to_anthropic_response(body: &[u8]) -> Value {
+    let text = String::from_utf8_lossy(body);
+    let (events, _remaining) = parse_kiro_events(&text);
+
+    // content blocks 按出现顺序聚合（保持文本/工具交错）
+    let mut content_blocks: Vec<Value> = Vec::new();
+    let mut current_text = String::new();
+    let mut has_open_text = false;
+
+    // 当前工具调用：(id, name, accumulated input json string)
+    let mut current_tool: Option<(String, String, String)> = None;
+
+    let mut has_tool_calls = false;
+    let mut input_tokens: u32 = 0;
+    let mut output_tokens: u32 = 0;
+
+    fn flush_text(
+        current_text: &mut String,
+        has_open_text: &mut bool,
+        content_blocks: &mut Vec<Value>,
+    ) {
+        if *has_open_text {
+            content_blocks.push(json!({
+                "type": "text",
+                "text": std::mem::take(current_text),
+            }));
+            *has_open_text = false;
+        }
+    }
+
+    fn flush_tool(current_tool: &mut Option<(String, String, String)>, content_blocks: &mut Vec<Value>) {
+        if let Some((id, name, input_json)) = current_tool.take() {
+            let input_value: Value = if input_json.trim().is_empty() {
+                json!({})
+            } else {
+                serde_json::from_str(&input_json).unwrap_or_else(|_| json!({}))
+            };
+            content_blocks.push(json!({
+                "type": "tool_use",
+                "id": id,
+                "name": name,
+                "input": input_value,
+            }));
+        }
+    }
+
+    for event in events {
+        match event {
+            KiroStreamEvent::Content(t) => {
+                // 文本出现表示上一个工具块（若有）已结束
+                flush_tool(&mut current_tool, &mut content_blocks);
+                current_text.push_str(&t);
+                has_open_text = true;
+            }
+            KiroStreamEvent::ToolUse {
+                name,
+                tool_use_id,
+                input,
+                stop,
+            } => {
+                has_tool_calls = true;
+                // 文本块在工具块前定格
+                flush_text(&mut current_text, &mut has_open_text, &mut content_blocks);
+
+                // 切换工具：先定格旧工具
+                let switching = match &current_tool {
+                    Some((id, _, _)) => id != &tool_use_id,
+                    None => true,
+                };
+                if switching {
+                    flush_tool(&mut current_tool, &mut content_blocks);
+                    current_tool = Some((tool_use_id.clone(), name.clone(), String::new()));
+                }
+                if let Some((_, _, buf)) = current_tool.as_mut() {
+                    if !input.is_empty() {
+                        buf.push_str(&input);
+                    }
+                }
+                if stop {
+                    flush_tool(&mut current_tool, &mut content_blocks);
+                }
+            }
+            KiroStreamEvent::ToolUseInput(input) => {
+                if let Some((_, _, buf)) = current_tool.as_mut() {
+                    buf.push_str(&input);
+                }
+            }
+            KiroStreamEvent::ToolUseStop(stop) => {
+                if stop {
+                    flush_tool(&mut current_tool, &mut content_blocks);
+                }
+            }
+            KiroStreamEvent::Usage {
+                input_tokens: it,
+                output_tokens: ot,
+            } => {
+                if let Some(v) = it {
+                    input_tokens = v;
+                }
+                if let Some(v) = ot {
+                    output_tokens = v;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // 收尾
+    flush_text(&mut current_text, &mut has_open_text, &mut content_blocks);
+    flush_tool(&mut current_tool, &mut content_blocks);
+
+    let stop_reason = if has_tool_calls { "tool_use" } else { "end_turn" };
+
+    json!({
+        "id": format!("msg_kiro{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
+        "type": "message",
+        "role": "assistant",
+        "content": content_blocks,
+        "model": "claude-sonnet",
+        "stop_reason": stop_reason,
+        "stop_sequence": null,
+        "usage": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aggregate_text_only_response() {
+        // Kiro eventstream: 多段 content 事件拼接（无 SSE 框架，裸 JSON 对象流）
+        let body = br#"{"content":"Hello"}{"content":", world"}{"usage":{"inputTokens":12,"outputTokens":3}}"#;
+        let resp = kiro_eventstream_to_anthropic_response(body);
+        assert_eq!(resp["type"], "message");
+        assert_eq!(resp["role"], "assistant");
+        assert_eq!(resp["stop_reason"], "end_turn");
+        let content = resp["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "Hello, world");
+        assert_eq!(resp["usage"]["input_tokens"], 12);
+        assert_eq!(resp["usage"]["output_tokens"], 3);
+    }
+
+    #[test]
+    fn aggregate_tool_use_response() {
+        let body = br#"{"content":"Let me check"}{"name":"get_weather","toolUseId":"tool_1","input":""}{"input":"{\"city\":"}{"input":"\"SF\"}"}{"stop":true}"#;
+        let resp = kiro_eventstream_to_anthropic_response(body);
+        assert_eq!(resp["stop_reason"], "tool_use");
+        let content = resp["content"].as_array().unwrap();
+        // 文本块在前，工具块在后
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "Let me check");
+        assert_eq!(content[1]["type"], "tool_use");
+        assert_eq!(content[1]["id"], "tool_1");
+        assert_eq!(content[1]["name"], "get_weather");
+        assert_eq!(content[1]["input"]["city"], "SF");
+    }
+
+    #[test]
+    fn aggregate_empty_response_is_valid_message() {
+        let resp = kiro_eventstream_to_anthropic_response(b"");
+        assert_eq!(resp["type"], "message");
+        assert_eq!(resp["content"].as_array().unwrap().len(), 0);
+        assert_eq!(resp["stop_reason"], "end_turn");
     }
 }

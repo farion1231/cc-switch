@@ -7,6 +7,7 @@ use crate::proxy::providers::codex_oauth_auth::CodexOAuthError;
 use crate::proxy::providers::copilot_auth::{
     CopilotAuthError, GitHubAccount, GitHubDeviceCodeResponse,
 };
+use tauri_plugin_opener::OpenerExt;
 
 const AUTH_PROVIDER_GITHUB_COPILOT: &str = "github_copilot";
 const AUTH_PROVIDER_CODEX_OAUTH: &str = "codex_oauth";
@@ -273,17 +274,14 @@ pub async fn auth_get_status(
             let auth_manager = kiro_state.0.read().await;
             let accounts = auth_manager.list_accounts().await;
             let authenticated = !accounts.is_empty();
-            let default_account_id = None; // fallback
             Ok(ManagedAuthStatus {
                 provider: auth_provider.to_string(),
                 authenticated,
-                default_account_id,
+                default_account_id: None,
                 migration_error: None,
                 accounts: accounts
                     .into_iter()
-                    .map(|account| {
-                        map_account(auth_provider, account, default_account_id)
-                    })
+                    .map(|account| map_account(auth_provider, account, None))
                     .collect(),
             })
         }
@@ -382,4 +380,38 @@ pub async fn auth_logout(
         }
         _ => unreachable!(),
     }
+}
+
+/// Kiro 社交登录（Google / GitHub）：PKCE + localhost 回调。
+/// 该命令会阻塞直到用户在浏览器完成登录或超时。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn auth_kiro_social_login(
+    app: tauri::AppHandle,
+    provider: Option<String>,
+    kiro_state: State<'_, KiroAuthState>,
+) -> Result<ManagedAuthAccount, String> {
+    let auth_manager = kiro_state.0.read().await;
+    let app_for_open = app.clone();
+    let account = auth_manager
+        .social_login(provider.as_deref(), move |url| {
+            if let Err(e) = app_for_open.opener().open_url(url, None::<&str>) {
+                log::warn!("[Kiro] 打开浏览器失败: {e}");
+            }
+        })
+        .await?;
+    Ok(map_account(AUTH_PROVIDER_KIRO, account, None))
+}
+
+/// Kiro 主动导入本地 kiro-cli / kiro-ide 凭证（仅在用户点击按钮时读取）。
+/// 返回本次新导入的账号列表。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn auth_kiro_import_dynamic(
+    kiro_state: State<'_, KiroAuthState>,
+) -> Result<Vec<ManagedAuthAccount>, String> {
+    let auth_manager = kiro_state.0.read().await;
+    let accounts = auth_manager.import_dynamic_accounts().await;
+    Ok(accounts
+        .into_iter()
+        .map(|a| map_account(AUTH_PROVIDER_KIRO, a, None))
+        .collect())
 }

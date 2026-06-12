@@ -99,6 +99,26 @@ export async function authLogout(
   });
 }
 
+/**
+ * Kiro 社交登录（Google / GitHub）。
+ * 该调用会打开浏览器并阻塞直到用户完成登录或超时。
+ */
+export async function authKiroSocialLogin(
+  provider?: "google" | "github",
+): Promise<ManagedAuthAccount> {
+  return invoke<ManagedAuthAccount>("auth_kiro_social_login", {
+    provider: provider || null,
+  });
+}
+
+/**
+ * Kiro 主动导入本地 kiro-cli / kiro-ide 凭证（仅在点击时读取）。
+ * 返回本次新导入的账号列表。
+ */
+export async function authKiroImportDynamic(): Promise<ManagedAuthAccount[]> {
+  return invoke<ManagedAuthAccount[]>("auth_kiro_import_dynamic", {});
+}
+
 export const authApi = {
   authStartLogin,
   authPollForAccount,
@@ -107,4 +127,6 @@ export const authApi = {
   authRemoveAccount,
   authSetDefaultAccount,
   authLogout,
+  authKiroSocialLogin,
+  authKiroImportDynamic,
 };

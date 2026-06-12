@@ -2,6 +2,7 @@
 
 use crate::app_config::AppType;
 use crate::commands::copilot::CopilotAuthState;
+use crate::commands::kiro::KiroAuthState;
 use crate::error::AppError;
 use crate::services::stream_check::{
     HealthStatus, StreamCheckConfig, StreamCheckResult, StreamCheckService,
@@ -15,6 +16,7 @@ use tauri::State;
 pub async fn stream_check_provider(
     state: State<'_, AppState>,
     copilot_state: State<'_, CopilotAuthState>,
+    kiro_state: State<'_, KiroAuthState>,
     app_type: AppType,
     provider_id: String,
 ) -> Result<StreamCheckResult, AppError> {
@@ -24,6 +26,18 @@ pub async fn stream_check_provider(
     let provider = providers
         .get(&provider_id)
         .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
+
+    // Kiro（托管 OAuth）走专用连通性探测
+    if provider.is_kiro() {
+        let result = check_kiro_provider(provider, &config, &kiro_state).await;
+        let _ = state.db.save_stream_check_log(
+            &provider_id,
+            &provider.name,
+            app_type.as_str(),
+            &result,
+        );
+        return Ok(result);
+    }
 
     let auth_override = resolve_copilot_auth_override(provider, &copilot_state).await?;
     let base_url_override = resolve_copilot_base_url_override(provider, &copilot_state).await?;
@@ -59,6 +73,7 @@ pub async fn stream_check_provider(
 pub async fn stream_check_all_providers(
     state: State<'_, AppState>,
     copilot_state: State<'_, CopilotAuthState>,
+    kiro_state: State<'_, KiroAuthState>,
     app_type: AppType,
     proxy_targets_only: bool,
 ) -> Result<Vec<(String, StreamCheckResult)>, AppError> {
@@ -86,6 +101,17 @@ pub async fn stream_check_all_providers(
             if !ids.contains(&id) {
                 continue;
             }
+        }
+
+        // Kiro（托管 OAuth）走专用连通性探测
+        if provider.is_kiro() {
+            let result = check_kiro_provider(&provider, &config, &kiro_state).await;
+            let _ =
+                state
+                    .db
+                    .save_stream_check_log(&id, &provider.name, app_type.as_str(), &result);
+            results.push((id, result));
+            continue;
         }
 
         let auth_override = resolve_copilot_auth_override(&provider, &copilot_state).await?;
@@ -160,6 +186,146 @@ pub fn save_stream_check_config(
     config: StreamCheckConfig,
 ) -> Result<(), AppError> {
     state.db.save_stream_check_config(&config)
+}
+
+/// Kiro（AWS CodeWhisperer，托管 OAuth）专用连通性探测。
+///
+/// 与代理转发路径一致：解析 OAuth token 与区域，向
+/// runtime.{api_region}.kiro.dev/ POST 一个最小 Kiro 运行时请求（带 X-Amz-Target
+/// 等 AWS 头），HTTP 200 视为健康。避免走通用 Anthropic 预检路径造成假阴性。
+async fn check_kiro_provider(
+    provider: &crate::provider::Provider,
+    config: &StreamCheckConfig,
+    kiro_state: &State<'_, KiroAuthState>,
+) -> StreamCheckResult {
+    let model = StreamCheckService::resolve_effective_test_model(&AppType::Claude, provider, config);
+    let now = chrono::Utc::now().timestamp();
+
+    let failed = |message: String, http_status: Option<u16>| StreamCheckResult {
+        status: HealthStatus::Failed,
+        success: false,
+        message,
+        response_time_ms: None,
+        http_status,
+        model_used: model.clone(),
+        tested_at: now,
+        retry_count: 0,
+        error_category: None,
+    };
+
+    let account_id = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_account_id_for("kiro"));
+
+    // 1) 解析 token / 区域 / profileArn
+    let (token, sso_region, profile_arn) = {
+        let auth_manager = kiro_state.0.read().await;
+        let token = match account_id.as_deref() {
+            Some(id) => auth_manager.get_valid_token_for_account(id).await,
+            None => auth_manager.get_valid_token().await,
+        };
+        let token = match token {
+            Ok(t) => t,
+            Err(e) => return failed(format!("Kiro 认证失败: {e}"), None),
+        };
+        let sso_region = auth_manager
+            .get_region_for_account(account_id.as_deref())
+            .await;
+        let profile_arn = auth_manager
+            .get_profile_arn_for_account(account_id.as_deref())
+            .await;
+        (token, sso_region, profile_arn)
+    };
+
+    let api_region =
+        crate::proxy::providers::kiro_auth::resolve_api_region(sso_region.as_deref());
+    let url = format!("https://runtime.{api_region}.kiro.dev/");
+
+    // 2) 构造最小 Kiro 运行时请求体
+    let kiro_model_id =
+        crate::proxy::providers::transform_kiro::map_model_to_kiro(&model);
+    let current_message = serde_json::json!({
+        "userInputMessage": {
+            "content": "ping",
+            "modelId": kiro_model_id,
+            "origin": "KIRO_CLI"
+        }
+    });
+    let mut body = serde_json::json!({
+        "conversationState": {
+            "chatTriggerType": "MANUAL",
+            "agentTaskType": "vibe",
+            "conversationId": uuid::Uuid::new_v4().to_string(),
+            "currentMessage": current_message
+        },
+        "agentMode": "vibe"
+    });
+    if let Some(arn) = profile_arn.as_deref() {
+        body["profileArn"] = serde_json::Value::String(arn.to_string());
+    }
+
+    // 3) 发送请求
+    let timeout = std::time::Duration::from_secs(config.timeout_secs.max(1));
+    let client = match reqwest::Client::builder().timeout(timeout).build() {
+        Ok(c) => c,
+        Err(e) => return failed(format!("创建 HTTP 客户端失败: {e}"), None),
+    };
+    let started = std::time::Instant::now();
+    let resp = client
+        .post(&url)
+        .header("content-type", "application/x-amz-json-1.0")
+        .header("accept", "application/json")
+        .header("authorization", format!("Bearer {token}"))
+        .header(
+            "x-amz-target",
+            "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
+        )
+        .header("x-amzn-codewhisperer-optout", "true")
+        .header("x-amzn-kiro-agent-mode", "vibe")
+        .header("amz-sdk-invocation-id", uuid::Uuid::new_v4().to_string())
+        .header("amz-sdk-request", "attempt=1; max=1")
+        .body(serde_json::to_vec(&body).unwrap_or_default())
+        .send()
+        .await;
+
+    let response = match resp {
+        Ok(r) => r,
+        Err(e) => return failed(format!("请求失败: {e}"), None),
+    };
+    let status = response.status();
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+
+    if status.is_success() {
+        let degraded = elapsed_ms > config.degraded_threshold_ms;
+        StreamCheckResult {
+            status: if degraded {
+                HealthStatus::Degraded
+            } else {
+                HealthStatus::Operational
+            },
+            success: true,
+            message: if degraded {
+                format!("响应较慢 ({elapsed_ms}ms)")
+            } else {
+                "OK".to_string()
+            },
+            response_time_ms: Some(elapsed_ms),
+            http_status: Some(status.as_u16()),
+            model_used: model,
+            tested_at: now,
+            retry_count: 0,
+            error_category: None,
+        }
+    } else {
+        let code = status.as_u16();
+        let body_text = response.text().await.unwrap_or_default();
+        let snippet: String = body_text.chars().take(300).collect();
+        failed(
+            format!("Kiro 返回 HTTP {code}: {snippet}"),
+            Some(code),
+        )
+    }
 }
 
 async fn resolve_copilot_auth_override(

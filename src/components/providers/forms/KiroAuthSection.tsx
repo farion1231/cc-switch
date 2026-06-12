@@ -17,12 +17,14 @@ import {
   Copy,
   Check,
   ExternalLink,
-  Plus,
   X,
   Sparkles,
   User,
+  AlertCircle,
+  Database,
 } from "lucide-react";
 import { useKiroAuth } from "./hooks/useKiroAuth";
+import { RegionCombobox } from "./RegionCombobox";
 import { copyText } from "@/lib/clipboard";
 
 interface KiroAuthSectionProps {
@@ -37,7 +39,7 @@ interface KiroAuthSectionProps {
  * Kiro 认证区块
  *
  * 通过 AWS Builder ID / IAM Identity Center 设备授权流程登录，
- * 用于将 Claude Code 请求反代到 Kiro (AWS CodeWhisperer/Amazon Q) 运行时。
+ * 用于将 Claude Code 请求反代到 Kiro 运行时。
  */
 export const KiroAuthSection: React.FC<KiroAuthSectionProps> = ({
   className,
@@ -48,6 +50,7 @@ export const KiroAuthSection: React.FC<KiroAuthSectionProps> = ({
   const [copied, setCopied] = React.useState(false);
   const [startUrl, setStartUrl] = React.useState("");
   const [region, setRegion] = React.useState("us-east-1");
+  const [showIdcConfig, setShowIdcConfig] = React.useState(false);
 
   const {
     accounts,
@@ -65,6 +68,12 @@ export const KiroAuthSection: React.FC<KiroAuthSectionProps> = ({
     setDefaultAccount,
     cancelAuth,
     logout,
+    socialLogin,
+    isSocialLoggingIn,
+    socialError,
+    importDynamic,
+    isImporting,
+    importError,
   } = useKiroAuth();
 
   const copyUserCode = async () => {
@@ -207,55 +216,132 @@ export const KiroAuthSection: React.FC<KiroAuthSectionProps> = ({
         </div>
       )}
 
-      {/* 登录参数配置 (轮询状态下隐藏，允许用户输入) */}
+      {/* 登录方式按钮 */}
       {pollingState === "idle" && (
-        <div className="space-y-3 rounded-lg border bg-muted/20 p-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="kiro-start-url" className="text-xs">
-              {t("kiro.startUrl", "SSO Start URL (可选)")}
-            </Label>
-            <Input
-              id="kiro-start-url"
-              type="text"
-              placeholder="https://view.awsapps.com/start (Builder ID)"
-              value={startUrl}
-              onChange={(e) => setStartUrl(e.target.value)}
-              disabled={isAddingAccount}
-            />
-            <p className="text-[10px] text-muted-foreground">
-              留空默认使用 AWS Builder ID 登录。如使用 IAM Identity Center，请输入对应的 SSO 起始 URL。
+        <div className="space-y-2">
+          {/* 1. Google / GitHub 网页登录 */}
+          <Button
+            type="button"
+            onClick={() => socialLogin()}
+            className="w-full"
+            variant="outline"
+            disabled={isAddingAccount || isSocialLoggingIn}
+          >
+            {isSocialLoggingIn ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <ExternalLink className="mr-2 h-4 w-4" />
+            )}
+            {t("kiro.loginWithSocial", "使用 Google / GitHub 网页登录")}
+          </Button>
+          {isSocialLoggingIn && (
+            <p className="text-[10px] text-muted-foreground flex items-center gap-1 px-1">
+              <AlertCircle className="h-3 w-3 flex-shrink-0" />
+              {t(
+                "kiro.socialLoginHint",
+                "请在打开的浏览器中完成登录（本地回调端口 3128）",
+              )}
             </p>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="kiro-region" className="text-xs">
-              {t("kiro.region", "Region (区域)")}
-            </Label>
-            <Input
-              id="kiro-region"
-              type="text"
-              placeholder="us-east-1"
-              value={region}
-              onChange={(e) => setRegion(e.target.value)}
-              disabled={isAddingAccount}
-            />
-          </div>
-        </div>
-      )}
+          )}
+          {socialError && (
+            <p className="text-xs text-red-500 px-1">{socialError}</p>
+          )}
 
-      {/* 未认证/添加账号按钮 */}
-      {pollingState === "idle" && (
-        <Button
-          type="button"
-          onClick={handleLogin}
-          className="w-full"
-          variant="outline"
-          disabled={isAddingAccount}
-        >
-          <Sparkles className="mr-2 h-4 w-4" />
-          {hasAnyAccount
-            ? t("kiro.addAnotherAccount", "添加其他 Kiro 账号")
-            : t("kiro.loginWithAWS", "使用 AWS/Kiro 登录")}
-        </Button>
+          {/* 2. AWS Builder ID */}
+          <Button
+            type="button"
+            onClick={() => addAccount({ region: region.trim() || undefined })}
+            className="w-full"
+            variant="outline"
+            disabled={isAddingAccount}
+          >
+            <Sparkles className="mr-2 h-4 w-4" />
+            {hasAnyAccount
+              ? t("kiro.addAnotherBuilderId", "添加 AWS Builder ID 账号")
+              : t("kiro.loginWithBuilderId", "使用 AWS Builder ID 登录")}
+          </Button>
+
+          {/* 3. IAM Identity Center */}
+          <div>
+            <Button
+              type="button"
+              onClick={() => setShowIdcConfig(!showIdcConfig)}
+              className="w-full"
+              variant="outline"
+              disabled={isAddingAccount}
+            >
+              <ExternalLink className="mr-2 h-4 w-4" />
+              {t("kiro.loginWithIdc", "使用 IAM Identity Center 登录")}
+            </Button>
+            {showIdcConfig && (
+              <div className="mt-2 space-y-2 rounded-lg border bg-muted/20 p-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="kiro-start-url" className="text-xs">
+                    {t("kiro.startUrl", "IAM Start URL")}
+                  </Label>
+                  <Input
+                    id="kiro-start-url"
+                    type="text"
+                    placeholder="https://your-company.awsapps.com/start"
+                    value={startUrl}
+                    onChange={(e) => setStartUrl(e.target.value)}
+                    disabled={isAddingAccount}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="kiro-region" className="text-xs">
+                    {t("kiro.region", "Region (区域)")}
+                  </Label>
+                  <RegionCombobox
+                    id="kiro-region"
+                    value={region}
+                    onChange={setRegion}
+                    disabled={isAddingAccount}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  onClick={() =>
+                    addAccount({
+                      startUrl: startUrl.trim(),
+                      region: region.trim() || undefined,
+                    })
+                  }
+                  className="w-full"
+                  disabled={isAddingAccount || !startUrl.trim()}
+                >
+                  {t("kiro.confirmIdcLogin", "确认使用 IAM Identity Center 登录")}
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {/* 4. kiro-cli / Kiro IDE 凭证导入（仅点击时读取） */}
+          <Button
+            type="button"
+            onClick={() => importDynamic()}
+            className="w-full"
+            variant="outline"
+            disabled={isAddingAccount || isImporting}
+          >
+            {isImporting ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Database className="mr-2 h-4 w-4" />
+            )}
+            {t("kiro.importLocalCreds", "从 kiro-cli / Kiro IDE 导入凭证")}
+          </Button>
+          {importError && (
+            <p className="text-xs text-red-500 px-1">{importError}</p>
+          )}
+          <p className="text-[10px] text-muted-foreground flex items-center gap-1 px-1">
+            <AlertCircle className="h-3 w-3 flex-shrink-0" />
+            {t(
+              "kiro.importLocalCredsHint",
+              "点击从本地 kiro-cli SQLite / Kiro IDE 缓存读取并导入凭证；导入后可像普通账号一样移除，不会自动重现。",
+            )}
+          </p>
+        </div>
       )}
 
       {/* 轮询中状态 */}
@@ -263,12 +349,12 @@ export const KiroAuthSection: React.FC<KiroAuthSectionProps> = ({
         <div className="space-y-3 p-4 rounded-lg border border-border bg-muted/50">
           <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
-            {t("kiro.waitingForAuth", "等待 AWS 授权中...")}
+            {t("kiro.waitingForAuth", "等待 Kiro 授权中...")}
           </div>
 
           <div className="text-center">
             <p className="text-xs text-muted-foreground mb-1">
-              {t("kiro.enterCode", "在浏览器中输入以下代码：")}
+              {t("kiro.enterCodeKiro", "在浏览器中核对以下代码：")}
             </p>
             <div className="flex items-center justify-center gap-2">
               <code className="text-2xl font-mono font-bold tracking-wider bg-background px-4 py-2 rounded border">

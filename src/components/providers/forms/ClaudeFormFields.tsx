@@ -780,13 +780,18 @@ export function ClaudeFormFields({
             </p>
           )}
           <CollapsibleContent className="space-y-4 pt-2">
-            {/* API 格式选择（仅非云服务商显示） */}
+            {/* API 格式选择（仅非云服务商显示）
+                Kiro 预设时显示 Kiro 选项但禁用（格式由预设固定，不可手动更改） */}
             {category !== "cloud_provider" && (
               <div className="space-y-2">
                 <FormLabel htmlFor="apiFormat">
                   {t("providerForm.apiFormat", { defaultValue: "API 格式" })}
                 </FormLabel>
-                <Select value={apiFormat} onValueChange={onApiFormatChange}>
+                <Select
+                  value={apiFormat}
+                  onValueChange={onApiFormatChange}
+                  disabled={isKiroPreset}
+                >
                   <SelectTrigger id="apiFormat" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
@@ -811,12 +816,25 @@ export function ClaudeFormFields({
                         defaultValue: "Gemini Native generateContent (需转换)",
                       })}
                     </SelectItem>
+                    {/* Kiro 仅在 Kiro 预设时可选（由预设固定） */}
+                    {isKiroPreset && (
+                      <SelectItem value="kiro">
+                        {t("providerForm.apiFormatKiro", {
+                          defaultValue: "Kiro (AWS CodeWhisperer)",
+                        })}
+                      </SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  {t("providerForm.apiFormatHint", {
-                    defaultValue: "选择供应商 API 的输入格式",
-                  })}
+                  {isKiroPreset
+                    ? t("providerForm.apiFormatHintKiro", {
+                        defaultValue:
+                          "Kiro 供应商使用固定的 Kiro 格式（AWS CodeWhisperer），不可更改。",
+                      })
+                    : t("providerForm.apiFormatHint", {
+                        defaultValue: "选择供应商 API 的输入格式",
+                      })}
                 </p>
               </div>
             )}

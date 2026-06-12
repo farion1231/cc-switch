@@ -59,6 +59,7 @@ import {
 } from "@/config/claudeDesktopProviderPresets";
 import {
   fetchModelsForConfig,
+  fetchKiroModels,
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
@@ -519,6 +520,33 @@ export function ClaudeDesktopProviderForm({
     }
   };
 
+  // Kiro 使用专用接口获取模型（基于绑定账号的 token / region / profileArn）
+  const handleFetchKiroModels = async () => {
+    setIsFetchingModels(true);
+    try {
+      const models = await fetchKiroModels(selectedKiroAccountId ?? null);
+      setFetchedModels(models);
+      if (models.length === 0) {
+        toast.info(
+          t("providerForm.fetchModelsEmpty", {
+            defaultValue: "未获取到可用模型",
+          }),
+        );
+      } else {
+        toast.success(
+          t("providerForm.fetchModelsSuccess", {
+            count: models.length,
+            defaultValue: `已获取 ${models.length} 个模型`,
+          }),
+        );
+      }
+    } catch (error) {
+      showFetchModelsError(error, t);
+    } finally {
+      setIsFetchingModels(false);
+    }
+  };
+
   const handleSubmit = async (values: ProviderFormData) => {
     if (!values.name.trim()) {
       toast.error(
@@ -848,6 +876,7 @@ export function ClaudeDesktopProviderForm({
                     onValueChange={(value) =>
                       setApiFormat(value as ClaudeApiFormat)
                     }
+                    disabled={activeProviderType === "kiro"}
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue />
@@ -874,8 +903,24 @@ export function ClaudeDesktopProviderForm({
                             "Gemini Native generateContent (需开启路由)",
                         })}
                       </SelectItem>
+                      {/* Kiro 仅在 Kiro 供应商时可选（由预设固定） */}
+                      {activeProviderType === "kiro" && (
+                        <SelectItem value="kiro">
+                          {t("providerForm.apiFormatKiro", {
+                            defaultValue: "Kiro (AWS CodeWhisperer)",
+                          })}
+                        </SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
+                  {activeProviderType === "kiro" && (
+                    <p className="text-xs text-muted-foreground">
+                      {t("providerForm.apiFormatHintKiro", {
+                        defaultValue:
+                          "Kiro 供应商使用固定的 Kiro 格式（AWS CodeWhisperer），不可更改。",
+                      })}
+                    </p>
+                  )}
                 </div>
 
                 <div className="space-y-3">
@@ -892,6 +937,25 @@ export function ClaudeDesktopProviderForm({
                           variant="outline"
                           size="sm"
                           onClick={handleFetchModels}
+                          disabled={isFetchingModels}
+                          className="h-7 gap-1"
+                        >
+                          {isFetchingModels ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Download className="h-3.5 w-3.5" />
+                          )}
+                          {t("providerForm.fetchModels", {
+                            defaultValue: "获取模型",
+                          })}
+                        </Button>
+                      )}
+                      {activeProviderType === "kiro" && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleFetchKiroModels}
                           disabled={isFetchingModels}
                           className="h-7 gap-1"
                         >

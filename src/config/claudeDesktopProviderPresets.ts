@@ -316,7 +316,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#000000",
   },
   {
-    name: "Kiro (AWS Q)",
+    name: "Kiro",
     websiteUrl: "https://kiro.dev",
     category: "third_party",
     baseUrl: "https://runtime.us-east-1.kiro.dev",
@@ -325,12 +325,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     providerType: "kiro",
     requiresOAuth: true,
     modelRoutes: brandedRoutes(
-      "anthropic.claude-3-5-sonnet",
-      "anthropic.claude-3-opus",
-      "anthropic.claude-3-haiku",
+      "claude-sonnet-4-6",
+      "claude-opus-4-8",
+      "claude-haiku-4-5",
     ),
-    icon: "aws",
-    iconColor: "#FF9900",
+    icon: "kiro",
+    iconColor: "#9046FF",
   },
   {
     name: "DeepSeek",

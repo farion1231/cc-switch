@@ -43,7 +43,7 @@ export async function fetchCodexOauthModels(
 }
 
 /**
- * 获取 Kiro (AWS Q) 可用模型列表
+ * 获取 Kiro 可用模型列表
  */
 export async function fetchKiroModels(
   accountId?: string | null,
