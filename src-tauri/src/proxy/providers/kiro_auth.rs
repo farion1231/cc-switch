@@ -573,6 +573,11 @@ impl KiroAuthManager {
         newly
     }
 
+    /// 获取默认账号 ID
+    pub async fn default_account_id(&self) -> Option<String> {
+        self.default_account_id.read().await.clone()
+    }
+
     /// 设置默认账号
     pub async fn set_default_account(&self, account_id: &str) -> Result<(), String> {
         {

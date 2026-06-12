@@ -165,9 +165,9 @@ pub async fn auth_poll_for_account(
             let auth_manager = kiro_state.0.write().await;
             match auth_manager.poll_for_token(&device_code).await {
                 Ok(account) => {
-                    let default_account_id = None; // will fallback to first
+                    let default_account_id = auth_manager.default_account_id().await;
                     Ok(account.map(|account| {
-                        map_account(auth_provider, account, default_account_id)
+                        map_account(auth_provider, account, default_account_id.as_deref())
                     }))
                 }
                 Err(e) => {
@@ -215,10 +215,10 @@ pub async fn auth_list_accounts(
         AUTH_PROVIDER_KIRO => {
             let auth_manager = kiro_state.0.read().await;
             let accounts = auth_manager.list_accounts().await;
-            let default_account_id = None; // fallback
+            let default_account_id = auth_manager.default_account_id().await;
             Ok(accounts
                 .into_iter()
-                .map(|account| map_account(auth_provider, account, default_account_id))
+                .map(|account| map_account(auth_provider, account, default_account_id.as_deref()))
                 .collect())
         }
         _ => unreachable!(),
@@ -274,14 +274,15 @@ pub async fn auth_get_status(
             let auth_manager = kiro_state.0.read().await;
             let accounts = auth_manager.list_accounts().await;
             let authenticated = !accounts.is_empty();
+            let default_account_id = auth_manager.default_account_id().await;
             Ok(ManagedAuthStatus {
                 provider: auth_provider.to_string(),
                 authenticated,
-                default_account_id: None,
+                default_account_id: default_account_id.clone(),
                 migration_error: None,
                 accounts: accounts
                     .into_iter()
-                    .map(|account| map_account(auth_provider, account, None))
+                    .map(|account| map_account(auth_provider, account, default_account_id.as_deref()))
                     .collect(),
             })
         }
@@ -399,7 +400,8 @@ pub async fn auth_kiro_social_login(
             }
         })
         .await?;
-    Ok(map_account(AUTH_PROVIDER_KIRO, account, None))
+    let default_account_id = auth_manager.default_account_id().await;
+    Ok(map_account(AUTH_PROVIDER_KIRO, account, default_account_id.as_deref()))
 }
 
 /// Kiro 主动导入本地 kiro-cli / kiro-ide 凭证（仅在用户点击按钮时读取）。
@@ -410,8 +412,9 @@ pub async fn auth_kiro_import_dynamic(
 ) -> Result<Vec<ManagedAuthAccount>, String> {
     let auth_manager = kiro_state.0.read().await;
     let accounts = auth_manager.import_dynamic_accounts().await;
+    let default_account_id = auth_manager.default_account_id().await;
     Ok(accounts
         .into_iter()
-        .map(|a| map_account(AUTH_PROVIDER_KIRO, a, None))
+        .map(|a| map_account(AUTH_PROVIDER_KIRO, a, default_account_id.as_deref()))
         .collect())
 }
