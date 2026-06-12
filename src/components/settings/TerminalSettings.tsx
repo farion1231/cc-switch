@@ -42,6 +42,10 @@ const LINUX_TERMINALS = [
   { value: "alacritty", labelKey: "settings.terminal.options.linux.alacritty" },
   { value: "kitty", labelKey: "settings.terminal.options.linux.kitty" },
   { value: "ghostty", labelKey: "settings.terminal.options.linux.ghostty" },
+  {
+    value: "x-terminal-emulator",
+    labelKey: "settings.terminal.options.linux.xTerminalEmulator",
+  },
 ] as const;
 
 // Get terminals for the current platform
