@@ -47,6 +47,9 @@
     "windows": {
       "wix": {
         "template": "wix/per-user-main.wxs"
+      },
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
       }
     },
     "macOS": {
