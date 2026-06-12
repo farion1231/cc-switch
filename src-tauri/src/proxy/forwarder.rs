@@ -583,7 +583,7 @@ impl RequestForwarder {
                     // Kiro: 部分模型不支持 additionalModelRequestFields，去掉 thinking 后重试一次。
                     if Self::kiro_additional_fields_retry_should_trigger(
                         adapter.name(),
-                        &super::providers::get_claude_api_format(provider),
+                        super::providers::get_claude_api_format(provider),
                         kiro_additional_fields_retried,
                         &provider_body,
                         &e,

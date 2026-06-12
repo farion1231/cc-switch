@@ -240,8 +240,7 @@ pub fn anthropic_to_kiro(
         let len = messages.len();
         if len > 0 {
             // Process history messages (all except the last one)
-            for i in 0..len - 1 {
-                let msg = &messages[i];
+            for (i, msg) in messages.iter().take(len - 1).enumerate() {
                 let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
                 let content = msg.get("content");
 

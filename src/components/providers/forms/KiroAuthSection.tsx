@@ -310,7 +310,10 @@ export const KiroAuthSection: React.FC<KiroAuthSectionProps> = ({
                   className="w-full"
                   disabled={isAddingAccount || !startUrl.trim()}
                 >
-                  {t("kiro.confirmIdcLogin", "确认使用 IAM Identity Center 登录")}
+                  {t(
+                    "kiro.confirmIdcLogin",
+                    "确认使用 IAM Identity Center 登录",
+                  )}
                 </Button>
               </div>
             )}

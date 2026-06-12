@@ -19,15 +19,16 @@ import { cn } from "@/lib/utils";
 /** 常见的 AWS 区域（与 IdC 探测列表保持一致的优先项） */
 export const COMMON_AWS_REGIONS = [
   "us-east-1",
-  "us-east-2",
-  "us-west-2",
+  "ap-northeast-1",
+  "ap-southeast-1",
+  "eu-central-1",
+  "eu-north-1",
   "eu-west-1",
   "eu-west-2",
   "eu-west-3",
-  "eu-central-1",
-  "eu-north-1",
-  "ap-southeast-1",
-  "ap-northeast-1",
+  "us-east-2",
+  "us-west-1",
+  "us-west-2",
 ];
 
 interface RegionComboboxProps {
@@ -57,8 +58,7 @@ export const RegionCombobox: React.FC<RegionComboboxProps> = ({
   const filtered = options.filter((r) => r.toLowerCase().includes(lowerQuery));
   // 输入的内容不在已有选项中（忽略大小写）时，提供「使用自定义」创建项
   const showCreate =
-    query.length > 0 &&
-    !options.some((r) => r.toLowerCase() === lowerQuery);
+    query.length > 0 && !options.some((r) => r.toLowerCase() === lowerQuery);
 
   const commit = (region: string) => {
     onChange(region);

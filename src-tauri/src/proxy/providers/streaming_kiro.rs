@@ -49,8 +49,7 @@ fn find_json_end_bytes(text: &str, start_byte: usize) -> Option<usize> {
     let mut in_string = false;
     let mut escape_next = false;
     let bytes = text.as_bytes();
-    for i in start_byte..bytes.len() {
-        let b = bytes[i];
+    for (i, &b) in bytes.iter().enumerate().skip(start_byte) {
         if escape_next {
             escape_next = false;
             continue;
@@ -229,17 +228,19 @@ pub fn create_anthropic_sse_stream_from_kiro<E: std::error::Error + Send + 'stat
                                             }
                                         }
                                     });
-                                    yield Ok(Bytes::from(format!("event: message_start\ndata: {}\n\n", serde_json::to_string(&msg_start).unwrap())));
+                                    let data = serde_json::to_string(&msg_start).map_err(std::io::Error::other)?;
+                                    yield Ok(Bytes::from(format!("event: message_start\ndata: {}\n\n", data)));
                                     has_sent_message_start = true;
                                 }
 
                                 if current_block_type != Some("text") {
-                                    if current_block_index.is_some() {
+                                    if let Some(idx) = current_block_index {
                                         let block_stop = json!({
                                             "type": "content_block_stop",
-                                            "index": current_block_index.unwrap()
+                                            "index": idx
                                         });
-                                        yield Ok(Bytes::from(format!("event: content_block_stop\ndata: {}\n\n", serde_json::to_string(&block_stop).unwrap())));
+                                        let data = serde_json::to_string(&block_stop).map_err(std::io::Error::other)?;
+                                        yield Ok(Bytes::from(format!("event: content_block_stop\ndata: {}\n\n", data)));
                                     }
 
                                     let block_start = json!({
@@ -250,7 +251,8 @@ pub fn create_anthropic_sse_stream_from_kiro<E: std::error::Error + Send + 'stat
                                             "text": ""
                                         }
                                     });
-                                    yield Ok(Bytes::from(format!("event: content_block_start\ndata: {}\n\n", serde_json::to_string(&block_start).unwrap())));
+                                    let data = serde_json::to_string(&block_start).map_err(std::io::Error::other)?;
+                                    yield Ok(Bytes::from(format!("event: content_block_start\ndata: {}\n\n", data)));
 
                                     current_block_index = Some(next_content_index);
                                     current_block_type = Some("text");
@@ -265,7 +267,8 @@ pub fn create_anthropic_sse_stream_from_kiro<E: std::error::Error + Send + 'stat
                                         "text": text
                                     }
                                 });
-                                yield Ok(Bytes::from(format!("event: content_block_delta\ndata: {}\n\n", serde_json::to_string(&block_delta).unwrap())));
+                                let data = serde_json::to_string(&block_delta).map_err(std::io::Error::other)?;
+                                yield Ok(Bytes::from(format!("event: content_block_delta\ndata: {}\n\n", data)));
                             }
                             KiroStreamEvent::ToolUse { name, tool_use_id, input, stop } => {
                                 has_tool_calls = true;
@@ -286,17 +289,19 @@ pub fn create_anthropic_sse_stream_from_kiro<E: std::error::Error + Send + 'stat
                                             }
                                         }
                                     });
-                                    yield Ok(Bytes::from(format!("event: message_start\ndata: {}\n\n", serde_json::to_string(&msg_start).unwrap())));
+                                    let data = serde_json::to_string(&msg_start).map_err(std::io::Error::other)?;
+                                    yield Ok(Bytes::from(format!("event: message_start\ndata: {}\n\n", data)));
                                     has_sent_message_start = true;
                                 }
 
                                 if current_block_type != Some("tool_use") || current_tool_id.as_deref() != Some(&tool_use_id) {
-                                    if current_block_index.is_some() {
+                                    if let Some(idx) = current_block_index {
                                         let block_stop = json!({
                                             "type": "content_block_stop",
-                                            "index": current_block_index.unwrap()
+                                            "index": idx
                                         });
-                                        yield Ok(Bytes::from(format!("event: content_block_stop\ndata: {}\n\n", serde_json::to_string(&block_stop).unwrap())));
+                                        let data = serde_json::to_string(&block_stop).map_err(std::io::Error::other)?;
+                                        yield Ok(Bytes::from(format!("event: content_block_stop\ndata: {}\n\n", data)));
                                     }
 
                                     let block_start = json!({
@@ -309,7 +314,8 @@ pub fn create_anthropic_sse_stream_from_kiro<E: std::error::Error + Send + 'stat
                                             "input": {}
                                         }
                                     });
-                                    yield Ok(Bytes::from(format!("event: content_block_start\ndata: {}\n\n", serde_json::to_string(&block_start).unwrap())));
+                                    let data = serde_json::to_string(&block_start).map_err(std::io::Error::other)?;
+                                    yield Ok(Bytes::from(format!("event: content_block_start\ndata: {}\n\n", data)));
 
                                     current_block_index = Some(next_content_index);
                                     current_block_type = Some("tool_use");
@@ -326,40 +332,50 @@ pub fn create_anthropic_sse_stream_from_kiro<E: std::error::Error + Send + 'stat
                                             "partial_json": input
                                         }
                                     });
-                                    yield Ok(Bytes::from(format!("event: content_block_delta\ndata: {}\n\n", serde_json::to_string(&block_delta).unwrap())));
+                                    let data = serde_json::to_string(&block_delta).map_err(std::io::Error::other)?;
+                                    yield Ok(Bytes::from(format!("event: content_block_delta\ndata: {}\n\n", data)));
                                 }
 
                                 if stop {
-                                    let block_stop = json!({
-                                        "type": "content_block_stop",
-                                        "index": current_block_index.unwrap()
-                                    });
-                                    yield Ok(Bytes::from(format!("event: content_block_stop\ndata: {}\n\n", serde_json::to_string(&block_stop).unwrap())));
+                                    if let Some(idx) = current_block_index {
+                                        let block_stop = json!({
+                                            "type": "content_block_stop",
+                                            "index": idx
+                                        });
+                                        let data = serde_json::to_string(&block_stop).map_err(std::io::Error::other)?;
+                                        yield Ok(Bytes::from(format!("event: content_block_stop\ndata: {}\n\n", data)));
+                                    }
                                     current_block_index = None;
                                     current_block_type = None;
                                     current_tool_id = None;
                                 }
                             }
                             KiroStreamEvent::ToolUseInput(input) => {
-                                if current_block_type == Some("tool_use") && current_block_index.is_some() {
-                                    let block_delta = json!({
-                                        "type": "content_block_delta",
-                                        "index": current_block_index.unwrap(),
-                                        "delta": {
-                                            "type": "input_json_delta",
-                                            "partial_json": input
-                                        }
-                                    });
-                                    yield Ok(Bytes::from(format!("event: content_block_delta\ndata: {}\n\n", serde_json::to_string(&block_delta).unwrap())));
+                                if current_block_type == Some("tool_use") {
+                                    if let Some(idx) = current_block_index {
+                                        let block_delta = json!({
+                                            "type": "content_block_delta",
+                                            "index": idx,
+                                            "delta": {
+                                                "type": "input_json_delta",
+                                                "partial_json": input
+                                            }
+                                        });
+                                        let data = serde_json::to_string(&block_delta).map_err(std::io::Error::other)?;
+                                        yield Ok(Bytes::from(format!("event: content_block_delta\ndata: {}\n\n", data)));
+                                    }
                                 }
                             }
                             KiroStreamEvent::ToolUseStop(stop) => {
-                                if stop && current_block_type == Some("tool_use") && current_block_index.is_some() {
-                                    let block_stop = json!({
-                                        "type": "content_block_stop",
-                                        "index": current_block_index.unwrap()
-                                    });
-                                    yield Ok(Bytes::from(format!("event: content_block_stop\ndata: {}\n\n", serde_json::to_string(&block_stop).unwrap())));
+                                if stop && current_block_type == Some("tool_use") {
+                                    if let Some(idx) = current_block_index {
+                                        let block_stop = json!({
+                                            "type": "content_block_stop",
+                                            "index": idx
+                                        });
+                                        let data = serde_json::to_string(&block_stop).map_err(std::io::Error::other)?;
+                                        yield Ok(Bytes::from(format!("event: content_block_stop\ndata: {}\n\n", data)));
+                                    }
                                     current_block_index = None;
                                     current_block_type = None;
                                     current_tool_id = None;
@@ -386,16 +402,16 @@ pub fn create_anthropic_sse_stream_from_kiro<E: std::error::Error + Send + 'stat
                     }
                 }
                 Err(e) => {
-                    yield Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
+                    yield Err(std::io::Error::other(e.to_string()));
                 }
             }
         }
 
         // Close any remaining open blocks
-        if current_block_index.is_some() {
+        if let Some(idx) = current_block_index {
             let block_stop = json!({
                 "type": "content_block_stop",
-                "index": current_block_index.unwrap()
+                "index": idx
             });
             yield Ok(Bytes::from(format!("event: content_block_stop\ndata: {}\n\n", serde_json::to_string(&block_stop).unwrap())));
         }

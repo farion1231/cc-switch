@@ -34,14 +34,15 @@ const EXPIRES_BUFFER_MS: i64 = 5 * 60 * 1000;
 /// 自动检测 IAM Identity Center OIDC region 时探测的常见 region，按可能性排序。
 const IDC_PROBE_REGIONS: &[&str] = &[
     "us-east-1",
-    "eu-west-1",
+    "ap-northeast-1",
+    "ap-southeast-1",
     "eu-central-1",
-    "us-east-2",
+    "eu-north-1",
+    "eu-west-1",
     "eu-west-2",
     "eu-west-3",
-    "eu-north-1",
-    "ap-southeast-1",
-    "ap-northeast-1",
+    "us-east-2",
+    "us-west-1",
     "us-west-2",
 ];
 
@@ -372,7 +373,7 @@ impl KiroAuthManager {
         let expires_at_ms = val
             .get("expires_at")
             .and_then(parse_expires_to_ms)
-            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis() + 3600_000);
+            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis() + 3_600_000);
 
         let mut client_id = String::new();
         let mut client_secret = String::new();
@@ -466,7 +467,7 @@ impl KiroAuthManager {
         let expires_at_ms = token_data
             .get("expiresAt")
             .and_then(parse_expires_to_ms)
-            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis() + 3600_000);
+            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis() + 3_600_000);
 
         // 读取伴随的 OIDC client 注册文件以支持静默刷新
         let mut client_id = String::new();
@@ -1126,9 +1127,7 @@ impl KiroAuthManager {
                 error: String,
             }
             if let Ok(err_res) = res.json::<ErrRes>().await {
-                if err_res.error == "authorization_pending" {
-                    return Ok(None);
-                } else if err_res.error == "slow_down" {
+                if err_res.error == "authorization_pending" || err_res.error == "slow_down" {
                     return Ok(None);
                 }
                 return Err(format!("OIDC token 授权失败: {}", err_res.error));
