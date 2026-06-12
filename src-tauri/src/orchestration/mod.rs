@@ -13,6 +13,7 @@ pub mod loader;
 pub mod model_caller;
 pub mod quality_gate;
 pub mod react_executor;
+pub mod response_adapter;
 pub mod retry_policy;
 pub mod scoring;
 pub mod selector;

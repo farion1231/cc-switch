@@ -144,6 +144,42 @@ impl OrchestrationConfig {
                         }
                     }
                 }
+                StrategyAction::Debate {
+                    debaters, judge, ..
+                } => {
+                    for model_key in debaters {
+                        if !self.models.contains_key(model_key) {
+                            return Err(format!(
+                                "strategy '{}' references undefined debater '{}'",
+                                strategy_name, model_key
+                            ));
+                        }
+                    }
+                    if !self.models.contains_key(judge) {
+                        return Err(format!(
+                            "strategy '{}' references undefined judge '{}'",
+                            strategy_name, judge
+                        ));
+                    }
+                }
+                StrategyAction::MoA {
+                    proposers, aggregator, ..
+                } => {
+                    for model_key in proposers {
+                        if !self.models.contains_key(model_key) {
+                            return Err(format!(
+                                "strategy '{}' references undefined proposer '{}'",
+                                strategy_name, model_key
+                            ));
+                        }
+                    }
+                    if !self.models.contains_key(aggregator) {
+                        return Err(format!(
+                            "strategy '{}' references undefined aggregator '{}'",
+                            strategy_name, aggregator
+                        ));
+                    }
+                }
             }
         }
 
@@ -181,6 +217,20 @@ pub enum StrategyAction {
         verify_each: bool,
         #[serde(default = "default_true")]
         escalate_on_fail: bool,
+        #[serde(default = "default_threshold")]
+        quality_threshold: f64,
+    },
+    Debate {
+        debaters: Vec<String>,
+        judge: String,
+        #[serde(default = "default_threshold")]
+        quality_threshold: f64,
+    },
+    MoA {
+        proposers: Vec<String>,
+        aggregator: String,
+        #[serde(default = "default_true")]
+        verify_each: bool,
         #[serde(default = "default_threshold")]
         quality_threshold: f64,
     },

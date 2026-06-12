@@ -20,6 +20,15 @@ pub enum OrchestrationDecision {
         models: Vec<String>,
         quality_threshold: f64,
     },
+    Debate {
+        debaters: Vec<String>,
+        judge: String,
+    },
+    MoA {
+        proposers: Vec<String>,
+        aggregator: String,
+        quality_threshold: f64,
+    },
 }
 
 impl OrchestrationEngine {
@@ -85,6 +94,35 @@ impl OrchestrationEngine {
                 );
                 OrchestrationDecision::Cascade {
                     models,
+                    quality_threshold,
+                }
+            }
+            StrategyAction::Debate {
+                debaters,
+                judge,
+                ..
+            } => {
+                log::info!(
+                    "[Orchestration] DEBATE — debaters=[{}], judge={}",
+                    debaters.join(", "),
+                    judge
+                );
+                OrchestrationDecision::Debate { debaters, judge }
+            }
+            StrategyAction::MoA {
+                proposers,
+                aggregator,
+                quality_threshold,
+                ..
+            } => {
+                log::info!(
+                    "[Orchestration] MoA — proposers=[{}], aggregator={}",
+                    proposers.join(", "),
+                    aggregator
+                );
+                OrchestrationDecision::MoA {
+                    proposers,
+                    aggregator,
                     quality_threshold,
                 }
             }

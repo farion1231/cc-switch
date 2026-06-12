@@ -100,13 +100,11 @@ strategies:
       complexity: [0.7, 1.0]
       risk: ["high", "critical"]
     action:
-      type: cascade
-      models:
+      type: debate
+      debaters:
         - deepseek
         - kimi
-        - glm
-      verify_each: true
-      escalate_on_fail: true
+      judge: glm
       quality_threshold: 0.75
 
   # 极高复杂度 → MoA：多提议者 + 聚合
@@ -117,11 +115,10 @@ strategies:
       risk: ["critical"]
       task_type: ["coding", "architecture"]
     action:
-      type: cascade
-      models:
+      type: moa
+      proposers:
         - deepseek
         - kimi
-        - glm
+      aggregator: glm
       verify_each: true
-      escalate_on_fail: true
       quality_threshold: 0.80

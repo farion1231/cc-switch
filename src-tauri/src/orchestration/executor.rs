@@ -53,6 +53,20 @@ impl StrategyExecutor {
                 self.execute_cascade(models, *quality_threshold, messages, tools)
                     .await
             }
+
+            OrchestrationDecision::Debate { debaters, judge } => {
+                self.execute_debate(debaters, judge, messages, tools)
+                    .await
+            }
+
+            OrchestrationDecision::MoA {
+                proposers,
+                aggregator,
+                quality_threshold,
+            } => {
+                self.execute_moa(proposers, aggregator, *quality_threshold, messages, tools)
+                    .await
+            }
         }
     }
 
@@ -222,6 +236,99 @@ impl StrategyExecutor {
         })
     }
 
+    /// Execute Mixture of Agents (MoA): multiple proposers generate answers,
+    /// then an aggregator synthesizes the best final response.
+    pub async fn execute_moa(
+        &self,
+        proposer_keys: &[String],
+        aggregator_key: &str,
+        quality_threshold: f64,
+        messages: Vec<Value>,
+        tools: Option<Vec<Value>>,
+    ) -> Result<ExecutionResult, String> {
+        let start = std::time::Instant::now();
+        let mut total_input = 0u64;
+        let mut total_output = 0u64;
+
+        // Phase 1: All proposers generate answers in parallel (sequential for now)
+        let mut proposals: Vec<(String, ModelResponse)> = Vec::new();
+        for model_key in proposer_keys {
+            match self
+                .caller
+                .call(model_key, messages.clone(), tools.clone(), None)
+                .await
+            {
+                Ok(resp) => {
+                    total_input += resp.usage.input_tokens;
+                    total_output += resp.usage.output_tokens;
+                    proposals.push((model_key.clone(), resp));
+                }
+                Err(e) => {
+                    log::warn!("[MoA] Proposer '{}' failed: {}", model_key, e);
+                }
+            }
+        }
+
+        if proposals.is_empty() {
+            return Err("All MoA proposers failed".to_string());
+        }
+
+        // Phase 2: Aggregator synthesizes the best answer
+        let aggregation_prompt = Self::build_moa_aggregation_prompt(&proposals);
+        let aggregator_resp = self
+            .caller
+            .call_prompt(
+                aggregator_key,
+                MOA_AGGREGATOR_SYSTEM,
+                &aggregation_prompt,
+                Some(0.3),
+            )
+            .await?;
+
+        total_input += aggregator_resp.usage.input_tokens;
+        total_output += aggregator_resp.usage.output_tokens;
+
+        // Phase 3: Quality gate on the aggregated result
+        let quality_result = self
+            .quality_gate
+            .verify(&aggregator_resp.content, None, Some(&self.caller), None)
+            .await;
+
+        Ok(ExecutionResult {
+            content: aggregator_resp.content,
+            model_used: aggregator_resp.model,
+            strategy: "moa".to_string(),
+            total_latency_ms: start.elapsed().as_millis() as u64,
+            total_input_tokens: total_input,
+            total_output_tokens: total_output,
+            cascade_attempts: proposals.len() as u32,
+            verified: quality_result.passed && quality_result.score >= quality_threshold,
+            judge_score: Some(quality_result.score),
+        })
+    }
+
+    fn build_moa_aggregation_prompt(proposals: &[(String, ModelResponse)]) -> String {
+        let mut prompt = String::from(
+            "You are synthesizing answers from multiple AI models. Combine the best elements from each proposal into a single superior answer.\n\n",
+        );
+        for (i, (_key, resp)) in proposals.iter().enumerate() {
+            prompt.push_str(&format!(
+                "--- Proposal {} ---\n{}\n\n",
+                i + 1,
+                resp.content
+            ));
+        }
+        prompt.push_str(
+            "Synthesize the above proposals into one comprehensive answer. \
+             Incorporate the strongest arguments and correct any errors.\n\n\
+             Format your response as:\n\
+             SCORE: <0.0 to 1.0>\n\
+             REASONING: <brief explanation of synthesis>\n\
+             ANSWER:\n<your synthesized response>",
+        );
+        prompt
+    }
+
     fn build_debate_prompt(responses: &[(String, ModelResponse)]) -> String {
         let mut prompt = String::from("Multiple AI models have provided answers to the same question. Evaluate and synthesize the best response.\n\n");
         for (i, (_key, resp)) in responses.iter().enumerate() {
@@ -255,6 +362,11 @@ impl StrategyExecutor {
 const DEBATE_JUDGE_SYSTEM: &str = "You are an impartial judge evaluating AI model outputs. \
     Synthesize the best answer from multiple candidates. \
     Be strict on factual accuracy and completeness.";
+
+const MOA_AGGREGATOR_SYSTEM: &str = "You are an expert AI aggregator. Your task is to synthesize \
+    multiple model proposals into the best possible answer. \
+    Identify the strongest arguments, correct any errors, and produce a response \
+    that is more accurate and complete than any individual proposal.";
 
 #[cfg(test)]
 mod tests {
