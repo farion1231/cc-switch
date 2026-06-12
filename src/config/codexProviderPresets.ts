@@ -312,6 +312,38 @@ requires_openai_auth = true`,
     iconColor: "#1E88E5",
   },
   {
+    name: "OpenCode Go",
+    websiteUrl: "https://opencode.ai",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "opencode_go",
+      "https://opencode.ai/zen/go/v1",
+      "deepseek-v4-flash",
+    ),
+    category: "third_party",
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      {
+        model: "deepseek-v4-flash",
+        displayName: "DeepSeek V4 Flash",
+        contextWindow: 1000000,
+      },
+      {
+        model: "deepseek-v4-pro",
+        displayName: "DeepSeek V4 Pro",
+        contextWindow: 1000000,
+      },
+    ]),
+    codexChatReasoning: {
+      supportsThinking: true,
+      thinkingParam: "thinking",
+      outputFormat: "reasoning_content",
+    },
+    endpointCandidates: ["https://opencode.ai/zen/go/v1"],
+    icon: "opencode",
+    iconColor: "#211E1E",
+  },
+  {
     name: "Zhipu GLM",
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
