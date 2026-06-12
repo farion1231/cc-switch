@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  Search,
   Sparkles,
   Trash2,
   ExternalLink,
@@ -9,10 +10,14 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   type ImportSkillSelection,
   type SkillBackupEntry,
+  useBatchToggleSkillApp,
+  useBatchUninstallSkill,
   useDeleteSkillBackup,
   useInstalledSkills,
   useSkillBackups,
@@ -31,7 +36,8 @@ import type { AppId } from "@/lib/api/types";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
-import { SKILLS_APP_IDS } from "@/config/appConfig";
+import { APP_ICON_MAP, MCP_SKILLS_APP_IDS, SKILLS_APP_IDS} from "@/config/appConfig";
+import { cn } from "@/lib/utils";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
@@ -48,6 +54,8 @@ interface UnifiedSkillsPanelProps {
   onOpenDiscovery: () => void;
   currentApp: AppId;
 }
+
+type BatchTargetApp = (typeof MCP_SKILLS_APP_IDS)[number];
 
 export interface UnifiedSkillsPanelHandle {
   openDiscovery: () => void;
@@ -79,6 +87,16 @@ const UnifiedSkillsPanel = React.forwardRef<
   } | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [batchMode, setBatchMode] = useState(false);
+  const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [batchTargetApp, setBatchTargetApp] = useState<BatchTargetApp>(() =>
+    MCP_SKILLS_APP_IDS.includes(currentApp as BatchTargetApp)
+      ? (currentApp as BatchTargetApp)
+      : "claude",
+  );
 
   const { data: skills, isLoading } = useInstalledSkills();
   const {
@@ -88,7 +106,9 @@ const UnifiedSkillsPanel = React.forwardRef<
   } = useSkillBackups();
   const deleteBackupMutation = useDeleteSkillBackup();
   const toggleAppMutation = useToggleSkillApp();
+  const batchToggleMutation = useBatchToggleSkillApp();
   const uninstallMutation = useUninstallSkill();
+  const batchUninstallMutation = useBatchUninstallSkill();
   const restoreBackupMutation = useRestoreSkillBackup();
   const { data: unmanagedSkills, refetch: scanUnmanaged } =
     useScanUnmanagedSkills();
@@ -130,6 +150,82 @@ const UnifiedSkillsPanel = React.forwardRef<
     });
     return counts;
   }, [skills]);
+
+  const filteredSkills = useMemo(() => {
+    if (!skills) return [];
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return skills;
+
+    return skills.filter((skill) => {
+      const source =
+        skill.repoOwner && skill.repoName
+          ? `${skill.repoOwner}/${skill.repoName}`.toLowerCase()
+          : "";
+      const fields = [
+        skill.name?.toLowerCase() || "",
+        skill.description?.toLowerCase() || "",
+        source,
+        skill.directory?.toLowerCase() || "",
+      ];
+      return fields.some((field) => field.includes(query));
+    });
+  }, [skills, searchQuery]);
+
+  React.useEffect(() => {
+    if (!batchMode) return;
+    const visibleIds = new Set(filteredSkills.map((skill) => skill.id));
+    setSelectedSkillIds((current) => {
+      let changed = false;
+      const next = new Set<string>();
+      current.forEach((id) => {
+        if (visibleIds.has(id)) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
+      });
+      return changed ? next : current;
+    });
+  }, [batchMode, filteredSkills]);
+
+  React.useEffect(() => {
+    if (MCP_SKILLS_APP_IDS.includes(currentApp as BatchTargetApp)) {
+      setBatchTargetApp(currentApp as BatchTargetApp);
+    }
+  }, [currentApp]);
+
+  const selectedSkills = useMemo(
+    () => filteredSkills.filter((skill) => selectedSkillIds.has(skill.id)),
+    [filteredSkills, selectedSkillIds],
+  );
+
+  const allFilteredSelected =
+    filteredSkills.length > 0 &&
+    filteredSkills.every((skill) => selectedSkillIds.has(skill.id));
+
+  const toggleSelectSkill = (id: string, checked: boolean) => {
+    setSelectedSkillIds((current) => {
+      const next = new Set(current);
+      if (checked) {
+        next.add(id);
+      } else {
+        next.delete(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAllFiltered = () => {
+    setSelectedSkillIds((current) => {
+      const next = new Set(current);
+      if (allFilteredSelected) {
+        filteredSkills.forEach((skill) => next.delete(skill.id));
+      } else {
+        filteredSkills.forEach((skill) => next.add(skill.id));
+      }
+      return next;
+    });
+  };
 
   const handleToggleApp = async (id: string, app: AppId, enabled: boolean) => {
     try {
@@ -336,6 +432,114 @@ const UnifiedSkillsPanel = React.forwardRef<
     });
   };
 
+  const handleBatchToggleApp = async (enabled: boolean) => {
+    if (selectedSkills.length === 0 || batchToggleMutation.isPending) return;
+
+    try {
+      const result = await batchToggleMutation.mutateAsync({
+        items: selectedSkills.map((skill) => ({
+          id: skill.id,
+          app: batchTargetApp,
+          enabled,
+        })),
+      });
+
+      if (result.successIds.length > 0) {
+        toast.success(
+          t(
+            enabled
+              ? "skills.batch.enableSuccess"
+              : "skills.batch.disableSuccess",
+            {
+              count: result.successIds.length,
+              appName: t(`skills.apps.${batchTargetApp}`),
+            },
+          ),
+          { closeButton: true },
+        );
+      }
+
+      if (result.failed.length > 0) {
+        toast.error(
+          t(
+            enabled
+              ? "skills.batch.enableFailed"
+              : "skills.batch.disableFailed",
+            {
+              failed: result.failed.length,
+              appName: t(`skills.apps.${batchTargetApp}`),
+            },
+          ),
+          {
+            description: result.failed[0]?.error || t("common.unknown"),
+          },
+        );
+      }
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    }
+  };
+
+  const handleBatchUninstall = () => {
+    if (selectedSkills.length === 0 || batchUninstallMutation.isPending) return;
+
+    setConfirmDialog({
+      isOpen: true,
+      title: t("skills.batch.deleteConfirmTitle"),
+      message: t("skills.batch.deleteConfirmMessage", {
+        count: selectedSkills.length,
+      }),
+      confirmText: t("skills.batch.deleteConfirmAction"),
+      variant: "destructive",
+      onConfirm: async () => {
+        try {
+          const result = await batchUninstallMutation.mutateAsync({
+            items: selectedSkills.map((skill) => ({ id: skill.id })),
+          });
+
+          setConfirmDialog(null);
+
+          if (result.successIds.length > 0) {
+            toast.success(
+              t("skills.batch.deleteSuccess", {
+                count: result.successIds.length,
+              }),
+              { closeButton: true },
+            );
+          }
+
+          if (result.failed.length > 0) {
+            toast.error(
+              t("skills.batch.deleteFailed", { failed: result.failed.length }),
+              {
+                description: result.failed[0]?.error || t("common.unknown"),
+              },
+            );
+          }
+
+          if (result.successIds.length > 0) {
+            setSelectedSkillIds((current) => {
+              const next = new Set(current);
+              result.successIds.forEach((id) => next.delete(id));
+              return next;
+            });
+          }
+        } catch (error) {
+          toast.error(t("common.error"), { description: String(error) });
+        }
+      },
+    });
+  };
+
+  const handleToggleBatchMode = () => {
+    setBatchMode((prev) => {
+      if (prev) {
+        setSelectedSkillIds(new Set());
+      }
+      return !prev;
+    });
+  };
+
   React.useImperativeHandle(ref, () => ({
     openDiscovery: onOpenDiscovery,
     openImport: handleOpenImport,
@@ -399,6 +603,155 @@ const UnifiedSkillsPanel = React.forwardRef<
         </div>
       </div>
 
+      {!isLoading && skills && skills.length > 0 && (
+        <div className="mb-4 space-y-3">
+          <div className="flex flex-col gap-2 md:flex-row md:items-center">
+            <div className="relative flex-1 min-w-0">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                type="text"
+                value={searchQuery}
+                placeholder={t("skills.batch.searchInstalledPlaceholder")}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 pr-3"
+              />
+            </div>
+            <Button
+              type="button"
+              variant={batchMode ? "secondary" : "outline"}
+              size="sm"
+              onClick={handleToggleBatchMode}
+              className="whitespace-nowrap"
+            >
+              {batchMode
+                ? t("skills.batch.exitMode")
+                : t("skills.batch.enterMode")}
+            </Button>
+          </div>
+
+          <div className="text-xs text-muted-foreground">
+            {t("skills.batch.filteredCount", {
+              count: filteredSkills.length,
+              total: skills.length,
+            })}
+          </div>
+
+          {batchMode && (
+            <div className="grid gap-3 rounded-md border bg-muted/40 px-3 py-2.5">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span>
+                  {t("skills.batch.selectedCount", {
+                    count: selectedSkills.length,
+                  })}
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  {t("skills.batch.targetApp")}
+                </span>
+                {MCP_SKILLS_APP_IDS.map((app) => (
+                  <button
+                    key={app}
+                    type="button"
+                    onClick={() => setBatchTargetApp(app as BatchTargetApp)}
+                    data-testid={`skills-batch-target-${app}`}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors",
+                      batchTargetApp === app
+                        ? "border-border-hover bg-background text-foreground"
+                        : "border-transparent text-muted-foreground hover:bg-background/70",
+                    )}
+                    aria-label={APP_ICON_MAP[app].label}
+                  >
+                    <span className="flex-shrink-0">
+                      {APP_ICON_MAP[app].icon}
+                    </span>
+                    <span>{t(`skills.apps.${app}`)}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {filteredSkills.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2.5 text-xs"
+                    onClick={toggleSelectAllFiltered}
+                  >
+                    {allFilteredSelected
+                      ? t("skills.batch.clearFilteredSelection")
+                      : t("skills.batch.selectAllFiltered")}
+                  </Button>
+                )}
+
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2.5 text-xs"
+                  onClick={() => setSelectedSkillIds(new Set())}
+                >
+                  {t("skills.batch.clearSelection")}
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2.5 text-xs"
+                  onClick={() => handleBatchToggleApp(true)}
+                  disabled={
+                    selectedSkills.length === 0 || batchToggleMutation.isPending
+                  }
+                >
+                  {batchToggleMutation.isPending
+                    ? t("skills.batch.processing")
+                    : t("skills.batch.enableSelectedFor", {
+                        appName: t(`skills.apps.${batchTargetApp}`),
+                      })}
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2.5 text-xs"
+                  onClick={() => handleBatchToggleApp(false)}
+                  disabled={
+                    selectedSkills.length === 0 || batchToggleMutation.isPending
+                  }
+                >
+                  {batchToggleMutation.isPending
+                    ? t("skills.batch.processing")
+                    : t("skills.batch.disableSelectedFor", {
+                        appName: t(`skills.apps.${batchTargetApp}`),
+                      })}
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  className="h-7 px-2.5 text-xs"
+                  onClick={handleBatchUninstall}
+                  disabled={
+                    selectedSkills.length === 0 ||
+                    batchUninstallMutation.isPending
+                  }
+                >
+                  {batchUninstallMutation.isPending
+                    ? t("skills.batch.deleting")
+                    : t("skills.batch.deleteSelected")}
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
         {isLoading ? (
           <div className="text-center py-12 text-muted-foreground">
@@ -416,10 +769,14 @@ const UnifiedSkillsPanel = React.forwardRef<
               {t("skills.noInstalledDescription")}
             </p>
           </div>
+        ) : filteredSkills.length === 0 ? (
+          <div className="text-center py-12 text-muted-foreground">
+            {t("skills.noResults")}
+          </div>
         ) : (
           <TooltipProvider delayDuration={300}>
             <div className="rounded-xl border border-border-default overflow-hidden">
-              {skills.map((skill, index) => (
+              {filteredSkills.map((skill, index) => (
                 <InstalledSkillListItem
                   key={skill.id}
                   skill={skill}
@@ -431,7 +788,17 @@ const UnifiedSkillsPanel = React.forwardRef<
                   onToggleApp={handleToggleApp}
                   onUninstall={() => handleUninstall(skill)}
                   onUpdate={() => handleUpdateSkill(skill)}
-                  isLast={index === skills.length - 1}
+                  selectionMode={batchMode}
+                  checked={selectedSkillIds.has(skill.id)}
+                  onToggleChecked={(checked) =>
+                    toggleSelectSkill(skill.id, checked)
+                  }
+                  disableActions={
+                    batchMode ||
+                    batchToggleMutation.isPending ||
+                    batchUninstallMutation.isPending
+                  }
+                  isLast={index === filteredSkills.length - 1}
                 />
               ))}
             </div>
@@ -484,6 +851,10 @@ interface InstalledSkillListItemProps {
   onToggleApp: (id: string, app: AppId, enabled: boolean) => void;
   onUninstall: () => void;
   onUpdate?: () => void;
+  selectionMode?: boolean;
+  checked?: boolean;
+  onToggleChecked?: (checked: boolean) => void;
+  disableActions?: boolean;
   isLast?: boolean;
 }
 
@@ -494,6 +865,10 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   onToggleApp,
   onUninstall,
   onUpdate,
+  selectionMode,
+  checked = false,
+  onToggleChecked,
+  disableActions,
   isLast,
 }) => {
   const { t } = useTranslation();
@@ -516,6 +891,16 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
 
   return (
     <ListItemRow isLast={isLast}>
+      {selectionMode && (
+        <Checkbox
+          checked={checked}
+          onCheckedChange={(nextChecked) =>
+            onToggleChecked?.(Boolean(nextChecked))
+          }
+          aria-label={t("skills.batch.selectItem", { name: skill.name })}
+        />
+      )}
+
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           <span className="font-medium text-sm text-foreground truncate">
@@ -554,8 +939,11 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
 
       <AppToggleGroup
         apps={skill.apps}
-        onToggle={(app, enabled) => onToggleApp(skill.id, app, enabled)}
-        appIds={SKILLS_APP_IDS}
+        onToggle={(app, enabled) => {
+          if (disableActions) return;
+          onToggleApp(skill.id, app, enabled);
+        }}
+        appIds={MCP_SKILLS_APP_IDS}
       />
 
       <div
@@ -585,6 +973,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
           size="icon"
           className="h-7 w-7 hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
           onClick={onUninstall}
+          disabled={disableActions}
           title={t("skills.uninstall")}
         >
           <Trash2 size={14} />
