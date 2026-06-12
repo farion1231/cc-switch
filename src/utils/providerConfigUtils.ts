@@ -198,6 +198,50 @@ export const getApiKeyFromConfig = (
   }
 };
 
+// 读取配置中映射的「上游实际模型名」（支持 Claude, Codex, Gemini）
+//
+// 用于故障转移队列等场景，向用户展示某个供应商实际会把请求转发到哪个模型。
+// 对 Claude：优先 env.ANTHROPIC_MODEL（与后端 model_mapper.rs 的 default_model 一致），
+// 其次回退到 SONNET/OPUS/HAIKU 的默认映射；对 Codex/Gemini 读各自的模型字段。
+// 解析失败或未配置时返回空字符串。
+export const getModelFromConfig = (
+  settingsConfig: unknown,
+  appType?: string,
+): string => {
+  try {
+    const config =
+      typeof settingsConfig === "string"
+        ? JSON.parse(settingsConfig)
+        : settingsConfig;
+
+    const env = (config as Record<string, any> | null | undefined)?.env;
+    if (!env || typeof env !== "object") return "";
+
+    const pick = (key: string): string => {
+      const v = (env as Record<string, unknown>)[key];
+      return typeof v === "string" && v.trim() !== "" ? v : "";
+    };
+
+    if (appType === "gemini") {
+      return pick("GEMINI_MODEL") || pick("GOOGLE_GENAI_MODEL");
+    }
+
+    if (appType === "codex") {
+      return pick("CODEX_MODEL") || pick("OPENAI_MODEL");
+    }
+
+    // Claude（默认）：与 model_mapper.rs 的优先级保持一致
+    return (
+      pick("ANTHROPIC_MODEL") ||
+      pick("ANTHROPIC_DEFAULT_SONNET_MODEL") ||
+      pick("ANTHROPIC_DEFAULT_OPUS_MODEL") ||
+      pick("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+    );
+  } catch {
+    return "";
+  }
+};
+
 // 模板变量替换
 export const applyTemplateValues = (
   config: any,
