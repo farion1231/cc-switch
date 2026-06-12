@@ -33,6 +33,7 @@ use tauri::Manager;
 use tokio::sync::RwLock;
 
 const PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
+const CONTENT_HEALTH_PRIME_MAX_BYTES: usize = 16 * 1024;
 
 pub struct ForwardResult {
     pub response: ProxyResponse,
@@ -1936,8 +1937,14 @@ impl RequestForwarder {
         let status = response.status();
 
         if status.is_success() {
+            let request_is_generation =
+                content_health_request_is_generation(method, &effective_endpoint, &filtered_body);
             let response = self
-                .prepare_success_response_for_failover(response, request_is_streaming)
+                .prepare_success_response_for_failover(
+                    response,
+                    request_is_streaming,
+                    request_is_generation,
+                )
                 .await?;
             Ok((response, resolved_claude_api_format, outbound_model))
         } else {
@@ -1959,9 +1966,12 @@ impl RequestForwarder {
         &self,
         response: ProxyResponse,
         request_is_streaming: bool,
+        request_is_generation: bool,
     ) -> Result<ProxyResponse, ProxyError> {
         if request_is_streaming {
-            return self.prime_streaming_response(response).await;
+            return self
+                .prime_streaming_response(response, request_is_generation)
+                .await;
         }
 
         if self.non_streaming_timeout.is_zero() {
@@ -1980,12 +1990,29 @@ impl RequestForwarder {
                 ))
             })??;
 
+        if let super::content_health::ContentHealth::Unhealthy(violation) =
+            super::content_health::classify_non_stream_response(
+                &headers,
+                &body,
+                request_is_generation,
+            )
+        {
+            let message = violation.provider_unhealthy_message();
+            log::warn!(
+                "[{}] content-health blocked successful non-stream response: {}",
+                super::log_codes::ch::UNHEALTHY_BLOCKED,
+                message
+            );
+            return Err(ProxyError::ProviderUnhealthy(message));
+        }
+
         Ok(ProxyResponse::buffered(status, headers, body))
     }
 
     async fn prime_streaming_response(
         &self,
         response: ProxyResponse,
+        request_is_generation: bool,
     ) -> Result<ProxyResponse, ProxyError> {
         if self.streaming_first_byte_timeout.is_zero() {
             return Ok(response);
@@ -1995,6 +2022,11 @@ impl RequestForwarder {
         let headers = response.headers().clone();
         let timeout = self.streaming_first_byte_timeout;
         let mut stream = Box::pin(response.bytes_stream());
+        let mut buffered_chunks: Vec<bytes::Bytes> = Vec::new();
+        let mut raw_sample: Vec<u8> = Vec::new();
+        let mut text_buffer = String::new();
+        let mut utf8_remainder: Vec<u8> = Vec::new();
+        let mut event_data: Vec<String> = Vec::new();
 
         let first = tokio::time::timeout(timeout, stream.next())
             .await
@@ -2014,7 +2046,70 @@ impl RequestForwarder {
         let first =
             first.map_err(|e| ProxyError::ForwardFailed(format!("读取流式响应首包失败: {e}")))?;
 
-        let replay = futures::stream::once(async move { Ok(first) }).chain(stream);
+        raw_sample.extend_from_slice(&first);
+        crate::proxy::sse::append_utf8_safe(&mut text_buffer, &mut utf8_remainder, &first);
+        buffered_chunks.push(first);
+
+        loop {
+            while let Some(event_text) = crate::proxy::sse::take_sse_block(&mut text_buffer) {
+                for line in event_text.lines() {
+                    if let Some(data) = crate::proxy::sse::strip_sse_field(line, "data") {
+                        if data.trim() != "[DONE]" {
+                            event_data.push(data.to_string());
+                        }
+                    }
+                }
+            }
+
+            if let super::content_health::ContentHealth::Unhealthy(violation) =
+                super::content_health::classify_sse_prime_window(
+                    &event_data,
+                    &raw_sample,
+                    request_is_generation,
+                )
+            {
+                let message = violation.provider_unhealthy_message();
+                log::warn!(
+                    "[{}] content-health blocked successful stream prime: {}",
+                    super::log_codes::ch::UNHEALTHY_BLOCKED,
+                    message
+                );
+                return Err(ProxyError::ProviderUnhealthy(message));
+            }
+
+            if !event_data.is_empty() || !response_looks_like_sse(&headers, &text_buffer) {
+                break;
+            }
+
+            if raw_sample.len() >= CONTENT_HEALTH_PRIME_MAX_BYTES {
+                break;
+            }
+
+            match tokio::time::timeout(timeout, stream.next()).await {
+                Ok(Some(Ok(bytes))) => {
+                    raw_sample.extend_from_slice(&bytes);
+                    crate::proxy::sse::append_utf8_safe(
+                        &mut text_buffer,
+                        &mut utf8_remainder,
+                        &bytes,
+                    );
+                    buffered_chunks.push(bytes);
+                }
+                Ok(Some(Err(e))) => {
+                    return Err(ProxyError::ForwardFailed(format!(
+                        "读取流式响应 prime 窗口失败: {e}"
+                    )));
+                }
+                Ok(None) | Err(_) => break,
+            }
+        }
+
+        let replay = futures::stream::iter(
+            buffered_chunks
+                .into_iter()
+                .map(Ok::<bytes::Bytes, std::io::Error>),
+        )
+        .chain(stream);
         Ok(ProxyResponse::streamed(status, headers, replay))
     }
 
@@ -2512,6 +2607,43 @@ fn is_streaming_request(endpoint: &str, body: &Value, headers: &axum::http::Head
         .unwrap_or(false)
 }
 
+fn content_health_request_is_generation(
+    method: &http::Method,
+    endpoint: &str,
+    body: &Value,
+) -> bool {
+    if matches!(method, &http::Method::GET | &http::Method::HEAD) {
+        return false;
+    }
+
+    if body.get("model").is_some() {
+        return true;
+    }
+
+    endpoint.contains("/responses")
+        || endpoint.contains("/messages")
+        || endpoint.contains("/chat/completions")
+        || endpoint.contains(":generateContent")
+        || endpoint.contains(":streamGenerateContent")
+}
+
+fn response_looks_like_sse(headers: &http::HeaderMap, text_buffer: &str) -> bool {
+    let content_type = headers
+        .get(http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    if content_type.contains("text/event-stream") {
+        return true;
+    }
+
+    text_buffer.lines().any(|line| {
+        crate::proxy::sse::strip_sse_field(line, "data").is_some()
+            || crate::proxy::sse::strip_sse_field(line, "event").is_some()
+    })
+}
+
 #[cfg(test)]
 fn should_force_identity_encoding(
     endpoint: &str,
@@ -2607,7 +2739,7 @@ fn value_for_log(value: &Value) -> String {
 mod tests {
     use super::*;
     use crate::database::Database;
-    use axum::http::header::{HeaderValue, ACCEPT};
+    use axum::http::header::{HeaderValue, ACCEPT, CONTENT_TYPE};
     use axum::http::HeaderMap;
     use bytes::Bytes;
     use http::StatusCode;
@@ -2819,7 +2951,7 @@ mod tests {
         );
 
         let prepared = forwarder
-            .prepare_success_response_for_failover(response, false)
+            .prepare_success_response_for_failover(response, false, false)
             .await
             .expect("response should be buffered");
 
@@ -2841,7 +2973,7 @@ mod tests {
         );
 
         let err = match forwarder
-            .prepare_success_response_for_failover(response, false)
+            .prepare_success_response_for_failover(response, false, false)
             .await
         {
             Ok(_) => panic!("body read errors should fail the attempt"),
@@ -2849,6 +2981,47 @@ mod tests {
         };
 
         assert!(matches!(err, ProxyError::ForwardFailed(_)));
+    }
+
+    #[tokio::test]
+    async fn non_streaming_content_unhealthy_returns_provider_unhealthy_before_success_response() {
+        let forwarder = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
+        let response = ProxyResponse::streamed(
+            StatusCode::OK,
+            HeaderMap::new(),
+            futures::stream::once(async {
+                Ok::<Bytes, std::io::Error>(Bytes::from_static(
+                    b"SYNTHETIC_UNHEALTHY_MARKER should not be copied",
+                ))
+            }),
+        );
+
+        let err = match forwarder
+            .prepare_success_response_for_failover(response, false, true)
+            .await
+        {
+            Ok(_) => panic!("content-unhealthy body should fail the attempt"),
+            Err(err) => err,
+        };
+
+        let ProxyError::ProviderUnhealthy(message) = err else {
+            panic!("expected ProviderUnhealthy");
+        };
+        assert!(message.contains("content_unhealthy:known_signature_hit"));
+        assert!(!message.contains("SYNTHETIC_UNHEALTHY_MARKER"));
+        assert!(!message.contains("should not be copied"));
+    }
+
+    #[test]
+    fn provider_unhealthy_is_retryable_for_failover() {
+        let forwarder = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
+
+        assert_eq!(
+            forwarder.categorize_proxy_error(&ProxyError::ProviderUnhealthy(
+                "content_unhealthy:known_signature_hit hash=abc sample_len=1".to_string()
+            )),
+            ErrorCategory::Retryable
+        );
     }
 
     #[tokio::test]
@@ -2864,7 +3037,7 @@ mod tests {
         );
 
         let prepared = forwarder
-            .prepare_success_response_for_failover(response, true)
+            .prepare_success_response_for_failover(response, true, false)
             .await
             .expect("stream should be primed");
 
@@ -2886,7 +3059,7 @@ mod tests {
         );
 
         let err = match forwarder
-            .prepare_success_response_for_failover(response, true)
+            .prepare_success_response_for_failover(response, true, false)
             .await
         {
             Ok(_) => panic!("first chunk errors should fail the attempt"),
@@ -2894,6 +3067,98 @@ mod tests {
         };
 
         assert!(matches!(err, ProxyError::ForwardFailed(_)));
+    }
+
+    #[tokio::test]
+    async fn streaming_prime_blocks_split_unhealthy_sse_before_replay() {
+        let forwarder = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
+        let response = ProxyResponse::streamed(
+            StatusCode::OK,
+            HeaderMap::new(),
+            futures::stream::iter(vec![
+                Ok::<Bytes, std::io::Error>(Bytes::from_static(b"data: SYNTHETIC_")),
+                Ok::<Bytes, std::io::Error>(Bytes::from_static(
+                    b"UNHEALTHY_MARKER should not be copied\n\n",
+                )),
+            ]),
+        );
+
+        let err = match forwarder
+            .prepare_success_response_for_failover(response, true, true)
+            .await
+        {
+            Ok(_) => panic!("split unhealthy SSE should fail before replay"),
+            Err(err) => err,
+        };
+
+        let ProxyError::ProviderUnhealthy(message) = err else {
+            panic!("expected ProviderUnhealthy");
+        };
+        assert!(message.contains("content_unhealthy:known_signature_hit"));
+        assert!(!message.contains("SYNTHETIC_UNHEALTHY_MARKER"));
+        assert!(!message.contains("should not be copied"));
+    }
+
+    #[tokio::test]
+    async fn streaming_prime_blocks_unhealthy_sse_when_field_name_is_split() {
+        let forwarder = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
+        let response = ProxyResponse::streamed(
+            StatusCode::OK,
+            headers,
+            futures::stream::iter(vec![
+                Ok::<Bytes, std::io::Error>(Bytes::from_static(b"da")),
+                Ok::<Bytes, std::io::Error>(Bytes::from_static(
+                    b"ta: SYNTHETIC_UNHEALTHY_MARKER should not be copied\n\n",
+                )),
+            ]),
+        );
+
+        let err = match forwarder
+            .prepare_success_response_for_failover(response, true, true)
+            .await
+        {
+            Ok(_) => panic!("field-name split unhealthy SSE should fail before replay"),
+            Err(err) => err,
+        };
+
+        let ProxyError::ProviderUnhealthy(message) = err else {
+            panic!("expected ProviderUnhealthy");
+        };
+        assert!(message.contains("content_unhealthy:known_signature_hit"));
+        assert!(!message.contains("SYNTHETIC_UNHEALTHY_MARKER"));
+        assert!(!message.contains("should not be copied"));
+    }
+
+    #[tokio::test]
+    async fn streaming_prime_blocks_non_protocol_sse_for_generation_request() {
+        let forwarder = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
+        let response = ProxyResponse::streamed(
+            StatusCode::OK,
+            headers,
+            futures::stream::once(async {
+                Ok::<Bytes, std::io::Error>(Bytes::from_static(
+                    b"data: plain provider notice instead of protocol JSON\n\n",
+                ))
+            }),
+        );
+
+        let err = match forwarder
+            .prepare_success_response_for_failover(response, true, true)
+            .await
+        {
+            Ok(_) => panic!("non-protocol SSE data should fail before replay"),
+            Err(err) => err,
+        };
+
+        let ProxyError::ProviderUnhealthy(message) = err else {
+            panic!("expected ProviderUnhealthy");
+        };
+        assert!(message.contains("content_unhealthy:schema_mismatch"));
+        assert!(!message.contains("plain provider notice"));
     }
 
     #[test]

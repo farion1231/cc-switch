@@ -6,6 +6,7 @@
 //! - FWD: Forwarder (转发器)
 //! - FO: Failover (故障转移)
 //! - RSP: Response (响应处理)
+//! - CH: Content Health (内容健康)
 //! - USG: Usage (使用量)
 
 #![allow(dead_code)]
@@ -53,6 +54,13 @@ pub mod rsp {
     pub const BUILD_RESPONSE_ERROR: &str = "RSP-003";
     pub const STREAM_TIMEOUT: &str = "RSP-004";
     pub const STREAM_ERROR: &str = "RSP-005";
+}
+
+/// 内容健康日志码
+pub mod ch {
+    pub const UNHEALTHY_BLOCKED: &str = "CH-001";
+    pub const PRIME_INCONCLUSIVE: &str = "CH-002";
+    pub const PRIME_CLEAN: &str = "CH-003";
 }
 
 /// 使用量日志码
