@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
+import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -273,11 +273,12 @@ export function UsageDateRangePicker({
         <Button
           type="button"
           variant={selection.preset === "custom" ? "default" : "outline"}
-          className="w-[150px] justify-start gap-2"
+          className="h-9 w-[100px] justify-start gap-1.5 text-xs"
           title={triggerLabel}
         >
           <CalendarDays className="h-4 w-4 shrink-0" />
-          <span className="truncate">{triggerLabel}</span>
+          <span className="truncate flex-1">{triggerLabel}</span>
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
       <PopoverContent
