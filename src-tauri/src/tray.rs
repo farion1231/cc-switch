@@ -695,33 +695,64 @@ pub fn apply_tray_policy(app: &tauri::AppHandle, dock_visible: bool) {
     }
 }
 
+pub fn open_main_on_tray_left_click_enabled(settings: &crate::settings::AppSettings) -> bool {
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    {
+        settings.open_main_window_on_tray_left_click
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = settings;
+        false
+    }
+}
+
+pub fn should_show_menu_on_left_click(settings: &crate::settings::AppSettings) -> bool {
+    !open_main_on_tray_left_click_enabled(settings)
+}
+
+pub fn apply_tray_left_click_policy(app: &tauri::AppHandle) -> Result<(), String> {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return Ok(());
+    };
+
+    let settings = crate::settings::get_settings();
+    tray.set_show_menu_on_left_click(should_show_menu_on_left_click(&settings))
+        .map_err(|e| format!("更新托盘左键行为失败: {e}"))
+}
+
+pub fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        #[cfg(target_os = "windows")]
+        {
+            let _ = window.set_skip_taskbar(false);
+        }
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        #[cfg(target_os = "linux")]
+        {
+            crate::linux_fix::nudge_main_window(window.clone());
+        }
+        #[cfg(target_os = "macos")]
+        {
+            apply_tray_policy(app, true);
+        }
+    } else if crate::lightweight::is_lightweight_mode() {
+        if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
+            log::error!("Failed to exit lightweight mode and recreate window: {e}");
+        }
+    }
+}
+
 /// 处理托盘菜单事件
 pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
     log::info!("处理托盘菜单事件: {event_id}");
 
     match event_id {
         "show_main" => {
-            if let Some(window) = app.get_webview_window("main") {
-                #[cfg(target_os = "windows")]
-                {
-                    let _ = window.set_skip_taskbar(false);
-                }
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-                #[cfg(target_os = "linux")]
-                {
-                    crate::linux_fix::nudge_main_window(window.clone());
-                }
-                #[cfg(target_os = "macos")]
-                {
-                    apply_tray_policy(app, true);
-                }
-            } else if crate::lightweight::is_lightweight_mode() {
-                if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
-                    log::error!("退出轻量模式重建窗口失败: {e}");
-                }
-            }
+            show_main_window(app);
         }
         "open_website" => {
             if let Err(e) = app.opener().open_url("https://ccswitch.io", None::<String>) {

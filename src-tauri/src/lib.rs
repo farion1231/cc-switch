@@ -64,7 +64,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use tauri::image::Image;
-use tauri::tray::{TrayIconBuilder, TrayIconEvent};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::RunEvent;
 use tauri::{Emitter, Manager};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
@@ -192,6 +192,7 @@ async fn update_tray_menu(
             if let Some(tray) = app.tray_by_id(tray::TRAY_ID) {
                 tray.set_menu(Some(new_menu))
                     .map_err(|e| format!("更新托盘菜单失败: {e}"))?;
+                tray::apply_tray_left_click_policy(&app)?;
                 return Ok(true);
             }
             Ok(false)
@@ -838,23 +839,45 @@ pub fn run() {
             // 构建托盘
             let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
                 .tooltip("CC Switch") // 鼠标悬停提示
-                .on_tray_icon_event(|tray, event| match event {
-                    // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
-                    // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
-                    // refresh_all_usage_in_tray 内部有 10 秒防抖。
-                    TrayIconEvent::Enter { .. } | TrayIconEvent::Click { .. } => {
-                        let app = tray.app_handle().clone();
-                        tauri::async_runtime::spawn(async move {
-                            crate::tray::refresh_all_usage_in_tray(&app).await;
-                        });
+                .on_tray_icon_event(|tray, event| {
+                    let app = tray.app_handle().clone();
+                    match event {
+                        // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
+                        // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
+                        // refresh_all_usage_in_tray 内部有 10 秒防抖。
+                        TrayIconEvent::Enter { .. } => {
+                            tauri::async_runtime::spawn(async move {
+                                crate::tray::refresh_all_usage_in_tray(&app).await;
+                            });
+                        }
+                        TrayIconEvent::Click {
+                            button,
+                            button_state,
+                            ..
+                        } => {
+                            let refresh_app = app.clone();
+                            tauri::async_runtime::spawn(async move {
+                                crate::tray::refresh_all_usage_in_tray(&refresh_app).await;
+                            });
+
+                            let settings = crate::settings::get_settings();
+                            if button == MouseButton::Left
+                                && button_state == MouseButtonState::Down
+                                && crate::tray::open_main_on_tray_left_click_enabled(&settings)
+                            {
+                                crate::tray::show_main_window(&app);
+                            }
+                        }
+                        _ => log::debug!("unhandled event {event:?}"),
                     }
-                    _ => log::debug!("unhandled event {event:?}"),
                 })
                 .menu(&menu)
                 .on_menu_event(|app, event| {
                     tray::handle_tray_menu_event(app, &event.id.0);
                 })
-                .show_menu_on_left_click(true);
+                .show_menu_on_left_click(tray::should_show_menu_on_left_click(
+                    &crate::settings::get_settings(),
+                ));
 
             // 使用平台对应的托盘图标（macOS 使用模板图标适配深浅色）
             #[cfg(target_os = "macos")]

@@ -661,6 +661,8 @@
     "autoLaunchFailed": "自動起動の設定に失敗しました",
     "minimizeToTray": "閉じるときトレイへ最小化",
     "minimizeToTrayDescription": "チェックすると閉じるボタンでトレイに隠し、オフならアプリを終了します。",
+    "openMainWindowOnTrayLeftClick": "トレイの左クリックでメイン画面を開く",
+    "openMainWindowOnTrayLeftClickDescription": "有効にすると、Windows/macOS でトレイアイコンを左クリックしたときにメイン画面を表示します。右クリックでは引き続きトレイメニューを開きます。",
     "useAppWindowControls": "アプリ内ウィンドウボタンを有効化",
     "useAppWindowControlsDescription": "有効にすると、アプリヘッダーに最小化・最大化/復元・閉じるボタンを表示します。",
     "enableClaudePluginIntegration": "Claude Code 拡張に適用",
