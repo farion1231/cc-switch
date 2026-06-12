@@ -1041,6 +1041,7 @@ mod tests {
         Provider, ProviderManager, ProviderMeta, UniversalProvider,
     };
     use http::header::{HeaderName, HeaderValue};
+    use indexmap::IndexMap;
     use serde_json::json;
 
     #[test]
@@ -1652,6 +1653,44 @@ mod tests {
                 .get("x-api-key")
                 .and_then(|value| value.to_str().ok()),
             Some("sk-xxx")
+        );
+    }
+
+
+    #[test]
+    fn provider_meta_custom_headers_prefer_explicit_user_agent_and_keep_empty_remove_semantics() {
+        let meta = ProviderMeta {
+            custom_user_agent: Some("legacy-agent/1.0".to_string()),
+            custom_headers: IndexMap::from([
+                ("User-Agent".to_string(), "explicit-agent/2.0".to_string()),
+                ("Authorization".to_string(), "   ".to_string()),
+                ("x-api-key".to_string(), "sk-live".to_string()),
+            ]),
+            ..Default::default()
+        };
+
+        let headers = meta.parsed_custom_headers();
+        let mut map = http::HeaderMap::new();
+        map.insert(http::header::AUTHORIZATION, HeaderValue::from_static("Bearer old"));
+        apply_custom_headers_to_http_map(&mut map, &headers, &[]);
+
+        assert_eq!(
+            headers
+                .iter()
+                .filter(|header| header.name.as_str().eq_ignore_ascii_case("user-agent"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            map.get(http::header::USER_AGENT)
+                .and_then(|value| value.to_str().ok()),
+            Some("explicit-agent/2.0")
+        );
+        assert!(!map.contains_key(http::header::AUTHORIZATION));
+        assert_eq!(
+            map.get("x-api-key")
+                .and_then(|value| value.to_str().ok()),
+            Some("sk-live")
         );
     }
 }

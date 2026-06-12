@@ -316,6 +316,17 @@ impl StreamCheckService {
             .unwrap_or_default()
     }
 
+    fn provider_custom_headers_for_health_check(
+        provider: &Provider,
+        auth: &AuthInfo,
+    ) -> Vec<crate::provider::ParsedProviderCustomHeader> {
+        if auth.strategy == AuthStrategy::GitHubCopilot {
+            Vec::new()
+        } else {
+            Self::provider_custom_headers(provider)
+        }
+    }
+
     /// Claude 流式检查
     ///
     /// 根据供应商的 api_format 选择请求格式：
@@ -529,7 +540,7 @@ impl StreamCheckService {
             &[]
         };
 
-        let custom_headers = Self::provider_custom_headers(provider);
+        let custom_headers = Self::provider_custom_headers_for_health_check(provider, auth);
         let mut request = request_builder
             .timeout(timeout)
             .json(&body)
@@ -649,7 +660,7 @@ impl StreamCheckService {
                 .header("originator", "codex_cli_rs")
                 .timeout(timeout);
 
-            let custom_headers = Self::provider_custom_headers(provider);
+            let custom_headers = Self::provider_custom_headers_for_health_check(provider, auth);
             let mut request = request_builder
                 .json(&body)
                 .build()
@@ -741,12 +752,14 @@ impl StreamCheckService {
             }
         }
 
-        let custom_headers = Self::provider_custom_headers(provider);
+        let custom_headers = Self::provider_custom_headers_for_health_check(provider, auth);
         let mut request = request_builder
             .timeout(timeout)
             .json(&body)
             .build()
             .map_err(|e| AppError::Message(format!("Failed to build request: {e}")))?;
+        // Keep Copilot health checks on the same header path as production forwarding;
+        // custom provider headers should not silently diverge here.
         crate::provider::apply_custom_headers_to_http_map(request.headers_mut(), &custom_headers, &[]);
 
         let response = client
@@ -1752,6 +1765,38 @@ mod tests {
             ..Default::default()
         });
         assert!(StreamCheckService::custom_user_agent(&p).is_none());
+    }
+
+    #[test]
+    fn test_provider_custom_headers_for_health_check_skips_copilot() {
+        use crate::proxy::providers::AuthInfo;
+        use crate::proxy::providers::AuthStrategy;
+        use crate::provider::ProviderMeta;
+
+        let mut p = make_provider(serde_json::json!({
+            "baseUrl": "https://api.githubcopilot.com",
+            "apiKey": "k",
+        }));
+        p.meta = Some(ProviderMeta {
+            custom_headers: serde_json::from_value(serde_json::json!({
+                "User-Agent": "kimi-code/0.1.0",
+                "X-Custom-Header": "value"
+            }))
+            .unwrap(),
+            ..Default::default()
+        });
+
+        let headers = StreamCheckService::provider_custom_headers_for_health_check(
+            &p,
+            &AuthInfo::new("token".to_string(), AuthStrategy::GitHubCopilot),
+        );
+        assert!(headers.is_empty());
+
+        let headers = StreamCheckService::provider_custom_headers_for_health_check(
+            &p,
+            &AuthInfo::new("token".to_string(), AuthStrategy::Bearer),
+        );
+        assert_eq!(headers.len(), 2);
     }
 
     #[test]

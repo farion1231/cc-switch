@@ -78,13 +78,13 @@ export function CustomHeadersField({
         <p className="text-xs text-muted-foreground">
           {t("providerForm.customHeadersHint", {
             defaultValue:
-              "Custom headers are injected into upstream requests and override built-in values. Leave the value empty to remove that header upstream.",
+              "Only takes effect when CC Switch is routing or proxying the provider request upstream. Custom headers override built-in values; leave the value empty to remove that header upstream.",
           })}
         </p>
         <p className="text-xs text-amber-600 dark:text-amber-400">
           {t("providerForm.customHeadersSensitiveHint", {
             defaultValue:
-              "Overriding Authorization, x-api-key, or User-Agent changes upstream authentication and client fingerprinting.",
+              "Overriding Authorization, x-api-key, or User-Agent changes upstream authentication, client fingerprinting, and allowlist behavior.",
           })}
         </p>
       </div>

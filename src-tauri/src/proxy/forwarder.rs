@@ -1787,12 +1787,6 @@ impl RequestForwarder {
             );
         }
 
-        crate::provider::apply_custom_headers_to_http_map(
-            &mut ordered_headers,
-            &custom_headers,
-            copilot_fingerprint_headers,
-        );
-
         // 如果原始请求中没有 anthropic-beta 且有值需要添加，追加
         if !saw_anthropic_beta {
             if let Some(ref beta_val) = anthropic_beta_value {
@@ -1833,6 +1827,12 @@ impl RequestForwarder {
                 http::HeaderValue::from_static("application/json"),
             );
         }
+
+        crate::provider::apply_custom_headers_to_http_map(
+            &mut ordered_headers,
+            &custom_headers,
+            copilot_fingerprint_headers,
+        );
 
         reject_proxy_placeholder_for_managed_account_upstream(&url, &ordered_headers)?;
 
@@ -2926,7 +2926,6 @@ mod tests {
             "authorization",
             HeaderValue::from_static("Bearer PROXY_MANAGED"),
         );
-
         let err = reject_proxy_placeholder_for_managed_account_upstream(
             "https://api.githubcopilot.com/chat/completions",
             &headers,

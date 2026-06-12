@@ -2371,6 +2371,12 @@ function ProviderFormFull({
               />
             )}
 
+          <p className="text-xs text-muted-foreground">
+            {t("providerForm.customHeadersUserAgentHint", {
+              defaultValue:
+                "If you add a User-Agent row here, it takes precedence over the legacy custom User-Agent field.",
+            })}
+          </p>
           <CustomHeadersField value={customHeaders} onChange={setCustomHeaders} />
 
           {showButtons && (
