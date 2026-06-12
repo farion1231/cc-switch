@@ -1043,6 +1043,25 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
     Ok(json!({ "auth": auth, "config": cfg_text }))
 }
 
+/// 在 Codex live 写入之前从现有 `~/.codex/config.toml` 中抢救出 cc-switch 不知道的
+/// 运行时子表（典型为 `[mcp_servers.<id>.tools.<tool>]`），把它们合并进即将写入的
+/// 新文本。详细语义见 `mcp::codex::merge_codex_runtime_subtables`。
+///
+/// 最佳努力（best-effort）：旧文件不存在时按空 live 处理，读失败时返回
+/// `new_text` 的拷贝，绝不阻断底层写入。
+fn preserve_runtime_codex_mcp_state(new_text: &str) -> String {
+    let live_path = get_codex_config_path();
+    let old_text = if live_path.exists() {
+        match std::fs::read_to_string(&live_path) {
+            Ok(text) => text,
+            Err(_) => return new_text.to_string(),
+        }
+    } else {
+        String::new()
+    };
+    crate::mcp::merge_codex_runtime_subtables(new_text, &old_text)
+}
+
 /// Route a Codex live write between full auth+config or config-only.
 ///
 /// Official providers with usable login material own `auth.json`. Third-party
@@ -1053,6 +1072,12 @@ pub fn write_codex_live_for_provider(
     auth: &Value,
     config_text: Option<&str>,
 ) -> Result<(), AppError> {
+    // Layer 2：provider 驱动的 live 写入前，把旧 live 中 cc-switch 不管辖的 runtime
+    // 子表（典型 [mcp_servers.<id>.tools.<tool>]）合并进新文本。仅作用于 provider
+    // 写入路径；byte-for-byte restore 走裸 write_codex_live_atomic，不受影响。
+    let preserved = config_text.map(preserve_runtime_codex_mcp_state);
+    let config_text = preserved.as_deref();
+
     let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
         || (category != Some("official")
             && !crate::settings::preserve_codex_official_auth_on_switch());
