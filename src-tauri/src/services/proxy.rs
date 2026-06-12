@@ -266,15 +266,51 @@ impl ProxyService {
             return;
         };
 
-        let mut client_model = takeover_model.to_string();
+        // When the upstream model is a Claude model of the same role family
+        // AND uses the dash-separated ID format that Claude Code accepts
+        // (e.g. claude-opus-4-6, not claude-opus-4.6), preserve the user's
+        // chosen version instead of forcing the hardcoded constant.
+        //
+        // Reuse the canonical helpers in `claude_desktop_config` so we don't
+        // accept invalid IDs like `claude-opus-` while still rejecting the
+        // dot-separated format used by Copilot (e.g. `claude-haiku-4.5`).
+        let stripped = Self::strip_claude_one_m_marker(upstream_model);
+        let base = stripped.rsplit('/').next().unwrap_or(&stripped);
+        let base_role = crate::claude_desktop_config::claude_role_keyword(base);
+        let takeover_role = crate::claude_desktop_config::claude_role_keyword(takeover_model);
+        let mut client_model = if !base.contains('.')
+            && base_role.is_some()
+            && base_role == takeover_role
+            && crate::claude_desktop_config::is_claude_safe_model_id(base)
+        {
+            base.to_string()
+        } else {
+            takeover_model.to_string()
+        };
         if supports_one_m && Self::has_claude_one_m_marker(upstream_model) {
             client_model.push_str(CLAUDE_ONE_M_MARKER_FOR_CLIENT);
         }
         fields.push((model_key, client_model));
 
+        // Strip the `anthropic/` provider prefix for the fallback display name
+        // so `MODEL` and `MODEL_NAME` agree when the upstream value includes it.
         let display_name = Self::claude_env_string(env, name_key)
-            .map(str::to_string)
-            .unwrap_or_else(|| Self::strip_claude_one_m_marker(upstream_model));
+            .map(|value| {
+                value
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(value)
+                    .trim()
+                    .to_string()
+            })
+            .unwrap_or_else(|| {
+                Self::strip_claude_one_m_marker(upstream_model)
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&Self::strip_claude_one_m_marker(upstream_model))
+                    .trim()
+                    .to_string()
+            });
         if !display_name.is_empty() {
             fields.push((name_key, display_name));
         }
@@ -3061,6 +3097,158 @@ mod tests {
             .expect("env should exist");
         assert_env_str(env, "ANTHROPIC_API_KEY", Some(PROXY_TOKEN_PLACEHOLDER));
         assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", None);
+    }
+
+    #[test]
+    fn managed_account_claude_takeover_preserves_dash_separated_opus_version() {
+        // Regression test for #3600: when a managed-account provider declares
+        // a dash-separated Opus version (e.g. claude-opus-4-6) for the
+        // OPUS role, the takeover must write that exact value to
+        // ANTHROPIC_DEFAULT_OPUS_MODEL instead of overwriting with the
+        // hardcoded claude-opus-4-8 constant.
+        let mut provider = Provider::with_id(
+            "copilot".to_string(),
+            "GitHub Copilot".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-6"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("github_copilot".to_string()),
+            ..Default::default()
+        });
+
+        let mut live_config = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://stale.example.com",
+                "ANTHROPIC_API_KEY": "stale-key",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "stale-opus"
+            }
+        });
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_config,
+            "http://127.0.0.1:15721",
+            &provider,
+        );
+
+        let env = live_config
+            .get("env")
+            .and_then(|value| value.as_object())
+            .expect("env should exist");
+        assert_env_str(
+            env,
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            Some("claude-opus-4-6"),
+        );
+        // MODEL_NAME falls back to the upstream model when not provided in env.
+        assert_env_str(
+            env,
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+            Some("claude-opus-4-6"),
+        );
+    }
+
+    #[test]
+    fn managed_account_claude_takeover_preserves_opus_version_with_one_m_marker() {
+        // The [1M] context marker on the upstream model must be stripped from
+        // the base ID (it is a Claude Code-only concept) and re-appended for
+        // MODEL when the role supports 1M. MODEL_NAME keeps the stripped
+        // base value.
+        let mut provider = Provider::with_id(
+            "copilot".to_string(),
+            "GitHub Copilot".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-6[1M]"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("github_copilot".to_string()),
+            ..Default::default()
+        });
+
+        let mut live_config = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://stale.example.com",
+                "ANTHROPIC_API_KEY": "stale-key",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "stale-opus"
+            }
+        });
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_config,
+            "http://127.0.0.1:15721",
+            &provider,
+        );
+
+        let env = live_config
+            .get("env")
+            .and_then(|value| value.as_object())
+            .expect("env should exist");
+        assert_env_str(
+            env,
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            Some("claude-opus-4-6[1M]"),
+        );
+        assert_env_str(
+            env,
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+            Some("claude-opus-4-6"),
+        );
+    }
+
+    #[test]
+    fn managed_account_claude_takeover_falls_back_for_degenerate_claude_id() {
+        // `claude-opus-` is a degenerate ID that fails the canonical
+        // `is_claude_safe_model_id` check (role prefix with no model body),
+        // so the takeover must fall back to the hardcoded constant.
+        let mut provider = Provider::with_id(
+            "copilot".to_string(),
+            "GitHub Copilot".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("github_copilot".to_string()),
+            ..Default::default()
+        });
+
+        let mut live_config = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://stale.example.com",
+                "ANTHROPIC_API_KEY": "stale-key",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "stale-opus"
+            }
+        });
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_config,
+            "http://127.0.0.1:15721",
+            &provider,
+        );
+
+        let env = live_config
+            .get("env")
+            .and_then(|value| value.as_object())
+            .expect("env should exist");
+        assert_env_str(env, "ANTHROPIC_DEFAULT_OPUS_MODEL", Some("claude-opus-4-8"));
+        // MODEL_NAME falls back to the upstream value (with [1M]/provider
+        // prefix stripped) even when MODEL fell back to the constant.
+        assert_env_str(
+            env,
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+            Some("claude-opus-"),
+        );
     }
 
     #[test]

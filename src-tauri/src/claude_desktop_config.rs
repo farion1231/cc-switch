@@ -757,7 +757,7 @@ fn is_compatible_opus_route_alias(route_id: &str, requested: &str) -> bool {
 /// 按角色关键词(opus / haiku / sonnet)归类一个 Claude 模型名/route_id。
 /// 仅在命中明确角色词时返回 Some,未知模型返回 None(不回落,保持精确报错语义)。
 /// 与前端 `routeRoleFromId` 同序(opus → haiku → sonnet)。
-fn claude_role_keyword(model: &str) -> Option<&'static str> {
+pub(crate) fn claude_role_keyword(model: &str) -> Option<&'static str> {
     let normalized = model.to_ascii_lowercase();
     if normalized.contains("opus") {
         Some("opus")
