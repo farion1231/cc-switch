@@ -733,9 +733,14 @@ async fn get_single_tool_version_impl(
     } else {
         #[cfg(target_os = "windows")]
         {
-            // Windows 上只执行已经定位到的真实可执行文件，避免 `cmd /C tool`
-            // 误触发 App Execution Alias 或协议处理器。
-            scan_cli_version(tool)
+            // 优先从用户 PATH 中查找（与终端 `claude --version` 行为一致），
+            // 避免硬编码目录扫描命中旧安装。PATH 中跳过 WindowsApps 防止
+            // App Execution Alias / 协议处理器干扰。
+            // 只有 PATH 中找不到(NotFound)才 fallback 到硬编码目录扫描。
+            match try_get_version_from_path(tool) {
+                ShellProbe::NotFound(_) => scan_cli_version(tool),
+                found => found,
+            }
         }
 
         #[cfg(not(target_os = "windows"))]
@@ -1538,6 +1543,68 @@ fn run_windows_tool_version_command(
         .env("PATH", new_path)
         .creation_flags(CREATE_NO_WINDOW)
         .output()
+}
+
+/// Windows 上通过用户 PATH 查找工具版本（优先于硬编码目录扫描）。
+///
+/// 遍历当前进程 PATH 中的目录，跳过 WindowsApps（App Execution Alias），
+/// 找到第一个可执行文件就执行 `--version` 并返回版本号。
+/// 与非 Windows 平台的 `try_get_version` 行为对齐——确保 GUI 应用看到的版本
+/// 与用户终端中 `claude --version` 一致。
+#[cfg(target_os = "windows")]
+fn try_get_version_from_path(tool: &str) -> ShellProbe {
+    use std::process::Command;
+
+    let path_env = match std::env::var_os("PATH") {
+        Some(p) => p,
+        None => return ShellProbe::NotFound(NOT_INSTALLED.to_string()),
+    };
+
+    let current_path = path_env.to_string_lossy().into_owned();
+    let mut exec_diagnostic: Option<String> = None;
+
+    for dir in std::env::split_paths(&path_env) {
+        // 跳过 WindowsApps 目录，避免 App Execution Alias / 协议处理器
+        if is_windows_app_execution_alias_dir(&dir) {
+            continue;
+        }
+
+        for tool_path in tool_executable_candidates(tool, &dir) {
+            if !tool_path.exists() {
+                continue;
+            }
+
+            // 直接用当前 PATH 运行（不修改），与终端行为一致
+            let output = Command::new(&tool_path)
+                .arg("--version")
+                .env("PATH", &current_path)
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+
+            if let Ok(out) = output {
+                let stdout = decode_command_output(&out.stdout).trim().to_string();
+                let stderr = decode_command_output(&out.stderr).trim().to_string();
+                if out.status.success() {
+                    let raw = if stdout.is_empty() { &stderr } else { &stdout };
+                    if !raw.is_empty() {
+                        return ShellProbe::Found(extract_version(raw));
+                    }
+                } else if exec_diagnostic.is_none() {
+                    let detail = if stderr.is_empty() { stdout } else { stderr };
+                    let detail = detail.trim();
+                    if !detail.is_empty() {
+                        exec_diagnostic = Some(last_lines(detail, 4));
+                    }
+                }
+            }
+        }
+    }
+
+    // 有诊断 = 找到了可执行文件但 --version 报错；否则视作未安装。
+    match exec_diagnostic {
+        Some(detail) => ShellProbe::FoundButFailed(detail),
+        None => ShellProbe::NotFound(NOT_INSTALLED.to_string()),
+    }
 }
 
 /// 扫描常见路径查找 CLI（PATH 主命令未命中时的兜底单探）。
