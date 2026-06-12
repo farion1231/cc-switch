@@ -643,6 +643,18 @@ impl KiroAuthManager {
     pub async fn get_valid_token_for_account(&self, account_id: &str) -> Result<String, String> {
         let now = chrono::Utc::now().timestamp_millis();
 
+        // 仅当账号仍注册在 local_accounts（即用户已导入且未删除）时，才允许读取
+        // kiro-cli / kiro-ide 源头凭证。否则删除后的账号仍会从源头通过鉴权，
+        // 违背导入/删除语义（删除后不应再生效）。
+        let registered = {
+            let local = self.local_accounts.read().await;
+            local.get(account_id).cloned()
+        };
+        let registered = match registered {
+            Some(a) => a,
+            None => return Err(format!("账号 {account_id} 未找到")),
+        };
+
         // 动态账号（kiro-cli / kiro-ide）：先从源头读取，如果未过期直接返回
         if let Some(acc) = self.read_dynamic_account(account_id) {
             if acc.expires_at_ms - now > EXPIRES_BUFFER_MS {
@@ -650,17 +662,8 @@ impl KiroAuthManager {
             }
         }
 
-        // 查找内存/配置中的账号详情用于刷新
-        let mut acc = {
-            let local = self.local_accounts.read().await;
-            if let Some(a) = local.get(account_id) {
-                a.clone()
-            } else if let Some(dyn_acc) = self.read_dynamic_account(account_id) {
-                dyn_acc
-            } else {
-                return Err(format!("账号 {account_id} 未找到"));
-            }
-        };
+        // 用于刷新的账号详情：优先源头最新凭证，回退到已注册快照
+        let mut acc = self.read_dynamic_account(account_id).unwrap_or(registered);
 
         if acc.expires_at_ms - now > EXPIRES_BUFFER_MS {
             return Ok(acc.access_token.clone());

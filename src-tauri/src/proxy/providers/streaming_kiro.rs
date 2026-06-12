@@ -474,7 +474,10 @@ pub fn create_anthropic_sse_stream_from_kiro<E: std::error::Error + Send + 'stat
 ///
 /// 用于客户端发起 stream:false 请求时（如 Claude Desktop 网关探活），Kiro 仍以
 /// application/vnd.amazon.eventstream 返回多段事件，需在此聚合成一条完整消息。
-pub fn kiro_eventstream_to_anthropic_response(body: &[u8]) -> Value {
+/// 返回 `Err(message)` 表示 eventstream 中出现了 application 级错误事件
+/// （KiroStreamEvent::Error，如配额/模型/鉴权错误）。此时不应伪造成功消息，
+/// 调用方应据此向客户端返回错误响应。
+pub fn kiro_eventstream_to_anthropic_response(body: &[u8]) -> Result<Value, String> {
     let text = String::from_utf8_lossy(body);
     let (events, _remaining) = parse_kiro_events(&text);
 
@@ -580,6 +583,10 @@ pub fn kiro_eventstream_to_anthropic_response(body: &[u8]) -> Value {
                     output_tokens = v;
                 }
             }
+            KiroStreamEvent::Error { error, message } => {
+                // 出现 application 级错误事件：放弃聚合，向上抛错，避免伪造成功消息。
+                return Err(message.unwrap_or(error));
+            }
             _ => {}
         }
     }
@@ -594,7 +601,7 @@ pub fn kiro_eventstream_to_anthropic_response(body: &[u8]) -> Value {
         "end_turn"
     };
 
-    json!({
+    Ok(json!({
         "id": format!("msg_kiro{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
         "type": "message",
         "role": "assistant",
@@ -606,7 +613,7 @@ pub fn kiro_eventstream_to_anthropic_response(body: &[u8]) -> Value {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
         }
-    })
+    }))
 }
 
 #[cfg(test)]
@@ -617,7 +624,7 @@ mod tests {
     fn aggregate_text_only_response() {
         // Kiro eventstream: 多段 content 事件拼接（无 SSE 框架，裸 JSON 对象流）
         let body = br#"{"content":"Hello"}{"content":", world"}{"usage":{"inputTokens":12,"outputTokens":3}}"#;
-        let resp = kiro_eventstream_to_anthropic_response(body);
+        let resp = kiro_eventstream_to_anthropic_response(body).unwrap();
         assert_eq!(resp["type"], "message");
         assert_eq!(resp["role"], "assistant");
         assert_eq!(resp["stop_reason"], "end_turn");
@@ -632,7 +639,7 @@ mod tests {
     #[test]
     fn aggregate_tool_use_response() {
         let body = br#"{"content":"Let me check"}{"name":"get_weather","toolUseId":"tool_1","input":""}{"input":"{\"city\":"}{"input":"\"SF\"}"}{"stop":true}"#;
-        let resp = kiro_eventstream_to_anthropic_response(body);
+        let resp = kiro_eventstream_to_anthropic_response(body).unwrap();
         assert_eq!(resp["stop_reason"], "tool_use");
         let content = resp["content"].as_array().unwrap();
         // 文本块在前，工具块在后
@@ -646,10 +653,27 @@ mod tests {
 
     #[test]
     fn aggregate_empty_response_is_valid_message() {
-        let resp = kiro_eventstream_to_anthropic_response(b"");
+        let resp = kiro_eventstream_to_anthropic_response(b"").unwrap();
         assert_eq!(resp["type"], "message");
         assert_eq!(resp["content"].as_array().unwrap().len(), 0);
         assert_eq!(resp["stop_reason"], "end_turn");
+    }
+
+    #[test]
+    fn aggregate_error_event_returns_err() {
+        // eventstream 中出现 application 级错误事件：不得伪造成功消息
+        let body = br#"{"content":"partial"}{"error":"ThrottlingException","message":"quota exceeded"}"#;
+        let resp = kiro_eventstream_to_anthropic_response(body);
+        assert!(resp.is_err());
+        assert_eq!(resp.unwrap_err(), "quota exceeded");
+    }
+
+    #[test]
+    fn aggregate_error_event_without_message_uses_error_field() {
+        let body = br#"{"Error":"InternalServerException"}"#;
+        let resp = kiro_eventstream_to_anthropic_response(body);
+        assert!(resp.is_err());
+        assert_eq!(resp.unwrap_err(), "InternalServerException");
     }
 
     #[test]

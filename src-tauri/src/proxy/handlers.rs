@@ -438,6 +438,13 @@ async fn handle_claude_transform(
     // api_format=="kiro" 的转换器分支会原样透传（已是 Anthropic 格式）。
     let upstream_response: Value = if api_format == "kiro" {
         super::providers::streaming_kiro::kiro_eventstream_to_anthropic_response(&body_bytes)
+            .map_err(|msg| {
+                log::error!("[Kiro] 上游 eventstream 返回错误事件: {msg}, body: {body_str}");
+                ProxyError::TransformError(format!(
+                    "Kiro upstream error: {msg} {}",
+                    body_diagnostics_suffix(&response_headers, &body_str)
+                ))
+            })?
     } else if aggregate_codex_oauth_responses_sse {
         responses_sse_to_response_value(&body_str)?
     } else {
