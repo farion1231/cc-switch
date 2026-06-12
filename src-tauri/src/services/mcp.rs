@@ -10,6 +10,15 @@ use crate::store::AppState;
 pub struct McpService;
 
 impl McpService {
+    /// 全局 MCP 管理器开关。
+    ///
+    /// 关闭后，CC Switch 不再从各应用 live 配置导入 MCP，
+    /// 也不再向这些配置写入或移除 MCP 条目。已有用户配置保持原样，
+    /// 继续由目标应用或用户自行管理。
+    fn is_manager_enabled() -> bool {
+        crate::settings::is_mcp_feature_enabled()
+    }
+
     /// 获取所有 MCP 服务器（统一结构）
     pub fn get_all_servers(state: &AppState) -> Result<IndexMap<String, McpServer>, AppError> {
         state.db.get_all_mcp_servers()
@@ -91,6 +100,11 @@ impl McpService {
 
     /// 将 MCP 服务器同步到所有启用的应用
     fn sync_server_to_apps(_state: &AppState, server: &McpServer) -> Result<(), AppError> {
+        if !Self::is_manager_enabled() {
+            log::debug!("MCP 管理器已关闭，跳过服务器同步");
+            return Ok(());
+        }
+
         for app in server.apps.enabled_apps() {
             Self::sync_server_to_app_no_config(server, &app)?;
         }
@@ -104,6 +118,11 @@ impl McpService {
         server: &McpServer,
         app: &AppType,
     ) -> Result<(), AppError> {
+        if !Self::is_manager_enabled() {
+            log::debug!("MCP 管理器已关闭，跳过同步服务器到 {app:?}");
+            return Ok(());
+        }
+
         Self::sync_server_to_app_no_config(server, app)
     }
 
@@ -155,6 +174,11 @@ impl McpService {
     }
 
     fn remove_server_from_app(_state: &AppState, id: &str, app: &AppType) -> Result<(), AppError> {
+        if !Self::is_manager_enabled() {
+            log::debug!("MCP 管理器已关闭，跳过从 {app:?} 移除服务器");
+            return Ok(());
+        }
+
         match app {
             AppType::Claude => mcp::remove_server_from_claude(id)?,
             AppType::ClaudeDesktop => {
@@ -178,6 +202,11 @@ impl McpService {
 
     /// 手动同步所有启用的 MCP 服务器到对应的应用
     pub fn sync_all_enabled(state: &AppState) -> Result<(), AppError> {
+        if !Self::is_manager_enabled() {
+            log::debug!("MCP 管理器已关闭，跳过全量 MCP 同步");
+            return Ok(());
+        }
+
         let servers = Self::get_all_servers(state)?;
 
         for app in AppType::all() {
@@ -247,6 +276,11 @@ impl McpService {
 
     /// 从 Claude 导入 MCP（v3.7.0 已更新为统一结构）
     pub fn import_from_claude(state: &AppState) -> Result<usize, AppError> {
+        if !Self::is_manager_enabled() {
+            log::debug!("MCP 管理器已关闭，跳过 Claude MCP 导入");
+            return Ok(0);
+        }
+
         // 创建临时 MultiAppConfig 用于导入
         let mut temp_config = crate::app_config::MultiAppConfig::default();
 
@@ -285,6 +319,11 @@ impl McpService {
 
     /// 从 Codex 导入 MCP（v3.7.0 已更新为统一结构）
     pub fn import_from_codex(state: &AppState) -> Result<usize, AppError> {
+        if !Self::is_manager_enabled() {
+            log::debug!("MCP 管理器已关闭，跳过 Codex MCP 导入");
+            return Ok(0);
+        }
+
         // 创建临时 MultiAppConfig 用于导入
         let mut temp_config = crate::app_config::MultiAppConfig::default();
 
@@ -323,6 +362,11 @@ impl McpService {
 
     /// 从 Gemini 导入 MCP（v3.7.0 已更新为统一结构）
     pub fn import_from_gemini(state: &AppState) -> Result<usize, AppError> {
+        if !Self::is_manager_enabled() {
+            log::debug!("MCP 管理器已关闭，跳过 Gemini MCP 导入");
+            return Ok(0);
+        }
+
         // 创建临时 MultiAppConfig 用于导入
         let mut temp_config = crate::app_config::MultiAppConfig::default();
 
@@ -361,6 +405,11 @@ impl McpService {
 
     /// 从 OpenCode 导入 MCP（v3.9.2+ 新增）
     pub fn import_from_opencode(state: &AppState) -> Result<usize, AppError> {
+        if !Self::is_manager_enabled() {
+            log::debug!("MCP 管理器已关闭，跳过 OpenCode MCP 导入");
+            return Ok(0);
+        }
+
         // 创建临时 MultiAppConfig 用于导入
         let mut temp_config = crate::app_config::MultiAppConfig::default();
 
@@ -399,6 +448,11 @@ impl McpService {
 
     /// 从 Hermes 导入 MCP
     pub fn import_from_hermes(state: &AppState) -> Result<usize, AppError> {
+        if !Self::is_manager_enabled() {
+            log::debug!("MCP 管理器已关闭，跳过 Hermes MCP 导入");
+            return Ok(0);
+        }
+
         // 创建临时 MultiAppConfig 用于导入
         let mut temp_config = crate::app_config::MultiAppConfig::default();
 

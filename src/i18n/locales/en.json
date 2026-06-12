@@ -678,6 +678,18 @@
       "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI"
     },
+    "featureVisibility": {
+      "title": "Feature Entries",
+      "description": "Choose which management features appear in the home toolbar",
+      "mcp": "MCP Management",
+      "mcpDescription": "Show the MCP server management entry",
+      "prompts": "Prompt Management",
+      "promptsDescription": "Show prompt editing and activation entry",
+      "sessions": "Session Management",
+      "sessionsDescription": "Show session browsing and management entry",
+      "skills": "Skills Management",
+      "skillsDescription": "Show Skills management, import, and discovery entries"
+    },
     "skillStorage": {
       "title": "Skill Storage Location",
       "description": "Choose where CC Switch stores the master copies of your skills",

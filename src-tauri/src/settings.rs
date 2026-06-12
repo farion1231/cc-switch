@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
 
@@ -72,6 +71,31 @@ impl VisibleApps {
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => self.openclaw,
             AppType::Hermes => self.hermes,
+        }
+    }
+}
+
+/// 主页面显示的功能入口配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeatureVisibility {
+    #[serde(default = "default_true")]
+    pub mcp: bool,
+    #[serde(default = "default_true")]
+    pub prompts: bool,
+    #[serde(default = "default_true")]
+    pub sessions: bool,
+    #[serde(default = "default_true")]
+    pub skills: bool,
+}
+
+impl Default for FeatureVisibility {
+    fn default() -> Self {
+        Self {
+            mcp: true,
+            prompts: true,
+            sessions: true,
+            skills: true,
         }
     }
 }
@@ -372,6 +396,9 @@ pub struct AppSettings {
     // ===== 主页面显示的应用 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_apps: Option<VisibleApps>,
+    // ===== 主页面显示的功能入口 =====
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature_visibility: Option<FeatureVisibility>,
 
     // ===== 设备级目录覆盖 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -480,6 +507,7 @@ impl Default for AppSettings {
             common_config_confirmed: None,
             language: None,
             visible_apps: None,
+            feature_visibility: None,
             claude_config_dir: None,
             codex_config_dir: None,
             gemini_config_dir: None,
@@ -622,6 +650,7 @@ fn save_settings_file(settings: &AppSettings) -> Result<(), AppError> {
     #[cfg(unix)]
     {
         use std::fs::OpenOptions;
+        use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
 
         let mut file = OpenOptions::new()
@@ -827,6 +856,19 @@ pub fn preserve_codex_official_auth_on_switch() -> bool {
             e.into_inner()
         })
         .preserve_codex_official_auth_on_switch
+}
+
+pub fn is_mcp_feature_enabled() -> bool {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .feature_visibility
+        .as_ref()
+        .map(|visibility| visibility.mcp)
+        .unwrap_or(true)
 }
 
 // ===== 当前供应商管理函数 =====

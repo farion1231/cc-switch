@@ -31,6 +31,7 @@ import { LanguageSettings } from "@/components/settings/LanguageSettings";
 import { ThemeSettings } from "@/components/settings/ThemeSettings";
 import { WindowSettings } from "@/components/settings/WindowSettings";
 import { AppVisibilitySettings } from "@/components/settings/AppVisibilitySettings";
+import { FeatureVisibilitySettings } from "@/components/settings/FeatureVisibilitySettings";
 import { SkillStorageLocationSettings } from "@/components/settings/SkillStorageLocationSettings";
 import { SkillSyncMethodSettings } from "@/components/settings/SkillSyncMethodSettings";
 import { TerminalSettings } from "@/components/settings/TerminalSettings";
@@ -226,6 +227,10 @@ export function SettingsPage({
                     />
                     <ThemeSettings />
                     <AppVisibilitySettings
+                      settings={settings}
+                      onChange={handleAutoSave}
+                    />
+                    <FeatureVisibilitySettings
                       settings={settings}
                       onChange={handleAutoSave}
                     />

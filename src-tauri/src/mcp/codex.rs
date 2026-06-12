@@ -42,6 +42,19 @@ fn collect_enabled_servers(cfg: &McpConfig) -> HashMap<String, Value> {
     out
 }
 
+fn infer_codex_server_type(entry_tbl: &toml::value::Table) -> &str {
+    if let Some(typ) = entry_tbl.get("type").and_then(|v| v.as_str()) {
+        return typ;
+    }
+    if entry_tbl.contains_key("command") {
+        "stdio"
+    } else if entry_tbl.contains_key("url") {
+        "http"
+    } else {
+        "stdio"
+    }
+}
+
 /// 从 ~/.codex/config.toml 导入 MCP 到统一结构（v3.7.0+）
 ///
 /// 格式支持：
@@ -71,11 +84,7 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                 continue;
             };
 
-            // type 缺省为 stdio
-            let typ = entry_tbl
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("stdio");
+            let typ = infer_codex_server_type(entry_tbl);
 
             // 构建 JSON 规范
             let mut spec = serde_json::Map::new();
@@ -556,7 +565,7 @@ fn json_value_to_toml_item(value: &Value, field_name: &str) -> Option<toml_edit:
 /// Helper: 将 JSON MCP 服务器规范转换为 toml_edit::Table
 ///
 /// 策略：
-/// 1. 核心字段（type, command, args, url, headers, env, cwd）使用强类型处理
+/// 1. 核心字段（command, args, url, headers, env, cwd）使用强类型处理
 /// 2. 扩展字段（timeout、retry 等）通过白名单列表自动转换
 /// 3. 其他未知字段使用通用转换器尝试转换
 fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError> {
@@ -564,12 +573,11 @@ fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError>
 
     let mut t = Table::new();
     let typ = spec.get("type").and_then(|v| v.as_str()).unwrap_or("stdio");
-    t["type"] = toml_edit::value(typ);
 
     // 定义核心字段（已在下方处理，跳过通用转换）
     let core_fields = match typ {
         "stdio" => vec!["type", "command", "args", "env", "cwd"],
-        "http" | "sse" => vec!["type", "url", "http_headers"],
+        "http" | "sse" => vec!["type", "url", "headers", "http_headers"],
         _ => vec!["type"],
     };
 
@@ -639,7 +647,12 @@ fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError>
             let url = spec.get("url").and_then(|v| v.as_str()).unwrap_or("");
             t["url"] = toml_edit::value(url);
 
-            if let Some(headers) = spec.get("headers").and_then(|v| v.as_object()) {
+            let headers = spec
+                .get("headers")
+                .and_then(|v| v.as_object())
+                .or_else(|| spec.get("http_headers").and_then(|v| v.as_object()));
+
+            if let Some(headers) = headers {
                 let mut h_tbl = Table::new();
                 for (k, v) in headers.iter() {
                     if let Some(s) = v.as_str() {
@@ -677,4 +690,61 @@ fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError>
     }
 
     Ok(t)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_toml_output_omits_type_for_stdio_server() {
+        let table = json_server_to_toml_table(&json!({
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "@example/mcp"],
+            "env": { "API_KEY": "test" }
+        }))
+        .expect("convert stdio server");
+
+        assert!(table.get("type").is_none());
+        assert_eq!(
+            table.get("command").and_then(|item| item.as_str()),
+            Some("npx")
+        );
+        assert!(table.get("env").is_some());
+    }
+
+    #[test]
+    fn codex_toml_output_omits_type_and_uses_http_headers_for_http_server() {
+        let table = json_server_to_toml_table(&json!({
+            "type": "http",
+            "url": "https://example.com/mcp",
+            "headers": { "Authorization": "Bearer test" }
+        }))
+        .expect("convert http server");
+
+        assert!(table.get("type").is_none());
+        assert!(table.get("headers").is_none());
+        assert_eq!(
+            table.get("url").and_then(|item| item.as_str()),
+            Some("https://example.com/mcp")
+        );
+        assert!(table.get("http_headers").is_some());
+    }
+
+    #[test]
+    fn codex_import_infers_http_when_type_is_absent_and_url_is_present() {
+        let value: toml::Value = toml::from_str(
+            r#"
+url = "https://example.com/mcp"
+http_headers = { Authorization = "Bearer test" }
+"#,
+        )
+        .expect("parse toml");
+
+        assert_eq!(
+            infer_codex_server_type(value.as_table().expect("table")),
+            "http"
+        );
+    }
 }
