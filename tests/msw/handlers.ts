@@ -381,4 +381,16 @@ export const handlers = [
   ),
   http.post(`${TAURI_ENDPOINT}/reset_circuit_breaker`, () => success(true)),
   http.post(`${TAURI_ENDPOINT}/get_circuit_breaker_stats`, () => success(null)),
+  // Orchestration engine — strategy editor commands
+  http.post(`${TAURI_ENDPOINT}/get_strategies_config`, () =>
+    success({
+      enabled: true,
+      models: {},
+      strategies: {},
+    }),
+  ),
+  http.post(`${TAURI_ENDPOINT}/save_strategies_config`, () => success(null)),
+  http.post(`${TAURI_ENDPOINT}/get_strategies_config_path`, () =>
+    success("configs/strategies.yaml"),
+  ),
 ];

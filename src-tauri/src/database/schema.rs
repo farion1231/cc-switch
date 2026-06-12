@@ -431,6 +431,11 @@ impl Database {
                         Self::migrate_v9_to_v10(conn)?;
                         Self::set_user_version(conn, 10)?;
                     }
+                    10 => {
+                        log::info!("迁移数据库从 v10 到 v11（编排请求日志表）");
+                        Self::migrate_v10_to_v11(conn)?;
+                        Self::set_user_version(conn, 11)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -1197,6 +1202,41 @@ impl Database {
         }
 
         log::info!("v9 -> v10 迁移完成：已添加 Hermes Agent 支持");
+        Ok(())
+    }
+
+    /// v10 -> v11 迁移：编排请求日志表，用于记录每次策略决策和执行结果
+    fn migrate_v10_to_v11(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS orchestration_requests (
+                id              TEXT PRIMARY KEY,
+                timestamp       TEXT NOT NULL,
+                task_type       TEXT,
+                complexity      REAL,
+                risk            TEXT,
+                strategy        TEXT NOT NULL,
+                models_used     TEXT NOT NULL,
+                input_tokens    INTEGER DEFAULT 0,
+                output_tokens   INTEGER DEFAULT 0,
+                latency_ms      INTEGER DEFAULT 0,
+                quality_score   REAL,
+                verified        INTEGER DEFAULT 0,
+                escalated       INTEGER DEFAULT 0,
+                success         INTEGER DEFAULT 0,
+                error           TEXT,
+                judge_score     REAL,
+                debate_consensus TEXT
+            )",
+        )
+        .map_err(|e| AppError::Database(format!("创建 orchestration_requests 表失败: {e}")))?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_orch_req_timestamp ON orchestration_requests(timestamp)",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 orchestration_requests 索引失败: {e}")))?;
+
+        log::info!("v10 -> v11 迁移完成：已添加 orchestration_requests 表");
         Ok(())
     }
 
