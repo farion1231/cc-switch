@@ -1043,6 +1043,129 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
     Ok(json!({ "auth": auth, "config": cfg_text }))
 }
 
+/// Normalize a Codex `config.toml` so Codex CLI can route to the configured
+/// third-party provider.
+///
+/// Codex CLI requires `[model_providers.<id>]` to exist with at minimum a
+/// `base_url` so it can route requests. This function handles three scenarios
+/// that can leave the config in a broken state:
+///
+/// - **Flat config without `model_provider`** (P1/P2): Codex Desktop App or
+///   other tools can produce a config with top-level `base_url`/`wire_api` but
+///   no `model_provider`. We detect this by checking for top-level endpoint
+///   fields and synthesize `model_provider = "custom"` + `[model_providers.custom]`.
+/// - **Missing provider table** (the original fix): `model_provider` is set to
+///   a custom provider but the table is absent — we create it, migrating any
+///   top-level endpoint fields.
+/// - **Incomplete existing table** (P2): The provider table exists but is missing
+///   `base_url`/`wire_api` while top-level copies remain — we fill the gap so
+///   the table is complete for Codex CLI routing.
+///
+/// Returns the normalized config text, or the original text unchanged on parse
+/// errors. Reserved provider IDs ("openai", "ollama", etc.) are left untouched.
+pub fn ensure_codex_model_provider_section(config_text: &str) -> String {
+    if config_text.trim().is_empty() {
+        return config_text.to_string();
+    }
+
+    let Ok(mut doc) = config_text.parse::<DocumentMut>() else {
+        return config_text.to_string();
+    };
+
+    let active_provider = active_codex_model_provider_id(&doc);
+    let top_has_endpoint = doc.as_table().get("base_url").is_some();
+
+    // P1/P2: Flat config with top-level endpoint fields but no model_provider.
+    // Synthesize model_provider = "custom" so Codex CLI routes correctly.
+    let provider_id = if let Some(id) = active_provider {
+        id
+    } else if top_has_endpoint {
+        doc["model_provider"] = toml_edit::value("custom");
+        "custom".to_string()
+    } else {
+        // No active provider and no top-level endpoint — nothing to normalize.
+        return config_text.to_string();
+    };
+
+    if !is_custom_codex_model_provider_id(&provider_id) {
+        return config_text.to_string();
+    }
+
+    // Extract top-level endpoint fields before taking a mutable borrow of the doc.
+    let flat_fields: Vec<(String, toml_edit::Item)> = ["base_url", "wire_api"]
+        .iter()
+        .filter_map(|field| {
+            doc.as_table()
+                .get(field)
+                .map(|v| (field.to_string(), v.clone()))
+        })
+        .collect();
+
+    // Ensure the [model_providers] parent table exists.
+    if doc.get("model_providers").is_none() {
+        doc["model_providers"] = toml_edit::table();
+    }
+
+    let mp = doc
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_mut());
+
+    let Some(mp) = mp else {
+        return config_text.to_string();
+    };
+
+    let table_exists = mp.contains_key(&provider_id);
+
+    if !table_exists {
+        // Create a new provider table, migrating top-level endpoint fields.
+        let mut t = toml_edit::Table::new();
+        t.set_implicit(false);
+        for (field, val) in &flat_fields {
+            t.insert(field, val.clone());
+        }
+        mp.insert(&provider_id, toml_edit::Item::Table(t));
+
+        // Clean up top-level copies after migration.
+        for (field, _) in &flat_fields {
+            doc.remove(field);
+        }
+    } else {
+        // P2: Provider table exists but may be missing endpoint fields.
+        // Fill in missing fields from top level if available.
+        let fields_to_insert: Vec<(String, toml_edit::Item)> = flat_fields
+            .iter()
+            .filter(|(field, _)| {
+                mp.get(&provider_id)
+                    .and_then(|item| item.as_table())
+                    .is_none_or(|t| !t.contains_key(field))
+            })
+            .cloned()
+            .collect();
+
+        if !fields_to_insert.is_empty() {
+            // Only proceed with cleanup if we can actually write into the
+            // provider entry.  Inline tables (e.g. `vendor = { name = "V" }`)
+            // are values, not tables — as_table_mut() returns None for them,
+            // so we must not remove top-level fields we couldn't migrate.
+            if let Some(provider_table) = mp
+                .get_mut(&provider_id)
+                .and_then(|item| item.as_table_mut())
+            {
+                for (field, val) in &fields_to_insert {
+                    provider_table.insert(field, val.clone());
+                }
+                // Clean up top-level copies only after successful insertion
+                // (borrow on provider_table has ended by this point).
+                for (field, _) in &fields_to_insert {
+                    doc.remove(field);
+                }
+            }
+        }
+    }
+
+    doc.to_string()
+}
+
 /// Route a Codex live write between full auth+config or config-only.
 ///
 /// Official providers with usable login material own `auth.json`. Third-party
@@ -1053,14 +1176,18 @@ pub fn write_codex_live_for_provider(
     auth: &Value,
     config_text: Option<&str>,
 ) -> Result<(), AppError> {
+    let normalized = config_text
+        .map(ensure_codex_model_provider_section)
+        .unwrap_or_default();
+
     let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
         || (category != Some("official")
             && !crate::settings::preserve_codex_official_auth_on_switch());
 
     if should_write_auth {
-        write_codex_live_atomic(auth, config_text)
+        write_codex_live_atomic(auth, Some(&normalized))
     } else {
-        let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
+        let live_config = prepare_codex_provider_live_config(auth, &normalized)?;
         write_codex_live_config_atomic(Some(&live_config))
     }
 }
@@ -1071,16 +1198,21 @@ pub fn write_codex_live_for_provider(
 /// requests can use a provider-scoped `experimental_bearer_token`, so switching
 /// providers only needs to update `config.toml`; `auth.json` stays as the user's
 /// long-lived ChatGPT login cache.
+///
+/// As a defensive measure, this also ensures the `[model_providers.<id>]` TOML
+/// table exists when `model_provider` points at a custom provider — see
+/// `ensure_codex_model_provider_section` for rationale.
 pub fn prepare_codex_provider_live_config(
     auth: &Value,
     config_text: &str,
 ) -> Result<String, AppError> {
+    let normalized = ensure_codex_model_provider_section(config_text);
     let token = extract_codex_auth_api_key(auth)
-        .or_else(|| extract_codex_experimental_bearer_token(config_text));
+        .or_else(|| extract_codex_experimental_bearer_token(&normalized));
 
     Ok(match token {
-        Some(token) => set_codex_experimental_bearer_token(config_text, &token)?,
-        None => config_text.to_string(),
+        Some(token) => set_codex_experimental_bearer_token(&normalized, &token)?,
+        None => normalized,
     })
 }
 
@@ -1381,7 +1513,7 @@ experimental_bearer_token = "stale-table-key"
     }
 
     #[test]
-    fn prepare_provider_live_config_does_not_create_incomplete_provider_table() {
+    fn prepare_provider_live_config_synthesizes_missing_provider_table() {
         let input = r#"model_provider = "vendor_x"
 model = "gpt-5"
 "#;
@@ -1391,15 +1523,24 @@ model = "gpt-5"
                 .expect("prepare live config");
         let parsed: toml::Value = toml::from_str(&output).expect("parse output");
 
+        // The bearer token is written into the scoped provider table, not at top level.
         assert_eq!(
             parsed
-                .get("experimental_bearer_token")
+                .get("model_providers")
+                .and_then(|v| v.get("vendor_x"))
+                .and_then(|v| v.get("experimental_bearer_token"))
                 .and_then(|v| v.as_str()),
-            Some("sk-test")
+            Some("sk-test"),
+            "API key must be written to [model_providers.vendor_x].experimental_bearer_token"
         );
+        // The defensive normalization now ensures [model_providers.<id>]
+        // exists so Codex CLI can route to the custom provider.
         assert!(
-            parsed.get("model_providers").is_none(),
-            "missing provider tables should not be synthesized without endpoint fields"
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("vendor_x"))
+                .is_some(),
+            "[model_providers.vendor_x] table must be synthesized even without endpoint fields"
         );
     }
 
@@ -2177,6 +2318,348 @@ model_catalog_json = "cc-switch-model-catalog.json"
         assert!(
             parsed.get("model_catalog_json").is_none(),
             "None arm should remove relative cc-switch-owned field"
+        );
+    }
+
+    #[test]
+    fn ensure_model_provider_section_creates_missing_section() {
+        // Simulates a config that Codex Desktop App rewrote to a flat format,
+        // stripping the [model_providers.custom] table.  Codex CLI needs that
+        // table to route requests to the custom provider.
+        let input = r#"model_provider = "custom"
+model = "deepseek-v4-flash"
+model_reasoning_effort = "high"
+disable_response_storage = true
+"#;
+        let result = ensure_codex_model_provider_section(input);
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("custom"),
+            "model_provider top-level key must be preserved"
+        );
+        let section = parsed
+            .get("model_providers")
+            .and_then(|v| v.get("custom"))
+            .expect("[model_providers.custom] table must be created");
+        assert!(
+            section.is_table(),
+            "[model_providers.custom] must be a TOML table"
+        );
+    }
+
+    #[test]
+    fn ensure_model_provider_section_preserves_existing_section() {
+        let input = r#"model_provider = "vendor_x"
+model = "gpt-5"
+
+[model_providers.vendor_x]
+name = "Vendor X"
+base_url = "https://vendor.example/v1"
+wire_api = "responses"
+"#;
+        let result = ensure_codex_model_provider_section(input);
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        // Original table must be left untouched.
+        let section = parsed
+            .get("model_providers")
+            .and_then(|v| v.get("vendor_x"))
+            .expect("[model_providers.vendor_x] must be preserved");
+        assert_eq!(
+            section.get("base_url").and_then(|v| v.as_str()),
+            Some("https://vendor.example/v1"),
+            "existing [model_providers.vendor_x] fields must be preserved"
+        );
+    }
+
+    #[test]
+    fn ensure_model_provider_section_ignores_reserved_providers() {
+        // Reserved providers (openai, ollama, etc.) don't need a custom table.
+        let input = r#"model_provider = "openai"
+model = "gpt-4"
+"#;
+        let result = ensure_codex_model_provider_section(input);
+        assert_eq!(
+            result
+                .lines()
+                .find(|l| l.trim() == "[model_providers.openai]"),
+            None,
+            "reserved provider openai must not get a [model_providers.openai] table"
+        );
+    }
+
+    #[test]
+    fn ensure_model_provider_section_noops_on_empty_config() {
+        assert_eq!(ensure_codex_model_provider_section(""), "");
+        assert_eq!(ensure_codex_model_provider_section("   "), "   ");
+    }
+
+    #[test]
+    fn ensure_model_provider_section_synthesizes_from_flat_config_without_model_provider() {
+        // P1/P2: Flat config with top-level endpoint fields but no model_provider.
+        // This is the exact format #3449 reported as broken: Codex Desktop App or
+        // other tools can produce a config with base_url/wire_api but no model_provider.
+        // We must detect this and synthesize model_provider = "custom" + table.
+        let input = r#"base_url = "https://astron.top/v1"
+wire_api = "responses"
+model = "astron-code-latest"
+experimental_bearer_token = "PROXY_MANAGED"
+model_catalog_json = "cc-switch-model-catalog.json"
+"#;
+        let result = ensure_codex_model_provider_section(input);
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        // model_provider must be synthesized as "custom".
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("custom"),
+            "model_provider = \"custom\" must be synthesized from flat config"
+        );
+        // Provider table must be created with migrated endpoint fields.
+        let section = parsed
+            .get("model_providers")
+            .and_then(|v| v.get("custom"))
+            .expect("[model_providers.custom] table must be created from flat config");
+        assert!(
+            section.is_table(),
+            "[model_providers.custom] must be a TOML table"
+        );
+        assert_eq!(
+            section.get("base_url").and_then(|v| v.as_str()),
+            Some("https://astron.top/v1"),
+            "base_url must be migrated from top level"
+        );
+        assert_eq!(
+            section.get("wire_api").and_then(|v| v.as_str()),
+            Some("responses"),
+            "wire_api must be migrated from top level"
+        );
+        // Top-level copies must be removed after migration.
+        assert!(
+            parsed.get("base_url").is_none(),
+            "top-level base_url must be removed after migration"
+        );
+    }
+
+    #[test]
+    fn ensure_model_provider_section_noops_without_model_provider_and_no_endpoint() {
+        // No model_provider key AND no top-level endpoint fields — nothing to normalize.
+        let input = r#"model = "gpt-4"
+disable_response_storage = true
+"#;
+        let result = ensure_codex_model_provider_section(input);
+        assert_eq!(
+            result, input,
+            "config without model_provider and without endpoint fields must pass through unchanged"
+        );
+    }
+
+    #[test]
+    fn ensure_model_provider_section_fills_incomplete_existing_table() {
+        // P2: Provider table exists but is missing base_url/wire_api while
+        // top-level copies remain. We should fill in the missing fields.
+        let input = r#"model_provider = "vendor"
+model = "gpt-5"
+base_url = "https://vendor.example/v1"
+wire_api = "responses"
+
+[model_providers.vendor]
+name = "Vendor"
+"#;
+        let result = ensure_codex_model_provider_section(input);
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        let section = parsed
+            .get("model_providers")
+            .and_then(|v| v.get("vendor"))
+            .expect("[model_providers.vendor] must exist");
+        // Missing fields must be filled from top level.
+        assert_eq!(
+            section.get("base_url").and_then(|v| v.as_str()),
+            Some("https://vendor.example/v1"),
+            "base_url must be filled into incomplete provider table"
+        );
+        assert_eq!(
+            section.get("wire_api").and_then(|v| v.as_str()),
+            Some("responses"),
+            "wire_api must be filled into incomplete provider table"
+        );
+        // Original fields must be preserved.
+        assert_eq!(
+            section.get("name").and_then(|v| v.as_str()),
+            Some("Vendor"),
+            "existing fields must be preserved"
+        );
+        // Top-level copies must be cleaned up.
+        assert!(
+            parsed.get("base_url").is_none(),
+            "top-level base_url must be removed after filling table"
+        );
+    }
+
+    #[test]
+    fn ensure_model_provider_section_does_not_overwrite_existing_endpoint_in_table() {
+        // When provider table already has base_url, top-level copy must NOT overwrite it.
+        let input = r#"model_provider = "vendor"
+base_url = "https://stale.example/v1"
+
+[model_providers.vendor]
+base_url = "https://correct.example/v1"
+"#;
+        let result = ensure_codex_model_provider_section(input);
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        let section = parsed
+            .get("model_providers")
+            .and_then(|v| v.get("vendor"))
+            .expect("[model_providers.vendor] must exist");
+        assert_eq!(
+            section.get("base_url").and_then(|v| v.as_str()),
+            Some("https://correct.example/v1"),
+            "existing scoped base_url must not be overwritten by top-level copy"
+        );
+        // Top-level stale value must remain untouched (table existed before).
+        assert_eq!(
+            parsed.get("base_url").and_then(|v| v.as_str()),
+            Some("https://stale.example/v1"),
+            "top-level base_url must remain when provider table already existed"
+        );
+    }
+
+    #[test]
+    fn ensure_model_provider_section_preserves_flat_fields_for_inline_table() {
+        // When the provider entry is an inline table (value, not a standard table),
+        // as_table_mut() returns None so we cannot insert into it.  Top-level
+        // endpoint fields must NOT be removed in this case — doing so would
+        // silently drop the routing information Codex CLI needs.
+        let input = r#"model_provider = "vendor"
+model = "gpt-5"
+base_url = "https://vendor.example/v1"
+wire_api = "responses"
+
+[model_providers]
+vendor = { name = "Vendor" }
+"#;
+        let result = ensure_codex_model_provider_section(input);
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        // Top-level endpoint fields must be preserved — we couldn't migrate them
+        // into the inline table, so removing them would be data loss.
+        assert_eq!(
+            parsed.get("base_url").and_then(|v| v.as_str()),
+            Some("https://vendor.example/v1"),
+            "top-level base_url must be preserved when provider is an inline table"
+        );
+        assert_eq!(
+            parsed.get("wire_api").and_then(|v| v.as_str()),
+            Some("responses"),
+            "top-level wire_api must be preserved when provider is an inline table"
+        );
+    }
+
+    #[test]
+    fn prepare_live_config_injects_section_when_missing() {
+        // This is the core fix: when prepare_codex_provider_live_config receives
+        // a flat config, it must normalize it so the written TOML has the table.
+        let input = r#"model_provider = "deepseek"
+model = "deepseek-v4-pro"
+"#;
+        let auth = json!({ "OPENAI_API_KEY": "sk-deepseek" });
+        let result = prepare_codex_provider_live_config(&auth, input).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("deepseek"))
+                .is_some(),
+            "prepare_codex_provider_live_config must add [model_providers.deepseek] table"
+        );
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("deepseek"))
+                .and_then(|v| v.get("experimental_bearer_token"))
+                .and_then(|v| v.as_str()),
+            Some("sk-deepseek"),
+            "API key must be written to [model_providers.deepseek].experimental_bearer_token"
+        );
+    }
+
+    #[test]
+    fn ensure_model_provider_section_migrates_flat_endpoint_fields() {
+        // When a config has model_provider set with top-level base_url / wire_api
+        // (the "flat" layout that Codex Desktop App can leave behind), the
+        // synthesized [model_providers.<id>] table must inherit those fields so
+        // that Codex CLI can resolve the third-party endpoint.
+        let input = r#"model_provider = "vendor"
+model = "gpt-5"
+base_url = "https://vendor.example/v1"
+wire_api = "responses"
+"#;
+        let result = ensure_codex_model_provider_section(input);
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        // Endpoint fields must now live inside the provider table, not at top level.
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("vendor"))
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("https://vendor.example/v1"),
+            "base_url must be migrated into [model_providers.vendor]"
+        );
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("vendor"))
+                .and_then(|v| v.get("wire_api"))
+                .and_then(|v| v.as_str()),
+            Some("responses"),
+            "wire_api must be migrated into [model_providers.vendor]"
+        );
+        // Top-level copies must be removed to avoid ambiguity.
+        assert!(
+            parsed.get("base_url").is_none(),
+            "top-level base_url must be removed after migration"
+        );
+        assert!(
+            parsed.get("wire_api").is_none(),
+            "top-level wire_api must be removed after migration"
+        );
+    }
+
+    #[test]
+    fn ensure_model_provider_section_skips_migration_when_table_exists() {
+        // If the provider table already exists (even partially), migration must
+        // NOT overwrite existing scoped fields with stale top-level copies.
+        let input = r#"model_provider = "vendor"
+base_url = "https://stale.example/v1"
+
+[model_providers.vendor]
+base_url = "https://correct.example/v1"
+"#;
+        let result = ensure_codex_model_provider_section(input);
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        // Existing scoped value must be preserved; top-level stale value ignored.
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("vendor"))
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("https://correct.example/v1"),
+            "existing scoped base_url must not be overwritten by top-level copy"
+        );
+        // Top-level value must remain untouched when the table already existed.
+        assert_eq!(
+            parsed.get("base_url").and_then(|v| v.as_str()),
+            Some("https://stale.example/v1"),
+            "top-level base_url must remain when provider table already existed"
         );
     }
 }
