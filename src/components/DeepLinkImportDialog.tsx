@@ -18,6 +18,9 @@ import { McpConfirmation } from "./deeplink/McpConfirmation";
 import { SkillConfirmation } from "./deeplink/SkillConfirmation";
 import { ProviderIcon } from "./ProviderIcon";
 
+const OPENAI_OFFICIAL_PROVIDER_NAME = "openai official";
+const OPENAI_OFFICIAL_HOMEPAGE = "https://chatgpt.com/codex";
+
 interface DeeplinkError {
   url: string;
   error: string;
@@ -212,6 +215,17 @@ export function DeepLinkImportDialog() {
       ? `${request.apiKey.substring(0, 4)}${"*".repeat(20)}`
       : "****";
 
+  const isProviderRequest =
+    !!request && (request.resource === "provider" || !request.resource);
+  const isCodexOpenAiOfficial =
+    isProviderRequest &&
+    request.app === "codex" &&
+    request.name?.trim().toLowerCase() === OPENAI_OFFICIAL_PROVIDER_NAME &&
+    !request.endpoint?.trim();
+  const displayHomepage = isCodexOpenAiOfficial
+    ? OPENAI_OFFICIAL_HOMEPAGE
+    : request?.homepage;
+
   // Check if config file is present
   const hasConfigFile = !!(request?.config || request?.configUrl);
   const configSource = request?.config
@@ -376,12 +390,19 @@ export function DeepLinkImportDialog() {
                   </div>
 
                   {/* Homepage */}
-                  <div className="grid grid-cols-3 items-center gap-4">
+                  <div className="grid grid-cols-3 items-start gap-4">
                     <div className="font-medium text-sm text-muted-foreground">
                       {t("deeplink.homepage")}
                     </div>
-                    <div className="col-span-2 text-sm break-all text-blue-600 dark:text-blue-400">
-                      {request.homepage}
+                    <div className="col-span-2 space-y-1">
+                      <div className="text-sm break-all text-blue-600 dark:text-blue-400">
+                        {displayHomepage || t("deeplink.notProvided")}
+                      </div>
+                      {isCodexOpenAiOfficial && (
+                        <div className="text-xs text-muted-foreground">
+                          {t("deeplink.codexOfficialHomepageHint")}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -391,32 +412,48 @@ export function DeepLinkImportDialog() {
                       {t("deeplink.endpoint")}
                     </div>
                     <div className="col-span-2 text-sm break-all space-y-1">
-                      {request.endpoint?.split(",").map((ep, idx) => (
-                        <div
-                          key={idx}
-                          className={
-                            idx === 0 ? "font-medium" : "text-muted-foreground"
-                          }
-                        >
-                          {idx === 0 ? "🔹 " : "└ "}
-                          {ep.trim()}
-                          {idx === 0 && request.endpoint?.includes(",") && (
-                            <span className="text-xs text-muted-foreground ml-2">
-                              ({t("deeplink.primaryEndpoint")})
-                            </span>
-                          )}
+                      {isCodexOpenAiOfficial ? (
+                        <div className="text-muted-foreground">
+                          {t("deeplink.codexOfficialEndpointHint")}
                         </div>
-                      ))}
+                      ) : request.endpoint ? (
+                        request.endpoint.split(",").map((ep, idx) => (
+                          <div
+                            key={idx}
+                            className={
+                              idx === 0
+                                ? "font-medium"
+                                : "text-muted-foreground"
+                            }
+                          >
+                            {idx === 0 ? "🔹 " : "└ "}
+                            {ep.trim()}
+                            {idx === 0 && request.endpoint?.includes(",") && (
+                              <span className="text-xs text-muted-foreground ml-2">
+                                ({t("deeplink.primaryEndpoint")})
+                              </span>
+                            )}
+                          </div>
+                        ))
+                      ) : (
+                        <div className="text-muted-foreground">
+                          {t("deeplink.notProvided")}
+                        </div>
+                      )}
                     </div>
                   </div>
 
                   {/* API Key (masked) */}
-                  <div className="grid grid-cols-3 items-center gap-4">
+                  <div className="grid grid-cols-3 items-start gap-4">
                     <div className="font-medium text-sm text-muted-foreground">
                       {t("deeplink.apiKey")}
                     </div>
-                    <div className="col-span-2 text-sm font-mono text-muted-foreground">
-                      {maskedApiKey}
+                    <div className="col-span-2 text-sm text-muted-foreground">
+                      {isCodexOpenAiOfficial ? (
+                        t("deeplink.codexOfficialAuthHint")
+                      ) : (
+                        <span className="font-mono">{maskedApiKey}</span>
+                      )}
                     </div>
                   </div>
 
