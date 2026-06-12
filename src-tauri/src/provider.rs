@@ -1036,9 +1036,11 @@ pub struct OpenCodeModelLimit {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, OpenCodeProviderConfig, Provider,
-        ProviderManager, ProviderMeta, UniversalProvider,
+        apply_custom_headers_to_http_map, parse_provider_custom_header, ClaudeModelConfig,
+        CodexModelConfig, GeminiModelConfig, OpenCodeProviderConfig, ParsedProviderCustomHeader,
+        Provider, ProviderManager, ProviderMeta, UniversalProvider,
     };
+    use http::header::{HeaderName, HeaderValue};
     use serde_json::json;
 
     #[test]

@@ -274,6 +274,7 @@ impl StreamCheckService {
                     &model_to_test,
                     test_prompt,
                     request_timeout,
+                    provider,
                     None,
                 )
                 .await
@@ -701,6 +702,7 @@ impl StreamCheckService {
         model: &str,
         test_prompt: &str,
         timeout: std::time::Duration,
+        provider: &Provider,
         extra_headers: Option<&serde_json::Map<String, serde_json::Value>>,
     ) -> Result<(u16, String), AppError> {
         let base = base_url.trim_end_matches('/');
@@ -1017,6 +1019,7 @@ impl StreamCheckService {
                     model,
                     test_prompt,
                     timeout,
+                    provider,
                     extra_headers,
                 )
                 .await
@@ -1288,6 +1291,7 @@ impl StreamCheckService {
                     model,
                     test_prompt,
                     timeout,
+                    provider,
                     extra_headers,
                 )
                 .await
