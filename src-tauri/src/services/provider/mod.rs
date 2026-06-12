@@ -68,6 +68,7 @@ mod tests {
     use serial_test::serial;
     use std::env;
     use std::fs;
+    use std::net::TcpListener;
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex, OnceLock};
     use tempfile::TempDir;
@@ -182,6 +183,14 @@ mod tests {
         }
 
         result
+    }
+
+    fn free_tcp_port() -> u16 {
+        TcpListener::bind(("127.0.0.1", 0))
+            .expect("bind ephemeral port")
+            .local_addr()
+            .expect("read local addr")
+            .port()
     }
 
     fn openclaw_provider(id: &str) -> Provider {
@@ -511,6 +520,119 @@ base_url = "http://localhost:8080"
                 .is_none(),
             "model override should be removed in takeover live config"
         );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn switch_to_codex_oauth_claude_provider_enables_takeover_instead_of_direct_live_write()
+    {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        let listen_port = free_tcp_port();
+        let mut proxy_config = db
+            .get_proxy_config_for_app("claude")
+            .await
+            .expect("get claude proxy config");
+        proxy_config.listen_port = listen_port;
+        db.update_proxy_config_for_app(proxy_config)
+            .await
+            .expect("set proxy port");
+
+        let normal = Provider::with_id(
+            "normal".into(),
+            "Claude Normal".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "normal-key",
+                    "ANTHROPIC_BASE_URL": "https://api.normal.example",
+                    "ANTHROPIC_MODEL": "claude-normal"
+                }
+            }),
+            None,
+        );
+        let mut codex = Provider::with_id(
+            "codex".into(),
+            "Codex".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex",
+                    "ANTHROPIC_MODEL": "gpt-5.5",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "gpt-5.5"
+                }
+            }),
+            None,
+        );
+        codex.meta = Some(ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            ..ProviderMeta::default()
+        });
+
+        db.save_provider("claude", &normal)
+            .expect("save normal provider");
+        db.save_provider("claude", &codex)
+            .expect("save codex provider");
+        db.set_current_provider("claude", "normal")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("normal"))
+            .expect("set local current provider");
+        write_json_file(&get_claude_settings_path(), &normal.settings_config)
+            .expect("seed normal live settings");
+
+        ProviderService::switch(&state, AppType::Claude, "codex")
+            .expect("switch to codex oauth provider");
+
+        assert!(
+            state.proxy_service.is_running().await,
+            "proxy server should be running after automatic takeover"
+        );
+        assert_eq!(
+            crate::settings::get_current_provider(&AppType::Claude).as_deref(),
+            Some("codex")
+        );
+        assert_eq!(
+            db.get_current_provider("claude")
+                .expect("get db current")
+                .as_deref(),
+            Some("codex")
+        );
+        assert!(
+            db.get_proxy_config_for_app("claude")
+                .await
+                .expect("get claude proxy config")
+                .enabled,
+            "Claude takeover should be marked enabled"
+        );
+
+        let live: Value = read_json_file(&get_claude_settings_path()).expect("read live settings");
+        let env = live
+            .get("env")
+            .and_then(|value| value.as_object())
+            .expect("live env");
+        let expected_proxy_url = format!("http://127.0.0.1:{listen_port}");
+        assert_eq!(
+            env.get("ANTHROPIC_BASE_URL").and_then(|value| value.as_str()),
+            Some(expected_proxy_url.as_str()),
+            "Claude live settings should point at the local proxy"
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_API_KEY").and_then(|value| value.as_str()),
+            Some("PROXY_MANAGED"),
+            "managed-account providers should only expose the proxy placeholder"
+        );
+        assert!(
+            !env.contains_key("ANTHROPIC_AUTH_TOKEN"),
+            "managed-account takeover should not write auth-token placeholders"
+        );
+        assert_ne!(
+            env.get("ANTHROPIC_BASE_URL").and_then(|value| value.as_str()),
+            Some("https://chatgpt.com/backend-api/codex"),
+            "Codex OAuth must not be written as a direct Claude live endpoint"
+        );
+
+        state.proxy_service.stop().await.expect("stop proxy");
     }
 
     #[cfg(any(target_os = "macos", windows))]
@@ -1649,6 +1771,33 @@ impl ProviderService {
 
             // The proxy server will route requests to the new provider via is_current.
             // MCP sync is intentionally skipped while Live config is owned by takeover.
+            return Ok(SwitchResult::default());
+        }
+
+        if matches!(app_type, AppType::Claude) && _provider.uses_managed_account_auth() {
+            log::info!(
+                "Claude 托管账号供应商 '{}' 需要本地代理接管，正在自动启用接管",
+                id
+            );
+
+            futures::executor::block_on(
+                state
+                    .proxy_service
+                    .set_takeover_for_app(app_type.as_str(), true),
+            )
+            .map_err(|e| {
+                AppError::Message(format!(
+                    "Claude 托管账号供应商需要启用本地代理接管，但自动启用失败: {e}"
+                ))
+            })?;
+
+            futures::executor::block_on(
+                state
+                    .proxy_service
+                    .hot_switch_provider(app_type.as_str(), id),
+            )
+            .map_err(|e| AppError::Message(format!("热切换失败: {e}")))?;
+
             return Ok(SwitchResult::default());
         }
 
