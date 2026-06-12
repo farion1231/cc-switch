@@ -1,7 +1,10 @@
 pub mod audit_log;
 pub mod classifier;
 pub mod config;
+pub mod config_advisor;
+pub mod cost_ledger;
 pub mod cross_judge;
+pub mod dag_executor;
 pub mod engine;
 pub mod escalation;
 pub mod executor;
@@ -16,11 +19,13 @@ pub mod react_executor;
 pub mod response_adapter;
 pub mod retry_policy;
 pub mod scoring;
+pub mod section_writer;
 pub mod selector;
 pub mod shuffle;
 pub mod spot_check;
 pub mod stats_engine;
 pub mod workflow_assembler;
+pub mod workflow_lifecycle;
 
 pub use audit_log::AuditLogger;
 pub use classifier::{TaskClassifier, TaskProfile};

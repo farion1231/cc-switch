@@ -5,3 +5,4 @@ export { AuditLog } from "./AuditLog";
 export { HumanGatePanel } from "./HumanGatePanel";
 export { ModelLeaderboard } from "./ModelLeaderboard";
 export { PredictiveInsights } from "./PredictiveInsights";
+export { WorkflowVisualizer } from "./WorkflowVisualizer";
