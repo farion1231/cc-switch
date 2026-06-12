@@ -16,7 +16,7 @@ export const settingsSchema = z.object({
   launchOnStartup: z.boolean().optional(),
   enableLocalProxy: z.boolean().optional(),
   preserveCodexOfficialAuthOnSwitch: z.boolean().optional(),
-  language: z.enum(["en", "zh", "zh-TW", "ja"]).optional(),
+  language: z.enum(["en", "zh", "zh-TW", "ja", "ru"]).optional(),
 
   // 设备级目录覆盖
   claudeConfigDir: directorySchema.nullable().optional(),

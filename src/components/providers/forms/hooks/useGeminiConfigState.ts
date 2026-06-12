@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { getActiveLanguage } from "@/lib/locale";
 
 interface UseGeminiConfigStateProps {
   initialData?: {
@@ -126,8 +127,16 @@ export function useGeminiConfigState({
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         return "";
       }
+      const lang = getActiveLanguage();
+      if (lang === "zh") return "配置必须是 JSON 对象";
+      if (lang === "ja") return "設定は JSON オブジェクトである必要があります";
+      if (lang === "ru") return "Конфигурация должна быть JSON-объектом";
       return "Config must be a JSON object";
     } catch {
+      const lang = getActiveLanguage();
+      if (lang === "zh") return "JSON 格式错误";
+      if (lang === "ja") return "JSON 形式が無効です";
+      if (lang === "ru") return "Неверный формат JSON";
       return "Invalid JSON format";
     }
   }, []);
