@@ -101,6 +101,55 @@ fn default_profile() -> String {
     "default".to_string()
 }
 
+fn default_sync_true() -> bool {
+    true
+}
+
+/// Cloud sync content scope.
+///
+/// Provider data and basic settings are always enabled. MCP and Skills default
+/// to false so they are only touched when the user explicitly opts in.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncScope {
+    #[serde(default = "default_sync_true")]
+    pub providers: bool,
+    #[serde(default = "default_sync_true")]
+    pub settings: bool,
+    #[serde(default)]
+    pub mcp: bool,
+    #[serde(default)]
+    pub skills: bool,
+}
+
+impl Default for SyncScope {
+    fn default() -> Self {
+        Self {
+            providers: true,
+            settings: true,
+            mcp: false,
+            skills: false,
+        }
+    }
+}
+
+impl SyncScope {
+    pub fn full() -> Self {
+        Self {
+            providers: true,
+            settings: true,
+            mcp: true,
+            skills: true,
+        }
+    }
+
+    pub fn normalize(&mut self) {
+        // These are part of the baseline WebDAV sync contract.
+        self.providers = true;
+        self.settings = true;
+    }
+}
+
 /// WebDAV 同步设置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -120,6 +169,8 @@ pub struct WebDavSyncSettings {
     #[serde(default = "default_profile")]
     pub profile: String,
     #[serde(default)]
+    pub sync_scope: SyncScope,
+    #[serde(default)]
     pub status: WebDavSyncStatus,
 }
 
@@ -133,6 +184,7 @@ impl Default for WebDavSyncSettings {
             password: String::new(),
             remote_root: default_remote_root(),
             profile: default_profile(),
+            sync_scope: SyncScope::default(),
             status: WebDavSyncStatus::default(),
         }
     }
@@ -168,6 +220,7 @@ impl WebDavSyncSettings {
         if self.profile.is_empty() {
             self.profile = default_profile();
         }
+        self.sync_scope.normalize();
     }
 
     /// Returns true if all credential fields are blank (no config to persist).

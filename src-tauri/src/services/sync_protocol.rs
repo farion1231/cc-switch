@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
 use crate::error::AppError;
+use crate::settings::SyncScope;
 
 // Re-export archive functions for use by transport layers.
 pub(crate) use super::webdav_sync::archive::{
@@ -66,6 +67,8 @@ pub(crate) struct SyncManifest {
     pub version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub db_compat_version: Option<u32>,
+    #[serde(default = "SyncScope::full")]
+    pub sync_scope: SyncScope,
     pub device_name: String,
     pub created_at: String,
     pub artifacts: BTreeMap<String, ArtifactMeta>,
@@ -80,7 +83,7 @@ pub(crate) struct ArtifactMeta {
 
 pub(crate) struct LocalSnapshot {
     pub db_sql: Vec<u8>,
-    pub skills_zip: Vec<u8>,
+    pub skills_zip: Option<Vec<u8>>,
     pub manifest_bytes: Vec<u8>,
     pub manifest_hash: String,
 }
@@ -104,23 +107,14 @@ impl RemoteLayout {
 
 pub(crate) fn build_local_snapshot(
     db: &crate::database::Database,
+    scope: &SyncScope,
 ) -> Result<LocalSnapshot, AppError> {
-    // Export database to SQL string
-    let sql_string = db.export_sql_string_for_sync()?;
-    let db_sql = sql_string.into_bytes();
+    let mut scope = scope.clone();
+    scope.normalize();
 
-    // Pack skills into deterministic ZIP
-    let tmp = tempdir().map_err(|e| {
-        io_context_localized(
-            "sync.snapshot_tmpdir_failed",
-            "创建快照临时目录失败",
-            "Failed to create temporary directory for snapshot",
-            e,
-        )
-    })?;
-    let skills_zip_path = tmp.path().join(REMOTE_SKILLS_ZIP);
-    zip_skills_ssot(&skills_zip_path)?;
-    let skills_zip = fs::read(&skills_zip_path).map_err(|e| AppError::io(&skills_zip_path, e))?;
+    // Export database to SQL string
+    let sql_string = db.export_sql_string_for_sync_scope(&scope)?;
+    let db_sql = sql_string.into_bytes();
 
     // Build artifact map and compute hashes
     let mut artifacts = BTreeMap::new();
@@ -131,19 +125,38 @@ pub(crate) fn build_local_snapshot(
             size: db_sql.len() as u64,
         },
     );
-    artifacts.insert(
-        REMOTE_SKILLS_ZIP.to_string(),
-        ArtifactMeta {
-            sha256: sha256_hex(&skills_zip),
-            size: skills_zip.len() as u64,
-        },
-    );
+
+    let skills_zip = if scope.skills {
+        // Pack skills into deterministic ZIP only when the user opted in.
+        let tmp = tempdir().map_err(|e| {
+            io_context_localized(
+                "sync.snapshot_tmpdir_failed",
+                "创建快照临时目录失败",
+                "Failed to create temporary directory for snapshot",
+                e,
+            )
+        })?;
+        let skills_zip_path = tmp.path().join(REMOTE_SKILLS_ZIP);
+        zip_skills_ssot(&skills_zip_path)?;
+        let bytes = fs::read(&skills_zip_path).map_err(|e| AppError::io(&skills_zip_path, e))?;
+        artifacts.insert(
+            REMOTE_SKILLS_ZIP.to_string(),
+            ArtifactMeta {
+                sha256: sha256_hex(&bytes),
+                size: bytes.len() as u64,
+            },
+        );
+        Some(bytes)
+    } else {
+        None
+    };
 
     let snapshot_id = compute_snapshot_id(&artifacts);
     let manifest = SyncManifest {
         format: PROTOCOL_FORMAT.to_string(),
         version: PROTOCOL_VERSION,
         db_compat_version: Some(DB_COMPAT_VERSION),
+        sync_scope: scope,
         device_name: detect_system_device_name().unwrap_or_else(|| "Unknown Device".to_string()),
         created_at: Utc::now().to_rfc3339(),
         artifacts,
@@ -309,8 +322,12 @@ pub(crate) fn verify_artifact(
 pub(crate) fn apply_snapshot(
     db: &crate::database::Database,
     db_sql: &[u8],
-    skills_zip: &[u8],
+    skills_zip: Option<&[u8]>,
+    scope: &SyncScope,
 ) -> Result<(), AppError> {
+    let mut scope = scope.clone();
+    scope.normalize();
+
     let sql_str = std::str::from_utf8(db_sql).map_err(|e| {
         localized(
             "sync.sql_not_utf8",
@@ -318,20 +335,28 @@ pub(crate) fn apply_snapshot(
             format!("SQL is not valid UTF-8: {e}"),
         )
     })?;
-    let skills_backup = backup_current_skills()?;
+    let skills_backup = if skills_zip.is_some() {
+        Some(backup_current_skills()?)
+    } else {
+        None
+    };
 
-    // Replace skills first, then import database; roll back skills on DB failure.
-    restore_skills_zip(skills_zip)?;
+    // Replace skills first when selected, then import database; roll back skills on DB failure.
+    if let Some(skills_zip) = skills_zip {
+        restore_skills_zip(skills_zip)?;
+    }
 
-    if let Err(db_err) = db.import_sql_string_for_sync(sql_str) {
-        if let Err(rollback_err) = restore_skills_from_backup(&skills_backup) {
-            return Err(localized(
-                "sync.db_import_and_rollback_failed",
-                format!("导入数据库失败: {db_err}; 同时回滚 Skills 失败: {rollback_err}"),
-                format!(
-                    "Database import failed: {db_err}; skills rollback also failed: {rollback_err}"
-                ),
-            ));
+    if let Err(db_err) = db.import_sql_string_for_sync_scope(sql_str, &scope) {
+        if let Some(skills_backup) = skills_backup.as_ref() {
+            if let Err(rollback_err) = restore_skills_from_backup(skills_backup) {
+                return Err(localized(
+                    "sync.db_import_and_rollback_failed",
+                    format!("导入数据库失败: {db_err}; 同时回滚 Skills 失败: {rollback_err}"),
+                    format!(
+                        "Database import failed: {db_err}; skills rollback also failed: {rollback_err}"
+                    ),
+                ));
+            }
         }
         return Err(db_err);
     }
@@ -489,6 +514,7 @@ mod tests {
             format: format.to_string(),
             version,
             db_compat_version,
+            sync_scope: SyncScope::full(),
             device_name: "My MacBook".to_string(),
             created_at: "2026-02-12T00:00:00Z".to_string(),
             artifacts,
