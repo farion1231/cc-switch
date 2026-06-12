@@ -26,6 +26,24 @@ try {
   // 忽略平台检测失败
 }
 
+// 禁用默认浏览器右键菜单；在可编辑区域保留原生编辑菜单。
+document.addEventListener("contextmenu", (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) {
+    event.preventDefault();
+    return;
+  }
+
+  const editableTarget = target.closest(
+    "input, textarea, select, [contenteditable='true'], .cm-editor",
+  );
+  if (editableTarget) {
+    return;
+  }
+
+  event.preventDefault();
+});
+
 // 配置加载错误payload类型
 interface ConfigLoadErrorPayload {
   path?: string;
