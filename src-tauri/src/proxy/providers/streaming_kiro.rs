@@ -156,11 +156,21 @@ fn parse_kiro_event(parsed: &Value) -> Option<KiroStreamEvent> {
 fn parse_kiro_events(buffer: &str) -> (Vec<KiroStreamEvent>, String) {
     let mut events = Vec::new();
     let mut pos = 0;
+    // 最长的 event pattern 是 {"contextUsagePercentage": (25 bytes)
+    // 保留尾部这么多字节,避免跨 chunk 的部分 pattern 丢失
+    const MAX_PATTERN_LEN: usize = 25;
 
     while pos < buffer.len() {
         let json_start = match find_next_event_start(buffer, pos) {
             Some(idx) => idx,
-            None => break,
+            None => {
+                // 从当前 pos 起找不到任何 pattern,可能是:
+                // 1) buffer[pos..] 全是非 event 数据(空白/乱码) -> 安全丢弃
+                // 2) buffer[pos..] 是部分 pattern(如 {"con) -> 必须保留尾部
+                // 策略:保留最后 MAX_PATTERN_LEN-1 字节,足够容纳任何部分 pattern
+                let keep_from = buffer.len().saturating_sub(MAX_PATTERN_LEN - 1);
+                return (events, buffer[keep_from..].to_string());
+            }
         };
 
         let json_end = match find_json_end_bytes(buffer, json_start) {
@@ -611,5 +621,22 @@ mod tests {
         assert_eq!(resp["type"], "message");
         assert_eq!(resp["content"].as_array().unwrap().len(), 0);
         assert_eq!(resp["stop_reason"], "end_turn");
+    }
+
+    #[test]
+    fn parse_preserves_partial_pattern_across_chunks() {
+        // 模拟跨 chunk 的部分 pattern: {"con 应该被保留到 remainder
+        let chunk1 = r#"{"content":"hi"}{"con"#;
+        let (events1, remainder1) = parse_kiro_events(chunk1);
+        assert_eq!(events1.len(), 1);
+        assert!(matches!(&events1[0], KiroStreamEvent::Content(t) if t == "hi"));
+        // 关键:remainder 必须包含 {"con,不能是空字符串
+        assert!(remainder1.contains("{\"con"), "remainder 应保留部分 pattern,实际: {remainder1:?}");
+
+        // 模拟第二个 chunk 到达后,拼接到 remainder 应该能解析出完整事件
+        let chunk2 = r#"tent":"world"}{"usage":{"inputTokens":1,"outputTokens":2}}"#;
+        let combined = format!("{}{}", remainder1, chunk2);
+        let (events2, _remainder2) = parse_kiro_events(&combined);
+        assert!(events2.iter().any(|e| matches!(e, KiroStreamEvent::Content(t) if t == "world")));
     }
 }
