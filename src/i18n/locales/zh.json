@@ -868,7 +868,11 @@
       "defaultCostMultiplierRequired": "默认倍率不能为空",
       "defaultCostMultiplierInvalid": "默认倍率格式不正确"
     },
-    "saveFailedGeneric": "保存失败，请重试"
+    "saveFailedGeneric": "保存失败，请重试",
+    "usageDisplayOrder": "用量显示顺序",
+    "usageDisplayOrderHint": "选择在用量显示中优先显示剩余额度还是已用额度。",
+    "usageDisplayRemainingFirst": "剩余优先",
+    "usageDisplayUsedFirst": "已用优先"
   },
   "apps": {
     "claude": "Claude",

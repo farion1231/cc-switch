@@ -36,6 +36,7 @@ import { Button } from "@/components/ui/button";
 import { settingsApi } from "@/lib/api";
 import { LanguageSettings } from "@/components/settings/LanguageSettings";
 import { ThemeSettings } from "@/components/settings/ThemeSettings";
+import { UsageDisplaySettings } from "@/components/settings/UsageDisplaySettings";
 import { WindowSettings } from "@/components/settings/WindowSettings";
 import { AppVisibilitySettings } from "@/components/settings/AppVisibilitySettings";
 import { SkillStorageLocationSettings } from "@/components/settings/SkillStorageLocationSettings";
@@ -257,6 +258,12 @@ export function SettingsPage({
                       onChange={(lang) => handleAutoSave({ language: lang })}
                     />
                     <ThemeSettings />
+                    <UsageDisplaySettings
+                      value={settings.usageDisplayOrder ?? "remaining-first"}
+                      onChange={(order) =>
+                        handleAutoSave({ usageDisplayOrder: order })
+                      }
+                    />
                     <AppVisibilitySettings
                       settings={settings}
                       onChange={handleAutoSave}
