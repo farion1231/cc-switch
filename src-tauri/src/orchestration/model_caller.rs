@@ -24,12 +24,12 @@ pub struct TokenUsage {
 }
 
 impl ModelCaller {
-    pub fn new(models: HashMap<String, ModelConfig>) -> Self {
+    pub fn new(models: HashMap<String, ModelConfig>) -> Result<Self, String> {
         let client = Client::builder()
             .timeout(Duration::from_secs(120))
             .build()
-            .expect("Failed to create HTTP client");
-        Self { client, models }
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+        Ok(Self { client, models })
     }
 
     /// Call a model and return the full text response (non-streaming).
@@ -98,7 +98,7 @@ impl ModelCaller {
         }
 
         let start = std::time::Instant::now();
-        let url = Self::build_url(config);
+        let url = Self::build_url(config)?;
         let mut req = self
             .client
             .post(&url)
@@ -124,7 +124,7 @@ impl ModelCaller {
 
         let status = resp.status();
         if !status.is_success() {
-            let error_body = resp.text().await.unwrap_or_default();
+            let error_body = resp.text().await.unwrap_or_else(|e| format!("<could not read body: {}>", e));
             return Err(format!(
                 "Model '{}' returned {}: {}",
                 model_key, status, error_body
@@ -142,12 +142,12 @@ impl ModelCaller {
         let usage = TokenUsage {
             input_tokens: resp_body
                 .get("usage")
-                .and_then(|u| u.get("input_tokens"))
+                .and_then(|u| u.get("input_tokens").or_else(|| u.get("prompt_tokens")))
                 .and_then(|t| t.as_u64())
                 .unwrap_or(0),
             output_tokens: resp_body
                 .get("usage")
-                .and_then(|u| u.get("output_tokens"))
+                .and_then(|u| u.get("output_tokens").or_else(|| u.get("completion_tokens")))
                 .and_then(|t| t.as_u64())
                 .unwrap_or(0),
         };
@@ -172,27 +172,30 @@ impl ModelCaller {
         self.call(model_key, messages, None, temperature).await
     }
 
-    fn build_url(config: &ModelConfig) -> String {
+    fn build_url(config: &ModelConfig) -> Result<String, String> {
         match config.provider.as_str() {
-            "anthropic" => "https://api.anthropic.com/v1/messages".to_string(),
-            "openai" => "https://api.openai.com/v1/chat/completions".to_string(),
-            "deepseek" => "https://api.deepseek.com/v1/chat/completions".to_string(),
-            "qwen" => {
-                "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions".to_string()
-            }
-            "glm" => "https://open.bigmodel.cn/api/paas/v4/chat/completions".to_string(),
-            "kimi" => "https://api.moonshot.cn/v1/chat/completions".to_string(),
-            "doubao" => "https://ark.cn-beijing.volces.com/api/v3/chat/completions".to_string(),
-            "yi" => "https://api.lingyiwanwu.com/v1/chat/completions".to_string(),
-            "baichuan" => "https://api.baichuan-ai.com/v1/chat/completions".to_string(),
-            "spark" => "https://spark-api-open.xf-yun.com/v1/chat/completions".to_string(),
-            _ => config.base_url.clone().unwrap_or_else(|| {
-                log::error!(
-                    "[ModelCaller] Unknown provider '{}' with no base_url set",
+            "anthropic" => Ok("https://api.anthropic.com/v1/messages".to_string()),
+            "openai" => Ok("https://api.openai.com/v1/chat/completions".to_string()),
+            "deepseek" => Ok("https://api.deepseek.com/v1/chat/completions".to_string()),
+            "qwen" => Ok(
+                "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions".to_string(),
+            ),
+            "glm" => Ok("https://open.bigmodel.cn/api/paas/v4/chat/completions".to_string()),
+            "kimi" => Ok("https://api.moonshot.cn/v1/chat/completions".to_string()),
+            "doubao" => Ok(
+                "https://ark.cn-beijing.volces.com/api/v3/chat/completions".to_string(),
+            ),
+            "yi" => Ok("https://api.lingyiwanwu.com/v1/chat/completions".to_string()),
+            "baichuan" => Ok("https://api.baichuan-ai.com/v1/chat/completions".to_string()),
+            "spark" => Ok(
+                "https://spark-api-open.xf-yun.com/v1/chat/completions".to_string(),
+            ),
+            _ => {
+                return Err(format!(
+                    "Unknown provider '{}' and no base_url configured — cannot route request",
                     config.provider
-                );
-                format!("https://api.example.com/v1/chat/completions")
-            }),
+                ));
+            }
         }
     }
 
@@ -308,8 +311,20 @@ mod tests {
         };
 
         assert_eq!(
-            ModelCaller::build_url(&config),
+            ModelCaller::build_url(&config).unwrap(),
             "https://example.com/v1/chat/completions"
         );
+    }
+
+    #[test]
+    fn unknown_provider_no_base_url_returns_error() {
+        let config = ModelConfig {
+            provider: "minimax".to_string(),
+            model: "MiniMax-Text-01".to_string(),
+            api_key_env: "MINIMAX_API_KEY".to_string(),
+            base_url: None,
+            max_tokens: 1024,
+        };
+        assert!(ModelCaller::build_url(&config).is_err());
     }
 }

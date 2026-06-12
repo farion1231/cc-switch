@@ -24,11 +24,11 @@ pub struct ExecutionResult {
 }
 
 impl StrategyExecutor {
-    pub fn new(models: HashMap<String, ModelConfig>) -> Self {
-        Self {
-            caller: ModelCaller::new(models),
+    pub fn new(models: HashMap<String, ModelConfig>) -> Result<Self, String> {
+        Ok(Self {
+            caller: ModelCaller::new(models)?,
             quality_gate: QualityGate::default(),
-        }
+        })
     }
 
     pub async fn execute(
