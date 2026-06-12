@@ -515,11 +515,15 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         if (result.success && result.data && result.data.length > 0) {
           const summary = result.data
             .map((d) =>
-              formatUsageDataSummary(d, {
-                invalid: t("usage.invalid"),
-                remaining: t("usage.remaining"),
-                used: t("usage.used"),
-              }),
+              formatUsageDataSummary(
+                d,
+                {
+                  invalid: t("usage.invalid"),
+                  remaining: t("usage.remaining"),
+                  used: t("usage.used"),
+                },
+                settingsData?.usageDisplayOrder,
+              ),
             )
             .join(", ");
           toast.success(`${t("usageScript.testSuccess")}${summary}`, {
@@ -623,11 +627,15 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       if (result.success && result.data && result.data.length > 0) {
         const summary = result.data
           .map((plan: UsageData) =>
-            formatUsageDataSummary(plan, {
-              invalid: t("usage.invalid"),
-              remaining: t("usage.remaining"),
-              used: t("usage.used"),
-            }),
+            formatUsageDataSummary(
+              plan,
+              {
+                invalid: t("usage.invalid"),
+                remaining: t("usage.remaining"),
+                used: t("usage.used"),
+              },
+              settingsData?.usageDisplayOrder,
+            ),
           )
           .join(", ");
         toast.success(`${t("usageScript.testSuccess")}${summary}`, {

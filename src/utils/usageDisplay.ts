@@ -1,5 +1,7 @@
 import type { UsageData } from "@/types";
 
+export type UsageDisplayOrder = "remaining-first" | "used-first";
+
 interface UsageSummaryLabels {
   invalid: string;
   remaining: string;
@@ -22,6 +24,17 @@ function formatValue(value: number, unit?: string): string {
 
 function isNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
+}
+
+function formatRemaining(
+  data: UsageData,
+  labels: UsageSummaryLabels,
+): string | null {
+  if (!isNumber(data.remaining)) {
+    return null;
+  }
+
+  return `${labels.remaining} ${formatValue(data.remaining, data.unit)}`;
 }
 
 function formatUsed(
@@ -48,6 +61,7 @@ function formatUsed(
 export function formatUsageDataSummary(
   data: UsageData,
   labels: UsageSummaryLabels,
+  displayOrder?: UsageDisplayOrder,
 ): string {
   const planPrefix = data.planName ? `[${data.planName}] ` : "";
 
@@ -55,11 +69,11 @@ export function formatUsageDataSummary(
     return `${planPrefix}${data.invalidMessage || labels.invalid}`;
   }
 
+  const order = displayOrder ?? "remaining-first";
   const parts = [
-    formatUsed(data, labels),
-    isNumber(data.remaining)
-      ? `${labels.remaining} ${formatValue(data.remaining, data.unit)}`
-      : null,
+    ...(order === "remaining-first"
+      ? [formatRemaining(data, labels), formatUsed(data, labels)]
+      : [formatUsed(data, labels), formatRemaining(data, labels)]),
     data.extra || null,
   ].filter((part): part is string => Boolean(part));
 

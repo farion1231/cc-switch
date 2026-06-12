@@ -848,7 +848,11 @@
       "defaultCostMultiplierRequired": "デフォルト倍率は必須です",
       "defaultCostMultiplierInvalid": "デフォルト倍率の形式が正しくありません"
     },
-    "saveFailedGeneric": "保存に失敗しました。もう一度お試しください"
+    "saveFailedGeneric": "保存に失敗しました。もう一度お試しください",
+    "usageDisplayOrder": "使用量表示順序",
+    "usageDisplayOrderHint": "使用量表示で残量を先に表示するか、使用量を先に表示するかを選択します。",
+    "usageDisplayRemainingFirst": "残量優先",
+    "usageDisplayUsedFirst": "使用量優先"
   },
   "apps": {
     "claude": "Claude",
