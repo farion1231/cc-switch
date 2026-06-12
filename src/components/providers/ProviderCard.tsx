@@ -48,7 +48,7 @@ interface ProviderCardProps {
   onDisableOmoSlim?: () => void;
   onConfigureUsage: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
-  onDuplicate: (provider: Provider) => void;
+  onDuplicate?: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
   onOpenTerminal?: (provider: Provider) => void;
   isTesting?: boolean;
@@ -549,7 +549,13 @@ export function ProviderCard({
               isOmo={isAnyOmo}
               onSwitch={() => onSwitch(provider)}
               onEdit={() => onEdit(provider)}
-              onDuplicate={() => onDuplicate(provider)}
+              onDuplicate={
+                appId === "claude-desktop" && isOfficial
+                  ? undefined
+                  : onDuplicate
+                    ? () => onDuplicate(provider)
+                    : undefined
+              }
               onTest={
                 onTest &&
                 !isOfficial &&

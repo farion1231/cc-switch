@@ -1421,10 +1421,11 @@ impl StreamCheckService {
         config: &StreamCheckConfig,
     ) -> String {
         match app_type {
-            AppType::Claude | AppType::ClaudeDesktop => {
-                Self::extract_env_model(provider, "ANTHROPIC_MODEL")
-                    .unwrap_or_else(|| config.claude_model.clone())
-            }
+            AppType::Claude => Self::extract_env_model(provider, "ANTHROPIC_MODEL")
+                .unwrap_or_else(|| config.claude_model.clone()),
+            AppType::ClaudeDesktop => Self::extract_env_model(provider, "ANTHROPIC_MODEL")
+                .or_else(|| Self::extract_desktop_model_from_routes(provider))
+                .unwrap_or_else(|| config.claude_model.clone()),
             AppType::Codex => {
                 Self::extract_codex_model(provider).unwrap_or_else(|| config.codex_model.clone())
             }
@@ -1476,6 +1477,21 @@ impl StreamCheckService {
             .and_then(|value| value.as_str())
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
+    }
+
+    /// Extract the first upstream model name from Claude Desktop's model route mapping.
+    ///
+    /// Claude Desktop presets store model info in `meta.claudeDesktopModelRoutes`
+    /// rather than `settings_config.env.ANTHROPIC_MODEL`, so this extra fallback is needed.
+    fn extract_desktop_model_from_routes(provider: &Provider) -> Option<String> {
+        provider
+            .meta
+            .as_ref()?
+            .claude_desktop_model_routes
+            .values()
+            .next()
+            .map(|route| route.model.trim().to_string())
+            .filter(|m| !m.is_empty())
     }
 
     fn extract_codex_model(provider: &Provider) -> Option<String> {
