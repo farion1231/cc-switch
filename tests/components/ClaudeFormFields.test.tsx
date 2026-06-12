@@ -92,6 +92,7 @@ const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
     isFullUrl: false,
     onFullUrlChange: vi.fn(),
     customUserAgent: "",
+    customHeaders: [],
     onCustomUserAgentChange: vi.fn(),
     ...overrides,
   };

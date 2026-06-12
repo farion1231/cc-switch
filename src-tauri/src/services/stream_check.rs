@@ -307,6 +307,14 @@ impl StreamCheckService {
             .and_then(|meta| meta.custom_user_agent_header().ok().flatten())
     }
 
+    fn provider_custom_headers(provider: &Provider) -> Vec<crate::provider::ParsedProviderCustomHeader> {
+        provider
+            .meta
+            .as_ref()
+            .map(|meta| meta.parsed_custom_headers())
+            .unwrap_or_default()
+    }
+
     /// Claude 流式检查
     ///
     /// 根据供应商的 api_format 选择请求格式：
@@ -494,7 +502,7 @@ impl StreamCheckService {
                 .header("sec-fetch-mode", "cors");
         }
 
-        // 供应商自定义 headers 最后追加，允许覆盖内置默认值（例如 user-agent）
+        // additive app 的 settings_config.headers 最后追加，允许覆盖默认值。
         if let Some(headers) = extra_headers {
             for (key, value) in headers {
                 if let Some(v) = value.as_str() {
@@ -503,18 +511,37 @@ impl StreamCheckService {
             }
         }
 
-        // Provider 级自定义 User-Agent（meta.customUserAgent）覆盖默认 UA，与 forwarder
-        // 转发路径口径一致；Copilot 指纹 UA 不可被覆盖。
-        if !is_github_copilot {
-            if let Some(ua) = Self::custom_user_agent(provider) {
-                request_builder = request_builder.header("user-agent", ua);
-            }
-        }
+        let protected_headers: &[&str] = if is_github_copilot {
+            &[
+                "editor-version",
+                "editor-plugin-version",
+                "copilot-integration-id",
+                "x-github-api-version",
+                "openai-intent",
+                "x-initiator",
+                "x-interaction-type",
+                "x-vscode-user-agent-library-version",
+                "x-request-id",
+                "x-agent-task-id",
+            ]
+        } else {
+            &[]
+        };
 
-        let response = request_builder
+        let custom_headers = Self::provider_custom_headers(provider);
+        let mut request = request_builder
             .timeout(timeout)
             .json(&body)
-            .send()
+            .build()
+            .map_err(|e| AppError::Message(format!("Failed to build request: {e}")))?;
+        crate::provider::apply_custom_headers_to_http_map(
+            request.headers_mut(),
+            &custom_headers,
+            protected_headers,
+        );
+
+        let response = client
+            .execute(request)
             .await
             .map_err(Self::map_request_error)?;
 
@@ -611,7 +638,7 @@ impl StreamCheckService {
 
         for (i, url) in urls.iter().enumerate() {
             // 严格按照 Codex CLI 请求格式设置 headers
-            let response = client
+            let request_builder = client
                 .post(url)
                 .header("authorization", format!("Bearer {}", auth.api_key))
                 .header("content-type", "application/json")
@@ -619,9 +646,21 @@ impl StreamCheckService {
                 .header("accept-encoding", "identity")
                 .header("user-agent", user_agent.clone())
                 .header("originator", "codex_cli_rs")
-                .timeout(timeout)
+                .timeout(timeout);
+
+            let custom_headers = Self::provider_custom_headers(provider);
+            let mut request = request_builder
                 .json(&body)
-                .send()
+                .build()
+                .map_err(|e| AppError::Message(format!("Failed to build request: {e}")))?;
+            crate::provider::apply_custom_headers_to_http_map(
+                request.headers_mut(),
+                &custom_headers,
+                &["originator"],
+            );
+
+            let response = client
+                .execute(request)
                 .await
                 .map_err(Self::map_request_error)?;
 
@@ -691,7 +730,7 @@ impl StreamCheckService {
             .header("Content-Type", "application/json")
             .header("Accept", "text/event-stream");
 
-        // 供应商自定义 headers 最后追加
+        // additive app 的 settings_config.headers 最后追加
         if let Some(headers) = extra_headers {
             for (key, value) in headers {
                 if let Some(v) = value.as_str() {
@@ -700,10 +739,16 @@ impl StreamCheckService {
             }
         }
 
-        let response = request_builder
+        let custom_headers = Self::provider_custom_headers(provider);
+        let mut request = request_builder
             .timeout(timeout)
             .json(&body)
-            .send()
+            .build()
+            .map_err(|e| AppError::Message(format!("Failed to build request: {e}")))?;
+        crate::provider::apply_custom_headers_to_http_map(request.headers_mut(), &custom_headers, &[]);
+
+        let response = client
+            .execute(request)
             .await
             .map_err(Self::map_request_error)?;
 
