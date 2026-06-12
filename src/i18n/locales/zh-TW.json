@@ -661,6 +661,8 @@
     "autoLaunchFailed": "設定開機自動啟動失敗",
     "minimizeToTray": "關閉時最小化至系統匣",
     "minimizeToTrayDescription": "勾選後點擊關閉按鈕會隱藏至系統匣，取消則直接退出應用程式。",
+    "keepDockIcon": "保留 Dock 圖示",
+    "keepDockIconDescription": "開啟後主視窗開啟時會在 Dock 中顯示 CC Switch；關閉後僅在選單列執行。",
     "useAppWindowControls": "啟用應用程式等級視窗按鈕",
     "useAppWindowControlsDescription": "開啟後使用應用程式自建的最小化、最大化/還原、關閉按鈕；關閉後沿用系統視窗模式。",
     "enableClaudePluginIntegration": "套用至 Claude Code 外掛程式",

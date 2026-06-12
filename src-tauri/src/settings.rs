@@ -324,6 +324,9 @@ pub struct AppSettings {
     pub show_in_tray: bool,
     #[serde(default = "default_minimize_to_tray_on_close")]
     pub minimize_to_tray_on_close: bool,
+    /// 是否保留 macOS Dock 图标
+    #[serde(default)]
+    pub keep_dock_icon: bool,
     #[serde(default)]
     pub use_app_window_controls: bool,
     /// 是否启用 Claude 插件联动
@@ -464,6 +467,7 @@ impl Default for AppSettings {
         Self {
             show_in_tray: true,
             minimize_to_tray_on_close: true,
+            keep_dock_icon: false,
             use_app_window_controls: false,
             enable_claude_plugin_integration: false,
             skip_claude_onboarding: false,

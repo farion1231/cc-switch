@@ -763,6 +763,7 @@ dependencies = [
  "log",
  "objc2 0.5.2",
  "objc2-app-kit 0.2.2",
+ "objc2-foundation 0.2.2",
  "once_cell",
  "regex",
  "reqwest 0.12.28",
@@ -1278,6 +1279,12 @@ dependencies = [
  "redox_users 0.5.2",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "dispatch"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd0c93bb4b0c6d9b77f4435b0ae98c24d17f1c45b2ff844c6151a07256ca923b"
 
 [[package]]
 name = "dispatch2"
@@ -3244,6 +3251,7 @@ checksum = "0ee638a5da3799329310ad4cfa62fbf045d5f56e3ef5ba4149e7452dcf89d5a8"
 dependencies = [
  "bitflags 2.11.0",
  "block2 0.5.1",
+ "dispatch",
  "libc",
  "objc2 0.5.2",
 ]

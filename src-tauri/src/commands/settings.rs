@@ -1,7 +1,36 @@
 #![allow(non_snake_case)]
 
 use tauri::AppHandle;
+#[cfg(target_os = "macos")]
+use tauri::Manager;
 use tauri_plugin_updater::UpdaterExt;
+
+#[cfg(target_os = "macos")]
+fn main_window_is_visible(app: &AppHandle) -> bool {
+    app.get_webview_window("main")
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn main_window_is_visible(_app: &AppHandle) -> bool {
+    false
+}
+
+#[cfg(target_os = "macos")]
+fn apply_dock_icon_setting_change(app: &AppHandle, main_window_was_visible: bool) {
+    crate::tray::apply_tray_policy(app, main_window_was_visible);
+    if main_window_was_visible {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_dock_icon_setting_change(_app: &AppHandle, _main_window_was_visible: bool) {}
 
 fn merge_settings_for_save(
     mut incoming: crate::settings::AppSettings,
@@ -65,10 +94,21 @@ pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
 
 /// 保存设置
 #[tauri::command]
-pub async fn save_settings(settings: crate::settings::AppSettings) -> Result<bool, String> {
+pub async fn save_settings(
+    app: AppHandle,
+    settings: crate::settings::AppSettings,
+) -> Result<bool, String> {
     let existing = crate::settings::get_settings();
     let merged = merge_settings_for_save(settings, &existing);
+    let keep_dock_icon_changed = existing.keep_dock_icon != merged.keep_dock_icon;
+    let main_window_was_visible = main_window_is_visible(&app);
+
     crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
+
+    if keep_dock_icon_changed {
+        apply_dock_icon_setting_change(&app, main_window_was_visible);
+    }
+
     Ok(true)
 }
 
