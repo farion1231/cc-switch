@@ -118,7 +118,7 @@ export function PricingEditModal({
           <p className="text-xs text-muted-foreground">
             {t(
               "usage.modelsDevHint",
-              "无需手动填写，可从 models.dev 批量选择模型定价",
+              "无需手动填写，可从 models.dev 选择模型定价",
             )}
           </p>
           <Button

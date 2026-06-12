@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Loader2, Search } from "lucide-react";
+import { Check, Loader2, Search } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -13,7 +13,6 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Select,
@@ -22,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useImportModelPricing } from "@/lib/query/usage";
+import { useUpdateModelPricing } from "@/lib/query/usage";
 import { isTextEditableTarget } from "@/utils/domUtils";
 
 const MODELS_DEV_API_URL = "https://models.dev/api.json";
@@ -144,20 +143,18 @@ export function ModelsDevPickerDialog({
   onImported,
 }: ModelsDevPickerDialogProps) {
   const { t } = useTranslation();
-  const importPricing = useImportModelPricing();
+  const updatePricing = useUpdateModelPricing();
 
   const [search, setSearch] = useState("");
   const [providerFilter, setProviderFilter] = useState("all");
-  const [selected, setSelected] = useState<Map<string, ModelsDevEntry>>(
-    new Map(),
-  );
+  const [selected, setSelected] = useState<ModelsDevEntry | null>(null);
 
   // 每次打开时重置选择与过滤条件
   useEffect(() => {
     if (open) {
       setSearch("");
       setProviderFilter("all");
-      setSelected(new Map());
+      setSelected(null);
     }
   }, [open]);
 
@@ -211,74 +208,30 @@ export function ModelsDevPickerDialog({
     [filtered, isFiltering],
   );
 
-  const allVisibleSelected =
-    visible.length > 0 && visible.every((entry) => selected.has(entry.key));
-
+  // 单选：点击未选中的行替换选择，点击已选中的行取消选择。
+  // 限制单选是为了避免批量导入时每条都触发一次全量零成本回填扫描（见 update_model_pricing）。
   const toggleEntry = (entry: ModelsDevEntry) => {
-    setSelected((prev) => {
-      const next = new Map(prev);
-      if (next.has(entry.key)) {
-        next.delete(entry.key);
-      } else {
-        next.set(entry.key, entry);
-      }
-      return next;
-    });
-  };
-
-  const toggleAllVisible = () => {
-    setSelected((prev) => {
-      const next = new Map(prev);
-      if (allVisibleSelected) {
-        for (const entry of visible) {
-          next.delete(entry.key);
-        }
-      } else {
-        for (const entry of visible) {
-          next.set(entry.key, entry);
-        }
-      }
-      return next;
-    });
+    setSelected((prev) => (prev?.key === entry.key ? null : entry));
   };
 
   const handleImport = async () => {
-    // 同一归一化 ID 可能被多个供应商条目选中，数据库以 model_id 为主键，
-    // 静默覆盖会导致最终价格取决于遍历顺序——按选择顺序保留第一个并提示跳过数量
-    const deduped = new Map<string, ModelsDevEntry>();
-    for (const item of selected.values()) {
-      if (!deduped.has(item.normalizedId)) {
-        deduped.set(item.normalizedId, item);
-      }
-    }
-    const items = Array.from(deduped.values());
-    if (items.length === 0) return;
-    const skipped = selected.size - items.length;
+    if (!selected) return;
 
     try {
-      await importPricing.mutateAsync(
-        items.map((item) => ({
-          modelId: item.normalizedId,
-          displayName: item.modelName,
-          inputCost: formatPrice(item.input),
-          outputCost: formatPrice(item.output),
-          cacheReadCost: formatPrice(item.cacheRead),
-          cacheCreationCost: formatPrice(item.cacheWrite),
-        })),
-      );
+      await updatePricing.mutateAsync({
+        modelId: selected.normalizedId,
+        displayName: selected.modelName,
+        inputCost: formatPrice(selected.input),
+        outputCost: formatPrice(selected.output),
+        cacheReadCost: formatPrice(selected.cacheRead),
+        cacheCreationCost: formatPrice(selected.cacheWrite),
+      });
 
       toast.success(
-        skipped > 0
-          ? t("usage.modelsDevImportedWithSkipped", {
-              count: items.length,
-              skipped,
-              defaultValue:
-                "已导入 {{count}} 个模型定价，跳过 {{skipped}} 个重复模型",
-            })
-          : t("usage.modelsDevImported", {
-              count: items.length,
-              defaultValue: "已导入 {{count}} 个模型定价",
-            }),
+        t("usage.modelsDevImported", {
+          name: selected.modelName,
+          defaultValue: "已导入 {{name}} 的定价",
+        }),
         { closeButton: true },
       );
       onImported();
@@ -302,7 +255,7 @@ export function ModelsDevPickerDialog({
     <Dialog
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!nextOpen && !importPricing.isPending) {
+        if (!nextOpen && !updatePricing.isPending) {
           onClose();
         }
       }}
@@ -311,7 +264,7 @@ export function ModelsDevPickerDialog({
         zIndex="top"
         className="max-w-3xl h-[80vh]"
         onEscapeKeyDown={(e) => {
-          // 在搜索框里按 ESC 不应关闭弹窗丢掉已勾选的模型（与 FullScreenPanel 的约定一致）
+          // 在搜索框里按 ESC 不应关闭弹窗丢掉已选模型（与 FullScreenPanel 的约定一致）
           if (isTextEditableTarget(e.target)) {
             e.preventDefault();
           }
@@ -324,7 +277,7 @@ export function ModelsDevPickerDialog({
           <DialogDescription>
             {t(
               "usage.modelsDevPickerDesc",
-              "选择要导入的模型（价格单位：USD / 百万 tokens），支持多选",
+              "选择要导入的模型（价格单位：USD / 百万 tokens），每次导入一个",
             )}
           </DialogDescription>
         </DialogHeader>
@@ -386,23 +339,6 @@ export function ModelsDevPickerDialog({
                 </div>
               </div>
 
-              <div className="flex items-center justify-between">
-                <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
-                  <Checkbox
-                    checked={allVisibleSelected}
-                    onCheckedChange={toggleAllVisible}
-                    disabled={visible.length === 0}
-                  />
-                  {t("usage.modelsDevSelectAllVisible", "全选当前显示")}
-                </label>
-                <span className="text-xs text-muted-foreground">
-                  {t("usage.modelsDevSelectedCount", {
-                    count: selected.size,
-                    defaultValue: "已选 {{count}} 个",
-                  })}
-                </span>
-              </div>
-
               <div className="flex-1 min-h-0 overflow-y-auto rounded-md border border-border/50">
                 {filtered.length === 0 ? (
                   <div className="flex h-full items-center justify-center py-8 text-sm text-muted-foreground">
@@ -414,13 +350,20 @@ export function ModelsDevPickerDialog({
                       <div
                         key={entry.key}
                         role="button"
+                        aria-pressed={selected?.key === entry.key}
                         onClick={() => toggleEntry(entry)}
-                        className="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-muted/40"
+                        className={`flex cursor-pointer items-center gap-3 px-3 py-2 ${
+                          selected?.key === entry.key
+                            ? "bg-accent/50"
+                            : "hover:bg-muted/40"
+                        }`}
                       >
-                        <Checkbox
-                          checked={selected.has(entry.key)}
-                          onCheckedChange={() => toggleEntry(entry)}
-                          onClick={(e) => e.stopPropagation()}
+                        <Check
+                          className={`h-4 w-4 shrink-0 text-primary ${
+                            selected?.key === entry.key
+                              ? "visible"
+                              : "invisible"
+                          }`}
                         />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
@@ -485,24 +428,21 @@ export function ModelsDevPickerDialog({
           <Button
             variant="outline"
             onClick={onClose}
-            disabled={importPricing.isPending}
+            disabled={updatePricing.isPending}
           >
             {t("common.cancel", "取消")}
           </Button>
           <Button
             onClick={handleImport}
-            disabled={selected.size === 0 || importPricing.isPending}
+            disabled={!selected || updatePricing.isPending}
           >
-            {importPricing.isPending ? (
+            {updatePricing.isPending ? (
               <>
                 <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
                 {t("usage.modelsDevImporting", "导入中...")}
               </>
             ) : (
-              t("usage.modelsDevImportButton", {
-                count: selected.size,
-                defaultValue: "导入 ({{count}})",
-              })
+              t("usage.modelsDevImportButton", "导入")
             )}
           </Button>
         </DialogFooter>
