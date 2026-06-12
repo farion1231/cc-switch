@@ -290,8 +290,10 @@ export function ProviderPresetSelector({
                 </TooltipContent>
               </Tooltip>
               <PopoverContent
-                align="end"
-                className="w-72 p-2 border-border-default"
+                side="left"
+                align="center"
+                sideOffset={8}
+                className="z-[100] w-72 border-0 bg-transparent p-0 shadow-none"
               >
                 <Input
                   value={searchQuery}

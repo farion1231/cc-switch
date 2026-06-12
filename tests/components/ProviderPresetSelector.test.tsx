@@ -273,7 +273,11 @@ describe("ProviderPresetSelector", () => {
     renderSelector();
 
     await user.click(getSearchButton());
-    await user.type(getSearchInput(), "gateway");
+    const searchInput = getSearchInput();
+    expect(searchInput.parentElement).toHaveAttribute("data-side", "left");
+    expect(searchInput.parentElement).toHaveClass("z-[100]");
+    expect(searchInput.parentElement).toHaveClass("border-0", "shadow-none");
+    await user.type(searchInput, "gateway");
 
     expect(
       screen.getByRole("button", { name: "providerPreset.custom" }),
