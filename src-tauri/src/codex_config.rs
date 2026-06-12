@@ -334,6 +334,48 @@ fn codex_catalog_model_entry(
     entry_obj.insert("availability_nux".to_string(), Value::Null);
     entry_obj.insert("upgrade".to_string(), Value::Null);
 
+    // Explicitly override fields that might be missing or invalid in dynamic templates
+    entry_obj.insert("visibility".to_string(), json!("list"));
+    if !entry_obj.contains_key("supported_reasoning_levels") {
+        entry_obj.insert("supported_reasoning_levels".to_string(), json!([]));
+    }
+    if !entry_obj.contains_key("supports_reasoning_summaries") {
+        entry_obj.insert("supports_reasoning_summaries".to_string(), json!(false));
+    }
+    if !entry_obj.contains_key("shell_type") {
+        entry_obj.insert("shell_type".to_string(), json!("default"));
+    }
+    if !entry_obj.contains_key("input_modalities") {
+        entry_obj.insert("input_modalities".to_string(), json!(["text"]));
+    }
+    if !entry_obj.contains_key("supports_parallel_tool_calls") {
+        entry_obj.insert("supports_parallel_tool_calls".to_string(), json!(false));
+    }
+    if !entry_obj.contains_key("support_verbosity") {
+        entry_obj.insert("support_verbosity".to_string(), json!(false));
+    }
+    if !entry_obj.contains_key("supported_in_api") {
+        entry_obj.insert("supported_in_api".to_string(), json!(true));
+    }
+    if !entry_obj.contains_key("default_verbosity") {
+        entry_obj.insert("default_verbosity".to_string(), Value::Null);
+    }
+    if !entry_obj.contains_key("truncation_policy") {
+        entry_obj.insert(
+            "truncation_policy".to_string(),
+            json!({
+                "limit": 10000,
+                "mode": "bytes"
+            }),
+        );
+    }
+    if !entry_obj.contains_key("experimental_supported_tools") {
+        entry_obj.insert("experimental_supported_tools".to_string(), json!([]));
+    }
+    if !entry_obj.contains_key("base_instructions") {
+        entry_obj.insert("base_instructions".to_string(), json!(""));
+    }
+
     entry
 }
 
@@ -1834,6 +1876,43 @@ base_url = "https://production.api/v1"
                 .get("availability_nux")
                 .is_some_and(|value| value.is_null()),
             "generated third-party entries should not inherit GPT-5.5 launch messaging"
+        );
+    }
+
+    #[test]
+    fn codex_model_catalog_does_not_enable_unknown_verbosity_support() {
+        let template = json!({
+            "slug": "legacy-template",
+            "display_name": "Legacy Template",
+            "description": "Older dynamic template",
+            "context_window": 128000,
+            "max_context_window": 128000
+        });
+        let specs = vec![CodexCatalogModelSpec {
+            model: "third-party-model".to_string(),
+            display_name: "Third Party Model".to_string(),
+            context_window: 64_000,
+        }];
+
+        let catalog = codex_model_catalog_from_specs(&specs, &template);
+        let model = catalog
+            .get("models")
+            .and_then(|value| value.as_array())
+            .and_then(|models| models.first())
+            .expect("generated model entry");
+
+        assert_eq!(
+            model
+                .get("support_verbosity")
+                .and_then(|value| value.as_bool()),
+            Some(false),
+            "unknown third-party models must not opt into text verbosity"
+        );
+        assert!(
+            model
+                .get("default_verbosity")
+                .is_some_and(|value| value.is_null()),
+            "default verbosity should stay null unless the template explicitly provides one"
         );
     }
 
