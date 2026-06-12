@@ -16,6 +16,7 @@
 //! ├── backup.rs     - SQL 导入导出 + 快照备份
 //! ├── migration.rs  - JSON → SQLite 数据迁移
 //! └── dao/          - 数据访问对象
+//!     ├── model_routes.rs
 //!     ├── providers.rs
 //!     ├── mcp.rs
 //!     ├── prompts.rs
@@ -49,7 +50,7 @@ use std::sync::Mutex;
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
-pub(crate) const SCHEMA_VERSION: i32 = 11;
+pub(crate) const SCHEMA_VERSION: i32 = 12;
 
 /// 安全地序列化 JSON，避免 unwrap panic
 pub(crate) fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError> {

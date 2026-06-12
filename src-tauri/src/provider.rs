@@ -215,6 +215,29 @@ pub struct ProviderManager {
     pub current: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelRoute {
+    pub id: String,
+    pub app_type: String,
+    pub pattern: String,
+    pub provider_id: String,
+    pub priority: i32,
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelRouteInput {
+    pub app_type: String,
+    pub pattern: String,
+    pub provider_id: String,
+    pub priority: i32,
+    pub enabled: bool,
+}
+
 /// 用量查询脚本配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageScript {

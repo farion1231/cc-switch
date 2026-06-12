@@ -867,6 +867,7 @@ mod tests {
     use crate::error::AppError;
     use crate::provider::ProviderMeta;
     use crate::proxy::failover_switch::FailoverSwitchManager;
+    use crate::proxy::model_router::ModelRouter;
     use crate::proxy::provider_router::ProviderRouter;
     use crate::proxy::providers::{
         codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore,
@@ -1025,6 +1026,7 @@ mod tests {
             start_time: Arc::new(RwLock::new(None)),
             current_providers: Arc::new(RwLock::new(HashMap::new())),
             provider_router: Arc::new(ProviderRouter::new(db.clone())),
+            model_router: Arc::new(ModelRouter::new(db.clone())),
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             app_handle: None,
