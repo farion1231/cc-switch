@@ -71,6 +71,17 @@ impl ModelMapping {
                 return m.clone();
             }
         }
+        // Fable currently behaves as the "main/sonnet-tier" Claude slot in the
+        // local Claude/cc-switch config surfaces, so it should not fall through
+        // to ANTHROPIC_MODEL and silently downgrade to an unrelated default.
+        if model_lower.contains("fable") {
+            if let Some(ref m) = self.sonnet_model {
+                return m.clone();
+            }
+            if let Some(ref m) = self.default_model {
+                return m.clone();
+            }
+        }
 
         // 2. 默认模型
         if let Some(ref m) = self.default_model {
@@ -259,6 +270,15 @@ mod tests {
         let (result, _, mapped) = apply_model_mapping(body, &provider);
         assert_eq!(result["model"], "default-model");
         assert_eq!(mapped, Some("default-model".to_string()));
+    }
+
+    #[test]
+    fn test_fable_mapping_uses_sonnet_slot() {
+        let provider = create_provider_with_mapping();
+        let body = json!({"model": "claude-fable-5"});
+        let (result, _, mapped) = apply_model_mapping(body, &provider);
+        assert_eq!(result["model"], "sonnet-mapped");
+        assert_eq!(mapped, Some("sonnet-mapped".to_string()));
     }
 
     #[test]
