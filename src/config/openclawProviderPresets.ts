@@ -665,6 +665,12 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
+          id: "MiniMax-M3",
+          name: "MiniMax M3",
+          contextWindow: 524288,
+          cost: { input: 0.002, output: 0.008 },
+        },
+        {
           id: "MiniMax-M2.7",
           name: "MiniMax M2.7",
           contextWindow: 200000,
@@ -689,8 +695,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "minimax/MiniMax-M2.7" },
-      modelCatalog: { "minimax/MiniMax-M2.7": { alias: "MiniMax" } },
+      model: { primary: "minimax/MiniMax-M3" },
+      modelCatalog: { "minimax/MiniMax-M3": { alias: "MiniMax" } },
     },
   },
   {
@@ -702,6 +708,12 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       apiKey: "",
       api: "openai-completions",
       models: [
+        {
+          id: "MiniMax-M3",
+          name: "MiniMax M3",
+          contextWindow: 524288,
+          cost: { input: 0.002, output: 0.008 },
+        },
         {
           id: "MiniMax-M2.7",
           name: "MiniMax M2.7",
@@ -727,8 +739,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "minimax-en/MiniMax-M2.7" },
-      modelCatalog: { "minimax-en/MiniMax-M2.7": { alias: "MiniMax" } },
+      model: { primary: "minimax-en/MiniMax-M3" },
+      modelCatalog: { "minimax-en/MiniMax-M3": { alias: "MiniMax" } },
     },
   },
   {
@@ -1313,6 +1325,12 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
+          id: "Pro/MiniMaxAI/MiniMax-M3",
+          name: "MiniMax M3",
+          contextWindow: 524288,
+          cost: { input: 0.002, output: 0.008 },
+        },
+        {
           id: "Pro/MiniMaxAI/MiniMax-M2.7",
           name: "MiniMax M2.7",
           contextWindow: 200000,
@@ -1333,9 +1351,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "siliconflow/Pro/MiniMaxAI/MiniMax-M2.7" },
+      model: { primary: "siliconflow/Pro/MiniMaxAI/MiniMax-M3" },
       modelCatalog: {
-        "siliconflow/Pro/MiniMaxAI/MiniMax-M2.7": { alias: "MiniMax" },
+        "siliconflow/Pro/MiniMaxAI/MiniMax-M3": { alias: "MiniMax" },
       },
     },
   },
@@ -1348,6 +1366,12 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       apiKey: "",
       api: "openai-completions",
       models: [
+        {
+          id: "MiniMaxAI/MiniMax-M3",
+          name: "MiniMax M3",
+          contextWindow: 524288,
+          cost: { input: 0.002, output: 0.008 },
+        },
         {
           id: "MiniMaxAI/MiniMax-M2.7",
           name: "MiniMax M2.7",
@@ -1369,9 +1393,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "siliconflow-en/MiniMaxAI/MiniMax-M2.7" },
+      model: { primary: "siliconflow-en/MiniMaxAI/MiniMax-M3" },
       modelCatalog: {
-        "siliconflow-en/MiniMaxAI/MiniMax-M2.7": { alias: "MiniMax" },
+        "siliconflow-en/MiniMaxAI/MiniMax-M3": { alias: "MiniMax" },
       },
     },
   },

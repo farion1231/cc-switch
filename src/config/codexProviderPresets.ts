@@ -561,11 +561,16 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "minimax",
       "https://api.minimaxi.com/v1",
-      "MiniMax-M2.7",
+      "MiniMax-M3",
     ),
     endpointCandidates: ["https://api.minimaxi.com/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
+      {
+        model: "MiniMax-M3",
+        displayName: "MiniMax M3",
+        contextWindow: 524288,
+      },
       {
         model: "MiniMax-M2.7",
         displayName: "MiniMax M2.7",
@@ -597,11 +602,16 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "minimax_en",
       "https://api.minimax.io/v1",
-      "MiniMax-M2.7",
+      "MiniMax-M3",
     ),
     endpointCandidates: ["https://api.minimax.io/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
+      {
+        model: "MiniMax-M3",
+        displayName: "MiniMax M3",
+        contextWindow: 524288,
+      },
       {
         model: "MiniMax-M2.7",
         displayName: "MiniMax M2.7",
@@ -714,11 +724,16 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "siliconflow",
       "https://api.siliconflow.cn/v1",
-      "Pro/MiniMaxAI/MiniMax-M2.7",
+      "Pro/MiniMaxAI/MiniMax-M3",
     ),
     endpointCandidates: ["https://api.siliconflow.cn/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
+      {
+        model: "Pro/MiniMaxAI/MiniMax-M3",
+        displayName: "Pro / MiniMax M3",
+        contextWindow: 524288,
+      },
       {
         model: "Pro/MiniMaxAI/MiniMax-M2.7",
         displayName: "Pro / MiniMax M2.7",
@@ -739,11 +754,16 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "siliconflow_en",
       "https://api.siliconflow.com/v1",
-      "MiniMaxAI/MiniMax-M2.7",
+      "MiniMaxAI/MiniMax-M3",
     ),
     endpointCandidates: ["https://api.siliconflow.com/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
+      {
+        model: "MiniMaxAI/MiniMax-M3",
+        displayName: "MiniMax M3",
+        contextWindow: 524288,
+      },
       {
         model: "MiniMaxAI/MiniMax-M2.7",
         displayName: "MiniMax M2.7",
