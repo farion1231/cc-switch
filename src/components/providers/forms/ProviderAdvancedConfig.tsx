@@ -1,6 +1,12 @@
 import { useTranslation } from "react-i18next";
 import { useState, useEffect } from "react";
-import { ChevronDown, ChevronRight, FlaskConical, Coins } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FlaskConical,
+  Coins,
+  Terminal,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -27,6 +33,8 @@ interface ProviderAdvancedConfigProps {
   pricingConfig: ProviderPricingConfig;
   onTestConfigChange: (config: ProviderTestConfig) => void;
   onPricingConfigChange: (config: ProviderPricingConfig) => void;
+  customCliArgs: string;
+  onCustomCliArgsChange: (value: string) => void;
 }
 
 export function ProviderAdvancedConfig({
@@ -34,6 +42,8 @@ export function ProviderAdvancedConfig({
   pricingConfig,
   onTestConfigChange,
   onPricingConfigChange,
+  customCliArgs,
+  onCustomCliArgsChange,
 }: ProviderAdvancedConfigProps) {
   const { t } = useTranslation();
   const [isTestConfigOpen, setIsTestConfigOpen] = useState(testConfig.enabled);
@@ -363,6 +373,31 @@ export function ProviderAdvancedConfig({
             </div>
           </div>
         </div>
+      </div>
+
+      {/* 自定义 CLI 参数 */}
+      <div className="rounded-lg border border-border/50 bg-muted/20 p-4 space-y-3">
+        <div className="flex items-center gap-3">
+          <Terminal className="h-4 w-4 text-muted-foreground" />
+          <span className="font-medium">
+            {t("providerAdvanced.customCliArgs", {
+              defaultValue: "自定义 CLI 参数",
+            })}
+          </span>
+        </div>
+        <Input
+          value={customCliArgs}
+          onChange={(e) => onCustomCliArgsChange(e.target.value)}
+          placeholder={t("providerAdvanced.customCliArgsPlaceholder", {
+            defaultValue: "--dangerously-skip-permissions",
+          })}
+        />
+        <p className="text-xs text-muted-foreground">
+          {t("providerAdvanced.customCliArgsHint", {
+            defaultValue:
+              "打开终端时附加到启动命令的额外参数，多个参数用空格分隔",
+          })}
+        </p>
       </div>
     </div>
   );

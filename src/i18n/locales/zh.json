@@ -701,6 +701,12 @@
       "title": "首选终端",
       "description": "选择点击终端按钮时使用的终端应用",
       "fallbackHint": "如果选择的终端不可用，将自动使用系统默认终端",
+      "customCliArgs": {
+        "title": "自定义 CLI 参数",
+        "description": "打开终端时附加到启动命令的额外参数",
+        "placeholder": "--dangerously-skip-permissions",
+        "hint": "多个参数用空格分隔，如 --dangerously-skip-permissions --verbose"
+      },
       "options": {
         "macos": {
           "terminal": "Terminal.app",
@@ -1209,7 +1215,10 @@
     "pricingModelSourceInherit": "继承全局默认",
     "pricingModelSourceRequest": "请求模型",
     "pricingModelSourceResponse": "返回模型",
-    "pricingModelSourceHint": "选择按请求模型还是返回模型进行定价匹配"
+    "pricingModelSourceHint": "选择按请求模型还是返回模型进行定价匹配",
+    "customCliArgs": "自定义 CLI 参数",
+    "customCliArgsPlaceholder": "--dangerously-skip-permissions",
+    "customCliArgsHint": "打开终端时附加到启动命令的额外参数，多个参数用空格分隔"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
