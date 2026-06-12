@@ -48,7 +48,7 @@ const CLAUDE_ONE_M_MARKER_FOR_CLIENT: &str = "[1M]";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClaudeTakeoverAuthPolicy {
     PreserveExistingOrAuthToken,
-    ManagedAccount,
+    ManagedAccount { keep_auth_token: bool },
 }
 
 #[derive(Clone)]
@@ -90,7 +90,12 @@ impl ProxyService {
         provider: &Provider,
     ) {
         let auth_policy = if provider.uses_managed_account_auth() {
-            ClaudeTakeoverAuthPolicy::ManagedAccount
+            // Codex 系（含仅凭 base_url 识别、无 provider_type meta 的）必须保留
+            // ANTHROPIC_AUTH_TOKEN 占位符：Claude Code 缺该键会弹登录提示（#3784）。
+            // Copilot 维持仅 API_KEY 占位，避免与 /login 管理的 key 冲突（#1049）。
+            ClaudeTakeoverAuthPolicy::ManagedAccount {
+                keep_auth_token: !provider.is_github_copilot(),
+            }
         } else {
             ClaudeTakeoverAuthPolicy::PreserveExistingOrAuthToken
         };
@@ -180,7 +185,7 @@ impl ProxyService {
                     );
                 }
             }
-            ClaudeTakeoverAuthPolicy::ManagedAccount => {
+            ClaudeTakeoverAuthPolicy::ManagedAccount { keep_auth_token } => {
                 for key in token_keys {
                     env.remove(key);
                 }
@@ -188,6 +193,14 @@ impl ProxyService {
                     "ANTHROPIC_API_KEY".to_string(),
                     json!(PROXY_TOKEN_PLACEHOLDER),
                 );
+                if keep_auth_token {
+                    // 无条件注入而非"已存在才保留"：热切换路径传入的是 provider
+                    // settings（预设不含该键），且旧版接管已把存量用户 live 中的键删光。
+                    env.insert(
+                        "ANTHROPIC_AUTH_TOKEN".to_string(),
+                        json!(PROXY_TOKEN_PLACEHOLDER),
+                    );
+                }
             }
         }
     }
@@ -1632,7 +1645,7 @@ impl ProxyService {
     ///
     /// 返回值：
     /// - Ok(true)：已成功写回
-    /// - Ok(false)：缺少当前供应商/供应商不存在，无法写回
+    /// - Ok(false)：缺少当前供应商/供应商不存在/供应商本身含占位符，无法写回
     fn restore_live_from_ssot_for_app(&self, app_type: &AppType) -> Result<bool, String> {
         let current_id = crate::settings::get_effective_current_provider(&self.db, app_type)
             .map_err(|e| format!("获取 {app_type:?} 当前供应商失败: {e}"))?;
@@ -1649,6 +1662,16 @@ impl ProxyService {
         let Some(provider) = providers.get(&current_id) else {
             return Ok(false);
         };
+
+        // 供应商配置本身含接管占位符时不可写回（历史异常：接管期间 Live 被
+        // 误导入成了供应商）。写回只会把占位符固化进 Live；返回 Ok(false)
+        // 让调用方落到"清理占位符"兜底。
+        if Self::live_has_proxy_placeholder_for_app(app_type, &provider.settings_config) {
+            log::warn!(
+                "{app_type:?} 当前供应商配置含代理接管占位符（疑似接管期间被导入的残留），跳过 SSOT 写回，改走占位符清理"
+            );
+            return Ok(false);
+        }
 
         write_live_with_common_config(self.db.as_ref(), app_type, provider)
             .map_err(|e| format!("写入 {app_type:?} Live 配置失败: {e}"))?;
@@ -2934,6 +2957,108 @@ mod tests {
         assert_env_str(env, "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", Some("gpt-5.4"));
         assert_env_str(env, "ANTHROPIC_DEFAULT_OPUS_MODEL", Some("claude-opus-4-8"));
         assert_env_str(env, "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME", Some("gpt-5.4"));
+        assert_env_str(env, "ANTHROPIC_API_KEY", Some(PROXY_TOKEN_PLACEHOLDER));
+        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
+    }
+
+    #[test]
+    fn managed_account_claude_takeover_codex_injects_auth_token_without_preexisting_key() {
+        let mut provider = Provider::with_id(
+            "codex".to_string(),
+            "Codex".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            ..Default::default()
+        });
+
+        // 全新安装/热切换形态：传入的 env 没有任何 token 键。
+        let mut live_config = provider.settings_config.clone();
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_config,
+            "http://127.0.0.1:15721",
+            &provider,
+        );
+
+        let env = live_config
+            .get("env")
+            .and_then(|value| value.as_object())
+            .expect("env should exist");
+        assert_env_str(env, "ANTHROPIC_API_KEY", Some(PROXY_TOKEN_PLACEHOLDER));
+        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
+    }
+
+    #[test]
+    fn managed_account_claude_takeover_codex_by_base_url_keeps_auth_token() {
+        // 无 provider_type meta、仅凭 base_url 识别为受管 codex 的供应商，
+        // 也必须保留 AUTH_TOKEN 占位符（与策略选择共用同一判定族）。
+        let provider = Provider::with_id(
+            "codex-url-only".to_string(),
+            "Codex (URL only)".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            None,
+        );
+        assert!(provider.uses_managed_account_auth());
+        assert!(!provider.is_codex_oauth());
+
+        let mut live_config = provider.settings_config.clone();
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_config,
+            "http://127.0.0.1:15721",
+            &provider,
+        );
+
+        let env = live_config
+            .get("env")
+            .and_then(|value| value.as_object())
+            .expect("env should exist");
+        assert_env_str(env, "ANTHROPIC_API_KEY", Some(PROXY_TOKEN_PLACEHOLDER));
+        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
+    }
+
+    #[test]
+    fn managed_account_claude_takeover_copilot_removes_stale_auth_token() {
+        let mut provider = Provider::with_id(
+            "copilot".to_string(),
+            "GitHub Copilot".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("github_copilot".to_string()),
+            ..Default::default()
+        });
+
+        let mut live_config = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://stale.example.com",
+                "ANTHROPIC_AUTH_TOKEN": "stale-token"
+            }
+        });
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_config,
+            "http://127.0.0.1:15721",
+            &provider,
+        );
+
+        let env = live_config
+            .get("env")
+            .and_then(|value| value.as_object())
+            .expect("env should exist");
         assert_env_str(env, "ANTHROPIC_API_KEY", Some(PROXY_TOKEN_PLACEHOLDER));
         assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", None);
     }

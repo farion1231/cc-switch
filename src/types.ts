@@ -219,6 +219,8 @@ export interface ProviderMeta {
   codexFastMode?: boolean;
   // Codex Responses -> Chat Completions reasoning capability metadata
   codexChatReasoning?: CodexChatReasoning;
+  // Custom User-Agent for local proxy routing. Only applied by the local proxy.
+  customUserAgent?: string;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）

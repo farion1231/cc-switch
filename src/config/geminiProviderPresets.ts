@@ -70,6 +70,24 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "shengsuanyun",
   },
   {
+    name: "Unity2.ai",
+    websiteUrl: "https://unity2.ai",
+    apiKeyUrl: "https://unity2.ai/register?source=ccs",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.unity2.ai",
+        GEMINI_MODEL: "gemini-3.1-pro",
+      },
+    },
+    baseURL: "https://api.unity2.ai",
+    model: "gemini-3.1-pro",
+    description: "Unity2.ai",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "unity2",
+    icon: "unity2",
+  },
+  {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.com",
     apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",

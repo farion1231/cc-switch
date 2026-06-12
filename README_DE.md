@@ -151,6 +151,11 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 <td>Danke an CCSub für die Unterstützung dieses Projekts! CCSub ist eine zuverlässige und kostengünstige AI-API-Relay-Plattform — Ihr direkter Ersatz für ein Claude.ai-Abonnement. Mit einem einzigen API-Schlüssel erhalten Sie Zugriff auf Claude Opus 4.8, Sonnet, Haiku, GPT-5, Gemini und DeepSeek zu etwa 30 % der Kosten der direkten API-Nutzung — ohne VPN, weltweit nutzbar. Kompatibel mit Claude Code, Codex, Cursor, Cline, Continue, Windsurf und allen gängigen AI-Coding-Tools. Registrieren Sie sich über <a href="https://www.ccsub.net/register?ref=Y6Z8DXEA">diesen Link</a> und erhalten Sie $5 Startguthaben bei der Anmeldung.</td>
 </tr>
 
+<tr>
+<td width="180"><a href="https://unity2.ai/register?source=ccs"><img src="assets/partners/logos/unity2.jpg" alt="Unity2.ai" width="150"></a></td>
+<td>Danke an Unity2.ai für die Unterstützung dieses Projekts! Unity2.ai ist eine leistungsstarke AI-Modell-API-Relay-Plattform für Einzelentwickler, Teams und Unternehmen. Sie wird seit Langem von führenden Unternehmen in China genutzt, verarbeitet täglich über 30 Milliarden Tokens und unterstützt hohe Parallelität auf 5.000-RPM-Niveau. Geboten werden Guthaben-Abrechnung, Ersteinzahlungsbonus, Kombi-Abonnements, Firmenrechnungen und persönliche Betreuung. Registrieren Sie sich über <a href="https://unity2.ai/register?source=ccs">diesen Link</a> und erhalten Sie $2 Guthaben, plus weitere $10 für den Beitritt zur offiziellen Gruppe — bis zu $12 Gratis-Guthaben!</td>
+</tr>
+
 </table>
 
 </details>

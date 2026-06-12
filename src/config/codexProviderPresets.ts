@@ -232,6 +232,22 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     icon: "ccsub",
   },
   {
+    name: "Unity2.ai",
+    websiteUrl: "https://unity2.ai",
+    apiKeyUrl: "https://unity2.ai/register?source=ccs",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "unity2",
+      "https://api.unity2.ai",
+      "gpt-5.5",
+    ),
+    endpointCandidates: ["https://api.unity2.ai"],
+    isPartner: true,
+    partnerPromotionKey: "unity2",
+    icon: "unity2",
+  },
+  {
     name: "Azure OpenAI",
     websiteUrl:
       "https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/codex",

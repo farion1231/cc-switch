@@ -208,7 +208,10 @@ pub fn extract_codex_api_key(auth: Option<&Value>, config_text: Option<&str>) ->
 /// Extract the upstream base URL from a Codex `config.toml` string.
 ///
 /// Prefers the active `[model_providers.<model_provider>].base_url`, falling
-/// back to a top-level `base_url` when no model provider is selected.
+/// back to a top-level `base_url`. Deliberately never reads a non-active
+/// `[model_providers.*]` section — the frontend `extractCodexBaseUrl`
+/// (`getRecoverableBaseUrlAssignments`) excludes those too, and a leftover
+/// section unrelated to the active provider must not leak into `{{baseUrl}}`.
 pub fn extract_codex_base_url(config_text: &str) -> Option<String> {
     let doc = config_text.parse::<toml::Value>().ok()?;
 
@@ -1253,6 +1256,50 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn extract_base_url_prefers_active_provider_section() {
+        let input = r#"model_provider = "azure"
+
+[model_providers.azure]
+base_url = "https://azure.example.com/v1"
+
+[model_providers.other]
+base_url = "https://other.example.com/v1"
+"#;
+
+        assert_eq!(
+            extract_codex_base_url(input).as_deref(),
+            Some("https://azure.example.com/v1")
+        );
+    }
+
+    #[test]
+    fn extract_base_url_falls_back_to_top_level_only() {
+        let top_level = r#"base_url = "https://top-level.example.com/v1""#;
+        assert_eq!(
+            extract_codex_base_url(top_level).as_deref(),
+            Some("https://top-level.example.com/v1")
+        );
+    }
+
+    // Mirrors the frontend extractCodexBaseUrl: a non-active provider section
+    // is never a credential source, whether the active provider points
+    // elsewhere (e.g. the built-in "openai") or none is selected at all.
+    #[test]
+    fn extract_base_url_ignores_non_active_provider_sections() {
+        let mismatched = r#"model_provider = "openai"
+
+[model_providers.custom]
+base_url = "https://leftover.example.com/v1"
+"#;
+        assert_eq!(extract_codex_base_url(mismatched), None);
+
+        let no_active = r#"[model_providers.any]
+base_url = "https://single.example.com/v1"
+"#;
+        assert_eq!(extract_codex_base_url(no_active), None);
+    }
 
     #[test]
     fn prepare_provider_live_config_rejects_key_without_config() {

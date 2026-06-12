@@ -420,18 +420,41 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-opus-4-8": { name: "Claude Opus 4.8" },
-        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
         "gpt-5.5": { name: "GPT-5.5" },
-        o3: { name: "o3" },
-        "gemini-3.1-pro": { name: "Gemini 3.1 Pro" },
-        "deepseek-v4-flash": { name: "DeepSeek V4 Flash" },
       },
     },
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "ccsub",
     icon: "ccsub",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "Unity2.ai",
+    websiteUrl: "https://unity2.ai",
+    apiKeyUrl: "https://unity2.ai/register?source=ccs",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Unity2.ai",
+      options: {
+        baseURL: "https://api.unity2.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-5.5": { name: "GPT-5.5" },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "unity2",
+    icon: "unity2",
     templateValues: {
       apiKey: {
         label: "API Key",
