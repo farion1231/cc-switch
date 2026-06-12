@@ -17,6 +17,8 @@ export function useKiroAuth() {
   const [socialError, setSocialError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const [isApiKeyLoggingIn, setIsApiKeyLoggingIn] = useState(false);
+  const [apiKeyError, setApiKeyError] = useState<string | null>(null);
 
   const socialLogin = useCallback(
     async (provider?: "google" | "github") => {
@@ -53,6 +55,27 @@ export function useKiroAuth() {
     }
   }, [base, queryClient]);
 
+  const apiKeyLogin = useCallback(
+    async (apiKey: string) => {
+      setApiKeyError(null);
+      setIsApiKeyLoggingIn(true);
+      try {
+        await authApi.authKiroApiKeyLogin(apiKey);
+        await base.refetchStatus();
+        await queryClient.invalidateQueries({
+          queryKey: ["managed-auth-status", "kiro"],
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setApiKeyError(msg);
+        throw e;
+      } finally {
+        setIsApiKeyLoggingIn(false);
+      }
+    },
+    [base, queryClient],
+  );
+
   return {
     ...base,
     socialLogin,
@@ -61,5 +84,8 @@ export function useKiroAuth() {
     importDynamic,
     isImporting,
     importError,
+    apiKeyLogin,
+    isApiKeyLoggingIn,
+    apiKeyError,
   };
 }

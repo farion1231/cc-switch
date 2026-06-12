@@ -53,14 +53,19 @@ pub(crate) async fn fetch_kiro_models(
     }
 
     let client = reqwest::Client::new();
-    let res = client
+    let mut req = client
         .post(&management_url)
         .header("Content-Type", "application/x-amz-json-1.0")
         .header("Authorization", format!("Bearer {token}"))
         .header(
             "X-Amz-Target",
             "AmazonCodeWhispererService.ListAvailableModels",
-        )
+        );
+    // API key (ksk_) 调用管理面需额外的 tokentype 头，否则被拒绝 Invalid token
+    if crate::proxy::providers::kiro_auth::is_api_key(&token) {
+        req = req.header("tokentype", "API_KEY");
+    }
+    let res = req
         .json(&req_body)
         .send()
         .await

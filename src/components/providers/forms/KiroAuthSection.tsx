@@ -22,6 +22,7 @@ import {
   User,
   AlertCircle,
   Database,
+  Key,
 } from "lucide-react";
 import { useKiroAuth } from "./hooks/useKiroAuth";
 import { RegionCombobox } from "./RegionCombobox";
@@ -51,6 +52,8 @@ export const KiroAuthSection: React.FC<KiroAuthSectionProps> = ({
   const [startUrl, setStartUrl] = React.useState("");
   const [region, setRegion] = React.useState("us-east-1");
   const [showIdcConfig, setShowIdcConfig] = React.useState(false);
+  const [apiKey, setApiKey] = React.useState("");
+  const [showApiKeyInput, setShowApiKeyInput] = React.useState(false);
 
   const {
     accounts,
@@ -74,6 +77,9 @@ export const KiroAuthSection: React.FC<KiroAuthSectionProps> = ({
     importDynamic,
     isImporting,
     importError,
+    apiKeyLogin,
+    isApiKeyLoggingIn,
+    apiKeyError,
   } = useKiroAuth();
 
   const copyUserCode = async () => {
@@ -319,7 +325,64 @@ export const KiroAuthSection: React.FC<KiroAuthSectionProps> = ({
             )}
           </div>
 
-          {/* 4. kiro-cli / Kiro IDE 凭证导入（仅点击时读取） */}
+          {/* 4. KIRO_API_KEY (ksk_) 直接接入 */}
+          <div>
+            <Button
+              type="button"
+              onClick={() => setShowApiKeyInput(!showApiKeyInput)}
+              className="w-full"
+              variant="outline"
+              disabled={isAddingAccount}
+            >
+              <Key className="mr-2 h-4 w-4" />
+              {t("kiro.loginWithApiKey", "使用 Kiro API Key 登录")}
+            </Button>
+            {showApiKeyInput && (
+              <div className="mt-2 space-y-2 rounded-lg border bg-muted/20 p-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="kiro-api-key" className="text-xs">
+                    {t("kiro.apiKey", "Kiro API Key")}
+                  </Label>
+                  <Input
+                    id="kiro-api-key"
+                    type="password"
+                    placeholder="ksk_..."
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    disabled={isApiKeyLoggingIn}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await apiKeyLogin(apiKey.trim());
+                      setApiKey("");
+                      setShowApiKeyInput(false);
+                    } catch {
+                      // 错误已由 hook 记录到 apiKeyError
+                    }
+                  }}
+                  className="w-full"
+                  disabled={isApiKeyLoggingIn || !apiKey.trim()}
+                >
+                  {isApiKeyLoggingIn && (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  )}
+                  {t("kiro.confirmApiKeyLogin", "确认使用 API Key 登录")}
+                </Button>
+                {apiKeyError && (
+                  <p className="text-xs text-red-500 px-1">{apiKeyError}</p>
+                )}
+                <p className="text-[10px] text-muted-foreground flex items-center gap-1 px-1">
+                  <AlertCircle className="h-3 w-3 flex-shrink-0" />
+                  {t("kiro.apiKeyHint", "输入以 ksk_ 开头的 Kiro API Key。")}
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* 5. kiro-cli / Kiro IDE 凭证导入（仅点击时读取） */}
           <Button
             type="button"
             onClick={() => importDynamic()}
@@ -341,7 +404,7 @@ export const KiroAuthSection: React.FC<KiroAuthSectionProps> = ({
             <AlertCircle className="h-3 w-3 flex-shrink-0" />
             {t(
               "kiro.importLocalCredsHint",
-              "点击从本地 kiro-cli SQLite / Kiro IDE 缓存读取并导入凭证；导入后可像普通账号一样移除，不会自动重现。",
+              "点击从本地 kiro-cli SQLite / Kiro IDE 缓存读取并导入凭证。",
             )}
           </p>
         </div>

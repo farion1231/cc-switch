@@ -119,6 +119,17 @@ export async function authKiroImportDynamic(): Promise<ManagedAuthAccount[]> {
   return invoke<ManagedAuthAccount[]>("auth_kiro_import_dynamic", {});
 }
 
+/**
+ * 使用 KIRO_API_KEY（ksk_ 格式）登录 Kiro。
+ */
+export async function authKiroApiKeyLogin(
+  apiKey: string,
+): Promise<ManagedAuthAccount> {
+  return invoke<ManagedAuthAccount>("auth_kiro_api_key_login", {
+    apiKey,
+  });
+}
+
 export const authApi = {
   authStartLogin,
   authPollForAccount,
@@ -129,4 +140,5 @@ export const authApi = {
   authLogout,
   authKiroSocialLogin,
   authKiroImportDynamic,
+  authKiroApiKeyLogin,
 };

@@ -930,7 +930,9 @@ impl ProviderAdapter for ClaudeAdapter {
                 let bearer = format!("Bearer {}", auth.api_key);
                 let mid = uuid::Uuid::new_v4().to_string().replace("-", "");
                 let ua = format!("aws-sdk-rust/1.0.0 ua/2.1 os/other lang/rust api/codewhispererstreaming#1.28.3 m/E app/AmazonQ-For-CLI md/appVersion-1.28.3-{mid}");
-                vec![
+                // API key (ksk_) 需额外的 tokentype 头，否则运行面拒绝 Invalid token
+                let is_api_key = super::kiro_auth::is_api_key(&auth.api_key);
+                let mut headers = vec![
                     (
                         HeaderName::from_static("content-type"),
                         HeaderValue::from_static("application/x-amz-json-1.0"),
@@ -964,7 +966,14 @@ impl ProviderAdapter for ClaudeAdapter {
                     ),
                     (HeaderName::from_static("x-amz-user-agent"), hv(&ua)?),
                     (HeaderName::from_static("user-agent"), hv(&ua)?),
-                ]
+                ];
+                if is_api_key {
+                    headers.push((
+                        HeaderName::from_static("tokentype"),
+                        HeaderValue::from_static("API_KEY"),
+                    ));
+                }
+                headers
             }
         })
     }

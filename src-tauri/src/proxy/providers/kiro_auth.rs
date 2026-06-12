@@ -67,6 +67,11 @@ pub fn resolve_api_region(sso_region: Option<&str>) -> String {
     mapped.to_string()
 }
 
+/// Kiro API key 是以 `ksk_` 前缀的长期有效 bearer token。
+pub fn is_api_key(token: &str) -> bool {
+    token.starts_with("ksk_")
+}
+
 /// 宽松解析过期时间为 epoch 毫秒。
 ///
 /// kiro-cli / Kiro IDE 在不同版本中可能以 RFC3339 字符串、RFC2822 字符串、
@@ -655,6 +660,11 @@ impl KiroAuthManager {
             None => return Err(format!("账号 {account_id} 未找到")),
         };
 
+        // API key（ksk_）是长期 bearer token，无需也无法刷新，直接返回。
+        if registered.auth_method == "apikey" || is_api_key(&registered.access_token) {
+            return Ok(registered.access_token);
+        }
+
         // 动态账号（kiro-cli / kiro-ide）：先从源头读取，如果未过期直接返回
         if let Some(acc) = self.read_dynamic_account(account_id) {
             if acc.expires_at_ms - now > EXPIRES_BUFFER_MS {
@@ -1233,24 +1243,31 @@ impl KiroAuthManager {
         }))
     }
 
-    /// 获取 AWS CodeWhisperer profileArn（通过 ListAvailableProfiles）
+    /// 获取 AWS CodeWhisperer profileArn。
+    ///
+    /// - OIDC / social token：通过 ListAvailableProfiles（返回 profiles 数组）
+    /// - API key (ksk_)：必须用 GetProfile（返回单个 profile），ListAvailableProfiles
+    ///   会被拒绝（Invalid token）；且管理面调用需额外的 tokentype: API_KEY 头
     async fn fetch_profile_arn(&self, access_token: &str, region: &str) -> Option<String> {
         // Kiro Q API 仅部署在 us-east-1 / eu-central-1，需映射 SSO region
         let api_region = resolve_api_region(Some(region));
         let management_url = format!("https://management.{api_region}.kiro.dev/");
-        let res = self
+        let use_api_key = is_api_key(access_token);
+        let target = if use_api_key {
+            "AmazonCodeWhispererService.GetProfile"
+        } else {
+            "AmazonCodeWhispererService.ListAvailableProfiles"
+        };
+        let mut req = self
             .http_client
             .post(&management_url)
             .header("Content-Type", "application/x-amz-json-1.0")
             .header("Authorization", format!("Bearer {access_token}"))
-            .header(
-                "X-Amz-Target",
-                "AmazonCodeWhispererService.ListAvailableProfiles",
-            )
-            .body("{}")
-            .send()
-            .await
-            .ok()?;
+            .header("X-Amz-Target", target);
+        if use_api_key {
+            req = req.header("tokentype", "API_KEY");
+        }
+        let res = req.body("{}").send().await.ok()?;
 
         if !res.status().is_success() {
             return None;
@@ -1260,13 +1277,77 @@ impl KiroAuthManager {
         struct Profile {
             arn: Option<String>,
         }
-        #[derive(Deserialize)]
-        struct ListProfilesResponse {
-            profiles: Option<Vec<Profile>>,
+        if use_api_key {
+            #[derive(Deserialize)]
+            struct GetProfileResponse {
+                profile: Option<Profile>,
+            }
+            let data: GetProfileResponse = res.json().await.ok()?;
+            data.profile?.arn
+        } else {
+            #[derive(Deserialize)]
+            struct ListProfilesResponse {
+                profiles: Option<Vec<Profile>>,
+            }
+            let data: ListProfilesResponse = res.json().await.ok()?;
+            data.profiles?.into_iter().find(|p| p.arn.is_some())?.arn
+        }
+    }
+
+    /// 使用 KIRO_API_KEY（ksk_ 格式）登录。
+    ///
+    /// API key 本身就是长期有效的 bearer token —— 无需 OIDC 交换、无需 kiro-cli。
+    /// 仅做一次 GetProfile 校验并解析 profileArn，然后作为本地账号保存。
+    pub async fn apikey_login(&self, api_key: &str) -> Result<GitHubAccount, String> {
+        let api_key = api_key.trim();
+        if !is_api_key(api_key) {
+            return Err("无效的 API Key 格式，Kiro API Key 以 'ksk_' 开头".to_string());
         }
 
-        let data: ListProfilesResponse = res.json().await.ok()?;
-        data.profiles?.into_iter().find(|p| p.arn.is_some())?.arn
+        // API key 由 us-east-1 控制面签发
+        let region = "us-east-1".to_string();
+
+        // GetProfile 校验 key 并解析 profileArn（同时验证 key 是否有效）
+        let profile_arn = self.fetch_profile_arn(api_key, &region).await;
+        if profile_arn.is_none() {
+            return Err("API Key 被 Kiro 拒绝，请确认 key 有效且未过期".to_string());
+        }
+
+        let now = chrono::Utc::now().timestamp_millis();
+        let account_id = profile_arn
+            .clone()
+            .unwrap_or_else(|| format!("kiro_apikey_{}", uuid::Uuid::new_v4().simple()));
+        let account = KiroAccountData {
+            account_id: account_id.clone(),
+            login: "Kiro API Key".to_string(),
+            auth_method: "apikey".to_string(),
+            access_token: api_key.to_string(),
+            // API key 同时充当 access 与 refresh，标记为 apikey 以跳过 OIDC 刷新
+            refresh_token: format!("{api_key}|apikey"),
+            client_id: String::new(),
+            client_secret: String::new(),
+            region,
+            profile_arn,
+            start_url: None,
+            // API key 长期有效，给一个远期过期时间；被吊销时上游会返回 401
+            expires_at_ms: now + 365 * 24 * 60 * 60 * 1000,
+            authenticated_at: now,
+            source: "local".to_string(),
+        };
+
+        {
+            let mut local = self.local_accounts.write().await;
+            local.insert(account_id.clone(), account.clone());
+        }
+        self.save_to_disk().await.ok();
+
+        Ok(GitHubAccount {
+            id: account.account_id,
+            login: account.login,
+            avatar_url: None,
+            authenticated_at: chrono::Utc::now().timestamp(),
+            github_domain: "kiro.dev".to_string(),
+        })
     }
 
     /// 社交登录（Google / GitHub / 个人账号）—— PKCE + localhost:3128 回调。
@@ -1536,7 +1617,15 @@ async fn write_http_response(
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_api_region;
+    use super::{is_api_key, resolve_api_region};
+
+    #[test]
+    fn is_api_key_detects_ksk_prefix() {
+        assert!(is_api_key("ksk_abc123"));
+        assert!(!is_api_key("aoaAAAAtoken"));
+        assert!(!is_api_key(""));
+        assert!(!is_api_key("sk-ant-xxx"));
+    }
 
     #[test]
     fn resolve_api_region_maps_to_deployed_regions() {

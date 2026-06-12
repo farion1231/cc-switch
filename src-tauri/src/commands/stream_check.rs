@@ -270,7 +270,10 @@ async fn check_kiro_provider(
         Err(e) => return failed(format!("创建 HTTP 客户端失败: {e}"), None),
     };
     let started = std::time::Instant::now();
-    let resp = client
+    // 运行面要求 user-agent 包含 app/AmazonQ-For-CLI；API key 还需 tokentype 头
+    let mid = uuid::Uuid::new_v4().to_string().replace('-', "");
+    let ua = format!("aws-sdk-rust/1.0.0 ua/2.1 os/other lang/rust api/codewhispererstreaming#1.28.3 m/E app/AmazonQ-For-CLI md/appVersion-1.28.3-{mid}");
+    let mut req = client
         .post(&url)
         .header("content-type", "application/x-amz-json-1.0")
         .header("accept", "application/json")
@@ -283,6 +286,12 @@ async fn check_kiro_provider(
         .header("x-amzn-kiro-agent-mode", "vibe")
         .header("amz-sdk-invocation-id", uuid::Uuid::new_v4().to_string())
         .header("amz-sdk-request", "attempt=1; max=1")
+        .header("user-agent", &ua)
+        .header("x-amz-user-agent", &ua);
+    if crate::proxy::providers::kiro_auth::is_api_key(&token) {
+        req = req.header("tokentype", "API_KEY");
+    }
+    let resp = req
         .body(serde_json::to_vec(&body).unwrap_or_default())
         .send()
         .await;

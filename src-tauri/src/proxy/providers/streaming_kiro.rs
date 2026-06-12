@@ -662,7 +662,8 @@ mod tests {
     #[test]
     fn aggregate_error_event_returns_err() {
         // eventstream 中出现 application 级错误事件：不得伪造成功消息
-        let body = br#"{"content":"partial"}{"error":"ThrottlingException","message":"quota exceeded"}"#;
+        let body =
+            br#"{"content":"partial"}{"error":"ThrottlingException","message":"quota exceeded"}"#;
         let resp = kiro_eventstream_to_anthropic_response(body);
         assert!(resp.is_err());
         assert_eq!(resp.unwrap_err(), "quota exceeded");

@@ -406,6 +406,22 @@ pub async fn auth_kiro_social_login(
     ))
 }
 
+/// 使用 KIRO_API_KEY（ksk_ 格式）登录 Kiro。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn auth_kiro_api_key_login(
+    api_key: String,
+    kiro_state: State<'_, KiroAuthState>,
+) -> Result<ManagedAuthAccount, String> {
+    let auth_manager = kiro_state.0.read().await;
+    let account = auth_manager.apikey_login(&api_key).await?;
+    let default_account_id = auth_manager.default_account_id().await;
+    Ok(map_account(
+        AUTH_PROVIDER_KIRO,
+        account,
+        default_account_id.as_deref(),
+    ))
+}
+
 /// Kiro 主动导入本地 kiro-cli / kiro-ide 凭证（仅在用户点击按钮时读取）。
 /// 返回本次新导入的账号列表。
 #[tauri::command(rename_all = "camelCase")]
