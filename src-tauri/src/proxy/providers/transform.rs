@@ -5,6 +5,7 @@
 
 use crate::proxy::{error::ProxyError, json_canonical::canonical_json_string};
 use serde_json::{json, Value};
+use std::collections::HashSet;
 
 const ANTHROPIC_BILLING_HEADER_PREFIX: &str = "x-anthropic-billing-header:";
 
@@ -165,6 +166,7 @@ pub fn anthropic_to_openai_with_reasoning_content(
     }
 
     normalize_openai_system_messages(&mut messages);
+    let messages = sanitize_openai_chat_tool_message_sequence(messages);
     result["messages"] = json!(messages);
 
     // 转换参数 — o-series 模型需要 max_completion_tokens
@@ -392,7 +394,7 @@ fn convert_message_to_openai(
                         }));
                     }
                 }
-                "tool_use" => {
+                "tool_use" if role == "assistant" => {
                     let id = block.get("id").and_then(|i| i.as_str()).unwrap_or("");
                     let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("");
                     let input = block.get("input").cloned().unwrap_or(json!({}));
@@ -405,6 +407,7 @@ fn convert_message_to_openai(
                         }
                     }));
                 }
+                "tool_use" => {}
                 "tool_result" => {
                     // tool_result 变成单独的 tool role 消息
                     let tool_use_id = block
@@ -484,6 +487,121 @@ fn convert_message_to_openai(
     // 其他情况直接透传
     result.push(json!({"role": role, "content": content}));
     Ok(result)
+}
+
+/// Chat Completions requires every assistant `tool_calls` entry to be followed
+/// by matching `role=tool` messages. Anthropic histories can contain abandoned
+/// parallel tool uses, so strip unanswered calls and orphan tool results before
+/// forwarding to strict OpenAI-compatible upstreams.
+fn sanitize_openai_chat_tool_message_sequence(messages: Vec<Value>) -> Vec<Value> {
+    let mut sanitized = Vec::with_capacity(messages.len());
+    let mut index = 0usize;
+
+    while index < messages.len() {
+        let mut message = messages[index].clone();
+        if message.get("role").and_then(|v| v.as_str()) != Some("assistant") {
+            if message.get("role").and_then(|v| v.as_str()) != Some("tool") {
+                sanitized.push(message);
+            }
+            index += 1;
+            continue;
+        }
+
+        let Some(tool_calls) = message
+            .get("tool_calls")
+            .and_then(|value| value.as_array())
+            .filter(|calls| !calls.is_empty())
+        else {
+            sanitized.push(message);
+            index += 1;
+            continue;
+        };
+
+        let mut tool_block_end = index + 1;
+        let mut answered_call_ids = HashSet::new();
+        while tool_block_end < messages.len()
+            && messages[tool_block_end]
+                .get("role")
+                .and_then(|value| value.as_str())
+                == Some("tool")
+        {
+            if let Some(call_id) = messages[tool_block_end]
+                .get("tool_call_id")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+            {
+                answered_call_ids.insert(call_id.to_string());
+            }
+            tool_block_end += 1;
+        }
+
+        let filtered_calls = tool_calls
+            .iter()
+            .filter(|call| {
+                call.get("id")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|call_id| answered_call_ids.contains(call_id))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if filtered_calls.is_empty() && tool_block_end == messages.len() {
+            sanitized.push(message);
+            index = tool_block_end;
+            continue;
+        }
+
+        if filtered_calls.is_empty() {
+            remove_openai_chat_tool_calls(&mut message);
+            if openai_chat_message_has_content(&message) {
+                sanitized.push(message);
+            }
+            index = tool_block_end;
+            continue;
+        }
+
+        let kept_call_ids = filtered_calls
+            .iter()
+            .filter_map(|call| call.get("id").and_then(|value| value.as_str()))
+            .map(ToString::to_string)
+            .collect::<HashSet<_>>();
+
+        if let Some(object) = message.as_object_mut() {
+            object.insert("tool_calls".to_string(), Value::Array(filtered_calls));
+        }
+        sanitized.push(message);
+
+        while index + 1 < tool_block_end {
+            index += 1;
+            let tool_message = &messages[index];
+            if tool_message
+                .get("tool_call_id")
+                .and_then(|value| value.as_str())
+                .is_some_and(|call_id| kept_call_ids.contains(call_id))
+            {
+                sanitized.push(tool_message.clone());
+            }
+        }
+        index = tool_block_end;
+    }
+
+    sanitized
+}
+
+fn remove_openai_chat_tool_calls(message: &mut Value) {
+    if let Some(object) = message.as_object_mut() {
+        object.remove("tool_calls");
+    }
+}
+
+fn openai_chat_message_has_content(message: &Value) -> bool {
+    match message.get("content") {
+        Some(Value::String(text)) => !text.trim().is_empty(),
+        Some(Value::Array(parts)) => !parts.is_empty(),
+        Some(Value::Object(obj)) => !obj.is_empty(),
+        Some(value) => !value.is_null(),
+        None => false,
+    }
 }
 
 /// 清理 JSON schema（移除不支持的 format）
@@ -1018,7 +1136,7 @@ mod tests {
     }
 
     #[test]
-    fn test_anthropic_to_openai_tool_result() {
+    fn test_anthropic_to_openai_drops_orphan_tool_result() {
         let input = json!({
             "model": "claude-3-opus",
             "max_tokens": 1024,
@@ -1031,10 +1149,83 @@ mod tests {
         });
 
         let result = anthropic_to_openai(input).unwrap();
-        let msg = &result["messages"][0];
-        assert_eq!(msg["role"], "tool");
-        assert_eq!(msg["tool_call_id"], "call_123");
-        assert_eq!(msg["content"], "Sunny, 25°C");
+        assert_eq!(result["messages"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_keeps_trailing_pending_tool_use() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call_123");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_drops_tool_use_from_non_assistant_message() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather", "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        assert_eq!(result["messages"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_drops_unanswered_parallel_tool_calls() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "call_1", "name": "read_file", "input": {"path": "README.md"}},
+                        {"type": "tool_use", "id": "call_2", "name": "list_files", "input": {"path": "src"}}
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "call_1", "content": "Readme content"}
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": "Continue"
+                }
+            ]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages[0]["role"], "assistant");
+        let tool_calls = messages[0]["tool_calls"].as_array().unwrap();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0]["id"], "call_1");
+        assert_eq!(messages[1]["role"], "tool");
+        assert_eq!(messages[1]["tool_call_id"], "call_1");
+        assert_eq!(messages[2]["role"], "user");
     }
 
     #[test]
