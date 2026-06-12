@@ -226,6 +226,7 @@ pub enum StrategyAction {
         #[serde(default = "default_threshold")]
         quality_threshold: f64,
     },
+    #[serde(rename = "moa")]
     MoA {
         proposers: Vec<String>,
         aggregator: String,
