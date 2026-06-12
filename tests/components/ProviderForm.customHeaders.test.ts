@@ -24,7 +24,7 @@ describe("ProviderForm custom headers helpers", () => {
     });
   });
 
-  it("falls back to legacy customUserAgent when no explicit User-Agent exists", () => {
+  it("does not mirror legacy customUserAgent into custom headers entries", () => {
     const entries = providerCustomHeadersToEntries({
       customHeaders: {
         "X-Custom-Header": "value",
@@ -32,14 +32,24 @@ describe("ProviderForm custom headers helpers", () => {
       customUserAgent: "claude-code/0.1.0",
     });
 
-    expect(entries).toEqual([
-      { key: "User-Agent", value: "claude-code/0.1.0" },
-      { key: "X-Custom-Header", value: "value" },
-    ]);
+    expect(entries).toEqual([{ key: "X-Custom-Header", value: "value" }]);
     expect(providerCustomHeadersToRecord(entries)).toEqual({
-      "User-Agent": "claude-code/0.1.0",
       "X-Custom-Header": "value",
     });
+  });
+
+  it("keeps legacy customUserAgent available on its own field", () => {
+    const meta = {
+      customHeaders: {
+        "X-Custom-Header": "value",
+      },
+      customUserAgent: "claude-code/0.1.0",
+    };
+
+    expect(meta.customUserAgent).toBe("claude-code/0.1.0");
+    expect(providerCustomHeadersToEntries(meta)).toEqual([
+      { key: "X-Custom-Header", value: "value" },
+    ]);
   });
 
   it("drops empty keys when converting back to a record", () => {

@@ -180,24 +180,12 @@ export const normalizeCodexCatalogModelsForSave = (
 export const providerCustomHeadersToEntries = (
   meta?: ProviderMeta,
 ): ProviderCustomHeaderEntry[] => {
-  const entries = Object.entries(meta?.customHeaders ?? {}).map(
+  return Object.entries(meta?.customHeaders ?? {}).map(
     ([key, value]) => ({
       key,
       value,
     }),
   );
-
-  if (
-    meta?.customUserAgent &&
-    !entries.some(({ key }) => key.trim().toLowerCase() === "user-agent")
-  ) {
-    entries.unshift({
-      key: "User-Agent",
-      value: meta.customUserAgent,
-    });
-  }
-
-  return entries;
 };
 
 export const providerCustomHeadersToRecord = (
