@@ -325,6 +325,8 @@ pub struct AppSettings {
     #[serde(default = "default_minimize_to_tray_on_close")]
     pub minimize_to_tray_on_close: bool,
     #[serde(default)]
+    pub open_main_window_on_tray_left_click: bool,
+    #[serde(default)]
     pub use_app_window_controls: bool,
     /// 是否启用 Claude 插件联动
     #[serde(default)]
@@ -464,6 +466,7 @@ impl Default for AppSettings {
         Self {
             show_in_tray: true,
             minimize_to_tray_on_close: true,
+            open_main_window_on_tray_left_click: false,
             use_app_window_controls: false,
             enable_claude_plugin_integration: false,
             skip_claude_onboarding: false,

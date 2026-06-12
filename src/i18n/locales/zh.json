@@ -661,6 +661,8 @@
     "autoLaunchFailed": "设置开机自启失败",
     "minimizeToTray": "关闭时最小化到托盘",
     "minimizeToTrayDescription": "勾选后点击关闭按钮会隐藏到系统托盘，取消则直接退出应用。",
+    "openMainWindowOnTrayLeftClick": "左键点击托盘图标打开主界面",
+    "openMainWindowOnTrayLeftClickDescription": "开启后 Windows/macOS 左键点击托盘图标会显示主界面，右键仍打开托盘菜单。",
     "useAppWindowControls": "启用应用级窗口按钮",
     "useAppWindowControlsDescription": "开启后使用应用自建的最小化、最大化/还原、关闭按钮；关闭后沿用系统窗口模式。",
     "enableClaudePluginIntegration": "应用到 Claude Code 插件",

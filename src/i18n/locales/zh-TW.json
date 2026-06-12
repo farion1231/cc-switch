@@ -661,6 +661,8 @@
     "autoLaunchFailed": "設定開機自動啟動失敗",
     "minimizeToTray": "關閉時最小化至系統匣",
     "minimizeToTrayDescription": "勾選後點擊關閉按鈕會隱藏至系統匣，取消則直接退出應用程式。",
+    "openMainWindowOnTrayLeftClick": "左鍵點擊系統匣圖示開啟主介面",
+    "openMainWindowOnTrayLeftClickDescription": "開啟後 Windows/macOS 左鍵點擊系統匣圖示會顯示主介面，右鍵仍會開啟系統匣選單。",
     "useAppWindowControls": "啟用應用程式等級視窗按鈕",
     "useAppWindowControlsDescription": "開啟後使用應用程式自建的最小化、最大化/還原、關閉按鈕；關閉後沿用系統視窗模式。",
     "enableClaudePluginIntegration": "套用至 Claude Code 外掛程式",

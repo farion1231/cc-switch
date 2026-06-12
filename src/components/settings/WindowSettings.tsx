@@ -77,6 +77,18 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
           }
         />
 
+        {!isLinux() && (
+          <ToggleRow
+            icon={<AppWindow className="h-4 w-4 text-teal-500" />}
+            title={t("settings.openMainWindowOnTrayLeftClick")}
+            description={t("settings.openMainWindowOnTrayLeftClickDescription")}
+            checked={!!settings.openMainWindowOnTrayLeftClick}
+            onCheckedChange={(value) =>
+              onChange({ openMainWindowOnTrayLeftClick: value })
+            }
+          />
+        )}
+
         {isLinux() && (
           <ToggleRow
             icon={<AppWindow className="h-4 w-4 text-amber-500" />}
