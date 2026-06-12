@@ -256,6 +256,80 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
   },
+  {
+    name: "CCSub",
+    websiteUrl: "https://www.ccsub.net",
+    apiKeyUrl: "https://www.ccsub.net/register?ref=Y6Z8DXEA",
+    settingsConfig: {
+      baseUrl: "https://www.ccsub.net/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          contextWindow: 400000,
+          cost: { input: 5, output: 15 },
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ccsub",
+    icon: "ccsub",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "ccsub/gpt-5.5",
+      },
+      modelCatalog: {
+        "ccsub/gpt-5.5": { alias: "GPT-5.5" },
+      },
+    },
+  },
+  {
+    name: "Unity2.ai",
+    websiteUrl: "https://unity2.ai",
+    apiKeyUrl: "https://unity2.ai/register?source=ccs",
+    settingsConfig: {
+      baseUrl: "https://api.unity2.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          contextWindow: 400000,
+          cost: { input: 5, output: 15 },
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "unity2",
+    icon: "unity2",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "unity2/gpt-5.5",
+      },
+      modelCatalog: {
+        "unity2/gpt-5.5": { alias: "GPT-5.5" },
+      },
+    },
+  },
   // ========== Chinese Officials ==========
   {
     name: "DeepSeek",
@@ -417,7 +491,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "Kimi k2.6",
-    websiteUrl: "https://platform.moonshot.cn/console",
+    websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
     apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
     settingsConfig: {
       baseUrl: "https://api.moonshot.cn/v1",
@@ -455,7 +529,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "Kimi For Coding",
-    websiteUrl: "https://www.kimi.com/code/docs/",
+    websiteUrl: "https://www.kimi.com/code/docs/?aff=cc-switch",
     apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
     settingsConfig: {
       baseUrl: "https://api.kimi.com/v1",
@@ -1841,10 +1915,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "SSSAiCode",
-    websiteUrl: "https://www.sssaicode.com",
-    apiKeyUrl: "https://www.sssaicode.com/register?ref=DCP0SM",
+    websiteUrl: "https://sssaicodeapi.com",
+    apiKeyUrl: "https://sssaicodeapi.com/register?ref=DCP0SM",
     settingsConfig: {
-      baseUrl: "https://node-hk.sssaicode.com/api",
+      baseUrl: "https://node-hk.sssaicodeapi.com/api",
       apiKey: "",
       api: "anthropic-messages",
       models: [

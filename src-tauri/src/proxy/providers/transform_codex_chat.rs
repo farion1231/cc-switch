@@ -336,21 +336,8 @@ pub fn responses_to_chat_completions_with_reasoning(
     // include_usage 才会在末尾吐 usage chunk。Codex CLI 用 Responses 协议、
     // 自身不带 stream_options，缺这一注入会导致 kimi/MiniMax 等第三方流式请求的
     // token/成本/缓存命中率全部漏记（input/output/cache 全为 0）。
-    let is_stream = result
-        .get("stream")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    if is_stream {
-        match result.get_mut("stream_options") {
-            // 保留客户端可能透传的其它 stream_options 字段，仅补 include_usage。
-            Some(Value::Object(opts)) => {
-                opts.insert("include_usage".to_string(), json!(true));
-            }
-            _ => {
-                result["stream_options"] = json!({ "include_usage": true });
-            }
-        }
-    }
+    // 与 Claude→openai_chat 路径共用同一 helper，保证两个客户端方向一致。
+    super::transform::inject_openai_stream_include_usage(&mut result);
 
     Ok(result)
 }
@@ -666,6 +653,34 @@ fn append_responses_item_as_chat_message(
                 append_pending_reasoning(pending_reasoning, reasoning);
             }
         }
+        Some("input_text" | "input_image" | "input_file" | "input_audio") => {
+            flush_pending_tool_calls(
+                messages,
+                pending_tool_calls,
+                pending_reasoning,
+                last_assistant_index,
+            );
+            let role = item
+                .get("role")
+                .and_then(|v| v.as_str())
+                .map(responses_role_to_chat_role)
+                .unwrap_or("user");
+            let message = json!({
+                "role": role,
+                "content": responses_content_to_chat_content(role, &Value::Array(vec![item.clone()]))
+            });
+            if role == "assistant" {
+                let mut message = message;
+                attach_pending_reasoning_to_assistant(&mut message, pending_reasoning);
+                update_last_assistant_index(messages, &message, last_assistant_index);
+                messages.push(message);
+                return Ok(());
+            } else if pending_reasoning.is_some() {
+                pending_reasoning.take();
+            }
+            update_last_assistant_index(messages, &message, last_assistant_index);
+            messages.push(message);
+        }
         Some("message") | None => {
             flush_pending_tool_calls(
                 messages,
@@ -959,6 +974,24 @@ fn responses_content_to_chat_content(_role: &str, content: &Value) -> Value {
                     has_non_text_part = true;
                 }
             }
+            "input_file" => {
+                if let Some(file) = responses_input_file_to_chat_file(part) {
+                    chat_parts.push(json!({
+                        "type": "file",
+                        "file": file
+                    }));
+                    has_non_text_part = true;
+                }
+            }
+            "input_audio" => {
+                if let Some(input_audio) = part.get("input_audio") {
+                    chat_parts.push(json!({
+                        "type": "input_audio",
+                        "input_audio": input_audio.clone()
+                    }));
+                    has_non_text_part = true;
+                }
+            }
             _ => {}
         }
     }
@@ -974,6 +1007,21 @@ fn responses_content_to_chat_content(_role: &str, content: &Value) -> Value {
     }
 
     Value::Array(chat_parts)
+}
+
+fn responses_input_file_to_chat_file(part: &Value) -> Option<Value> {
+    let mut file = serde_json::Map::new();
+    let has_supported_file_ref = part.get("file_id").is_some() || part.get("file_data").is_some();
+    if !has_supported_file_ref {
+        return None;
+    }
+
+    for key in ["file_id", "file_data", "filename"] {
+        if let Some(value) = part.get(key) {
+            file.insert(key.to_string(), value.clone());
+        }
+    }
+    Some(Value::Object(file))
 }
 
 fn collect_tool_search_output_tools(value: &Value, context: &mut CodexToolContext) {
@@ -1726,6 +1774,122 @@ mod tests {
         // 既补上 include_usage，又保留客户端原有的 stream_options 字段。
         assert_eq!(result["stream_options"]["include_usage"], true);
         assert_eq!(result["stream_options"]["continuous_usage_stats"], true);
+    }
+
+    #[test]
+    fn responses_request_maps_input_file_content_parts() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Summarize this."},
+                    {
+                        "type": "input_file",
+                        "file_id": "file_123",
+                        "file_url": "https://example.com/spec.pdf",
+                        "filename": "spec.pdf"
+                    },
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": "UklGRg==",
+                            "format": "wav"
+                        }
+                    }
+                ]
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let content = result["messages"][0]["content"].as_array().unwrap();
+
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "file");
+        assert_eq!(content[1]["file"]["file_id"], "file_123");
+        assert!(content[1]["file"].get("file_url").is_none());
+        assert_eq!(content[1]["file"]["filename"], "spec.pdf");
+        assert_eq!(content[2]["type"], "input_audio");
+        assert_eq!(content[2]["input_audio"]["format"], "wav");
+    }
+
+    #[test]
+    fn responses_request_does_not_emit_chat_file_for_url_only_input_file() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Summarize this URL file."},
+                    {
+                        "type": "input_file",
+                        "file_url": "https://example.com/spec.pdf"
+                    }
+                ]
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert_eq!(result["messages"][0]["content"], "Summarize this URL file.");
+    }
+
+    #[test]
+    fn responses_request_maps_top_level_input_file_item() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {
+                    "type": "input_file",
+                    "file_id": "file_top",
+                    "filename": "top.pdf"
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let content = result["messages"][0]["content"].as_array().unwrap();
+
+        assert_eq!(result["messages"][0]["role"], "user");
+        assert_eq!(content[0]["type"], "file");
+        assert_eq!(content[0]["file"]["file_id"], "file_top");
+        assert_eq!(content[0]["file"]["filename"], "top.pdf");
+    }
+
+    #[test]
+    fn top_level_user_content_part_clears_pending_reasoning() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {
+                    "type": "reasoning",
+                    "summary": [{"text": "stale reasoning"}]
+                },
+                {
+                    "type": "input_text",
+                    "text": "Please run the tool."
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "lookup",
+                    "arguments": "{}"
+                }
+            ],
+            "tools": [{
+                "type": "function",
+                "name": "lookup",
+                "parameters": {"type": "object"}
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"], "Please run the tool.");
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["reasoning_content"], "tool call");
     }
 
     #[test]

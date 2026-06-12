@@ -9,6 +9,7 @@ interface SubscriptionQuotaFooterProps {
   appId: AppId;
   inline?: boolean;
   isCurrent?: boolean;
+  autoQueryInterval?: number;
 }
 
 interface SubscriptionQuotaViewProps {
@@ -397,12 +398,18 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
   appId,
   inline = false,
   isCurrent = false,
+  autoQueryInterval = 5,
 }) => {
   const {
     data: quota,
     isFetching: loading,
     refetch,
-  } = useSubscriptionQuota(appId, isCurrent, isCurrent);
+  } = useSubscriptionQuota(
+    appId,
+    isCurrent,
+    isCurrent && autoQueryInterval > 0,
+    autoQueryInterval,
+  );
 
   if (!isCurrent) return null;
 

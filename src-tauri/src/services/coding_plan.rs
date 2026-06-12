@@ -190,14 +190,46 @@ async fn query_kimi(api_key: &str) -> SubscriptionQuota {
 
 // ── 智谱 GLM ────────────────────────────────────────────────
 
+/// 智谱 TOKENS_LIMIT 条目按 `unit` 字段的显式窗口分类。
+enum ZhipuWindow {
+    FiveHour,
+    Weekly,
+}
+
+/// 按 `unit` 字段判定 TOKENS_LIMIT 条目所属窗口。
+///
+/// 实测形态（bigmodel.cn 与 z.ai 共用同一后端，字段一致）：
+/// - `unit: 3, number: 5` → 5 小时滚动窗口（老/新套餐均有）
+/// - `unit: 6, number: 7` 与 `unit: 6, number: 1` → 每周窗口（两种取值都被
+///   实测过，故只锚定 `unit`、不绑 `number`）
+///
+/// `unit` 缺失或值不认识时返回 None，由调用方走重置时间启发式兜底。
+fn classify_zhipu_window(item: &serde_json::Value) -> Option<ZhipuWindow> {
+    match item.get("unit").and_then(|v| v.as_i64()) {
+        Some(3) => Some(ZhipuWindow::FiveHour),
+        Some(6) => Some(ZhipuWindow::Weekly),
+        _ => None,
+    }
+}
+
 /// 把智谱 `data` 里的 `limits[]` 解析成 tier 列表。
 ///
-/// 双桶响应中，5 小时桶在 0% 等状态下可能没有 `nextResetTime`；
-/// 这类无 reset 条目应优先归为五小时桶。其余条目按 `nextResetTime` 升序。
+/// 分类优先级：
+/// 1. 显式字段：`unit` 标识窗口类型（见 [`classify_zhipu_window`]）。不能按
+///    `nextResetTime` 排序代替——周期末尾每周窗口会比 5 小时窗口更早重置
+///    （issue #3036），时间排序在该场景必然把两桶标反。
+/// 2. 兜底启发式（`unit` 缺失或不识别）：无 `nextResetTime` 的条目优先归
+///    five_hour（5 小时桶在 0% 等状态下可能没有 reset），其余按 reset 升序
+///    依次填入仍空缺的槽位。
+///
 /// 老套餐（2026-02-12 前订阅）只回 1 条
 /// `TOKENS_LIMIT`，自然降级为仅展示 `five_hour`；新套餐回 2 条。
 fn parse_zhipu_token_tiers(data: &serde_json::Value) -> Vec<QuotaTier> {
-    let mut token_limits: Vec<(Option<i64>, f64, Option<String>)> = Vec::new();
+    type Entry = (Option<i64>, f64, Option<String>);
+    let mut five_hour: Option<Entry> = None;
+    let mut weekly: Option<Entry> = None;
+    let mut unclassified: Vec<Entry> = Vec::new();
+
     if let Some(limits) = data.get("limits").and_then(|v| v.as_array()) {
         for limit_item in limits {
             let limit_type = limit_item
@@ -214,29 +246,38 @@ fn parse_zhipu_token_tiers(data: &serde_json::Value) -> Vec<QuotaTier> {
                 .unwrap_or(0.0);
             let reset_ms = limit_item.get("nextResetTime").and_then(|v| v.as_i64());
             let reset_iso = reset_ms.and_then(millis_to_iso8601);
-            token_limits.push((reset_ms, percentage, reset_iso));
+            let entry = (reset_ms, percentage, reset_iso);
+            match classify_zhipu_window(limit_item) {
+                Some(ZhipuWindow::FiveHour) if five_hour.is_none() => five_hour = Some(entry),
+                Some(ZhipuWindow::Weekly) if weekly.is_none() => weekly = Some(entry),
+                _ => unclassified.push(entry),
+            }
         }
     }
-    token_limits.sort_by_key(|(reset, _, _)| (reset.is_some(), reset.unwrap_or(i64::MIN)));
 
-    token_limits
-        .into_iter()
-        .enumerate()
-        .filter_map(|(idx, (_, percentage, resets_at))| {
-            let name = match idx {
-                0 => TIER_FIVE_HOUR,
-                1 => TIER_WEEKLY_LIMIT,
-                _ => return None, // 智谱当前最多两条 TOKENS_LIMIT，多余的忽略
-            };
-            Some(QuotaTier {
+    unclassified.sort_by_key(|(reset, _, _)| (reset.is_some(), reset.unwrap_or(i64::MIN)));
+    for entry in unclassified {
+        if five_hour.is_none() {
+            five_hour = Some(entry);
+        } else if weekly.is_none() {
+            weekly = Some(entry);
+        }
+        // 智谱当前最多两条 TOKENS_LIMIT，多余的忽略
+    }
+
+    let mut tiers = Vec::new();
+    for (name, slot) in [(TIER_FIVE_HOUR, five_hour), (TIER_WEEKLY_LIMIT, weekly)] {
+        if let Some((_, percentage, resets_at)) = slot {
+            tiers.push(QuotaTier {
                 name: name.to_string(),
                 utilization: percentage,
                 resets_at,
                 used_value_usd: None,
                 max_value_usd: None,
-            })
-        })
-        .collect()
+            });
+        }
+    }
+    tiers
 }
 
 /// Resolve the Zhipu quota endpoint from the user's configured `base_url`.
@@ -777,6 +818,96 @@ mod tests {
         assert_eq!(tiers.len(), 2);
         assert_eq!(tiers[0].utilization, -5.0);
         assert_eq!(tiers[1].utilization, 150.0);
+    }
+
+    #[test]
+    fn zhipu_unit_field_overrides_reset_order_when_weekly_resets_sooner() {
+        // 真实案例（issue #3036，2026-06-10 再次复现）：每周周期末尾，周桶比
+        // 5 小时桶更早重置。官网真实值：5h 用 1%（约 5h 后重置）、每周用 42%
+        // （约 1h 后重置）。旧逻辑按 reset 升序必然标反，unit 字段须优先。
+        let data = json!({
+            "limits": [
+                { "type": "TOKENS_LIMIT", "unit": 6, "number": 7, "percentage": 42.0, "nextResetTime": 1_000_003_600_000_i64 },
+                { "type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 1.0,  "nextResetTime": 1_000_018_000_000_i64 }
+            ]
+        });
+        let tiers = parse_zhipu_token_tiers(&data);
+        assert_eq!(tiers.len(), 2);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(tiers[0].utilization, 1.0);
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(tiers[1].utilization, 42.0);
+    }
+
+    #[test]
+    fn zhipu_weekly_unit_six_number_one_variant() {
+        // z.ai 也观测过 (unit:6, number:1) 表示每周窗口（按"1 周"计），
+        // 分类只看 unit，number 取值不影响。
+        let data = json!({
+            "limits": [
+                { "type": "TOKENS_LIMIT", "unit": 6, "number": 1, "percentage": 30.0, "nextResetTime": 1_000_000_000_000_i64 },
+                { "type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 10.0, "nextResetTime": 2_000_000_000_000_i64 }
+            ]
+        });
+        let tiers = parse_zhipu_token_tiers(&data);
+        assert_eq!(tiers.len(), 2);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(tiers[0].utilization, 10.0);
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(tiers[1].utilization, 30.0);
+    }
+
+    #[test]
+    fn zhipu_partial_unit_fields_fill_remaining_slot() {
+        // 只有周桶带 unit 时，缺 unit 的另一条应填入剩下的 five_hour 槽位，
+        // 即便它的 reset 更晚——显式分类结果不受时间排序干扰。
+        let data = json!({
+            "limits": [
+                { "type": "TOKENS_LIMIT", "unit": 6, "number": 7, "percentage": 42.0, "nextResetTime": 1_000_000_000_000_i64 },
+                { "type": "TOKENS_LIMIT", "percentage": 1.0, "nextResetTime": 2_000_000_000_000_i64 }
+            ]
+        });
+        let tiers = parse_zhipu_token_tiers(&data);
+        assert_eq!(tiers.len(), 2);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(tiers[0].utilization, 1.0);
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(tiers[1].utilization, 42.0);
+    }
+
+    #[test]
+    fn zhipu_unknown_unit_values_fall_back_to_reset_order() {
+        // 未识别的 unit 枚举值不猜语义，整体回落旧的重置时间启发式。
+        let data = json!({
+            "limits": [
+                { "type": "TOKENS_LIMIT", "unit": 9, "percentage": 44.0, "nextResetTime": 1_000_000_000_000_i64 },
+                { "type": "TOKENS_LIMIT", "unit": 9, "percentage": 53.0, "nextResetTime": 2_000_000_000_000_i64 }
+            ]
+        });
+        let tiers = parse_zhipu_token_tiers(&data);
+        assert_eq!(tiers.len(), 2);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(tiers[0].utilization, 44.0);
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(tiers[1].utilization, 53.0);
+    }
+
+    #[test]
+    fn zhipu_duplicate_unit_classification_fills_other_slot() {
+        // 防御性：两条都标成 5 小时窗（上游异常）时，第一条占 five_hour，
+        // 第二条降级走兜底填入 weekly，保证不丢数据也不 panic。
+        let data = json!({
+            "limits": [
+                { "type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 10.0, "nextResetTime": 1_000_000_000_000_i64 },
+                { "type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 20.0, "nextResetTime": 2_000_000_000_000_i64 }
+            ]
+        });
+        let tiers = parse_zhipu_token_tiers(&data);
+        assert_eq!(tiers.len(), 2);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(tiers[0].utilization, 10.0);
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(tiers[1].utilization, 20.0);
     }
 
     #[test]

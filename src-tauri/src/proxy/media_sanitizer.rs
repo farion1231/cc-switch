@@ -41,14 +41,7 @@ pub fn replace_images_for_text_only_model(
 }
 
 pub fn contains_image_blocks(body: &Value) -> bool {
-    body.get("messages")
-        .and_then(Value::as_array)
-        .is_some_and(|messages| {
-            messages
-                .iter()
-                .filter_map(|message| message.get("content"))
-                .any(content_has_image_blocks)
-        })
+    messages_have_image_blocks(body) || responses_input_has_image_blocks(body.get("input"))
 }
 
 pub fn replace_image_blocks_with_marker(body: &mut Value) -> usize {
@@ -95,6 +88,7 @@ pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
         "text-only",
         "invalid content type",
         "invalid message content",
+        "unknown variant",
         "unknown content type",
         "unrecognized content type",
         "cannot process",
@@ -113,49 +107,122 @@ fn content_has_image_blocks(content: &Value) -> bool {
     };
 
     blocks.iter().any(|block| {
-        block.get("type").and_then(Value::as_str) == Some("image")
+        is_image_block_type(block.get("type").and_then(Value::as_str))
             || block.get("content").is_some_and(content_has_image_blocks)
     })
 }
 
 fn replace_images_in_body(body: &mut Value) -> usize {
-    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
-        return 0;
-    };
+    let message_replacements = body
+        .get_mut("messages")
+        .and_then(Value::as_array_mut)
+        .map(|messages| {
+            messages
+                .iter_mut()
+                .filter_map(|message| message.get_mut("content"))
+                .map(replace_images_in_content)
+                .sum()
+        })
+        .unwrap_or(0);
 
-    messages
-        .iter_mut()
-        .filter_map(|message| message.get_mut("content"))
-        .map(replace_images_in_content)
-        .sum()
+    message_replacements
+        + body
+            .get_mut("input")
+            .map(replace_images_in_responses_input)
+            .unwrap_or(0)
 }
 
 fn replace_images_in_content(content: &mut Value) -> usize {
+    replace_images_in_content_with_text_type(content, "text")
+}
+
+fn replace_images_in_content_with_text_type(content: &mut Value, text_type: &str) -> usize {
     let Some(blocks) = content.as_array_mut() else {
         return 0;
     };
 
     let mut replaced = 0usize;
     for block in blocks {
-        if block.get("type").and_then(Value::as_str) == Some("image") {
-            let cache_control = block.get("cache_control").cloned();
-            *block = json!({
-                "type": "text",
-                "text": UNSUPPORTED_IMAGE_MARKER
-            });
-            if let (Some(cache_control), Some(object)) = (cache_control, block.as_object_mut()) {
-                object.insert("cache_control".to_string(), cache_control);
-            }
+        if is_image_block_type(block.get("type").and_then(Value::as_str)) {
+            replace_image_block_with_text_marker(block, text_type);
             replaced += 1;
             continue;
         }
 
         if let Some(nested_content) = block.get_mut("content") {
-            replaced += replace_images_in_content(nested_content);
+            replaced += replace_images_in_content_with_text_type(nested_content, text_type);
         }
     }
 
     replaced
+}
+
+fn messages_have_image_blocks(body: &Value) -> bool {
+    body.get("messages")
+        .and_then(Value::as_array)
+        .is_some_and(|messages| {
+            messages
+                .iter()
+                .filter_map(|message| message.get("content"))
+                .any(content_has_image_blocks)
+        })
+}
+
+fn responses_input_has_image_blocks(input: Option<&Value>) -> bool {
+    match input {
+        Some(Value::Array(items)) => items.iter().any(responses_input_item_has_image_blocks),
+        Some(item @ Value::Object(_)) => responses_input_item_has_image_blocks(item),
+        _ => false,
+    }
+}
+
+fn responses_input_item_has_image_blocks(item: &Value) -> bool {
+    if item.get("type").and_then(Value::as_str) == Some("input_image") {
+        return true;
+    }
+
+    item.get("content").is_some_and(content_has_image_blocks)
+}
+
+fn replace_images_in_responses_input(input: &mut Value) -> usize {
+    match input {
+        Value::Array(items) => items
+            .iter_mut()
+            .map(replace_images_in_responses_input_item)
+            .sum(),
+        Value::Object(_) => replace_images_in_responses_input_item(input),
+        _ => 0,
+    }
+}
+
+fn replace_images_in_responses_input_item(item: &mut Value) -> usize {
+    let mut replaced = 0usize;
+
+    if item.get("type").and_then(Value::as_str) == Some("input_image") {
+        replace_image_block_with_text_marker(item, "input_text");
+        replaced += 1;
+    }
+
+    if let Some(content) = item.get_mut("content") {
+        replaced += replace_images_in_content_with_text_type(content, "input_text");
+    }
+
+    replaced
+}
+
+fn is_image_block_type(block_type: Option<&str>) -> bool {
+    matches!(block_type, Some("image" | "image_url" | "input_image"))
+}
+
+fn replace_image_block_with_text_marker(block: &mut Value, text_type: &str) {
+    let cache_control = block.get("cache_control").cloned();
+    *block = json!({
+        "type": text_type,
+        "text": UNSUPPORTED_IMAGE_MARKER
+    });
+    if let (Some(cache_control), Some(object)) = (cache_control, block.as_object_mut()) {
+        object.insert("cache_control".to_string(), cache_control);
+    }
 }
 
 fn explicit_model_image_support(provider: &Provider, model: &str) -> Option<bool> {
@@ -365,6 +432,54 @@ mod tests {
         assert_eq!(count, 1);
         assert_eq!(
             body["messages"][0]["content"][0]["text"],
+            UNSUPPORTED_IMAGE_MARKER
+        );
+    }
+
+    #[test]
+    fn known_text_only_models_replace_chat_image_url_before_send() {
+        let provider = provider(json!({}));
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "look" },
+                    { "type": "image_url", "image_url": { "url": "data:image/png;base64,abc" } }
+                ]
+            }]
+        });
+
+        let count = replace_images_for_text_only_model(&mut body, &provider, true);
+
+        assert_eq!(count, 1);
+        assert_eq!(body["messages"][0]["content"][1]["type"], "text");
+        assert_eq!(
+            body["messages"][0]["content"][1]["text"],
+            UNSUPPORTED_IMAGE_MARKER
+        );
+    }
+
+    #[test]
+    fn known_text_only_models_replace_codex_input_image_before_send() {
+        let provider = provider(json!({}));
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "input": [{
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "look" },
+                    { "type": "input_image", "image_url": "data:image/png;base64,abc" }
+                ]
+            }]
+        });
+
+        let count = replace_images_for_text_only_model(&mut body, &provider, true);
+
+        assert_eq!(count, 1);
+        assert_eq!(body["input"][0]["content"][1]["type"], "input_text");
+        assert_eq!(
+            body["input"][0]["content"][1]["text"],
             UNSUPPORTED_IMAGE_MARKER
         );
     }
@@ -652,6 +767,19 @@ mod tests {
             body: Some(r#"{"message":"attachments are not supported by this model"}"#.to_string()),
         };
         assert!(is_unsupported_image_error(&attachment_error));
+    }
+
+    #[test]
+    fn detects_chat_content_unknown_variant_image_url_errors() {
+        let error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(
+                r#"{"error":{"message":"Failed to deserialize the JSON body into the target type: messages[11]: unknown variant image_url, expected text"}}"#
+                    .to_string(),
+            ),
+        };
+
+        assert!(is_unsupported_image_error(&error));
     }
 
     #[test]
