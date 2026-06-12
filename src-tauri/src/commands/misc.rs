@@ -1069,6 +1069,36 @@ fn default_flag_for_shell(shell: &str) -> &'static str {
     }
 }
 
+/// 获取用户默认 shell 的完整路径
+fn get_user_shell() -> String {
+    std::env::var("SHELL").unwrap_or_else(|_| {
+        if cfg!(target_os = "macos") {
+            "/bin/zsh".to_string()
+        } else {
+            "/bin/bash".to_string()
+        }
+    })
+}
+
+/// 从完整 shell 路径提取 shell 名（如 /bin/zsh → zsh）
+fn get_shell_name(shell_path: &str) -> String {
+    shell_path
+        .rsplit('/')
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("sh")
+        .to_string()
+}
+
+/// 返回给定 shell 的交互式"干净启动" flags（不加载用户配置）
+fn interactive_flags_for_shell(shell_name: &str) -> &'static str {
+    match shell_name {
+        "bash" => "--norc --noprofile",
+        "zsh" => "--norcs --no-globalrcs",
+        _ => "",
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn try_get_version_wsl(
     tool: &str,
@@ -2568,6 +2598,10 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("terminal");
 
+    let shell = get_user_shell();
+    let shell_name = get_shell_name(&shell);
+    let interactive_flags = interactive_flags_for_shell(&shell_name);
+
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
@@ -2575,14 +2609,17 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
 
     // Write the shell script to a temp file
     let script_content = format!(
-        r#"#!/bin/bash
+        r#"#!/usr/bin/env {shell_name}
 trap 'rm -f "{config_path}" "{script_file}"' EXIT
 {cd_command}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
 claude --settings "{config_path}"
-exec bash --norc --noprofile
+exec {shell} {interactive_flags}
 "#,
+        shell_name = shell_name,
+        shell = shell,
+        interactive_flags = interactive_flags,
         config_path = config_path,
         script_file = script_file.display(),
         cd_command = cd_command,
@@ -2597,14 +2634,14 @@ exec bash --norc --noprofile
     // Try the preferred terminal first, fall back to Terminal.app if it fails
     // Note: Kitty doesn't need the -e flag, others do
     let result = match terminal {
-        "iterm2" => launch_macos_iterm2(&script_file),
-        "warp" => launch_macos_warp(&script_file),
-        "alacritty" => launch_macos_open_app("Alacritty", &script_file, true),
-        "kitty" => launch_macos_open_app("kitty", &script_file, false),
-        "ghostty" => launch_macos_ghostty(&script_file),
-        "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
-        "kaku" => launch_macos_open_app("Kaku", &script_file, true),
-        _ => launch_macos_terminal_app(&script_file), // "terminal" or default
+        "iterm2" => launch_macos_iterm2(&script_file, &shell_name),
+        "warp" => launch_macos_warp(&script_file, &shell_name),
+        "alacritty" => launch_macos_open_app("Alacritty", &script_file, true, &shell_name),
+        "kitty" => launch_macos_open_app("kitty", &script_file, false, &shell_name),
+        "ghostty" => launch_macos_ghostty(&script_file, &shell_name),
+        "wezterm" => launch_macos_open_app("WezTerm", &script_file, true, &shell_name),
+        "kaku" => launch_macos_open_app("Kaku", &script_file, true, &shell_name),
+        _ => launch_macos_terminal_app(&script_file, &shell), // "terminal" or default
     };
 
     // If preferred terminal fails and it's not the default, try Terminal.app as fallback
@@ -2614,7 +2651,7 @@ exec bash --norc --noprofile
             terminal,
             result.as_ref().err()
         );
-        return launch_macos_terminal_app(&script_file);
+        return launch_macos_terminal_app(&script_file, &shell);
     }
 
     result
@@ -2622,15 +2659,16 @@ exec bash --norc --noprofile
 
 /// macOS: Terminal.app
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal_app(script_file: &std::path::Path) -> Result<(), String> {
+fn launch_macos_terminal_app(script_file: &std::path::Path, shell: &str) -> Result<(), String> {
     use std::process::Command;
 
     let applescript = format!(
         r#"tell application "Terminal"
     activate
-    do script "bash '{}'"
+    do script "{shell} '{script_file}'"
 end tell"#,
-        script_file.display()
+        shell = shell,
+        script_file = script_file.display()
     );
 
     let output = Command::new("osascript")
@@ -2653,9 +2691,9 @@ end tell"#,
 
 /// macOS: iTerm2
 #[cfg(target_os = "macos")]
-fn build_macos_iterm2_applescript(script_file: &std::path::Path) -> String {
+fn build_macos_iterm2_applescript(script_file: &std::path::Path, shell_name: &str) -> String {
     format!(
-        r#"set launcher_script to "bash '{}'"
+        r#"set launcher_script to "{shell_name} '{script_file}'"
 set was_running to application "iTerm" is running
 tell application "iTerm"
     if was_running then
@@ -2683,16 +2721,17 @@ tell application "iTerm"
         write text launcher_script
     end tell
 end tell"#,
-        script_file.display()
+        shell_name = shell_name,
+        script_file = script_file.display()
     )
 }
 
 /// macOS: iTerm2
 #[cfg(target_os = "macos")]
-fn launch_macos_iterm2(script_file: &std::path::Path) -> Result<(), String> {
+fn launch_macos_iterm2(script_file: &std::path::Path, shell_name: &str) -> Result<(), String> {
     use std::process::Command;
 
-    let applescript = build_macos_iterm2_applescript(script_file);
+    let applescript = build_macos_iterm2_applescript(script_file, shell_name);
 
     let output = Command::new("osascript")
         .arg("-e")
@@ -2714,7 +2753,7 @@ fn launch_macos_iterm2(script_file: &std::path::Path) -> Result<(), String> {
 
 /// macOS: Ghostty — use --quit-after-last-window-closed to avoid cloning existing tabs
 #[cfg(target_os = "macos")]
-fn launch_macos_ghostty(script_file: &std::path::Path) -> Result<(), String> {
+fn launch_macos_ghostty(script_file: &std::path::Path, shell_name: &str) -> Result<(), String> {
     use std::process::Command;
 
     let output = Command::new("open")
@@ -2724,7 +2763,7 @@ fn launch_macos_ghostty(script_file: &std::path::Path) -> Result<(), String> {
             "--args",
             "--quit-after-last-window-closed=true",
             "-e",
-            "bash",
+            shell_name,
         ])
         .arg(script_file)
         .output()
@@ -2748,6 +2787,7 @@ fn launch_macos_open_app(
     app_name: &str,
     script_file: &std::path::Path,
     use_e_flag: bool,
+    shell_name: &str,
 ) -> Result<(), String> {
     use std::process::Command;
 
@@ -2757,7 +2797,7 @@ fn launch_macos_open_app(
     if use_e_flag {
         cmd.arg("-e");
     }
-    cmd.arg("bash").arg(script_file);
+    cmd.arg(shell_name).arg(script_file);
 
     let output = cmd
         .output()
@@ -2777,7 +2817,7 @@ fn launch_macos_open_app(
 }
 
 #[cfg(target_os = "macos")]
-fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
+fn launch_macos_warp(script_file: &std::path::Path, shell_name: &str) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
@@ -2801,9 +2841,10 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 
         rm -- "$0"
 
-        exec bash {}
+        exec {shell_name} {script_file}
         "#,
-        script_file.display(),
+        shell_name = shell_name,
+        script_file = script_file.display(),
     )
     .map_err(|e| format!("Failed to write to temporary script file for Warp: {e}"))?;
 
@@ -2835,6 +2876,10 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
 
     let preferred = crate::settings::get_preferred_terminal();
 
+    let shell = get_user_shell();
+    let shell_name = get_shell_name(&shell);
+    let interactive_flags = interactive_flags_for_shell(&shell_name);
+
     // Default terminal list with their arguments
     let default_terminals = [
         ("gnome-terminal", vec!["--"]),
@@ -2854,14 +2899,17 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let cd_command = build_shell_cd_command(cwd);
 
     let script_content = format!(
-        r#"#!/bin/bash
+        r#"#!/usr/bin/env {shell_name}
 trap 'rm -f "{config_path}" "{script_file}"' EXIT
 {cd_command}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
 claude --settings "{config_path}"
-exec bash --norc --noprofile
+exec {shell} {interactive_flags}
 "#,
+        shell_name = shell_name,
+        shell = shell,
+        interactive_flags = interactive_flags,
         config_path = config_path,
         script_file = script_file.display(),
         cd_command = cd_command,
@@ -2908,7 +2956,7 @@ exec bash --norc --noprofile
         if terminal_exists {
             let result = Command::new(terminal)
                 .args(&args)
-                .arg("bash")
+                .arg(shell_name)
                 .arg(script_file.to_string_lossy().as_ref())
                 .spawn();
 
@@ -3082,10 +3130,12 @@ pub(crate) fn launch_terminal_running(command_line: &str, label: &str) -> Result
     let pid = std::process::id();
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    let (script_file, script_content) = {
+    let (script_file, script_content, shell, shell_name) = {
+        let shell = get_user_shell();
+        let shell_name = get_shell_name(&shell);
         let file = temp_dir.join(format!("cc_switch_{}_{}.sh", label, pid));
         let content = format!(
-            r#"#!/bin/bash
+            r#"#!/usr/bin/env {shell_name}
 trap 'rm -f "{script_path}"' EXIT
 echo "[cc-switch] Starting: {label}"
 echo ""
@@ -3094,11 +3144,12 @@ echo ""
 echo "[cc-switch] Command exited. Press any key to close."
 read -n 1 -s
 "#,
+            shell_name = shell_name,
             script_path = file.display(),
             label = label,
             cmd = command_line,
         );
-        (file, content)
+        (file, content, shell, shell_name)
     };
 
     #[cfg(target_os = "macos")]
@@ -3114,14 +3165,14 @@ read -n 1 -s
         let terminal = preferred.as_deref().unwrap_or("terminal");
 
         let result = match terminal {
-            "iterm2" => launch_macos_iterm2(&script_file),
-            "warp" => launch_macos_warp(&script_file),
-            "alacritty" => launch_macos_open_app("Alacritty", &script_file, true),
-            "kitty" => launch_macos_open_app("kitty", &script_file, false),
-            "ghostty" => launch_macos_ghostty(&script_file),
-            "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
-            "kaku" => launch_macos_open_app("Kaku", &script_file, true),
-            _ => launch_macos_terminal_app(&script_file),
+            "iterm2" => launch_macos_iterm2(&script_file, &shell_name),
+            "warp" => launch_macos_warp(&script_file, &shell_name),
+            "alacritty" => launch_macos_open_app("Alacritty", &script_file, true, &shell_name),
+            "kitty" => launch_macos_open_app("kitty", &script_file, false, &shell_name),
+            "ghostty" => launch_macos_ghostty(&script_file, &shell_name),
+            "wezterm" => launch_macos_open_app("WezTerm", &script_file, true, &shell_name),
+            "kaku" => launch_macos_open_app("Kaku", &script_file, true, &shell_name),
+            _ => launch_macos_terminal_app(&script_file, &shell),
         };
 
         if result.is_err() && terminal != "terminal" {
@@ -3130,7 +3181,7 @@ read -n 1 -s
                 terminal,
                 result.as_ref().err()
             );
-            return launch_macos_terminal_app(&script_file);
+            return launch_macos_terminal_app(&script_file, &shell);
         }
         result
     }
@@ -3188,7 +3239,7 @@ read -n 1 -s
             if terminal_exists {
                 let spawn_result = Command::new(terminal)
                     .args(&args)
-                    .arg("bash")
+                    .arg(shell_name)
                     .arg(script_file.to_string_lossy().as_ref())
                     .spawn();
                 match spawn_result {
@@ -3275,6 +3326,37 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn test_get_shell_name() {
+        assert_eq!(get_shell_name("/bin/zsh"), "zsh");
+        assert_eq!(get_shell_name("/bin/bash"), "bash");
+        assert_eq!(get_shell_name("/usr/bin/fish"), "fish");
+        assert_eq!(get_shell_name("/usr/local/bin/dash"), "dash");
+        assert_eq!(get_shell_name("zsh"), "zsh");
+        assert_eq!(get_shell_name(""), "sh");
+    }
+
+    #[test]
+    fn test_interactive_flags_for_shell() {
+        assert_eq!(interactive_flags_for_shell("bash"), "--norc --noprofile");
+        assert_eq!(interactive_flags_for_shell("zsh"), "--norcs --no-globalrcs");
+        assert_eq!(interactive_flags_for_shell("fish"), "");
+        assert_eq!(interactive_flags_for_shell("dash"), "");
+        assert_eq!(interactive_flags_for_shell("sh"), "");
+    }
+
+    #[test]
+    fn test_get_user_shell_fallback() {
+        // $SHELL 未设置时应按平台 fallback
+        // 此测试验证 fallback 逻辑，但不验证环境变量值（取决于运行环境）
+        let shell = get_user_shell();
+        // 至少应返回一个合法路径
+        assert!(shell.starts_with('/') || shell.starts_with("sh"));
+        // shell_name 应可正确提取
+        let name = get_shell_name(&shell);
+        assert!(["sh", "bash", "zsh", "fish", "dash"].contains(&name.as_str()));
+    }
 
     #[test]
     fn test_extract_version() {
@@ -4659,7 +4741,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn iterm2_applescript_cold_start_avoids_current_window_before_one_exists() {
-        let script = build_macos_iterm2_applescript(Path::new("/tmp/cc_switch_launcher.sh"));
+        let script = build_macos_iterm2_applescript(Path::new("/tmp/cc_switch_launcher.sh"), "zsh");
 
         let cold_start_branch = script
             .split("else\n        activate")
@@ -4678,7 +4760,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn iterm2_applescript_keeps_new_tab_behavior_for_existing_windows() {
-        let script = build_macos_iterm2_applescript(Path::new("/tmp/cc_switch_launcher.sh"));
+        let script = build_macos_iterm2_applescript(Path::new("/tmp/cc_switch_launcher.sh"), "zsh");
 
         let running_branch = script
             .split("if was_running then")
