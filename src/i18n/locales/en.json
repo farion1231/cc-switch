@@ -279,6 +279,18 @@
       "message": "Failover is an advanced feature. Please make sure you understand how it works before enabling.\n\nWe recommend configuring provider priorities in the failover queue first.",
       "confirm": "I understand, enable"
     },
+    "unifyCodexHistory": {
+      "title": "Unified Codex session history",
+      "message": "When enabled, the official subscription and third-party providers share one session history list. Note: resuming an old session across providers may fail because its encrypted_content reasoning cannot be decrypted by another backend.\n\nYou can also migrate your existing official session history into the shared list (originals are backed up to ~/.cc-switch/backups first and can be restored when you turn this off).",
+      "migrateExisting": "Also migrate existing official session history",
+      "confirm": "I understand, enable"
+    },
+    "unifyCodexHistoryOff": {
+      "title": "Turn off unified session history",
+      "message": "After turning this off, the official subscription and third-party providers return to separate history lists. Sessions created while it was on cannot be attributed to a provider, so they stay in the third-party history and the official subscription will not see them.",
+      "restoreBackup": "Restore the official sessions migrated at enable time back to the official history (exact restore from backup)",
+      "confirm": "Turn off"
+    },
     "usage": {
       "title": "Configure Usage Query",
       "message": "Usage query requires a custom script or API parameters. Please make sure you have obtained the necessary information from your provider.\n\nIf unsure how to configure, please consult your provider's documentation first.",
@@ -671,7 +683,11 @@
     "preserveCodexOfficialAuthOnSwitch": "Keep official login when switching third-party providers",
     "preserveCodexOfficialAuthOnSwitchDescription": "When enabled, you can use the Codex app's official plugins, mobile remote control, and other features while using third-party APIs.",
     "unifyCodexSessionHistory": "Unified Codex session history",
-    "unifyCodexSessionHistoryDescription": "When enabled, the official subscription runs under the shared \"custom\" provider id, so future official sessions appear in the same history list as third-party sessions (existing sessions are not migrated). Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it.",
+    "unifyCodexSessionHistoryDescription": "When enabled, the official subscription runs under the shared \"custom\" provider id so official and third-party sessions appear in one history list, optionally migrating existing official sessions in (backed up first). When turning it off, the migrated sessions can be restored from backup. Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it.",
+    "unifyCodexHistoryRestoreCompleted": "Official session history restored from backup ({{files}} session files, {{rows}} index rows)",
+    "unifyCodexHistoryRestoreFailed": "Failed to restore official session history, please try again",
+    "unifyCodexHistoryRestoreNothing": "No restorable migration backup for the current Codex directory",
+    "unifyCodexHistoryRestoreSkippedToggleOn": "Unified session history was re-enabled; restore skipped",
     "appVisibility": {
       "title": "Homepage Display",
       "description": "Choose which apps to show on the homepage",

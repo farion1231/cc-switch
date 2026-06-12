@@ -279,6 +279,18 @@
       "message": "故障轉移是一項進階功能，啟用前請確保您已了解其運作原理。\n\n建議先在故障轉移佇列中設定好供應商優先順序。",
       "confirm": "我已了解，繼續啟用"
     },
+    "unifyCodexHistory": {
+      "title": "統一 Codex 會話歷史",
+      "message": "開啟後，官方訂閱與第三方將共用同一個會話歷史清單。注意：跨供應商繼續舊會話時，可能因對方後端無法解密 encrypted_content 推理內容而失敗。\n\n可選擇同時把現有官方會話歷史遷入共享清單（遷移前自動備份到 ~/.cc-switch/backups，關閉開關時可選擇恢復）。",
+      "migrateExisting": "同時遷入現有官方會話歷史",
+      "confirm": "我已了解，繼續開啟"
+    },
+    "unifyCodexHistoryOff": {
+      "title": "關閉統一會話歷史",
+      "message": "關閉後，官方訂閱與第三方將恢復各自獨立的會話歷史清單。開啟期間產生的會話因無法區分來源，將留在第三方歷史中，官方訂閱將看不到它們。",
+      "restoreBackup": "把開啟時遷入的官方會話還原回官方歷史（按備份精確還原）",
+      "confirm": "關閉"
+    },
     "usage": {
       "title": "設定用量查詢",
       "message": "用量查詢需要設定專用的查詢腳本或 API 參數，請確保您已從供應商處取得相關資訊。\n\n如不確定如何設定，請先查閱供應商文件。",
@@ -671,7 +683,11 @@
     "preserveCodexOfficialAuthOnSwitch": "切換第三方時保留官方登入",
     "preserveCodexOfficialAuthOnSwitchDescription": "開啟後可以在使用第三方 API 的時候使用 Codex 應用的官方外掛、手機遠端操作等功能",
     "unifyCodexSessionHistory": "統一 Codex 會話歷史",
-    "unifyCodexSessionHistoryDescription": "開啟後，官方訂閱將以共享的 custom 供應商標識執行，未來的官方會話與第三方會話出現在同一歷史清單中（不遷移既有會話）。注意：跨供應商繼續舊會話時，對方後端可能無法解密會話中的 encrypted_content 推理內容，導致繼續失敗",
+    "unifyCodexSessionHistoryDescription": "開啟後，官方訂閱將以共享的 custom 供應商標識執行，官方與第三方會話出現在同一歷史清單中，並可選擇把現有官方會話一併遷入（遷移前自動備份）。關閉開關時可按備份恢復遷入的會話。注意：跨供應商繼續舊會話時，對方後端可能無法解密會話中的 encrypted_content 推理內容，導致繼續失敗",
+    "unifyCodexHistoryRestoreCompleted": "已按備份還原官方會話歷史（{{files}} 個會話檔案、{{rows}} 條索引記錄）",
+    "unifyCodexHistoryRestoreFailed": "還原官方會話歷史失敗，請重試",
+    "unifyCodexHistoryRestoreNothing": "目前 Codex 目錄沒有可恢復的遷移備份",
+    "unifyCodexHistoryRestoreSkippedToggleOn": "統一會話歷史開關已重新開啟，已跳過還原",
     "appVisibility": {
       "title": "主頁面顯示",
       "description": "選擇在主頁面顯示的應用程式",

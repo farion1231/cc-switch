@@ -59,7 +59,7 @@ export const settingsSchema = z.object({
     })
     .optional(),
 
-  // 本机自动迁移状态（后端维护，前端保存设置时应透传）
+  // 本机自动迁移状态（后端维护且保存时后端忽略前端值，仅供读取展示）
   localMigrations: z
     .object({
       codexThirdPartyHistoryProviderBucketV1: z

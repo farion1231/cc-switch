@@ -354,6 +354,8 @@ export interface Settings {
   // Run official Codex under the shared "custom" provider id so future
   // sessions share one resume-history bucket with third-party providers
   unifyCodexSessionHistory?: boolean;
+  // User opted in (enable dialog checkbox) to migrate existing official sessions
+  unifyCodexMigrateExisting?: boolean;
   // User has confirmed the failover toggle first-run notice
   failoverConfirmed?: boolean;
   // User has confirmed the first-run welcome notice
