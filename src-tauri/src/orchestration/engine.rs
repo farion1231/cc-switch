@@ -1,13 +1,16 @@
 use crate::orchestration::classifier::{TaskClassifier, TaskProfile};
 use crate::orchestration::config::StrategyAction;
 use crate::orchestration::executor::{ExecutionResult, StrategyExecutor};
+use crate::orchestration::health_checker::ModelHealthChecker;
 use crate::orchestration::loader::StrategyLoader;
 use serde_json::Value;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 pub struct OrchestrationEngine {
     loader: StrategyLoader,
     executor: Option<StrategyExecutor>,
+    health_checker: Mutex<Option<ModelHealthChecker>>,
 }
 
 #[derive(Debug)]
@@ -37,6 +40,7 @@ impl OrchestrationEngine {
         Self {
             loader,
             executor: None,
+            health_checker: Mutex::new(None),
         }
     }
 
@@ -45,6 +49,19 @@ impl OrchestrationEngine {
         Self {
             loader,
             executor: Some(executor),
+            health_checker: Mutex::new(None),
+        }
+    }
+
+    /// Enable health-aware routing. Call this after construction with a list of known model keys.
+    pub fn enable_health_checks(&self, model_keys: &[String]) {
+        *self.health_checker.lock().unwrap() = Some(ModelHealthChecker::new(model_keys));
+    }
+
+    /// Report the result of a model invocation so the health checker can react.
+    pub fn report_model_result(&self, model_key: &str, success: bool, latency_ms: u64) {
+        if let Some(ref mut hc) = *self.health_checker.lock().unwrap() {
+            hc.update_health(model_key, success, latency_ms);
         }
     }
 
@@ -77,8 +94,44 @@ impl OrchestrationEngine {
             profile.risk
         );
 
+        let health_filter = |models: Vec<String>| -> Vec<String> {
+            if let Some(ref hc) = *self.health_checker.lock().unwrap() {
+                let filtered: Vec<String> = models
+                    .into_iter()
+                    .filter(|m| {
+                        let ok = hc.is_available(m);
+                        if !ok {
+                            log::warn!("[Orchestration] Skipping unhealthy model: {}", m);
+                        }
+                        ok
+                    })
+                    .collect();
+                if filtered.is_empty() {
+                    log::warn!(
+                        "[Orchestration] All models unhealthy for strategy '{}', passthrough",
+                        strategy_name
+                    );
+                }
+                filtered
+            } else {
+                models
+            }
+        };
+
         match action {
             StrategyAction::Route { use_model, .. } => {
+                let ok = if let Some(ref hc) = *self.health_checker.lock().unwrap() {
+                    hc.is_available(&use_model)
+                } else {
+                    true
+                };
+                if !ok {
+                    log::warn!(
+                        "[Orchestration] ROUTE model '{}' is unhealthy, passthrough",
+                        use_model
+                    );
+                    return OrchestrationDecision::Passthrough;
+                }
                 log::info!("[Orchestration] ROUTE → {}", use_model);
                 OrchestrationDecision::Route { model: use_model }
             }
@@ -87,13 +140,17 @@ impl OrchestrationEngine {
                 quality_threshold,
                 ..
             } => {
+                let healthy = health_filter(models);
+                if healthy.is_empty() {
+                    return OrchestrationDecision::Passthrough;
+                }
                 log::info!(
                     "[Orchestration] CASCADE → {} (threshold={})",
-                    models.join(" → "),
+                    healthy.join(" → "),
                     quality_threshold
                 );
                 OrchestrationDecision::Cascade {
-                    models,
+                    models: healthy,
                     quality_threshold,
                 }
             }
@@ -102,12 +159,32 @@ impl OrchestrationEngine {
                 judge,
                 ..
             } => {
+                let healthy_debaters = health_filter(debaters);
+                if healthy_debaters.len() < 2 {
+                    log::warn!(
+                        "[Orchestration] DEBATE needs >=2 healthy debaters, only {} available, passthrough",
+                        healthy_debaters.len()
+                    );
+                    return OrchestrationDecision::Passthrough;
+                }
+                let judge_ok = if let Some(ref hc) = *self.health_checker.lock().unwrap() {
+                    hc.is_available(&judge)
+                } else {
+                    true
+                };
+                if !judge_ok {
+                    log::warn!("[Orchestration] DEBATE judge '{}' is unhealthy, passthrough", judge);
+                    return OrchestrationDecision::Passthrough;
+                }
                 log::info!(
                     "[Orchestration] DEBATE — debaters=[{}], judge={}",
-                    debaters.join(", "),
+                    healthy_debaters.join(", "),
                     judge
                 );
-                OrchestrationDecision::Debate { debaters, judge }
+                OrchestrationDecision::Debate {
+                    debaters: healthy_debaters,
+                    judge,
+                }
             }
             StrategyAction::MoA {
                 proposers,
@@ -115,13 +192,33 @@ impl OrchestrationEngine {
                 quality_threshold,
                 ..
             } => {
+                let healthy_proposers = health_filter(proposers);
+                if healthy_proposers.len() < 2 {
+                    log::warn!(
+                        "[Orchestration] MoA needs >=2 healthy proposers, only {} available, passthrough",
+                        healthy_proposers.len()
+                    );
+                    return OrchestrationDecision::Passthrough;
+                }
+                let agg_ok = if let Some(ref hc) = *self.health_checker.lock().unwrap() {
+                    hc.is_available(&aggregator)
+                } else {
+                    true
+                };
+                if !agg_ok {
+                    log::warn!(
+                        "[Orchestration] MoA aggregator '{}' is unhealthy, passthrough",
+                        aggregator
+                    );
+                    return OrchestrationDecision::Passthrough;
+                }
                 log::info!(
                     "[Orchestration] MoA — proposers=[{}], aggregator={}",
-                    proposers.join(", "),
+                    healthy_proposers.join(", "),
                     aggregator
                 );
                 OrchestrationDecision::MoA {
-                    proposers,
+                    proposers: healthy_proposers,
                     aggregator,
                     quality_threshold,
                 }

@@ -2,6 +2,7 @@ use crate::orchestration::config::ModelConfig;
 use crate::orchestration::engine::OrchestrationDecision;
 use crate::orchestration::model_caller::{ModelCaller, ModelResponse};
 use crate::orchestration::quality_gate::QualityGate;
+use crate::orchestration::shuffle::CandidateShuffler;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -207,7 +208,19 @@ impl StrategyExecutor {
             });
         }
 
-        let debate_summary = Self::build_debate_prompt(&responses);
+        // Shuffle responses to prevent position bias in judge evaluation
+        let candidates: Vec<crate::orchestration::shuffle::CandidateAnswer> = responses
+            .iter()
+            .map(|(key, resp)| crate::orchestration::shuffle::CandidateAnswer {
+                model_key: key.clone(),
+                content: resp.content.clone(),
+                quality_score: 0.5, // neutral baseline before judge scoring
+                latency_ms: resp.latency_ms,
+                cost_usd: 0.0,
+            })
+            .collect();
+        let shuffled = CandidateShuffler::shuffle(candidates);
+        let debate_summary = Self::build_debate_prompt_from_candidates(&shuffled.candidates);
         let judge_messages = vec![json!({
             "role": "user",
             "content": debate_summary
@@ -325,6 +338,29 @@ impl StrategyExecutor {
              SCORE: <0.0 to 1.0>\n\
              REASONING: <brief explanation of synthesis>\n\
              ANSWER:\n<your synthesized response>",
+        );
+        prompt
+    }
+
+    fn build_debate_prompt_from_candidates(
+        candidates: &[crate::orchestration::shuffle::CandidateAnswer],
+    ) -> String {
+        let mut prompt = String::from("Multiple AI models have provided answers to the same question. Evaluate and synthesize the best response.\n\n");
+        for (i, cand) in candidates.iter().enumerate() {
+            prompt.push_str(&format!(
+                "--- Answer {} ---\n{}\n\n",
+                i + 1,
+                cand.content
+            ));
+        }
+        prompt.push_str(
+            "Based on the above answers, provide:\n\
+             1. A quality score from 0.0 to 1.0\n\
+             2. Your synthesized answer combining the best parts\n\
+             \n\
+             Format:\n\
+             SCORE: <number>\n\
+             ANSWER:\n<your response>",
         );
         prompt
     }
