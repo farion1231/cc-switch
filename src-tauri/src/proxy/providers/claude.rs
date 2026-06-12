@@ -382,9 +382,7 @@ pub fn transform_claude_request_for_api_format(
         (None, "none")
     };
     match api_format {
-        "kiro" => {
-            super::transform_kiro::anthropic_to_kiro(body, provider, session_id, profile_arn)
-        }
+        "kiro" => super::transform_kiro::anthropic_to_kiro(body, provider, session_id, profile_arn),
         "openai_responses" => {
             log::debug!(
                 "[Cache] OpenAI Responses prompt_cache_key source={cache_key_source}, provider={}, codex_oauth={is_codex_oauth}, has_key={}",
@@ -933,14 +931,37 @@ impl ProviderAdapter for ClaudeAdapter {
                 let mid = uuid::Uuid::new_v4().to_string().replace("-", "");
                 let ua = format!("aws-sdk-rust/1.0.0 ua/2.1 os/other lang/rust api/codewhispererstreaming#1.28.3 m/E app/AmazonQ-For-CLI md/appVersion-1.28.3-{mid}");
                 vec![
-                    (HeaderName::from_static("content-type"), HeaderValue::from_static("application/x-amz-json-1.0")),
-                    (HeaderName::from_static("accept"), HeaderValue::from_static("application/json")),
+                    (
+                        HeaderName::from_static("content-type"),
+                        HeaderValue::from_static("application/x-amz-json-1.0"),
+                    ),
+                    (
+                        HeaderName::from_static("accept"),
+                        HeaderValue::from_static("application/json"),
+                    ),
                     (HeaderName::from_static("authorization"), hv(&bearer)?),
-                    (HeaderName::from_static("x-amz-target"), HeaderValue::from_static("AmazonCodeWhispererStreamingService.GenerateAssistantResponse")),
-                    (HeaderName::from_static("x-amzn-codewhisperer-optout"), HeaderValue::from_static("true")),
-                    (HeaderName::from_static("amz-sdk-invocation-id"), hv(&uuid::Uuid::new_v4().to_string())?),
-                    (HeaderName::from_static("amz-sdk-request"), HeaderValue::from_static("attempt=1; max=1")),
-                    (HeaderName::from_static("x-amzn-kiro-agent-mode"), HeaderValue::from_static("vibe")),
+                    (
+                        HeaderName::from_static("x-amz-target"),
+                        HeaderValue::from_static(
+                            "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
+                        ),
+                    ),
+                    (
+                        HeaderName::from_static("x-amzn-codewhisperer-optout"),
+                        HeaderValue::from_static("true"),
+                    ),
+                    (
+                        HeaderName::from_static("amz-sdk-invocation-id"),
+                        hv(&uuid::Uuid::new_v4().to_string())?,
+                    ),
+                    (
+                        HeaderName::from_static("amz-sdk-request"),
+                        HeaderValue::from_static("attempt=1; max=1"),
+                    ),
+                    (
+                        HeaderName::from_static("x-amzn-kiro-agent-mode"),
+                        HeaderValue::from_static("vibe"),
+                    ),
                     (HeaderName::from_static("x-amz-user-agent"), hv(&ua)?),
                     (HeaderName::from_static("user-agent"), hv(&ua)?),
                 ]
@@ -1750,9 +1771,15 @@ mod tests {
             "max_tokens": 128,
             "stream": true
         });
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None, None)
-                .unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_chat",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(transformed["stream"], true);
         assert_eq!(transformed["stream_options"]["include_usage"], true);
     }
@@ -1768,9 +1795,15 @@ mod tests {
             "messages": [{ "role": "user", "content": "hello" }],
             "max_tokens": 128
         });
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None, None)
-                .unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_chat",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         assert!(transformed.get("stream_options").is_none());
     }
 
@@ -1997,9 +2030,15 @@ mod tests {
             "max_tokens": 64
         });
 
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "gemini_native", None, None, None)
-                .unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "gemini_native",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         assert!(transformed.get("contents").is_some());
         assert_eq!(
@@ -2030,9 +2069,15 @@ mod tests {
             "max_tokens": 64
         });
 
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None, None)
-                .unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_chat",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         assert!(transformed.get("prompt_cache_key").is_none());
     }
@@ -2058,9 +2103,15 @@ mod tests {
             "max_tokens": 64
         });
 
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None, None)
-                .unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_chat",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         assert_eq!(transformed["prompt_cache_key"], "claude-cache-route");
     }
@@ -2091,9 +2142,15 @@ mod tests {
             }]
         });
 
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None, None)
-                .unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_chat",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         let msg = &transformed["messages"][0];
         assert!(msg.get("tool_calls").is_some());
@@ -2126,9 +2183,15 @@ mod tests {
             }]
         });
 
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None, None)
-                .unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_chat",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         let msg = &transformed["messages"][0];
         assert_eq!(msg["reasoning_content"], "I should call the tool.");
@@ -2161,9 +2224,15 @@ mod tests {
             }]
         });
 
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None, None)
-                .unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_chat",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         let msg = &transformed["messages"][0];
         assert_eq!(msg["reasoning_content"], "I should call the tool.");
@@ -2196,9 +2265,15 @@ mod tests {
             }]
         });
 
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None, None)
-                .unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_chat",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         let msg = &transformed["messages"][0];
         assert_eq!(msg["reasoning_content"], "I should call the tool.");

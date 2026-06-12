@@ -97,14 +97,20 @@ fn parse_kiro_event(parsed: &Value) -> Option<KiroStreamEvent> {
         parsed.get("name").and_then(|v| v.as_str()),
         parsed.get("toolUseId").and_then(|v| v.as_str()),
     ) {
-        let input = parsed.get("input").map(|v| {
-            if let Some(s) = v.as_str() {
-                s.to_string()
-            } else {
-                v.to_string()
-            }
-        }).unwrap_or_default();
-        let stop = parsed.get("stop").and_then(|v| v.as_bool()).unwrap_or(false);
+        let input = parsed
+            .get("input")
+            .map(|v| {
+                if let Some(s) = v.as_str() {
+                    s.to_string()
+                } else {
+                    v.to_string()
+                }
+            })
+            .unwrap_or_default();
+        let stop = parsed
+            .get("stop")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         return Some(KiroStreamEvent::ToolUse {
             name: name.to_string(),
             tool_use_id: tool_use_id.to_string(),
@@ -127,7 +133,10 @@ fn parse_kiro_event(parsed: &Value) -> Option<KiroStreamEvent> {
             return Some(KiroStreamEvent::ToolUseStop(stop));
         }
     }
-    if let Some(pct) = parsed.get("contextUsagePercentage").and_then(|v| v.as_f64()) {
+    if let Some(pct) = parsed
+        .get("contextUsagePercentage")
+        .and_then(|v| v.as_f64())
+    {
         return Some(KiroStreamEvent::ContextUsage(pct));
     }
     if let Some(error_val) = parsed.get("error").or_else(|| parsed.get("Error")) {
@@ -136,18 +145,31 @@ fn parse_kiro_event(parsed: &Value) -> Option<KiroStreamEvent> {
         } else {
             error_val.to_string()
         };
-        let message = parsed.get("message")
+        let message = parsed
+            .get("message")
             .or_else(|| parsed.get("Message"))
             .or_else(|| parsed.get("reason"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        return Some(KiroStreamEvent::Error { error: error_str, message });
+        return Some(KiroStreamEvent::Error {
+            error: error_str,
+            message,
+        });
     }
     if let Some(usage) = parsed.get("usage") {
         if parsed.get("unit").is_none() {
-            let input_tokens = usage.get("inputTokens").and_then(|v| v.as_u64()).map(|v| v as u32);
-            let output_tokens = usage.get("outputTokens").and_then(|v| v.as_u64()).map(|v| v as u32);
-            return Some(KiroStreamEvent::Usage { input_tokens, output_tokens });
+            let input_tokens = usage
+                .get("inputTokens")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32);
+            let output_tokens = usage
+                .get("outputTokens")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32);
+            return Some(KiroStreamEvent::Usage {
+                input_tokens,
+                output_tokens,
+            });
         }
     }
     None
@@ -482,7 +504,10 @@ pub fn kiro_eventstream_to_anthropic_response(body: &[u8]) -> Value {
         }
     }
 
-    fn flush_tool(current_tool: &mut Option<(String, String, String)>, content_blocks: &mut Vec<Value>) {
+    fn flush_tool(
+        current_tool: &mut Option<(String, String, String)>,
+        content_blocks: &mut Vec<Value>,
+    ) {
         if let Some((id, name, input_json)) = current_tool.take() {
             let input_value: Value = if input_json.trim().is_empty() {
                 json!({})
@@ -563,7 +588,11 @@ pub fn kiro_eventstream_to_anthropic_response(body: &[u8]) -> Value {
     flush_text(&mut current_text, &mut has_open_text, &mut content_blocks);
     flush_tool(&mut current_tool, &mut content_blocks);
 
-    let stop_reason = if has_tool_calls { "tool_use" } else { "end_turn" };
+    let stop_reason = if has_tool_calls {
+        "tool_use"
+    } else {
+        "end_turn"
+    };
 
     json!({
         "id": format!("msg_kiro{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
@@ -631,12 +660,17 @@ mod tests {
         assert_eq!(events1.len(), 1);
         assert!(matches!(&events1[0], KiroStreamEvent::Content(t) if t == "hi"));
         // 关键:remainder 必须包含 {"con,不能是空字符串
-        assert!(remainder1.contains("{\"con"), "remainder 应保留部分 pattern,实际: {remainder1:?}");
+        assert!(
+            remainder1.contains("{\"con"),
+            "remainder 应保留部分 pattern,实际: {remainder1:?}"
+        );
 
         // 模拟第二个 chunk 到达后,拼接到 remainder 应该能解析出完整事件
         let chunk2 = r#"tent":"world"}{"usage":{"inputTokens":1,"outputTokens":2}}"#;
         let combined = format!("{}{}", remainder1, chunk2);
         let (events2, _remainder2) = parse_kiro_events(&combined);
-        assert!(events2.iter().any(|e| matches!(e, KiroStreamEvent::Content(t) if t == "world")));
+        assert!(events2
+            .iter()
+            .any(|e| matches!(e, KiroStreamEvent::Content(t) if t == "world")));
     }
 }

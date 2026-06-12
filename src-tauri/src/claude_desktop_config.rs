@@ -396,8 +396,7 @@ pub fn validate_proxy_provider(provider: &Provider) -> Result<(), AppError> {
         if let Some(api_format) = meta.api_format.as_deref() {
             if !matches!(
                 api_format,
-                "" | "anthropic" | "openai_chat" | "openai_responses" | "gemini_native"
-                    | "kiro"
+                "" | "anthropic" | "openai_chat" | "openai_responses" | "gemini_native" | "kiro"
             ) {
                 return Err(AppError::localized(
                     "claude_desktop.provider.api_format_unsupported",

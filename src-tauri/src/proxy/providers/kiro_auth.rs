@@ -207,14 +207,13 @@ impl KiroAuthManager {
         let storage_path = data_dir.join("kiro_auth.json");
 
         // 在构造共享锁之前同步加载磁盘数据，避免在 tokio runtime 上调用 blocking_write。
-        let (loaded_accounts, loaded_default) =
-            match Self::read_from_disk(&storage_path) {
-                Ok(v) => v,
-                Err(e) => {
-                    log::warn!("[KiroAuth] 加载存储失败: {e}");
-                    (HashMap::new(), None)
-                }
-            };
+        let (loaded_accounts, loaded_default) = match Self::read_from_disk(&storage_path) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("[KiroAuth] 加载存储失败: {e}");
+                (HashMap::new(), None)
+            }
+        };
 
         Self {
             local_accounts: Arc::new(RwLock::new(loaded_accounts)),
@@ -233,15 +232,14 @@ impl KiroAuthManager {
         if !storage_path.exists() {
             return Ok((HashMap::new(), None));
         }
-        let content = fs::read_to_string(storage_path)
-            .map_err(|e| format!("读取文件失败: {e}"))?;
+        let content = fs::read_to_string(storage_path).map_err(|e| format!("读取文件失败: {e}"))?;
         #[derive(Deserialize)]
         struct SavedData {
             accounts: HashMap<String, KiroAccountData>,
             default_account_id: Option<String>,
         }
-        let data: SavedData = serde_json::from_str(&content)
-            .map_err(|e| format!("解析 JSON 失败: {e}"))?;
+        let data: SavedData =
+            serde_json::from_str(&content).map_err(|e| format!("解析 JSON 失败: {e}"))?;
 
         // 全部账号都从磁盘恢复（包括用户主动导入的 kiro-cli / kiro-ide 快照）。
         // 导入的动态账号仍带有 source 标记，token 刷新时会通过 read_dynamic_account
@@ -274,8 +272,8 @@ impl KiroAuthManager {
             default_account_id,
         };
 
-        let content = serde_json::to_string_pretty(&data)
-            .map_err(|e| format!("序列化失败: {e}"))?;
+        let content =
+            serde_json::to_string_pretty(&data).map_err(|e| format!("序列化失败: {e}"))?;
 
         // 凭证文件包含 access_token/refresh_token/client_secret，需限制为仅属主可读写，
         // 并通过临时文件 + rename 实现原子写入，避免并发读取到半写状态。
@@ -311,21 +309,18 @@ impl KiroAuthManager {
                 .map_err(|e| format!("写入数据失败: {e}"))?;
             file.flush().map_err(|e| format!("刷新数据失败: {e}"))?;
 
-            fs::rename(&tmp_path, &self.storage_path)
-                .map_err(|e| format!("保存文件失败: {e}"))?;
+            fs::rename(&tmp_path, &self.storage_path).map_err(|e| format!("保存文件失败: {e}"))?;
             fs::set_permissions(&self.storage_path, fs::Permissions::from_mode(0o600))
                 .map_err(|e| format!("设置文件权限失败: {e}"))?;
         }
 
         #[cfg(not(unix))]
         {
-            let mut file = fs::File::create(&tmp_path)
-                .map_err(|e| format!("创建文件失败: {e}"))?;
+            let mut file = fs::File::create(&tmp_path).map_err(|e| format!("创建文件失败: {e}"))?;
             file.write_all(content.as_bytes())
                 .map_err(|e| format!("写入数据失败: {e}"))?;
             file.flush().map_err(|e| format!("刷新数据失败: {e}"))?;
-            fs::rename(&tmp_path, &self.storage_path)
-                .map_err(|e| format!("保存文件失败: {e}"))?;
+            fs::rename(&tmp_path, &self.storage_path).map_err(|e| format!("保存文件失败: {e}"))?;
         }
 
         Ok(())
@@ -366,9 +361,21 @@ impl KiroAuthManager {
         let val = self.read_kiro_cli_token(&db_path, token_key)?;
         let access_token = val.get("access_token")?.as_str()?.to_string();
         let refresh_token = val.get("refresh_token")?.as_str()?.to_string();
-        let region = val.get("region").and_then(|v| v.as_str()).unwrap_or("us-east-1").to_string();
-        let profile_arn = val.get("profile_arn").or_else(|| val.get("profileArn")).and_then(|v| v.as_str()).map(String::from);
-        let start_url = val.get("start_url").or_else(|| val.get("startUrl")).and_then(|v| v.as_str()).map(String::from);
+        let region = val
+            .get("region")
+            .and_then(|v| v.as_str())
+            .unwrap_or("us-east-1")
+            .to_string();
+        let profile_arn = val
+            .get("profile_arn")
+            .or_else(|| val.get("profileArn"))
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let start_url = val
+            .get("start_url")
+            .or_else(|| val.get("startUrl"))
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
         let expires_at_ms = val
             .get("expires_at")
@@ -379,11 +386,21 @@ impl KiroAuthManager {
         let mut client_secret = String::new();
 
         if method == "idc" {
-            if let Some(dev_reg) = self.read_kiro_cli_token(&db_path, "kirocli:odic:device-registration") {
-                if let Some(cid) = dev_reg.get("client_id").or_else(|| dev_reg.get("clientId")).and_then(|v| v.as_str()) {
+            if let Some(dev_reg) =
+                self.read_kiro_cli_token(&db_path, "kirocli:odic:device-registration")
+            {
+                if let Some(cid) = dev_reg
+                    .get("client_id")
+                    .or_else(|| dev_reg.get("clientId"))
+                    .and_then(|v| v.as_str())
+                {
                     client_id = cid.to_string();
                 }
-                if let Some(csec) = dev_reg.get("client_secret").or_else(|| dev_reg.get("clientSecret")).and_then(|v| v.as_str()) {
+                if let Some(csec) = dev_reg
+                    .get("client_secret")
+                    .or_else(|| dev_reg.get("clientSecret"))
+                    .and_then(|v| v.as_str())
+                {
                     client_secret = csec.to_string();
                 }
             }
@@ -415,20 +432,28 @@ impl KiroAuthManager {
 
     fn read_kiro_cli_token(&self, db_path: &Path, key: &str) -> Option<serde_json::Value> {
         let conn = rusqlite::Connection::open(db_path).ok()?;
-        let mut stmt = conn.prepare("SELECT value FROM auth_kv WHERE key = ?1").ok()?;
+        let mut stmt = conn
+            .prepare("SELECT value FROM auth_kv WHERE key = ?1")
+            .ok()?;
         let val_str: String = stmt.query_row([key], |row| row.get(0)).ok()?;
         serde_json::from_str(&val_str).ok()
     }
 
-    fn write_kiro_cli_token(&self, token_key: &str, value: &serde_json::Value) -> Result<(), String> {
-        let db_path = self.get_kiro_cli_db_path()
+    fn write_kiro_cli_token(
+        &self,
+        token_key: &str,
+        value: &serde_json::Value,
+    ) -> Result<(), String> {
+        let db_path = self
+            .get_kiro_cli_db_path()
             .ok_or_else(|| "kiro-cli database not found".to_string())?;
-        let conn = rusqlite::Connection::open(&db_path)
-            .map_err(|e| format!("打开数据库失败: {e}"))?;
+        let conn =
+            rusqlite::Connection::open(&db_path).map_err(|e| format!("打开数据库失败: {e}"))?;
         conn.execute(
             "INSERT OR REPLACE INTO auth_kv (key, value) VALUES (?1, ?2)",
             (token_key, serde_json::to_string(value).unwrap_or_default()),
-        ).map_err(|e| format!("写入数据库失败: {e}"))?;
+        )
+        .map_err(|e| format!("写入数据库失败: {e}"))?;
         Ok(())
     }
 
@@ -696,9 +721,7 @@ impl KiroAuthManager {
                 // 实际 AWS token 可能仍有效，返回以争取时间
                 let now = chrono::Utc::now().timestamp_millis();
                 if !acc.access_token.is_empty() && now < acc.expires_at_ms + EXPIRES_BUFFER_MS {
-                    log::warn!(
-                        "[KiroAuth] 刷新失败，使用缓冲期内的现有 token: {refresh_err}"
-                    );
+                    log::warn!("[KiroAuth] 刷新失败，使用缓冲期内的现有 token: {refresh_err}");
                     return Ok(acc.access_token.clone());
                 }
 
@@ -724,10 +747,7 @@ impl KiroAuthManager {
     }
 
     /// 直接调用 AWS / Kiro 端点刷新凭证，返回更新后的账号数据（不修改存储）。
-    async fn refresh_token_direct(
-        &self,
-        acc: &KiroAccountData,
-    ) -> Result<KiroAccountData, String> {
+    async fn refresh_token_direct(&self, acc: &KiroAccountData) -> Result<KiroAccountData, String> {
         let (new_access, new_refresh, expires_in, profile_arn) = if acc.auth_method == "desktop" {
             // Desktop Refresh
             let url = format!(
@@ -755,7 +775,8 @@ impl KiroAuthManager {
 
             (
                 data.access_token,
-                data.refresh_token.unwrap_or_else(|| acc.refresh_token.clone()),
+                data.refresh_token
+                    .unwrap_or_else(|| acc.refresh_token.clone()),
                 data.expires_in,
                 data.profile_arn.or_else(|| acc.profile_arn.clone()),
             )
@@ -1080,7 +1101,8 @@ impl KiroAuthManager {
             );
         }
 
-        let verification_uri = auth_data.verification_uri_complete
+        let verification_uri = auth_data
+            .verification_uri_complete
             .unwrap_or(auth_data.verification_uri);
 
         Ok(GitHubDeviceCodeResponse {
@@ -1093,10 +1115,7 @@ impl KiroAuthManager {
     }
 
     /// 轮询授权结果
-    pub async fn poll_for_token(
-        &self,
-        device_code: &str,
-    ) -> Result<Option<GitHubAccount>, String> {
+    pub async fn poll_for_token(&self, device_code: &str) -> Result<Option<GitHubAccount>, String> {
         let login_info = {
             let pending = self.pending_logins.read().await;
             pending.get(device_code).cloned()
@@ -1111,7 +1130,9 @@ impl KiroAuthManager {
         }
 
         let oidc_endpoint = format!("https://oidc.{}.amazonaws.com", info.region);
-        let res = self.http_client.post(format!("{oidc_endpoint}/token"))
+        let res = self
+            .http_client
+            .post(format!("{oidc_endpoint}/token"))
             .header("Content-Type", "application/json")
             .header("User-Agent", "cc-switch-kiro")
             .json(&serde_json::json!({
@@ -1144,7 +1165,8 @@ impl KiroAuthManager {
             return Err(format!("OIDC token 授权服务器错误: {status}"));
         }
 
-        let token_data: TokenResponse = res.json()
+        let token_data: TokenResponse = res
+            .json()
             .await
             .map_err(|e| format!("解析 Token 失败: {e}"))?;
 
@@ -1155,7 +1177,9 @@ impl KiroAuthManager {
         }
 
         // 尝试获取 profileArn
-        let profile_arn = self.fetch_profile_arn(&token_data.access_token, &info.region).await;
+        let profile_arn = self
+            .fetch_profile_arn(&token_data.access_token, &info.region)
+            .await;
 
         let account_id = profile_arn.clone().unwrap_or_else(|| {
             // fallback: generate a uuid
@@ -1183,7 +1207,9 @@ impl KiroAuthManager {
             region: info.region,
             profile_arn,
             start_url: Some(info.start_url),
-            expires_at_ms: chrono::Utc::now().timestamp_millis() + (token_data.expires_in as i64) * 1000 - EXPIRES_BUFFER_MS,
+            expires_at_ms: chrono::Utc::now().timestamp_millis()
+                + (token_data.expires_in as i64) * 1000
+                - EXPIRES_BUFFER_MS,
             authenticated_at: chrono::Utc::now().timestamp(),
             source: "local".to_string(),
         };
@@ -1209,10 +1235,15 @@ impl KiroAuthManager {
         // Kiro Q API 仅部署在 us-east-1 / eu-central-1，需映射 SSO region
         let api_region = resolve_api_region(Some(region));
         let management_url = format!("https://management.{api_region}.kiro.dev/");
-        let res = self.http_client.post(&management_url)
+        let res = self
+            .http_client
+            .post(&management_url)
             .header("Content-Type", "application/x-amz-json-1.0")
             .header("Authorization", format!("Bearer {access_token}"))
-            .header("X-Amz-Target", "AmazonCodeWhispererService.ListAvailableProfiles")
+            .header(
+                "X-Amz-Target",
+                "AmazonCodeWhispererService.ListAvailableProfiles",
+            )
             .body("{}")
             .send()
             .await
@@ -1331,7 +1362,10 @@ impl KiroAuthManager {
                 .map(|u| u.query_pairs().into_owned().collect())
                 .unwrap_or_default();
 
-            let only_path = parsed.as_ref().map(|u| u.path().to_string()).unwrap_or_default();
+            let only_path = parsed
+                .as_ref()
+                .map(|u| u.path().to_string())
+                .unwrap_or_default();
             // 忽略非回调路径（如 favicon）
             let allowed = ["/", "/oauth/callback", "/signin/callback"];
             if !allowed.contains(&only_path.as_str()) {
@@ -1382,7 +1416,11 @@ impl KiroAuthManager {
             let login_option = params.get("login_option").cloned();
             let actual_redirect_uri = format!(
                 "http://localhost:3128{}{}",
-                if only_path == "/" { "" } else { only_path.as_str() },
+                if only_path == "/" {
+                    ""
+                } else {
+                    only_path.as_str()
+                },
                 login_option
                     .as_ref()
                     .map(|o| format!("?login_option={o}"))

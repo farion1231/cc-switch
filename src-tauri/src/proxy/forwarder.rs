@@ -1544,14 +1544,19 @@ impl RequestForwarder {
                             .meta
                             .as_ref()
                             .and_then(|m| m.managed_account_id_for("kiro"));
-                        profile_arn = kiro_auth.get_profile_arn_for_account(account_id.as_deref()).await;
+                        profile_arn = kiro_auth
+                            .get_profile_arn_for_account(account_id.as_deref())
+                            .await;
 
                         // 能力驱动预热：请求带 thinking 但该模型能力未缓存时，
                         // 先拉一次模型列表填充缓存（fetch_kiro_models 作为副作用写入），
                         // 避免首个思考请求白费一次 400 重试。失败不阻断，仍由 400 重试兑底。
                         if mapped_body.get("thinking").is_some() {
                             let kiro_model_id = super::providers::transform_kiro::map_model_to_kiro(
-                                mapped_body.get("model").and_then(|m| m.as_str()).unwrap_or("auto"),
+                                mapped_body
+                                    .get("model")
+                                    .and_then(|m| m.as_str())
+                                    .unwrap_or("auto"),
                             );
                             if super::providers::transform_kiro::get_model_caps(&kiro_model_id)
                                 .is_none()
@@ -1657,9 +1662,7 @@ impl RequestForwarder {
                                 "[Kiro] 获取 token 失败 (account={}): {e}",
                                 account_id.as_deref().unwrap_or("default")
                             );
-                            return Err(ProxyError::AuthError(format!(
-                                "Kiro 认证失败: {e}"
-                            )));
+                            return Err(ProxyError::AuthError(format!("Kiro 认证失败: {e}")));
                         }
                     }
                 } else {
@@ -3714,25 +3717,55 @@ mod tests {
         };
 
         // 命中：Claude + kiro + 未重试 + 带 thinking + 匹配错误
-        assert!(RequestForwarder::kiro_additional_fields_retry_should_trigger(
-            "Claude", "kiro", false, &body_with_thinking, &err_unsupported
-        ));
+        assert!(
+            RequestForwarder::kiro_additional_fields_retry_should_trigger(
+                "Claude",
+                "kiro",
+                false,
+                &body_with_thinking,
+                &err_unsupported
+            )
+        );
         // 已重试 → 不触发
-        assert!(!RequestForwarder::kiro_additional_fields_retry_should_trigger(
-            "Claude", "kiro", true, &body_with_thinking, &err_unsupported
-        ));
+        assert!(
+            !RequestForwarder::kiro_additional_fields_retry_should_trigger(
+                "Claude",
+                "kiro",
+                true,
+                &body_with_thinking,
+                &err_unsupported
+            )
+        );
         // 无 thinking → 不触发
-        assert!(!RequestForwarder::kiro_additional_fields_retry_should_trigger(
-            "Claude", "kiro", false, &body_no_thinking, &err_unsupported
-        ));
+        assert!(
+            !RequestForwarder::kiro_additional_fields_retry_should_trigger(
+                "Claude",
+                "kiro",
+                false,
+                &body_no_thinking,
+                &err_unsupported
+            )
+        );
         // 非 kiro 格式 → 不触发
-        assert!(!RequestForwarder::kiro_additional_fields_retry_should_trigger(
-            "Claude", "openai_chat", false, &body_with_thinking, &err_unsupported
-        ));
+        assert!(
+            !RequestForwarder::kiro_additional_fields_retry_should_trigger(
+                "Claude",
+                "openai_chat",
+                false,
+                &body_with_thinking,
+                &err_unsupported
+            )
+        );
         // 其他 400 错误 → 不触发
-        assert!(!RequestForwarder::kiro_additional_fields_retry_should_trigger(
-            "Claude", "kiro", false, &body_with_thinking, &err_other
-        ));
+        assert!(
+            !RequestForwarder::kiro_additional_fields_retry_should_trigger(
+                "Claude",
+                "kiro",
+                false,
+                &body_with_thinking,
+                &err_other
+            )
+        );
     }
     #[test]
     fn prevention_replaces_when_all_switches_on_and_model_in_heuristic_list() {

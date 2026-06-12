@@ -282,7 +282,9 @@ pub async fn auth_get_status(
                 migration_error: None,
                 accounts: accounts
                     .into_iter()
-                    .map(|account| map_account(auth_provider, account, default_account_id.as_deref()))
+                    .map(|account| {
+                        map_account(auth_provider, account, default_account_id.as_deref())
+                    })
                     .collect(),
             })
         }
@@ -316,9 +318,7 @@ pub async fn auth_remove_account(
         }
         AUTH_PROVIDER_KIRO => {
             let auth_manager = kiro_state.0.write().await;
-            auth_manager
-                .remove_account(&account_id)
-                .await
+            auth_manager.remove_account(&account_id).await
         }
         _ => unreachable!(),
     }
@@ -350,9 +350,7 @@ pub async fn auth_set_default_account(
         }
         AUTH_PROVIDER_KIRO => {
             let auth_manager = kiro_state.0.write().await;
-            auth_manager
-                .set_default_account(&account_id)
-                .await
+            auth_manager.set_default_account(&account_id).await
         }
         _ => unreachable!(),
     }
@@ -401,7 +399,11 @@ pub async fn auth_kiro_social_login(
         })
         .await?;
     let default_account_id = auth_manager.default_account_id().await;
-    Ok(map_account(AUTH_PROVIDER_KIRO, account, default_account_id.as_deref()))
+    Ok(map_account(
+        AUTH_PROVIDER_KIRO,
+        account,
+        default_account_id.as_deref(),
+    ))
 }
 
 /// Kiro 主动导入本地 kiro-cli / kiro-ide 凭证（仅在用户点击按钮时读取）。

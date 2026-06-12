@@ -106,10 +106,9 @@ pub async fn stream_check_all_providers(
         // Kiro（托管 OAuth）走专用连通性探测
         if provider.is_kiro() {
             let result = check_kiro_provider(&provider, &config, &kiro_state).await;
-            let _ =
-                state
-                    .db
-                    .save_stream_check_log(&id, &provider.name, app_type.as_str(), &result);
+            let _ = state
+                .db
+                .save_stream_check_log(&id, &provider.name, app_type.as_str(), &result);
             results.push((id, result));
             continue;
         }
@@ -198,7 +197,8 @@ async fn check_kiro_provider(
     config: &StreamCheckConfig,
     kiro_state: &State<'_, KiroAuthState>,
 ) -> StreamCheckResult {
-    let model = StreamCheckService::resolve_effective_test_model(&AppType::Claude, provider, config);
+    let model =
+        StreamCheckService::resolve_effective_test_model(&AppType::Claude, provider, config);
     let now = chrono::Utc::now().timestamp();
 
     let failed = |message: String, http_status: Option<u16>| StreamCheckResult {
@@ -238,13 +238,11 @@ async fn check_kiro_provider(
         (token, sso_region, profile_arn)
     };
 
-    let api_region =
-        crate::proxy::providers::kiro_auth::resolve_api_region(sso_region.as_deref());
+    let api_region = crate::proxy::providers::kiro_auth::resolve_api_region(sso_region.as_deref());
     let url = format!("https://runtime.{api_region}.kiro.dev/");
 
     // 2) 构造最小 Kiro 运行时请求体
-    let kiro_model_id =
-        crate::proxy::providers::transform_kiro::map_model_to_kiro(&model);
+    let kiro_model_id = crate::proxy::providers::transform_kiro::map_model_to_kiro(&model);
     let current_message = serde_json::json!({
         "userInputMessage": {
             "content": "ping",
@@ -321,10 +319,7 @@ async fn check_kiro_provider(
         let code = status.as_u16();
         let body_text = response.text().await.unwrap_or_default();
         let snippet: String = body_text.chars().take(300).collect();
-        failed(
-            format!("Kiro 返回 HTTP {code}: {snippet}"),
-            Some(code),
-        )
+        failed(format!("Kiro 返回 HTTP {code}: {snippet}"), Some(code))
     }
 }
 

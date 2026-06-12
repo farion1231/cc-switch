@@ -2,12 +2,12 @@
 //!
 //! Converts Anthropic Messages API format into Kiro's JSON request format.
 
+use crate::proxy::error::ProxyError;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use uuid::Uuid;
-use crate::proxy::error::ProxyError;
 use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
+use uuid::Uuid;
 
 /// 模型能力（是否支持 thinking / output_config.effort）。
 /// 来自 ListAvailableModels 返回的 additionalModelRequestFieldsSchema。
@@ -36,7 +36,10 @@ pub fn set_model_caps(kiro_model_id: &str, caps: KiroModelCaps) {
 
 /// 读取某个 Kiro 模型的能力；未命中（冷启动/未拉取过）返回 None。
 pub fn get_model_caps(kiro_model_id: &str) -> Option<KiroModelCaps> {
-    caps_cache().read().ok().and_then(|m| m.get(kiro_model_id).copied())
+    caps_cache()
+        .read()
+        .ok()
+        .and_then(|m| m.get(kiro_model_id).copied())
 }
 use crate::provider::Provider;
 
@@ -101,7 +104,10 @@ pub struct KiroUserInputMessage {
     pub origin: String, // "KIRO_CLI"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub images: Option<Vec<KiroImage>>,
-    #[serde(rename = "userInputMessageContext", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "userInputMessageContext",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub user_input_message_context: Option<KiroUserInputMessageContext>,
 }
 
@@ -124,7 +130,10 @@ pub struct KiroAssistantResponseMessage {
 pub struct KiroHistoryEntry {
     #[serde(rename = "userInputMessage", skip_serializing_if = "Option::is_none")]
     pub user_input_message: Option<KiroUserInputMessage>,
-    #[serde(rename = "assistantResponseMessage", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "assistantResponseMessage",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub assistant_response_message: Option<KiroAssistantResponseMessage>,
 }
 
@@ -136,7 +145,10 @@ pub struct KiroRequest {
     pub profile_arn: Option<String>,
     #[serde(rename = "agentMode")]
     pub agent_mode: String, // "vibe"
-    #[serde(rename = "additionalModelRequestFields", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "additionalModelRequestFields",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub additional_model_request_fields: Option<Value>,
 }
 
@@ -185,26 +197,39 @@ fn sanitize_surrogates(text: &str) -> String {
 
 fn parse_tool_result_content(text: &str) -> Vec<KiroToolResultContent> {
     let trimmed = text.trim();
-    if (trimmed.starts_with('{') && trimmed.ends_with('}')) || (trimmed.starts_with('[') && trimmed.ends_with(']')) {
+    if (trimmed.starts_with('{') && trimmed.ends_with('}'))
+        || (trimmed.starts_with('[') && trimmed.ends_with(']'))
+    {
         if let Ok(parsed) = serde_json::from_str::<Value>(trimmed) {
             return vec![KiroToolResultContent::Json { json: parsed }];
         }
     }
-    vec![KiroToolResultContent::Text { text: text.to_string() }]
+    vec![KiroToolResultContent::Text {
+        text: text.to_string(),
+    }]
 }
 
 fn convert_tools(tools: &[Value]) -> Vec<KiroToolSpec> {
-    tools.iter().map(|t| {
-        KiroToolSpec {
+    tools
+        .iter()
+        .map(|t| KiroToolSpec {
             tool_specification: KiroToolSpecification {
-                name: t.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                description: t.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                name: t
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                description: t
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
                 input_schema: KiroInputSchema {
                     json: t.get("input_schema").cloned().unwrap_or(json!({})),
-                }
-            }
-        }
-    }).collect()
+                },
+            },
+        })
+        .collect()
 }
 
 /// Anthropic Request -> Kiro Request
@@ -214,9 +239,7 @@ pub fn anthropic_to_kiro(
     session_id: Option<&str>,
     profile_arn: Option<String>,
 ) -> Result<Value, ProxyError> {
-    let original_model = body.get("model")
-        .and_then(|m| m.as_str())
-        .unwrap_or("auto");
+    let original_model = body.get("model").and_then(|m| m.as_str()).unwrap_or("auto");
     let kiro_model_id = map_model_to_kiro(original_model);
 
     // Build history and current message
@@ -231,7 +254,10 @@ pub fn anthropic_to_kiro(
         if let Some(text) = system.as_str() {
             system_prompt = text.to_string();
         } else if let Some(arr) = system.as_array() {
-            let parts: Vec<&str> = arr.iter().filter_map(|p| p.get("text").and_then(|t| t.as_str())).collect();
+            let parts: Vec<&str> = arr
+                .iter()
+                .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                .collect();
             system_prompt = parts.join("\n\n");
         }
     }
@@ -253,36 +279,58 @@ pub fn anthropic_to_kiro(
                         text_parts.push(text.to_string());
                     } else if let Some(arr) = content.and_then(|c| c.as_array()) {
                         for block in arr {
-                            let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("text");
+                            let block_type =
+                                block.get("type").and_then(|t| t.as_str()).unwrap_or("text");
                             if block_type == "text" {
                                 if let Some(t) = block.get("text").and_then(|v| v.as_str()) {
                                     text_parts.push(t.to_string());
                                 }
                             } else if block_type == "image" {
                                 if let Some(source) = block.get("source") {
-                                    let media_type = source.get("media_type").and_then(|v| v.as_str()).unwrap_or("image/png");
-                                    let data = source.get("data").and_then(|v| v.as_str()).unwrap_or("");
-                                    let format = media_type.split('/').nth(1).unwrap_or("png").to_string();
+                                    let media_type = source
+                                        .get("media_type")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("image/png");
+                                    let data =
+                                        source.get("data").and_then(|v| v.as_str()).unwrap_or("");
+                                    let format =
+                                        media_type.split('/').nth(1).unwrap_or("png").to_string();
                                     images.push(KiroImage {
                                         format,
-                                        source: KiroImageSource { bytes: data.to_string() },
+                                        source: KiroImageSource {
+                                            bytes: data.to_string(),
+                                        },
                                     });
                                 }
                             } else if block_type == "tool_result" {
-                                let tool_use_id = block.get("tool_use_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                let is_error = block.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false);
+                                let tool_use_id = block
+                                    .get("tool_use_id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let is_error = block
+                                    .get("is_error")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
                                 let tr_content = block.get("content");
                                 let tr_text = if let Some(t) = tr_content.and_then(|v| v.as_str()) {
                                     t.to_string()
                                 } else if let Some(arr) = tr_content.and_then(|v| v.as_array()) {
-                                    let parts: Vec<&str> = arr.iter().filter_map(|p| p.get("text").and_then(|t| t.as_str())).collect();
+                                    let parts: Vec<&str> = arr
+                                        .iter()
+                                        .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                                        .collect();
                                     parts.join("\n")
                                 } else {
                                     "".to_string()
                                 };
                                 tool_results.push(KiroToolResult {
                                     content: parse_tool_result_content(&tr_text),
-                                    status: if is_error { "error".to_string() } else { "success".to_string() },
+                                    status: if is_error {
+                                        "error".to_string()
+                                    } else {
+                                        "success".to_string()
+                                    },
                                     tool_use_id,
                                 });
                             }
@@ -298,7 +346,11 @@ pub fn anthropic_to_kiro(
                         content: sanitize_surrogates(&content_str),
                         model_id: kiro_model_id.clone(),
                         origin: "KIRO_CLI".to_string(),
-                        images: if images.is_empty() { None } else { Some(images) },
+                        images: if images.is_empty() {
+                            None
+                        } else {
+                            Some(images)
+                        },
                         user_input_message_context: if tool_results.is_empty() {
                             None
                         } else {
@@ -333,18 +385,28 @@ pub fn anthropic_to_kiro(
                         arm_content = text.to_string();
                     } else if let Some(arr) = content.and_then(|c| c.as_array()) {
                         for block in arr {
-                            let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("text");
+                            let block_type =
+                                block.get("type").and_then(|t| t.as_str()).unwrap_or("text");
                             if block_type == "text" {
                                 if let Some(t) = block.get("text").and_then(|v| v.as_str()) {
                                     arm_content.push_str(t);
                                 }
                             } else if block_type == "thinking" {
                                 if let Some(t) = block.get("thinking").and_then(|v| v.as_str()) {
-                                    arm_content = format!("<thinking>{}</thinking>\n\n{}", t, arm_content);
+                                    arm_content =
+                                        format!("<thinking>{}</thinking>\n\n{}", t, arm_content);
                                 }
                             } else if block_type == "tool_use" {
-                                let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                let tool_use_id = block.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let name = block
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let tool_use_id = block
+                                    .get("id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
                                 let input = block.get("input").cloned().unwrap_or(json!({}));
                                 tool_uses.push(KiroToolUse {
                                     name,
@@ -359,7 +421,11 @@ pub fn anthropic_to_kiro(
                         user_input_message: None,
                         assistant_response_message: Some(KiroAssistantResponseMessage {
                             content: arm_content,
-                            tool_uses: if tool_uses.is_empty() { None } else { Some(tool_uses) },
+                            tool_uses: if tool_uses.is_empty() {
+                                None
+                            } else {
+                                Some(tool_uses)
+                            },
                         }),
                     });
                 }
@@ -383,29 +449,48 @@ pub fn anthropic_to_kiro(
                         }
                     } else if block_type == "image" {
                         if let Some(source) = block.get("source") {
-                            let media_type = source.get("media_type").and_then(|v| v.as_str()).unwrap_or("image/png");
+                            let media_type = source
+                                .get("media_type")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("image/png");
                             let data = source.get("data").and_then(|v| v.as_str()).unwrap_or("");
                             let format = media_type.split('/').nth(1).unwrap_or("png").to_string();
                             images.push(KiroImage {
                                 format,
-                                source: KiroImageSource { bytes: data.to_string() },
+                                source: KiroImageSource {
+                                    bytes: data.to_string(),
+                                },
                             });
                         }
                     } else if block_type == "tool_result" {
-                        let tool_use_id = block.get("tool_use_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let is_error = block.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false);
+                        let tool_use_id = block
+                            .get("tool_use_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let is_error = block
+                            .get("is_error")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
                         let tr_content = block.get("content");
                         let tr_text = if let Some(t) = tr_content.and_then(|v| v.as_str()) {
                             t.to_string()
                         } else if let Some(arr) = tr_content.and_then(|v| v.as_array()) {
-                            let parts: Vec<&str> = arr.iter().filter_map(|p| p.get("text").and_then(|t| t.as_str())).collect();
+                            let parts: Vec<&str> = arr
+                                .iter()
+                                .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                                .collect();
                             parts.join("\n")
                         } else {
                             "".to_string()
                         };
                         tool_results.push(KiroToolResult {
                             content: parse_tool_result_content(&tr_text),
-                            status: if is_error { "error".to_string() } else { "success".to_string() },
+                            status: if is_error {
+                                "error".to_string()
+                            } else {
+                                "success".to_string()
+                            },
                             tool_use_id,
                         });
                     }
@@ -463,7 +548,8 @@ pub fn anthropic_to_kiro(
         if thinking.get("type").and_then(|t| t.as_str()) == Some("enabled") {
             let allow_effort = model_caps.map(|c| c.supports_effort).unwrap_or(true);
             if allow_effort {
-                let effort = body.pointer("/output_config/effort")
+                let effort = body
+                    .pointer("/output_config/effort")
                     .and_then(|v| v.as_str())
                     .unwrap_or("medium");
                 additional_fields["output_config"] = json!({
@@ -492,7 +578,11 @@ pub fn anthropic_to_kiro(
             current_message: KiroCurrentMessage {
                 user_input_message: user_message,
             },
-            history: if history.is_empty() { None } else { Some(history) },
+            history: if history.is_empty() {
+                None
+            } else {
+                Some(history)
+            },
         },
         profile_arn,
         agent_mode: "vibe".to_string(),

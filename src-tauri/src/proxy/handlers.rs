@@ -328,7 +328,9 @@ async fn handle_claude_transform(
                 tool_schema_hints.clone(),
             )))
         } else if api_format == "kiro" {
-            Box::new(Box::pin(super::providers::streaming_kiro::create_anthropic_sse_stream_from_kiro(stream)))
+            Box::new(Box::pin(
+                super::providers::streaming_kiro::create_anthropic_sse_stream_from_kiro(stream),
+            ))
         } else {
             Box::new(Box::pin(create_anthropic_sse_stream(stream)))
         };
@@ -1376,7 +1378,9 @@ fn should_use_claude_transform_streaming(
     // Kiro 上游始终返回 application/vnd.amazon.eventstream（非 text/event-stream，
     // is_sse() 识别不了）。当客户端请求流式时走 Kiro 流式转换器；
     // 非流式请求则在下方的非流式路径里聚合 Kiro eventstream 为单个 JSON。
-    requested_streaming || (upstream_is_sse && api_format != "kiro") || (is_codex_oauth && api_format == "openai_responses")
+    requested_streaming
+        || (upstream_is_sse && api_format != "kiro")
+        || (is_codex_oauth && api_format == "openai_responses")
 }
 
 /// 把 OpenAI Responses SSE 流聚合成一个完整的 Responses JSON 对象，供下游转成 Anthropic

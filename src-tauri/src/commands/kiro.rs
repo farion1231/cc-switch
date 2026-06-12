@@ -53,10 +53,14 @@ pub(crate) async fn fetch_kiro_models(
     }
 
     let client = reqwest::Client::new();
-    let res = client.post(&management_url)
+    let res = client
+        .post(&management_url)
         .header("Content-Type", "application/x-amz-json-1.0")
         .header("Authorization", format!("Bearer {token}"))
-        .header("X-Amz-Target", "AmazonCodeWhispererService.ListAvailableModels")
+        .header(
+            "X-Amz-Target",
+            "AmazonCodeWhispererService.ListAvailableModels",
+        )
         .json(&req_body)
         .send()
         .await
@@ -103,17 +107,23 @@ pub(crate) async fn fetch_kiro_models(
         models: Option<Vec<KiroModel>>,
     }
 
-    let data: ListModelsResponse = res.json()
+    let data: ListModelsResponse = res
+        .json()
         .await
         .map_err(|e| format!("解析 Kiro 模型列表响应失败: {e}"))?;
 
     let re = regex::Regex::new(r"(\d)\.(\d)").unwrap();
-    let models = data.models.unwrap_or_default()
+    let models = data
+        .models
+        .unwrap_or_default()
         .into_iter()
         .map(|m| {
             // 能力驱动：解析 additionalModelRequestFieldsSchema 并写入全局缓存，
             // 键为 Kiro 侧 modelId（与 anthropic_to_kiro 中 map_model_to_kiro 产出一致）。
-            let props = m.additional_schema.as_ref().and_then(|s| s.properties.as_ref());
+            let props = m
+                .additional_schema
+                .as_ref()
+                .and_then(|s| s.properties.as_ref());
             let supports_thinking = props.map(|p| p.thinking.is_some()).unwrap_or(false);
             let supports_effort = props
                 .and_then(|p| p.output_config.as_ref())
@@ -128,7 +138,10 @@ pub(crate) async fn fetch_kiro_models(
                 },
             );
 
-            let mapped_id = re.replace_all(&m.model_id, "$1-$2").into_owned().replace('.', "-");
+            let mapped_id = re
+                .replace_all(&m.model_id, "$1-$2")
+                .into_owned()
+                .replace('.', "-");
             FetchedModel {
                 id: mapped_id,
                 owned_by: Some("Kiro".to_string()),
