@@ -330,6 +330,79 @@ mod tests {
     }
 
     #[test]
+    fn validate_atomcode_settings_rejects_missing_provider_key() {
+        let provider = Provider::with_id(
+            "atomcode-test".into(),
+            "AtomcodeTest".into(),
+            json!({
+                "type": "openai-compatible",
+                "model": "gpt-4o",
+                "api_key": "sk-test",
+                "base_url": "https://api.example.com/v1"
+            }),
+            None,
+        );
+        let err = ProviderService::validate_provider_settings(&AppType::Atomcode, &provider)
+            .expect_err("missing providerKey should be rejected");
+        assert!(
+            matches!(
+                err,
+                AppError::Localized {
+                    key: "provider.atomcode.settings.provider_key_missing",
+                    ..
+                }
+            ),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_atomcode_settings_rejects_empty_provider_key() {
+        let provider = Provider::with_id(
+            "atomcode-test".into(),
+            "AtomcodeTest".into(),
+            json!({
+                "providerKey": "   ",
+                "type": "openai-compatible",
+                "model": "gpt-4o",
+                "api_key": "sk-test",
+                "base_url": "https://api.example.com/v1"
+            }),
+            None,
+        );
+        let err = ProviderService::validate_provider_settings(&AppType::Atomcode, &provider)
+            .expect_err("empty providerKey should be rejected");
+        assert!(
+            matches!(
+                err,
+                AppError::Localized {
+                    key: "provider.atomcode.settings.provider_key_missing",
+                    ..
+                }
+            ),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_atomcode_settings_accepts_valid_provider_key() {
+        let provider = Provider::with_id(
+            "atomcode-test".into(),
+            "AtomcodeTest".into(),
+            json!({
+                "providerKey": "openai",
+                "type": "openai-compatible",
+                "model": "gpt-4o",
+                "api_key": "sk-test",
+                "base_url": "https://api.example.com/v1"
+            }),
+            None,
+        );
+        ProviderService::validate_provider_settings(&AppType::Atomcode, &provider)
+            .expect("valid atomcode settings should be accepted");
+    }
+
+    #[test]
     fn extract_credentials_returns_expected_values() {
         let provider = Provider::with_id(
             "claude".into(),
@@ -2361,6 +2434,21 @@ impl ProviderService {
                         "Atomcode 配置必须是 JSON 对象",
                         "Atomcode configuration must be a JSON object",
                     ));
+                }
+                let provider_key = provider
+                    .settings_config
+                    .get("providerKey")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim());
+                match provider_key {
+                    None | Some("") => {
+                        return Err(AppError::localized(
+                            "provider.atomcode.settings.provider_key_missing",
+                            "Atomcode 配置缺少必填字段 providerKey",
+                            "Atomcode configuration is missing required field `providerKey`",
+                        ));
+                    }
+                    Some(_) => {}
                 }
             }
         }
