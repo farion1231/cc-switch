@@ -3343,12 +3343,16 @@ mod tests {
     #[test]
     fn test_build_exec_line() {
         assert_eq!(
-            build_exec_line("/bin/zsh", "--norcs --no-globalrcs"),
-            "exec '/bin/zsh' --norcs --no-globalrcs"
+            build_exec_line("/bin/zsh", interactive_flags_for_shell("zsh")),
+            "exec '/bin/zsh'"
         );
         assert_eq!(
-            build_exec_line("/bin/bash", "--norc --noprofile"),
-            "exec '/bin/bash' --norc --noprofile"
+            build_exec_line("/bin/bash", interactive_flags_for_shell("bash")),
+            "exec '/bin/bash'"
+        );
+        assert_eq!(
+            build_exec_line("/bin/zsh", "--custom-flag"),
+            "exec '/bin/zsh' --custom-flag"
         );
         assert_eq!(
             build_exec_line("/opt/homebrew dir/bin/fish", ""),
