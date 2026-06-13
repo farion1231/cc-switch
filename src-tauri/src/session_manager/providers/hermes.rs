@@ -137,6 +137,7 @@ fn sqlite_row_to_session_meta(row: &Value, db_source: &str) -> Option<SessionMet
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
         session_id,
+        model_provider: None,
         title,
         summary: None,
         project_dir: cwd,
@@ -418,6 +419,7 @@ fn parse_jsonl_session(path: &Path) -> Option<SessionMeta> {
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
         session_id,
+        model_provider: None,
         title: title.or_else(|| first_user_msg.clone()),
         summary: first_user_msg,
         project_dir: cwd,

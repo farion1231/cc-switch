@@ -44,6 +44,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
             }
             if let Some(meta) = parse_session(&path) {
                 sessions.push(SessionMeta {
+                    model_provider: None,
                     project_dir: project_dir.clone(),
                     ..meta
                 });
@@ -163,6 +164,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
         session_id: session_id.clone(),
+        model_provider: None,
         title: title.clone(),
         summary: title,
         project_dir: None, // (optionally) populated later
