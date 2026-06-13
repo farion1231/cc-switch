@@ -861,6 +861,16 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes"
   },
+  "codexSessions": {
+    "title": "{{name}} Codex Sessions",
+    "subtitle": "Manage Codex conversations visible to this provider.",
+    "empty": "No Codex sessions found.",
+    "shareAll": "Share all",
+    "shareAllDone": "Session shared to all Codex providers.",
+    "modelProvider": "Provider bucket",
+    "visible": "Visible here",
+    "linkedProviders": "Linked providers"
+  },
   "sessionManager": {
     "title": "Session Manager",
     "subtitle": "Manage Claude Code, Codex, OpenCode, OpenClaw, Hermes and Gemini CLI sessions",

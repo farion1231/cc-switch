@@ -861,6 +861,16 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes"
   },
+  "codexSessions": {
+    "title": "{{name}} Codex セッション",
+    "subtitle": "このプロバイダーに表示される Codex の会話を管理します。",
+    "empty": "Codex セッションが見つかりません。",
+    "shareAll": "すべてに共有",
+    "shareAllDone": "セッションをすべての Codex プロバイダーに共有しました。",
+    "modelProvider": "Provider バケット",
+    "visible": "ここに表示",
+    "linkedProviders": "リンク済みプロバイダー"
+  },
   "sessionManager": {
     "title": "セッション管理",
     "subtitle": "Claude Code / Codex / OpenCode / OpenClaw / Hermes / Gemini CLI のセッションを管理",

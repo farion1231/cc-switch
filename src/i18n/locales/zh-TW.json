@@ -832,6 +832,16 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes"
   },
+  "codexSessions": {
+    "title": "{{name}} Codex 工作階段",
+    "subtitle": "管理此供應商可見的 Codex 對話。",
+    "empty": "找不到 Codex 工作階段。",
+    "shareAll": "共享到全部",
+    "shareAllDone": "工作階段已共享到所有 Codex 供應商。",
+    "modelProvider": "Provider 桶",
+    "visible": "目前可見",
+    "linkedProviders": "已綁定供應商"
+  },
   "sessionManager": {
     "title": "工作階段管理",
     "subtitle": "管理 Claude Code、Codex、OpenCode、OpenClaw、Hermes 與 Gemini CLI 工作階段紀錄",
