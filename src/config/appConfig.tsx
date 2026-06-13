@@ -23,6 +23,7 @@ export const APP_IDS: AppId[] = [
   "opencode",
   "openclaw",
   "hermes",
+  "atomcode",
 ];
 
 /** App IDs shown in Skills panels (excludes OpenClaw — it doesn't support Skills) */
@@ -99,6 +100,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       <ProviderIcon
         icon="hermes"
         name="Hermes"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-violet-500/10 ring-1 ring-violet-500/20 hover:bg-violet-500/20 text-violet-600 dark:text-violet-400",
+    badgeClass:
+      "bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 border-0 gap-1.5",
+  },
+  atomcode: {
+    label: "AtomCode",
+    icon: (
+      <ProviderIcon
+        icon="atomcode"
+        name="AtomCode"
         size={14}
         showFallback={false}
       />
