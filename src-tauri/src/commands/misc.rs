@@ -2869,9 +2869,7 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let preferred = crate::settings::get_preferred_terminal();
 
     let shell = get_user_shell();
-    let shell_name = get_shell_name(&shell);
-    let interactive_flags = interactive_flags_for_shell(&shell_name);
-    let exec_line = build_exec_line(&shell, interactive_flags);
+    let exec_line = build_exec_line(&shell);
 
     // Default terminal list with their arguments
     let default_terminals = [
