@@ -42,7 +42,7 @@ impl TaskClassifier {
         let messages = body.get("messages").and_then(|m| m.as_array());
         let tools = body.get("tools").and_then(|t| t.as_array());
 
-        let content_text = extract_text_content(messages);
+        let content_text = extract_text_content(messages, " ");
         let msg_count = messages.map(|m| m.len()).unwrap_or(0);
         let has_image = detect_image(messages);
 
@@ -127,31 +127,8 @@ impl TaskClassifier {
     }
 
     fn extract_text(body: &serde_json::Value) -> String {
-        let Some(messages) = body.get("messages").and_then(|v| v.as_array()) else {
-            return String::new();
-        };
-
-        messages
-            .iter()
-            .filter_map(|message| message.get("content"))
-            .flat_map(|content| {
-                if let Some(s) = content.as_str() {
-                    vec![s.to_string()]
-                } else if let Some(items) = content.as_array() {
-                    items
-                        .iter()
-                        .filter_map(|item| {
-                            item.get("text")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string())
-                        })
-                        .collect()
-                } else {
-                    Vec::new()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+        let messages = body.get("messages").and_then(|v| v.as_array());
+        extract_text_content(messages, "\n")
     }
 
     fn detect_task_type(text: &str, has_tools: bool, has_image: bool) -> TaskType {
@@ -237,29 +214,27 @@ impl TaskClassifier {
     }
 }
 
-fn extract_text_content(messages: Option<&Vec<serde_json::Value>>) -> String {
+fn extract_text_content(messages: Option<&Vec<serde_json::Value>>, separator: &str) -> String {
     let Some(messages) = messages else {
         return String::new();
     };
-    let mut text = String::new();
+    let mut parts: Vec<&str> = Vec::new();
     for msg in messages {
         if let Some(content) = msg.get("content") {
             if let Some(s) = content.as_str() {
-                text.push_str(s);
-                text.push(' ');
+                parts.push(s);
             } else if let Some(arr) = content.as_array() {
                 for block in arr {
                     if block.get("type").and_then(|t| t.as_str()) == Some("text") {
                         if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
-                            text.push_str(t);
-                            text.push(' ');
+                            parts.push(t);
                         }
                     }
                 }
             }
         }
     }
-    text
+    parts.join(separator)
 }
 
 fn detect_image(messages: Option<&Vec<serde_json::Value>>) -> bool {
@@ -388,5 +363,27 @@ mod tests {
         assert!(!profile.has_audio);
         assert!(profile.eligible_for_orchestration);
         assert_eq!(profile.ineligibility_reason, None);
+    }
+
+    #[test]
+    fn classify_detects_requires_exact_format_for_json_instruction() {
+        let body = json!({
+            "stream": false,
+            "messages": [{"role": "user", "content": "Please return JSON only with the schema below."}]
+        });
+
+        let profile = TaskClassifier::classify(&body);
+        assert!(profile.requires_exact_format);
+    }
+
+    #[test]
+    fn classify_does_not_flag_plain_text_as_exact_format() {
+        let body = json!({
+            "stream": false,
+            "messages": [{"role": "user", "content": "Explain how merge sort works."}]
+        });
+
+        let profile = TaskClassifier::classify(&body);
+        assert!(!profile.requires_exact_format);
     }
 }
