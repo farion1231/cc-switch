@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize)]
@@ -174,6 +175,130 @@ fn backup_codex_jsonl_file(
     Ok(())
 }
 
+fn session_id_from_jsonl(path: &Path) -> Result<String, AppError> {
+    let content = fs::read_to_string(path).map_err(|e| AppError::io(path, e))?;
+    for line in content.lines() {
+        if !line.contains("\"session_meta\"") {
+            continue;
+        }
+        let value: Value = serde_json::from_str(line)
+            .map_err(|e| AppError::Config(format!("parse Codex session metadata failed: {e}")))?;
+        if value.get("type").and_then(Value::as_str) == Some("session_meta") {
+            if let Some(id) = value
+                .get("payload")
+                .and_then(|payload| payload.get("id").or_else(|| payload.get("session_id")))
+                .and_then(Value::as_str)
+            {
+                return Ok(id.to_string());
+            }
+        }
+    }
+    Err(AppError::Message(format!(
+        "Codex session id not found in {}",
+        path.display()
+    )))
+}
+
+fn update_state_db_provider_bucket(
+    db_path: &Path,
+    session_id: &str,
+    target_model_provider: &str,
+) -> Result<u32, AppError> {
+    update_state_db_provider_bucket_inner(db_path, session_id, target_model_provider, None, None)
+}
+
+fn update_state_db_provider_bucket_with_backup(
+    db_path: &Path,
+    codex_dir: &Path,
+    backup_root: &Path,
+    session_id: &str,
+    target_model_provider: &str,
+) -> Result<u32, AppError> {
+    update_state_db_provider_bucket_inner(
+        db_path,
+        session_id,
+        target_model_provider,
+        Some(codex_dir),
+        Some(backup_root),
+    )
+}
+
+fn update_state_db_provider_bucket_inner(
+    db_path: &Path,
+    session_id: &str,
+    target_model_provider: &str,
+    codex_dir: Option<&Path>,
+    backup_root: Option<&Path>,
+) -> Result<u32, AppError> {
+    if !db_path.exists() {
+        return Ok(0);
+    }
+    let conn = rusqlite::Connection::open(db_path)
+        .map_err(|e| AppError::Database(format!("open Codex state DB failed: {e}")))?;
+    conn.busy_timeout(Duration::from_secs(5))
+        .map_err(|e| AppError::Database(format!("set Codex state DB timeout failed: {e}")))?;
+
+    if !Database::table_exists(&conn, "threads")?
+        || !Database::has_column(&conn, "threads", "model_provider")?
+    {
+        return Ok(0);
+    }
+
+    let matching_rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM threads WHERE id = ?1 AND model_provider <> ?2",
+            rusqlite::params![session_id, target_model_provider],
+            |row| row.get(0),
+        )
+        .map_err(|e| {
+            AppError::Database(format!(
+                "count Codex state DB provider bucket rows failed: {e}"
+            ))
+        })?;
+    if matching_rows == 0 {
+        return Ok(0);
+    }
+
+    if let (Some(codex_dir), Some(backup_root)) = (codex_dir, backup_root) {
+        backup_codex_state_db_file(db_path, codex_dir, backup_root, &conn)?;
+    }
+
+    let changed = conn
+        .execute(
+            "UPDATE threads SET model_provider = ?1 WHERE id = ?2 AND model_provider <> ?1",
+            rusqlite::params![target_model_provider, session_id],
+        )
+        .map_err(|e| {
+            AppError::Database(format!("update Codex state DB provider bucket failed: {e}"))
+        })?;
+
+    Ok(changed as u32)
+}
+
+fn backup_codex_state_db_file(
+    db_path: &Path,
+    codex_dir: &Path,
+    backup_root: &Path,
+    source_conn: &rusqlite::Connection,
+) -> Result<(), AppError> {
+    let backup_path = backup_root
+        .join(now_nanos().to_string())
+        .join("state")
+        .join(relative_backup_path(db_path, codex_dir));
+    if let Some(parent) = backup_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+    }
+
+    let mut backup_conn = rusqlite::Connection::open(&backup_path)
+        .map_err(|e| AppError::Database(format!("create Codex state DB backup failed: {e}")))?;
+    let backup = rusqlite::backup::Backup::new(source_conn, &mut backup_conn)
+        .map_err(|e| AppError::Database(format!("initialize Codex state DB backup failed: {e}")))?;
+    backup
+        .run_to_completion(5, Duration::from_millis(25), None)
+        .map_err(|e| AppError::Database(format!("write Codex state DB backup failed: {e}")))?;
+    Ok(())
+}
+
 fn relative_backup_path(path: &Path, codex_dir: &Path) -> PathBuf {
     let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let canonical_codex_dir = codex_dir
@@ -235,16 +360,26 @@ pub fn sync_codex_session_visibility(
         .join("backups")
         .join("codex-session-sharing");
     let source_path = PathBuf::from(source_path);
+    let validated_source = validate_codex_session_source_path(&codex_dir, &source_path)?;
+    let session_id = session_id_from_jsonl(&validated_source)?;
     let rewrite = rewrite_jsonl_session_provider_bucket(
-        &source_path,
+        &validated_source,
         &codex_dir,
         &backup_root,
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+    )?;
+    let state_db_path = codex_dir.join("state_5.sqlite");
+    let changed_state_rows = update_state_db_provider_bucket_with_backup(
+        &state_db_path,
+        &codex_dir,
+        &backup_root,
+        &session_id,
         CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
     )?;
 
     Ok(CodexVisibilitySyncResult {
         changed_jsonl_files: u32::from(rewrite.changed),
-        changed_state_rows: 0,
+        changed_state_rows,
         skipped: Vec::new(),
         warnings: Vec::new(),
     })
@@ -428,6 +563,37 @@ mod tests {
             visible[0].linked_provider_ids,
             vec!["provider-a".to_string()]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn updates_codex_state_db_thread_provider_bucket() -> Result<(), AppError> {
+        let root = tempdir().expect("root");
+        let db_path = root.path().join("state_5.sqlite");
+        {
+            let conn = rusqlite::Connection::open(&db_path).expect("open state");
+            conn.execute(
+                "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL)",
+                [],
+            )
+            .expect("create threads");
+            conn.execute(
+                "INSERT INTO threads (id, model_provider) VALUES ('session-1', 'old-provider')",
+                [],
+            )
+            .expect("insert thread");
+        }
+
+        let changed = update_state_db_provider_bucket(&db_path, "session-1", "custom")?;
+        assert_eq!(changed, 1);
+
+        let conn = rusqlite::Connection::open(&db_path).expect("open state");
+        let provider: String = conn.query_row(
+            "SELECT model_provider FROM threads WHERE id = 'session-1'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(provider, "custom");
         Ok(())
     }
 }
