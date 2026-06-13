@@ -19,7 +19,7 @@ pub enum ModelCapability {
 /// Produced by [`ProviderModelResolver::resolve_role`] by walking a configured
 /// provider map and selecting the first provider whose inferred capabilities
 /// satisfy `required` and whose identity matches the requested role.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ResolvedModelCallTarget {
     pub role: String,
     pub provider_id: String,
@@ -29,6 +29,21 @@ pub struct ResolvedModelCallTarget {
     pub base_url: String,
     pub api_key: String,
     pub capabilities: HashSet<ModelCapability>,
+}
+
+impl std::fmt::Debug for ResolvedModelCallTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResolvedModelCallTarget")
+            .field("role", &self.role)
+            .field("provider_id", &self.provider_id)
+            .field("provider_name", &self.provider_name)
+            .field("provider_type", &self.provider_type)
+            .field("model", &self.model)
+            .field("base_url", &self.base_url)
+            .field("api_key", &"<redacted>")
+            .field("capabilities", &self.capabilities)
+            .finish()
+    }
 }
 
 /// Resolves logical orchestration role names (e.g. `frontier`, `cheap_coder`)
@@ -127,7 +142,12 @@ fn role_matches_provider(role: &str, provider: &Provider) -> bool {
     }
 }
 
-/// Infer capability tags from a provider's id/name/settings via substring match.
+/// Infer capabilities from provider name/id/config using substring heuristics.
+///
+/// This is a deliberate stopgap: the `Provider` struct does not yet carry a structured
+/// capabilities field. Replace this with structured capability lookup once Provider grows
+/// that field. Known false positives: a provider named "gpt-handler-service" gets Json
+/// capability because "gpt" is a substring.
 ///
 /// `Text` is always inferred — any provider in the map is assumed able to emit
 /// plain text. Other capabilities require explicit keyword evidence.
@@ -223,14 +243,30 @@ fn extract_model(provider: &Provider) -> Option<String> {
 /// concatenate paths.
 fn extract_base_url(provider: &Provider) -> Option<String> {
     let env = provider.settings_config.get("env");
-    env.and_then(|v| v.get("ANTHROPIC_BASE_URL"))
+    let explicit = env
+        .and_then(|v| v.get("ANTHROPIC_BASE_URL"))
         .or_else(|| env.and_then(|v| v.get("OPENAI_BASE_URL")))
         .or_else(|| env.and_then(|v| v.get("BASE_URL")))
         .or_else(|| provider.settings_config.get("baseUrl"))
         .or_else(|| provider.settings_config.get("base_url"))
         .and_then(|v| v.as_str())
-        .map(|s| s.trim_end_matches('/').to_string())
-        .or_else(|| provider.website_url.clone())
+        .map(|s| s.trim_end_matches('/').to_string());
+
+    if let Some(url) = explicit {
+        return Some(url);
+    }
+
+    if let Some(homepage) = provider.website_url.clone() {
+        log::warn!(
+            "Provider '{}' has no explicit API base URL; falling back to website_url '{}'. \
+             If this is not an API endpoint, set ANTHROPIC_BASE_URL / OPENAI_BASE_URL explicitly.",
+            provider.id,
+            homepage
+        );
+        return Some(homepage);
+    }
+
+    None
 }
 
 /// Extract the API key from common env/settings keys, in priority order.
@@ -330,5 +366,153 @@ mod tests {
         .unwrap_err();
 
         assert!(err.contains("capability"));
+    }
+
+    #[test]
+    fn build_target_errors_when_model_missing() {
+        let mut providers = IndexMap::new();
+        let mut p = Provider::with_id(
+            "claude-no-model".to_string(),
+            "Provider claude-no-model".to_string(),
+            json!({"env": {"ANTHROPIC_API_KEY": "sk", "ANTHROPIC_BASE_URL": "https://api.x.com"}}),
+            Some("https://api.x.com".to_string()),
+        );
+        p.meta = Some(ProviderMeta {
+            provider_type: Some("anthropic".to_string()),
+            ..ProviderMeta::default()
+        });
+        providers.insert("claude-no-model".to_string(), p);
+
+        let err = ProviderModelResolver::resolve_role("frontier", &providers, &[ModelCapability::Text])
+            .unwrap_err();
+        assert!(err.contains("model"), "error should mention model: {err}");
+    }
+
+    #[test]
+    fn build_target_errors_when_base_url_missing() {
+        let mut providers = IndexMap::new();
+        let mut p = Provider::with_id(
+            "claude-no-url".to_string(),
+            "Provider claude-no-url".to_string(),
+            json!({"env": {"ANTHROPIC_API_KEY": "sk", "ANTHROPIC_MODEL": "claude-1"}}),
+            None,
+        );
+        p.meta = Some(ProviderMeta {
+            provider_type: Some("anthropic".to_string()),
+            ..ProviderMeta::default()
+        });
+        providers.insert("claude-no-url".to_string(), p);
+
+        let err = ProviderModelResolver::resolve_role("frontier", &providers, &[ModelCapability::Text])
+            .unwrap_err();
+        assert!(
+            err.contains("base URL") || err.contains("base_url"),
+            "error should mention base URL: {err}"
+        );
+    }
+
+    #[test]
+    fn build_target_errors_when_api_key_missing() {
+        let mut providers = IndexMap::new();
+        let mut p = Provider::with_id(
+            "claude-no-key".to_string(),
+            "Provider claude-no-key".to_string(),
+            json!({"env": {"ANTHROPIC_BASE_URL": "https://api.x.com", "ANTHROPIC_MODEL": "claude-1"}}),
+            Some("https://api.x.com".to_string()),
+        );
+        p.meta = Some(ProviderMeta {
+            provider_type: Some("anthropic".to_string()),
+            ..ProviderMeta::default()
+        });
+        providers.insert("claude-no-key".to_string(), p);
+
+        let err = ProviderModelResolver::resolve_role("frontier", &providers, &[ModelCapability::Text])
+            .unwrap_err();
+        assert!(
+            err.contains("API key") || err.contains("api_key"),
+            "error should mention API key: {err}"
+        );
+    }
+
+    #[test]
+    fn skips_providers_in_failover_queue() {
+        let mut providers = IndexMap::new();
+        let healthy = provider(
+            "claude-healthy",
+            "anthropic",
+            "claude-A",
+            "https://api.a.com",
+            "sk-a",
+        );
+        let mut failing = provider(
+            "claude-failing",
+            "anthropic",
+            "claude-B",
+            "https://api.b.com",
+            "sk-b",
+        );
+        failing.in_failover_queue = true;
+        // Insert failing FIRST to verify the filter doesn't just pick first-inserted
+        providers.insert("claude-failing".to_string(), failing);
+        providers.insert("claude-healthy".to_string(), healthy);
+
+        let target =
+            ProviderModelResolver::resolve_role("frontier", &providers, &[ModelCapability::Text])
+                .unwrap();
+        assert_eq!(target.provider_id, "claude-healthy");
+    }
+
+    #[test]
+    fn breaks_ties_deterministically_by_id_when_sort_index_equal() {
+        let mut providers = IndexMap::new();
+        // Insert in non-alphabetical order; both have no sort_index (defaults to usize::MAX)
+        providers.insert(
+            "zeta-claude".to_string(),
+            provider(
+                "zeta-claude",
+                "anthropic",
+                "claude-Z",
+                "https://api.z.com",
+                "sk-z",
+            ),
+        );
+        providers.insert(
+            "alpha-claude".to_string(),
+            provider(
+                "alpha-claude",
+                "anthropic",
+                "claude-A",
+                "https://api.a.com",
+                "sk-a",
+            ),
+        );
+
+        let target =
+            ProviderModelResolver::resolve_role("frontier", &providers, &[ModelCapability::Text])
+                .unwrap();
+        assert_eq!(
+            target.provider_id, "alpha-claude",
+            "ties should break by id ascending"
+        );
+    }
+
+    #[test]
+    fn debug_impl_redacts_api_key() {
+        let p = provider(
+            "claude-debug",
+            "anthropic",
+            "claude-1",
+            "https://api.x.com",
+            "sk-super-secret-key",
+        );
+        let target =
+            ProviderModelResolver::resolve_role("frontier", &IndexMap::from([("claude-debug".to_string(), p)]), &[ModelCapability::Text])
+                .unwrap();
+        let dbg = format!("{target:?}");
+        assert!(
+            !dbg.contains("sk-super-secret-key"),
+            "Debug output must not leak api_key: {dbg}"
+        );
+        assert!(dbg.contains("<redacted>"), "Debug output should mark redaction: {dbg}");
     }
 }
