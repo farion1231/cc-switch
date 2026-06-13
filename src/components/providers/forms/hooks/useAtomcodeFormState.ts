@@ -3,6 +3,9 @@ import type { AppId } from "@/lib/api";
 import { useProvidersQuery } from "@/lib/query/queries";
 import type { AtomcodeProviderSettingsConfig } from "@/config/atomcodeProviderPresets";
 
+type AtomcodeType = "openai" | "claude" | "ollama";
+const VALID_ATOMCODE_TYPES: readonly AtomcodeType[] = ["openai", "claude", "ollama"];
+
 interface UseAtomcodeFormStateParams {
   initialData?: {
     settingsConfig?: Record<string, unknown>;
@@ -28,7 +31,7 @@ export const ATOMCODE_DEFAULT_CONFIG = JSON.stringify(
 export interface AtomcodeFormState {
   atomcodeProviderKey: string;
   setAtomcodeProviderKey: (key: string) => void;
-  atomcodeType: "openai" | "claude" | "ollama";
+  atomcodeType: AtomcodeType;
   atomcodeModel: string;
   atomcodeApiKey: string;
   atomcodeBaseUrl: string;
@@ -36,7 +39,7 @@ export interface AtomcodeFormState {
   atomcodeThinkingEnabled: boolean;
   atomcodeThinkingBudget: number | undefined;
   existingAtomcodeKeys: string[];
-  handleAtomcodeTypeChange: (type: "openai" | "claude" | "ollama") => void;
+  handleAtomcodeTypeChange: (type: AtomcodeType) => void;
   handleAtomcodeModelChange: (model: string) => void;
   handleAtomcodeApiKeyChange: (apiKey: string) => void;
   handleAtomcodeBaseUrlChange: (baseUrl: string) => void;
@@ -84,13 +87,12 @@ export function useAtomcodeFormState({
     return providerId || parseAtomcodeField(initialData, "providerKey", "");
   });
 
-  const [atomcodeType, setAtomcodeType] = useState<"openai" | "claude" | "ollama">(() => {
+  const [atomcodeType, setAtomcodeType] = useState<AtomcodeType>(() => {
     if (appId !== "atomcode") return "openai";
-    return parseAtomcodeField<"openai" | "claude" | "ollama">(
-      initialData,
-      "type",
-      "openai",
-    );
+    const rawType = parseAtomcodeField(initialData, "type", "openai");
+    return (VALID_ATOMCODE_TYPES as readonly string[]).includes(rawType)
+      ? (rawType as AtomcodeType)
+      : "openai";
   });
 
   const [atomcodeModel, setAtomcodeModel] = useState<string>(() => {
@@ -170,7 +172,7 @@ export function useAtomcodeFormState({
   );
 
   const handleAtomcodeTypeChange = useCallback(
-    (type: "openai" | "claude" | "ollama") => {
+    (type: AtomcodeType) => {
       setAtomcodeType(type);
       buildAndEmitConfig({ type });
     },
@@ -235,7 +237,12 @@ export function useAtomcodeFormState({
       >,
     ) => {
       setAtomcodeProviderKey(config?.providerKey || "");
-      setAtomcodeType(config?.type ?? "openai");
+      const rawResetType = config?.type ?? "openai";
+      setAtomcodeType(
+        (VALID_ATOMCODE_TYPES as readonly string[]).includes(rawResetType)
+          ? (rawResetType as AtomcodeType)
+          : "openai",
+      );
       setAtomcodeModel(config?.model || "");
       setAtomcodeApiKey(config?.api_key || "");
       setAtomcodeBaseUrl(config?.base_url || "");

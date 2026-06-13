@@ -1117,6 +1117,14 @@ function ProviderFormFull({
         );
         return;
       }
+      if (!atomcodeForm.atomcodeModel.trim()) {
+        toast.error(
+          t("atomcode.form.modelRequired", {
+            defaultValue: "请填写模型名称",
+          }),
+        );
+        return;
+      }
     }
 
     // OAuth 未登录：B 类（token 根本不存在，保存了也没法建立）
@@ -1604,6 +1612,20 @@ function ProviderFormFull({
     partnerPromotionKey: hermesPartnerPromotionKey,
   } = useApiKeyLink({
     appId: "hermes",
+    category,
+    selectedPresetId,
+    presetEntries,
+    formWebsiteUrl: form.watch("websiteUrl") || "",
+  });
+
+  // 使用 API Key 链接 hook (AtomCode)
+  const {
+    shouldShowApiKeyLink: shouldShowAtomcodeApiKeyLink,
+    websiteUrl: atomcodeWebsiteUrl,
+    isPartner: isAtomcodePartner,
+    partnerPromotionKey: atomcodePartnerPromotionKey,
+  } = useApiKeyLink({
+    appId: "atomcode",
     category,
     selectedPresetId,
     presetEntries,
@@ -2370,8 +2392,10 @@ function ProviderFormFull({
               apiKey={atomcodeForm.atomcodeApiKey}
               onApiKeyChange={atomcodeForm.handleAtomcodeApiKeyChange}
               category={category}
-              shouldShowApiKeyLink={false}
-              websiteUrl=""
+              shouldShowApiKeyLink={shouldShowAtomcodeApiKeyLink}
+              websiteUrl={atomcodeWebsiteUrl}
+              isPartner={isAtomcodePartner}
+              partnerPromotionKey={atomcodePartnerPromotionKey}
               baseUrl={atomcodeForm.atomcodeBaseUrl}
               onBaseUrlChange={atomcodeForm.handleAtomcodeBaseUrlChange}
               contextWindow={atomcodeForm.atomcodeContextWindow}
@@ -2475,9 +2499,7 @@ function ProviderFormFull({
               </div>
               {settingsConfigErrorField}
             </>
-          ) : appId === "openclaw" ||
-            appId === "hermes" ||
-            appId === "atomcode" ? (
+          ) : appId === "openclaw" || appId === "hermes" ? (
             <>
               <div className="space-y-2">
                 <Label htmlFor="settingsConfig">
@@ -2493,15 +2515,7 @@ function ProviderFormFull({
   "base_url": "https://api.example.com/v1",
   "api_key": ""
 }`
-                      : appId === "atomcode"
-                        ? `{
-  "providerKey": "my-provider",
-  "type": "openai",
-  "model": "gpt-4o",
-  "api_key": "your-api-key-here",
-  "base_url": "https://api.openai.com/v1"
-}`
-                        : `{
+                      : `{
   "baseUrl": "https://api.example.com/v1",
   "apiKey": "your-api-key-here",
   "api": "openai-completions",
@@ -2523,7 +2537,7 @@ function ProviderFormFull({
                 )}
               />
             </>
-          ) : (
+          ) : appId === "atomcode" ? null : (
             <>
               <CommonConfigEditor
                 value={form.getValues("settingsConfig")}
