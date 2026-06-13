@@ -2138,6 +2138,7 @@
       "allRepos": "All repos"
     },
     "noResults": "No matching skills found",
+    "searchInstalledPlaceholder": "Search installed skills...",
     "noInstalled": "No skills installed",
     "noInstalledDescription": "Discover and install skills from repositories, or import existing skills",
     "discover": "Discover Skills",

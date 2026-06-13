@@ -2138,6 +2138,7 @@
       "allRepos": "全部仓库"
     },
     "noResults": "未找到匹配的技能",
+    "searchInstalledPlaceholder": "搜索已安装的技能...",
     "noInstalled": "暂无已安装的技能",
     "noInstalledDescription": "从仓库发现并安装技能，或导入已有的技能",
     "discover": "发现技能",

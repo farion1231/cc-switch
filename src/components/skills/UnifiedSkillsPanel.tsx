@@ -6,8 +6,10 @@ import {
   ExternalLink,
   RefreshCw,
   Loader2,
+  Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
@@ -79,6 +81,7 @@ const UnifiedSkillsPanel = React.forwardRef<
   } | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const { data: skills, isLoading } = useInstalledSkills();
   const {
@@ -130,6 +133,21 @@ const UnifiedSkillsPanel = React.forwardRef<
     });
     return counts;
   }, [skills]);
+
+  const filteredSkills = useMemo(() => {
+    if (!skills) return [];
+    const query = searchQuery.toLowerCase().trim();
+    if (!query) return skills;
+    return skills.filter((skill) => {
+      const name = skill.name?.toLowerCase() || "";
+      const desc = skill.description?.toLowerCase() || "";
+      const source =
+        skill.repoOwner && skill.repoName
+          ? `${skill.repoOwner}/${skill.repoName}`.toLowerCase()
+          : "";
+      return name.includes(query) || desc.includes(query) || source.includes(query);
+    });
+  }, [skills, searchQuery]);
 
   const handleToggleApp = async (id: string, app: AppId, enabled: boolean) => {
     try {
@@ -346,60 +364,7 @@ const UnifiedSkillsPanel = React.forwardRef<
 
   return (
     <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
-      <div className="flex items-center justify-between">
-        <AppCountBar
-          totalLabel={t("skills.installed", { count: skills?.length || 0 })}
-          counts={enabledCounts}
-          appIds={SKILLS_APP_IDS}
-        />
-        <div className="flex items-center gap-1.5">
-          <div
-            className="transition-all duration-300 ease-out overflow-hidden"
-            style={{
-              maxWidth:
-                skillUpdates && skillUpdates.length > 0 ? "200px" : "0px",
-              opacity: skillUpdates && skillUpdates.length > 0 ? 1 : 0,
-            }}
-          >
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs gap-1 whitespace-nowrap"
-              onClick={handleUpdateAll}
-              disabled={isUpdatingAll || updateSkillMutation.isPending}
-            >
-              {isUpdatingAll ? (
-                <Loader2 size={12} className="animate-spin" />
-              ) : (
-                <RefreshCw size={12} />
-              )}
-              {isUpdatingAll
-                ? t("skills.updatingAll")
-                : t("skills.updateAll", { count: skillUpdates?.length ?? 0 })}
-            </Button>
-          </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs gap-1"
-            onClick={handleCheckUpdates}
-            disabled={isCheckingUpdates || !skills || skills.length === 0}
-          >
-            {isCheckingUpdates ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <RefreshCw size={12} />
-            )}
-            {isCheckingUpdates
-              ? t("skills.checkingUpdates")
-              : t("skills.checkUpdates")}
-          </Button>
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden pb-4 mt-2 flex flex-col">
         {isLoading ? (
           <div className="text-center py-12 text-muted-foreground">
             {t("skills.loading")}
@@ -418,22 +383,101 @@ const UnifiedSkillsPanel = React.forwardRef<
           </div>
         ) : (
           <TooltipProvider delayDuration={300}>
-            <div className="rounded-xl border border-border-default overflow-hidden">
-              {skills.map((skill, index) => (
-                <InstalledSkillListItem
-                  key={skill.id}
-                  skill={skill}
-                  hasUpdate={!!updatesMap[skill.id]}
-                  isUpdating={
-                    updateSkillMutation.isPending &&
-                    updateSkillMutation.variables === skill.id
-                  }
-                  onToggleApp={handleToggleApp}
-                  onUninstall={() => handleUninstall(skill)}
-                  onUpdate={() => handleUpdateSkill(skill)}
-                  isLast={index === skills.length - 1}
+            <div className="rounded-xl border border-border-default overflow-hidden flex-1">
+              <div className="flex items-center justify-between px-4 py-2 border-b border-border-default">
+                <AppCountBar
+                  totalLabel={t("skills.installed", {
+                    count: skills?.length || 0,
+                  })}
+                  counts={enabledCounts}
+                  appIds={SKILLS_APP_IDS}
                 />
-              ))}
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <div
+                    className="transition-all duration-300 ease-out overflow-hidden"
+                    style={{
+                      maxWidth:
+                        skillUpdates && skillUpdates.length > 0
+                          ? "200px"
+                          : "0px",
+                      opacity:
+                        skillUpdates && skillUpdates.length > 0 ? 1 : 0,
+                    }}
+                  >
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs gap-1 whitespace-nowrap"
+                      onClick={handleUpdateAll}
+                      disabled={isUpdatingAll || updateSkillMutation.isPending}
+                    >
+                      {isUpdatingAll ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        <RefreshCw size={12} />
+                      )}
+                      {isUpdatingAll
+                        ? t("skills.updatingAll")
+                        : t("skills.updateAll", {
+                            count: skillUpdates?.length ?? 0,
+                          })}
+                    </Button>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs gap-1"
+                    onClick={handleCheckUpdates}
+                    disabled={
+                      isCheckingUpdates || !skills || skills.length === 0
+                    }
+                  >
+                    {isCheckingUpdates ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : (
+                      <RefreshCw size={12} />
+                    )}
+                    {isCheckingUpdates
+                      ? t("skills.checkingUpdates")
+                      : t("skills.checkUpdates")}
+                  </Button>
+                </div>
+              </div>
+              <div className="relative border-b border-border-default">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  type="text"
+                  placeholder={t("skills.searchInstalledPlaceholder")}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10 pr-3 border-0 shadow-none rounded-none focus:ring-0 h-10"
+                />
+              </div>
+              {filteredSkills.length === 0 ? (
+                <div className="text-center py-12">
+                  <p className="text-sm text-muted-foreground">
+                    {t("skills.noResults")}
+                  </p>
+                </div>
+              ) : (
+                filteredSkills.map((skill, index) => (
+                  <InstalledSkillListItem
+                    key={skill.id}
+                    skill={skill}
+                    hasUpdate={!!updatesMap[skill.id]}
+                    isUpdating={
+                      updateSkillMutation.isPending &&
+                      updateSkillMutation.variables === skill.id
+                    }
+                    onToggleApp={handleToggleApp}
+                    onUninstall={() => handleUninstall(skill)}
+                    onUpdate={() => handleUpdateSkill(skill)}
+                    isLast={index === filteredSkills.length - 1}
+                  />
+                ))
+              )}
             </div>
           </TooltipProvider>
         )}

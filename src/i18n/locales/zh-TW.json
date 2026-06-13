@@ -2110,6 +2110,7 @@
       "allRepos": "全部儲存庫"
     },
     "noResults": "未找到相符的技能",
+    "searchInstalledPlaceholder": "搜尋已安裝的技能...",
     "noInstalled": "暫無已安裝的技能",
     "noInstalledDescription": "從儲存庫發現並安裝技能，或匯入已有的技能",
     "discover": "發現技能",

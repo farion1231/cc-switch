@@ -2138,6 +2138,7 @@
       "allRepos": "すべてのリポジトリ"
     },
     "noResults": "一致するスキルが見つかりませんでした",
+    "searchInstalledPlaceholder": "インストール済みスキルを検索...",
     "noInstalled": "インストールされたスキルがありません",
     "noInstalledDescription": "リポジトリからスキルを発見してインストールするか、既存のスキルをインポートしてください",
     "discover": "スキルを発見",
