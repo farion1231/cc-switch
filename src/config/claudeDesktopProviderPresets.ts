@@ -150,6 +150,22 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#D4915D",
   },
   {
+    name: "腾讯云",
+    websiteUrl: "https://console.cloud.tencent.com/tokenhub/models",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/apikey",
+    category: "cn_official",
+    baseUrl: "https://tokenhub.tencentmaas.com",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "deepseek-v4-pro-202606",
+      "deepseek-v4-pro-202606",
+      "deepseek-v4-flash-202605",
+    ),
+    icon: "tencent",
+    iconColor: "#006EFF",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
