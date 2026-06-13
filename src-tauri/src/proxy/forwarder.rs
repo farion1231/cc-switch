@@ -1350,7 +1350,7 @@ impl RequestForwarder {
                 .await;
             if restored > 0 {
                 log::debug!(
-                    "[Codex] Restored {restored} cached function call(s) for Chat upstream"
+                    "[Codex] Restored or enriched {restored} cached function call item(s) for Chat upstream"
                 );
             }
             super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
