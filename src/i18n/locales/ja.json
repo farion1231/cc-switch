@@ -1622,6 +1622,8 @@
     "editCodexServer": "Codex MCP を編集",
     "configPath": "設定パス",
     "serverCount": "MCP サーバー: {{count}} 件",
+    "searchPlaceholder": "MCP サーバーを検索...",
+    "noResults": "一致するサーバーが見つかりませんでした",
     "enabledCount": "{{count}} 件が有効",
     "template": {
       "fetch": "クイックテンプレート: mcp-fetch"
@@ -2138,6 +2140,7 @@
       "allRepos": "すべてのリポジトリ"
     },
     "noResults": "一致するスキルが見つかりませんでした",
+    "searchInstalledPlaceholder": "インストール済みスキルを検索...",
     "noInstalled": "インストールされたスキルがありません",
     "noInstalledDescription": "リポジトリからスキルを発見してインストールするか、既存のスキルをインポートしてください",
     "discover": "スキルを発見",

@@ -14,6 +14,12 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { AppId } from "@/lib/api";
 
@@ -227,145 +233,233 @@ export function ProviderActions({
   });
 
   return (
-    <div className="flex items-center gap-1.5">
-      {(appId === "openclaw" || appId === "hermes") &&
-        isInConfig &&
-        onSetAsDefault &&
-        (() => {
-          const activeLabel =
-            appId === "hermes"
-              ? t("provider.inUse", { defaultValue: "已在用" })
-              : t("provider.isDefault", { defaultValue: "当前默认" });
-          const inactiveLabel =
-            appId === "hermes"
-              ? t("provider.enable", { defaultValue: "启用" })
-              : t("provider.setAsDefault", { defaultValue: "设为默认" });
-          return (
-            <Button
-              size="sm"
-              variant={isDefaultModel ? "secondary" : "default"}
-              onClick={isDefaultModel ? undefined : onSetAsDefault}
-              disabled={isDefaultModel}
-              className={cn(
-                "w-fit px-2.5",
-                isDefaultModel
-                  ? "bg-gray-200 text-muted-foreground dark:bg-gray-700 opacity-60 cursor-not-allowed"
-                  : "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
-              )}
-            >
-              <Zap className="h-4 w-4" />
-              {isDefaultModel ? activeLabel : inactiveLabel}
-            </Button>
-          );
-        })()}
+    <TooltipProvider delayDuration={300}>
+      <div className="flex items-center gap-1.5">
+        {(appId === "openclaw" || appId === "hermes") &&
+          isInConfig &&
+          onSetAsDefault &&
+          (() => {
+            const activeLabel =
+              appId === "hermes"
+                ? t("provider.inUse", { defaultValue: "已在用" })
+                : t("provider.isDefault", { defaultValue: "当前默认" });
+            const inactiveLabel =
+              appId === "hermes"
+                ? t("provider.enable", { defaultValue: "启用" })
+                : t("provider.setAsDefault", { defaultValue: "设为默认" });
+            return (
+              <Button
+                size="sm"
+                variant={isDefaultModel ? "secondary" : "default"}
+                onClick={isDefaultModel ? undefined : onSetAsDefault}
+                disabled={isDefaultModel}
+                className={cn(
+                  "w-fit px-2.5",
+                  isDefaultModel
+                    ? "bg-gray-200 text-muted-foreground dark:bg-gray-700 opacity-60 cursor-not-allowed"
+                    : "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
+                )}
+              >
+                <Zap className="h-4 w-4" />
+                {isDefaultModel ? activeLabel : inactiveLabel}
+              </Button>
+            );
+          })()}
 
-      {/* wrapper span 承接 hover：disabled 按钮自身 pointer-events:none，
-          原生 title 与 cursor 都必须挂在未禁用的外层元素上才会生效 */}
-      <span
-        title={buttonState.title}
-        className={cn(
-          "inline-flex",
-          buttonState.disabled && "cursor-not-allowed",
-        )}
-      >
-        <Button
-          size="sm"
-          variant={buttonState.variant}
-          onClick={handleMainButtonClick}
-          disabled={buttonState.disabled}
-          className={cn("w-[4.5rem] px-2.5", buttonState.className)}
-        >
-          {buttonState.icon}
-          {buttonState.text}
-        </Button>
-      </span>
-
-      <div className="flex items-center gap-1">
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={isReadOnly ? undefined : onEdit}
-          disabled={isReadOnly}
-          title={isReadOnly ? readOnlyHint : t("common.edit")}
-          className={cn(
-            iconButtonClass,
-            isReadOnly && "opacity-40 cursor-not-allowed text-muted-foreground",
-          )}
-        >
-          <Edit className="h-4 w-4" />
-        </Button>
-
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={onDuplicate}
-          title={t("provider.duplicate")}
-          className={iconButtonClass}
-        >
-          <Copy className="h-4 w-4" />
-        </Button>
-
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={onTest || undefined}
-          disabled={isTesting}
-          title={t("modelTest.testProvider", "测试模型")}
-          className={cn(
-            iconButtonClass,
-            !onTest && "opacity-40 cursor-not-allowed text-muted-foreground",
-          )}
-        >
-          {isTesting ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <TestTube2 className="h-4 w-4" />
-          )}
-        </Button>
-
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={onConfigureUsage || undefined}
-          title={t("provider.configureUsage")}
-          className={cn(
-            iconButtonClass,
-            !onConfigureUsage &&
-              "opacity-40 cursor-not-allowed text-muted-foreground",
-          )}
-        >
-          <BarChart3 className="h-4 w-4" />
-        </Button>
-
-        {onOpenTerminal && (
-          <Button
-            size="icon"
-            variant="ghost"
-            onClick={onOpenTerminal}
-            title={t("provider.openTerminal", "打开终端")}
+        {buttonState.title ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className={cn(
+                  "inline-flex",
+                  buttonState.disabled && "cursor-not-allowed",
+                )}
+              >
+                <Button
+                  size="sm"
+                  variant={buttonState.variant}
+                  onClick={handleMainButtonClick}
+                  disabled={buttonState.disabled}
+                  className={cn("w-[4.5rem] px-2.5", buttonState.className)}
+                >
+                  {buttonState.icon}
+                  {buttonState.text}
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{buttonState.title}</TooltipContent>
+          </Tooltip>
+        ) : (
+          <span
             className={cn(
-              iconButtonClass,
-              "hover:text-emerald-600 dark:hover:text-emerald-400",
+              "inline-flex",
+              buttonState.disabled && "cursor-not-allowed",
             )}
           >
-            <Terminal className="h-4 w-4" />
-          </Button>
+            <Button
+              size="sm"
+              variant={buttonState.variant}
+              onClick={handleMainButtonClick}
+              disabled={buttonState.disabled}
+              className={cn("w-[4.5rem] px-2.5", buttonState.className)}
+            >
+              {buttonState.icon}
+              {buttonState.text}
+            </Button>
+          </span>
         )}
 
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={canDelete ? onDelete : undefined}
-          title={isReadOnly ? readOnlyHint : t("common.delete")}
-          className={cn(
-            iconButtonClass,
-            canDelete && "hover:text-red-500 dark:hover:text-red-400",
-            !canDelete && "opacity-40 cursor-not-allowed text-muted-foreground",
+        <div className="flex items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className={cn(
+                  "inline-flex",
+                  isReadOnly && "cursor-not-allowed",
+                )}
+              >
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={isReadOnly ? undefined : onEdit}
+                  disabled={isReadOnly}
+                  className={cn(
+                    iconButtonClass,
+                    isReadOnly &&
+                      "opacity-40 cursor-not-allowed text-muted-foreground",
+                  )}
+                >
+                  <Edit className="h-4 w-4" />
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {isReadOnly ? readOnlyHint : t("common.edit")}
+            </TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={onDuplicate}
+                className={iconButtonClass}
+              >
+                <Copy className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {t("provider.duplicate")}
+            </TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className={cn("inline-flex", !onTest && "cursor-not-allowed")}
+              >
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={onTest || undefined}
+                  disabled={isTesting}
+                  className={cn(
+                    iconButtonClass,
+                    !onTest &&
+                      "opacity-40 cursor-not-allowed text-muted-foreground",
+                  )}
+                >
+                  {isTesting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <TestTube2 className="h-4 w-4" />
+                  )}
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {t("modelTest.testProvider", "测试模型")}
+            </TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className={cn(
+                  "inline-flex",
+                  !onConfigureUsage && "cursor-not-allowed",
+                )}
+              >
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={onConfigureUsage || undefined}
+                  className={cn(
+                    iconButtonClass,
+                    !onConfigureUsage &&
+                      "opacity-40 cursor-not-allowed text-muted-foreground",
+                  )}
+                >
+                  <BarChart3 className="h-4 w-4" />
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {t("provider.configureUsage")}
+            </TooltipContent>
+          </Tooltip>
+
+          {onOpenTerminal && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={onOpenTerminal}
+                  className={cn(
+                    iconButtonClass,
+                    "hover:text-emerald-600 dark:hover:text-emerald-400",
+                  )}
+                >
+                  <Terminal className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {t("provider.openTerminal", "打开终端")}
+              </TooltipContent>
+            </Tooltip>
           )}
-        >
-          <Trash2 className="h-4 w-4" />
-        </Button>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className={cn(
+                  "inline-flex",
+                  !canDelete && "cursor-not-allowed",
+                )}
+              >
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={canDelete ? onDelete : undefined}
+                  className={cn(
+                    iconButtonClass,
+                    canDelete && "hover:text-red-500 dark:hover:text-red-400",
+                    !canDelete &&
+                      "opacity-40 cursor-not-allowed text-muted-foreground",
+                  )}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {isReadOnly ? readOnlyHint : t("common.delete")}
+            </TooltipContent>
+          </Tooltip>
+        </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }
