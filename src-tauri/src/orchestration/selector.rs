@@ -1,6 +1,21 @@
 use crate::orchestration::classifier::{RiskLevel, TaskProfile, TaskType};
 use crate::orchestration::config::{OrchestrationConfig, StrategyAction};
 
+#[derive(Debug, Clone)]
+pub struct SelectionDecision {
+    pub strategy_name: String,
+    pub action: StrategyAction,
+    pub score: f64,
+    pub priority: i32,
+    pub rejected: Vec<RejectedStrategy>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RejectedStrategy {
+    pub strategy_name: String,
+    pub reason: String,
+}
+
 pub struct StrategySelector;
 
 impl StrategySelector {
@@ -8,19 +23,53 @@ impl StrategySelector {
         profile: &TaskProfile,
         config: &OrchestrationConfig,
     ) -> Option<(String, StrategyAction)> {
-        let mut best_match: Option<(&String, f64)> = None;
+        Self::select_detailed(profile, config)
+            .map(|decision| (decision.strategy_name, decision.action))
+    }
 
-        for (name, def) in &config.strategies {
-            let score = Self::match_score(profile, &def.when);
-            if score > 0.0 {
-                match best_match {
-                    Some((_, best_score)) if score <= best_score => {}
-                    _ => best_match = Some((name, score)),
-                }
-            }
+    pub fn select_detailed(
+        profile: &TaskProfile,
+        config: &OrchestrationConfig,
+    ) -> Option<SelectionDecision> {
+        if !profile.eligible_for_orchestration {
+            return None;
         }
 
-        best_match.map(|(name, _)| (name.clone(), config.strategies[name].action.clone()))
+        let mut candidates: Vec<(String, StrategyAction, f64, i32)> = Vec::new();
+        let mut rejected = Vec::new();
+
+        let mut names: Vec<&String> = config.strategies.keys().collect();
+        names.sort();
+
+        for name in names {
+            let def = &config.strategies[name];
+            let score = Self::match_score(profile, &def.when);
+            if score <= 0.0 {
+                rejected.push(RejectedStrategy {
+                    strategy_name: name.clone(),
+                    reason: "condition_score_zero".to_string(),
+                });
+                continue;
+            }
+
+            candidates.push((name.clone(), def.action.clone(), score, def.priority));
+        }
+
+        candidates.sort_by(|a, b| {
+            b.3.cmp(&a.3)
+                .then_with(|| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal))
+                .then_with(|| a.0.cmp(&b.0))
+        });
+
+        candidates.into_iter().next().map(
+            |(strategy_name, action, score, priority)| SelectionDecision {
+                strategy_name,
+                action,
+                score,
+                priority,
+                rejected,
+            },
+        )
     }
 
     fn match_score(
@@ -71,11 +120,57 @@ impl StrategySelector {
             }
         }
 
+        if let Some(has_audio) = &condition.has_audio {
+            total_weight += 1.0;
+            if &profile.has_audio == has_audio {
+                score += 1.0;
+            }
+        }
+
+        if let Some(has_tools) = &condition.has_tools {
+            total_weight += 1.0;
+            if &profile.has_tools == has_tools {
+                score += 1.0;
+            }
+        }
+
+        if let Some(is_streaming) = &condition.is_streaming {
+            total_weight += 1.0;
+            if &profile.is_streaming == is_streaming {
+                score += 1.0;
+            }
+        }
+
+        if let Some(modalities) = &condition.modalities {
+            total_weight += 1.0;
+            let profile_modalities = profile_modalities(profile);
+            if modalities
+                .iter()
+                .all(|required| profile_modalities.iter().any(|actual| actual == required))
+            {
+                score += 1.0;
+            }
+        }
+
         if total_weight == 0.0 {
             return 0.5;
         }
         score / total_weight
     }
+}
+
+fn profile_modalities(profile: &TaskProfile) -> Vec<&'static str> {
+    let mut modalities = Vec::new();
+    if !profile.has_image && !profile.has_audio {
+        modalities.push("text");
+    }
+    if profile.has_image {
+        modalities.push("image");
+    }
+    if profile.has_audio {
+        modalities.push("audio");
+    }
+    modalities
 }
 
 #[cfg(test)]
@@ -112,10 +207,15 @@ mod tests {
 
     #[test]
     fn select_cascade_for_complex_task() {
+        // complexity=0.5 / risk=Medium matches the `cascade` condition on both
+        // complexity ([0.4, 0.7]) and risk (medium/high). The `debate` condition
+        // ([0.7, 0.9]) misses on complexity, so cascade has the strictly higher
+        // match score. Under the deterministic sort (priority desc, score desc,
+        // name asc) cascade wins here even though debate has higher priority.
         let profile = TaskProfile {
             task_type: TaskType::Coding,
-            complexity: 0.6,
-            risk: RiskLevel::High,
+            complexity: 0.5,
+            risk: RiskLevel::Medium,
             verifiability: 0.9,
             has_image: false,
             need_code: true,
@@ -154,5 +254,111 @@ mod tests {
         config.strategies.clear();
         let result = StrategySelector::select(&profile, &config);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn selection_uses_priority_when_scores_tie() {
+        let yaml = r#"
+enabled: true
+models: {}
+strategies:
+  low_priority:
+    priority: 10
+    description: "low"
+    when:
+      complexity: [0.0, 1.0]
+    action:
+      type: route
+      use_model: a
+  high_priority:
+    priority: 90
+    description: "high"
+    when:
+      complexity: [0.0, 1.0]
+    action:
+      type: route
+      use_model: b
+"#;
+        let config: OrchestrationConfig = serde_yaml::from_str(yaml).unwrap();
+        let profile = TaskProfile {
+            task_type: TaskType::Chat,
+            complexity: 0.5,
+            risk: RiskLevel::Low,
+            verifiability: 0.1,
+            has_image: false,
+            need_code: false,
+            has_audio: false,
+            has_tools: false,
+            is_streaming: false,
+            requires_exact_format: false,
+            eligible_for_orchestration: true,
+            ineligibility_reason: None,
+        };
+
+        let decision = StrategySelector::select_detailed(&profile, &config).unwrap();
+        assert_eq!(decision.strategy_name, "high_priority");
+        assert_eq!(decision.priority, 90);
+    }
+
+    #[test]
+    fn selection_uses_name_when_priority_and_score_tie() {
+        let yaml = r#"
+enabled: true
+models: {}
+strategies:
+  beta:
+    priority: 10
+    description: "beta"
+    when: {}
+    action:
+      type: route
+      use_model: b
+  alpha:
+    priority: 10
+    description: "alpha"
+    when: {}
+    action:
+      type: route
+      use_model: a
+"#;
+        let config: OrchestrationConfig = serde_yaml::from_str(yaml).unwrap();
+        let profile = TaskProfile {
+            task_type: TaskType::Chat,
+            complexity: 0.5,
+            risk: RiskLevel::Low,
+            verifiability: 0.1,
+            has_image: false,
+            need_code: false,
+            has_audio: false,
+            has_tools: false,
+            is_streaming: false,
+            requires_exact_format: false,
+            eligible_for_orchestration: true,
+            ineligibility_reason: None,
+        };
+
+        let decision = StrategySelector::select_detailed(&profile, &config).unwrap();
+        assert_eq!(decision.strategy_name, "alpha");
+    }
+
+    #[test]
+    fn selector_rejects_ineligible_profile() {
+        let profile = TaskProfile {
+            task_type: TaskType::Chat,
+            complexity: 0.5,
+            risk: RiskLevel::Low,
+            verifiability: 0.1,
+            has_image: false,
+            need_code: false,
+            has_audio: false,
+            has_tools: true,
+            is_streaming: false,
+            requires_exact_format: false,
+            eligible_for_orchestration: false,
+            ineligibility_reason: Some("streaming_or_tools_or_audio".to_string()),
+        };
+        let config = OrchestrationConfig::default();
+
+        assert!(StrategySelector::select_detailed(&profile, &config).is_none());
     }
 }
