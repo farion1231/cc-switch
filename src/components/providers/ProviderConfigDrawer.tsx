@@ -1,20 +1,12 @@
-import {
-  BarChart3,
-  Copy,
-  Edit,
-  MessagesSquare,
-  Terminal,
-  TestTube2,
-  Trash2,
-} from "lucide-react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import { ProviderActions } from "@/components/providers/ProviderActions";
+import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import {
   getGroupCommonConfigCandidates,
   type GroupCommonConfigKey,
@@ -30,20 +22,38 @@ const COMMON_CONFIG_KEYS: GroupCommonConfigKey[] = [
   "customUserAgent",
 ];
 
+export interface ProviderConfigDrawerState {
+  isCurrent: boolean;
+  isDefaultModel?: boolean;
+  isInConfig: boolean;
+  isOmo: boolean;
+  isOmoSlim: boolean;
+  isInFailoverQueue: boolean;
+}
+
 interface ProviderConfigDrawerProps {
   groupId: string;
   groupLabel: string;
   providers: Provider[];
   primaryProvider: Provider;
   appId: AppId;
+  getProviderState: (provider: Provider) => ProviderConfigDrawerState;
+  onSwitch: (provider: Provider) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onDuplicate: (provider: Provider) => void;
+  onRemoveFromConfig?: (provider: Provider) => void;
+  onDisableOmo?: () => void;
+  onDisableOmoSlim?: () => void;
   onConfigureUsage?: (provider: Provider) => void;
   onOpenTerminal?: (provider: Provider) => void;
   onOpenCodexSessions?: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
   isTesting?: (providerId: string) => boolean;
+  isProxyTakeover?: boolean;
+  isAutoFailoverEnabled?: boolean;
+  onToggleFailover?: (providerId: string, enabled: boolean) => void;
+  onSetAsDefault?: (provider: Provider) => void;
   onApplyGroupCommonConfig: (
     provider: Provider,
     keys: GroupCommonConfigKey[],
@@ -61,14 +71,23 @@ export function ProviderConfigDrawer({
   providers,
   primaryProvider,
   appId,
+  getProviderState,
+  onSwitch,
   onEdit,
   onDelete,
   onDuplicate,
+  onRemoveFromConfig,
+  onDisableOmo,
+  onDisableOmoSlim,
   onConfigureUsage,
   onOpenTerminal,
   onOpenCodexSessions,
   onTest,
   isTesting,
+  isProxyTakeover = false,
+  isAutoFailoverEnabled = false,
+  onToggleFailover,
+  onSetAsDefault,
   onApplyGroupCommonConfig,
 }: ProviderConfigDrawerProps) {
   const { t } = useTranslation();
@@ -117,6 +136,10 @@ export function ProviderConfigDrawer({
           const summary = extractProviderSummary(provider, appId);
           const isPrimary = provider.id === primaryProvider.id;
           const activeKeys = enabledKeys(provider);
+          const state = getProviderState(provider);
+          const isReadOnly =
+            appId === "hermes" &&
+            isHermesReadOnlyProvider(provider.settingsConfig);
 
           return (
             <div
@@ -212,94 +235,56 @@ export function ProviderConfigDrawer({
                 )}
               </div>
 
-              <div className="flex items-center justify-end gap-1">
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  className="h-8 w-8"
-                  onClick={() => onEdit(provider)}
-                  title={t("common.edit", { defaultValue: "Edit" })}
-                >
-                  <Edit className="h-4 w-4" />
-                </Button>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  className="h-8 w-8"
-                  onClick={() => onDuplicate(provider)}
-                  title={t("provider.duplicate", { defaultValue: "Duplicate" })}
-                >
-                  <Copy className="h-4 w-4" />
-                </Button>
-                {onTest && (
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="ghost"
-                    className="h-8 w-8"
-                    onClick={() => onTest(provider)}
-                    disabled={isTesting?.(provider.id)}
-                    title={t("modelTest.testProvider", {
-                      defaultValue: "Test provider",
-                    })}
-                  >
-                    <TestTube2 className="h-4 w-4" />
-                  </Button>
-                )}
-                {onConfigureUsage && (
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="ghost"
-                    className="h-8 w-8"
-                    onClick={() => onConfigureUsage(provider)}
-                    title={t("provider.configureUsage", {
-                      defaultValue: "Configure usage query",
-                    })}
-                  >
-                    <BarChart3 className="h-4 w-4" />
-                  </Button>
-                )}
-                {appId === "codex" && onOpenCodexSessions && (
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="ghost"
-                    className="h-8 w-8"
-                    onClick={() => onOpenCodexSessions(provider)}
-                    title={t("codexSessions.action", {
-                      defaultValue: "Codex sessions",
-                    })}
-                  >
-                    <MessagesSquare className="h-4 w-4" />
-                  </Button>
-                )}
-                {onOpenTerminal && (
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="ghost"
-                    className="h-8 w-8"
-                    onClick={() => onOpenTerminal(provider)}
-                    title={t("provider.openTerminal", {
-                      defaultValue: "Open Terminal",
-                    })}
-                  >
-                    <Terminal className="h-4 w-4" />
-                  </Button>
-                )}
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  className="h-8 w-8 hover:text-red-500 dark:hover:text-red-400"
-                  onClick={() => onDelete(provider)}
-                  title={t("common.delete", { defaultValue: "Delete" })}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+              <div className="flex items-center justify-end">
+                <ProviderActions
+                  appId={appId}
+                  isCurrent={state.isCurrent}
+                  isInConfig={state.isInConfig}
+                  isTesting={isTesting?.(provider.id)}
+                  isProxyTakeover={isProxyTakeover}
+                  isOmo={state.isOmo || state.isOmoSlim}
+                  onSwitch={() => onSwitch(provider)}
+                  onEdit={() => onEdit(provider)}
+                  onDuplicate={() => onDuplicate(provider)}
+                  onTest={onTest ? () => onTest(provider) : undefined}
+                  onConfigureUsage={
+                    onConfigureUsage
+                      ? () => onConfigureUsage(provider)
+                      : undefined
+                  }
+                  onDelete={() => onDelete(provider)}
+                  onRemoveFromConfig={
+                    onRemoveFromConfig
+                      ? () => onRemoveFromConfig(provider)
+                      : undefined
+                  }
+                  onDisableOmo={
+                    state.isOmoSlim ? onDisableOmoSlim : onDisableOmo
+                  }
+                  onOpenTerminal={
+                    onOpenTerminal ? () => onOpenTerminal(provider) : undefined
+                  }
+                  onOpenCodexSessions={
+                    appId === "codex" && onOpenCodexSessions
+                      ? () => onOpenCodexSessions(provider)
+                      : undefined
+                  }
+                  isAutoFailoverEnabled={isAutoFailoverEnabled}
+                  isInFailoverQueue={state.isInFailoverQueue}
+                  onToggleFailover={
+                    onToggleFailover
+                      ? (enabled) => onToggleFailover(provider.id, enabled)
+                      : undefined
+                  }
+                  isOfficialBlockedByProxy={
+                    isProxyTakeover && provider.category === "official"
+                  }
+                  isReadOnly={isReadOnly}
+                  isDefaultModel={state.isDefaultModel}
+                  onSetAsDefault={
+                    onSetAsDefault ? () => onSetAsDefault(provider) : undefined
+                  }
+                />
               </div>
             </div>
           );

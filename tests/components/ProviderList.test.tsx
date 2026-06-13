@@ -523,6 +523,149 @@ describe("ProviderList Component", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("uses the active provider as the folded group surface and common-config source", async () => {
+    const providerAlpha = createProvider({
+      id: "alpha",
+      name: "Minimax API A",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.minimax.test/v1",
+          ANTHROPIC_AUTH_TOKEN: "sk-alpha-secret-123456",
+          ANTHROPIC_DEFAULT_SONNET_MODEL: "minimax-2.5",
+        },
+      },
+      meta: { providerGroup: "Minimax" },
+    });
+    const providerBeta = createProvider({
+      id: "beta",
+      name: "Minimax API B",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.minimax.test/v1",
+          ANTHROPIC_AUTH_TOKEN: "sk-beta-secret-654321",
+          ANTHROPIC_DEFAULT_OPUS_MODEL: "minimax-2.7",
+        },
+      },
+      meta: { providerGroup: "Minimax" },
+    });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerAlpha, providerBeta],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ alpha: providerAlpha, beta: providerBeta }}
+        currentProviderId="beta"
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId("provider-card-alpha")).not.toBeInTheDocument();
+    expect(screen.getByTestId("provider-card-beta")).toBeInTheDocument();
+    expect(providerCardRenderSpy).toHaveBeenCalledTimes(1);
+    expect(providerCardRenderSpy.mock.calls[0][0].provider.id).toBe("beta");
+    expect(screen.getByTestId("is-current-beta")).toHaveTextContent("current");
+
+    fireEvent.click(screen.getByTestId("drawer-beta"));
+
+    const drawer = screen.getByTestId("provider-config-drawer-group:minimax");
+    expect(within(drawer).getByText("Minimax API A")).toBeInTheDocument();
+    expect(within(drawer).getByText("Minimax API B")).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "Use group API key for Minimax API A",
+      }),
+    );
+
+    await waitFor(() => expect(providerApiMocks.update).toHaveBeenCalled());
+    const [updatedProvider, appId, originalId] =
+      providerApiMocks.update.mock.calls[0];
+
+    expect(appId).toBe("claude");
+    expect(originalId).toBe("alpha");
+    expect(updatedProvider.settingsConfig.env.ANTHROPIC_AUTH_TOKEN).toBe(
+      "sk-beta-secret-654321",
+    );
+    expect(JSON.stringify(updatedProvider.meta)).not.toContain(
+      "sk-beta-secret-654321",
+    );
+  });
+
+  it("folds duplicate branded providers with the same name into one drawer", () => {
+    const providerAlpha = createProvider({
+      id: "kimi-a",
+      name: "Kimi For Coding",
+      category: "cn_official",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api-a.example.com/coding",
+          ANTHROPIC_AUTH_TOKEN: "sk-alpha-secret-123456",
+          ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-for-coding",
+        },
+      },
+    });
+    const providerBeta = createProvider({
+      id: "kimi-b",
+      name: "Kimi For Coding",
+      category: "cn_official",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api-b.example.com/coding",
+          ANTHROPIC_AUTH_TOKEN: "sk-beta-secret-654321",
+          ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-for-coding",
+        },
+      },
+    });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerAlpha, providerBeta],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ "kimi-a": providerAlpha, "kimi-b": providerBeta }}
+        currentProviderId="kimi-b"
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.queryByTestId("provider-card-kimi-a"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("provider-card-kimi-b")).toBeInTheDocument();
+    expect(screen.getByTestId("drawer-kimi-b")).toHaveTextContent("2");
+
+    fireEvent.click(screen.getByTestId("drawer-kimi-b"));
+
+    const drawer = screen.getByTestId(
+      "provider-config-drawer-name:kimi-for-coding",
+    );
+    expect(
+      screen.getByTestId("provider-config-drawer-row-kimi-a"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("provider-config-drawer-row-kimi-b"),
+    ).toBeInTheDocument();
+    expect(within(drawer).getByText("api-a.example.com")).toBeInTheDocument();
+    expect(within(drawer).getByText("api-b.example.com")).toBeInTheDocument();
+  });
+
   it("applies group common API key without storing raw secrets in metadata", async () => {
     const providerAlpha = createProvider({
       id: "alpha",

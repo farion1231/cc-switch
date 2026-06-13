@@ -17,6 +17,10 @@ export interface ProviderSummary {
 }
 
 type PlainRecord = Record<string, unknown>;
+type ModelSummaryEntry = {
+  label?: string;
+  value: string;
+};
 
 const SECRET_KEY_PATTERN =
   /(api[_-]?key|auth[_-]?token|access[_-]?token|bearer|secret|password|token)$/i;
@@ -64,10 +68,7 @@ const pushUnique = (target: string[], value: unknown) => {
   }
 };
 
-const readPath = (
-  value: unknown,
-  path: Array<string>,
-): string | undefined => {
+const readPath = (value: unknown, path: Array<string>): string | undefined => {
   let cursor = value;
   for (const segment of path) {
     if (!isRecord(cursor)) return undefined;
@@ -108,11 +109,7 @@ const collectSecretFingerprints = (
   pushUnique(output, maskSecret(value));
 };
 
-const collectModelValues = (
-  value: unknown,
-  output: string[],
-  keyName = "",
-) => {
+const collectModelValues = (value: unknown, output: string[], keyName = "") => {
   if (Array.isArray(value)) {
     value.forEach((item) => collectModelValues(item, output, keyName));
     return;
@@ -129,30 +126,35 @@ const collectModelValues = (
   pushUnique(output, value);
 };
 
-const claudeModelPairs = (settingsConfig: PlainRecord) => {
+const modelEntry = (
+  label: string | undefined,
+  value: string | undefined,
+): ModelSummaryEntry | undefined => (value ? { label, value } : undefined);
+
+const claudeModelEntries = (settingsConfig: PlainRecord) => {
   const env = isRecord(settingsConfig.env) ? settingsConfig.env : {};
   return [
-    ["Model", stringValue(env.ANTHROPIC_MODEL)],
-    ["Sonnet", stringValue(env.ANTHROPIC_DEFAULT_SONNET_MODEL)],
-    ["Opus", stringValue(env.ANTHROPIC_DEFAULT_OPUS_MODEL)],
-    ["Haiku", stringValue(env.ANTHROPIC_DEFAULT_HAIKU_MODEL)],
-  ].filter((entry): entry is [string, string] => Boolean(entry[1]));
+    modelEntry("Default", stringValue(env.ANTHROPIC_MODEL)),
+    modelEntry("Sonnet", stringValue(env.ANTHROPIC_DEFAULT_SONNET_MODEL)),
+    modelEntry("Opus", stringValue(env.ANTHROPIC_DEFAULT_OPUS_MODEL)),
+    modelEntry("Haiku", stringValue(env.ANTHROPIC_DEFAULT_HAIKU_MODEL)),
+  ].filter((entry): entry is ModelSummaryEntry => Boolean(entry));
 };
 
-const geminiModelPairs = (settingsConfig: PlainRecord) => {
+const geminiModelEntries = (settingsConfig: PlainRecord) => {
   const env = isRecord(settingsConfig.env) ? settingsConfig.env : {};
   const model = stringValue(env.GEMINI_MODEL);
-  return model ? ([["Model", model]] as Array<[string, string]>) : [];
+  return model ? [{ value: model }] : [];
 };
 
-const opencodeModelPairs = (settingsConfig: PlainRecord) => {
+const opencodeModelEntries = (settingsConfig: PlainRecord) => {
   const models = isRecord(settingsConfig.models) ? settingsConfig.models : {};
   return Object.keys(models)
     .slice(0, 3)
-    .map((model) => ["Model", model] as [string, string]);
+    .map((model) => ({ value: model }));
 };
 
-const openclawModelPairs = (settingsConfig: PlainRecord) => {
+const openclawModelEntries = (settingsConfig: PlainRecord) => {
   const models = Array.isArray(settingsConfig.models)
     ? settingsConfig.models
     : [];
@@ -166,7 +168,7 @@ const openclawModelPairs = (settingsConfig: PlainRecord) => {
     })
     .filter((model): model is string => Boolean(model))
     .slice(0, 3)
-    .map((model) => ["Model", model] as [string, string]);
+    .map((model) => ({ value: model }));
 };
 
 const getBaseUrl = (
@@ -191,27 +193,42 @@ const getBaseUrl = (
   ]);
 };
 
-const getModelPairs = (
+const getModelEntries = (
   settingsConfig: PlainRecord,
   appId: AppId,
-): Array<[string, string]> => {
+): ModelSummaryEntry[] => {
   if (appId === "claude" || appId === "claude-desktop") {
-    return claudeModelPairs(settingsConfig);
+    return claudeModelEntries(settingsConfig);
   }
   if (appId === "codex") {
     const model = extractCodexModelName(stringValue(settingsConfig.config));
-    return model ? [["Model", model]] : [];
+    return model ? [{ value: model }] : [];
   }
   if (appId === "gemini") {
-    return geminiModelPairs(settingsConfig);
+    return geminiModelEntries(settingsConfig);
   }
   if (appId === "openclaw") {
-    return openclawModelPairs(settingsConfig);
+    return openclawModelEntries(settingsConfig);
   }
   if (appId === "opencode") {
-    return opencodeModelPairs(settingsConfig);
+    return opencodeModelEntries(settingsConfig);
   }
   return [];
+};
+
+const summarizeModelEntries = (
+  entries: ModelSummaryEntry[],
+): string | undefined => {
+  if (!entries.length) return undefined;
+  const hasLabels = entries.some((entry) => entry.label);
+  if (!hasLabels) {
+    return entries.map((entry) => entry.value).join(", ");
+  }
+  return entries
+    .map((entry) =>
+      entry.label ? `${entry.label} -> ${entry.value}` : entry.value,
+    )
+    .join(", ");
 };
 
 export const extractProviderSummary = (
@@ -227,17 +244,18 @@ export const extractProviderSummary = (
   const apiKeyFingerprints: string[] = [];
   collectSecretFingerprints(settingsConfig, apiKeyFingerprints);
 
-  const modelPairs = getModelPairs(settingsConfig, appId);
-  const modelValues = modelPairs.map(([, value]) => value);
+  const modelEntries = getModelEntries(settingsConfig, appId);
+  const modelValues: string[] = [];
+  modelEntries.forEach((entry) => pushUnique(modelValues, entry.value));
   collectModelValues(settingsConfig, modelValues);
 
   const apiFormat =
     stringValue(meta.apiFormat) ??
     firstPath(settingsConfig, [["apiFormat"], ["api_format"]]);
   const providerType = stringValue(meta.providerType);
-  const modelSummary = modelPairs.length
-    ? modelPairs.map(([label, value]) => `${label}=${value}`).join(" ")
-    : undefined;
+  const modelSummary =
+    summarizeModelEntries(modelEntries) ??
+    (modelValues.length ? modelValues.slice(0, 3).join(", ") : undefined);
 
   const searchText: string[] = [];
   [

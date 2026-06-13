@@ -66,4 +66,34 @@ describe("providerGrouping", () => {
     ]);
     expect(groups[1].providers.map((provider) => provider.id)).toEqual(["c"]);
   });
+
+  it("groups duplicate branded providers by display name", () => {
+    const groups = buildProviderGroups(
+      [
+        makeProvider("kimi-a", {
+          name: "Kimi For Coding",
+          category: "cn_official",
+          settingsConfig: {
+            env: { ANTHROPIC_BASE_URL: "https://api-a.example.com/coding" },
+          },
+        }),
+        makeProvider("kimi-b", {
+          name: "Kimi For Coding",
+          category: "cn_official",
+          settingsConfig: {
+            env: { ANTHROPIC_BASE_URL: "https://api-b.example.com/coding" },
+          },
+        }),
+      ],
+      "claude",
+    );
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].id).toBe("name:kimi-for-coding");
+    expect(groups[0].label).toBe("Kimi For Coding");
+    expect(groups[0].providers.map((provider) => provider.id)).toEqual([
+      "kimi-a",
+      "kimi-b",
+    ]);
+  });
 });

@@ -15,6 +15,8 @@ const GROUPABLE_CATEGORIES = new Set([
   "third_party",
   "custom",
   "cloud_provider",
+  "cn_official",
+  "official",
 ]);
 
 const normalizeGroupKey = (value: string) =>
@@ -30,10 +32,24 @@ const shouldGroupByHost = (provider: Provider) => {
   return GROUPABLE_CATEGORIES.has(provider.category);
 };
 
+const providerNameGroup = (provider: Provider) => {
+  const name = provider.name.trim();
+  return name || undefined;
+};
+
 export const buildProviderGroups = (
   providers: Provider[],
   appId: AppId,
 ): ProviderDisplayGroup[] => {
+  const nameCounts = new Map<string, number>();
+  providers.forEach((provider) => {
+    if (!shouldGroupByHost(provider)) return;
+    const nameGroup = providerNameGroup(provider);
+    if (!nameGroup) return;
+    const key = normalizeGroupKey(nameGroup);
+    nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
+  });
+
   const buckets = new Map<
     string,
     { label: string; providers: Provider[]; explicit: boolean }
@@ -41,15 +57,25 @@ export const buildProviderGroups = (
 
   providers.forEach((provider) => {
     const explicitGroup = providerGroupName(provider);
+    const nameGroup = providerNameGroup(provider);
+    const nameGroupKey = nameGroup ? normalizeGroupKey(nameGroup) : undefined;
+    const shouldUseNameGroup =
+      nameGroupKey !== undefined && (nameCounts.get(nameGroupKey) ?? 0) > 1;
     const summary = extractProviderSummary(provider, appId);
     const key = explicitGroup
       ? `group:${normalizeGroupKey(explicitGroup)}`
-      : shouldGroupByHost(provider) && summary.baseUrlHost
-        ? `host:${summary.baseUrlHost.toLowerCase()}`
-        : `provider:${provider.id}`;
+      : shouldUseNameGroup
+        ? `name:${nameGroupKey}`
+        : shouldGroupByHost(provider) && summary.baseUrlHost
+          ? `host:${summary.baseUrlHost.toLowerCase()}`
+          : `provider:${provider.id}`;
     const label =
       explicitGroup ??
-      (key.startsWith("host:") ? (summary.baseUrlHost ?? provider.name) : provider.name);
+      (key.startsWith("name:")
+        ? (nameGroup ?? provider.name)
+        : key.startsWith("host:")
+          ? (summary.baseUrlHost ?? provider.name)
+          : provider.name);
 
     const existing = buckets.get(key);
     if (existing) {

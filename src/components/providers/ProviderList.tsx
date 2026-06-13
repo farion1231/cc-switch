@@ -50,7 +50,10 @@ import {
   type ProviderViewMode,
 } from "@/components/providers/ProviderManagementToolbar";
 import { ProviderCompactRow } from "@/components/providers/ProviderCompactRow";
-import { ProviderConfigDrawer } from "@/components/providers/ProviderConfigDrawer";
+import {
+  ProviderConfigDrawer,
+  type ProviderConfigDrawerState,
+} from "@/components/providers/ProviderConfigDrawer";
 import {
   buildProviderGroups,
   type ProviderDisplayGroup,
@@ -433,7 +436,11 @@ export function ProviderList({
   );
 
   const getProviderDisplayState = useCallback(
-    (provider: Provider) => {
+    (
+      provider: Provider,
+    ): ProviderConfigDrawerState & {
+      failoverPriority?: number;
+    } => {
       const isOmo = provider.category === "omo";
       const isOmoSlim = provider.category === "omo-slim";
       const isOmoCurrent = isOmo && provider.id === (currentOmoId || "");
@@ -474,6 +481,27 @@ export function ProviderList({
       isProviderDefaultModel,
       isProviderInConfig,
     ],
+  );
+
+  const getGroupDisplayProvider = useCallback(
+    (group: ProviderDisplayGroup) => {
+      const activeProvider = group.providers.find((provider) => {
+        const state = getProviderDisplayState(provider);
+        return (
+          provider.id === activeProviderId ||
+          state.isCurrent ||
+          Boolean(state.isDefaultModel)
+        );
+      });
+      if (activeProvider) return activeProvider;
+
+      return (
+        group.providers.find(
+          (provider) => getProviderDisplayState(provider).isInConfig,
+        ) ?? group.primaryProvider
+      );
+    },
+    [activeProviderId, getProviderDisplayState],
   );
 
   const selectedProvidersToAddToConfig = useMemo(
@@ -669,17 +697,23 @@ export function ProviderList({
 
   const renderGroupDrawer = (group: ProviderDisplayGroup) => {
     if (!group.isGrouped || !expandedGroupIds.has(group.id)) return null;
+    const sourceProvider = getGroupDisplayProvider(group);
 
     return (
       <ProviderConfigDrawer
         groupId={group.id}
         groupLabel={group.label}
         providers={group.providers}
-        primaryProvider={group.primaryProvider}
+        primaryProvider={sourceProvider}
         appId={appId}
+        getProviderState={getProviderDisplayState}
+        onSwitch={onSwitch}
         onEdit={onEdit}
         onDelete={onDelete}
         onDuplicate={onDuplicate}
+        onRemoveFromConfig={onRemoveFromConfig}
+        onDisableOmo={onDisableOmo}
+        onDisableOmoSlim={onDisableOmoSlim}
         onConfigureUsage={onConfigureUsage}
         onOpenTerminal={onOpenTerminal}
         onOpenCodexSessions={
@@ -687,8 +721,12 @@ export function ProviderList({
         }
         onTest={handleTest}
         isTesting={isChecking}
+        isProxyTakeover={isProxyTakeover}
+        isAutoFailoverEnabled={isFailoverModeActive}
+        onToggleFailover={handleToggleFailover}
+        onSetAsDefault={onSetAsDefault}
         onApplyGroupCommonConfig={(provider, keys) =>
-          handleApplyGroupCommonConfig(provider, group.primaryProvider, keys)
+          handleApplyGroupCommonConfig(provider, sourceProvider, keys)
         }
       />
     );
@@ -706,13 +744,14 @@ export function ProviderList({
       >
         <div className="space-y-3">
           {providerGroups.map((group) => {
-            const provider = group.primaryProvider;
+            const provider = getGroupDisplayProvider(group);
             const state = getProviderDisplayState(provider);
             const isDrawerOpen = expandedGroupIds.has(group.id);
 
             return (
               <div key={group.id} className="space-y-2">
                 <SortableProviderCard
+                  sortableId={group.primaryProvider.id}
                   provider={provider}
                   isCurrent={state.isCurrent}
                   isSelected={selectedProviderIds.has(provider.id)}
@@ -771,7 +810,7 @@ export function ProviderList({
   const renderCompactList = () => (
     <div className="overflow-hidden rounded-lg border border-border">
       {providerGroups.map((group) => {
-        const provider = group.primaryProvider;
+        const provider = getGroupDisplayProvider(group);
         const state = getProviderDisplayState(provider);
         const isDrawerOpen = expandedGroupIds.has(group.id);
 
@@ -942,6 +981,7 @@ export function ProviderList({
 }
 
 interface SortableProviderCardProps {
+  sortableId: string;
   provider: Provider;
   isCurrent: boolean;
   isSelected: boolean;
@@ -979,6 +1019,7 @@ interface SortableProviderCardProps {
 }
 
 function SortableProviderCard({
+  sortableId,
   provider,
   isCurrent,
   isSelected,
@@ -1020,7 +1061,7 @@ function SortableProviderCard({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: provider.id });
+  } = useSortable({ id: sortableId });
 
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),

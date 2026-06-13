@@ -46,8 +46,8 @@ describe("providerSummary", () => {
     expect(summary.baseUrl).toBe("https://api.minimax.test/v1");
     expect(summary.apiKeyFingerprint).toBe("sk-123...cdef");
     expect(summary.apiFormat).toBe("openai_chat");
-    expect(summary.modelSummary).toContain("Sonnet=minimax-2.5");
-    expect(summary.modelSummary).toContain("Opus=minimax-2.7");
+    expect(summary.modelSummary).toContain("Sonnet -> minimax-2.5");
+    expect(summary.modelSummary).toContain("Opus -> minimax-2.7");
     expect(summary.searchText).toContain("minimax-2.7");
     expect(summary.searchText).toContain("sk-123...cdef");
     expect(summary.searchText).not.toContain(rawKey);
@@ -81,8 +81,47 @@ base_url = "https://codex.minimax.test/v1"
 
     expect(summary.baseUrl).toBe("https://codex.minimax.test/v1");
     expect(summary.apiKeyFingerprint).toBe("sk-cod...7890");
-    expect(summary.modelSummary).toBe("Model=minimax-agent");
+    expect(summary.modelSummary).toBe("minimax-agent");
     expect(summary.searchText).toContain("codex.minimax.test");
     expect(summary.searchText).not.toContain(rawKey);
+  });
+
+  it("summarizes non-mapping agent models as names only", () => {
+    const openClawSummary = extractProviderSummary(
+      makeProvider({
+        id: "openclaw-minimax",
+        name: "OpenClaw Minimax",
+        settingsConfig: {
+          models: [
+            { id: "minimax/minimax-2.7", name: "Minimax 2.7" },
+            { id: "moonshot/kimi-k2", name: "Kimi K2" },
+          ],
+        },
+      }),
+      "openclaw",
+    );
+
+    const openCodeSummary = extractProviderSummary(
+      makeProvider({
+        id: "opencode-minimax",
+        name: "OpenCode Minimax",
+        settingsConfig: {
+          models: {
+            "minimax/minimax-2.7": {},
+            "moonshot/kimi-k2": {},
+          },
+        },
+      }),
+      "opencode",
+    );
+
+    expect(openClawSummary.modelSummary).toBe(
+      "minimax/minimax-2.7, moonshot/kimi-k2",
+    );
+    expect(openCodeSummary.modelSummary).toBe(
+      "minimax/minimax-2.7, moonshot/kimi-k2",
+    );
+    expect(openClawSummary.modelSummary).not.toContain("Model=");
+    expect(openCodeSummary.modelSummary).not.toContain("Model=");
   });
 });
