@@ -59,6 +59,9 @@ export interface DiscoverableSkill {
   repoOwner: string;
   repoName: string;
   repoBranch: string;
+  repoSource: string;
+  repoZipUrl?: string | null;
+  repoWebsiteUrl?: string | null;
 }
 
 /** 未管理的 Skill（用于导入） */
@@ -129,6 +132,9 @@ export interface SkillRepo {
   name: string;
   branch: string;
   enabled: boolean;
+  zipUrl?: string | null;
+  websiteUrl?: string | null;
+  source?: string;
 }
 
 // ========== API ==========
