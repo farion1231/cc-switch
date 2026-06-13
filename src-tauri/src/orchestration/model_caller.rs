@@ -2,7 +2,11 @@ use crate::orchestration::config::ModelConfig;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::fmt;
 use std::time::Duration;
+
+/// Anthropic API version pinned for both `call` and `call_target`.
+const ANTHROPIC_API_VERSION: &str = "2023-06-01";
 
 pub struct ModelCaller {
     client: Client,
@@ -25,6 +29,7 @@ pub struct TokenUsage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelCallErrorKind {
+    /// Produced by callers (engine, cross-judge) when a config lookup fails before a target is built.
     ModelNotFound,
     ProviderAuthFailed,
     ProviderRateLimited,
@@ -50,7 +55,7 @@ impl ModelCallError {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ModelCallTarget {
     pub model_key: String,
     pub provider_type: String,
@@ -58,6 +63,19 @@ pub struct ModelCallTarget {
     pub base_url: String,
     pub api_key: String,
     pub max_tokens: u32,
+}
+
+impl fmt::Debug for ModelCallTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ModelCallTarget")
+            .field("model_key", &self.model_key)
+            .field("provider_type", &self.provider_type)
+            .field("model", &self.model)
+            .field("base_url", &self.base_url)
+            .field("api_key", &"<redacted>")
+            .field("max_tokens", &self.max_tokens)
+            .finish()
+    }
 }
 
 impl ModelCaller {
@@ -146,7 +164,7 @@ impl ModelCaller {
             "anthropic" => {
                 req = req
                     .header("x-api-key", &api_key)
-                    .header("anthropic-version", "2023-06-01");
+                    .header("anthropic-version", ANTHROPIC_API_VERSION);
             }
             _ => {
                 req = req.header("Authorization", format!("Bearer {}", api_key));
@@ -176,18 +194,7 @@ impl ModelCaller {
         let latency_ms = start.elapsed().as_millis() as u64;
 
         let content = Self::extract_content(&resp_body);
-        let usage = TokenUsage {
-            input_tokens: resp_body
-                .get("usage")
-                .and_then(|u| u.get("input_tokens").or_else(|| u.get("prompt_tokens")))
-                .and_then(|t| t.as_u64())
-                .unwrap_or(0),
-            output_tokens: resp_body
-                .get("usage")
-                .and_then(|u| u.get("output_tokens").or_else(|| u.get("completion_tokens")))
-                .and_then(|t| t.as_u64())
-                .unwrap_or(0),
-        };
+        let usage = Self::extract_usage(&resp_body);
 
         Ok(ModelResponse {
             content,
@@ -215,15 +222,23 @@ impl ModelCaller {
     pub fn build_target_url(target: &ModelCallTarget) -> Result<String, String> {
         let base = target.base_url.trim_end_matches('/');
         match target.provider_type.as_str() {
-            "anthropic" => Ok(format!("{base}/v1/messages")),
-            "openai_chat" | "openai" => {
+            "anthropic" => {
+                if base.ends_with("/v1/messages") {
+                    Ok(base.to_string())
+                } else {
+                    Ok(format!("{base}/v1/messages"))
+                }
+            }
+            // Treat unknown provider types as OpenAI-compatible — most LLM providers
+            // expose chat completions at {base}/chat/completions. Auth upstream is
+            // responsible for normalization.
+            _other => {
                 if base.ends_with("/chat/completions") {
                     Ok(base.to_string())
                 } else {
                     Ok(format!("{base}/chat/completions"))
                 }
             }
-            other => Err(format!("unsupported provider_type '{other}'")),
         }
     }
 
@@ -268,7 +283,7 @@ impl ModelCaller {
         if target.provider_type == "anthropic" {
             req = req
                 .header("x-api-key", &target.api_key)
-                .header("anthropic-version", "2023-06-01");
+                .header("anthropic-version", ANTHROPIC_API_VERSION);
         } else {
             req = req.header("Authorization", format!("Bearer {}", target.api_key));
         }
@@ -310,18 +325,7 @@ impl ModelCaller {
 
         let latency_ms = start.elapsed().as_millis() as u64;
         let content = Self::extract_content(&resp_body);
-        let usage = TokenUsage {
-            input_tokens: resp_body
-                .get("usage")
-                .and_then(|u| u.get("input_tokens").or_else(|| u.get("prompt_tokens")))
-                .and_then(|t| t.as_u64())
-                .unwrap_or(0),
-            output_tokens: resp_body
-                .get("usage")
-                .and_then(|u| u.get("output_tokens").or_else(|| u.get("completion_tokens")))
-                .and_then(|t| t.as_u64())
-                .unwrap_or(0),
-        };
+        let usage = Self::extract_usage(&resp_body);
 
         Ok(ModelResponse {
             content,
@@ -393,6 +397,24 @@ impl ModelCaller {
         }
         // Fallback: return raw JSON
         resp.to_string()
+    }
+
+    /// Extract token usage from an OpenAI- or Anthropic-shaped response body.
+    /// Accepts both Anthropic (`input_tokens`/`output_tokens`) and OpenAI
+    /// (`prompt_tokens`/`completion_tokens`) field names.
+    fn extract_usage(resp_body: &Value) -> TokenUsage {
+        TokenUsage {
+            input_tokens: resp_body
+                .get("usage")
+                .and_then(|u| u.get("input_tokens").or_else(|| u.get("prompt_tokens")))
+                .and_then(|t| t.as_u64())
+                .unwrap_or(0),
+            output_tokens: resp_body
+                .get("usage")
+                .and_then(|u| u.get("output_tokens").or_else(|| u.get("completion_tokens")))
+                .and_then(|t| t.as_u64())
+                .unwrap_or(0),
+        }
     }
 }
 
@@ -509,6 +531,75 @@ mod tests {
             max_tokens: 1024,
         };
 
+        assert_eq!(
+            ModelCaller::build_target_url(&target).unwrap(),
+            "https://example.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn model_call_target_debug_redacts_api_key() {
+        let target = ModelCallTarget {
+            model_key: "frontier".to_string(),
+            provider_type: "openai_chat".to_string(),
+            model: "gpt-5-mini".to_string(),
+            base_url: "https://example.com/v1".to_string(),
+            api_key: "sk-secret-key".to_string(),
+            max_tokens: 1024,
+        };
+        let debug = format!("{:?}", target);
+        assert!(
+            !debug.contains("sk-secret-key"),
+            "api_key leaked in Debug: {debug}"
+        );
+        assert!(
+            debug.contains("<redacted>"),
+            "expected <redacted> in Debug: {debug}"
+        );
+    }
+
+    #[test]
+    fn build_target_url_anthropic_arm_resists_double_append() {
+        let target = ModelCallTarget {
+            model_key: "claude".to_string(),
+            provider_type: "anthropic".to_string(),
+            model: "claude-3-5-sonnet".to_string(),
+            base_url: "https://api.anthropic.com/v1/messages".to_string(),
+            api_key: "sk-test".to_string(),
+            max_tokens: 1024,
+        };
+        assert_eq!(
+            ModelCaller::build_target_url(&target).unwrap(),
+            "https://api.anthropic.com/v1/messages"
+        );
+    }
+
+    #[test]
+    fn build_target_url_routes_unknown_provider_through_openai_path() {
+        let target = ModelCallTarget {
+            model_key: "deepseek".to_string(),
+            provider_type: "deepseek".to_string(),
+            model: "deepseek-chat".to_string(),
+            base_url: "https://api.deepseek.com/v1".to_string(),
+            api_key: "sk-test".to_string(),
+            max_tokens: 1024,
+        };
+        assert_eq!(
+            ModelCaller::build_target_url(&target).unwrap(),
+            "https://api.deepseek.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn build_target_url_trims_trailing_slash() {
+        let target = ModelCallTarget {
+            model_key: "frontier".to_string(),
+            provider_type: "openai_chat".to_string(),
+            model: "gpt-5-mini".to_string(),
+            base_url: "https://example.com/v1/".to_string(),
+            api_key: "sk-test".to_string(),
+            max_tokens: 1024,
+        };
         assert_eq!(
             ModelCaller::build_target_url(&target).unwrap(),
             "https://example.com/v1/chat/completions"
