@@ -26,6 +26,10 @@ pub enum OrchestrationDecision {
     Debate {
         debaters: Vec<String>,
         judge: String,
+        quality_threshold: f64,
+        max_rounds: u32,
+        critique: bool,
+        revision: bool,
     },
     MoA {
         proposers: Vec<String>,
@@ -157,7 +161,10 @@ impl OrchestrationEngine {
             StrategyAction::Debate {
                 debaters,
                 judge,
-                ..
+                quality_threshold,
+                max_rounds,
+                critique,
+                revision,
             } => {
                 let healthy_debaters = health_filter(debaters);
                 if healthy_debaters.len() < 2 {
@@ -177,13 +184,18 @@ impl OrchestrationEngine {
                     return OrchestrationDecision::Passthrough;
                 }
                 log::info!(
-                    "[Orchestration] DEBATE — debaters=[{}], judge={}",
+                    "[Orchestration] DEBATE — debaters=[{}], judge={}, threshold={:.2}",
                     healthy_debaters.join(", "),
-                    judge
+                    judge,
+                    quality_threshold
                 );
                 OrchestrationDecision::Debate {
                     debaters: healthy_debaters,
                     judge,
+                    quality_threshold,
+                    max_rounds,
+                    critique,
+                    revision,
                 }
             }
             StrategyAction::MoA {
@@ -355,5 +367,37 @@ strategies:
         let result = engine.execute(&decision, vec![], None).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not initialized"));
+    }
+
+    #[tokio::test]
+    async fn debate_decision_carries_quality_threshold() {
+        let yaml = r#"
+enabled: true
+models:
+  a: { provider: deepseek, model: deepseek-chat, api_key_env: DEEPSEEK_API_KEY }
+  b: { provider: qwen, model: qwen-plus, api_key_env: QWEN_API_KEY }
+  judge: { provider: anthropic, model: claude-sonnet-4-20250514, api_key_env: ANTHROPIC_API_KEY }
+strategies:
+  debate:
+    priority: 10
+    description: "Debate"
+    when:
+      complexity: [0.0, 1.0]
+    action:
+      type: debate
+      debaters: [a, b]
+      judge: judge
+      quality_threshold: 0.83
+"#;
+        let (engine, _dir) = create_engine_with_yaml(yaml);
+        let body = json!({"messages": [{"role": "user", "content": "design a compiler"}]});
+        let decision = engine.decide(&body).await;
+
+        match decision {
+            OrchestrationDecision::Debate { quality_threshold, .. } => {
+                assert!((quality_threshold - 0.83).abs() < f64::EPSILON);
+            }
+            other => panic!("expected Debate, got {other:?}"),
+        }
     }
 }

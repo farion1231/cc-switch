@@ -64,9 +64,25 @@ impl StrategyExecutor {
                     .await
             }
 
-            OrchestrationDecision::Debate { debaters, judge } => {
-                self.execute_debate(debaters, judge, messages, tools)
-                    .await
+            OrchestrationDecision::Debate {
+                debaters,
+                judge,
+                quality_threshold,
+                max_rounds,
+                critique,
+                revision,
+            } => {
+                self.execute_debate(
+                    debaters,
+                    judge,
+                    *quality_threshold,
+                    *max_rounds,
+                    *critique,
+                    *revision,
+                    messages,
+                    tools,
+                )
+                .await
             }
 
             OrchestrationDecision::MoA {
@@ -197,6 +213,10 @@ impl StrategyExecutor {
         &self,
         debater_keys: &[String],
         judge_key: &str,
+        quality_threshold: f64,
+        max_rounds: u32,
+        critique: bool,
+        revision: bool,
         messages: Vec<Value>,
         tools: Option<Vec<Value>>,
     ) -> Result<ExecutionResult, String> {
@@ -236,7 +256,7 @@ impl StrategyExecutor {
         }
 
         if responses.len() == 1 {
-            let (key, resp) = responses.into_iter().next().unwrap();
+            let (_key, resp) = responses.into_iter().next().unwrap();
             return Ok(ExecutionResult {
                 content: resp.content,
                 model_used: resp.model,
@@ -250,8 +270,51 @@ impl StrategyExecutor {
             });
         }
 
+        // Optional critique phase: judge produces critique bullets for the candidates.
+        let mut critique_text: Option<String> = None;
+        if critique {
+            let critique_prompt = Self::build_debate_critique_prompt(&responses);
+            let critique_resp = self
+                .caller
+                .call_prompt(judge_key, DEBATE_JUDGE_SYSTEM, &critique_prompt, Some(0.2))
+                .await?;
+            total_input += critique_resp.usage.input_tokens;
+            total_output += critique_resp.usage.output_tokens;
+            critique_text = Some(critique_resp.content);
+        }
+
+        // Optional revision phase: each debater revises its answer in light of the critique.
+        let mut revised_responses = responses.clone();
+        if revision && max_rounds > 0 {
+            let critique_for_revision = critique_text.as_deref().unwrap_or("");
+            let revision_futures: Vec<_> = responses
+                .iter()
+                .map(|(model_key, resp)| async {
+                    let prompt =
+                        Self::build_debate_revision_prompt(&resp.content, critique_for_revision);
+                    let result = self
+                        .caller
+                        .call_prompt(model_key, "", &prompt, Some(0.2))
+                        .await;
+                    (model_key.clone(), result)
+                })
+                .collect();
+            let revision_results = join_all(revision_futures).await;
+            let mut revisions = Vec::new();
+            for (model_key, result) in revision_results {
+                if let Ok(resp) = result {
+                    total_input += resp.usage.input_tokens;
+                    total_output += resp.usage.output_tokens;
+                    revisions.push((model_key, resp));
+                }
+            }
+            if !revisions.is_empty() {
+                revised_responses = revisions;
+            }
+        }
+
         // Shuffle responses to prevent position bias in judge evaluation
-        let candidates: Vec<crate::orchestration::shuffle::CandidateAnswer> = responses
+        let candidates: Vec<crate::orchestration::shuffle::CandidateAnswer> = revised_responses
             .iter()
             .map(|(key, resp)| crate::orchestration::shuffle::CandidateAnswer {
                 model_key: key.clone(),
@@ -284,6 +347,18 @@ impl StrategyExecutor {
                 best.model_key,
             );
 
+            if cj_result.final_score < quality_threshold {
+                log::warn!(
+                    "[Debate] CrossJudge score {:.2} below threshold {:.2}; returning fallback error",
+                    cj_result.final_score,
+                    quality_threshold
+                );
+                return Err(format!(
+                    "quality_threshold_failed: debate score {:.2} below {:.2}",
+                    cj_result.final_score, quality_threshold
+                ));
+            }
+
             return Ok(ExecutionResult {
                 content: best.content.clone(),
                 model_used: best.model_key.clone(),
@@ -291,16 +366,17 @@ impl StrategyExecutor {
                 total_latency_ms: start.elapsed().as_millis() as u64,
                 total_input_tokens: total_input,
                 total_output_tokens: total_output,
-                cascade_attempts: responses.len() as u32,
+                cascade_attempts: revised_responses.len() as u32,
                 verified: cj_result.consensus_level != ConsensusLevel::Low,
                 judge_score: Some(cj_result.final_score),
             });
         }
 
-        let debate_summary = Self::build_debate_prompt_from_candidates(&shuffled.candidates);
-        let judge_messages = vec![json!({
+        let debate_summary =
+            Self::build_debate_judge_prompt(&revised_responses, critique_text.as_deref());
+        let _judge_messages = vec![json!({
             "role": "user",
-            "content": debate_summary
+            "content": debate_summary.clone()
         })];
 
         let judge_resp = self
@@ -311,7 +387,18 @@ impl StrategyExecutor {
         total_input += judge_resp.usage.input_tokens;
         total_output += judge_resp.usage.output_tokens;
 
-        let score = Self::extract_score_from_judge(&judge_resp.content);
+        let score = Self::extract_score_from_judge(&judge_resp.content).unwrap_or(0.0);
+        if score < quality_threshold {
+            log::warn!(
+                "[Debate] judge score {:.2} below threshold {:.2}; returning fallback error",
+                score,
+                quality_threshold
+            );
+            return Err(format!(
+                "quality_threshold_failed: debate score {:.2} below {:.2}",
+                score, quality_threshold
+            ));
+        }
 
         Ok(ExecutionResult {
             content: judge_resp.content,
@@ -320,9 +407,9 @@ impl StrategyExecutor {
             total_latency_ms: start.elapsed().as_millis() as u64,
             total_input_tokens: total_input,
             total_output_tokens: total_output,
-            cascade_attempts: responses.len() as u32,
+            cascade_attempts: revised_responses.len() as u32,
             verified: true,
-            judge_score: score,
+            judge_score: Some(score),
         })
     }
 
@@ -460,6 +547,56 @@ impl StrategyExecutor {
             }
         }
         None
+    }
+
+    fn build_debate_critique_prompt(candidates: &[(String, ModelResponse)]) -> String {
+        let mut prompt = String::from(
+            "Review the candidate answers. Identify factual errors, missing requirements, unsafe claims, and format violations.\n\n",
+        );
+        for (i, (key, resp)) in candidates.iter().enumerate() {
+            prompt.push_str(&format!(
+                "Candidate {} ({})\n{}\n\n",
+                i + 1,
+                key,
+                resp.content
+            ));
+        }
+        prompt.push_str(
+            "Return concise critique bullets and end with SCORE: <0.0 to 1.0> for the strongest candidate.",
+        );
+        prompt
+    }
+
+    fn build_debate_revision_prompt(original_answer: &str, critique: &str) -> String {
+        format!(
+            "Revise your answer using the critique. Keep correct parts, fix errors, and preserve the user's requested format.\n\nOriginal answer:\n{original_answer}\n\nCritique:\n{critique}\n\nRevised answer:"
+        )
+    }
+
+    fn build_debate_judge_prompt(
+        candidates: &[(String, ModelResponse)],
+        critique_text: Option<&str>,
+    ) -> String {
+        let mut prompt = String::from(
+            "You are judging revised candidate answers. Select the best final answer and enforce the quality threshold strictly.\n\n",
+        );
+        if let Some(critique) = critique_text {
+            prompt.push_str("Critique summary:\n");
+            prompt.push_str(critique);
+            prompt.push_str("\n\n");
+        }
+        for (i, (key, resp)) in candidates.iter().enumerate() {
+            prompt.push_str(&format!(
+                "Candidate {} ({})\n{}\n\n",
+                i + 1,
+                key,
+                resp.content
+            ));
+        }
+        prompt.push_str(
+            "Return exactly:\nSCORE: <0.0 to 1.0>\nBEST: <candidate number>\nANSWER:\n<final answer>",
+        );
+        prompt
     }
 }
 
