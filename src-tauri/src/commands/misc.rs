@@ -1069,15 +1069,27 @@ fn default_flag_for_shell(shell: &str) -> &'static str {
     }
 }
 
-/// 获取用户默认 shell 的完整路径
+fn fallback_user_shell() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "/bin/zsh"
+    } else {
+        "/bin/bash"
+    }
+}
+
+fn valid_user_shell_path(shell: &str) -> bool {
+    !shell.is_empty()
+        && shell.starts_with('/')
+        && is_valid_shell(shell)
+        && !shell.chars().any(char::is_control)
+}
+
+/// 获取用户默认 shell 的完整路径；异常或被污染的 SHELL 回退到平台默认值。
 fn get_user_shell() -> String {
-    std::env::var("SHELL").unwrap_or_else(|_| {
-        if cfg!(target_os = "macos") {
-            "/bin/zsh".to_string()
-        } else {
-            "/bin/bash".to_string()
-        }
-    })
+    std::env::var("SHELL")
+        .ok()
+        .filter(|shell| valid_user_shell_path(shell))
+        .unwrap_or_else(|| fallback_user_shell().to_string())
 }
 
 /// 从完整 shell 路径提取 shell 名（如 /bin/zsh → zsh）
@@ -1101,10 +1113,12 @@ fn interactive_flags_for_shell(shell_name: &str) -> &'static str {
 
 /// 构建 exec 行：interactive_flags 为空时不含尾部空格
 fn build_exec_line(shell: &str, interactive_flags: &str) -> String {
+    let quoted_shell = shell_single_quote(shell);
+
     if interactive_flags.is_empty() {
-        format!("exec {shell}")
+        format!("exec {quoted_shell}")
     } else {
-        format!("exec {shell} {interactive_flags}")
+        format!("exec {quoted_shell} {interactive_flags}")
     }
 }
 
@@ -3330,9 +3344,22 @@ mod tests {
 
     #[test]
     fn test_build_exec_line() {
-        assert_eq!(build_exec_line("/bin/zsh", "--norcs --no-globalrcs"), "exec /bin/zsh --norcs --no-globalrcs");
-        assert_eq!(build_exec_line("/bin/bash", "--norc --noprofile"), "exec /bin/bash --norc --noprofile");
-        assert_eq!(build_exec_line("/usr/bin/fish", ""), "exec /usr/bin/fish");
+        assert_eq!(
+            build_exec_line("/bin/zsh", "--norcs --no-globalrcs"),
+            "exec '/bin/zsh' --norcs --no-globalrcs"
+        );
+        assert_eq!(
+            build_exec_line("/bin/bash", "--norc --noprofile"),
+            "exec '/bin/bash' --norc --noprofile"
+        );
+        assert_eq!(
+            build_exec_line("/opt/homebrew dir/bin/fish", ""),
+            "exec '/opt/homebrew dir/bin/fish'"
+        );
+        assert_eq!(
+            build_exec_line("/tmp/shell'quote/zsh", ""),
+            "exec '/tmp/shell'\"'\"'quote/zsh'"
+        );
     }
 
     #[test]
@@ -3359,11 +3386,23 @@ mod tests {
         // $SHELL 未设置时应按平台 fallback
         // 此测试验证 fallback 逻辑，但不验证环境变量值（取决于运行环境）
         let shell = get_user_shell();
-        // 至少应返回一个合法路径
-        assert!(shell.starts_with('/') || shell.starts_with("sh"));
+        // 至少应返回一个合法的绝对路径
+        assert!(valid_user_shell_path(&shell));
         // shell_name 应可正确提取
         let name = get_shell_name(&shell);
         assert!(["sh", "bash", "zsh", "fish", "dash"].contains(&name.as_str()));
+    }
+
+    #[test]
+    fn test_valid_user_shell_path() {
+        assert!(valid_user_shell_path("/bin/zsh"));
+        assert!(valid_user_shell_path("/usr/local/bin/bash"));
+        assert!(valid_user_shell_path("/opt/homebrew dir/bin/fish"));
+        assert!(!valid_user_shell_path(""));
+        assert!(!valid_user_shell_path("zsh"));
+        assert!(!valid_user_shell_path("/bin/zsh; rm -rf /"));
+        assert!(!valid_user_shell_path("/bin/zsh\n/bin/bash"));
+        assert!(!valid_user_shell_path("/usr/bin/powershell"));
     }
 
     #[test]
