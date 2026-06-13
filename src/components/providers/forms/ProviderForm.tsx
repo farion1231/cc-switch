@@ -45,9 +45,14 @@ import {
   hermesProviderPresets,
   type HermesProviderPreset,
 } from "@/config/hermesProviderPresets";
+import {
+  atomcodeProviderPresets,
+  type AtomcodeProviderPreset,
+} from "@/config/atomcodeProviderPresets";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import { HermesFormFields } from "./HermesFormFields";
+import { AtomcodeFormFields } from "./AtomcodeFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import {
   applyTemplateValues,
@@ -97,6 +102,7 @@ import {
   useOmoDraftState,
   useOpenclawFormState,
   useHermesFormState,
+  useAtomcodeFormState,
   useCopilotAuth,
   useCodexOauth,
 } from "./hooks";
@@ -111,6 +117,7 @@ import {
   normalizePricingSource,
 } from "./helpers/opencodeFormUtils";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
+import { ATOMCODE_DEFAULT_CONFIG } from "./hooks/useAtomcodeFormState";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
@@ -123,7 +130,8 @@ type PresetEntry = {
     | GeminiProviderPreset
     | OpenCodeProviderPreset
     | OpenClawProviderPreset
-    | HermesProviderPreset;
+    | HermesProviderPreset
+    | AtomcodeProviderPreset;
 };
 
 const codexApiFormatFromWireApi = (
@@ -375,7 +383,9 @@ function ProviderFormFull({
                 ? OPENCLAW_DEFAULT_CONFIG
                 : appId === "hermes"
                   ? HERMES_DEFAULT_CONFIG
-                  : CLAUDE_DEFAULT_CONFIG,
+                  : appId === "atomcode"
+                    ? ATOMCODE_DEFAULT_CONFIG
+                    : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     }),
@@ -630,6 +640,11 @@ function ProviderFormFull({
         id: `hermes-${index}`,
         preset,
       }));
+    } else if (appId === "atomcode") {
+      return atomcodeProviderPresets.map<PresetEntry>((preset, index) => ({
+        id: `atomcode-${index}`,
+        preset,
+      }));
     }
     return providerPresets
       .filter((p) => !p.hidden)
@@ -837,6 +852,14 @@ function ProviderFormFull({
     isLoading: isHermesLiveProviderIdsLoading,
   } = useHermesLiveProviderIds(appId === "hermes");
 
+  const atomcodeForm = useAtomcodeFormState({
+    initialData,
+    appId,
+    providerId,
+    onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
+    getSettingsConfig: () => form.getValues("settingsConfig"),
+  });
+
   const additiveExistingProviderKeys = useMemo(() => {
     if (appId === "opencode" && !isAnyOmoCategory) {
       return Array.from(
@@ -869,9 +892,18 @@ function ProviderFormFull({
       );
     }
 
+    if (appId === "atomcode") {
+      return Array.from(
+        new Set(
+          atomcodeForm.existingAtomcodeKeys.filter((key) => key !== providerId),
+        ),
+      );
+    }
+
     return [];
   }, [
     appId,
+    atomcodeForm.existingAtomcodeKeys,
     existingOpencodeKeys,
     hermesForm.existingHermesKeys,
     hermesLiveProviderIds,
@@ -893,6 +925,7 @@ function ProviderFormFull({
     if (appId === "hermes") {
       return isHermesLiveProviderIdsLoading;
     }
+    // atomcode: no live-provider-ids API yet; key is never locked
     return false;
   }, [
     appId,
@@ -914,6 +947,7 @@ function ProviderFormFull({
     if (appId === "hermes") {
       return hermesLiveProviderIds.includes(providerId);
     }
+    // atomcode: no live-provider-ids API yet; key is never locked
     return false;
   }, [
     appId,
@@ -1050,6 +1084,37 @@ function ProviderFormFull({
         additiveExistingProviderKeys.includes(hermesForm.hermesProviderKey)
       ) {
         toast.error(t("hermes.form.providerKeyDuplicate"));
+        return;
+      }
+    }
+
+    if (appId === "atomcode") {
+      if (!atomcodeForm.atomcodeProviderKey.trim()) {
+        toast.error(
+          t("atomcode.form.providerKeyRequired", {
+            defaultValue: "请填写 Provider Key",
+          }),
+        );
+        return;
+      }
+      if (!keyPattern.test(atomcodeForm.atomcodeProviderKey)) {
+        toast.error(
+          t("atomcode.form.providerKeyInvalid", {
+            defaultValue:
+              "Provider Key 只能包含小写字母、数字和连字符，且不能以连字符开头或结尾",
+          }),
+        );
+        return;
+      }
+      if (
+        !isProviderKeyLocked &&
+        additiveExistingProviderKeys.includes(atomcodeForm.atomcodeProviderKey)
+      ) {
+        toast.error(
+          t("atomcode.form.providerKeyDuplicate", {
+            defaultValue: "该 Provider Key 已被其他供应商使用",
+          }),
+        );
         return;
       }
     }
@@ -1252,6 +1317,37 @@ function ProviderFormFull({
         }
       }
       settingsConfig = JSON.stringify(omoConfig);
+    } else if (appId === "atomcode") {
+      // Build flat settingsConfig for atomcode; omit blank optional fields
+      const flat: Record<string, unknown> = {
+        providerKey: atomcodeForm.atomcodeProviderKey,
+        type: atomcodeForm.atomcodeType,
+        model: atomcodeForm.atomcodeModel,
+      };
+      if (atomcodeForm.atomcodeApiKey.trim()) {
+        flat.api_key = atomcodeForm.atomcodeApiKey;
+      }
+      if (atomcodeForm.atomcodeBaseUrl.trim()) {
+        flat.base_url = atomcodeForm.atomcodeBaseUrl.trim();
+      }
+      if (
+        atomcodeForm.atomcodeContextWindow !== undefined &&
+        atomcodeForm.atomcodeContextWindow > 0
+      ) {
+        flat.context_window = atomcodeForm.atomcodeContextWindow;
+      }
+      if (atomcodeForm.atomcodeType === "claude") {
+        if (atomcodeForm.atomcodeThinkingEnabled) {
+          flat.thinking_enabled = true;
+        }
+        if (
+          atomcodeForm.atomcodeThinkingBudget !== undefined &&
+          atomcodeForm.atomcodeThinkingBudget > 0
+        ) {
+          flat.thinking_budget = atomcodeForm.atomcodeThinkingBudget;
+        }
+      }
+      settingsConfig = JSON.stringify(flat);
     } else {
       settingsConfig = values.settingsConfig.trim();
     }
@@ -1276,6 +1372,8 @@ function ProviderFormFull({
       payload.providerKey = openclawForm.openclawProviderKey;
     } else if (appId === "hermes") {
       payload.providerKey = hermesForm.hermesProviderKey;
+    } else if (appId === "atomcode") {
+      payload.providerKey = atomcodeForm.atomcodeProviderKey;
     }
 
     if (isAnyOmoCategory && !payload.presetCategory) {
@@ -1551,6 +1649,9 @@ function ProviderFormFull({
       if (appId === "hermes") {
         hermesForm.resetHermesState();
       }
+      if (appId === "atomcode") {
+        atomcodeForm.resetAtomcodeState();
+      }
       return;
     }
 
@@ -1667,6 +1768,23 @@ function ProviderFormFull({
       const config = preset.settingsConfig;
 
       hermesForm.resetHermesState(config);
+
+      form.reset({
+        name: preset.nameKey ? t(preset.nameKey) : preset.name,
+        websiteUrl: preset.websiteUrl ?? "",
+        settingsConfig: JSON.stringify(config, null, 2),
+        icon: preset.icon ?? "",
+        iconColor: preset.iconColor ?? "",
+      });
+      return;
+    }
+
+    // AtomCode preset handling
+    if (appId === "atomcode") {
+      const preset = entry.preset as AtomcodeProviderPreset;
+      const config = preset.settingsConfig;
+
+      atomcodeForm.resetAtomcodeState(config);
 
       form.reset({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -1942,6 +2060,77 @@ function ProviderFormFull({
                       </p>
                     )}
                 </div>
+              ) : appId === "atomcode" ? (
+                <div className="space-y-2">
+                  <Label htmlFor="atomcode-key">
+                    {t("atomcode.form.providerKey", {
+                      defaultValue: "Provider Key",
+                    })}
+                    <span className="text-destructive ml-1">*</span>
+                  </Label>
+                  <Input
+                    id="atomcode-key"
+                    value={atomcodeForm.atomcodeProviderKey}
+                    onChange={(e) =>
+                      atomcodeForm.setAtomcodeProviderKey(
+                        e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""),
+                      )
+                    }
+                    placeholder={t("atomcode.form.providerKeyPlaceholder", {
+                      defaultValue: "my-provider",
+                    })}
+                    disabled={isProviderKeyLocked}
+                    className={
+                      (additiveExistingProviderKeys.includes(
+                        atomcodeForm.atomcodeProviderKey,
+                      ) &&
+                        !isProviderKeyLocked) ||
+                      (atomcodeForm.atomcodeProviderKey.trim() !== "" &&
+                        !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                          atomcodeForm.atomcodeProviderKey,
+                        ))
+                        ? "border-destructive"
+                        : ""
+                    }
+                  />
+                  {additiveExistingProviderKeys.includes(
+                    atomcodeForm.atomcodeProviderKey,
+                  ) &&
+                    !isProviderKeyLocked && (
+                      <p className="text-xs text-destructive">
+                        {t("atomcode.form.providerKeyDuplicate", {
+                          defaultValue: "该 Provider Key 已被其他供应商使用",
+                        })}
+                      </p>
+                    )}
+                  {atomcodeForm.atomcodeProviderKey.trim() !== "" &&
+                    !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                      atomcodeForm.atomcodeProviderKey,
+                    ) && (
+                      <p className="text-xs text-destructive">
+                        {t("atomcode.form.providerKeyInvalid", {
+                          defaultValue:
+                            "Provider Key 只能包含小写字母、数字和连字符，且不能以连字符开头或结尾",
+                        })}
+                      </p>
+                    )}
+                  {!(
+                    additiveExistingProviderKeys.includes(
+                      atomcodeForm.atomcodeProviderKey,
+                    ) && !isProviderKeyLocked
+                  ) &&
+                    (atomcodeForm.atomcodeProviderKey.trim() === "" ||
+                      /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                        atomcodeForm.atomcodeProviderKey,
+                      )) && (
+                      <p className="text-xs text-muted-foreground">
+                        {t("atomcode.form.providerKeyHint", {
+                          defaultValue:
+                            "小写字母、数字和连字符，用作 AtomCode 配置中的供应商标识。",
+                        })}
+                      </p>
+                    )}
+                </div>
               ) : undefined
             }
           />
@@ -2171,6 +2360,35 @@ function ProviderFormFull({
             />
           )}
 
+          {/* AtomCode 专属字段 */}
+          {appId === "atomcode" && (
+            <AtomcodeFormFields
+              type={atomcodeForm.atomcodeType}
+              onTypeChange={atomcodeForm.handleAtomcodeTypeChange}
+              model={atomcodeForm.atomcodeModel}
+              onModelChange={atomcodeForm.handleAtomcodeModelChange}
+              apiKey={atomcodeForm.atomcodeApiKey}
+              onApiKeyChange={atomcodeForm.handleAtomcodeApiKeyChange}
+              category={category}
+              shouldShowApiKeyLink={false}
+              websiteUrl=""
+              baseUrl={atomcodeForm.atomcodeBaseUrl}
+              onBaseUrlChange={atomcodeForm.handleAtomcodeBaseUrlChange}
+              contextWindow={atomcodeForm.atomcodeContextWindow}
+              onContextWindowChange={
+                atomcodeForm.handleAtomcodeContextWindowChange
+              }
+              thinkingEnabled={atomcodeForm.atomcodeThinkingEnabled}
+              onThinkingEnabledChange={
+                atomcodeForm.handleAtomcodeThinkingEnabledChange
+              }
+              thinkingBudget={atomcodeForm.atomcodeThinkingBudget}
+              onThinkingBudgetChange={
+                atomcodeForm.handleAtomcodeThinkingBudgetChange
+              }
+            />
+          )}
+
           {/* 配置编辑器：Codex、Claude、Gemini 分别使用不同的编辑器 */}
           {appId === "codex" ? (
             <>
@@ -2257,7 +2475,9 @@ function ProviderFormFull({
               </div>
               {settingsConfigErrorField}
             </>
-          ) : appId === "openclaw" || appId === "hermes" ? (
+          ) : appId === "openclaw" ||
+            appId === "hermes" ||
+            appId === "atomcode" ? (
             <>
               <div className="space-y-2">
                 <Label htmlFor="settingsConfig">
@@ -2273,7 +2493,15 @@ function ProviderFormFull({
   "base_url": "https://api.example.com/v1",
   "api_key": ""
 }`
-                      : `{
+                      : appId === "atomcode"
+                        ? `{
+  "providerKey": "my-provider",
+  "type": "openai",
+  "model": "gpt-4o",
+  "api_key": "your-api-key-here",
+  "base_url": "https://api.openai.com/v1"
+}`
+                        : `{
   "baseUrl": "https://api.example.com/v1",
   "apiKey": "your-api-key-here",
   "api": "openai-completions",
@@ -2318,7 +2546,8 @@ function ProviderFormFull({
           {!isAnyOmoCategory &&
             appId !== "opencode" &&
             appId !== "openclaw" &&
-            appId !== "hermes" && (
+            appId !== "hermes" &&
+            appId !== "atomcode" && (
               <ProviderAdvancedConfig
                 testConfig={testConfig}
                 pricingConfig={pricingConfig}
