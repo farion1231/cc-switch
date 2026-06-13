@@ -1092,32 +1092,9 @@ fn get_user_shell() -> String {
         .unwrap_or_else(|| fallback_user_shell().to_string())
 }
 
-/// 从完整 shell 路径提取 shell 名（如 /bin/zsh → zsh）
-fn get_shell_name(shell_path: &str) -> String {
-    shell_path
-        .rsplit('/')
-        .next()
-        .filter(|s| !s.is_empty())
-        .unwrap_or("sh")
-        .to_string()
-}
-
-/// 返回给定 shell 的额外交互式 flags。
-/// 这里保持为空，让用户 shell 按默认交互式规则加载 ~/.zshrc、~/.bashrc 等配置。
-fn interactive_flags_for_shell(shell_name: &str) -> &'static str {
-    let _ = shell_name;
-    ""
-}
-
-/// 构建 exec 行：interactive_flags 为空时不含尾部空格
-fn build_exec_line(shell: &str, interactive_flags: &str) -> String {
-    let quoted_shell = shell_single_quote(shell);
-
-    if interactive_flags.is_empty() {
-        format!("exec {quoted_shell}")
-    } else {
-        format!("exec {quoted_shell} {interactive_flags}")
-    }
+/// 构建 exec 行：引号保护 shell 路径，用户 shell 按默认交互式规则加载 rc 配置
+fn build_exec_line(shell: &str) -> String {
+    format!("exec {}", shell_single_quote(shell))
 }
 
 #[cfg(target_os = "windows")]
@@ -2620,9 +2597,7 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let terminal = preferred.as_deref().unwrap_or("terminal");
 
     let shell = get_user_shell();
-    let shell_name = get_shell_name(&shell);
-    let interactive_flags = interactive_flags_for_shell(&shell_name);
-    let exec_line = build_exec_line(&shell, interactive_flags);
+    let exec_line = build_exec_line(&shell);
 
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
@@ -2632,7 +2607,7 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     // Write the shell script to a temp file
     // 脚本使用 POSIX sh 语法确保可移植性，exec 行切换到用户交互式 shell
     let script_content = format!(
-        r#"#!/bin/sh
+        r#"#!/usr/bin/env sh
 trap 'rm -f "{config_path}" "{script_file}"' EXIT
 {cd_command}
 echo "Using provider-specific claude config:"
@@ -2859,9 +2834,9 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 
         rm -- "$0"
 
-        exec sh {script_file}
+        exec sh {quoted_script}
         "#,
-        script_file = script_file.display(),
+        quoted_script = shell_single_quote(&script_file.to_string_lossy()),
     )
     .map_err(|e| format!("Failed to write to temporary script file for Warp: {e}"))?;
 
@@ -2917,7 +2892,7 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let cd_command = build_shell_cd_command(cwd);
 
     let script_content = format!(
-        r#"#!/bin/sh
+        r#"#!/usr/bin/env sh
 trap 'rm -f "{config_path}" "{script_file}"' EXIT
 {cd_command}
 echo "Using provider-specific claude config:"
@@ -3149,7 +3124,7 @@ pub(crate) fn launch_terminal_running(command_line: &str, label: &str) -> Result
     let (script_file, script_content) = {
         let file = temp_dir.join(format!("cc_switch_{}_{}.sh", label, pid));
         let content = format!(
-            r#"#!/bin/sh
+            r#"#!/usr/bin/env sh
 trap 'rm -f "{script_path}"' EXIT
 echo "[cc-switch] Starting: {label}"
 echo ""
@@ -3342,45 +3317,16 @@ mod tests {
 
     #[test]
     fn test_build_exec_line() {
+        assert_eq!(build_exec_line("/bin/zsh"), "exec '/bin/zsh'");
+        assert_eq!(build_exec_line("/bin/bash"), "exec '/bin/bash'");
         assert_eq!(
-            build_exec_line("/bin/zsh", interactive_flags_for_shell("zsh")),
-            "exec '/bin/zsh'"
-        );
-        assert_eq!(
-            build_exec_line("/bin/bash", interactive_flags_for_shell("bash")),
-            "exec '/bin/bash'"
-        );
-        assert_eq!(
-            build_exec_line("/bin/zsh", "--custom-flag"),
-            "exec '/bin/zsh' --custom-flag"
-        );
-        assert_eq!(
-            build_exec_line("/opt/homebrew dir/bin/fish", ""),
+            build_exec_line("/opt/homebrew dir/bin/fish"),
             "exec '/opt/homebrew dir/bin/fish'"
         );
         assert_eq!(
-            build_exec_line("/tmp/shell'quote/zsh", ""),
+            build_exec_line("/tmp/shell'quote/zsh"),
             "exec '/tmp/shell'\"'\"'quote/zsh'"
         );
-    }
-
-    #[test]
-    fn test_get_shell_name() {
-        assert_eq!(get_shell_name("/bin/zsh"), "zsh");
-        assert_eq!(get_shell_name("/bin/bash"), "bash");
-        assert_eq!(get_shell_name("/usr/bin/fish"), "fish");
-        assert_eq!(get_shell_name("/usr/local/bin/dash"), "dash");
-        assert_eq!(get_shell_name("zsh"), "zsh");
-        assert_eq!(get_shell_name(""), "sh");
-    }
-
-    #[test]
-    fn test_interactive_flags_for_shell() {
-        assert_eq!(interactive_flags_for_shell("bash"), "");
-        assert_eq!(interactive_flags_for_shell("zsh"), "");
-        assert_eq!(interactive_flags_for_shell("fish"), "");
-        assert_eq!(interactive_flags_for_shell("dash"), "");
-        assert_eq!(interactive_flags_for_shell("sh"), "");
     }
 
     #[test]
@@ -3390,9 +3336,9 @@ mod tests {
         let shell = get_user_shell();
         // 至少应返回一个合法的绝对路径
         assert!(valid_user_shell_path(&shell));
-        // shell_name 应可正确提取
-        let name = get_shell_name(&shell);
-        assert!(["sh", "bash", "zsh", "fish", "dash"].contains(&name.as_str()));
+        // basename 应为合法 shell 名
+        let basename = shell.rsplit('/').next().unwrap_or("sh");
+        assert!(["sh", "bash", "zsh", "fish", "dash"].contains(&basename));
     }
 
     #[test]
