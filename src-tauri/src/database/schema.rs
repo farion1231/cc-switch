@@ -1227,6 +1227,7 @@ impl Database {
                 judge_score     REAL,
                 debate_consensus TEXT
             )",
+            [],
         )
         .map_err(|e| AppError::Database(format!("创建 orchestration_requests 表失败: {e}")))?;
 

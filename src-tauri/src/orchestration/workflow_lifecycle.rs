@@ -60,6 +60,7 @@ pub struct StateTransition {
 }
 
 /// Tracks the lifecycle of a single orchestration workflow.
+#[derive(Debug, Clone)]
 pub struct WorkflowLifecycle {
     state: WorkflowState,
     transitions: Vec<StateTransition>,

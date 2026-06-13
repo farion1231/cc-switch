@@ -91,10 +91,11 @@ impl CostLedger {
 
     /// Calculate cost for a model given token counts.
     pub fn calculate_cost(&self, model: &str, input_tokens: u64, output_tokens: u64) -> f64 {
+        let default_pricing = ModelPricing::default();
         let pricing = self
             .pricing
             .get(model)
-            .unwrap_or(&ModelPricing::default());
+            .unwrap_or(&default_pricing);
         (input_tokens as f64 / 1_000_000.0) * pricing.input_price_per_1m
             + (output_tokens as f64 / 1_000_000.0) * pricing.output_price_per_1m
     }

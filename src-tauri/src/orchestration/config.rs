@@ -259,6 +259,26 @@ impl Default for OrchestrationConfig {
             },
         );
         models.insert(
+            "qwen_coder".to_string(),
+            ModelConfig {
+                provider: "qwen".to_string(),
+                model: "qwen-plus".to_string(),
+                api_key_env: "QWEN_API_KEY".to_string(),
+                base_url: None,
+                max_tokens: 16384,
+            },
+        );
+        models.insert(
+            "glm_coder".to_string(),
+            ModelConfig {
+                provider: "glm".to_string(),
+                model: "glm-4-flash".to_string(),
+                api_key_env: "GLM_API_KEY".to_string(),
+                base_url: None,
+                max_tokens: 16384,
+            },
+        );
+        models.insert(
             "frontier".to_string(),
             ModelConfig {
                 provider: "anthropic".to_string(),
@@ -302,6 +322,48 @@ impl Default for OrchestrationConfig {
                 },
             },
         );
+        strategies.insert(
+            "debate".to_string(),
+            StrategyDef {
+                description: "Multi-model debate with judge arbitration".to_string(),
+                when: StrategyCondition {
+                    complexity: Some((0.7, 0.9)),
+                    risk: Some(vec!["high".to_string(), "critical".to_string()]),
+                    ..Default::default()
+                },
+                action: StrategyAction::Debate {
+                    debaters: vec![
+                        "cheap_coder".to_string(),
+                        "qwen_coder".to_string(),
+                        "glm_coder".to_string(),
+                    ],
+                    judge: "frontier".to_string(),
+                    quality_threshold: 0.7,
+                },
+            },
+        );
+        strategies.insert(
+            "moa".to_string(),
+            StrategyDef {
+                description: "Mixture of Agents — propose then aggregate".to_string(),
+                when: StrategyCondition {
+                    complexity: Some((0.9, 1.0)),
+                    risk: Some(vec!["critical".to_string()]),
+                    ..Default::default()
+                },
+                action: StrategyAction::MoA {
+                    proposers: vec![
+                        "cheap_coder".to_string(),
+                        "qwen_coder".to_string(),
+                        "glm_coder".to_string(),
+                        "frontier".to_string(),
+                    ],
+                    aggregator: "frontier".to_string(),
+                    verify_each: true,
+                    quality_threshold: 0.75,
+                },
+            },
+        );
         Self {
             enabled: false,
             models,
@@ -319,6 +381,8 @@ mod tests {
         let config = OrchestrationConfig::default();
         assert!(!config.models.is_empty());
         assert!(config.models.contains_key("cheap_coder"));
+        assert!(config.models.contains_key("qwen_coder"));
+        assert!(config.models.contains_key("glm_coder"));
         assert!(config.models.contains_key("frontier"));
     }
 
@@ -327,6 +391,8 @@ mod tests {
         let config = OrchestrationConfig::default();
         assert!(config.strategies.contains_key("route"));
         assert!(config.strategies.contains_key("cascade"));
+        assert!(config.strategies.contains_key("debate"));
+        assert!(config.strategies.contains_key("moa"));
     }
 
     #[test]
@@ -438,5 +504,67 @@ strategies:
         let config: OrchestrationConfig = serde_yaml::from_str(yaml).unwrap();
         let err = config.validate().unwrap_err();
         assert!(err.contains("missing_model"));
+    }
+
+    #[test]
+    fn default_config_has_debate_strategy() {
+        let config = OrchestrationConfig::default();
+        assert!(
+            config.strategies.contains_key("debate"),
+            "Default config should include debate strategy"
+        );
+        match &config.strategies["debate"].action {
+            StrategyAction::Debate {
+                debaters,
+                judge,
+                quality_threshold,
+            } => {
+                assert!(
+                    debaters.len() >= 2,
+                    "Debate needs at least 2 debaters"
+                );
+                assert!(!judge.is_empty(), "Debate needs a judge");
+                assert!(
+                    (*quality_threshold - 0.7).abs() < 0.001,
+                    "Debate quality threshold should be 0.7"
+                );
+            }
+            other => panic!("Expected Debate action, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn default_config_has_moa_strategy() {
+        let config = OrchestrationConfig::default();
+        assert!(
+            config.strategies.contains_key("moa"),
+            "Default config should include MoA strategy"
+        );
+        match &config.strategies["moa"].action {
+            StrategyAction::MoA {
+                proposers,
+                aggregator,
+                verify_each,
+                quality_threshold,
+            } => {
+                assert!(
+                    proposers.len() >= 2,
+                    "MoA needs at least 2 proposers"
+                );
+                assert!(
+                    !aggregator.is_empty(),
+                    "MoA needs an aggregator"
+                );
+                assert!(
+                    *verify_each,
+                    "MoA should verify each proposer"
+                );
+                assert!(
+                    (*quality_threshold - 0.75).abs() < 0.001,
+                    "MoA quality threshold should be 0.75"
+                );
+            }
+            other => panic!("Expected MoA action, got {:?}", other),
+        }
     }
 }

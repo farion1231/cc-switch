@@ -1,14 +1,17 @@
 use crate::orchestration::config::ModelConfig;
+use crate::orchestration::cross_judge::{ConsensusLevel, CrossJudge, JudgeAggregation, JudgeModel};
 use crate::orchestration::engine::OrchestrationDecision;
 use crate::orchestration::model_caller::{ModelCaller, ModelResponse};
 use crate::orchestration::quality_gate::QualityGate;
 use crate::orchestration::shuffle::CandidateShuffler;
+use futures::future::join_all;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
 pub struct StrategyExecutor {
     caller: ModelCaller,
     quality_gate: QualityGate,
+    cross_judge: Option<CrossJudge>,
 }
 
 #[derive(Debug, Clone)]
@@ -29,7 +32,13 @@ impl StrategyExecutor {
         Ok(Self {
             caller: ModelCaller::new(models)?,
             quality_gate: QualityGate::default(),
+            cross_judge: None,
         })
+    }
+
+    pub fn with_cross_judge(mut self, judges: Vec<JudgeModel>, aggregation: JudgeAggregation) -> Self {
+        self.cross_judge = Some(CrossJudge::new(judges, aggregation));
+        self
     }
 
     pub async fn execute(
@@ -195,20 +204,29 @@ impl StrategyExecutor {
         let mut total_input = 0u64;
         let mut total_output = 0u64;
 
+        // Fire all debater calls in parallel for lower latency
+        let debater_futures: Vec<_> = debater_keys
+            .iter()
+            .map(|model_key| async {
+                let result = self
+                    .caller
+                    .call(model_key, messages.clone(), tools.clone(), None)
+                    .await;
+                (model_key.clone(), result)
+            })
+            .collect();
+        let debater_results = join_all(debater_futures).await;
+
         let mut responses: Vec<(String, ModelResponse)> = Vec::new();
-        for model_key in debater_keys {
-            match self
-                .caller
-                .call(model_key, messages.clone(), tools.clone(), None)
-                .await
-            {
+        for (model_key, result) in debater_results {
+            match result {
                 Ok(resp) => {
                     total_input += resp.usage.input_tokens;
                     total_output += resp.usage.output_tokens;
-                    responses.push((model_key.clone(), resp));
+                    responses.push((model_key, resp));
                 }
                 Err(e) => {
-                    log::warn!("[Debate] Debater '{}' failed: {}", model_key, e);
+                    log::warn!("[Debate] Debater failed: {}", e);
                 }
             }
         }
@@ -244,6 +262,41 @@ impl StrategyExecutor {
             })
             .collect();
         let shuffled = CandidateShuffler::shuffle(candidates);
+
+        // Use CrossJudge if configured, otherwise fall back to single judge
+        if let Some(ref cj) = self.cross_judge {
+            let original_prompt = messages
+                .iter()
+                .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            let cj_result = cj
+                .evaluate(&original_prompt, &shuffled, &self.caller)
+                .await
+                .map_err(|e| format!("CrossJudge evaluation failed: {}", e))?;
+
+            let best = &shuffled.candidates[cj_result.best_candidate_idx];
+            log::info!(
+                "[Debate] CrossJudge consensus={:?}, best_score={:.2}, best_model={}",
+                cj_result.consensus_level,
+                cj_result.final_score,
+                best.model_key,
+            );
+
+            return Ok(ExecutionResult {
+                content: best.content.clone(),
+                model_used: best.model_key.clone(),
+                strategy: "debate".to_string(),
+                total_latency_ms: start.elapsed().as_millis() as u64,
+                total_input_tokens: total_input,
+                total_output_tokens: total_output,
+                cascade_attempts: responses.len() as u32,
+                verified: cj_result.consensus_level != ConsensusLevel::Low,
+                judge_score: Some(cj_result.final_score),
+            });
+        }
+
         let debate_summary = Self::build_debate_prompt_from_candidates(&shuffled.candidates);
         let judge_messages = vec![json!({
             "role": "user",
@@ -287,21 +340,29 @@ impl StrategyExecutor {
         let mut total_input = 0u64;
         let mut total_output = 0u64;
 
-        // Phase 1: All proposers generate answers in parallel (sequential for now)
+        // Phase 1: All proposers generate answers in parallel
+        let proposer_futures: Vec<_> = proposer_keys
+            .iter()
+            .map(|model_key| async {
+                let result = self
+                    .caller
+                    .call(model_key, messages.clone(), tools.clone(), None)
+                    .await;
+                (model_key.clone(), result)
+            })
+            .collect();
+        let proposer_results = join_all(proposer_futures).await;
+
         let mut proposals: Vec<(String, ModelResponse)> = Vec::new();
-        for model_key in proposer_keys {
-            match self
-                .caller
-                .call(model_key, messages.clone(), tools.clone(), None)
-                .await
-            {
+        for (model_key, result) in proposer_results {
+            match result {
                 Ok(resp) => {
                     total_input += resp.usage.input_tokens;
                     total_output += resp.usage.output_tokens;
-                    proposals.push((model_key.clone(), resp));
+                    proposals.push((model_key, resp));
                 }
                 Err(e) => {
-                    log::warn!("[MoA] Proposer '{}' failed: {}", model_key, e);
+                    log::warn!("[MoA] Proposer failed: {}", e);
                 }
             }
         }

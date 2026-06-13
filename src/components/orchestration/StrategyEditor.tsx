@@ -25,6 +25,7 @@ const TYPE_COLORS: Record<string, string> = {
 export function StrategyEditor() {
   const { t } = useTranslation();
   const [strategies, setStrategies] = useState<StrategyRule[]>([]);
+  const [savedConfig, setSavedConfig] = useState<OrchestrationConfig | null>(null);
   const [configPath, setConfigPath] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -35,6 +36,7 @@ export function StrategyEditor() {
       setLoading(true);
       setError(null);
       const config = await getConfig();
+      setSavedConfig(config);
       const rules = configToStrategyRules(config);
       setStrategies(rules);
       try {
@@ -58,16 +60,12 @@ export function StrategyEditor() {
     try {
       setSaving(true);
       setError(null);
-      // Rebuild config from current strategy rules
-      const config: OrchestrationConfig = {
-        enabled: true,
-        models: {},
-        strategies: {},
-      };
+      // Rebuild config from current strategy rules, preserving existing models
+      const strategiesMap: OrchestrationConfig["strategies"] = {};
       for (const s of strategies) {
         const action = buildAction(s);
         if (!action) continue;
-        config.strategies[s.name] = {
+        strategiesMap[s.name] = {
           description: s.description ?? s.name,
           when: {
             complexity: s.complexityRange,
@@ -76,13 +74,18 @@ export function StrategyEditor() {
           action: action as OrchestrationConfig["strategies"][string]["action"],
         };
       }
+      const config: OrchestrationConfig = {
+        enabled: true,
+        models: savedConfig?.models ?? {},
+        strategies: strategiesMap,
+      };
       await saveConfig(config);
     } catch (e) {
       setError(String(e));
     } finally {
       setSaving(false);
     }
-  }, [strategies]);
+  }, [strategies, savedConfig]);
 
   const removeStrategy = (id: string) => {
     setStrategies((prev) => prev.filter((s) => s.name !== id));

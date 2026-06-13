@@ -131,7 +131,7 @@ async fn handle_messages_for_app(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    // Orchestration: skip for streaming requests or tool-use requests (can't wrap SSE)
+    // Orchestration: attempt for all requests; wrap buffered response as SSE when streaming
     let is_streaming = body
         .get("stream")
         .and_then(|v| v.as_bool())
@@ -140,9 +140,15 @@ async fn handle_messages_for_app(
         .get("tools")
         .and_then(|t| t.as_array())
         .is_some_and(|a| !a.is_empty());
-    if !is_streaming && !has_tools {
-        if let Some(resp) = try_orchestrate_claude(&state, &body).await {
-            return resp;
+    if should_try_orchestrate(is_streaming, has_tools) {
+        if is_streaming {
+            if let Some(resp) = try_orchestrate_claude(&state, &body).await {
+                return wrap_as_sse_response(resp).await;
+            }
+        } else {
+            if let Some(resp) = try_orchestrate_claude(&state, &body).await {
+                return resp;
+            }
         }
     }
 
@@ -509,7 +515,7 @@ pub async fn handle_chat_completions(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    // Orchestration: skip for streaming requests or tool-use requests
+    // Orchestration: attempt for all requests; wrap buffered response as SSE when streaming
     let is_streaming = body
         .get("stream")
         .and_then(|v| v.as_bool())
@@ -518,9 +524,15 @@ pub async fn handle_chat_completions(
         .get("tools")
         .and_then(|t| t.as_array())
         .is_some_and(|a| !a.is_empty());
-    if !is_streaming && !has_tools {
-        if let Some(resp) = try_orchestrate_openai(&state, &body).await {
-            return resp;
+    if should_try_orchestrate(is_streaming, has_tools) {
+        if is_streaming {
+            if let Some(resp) = try_orchestrate_openai(&state, &body).await {
+                return wrap_as_sse_response(resp).await;
+            }
+        } else {
+            if let Some(resp) = try_orchestrate_openai(&state, &body).await {
+                return resp;
+            }
         }
     }
 
@@ -588,7 +600,7 @@ pub async fn handle_responses(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    // Orchestration: skip for streaming requests or tool-use requests
+    // Orchestration: attempt for all requests; wrap buffered response as SSE when streaming
     let is_streaming = body
         .get("stream")
         .and_then(|v| v.as_bool())
@@ -597,9 +609,15 @@ pub async fn handle_responses(
         .get("tools")
         .and_then(|t| t.as_array())
         .is_some_and(|a| !a.is_empty());
-    if !is_streaming && !has_tools {
-        if let Some(resp) = try_orchestrate_openai(&state, &body).await {
-            return resp;
+    if should_try_orchestrate(is_streaming, has_tools) {
+        if is_streaming {
+            if let Some(resp) = try_orchestrate_openai(&state, &body).await {
+                return wrap_as_sse_response(resp).await;
+            }
+        } else {
+            if let Some(resp) = try_orchestrate_openai(&state, &body).await {
+                return resp;
+            }
         }
     }
 
@@ -1263,6 +1281,50 @@ fn log_orchestration_usage(
         false,
     ) {
         log::warn!("[Orchestration] Usage log failed: {e}");
+    }
+}
+
+/// Decide whether to attempt orchestration for this request.
+fn should_try_orchestrate(_is_streaming: bool, _has_tools: bool) -> bool {
+    true
+}
+
+/// Wrap a buffered orchestration response into an SSE stream,
+/// so that callers who requested `stream: true` receive the expected format.
+async fn wrap_as_sse_response(
+    inner: Result<axum::response::Response, ProxyError>,
+) -> Result<axum::response::Response, ProxyError> {
+    match inner {
+        Ok(response) => {
+            let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap_or_default();
+            let sse_data = format!(
+                "data: {}\n\ndata: [DONE]\n\n",
+                String::from_utf8_lossy(&body_bytes)
+            );
+            let stream = futures::stream::once(async move {
+                Ok::<_, std::convert::Infallible>(sse_data)
+            });
+            Ok(
+                (
+                    StatusCode::OK,
+                    [
+                        (
+                            http::header::CONTENT_TYPE,
+                            http::HeaderValue::from_static("text/event-stream"),
+                        ),
+                        (
+                            http::header::CACHE_CONTROL,
+                            http::HeaderValue::from_static("no-cache"),
+                        ),
+                    ],
+                    axum::body::Body::from_stream(stream),
+                )
+                    .into_response(),
+            )
+        }
+        Err(e) => Err(e),
     }
 }
 

@@ -191,6 +191,9 @@ impl ModelCaller {
                 "https://spark-api-open.xf-yun.com/v1/chat/completions".to_string(),
             ),
             _ => {
+                if let Some(ref url) = config.base_url {
+                    return Ok(url.clone());
+                }
                 return Err(format!(
                     "Unknown provider '{}' and no base_url configured — cannot route request",
                     config.provider
