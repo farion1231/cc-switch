@@ -189,10 +189,16 @@ impl OrchestrationConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StrategyDef {
+    #[serde(default)]
+    pub priority: i32,
     pub description: String,
     #[serde(default)]
     pub when: StrategyCondition,
+    #[serde(default)]
+    pub budgets: StrategyBudgets,
     pub action: StrategyAction,
+    #[serde(default)]
+    pub fallback: FallbackPolicy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -201,6 +207,24 @@ pub struct StrategyCondition {
     pub risk: Option<Vec<String>>,
     pub task_type: Option<Vec<String>>,
     pub has_image: Option<bool>,
+    pub has_audio: Option<bool>,
+    pub has_tools: Option<bool>,
+    pub is_streaming: Option<bool>,
+    pub modalities: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct StrategyBudgets {
+    pub max_calls: Option<u32>,
+    pub max_latency_ms: Option<u64>,
+    pub max_cost_usd: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FallbackPolicy {
+    pub on_quality_fail: Option<String>,
+    pub on_judge_fail: Option<String>,
+    pub on_provider_fail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,6 +247,12 @@ pub enum StrategyAction {
     Debate {
         debaters: Vec<String>,
         judge: String,
+        #[serde(default = "default_debate_rounds")]
+        max_rounds: u32,
+        #[serde(default = "default_true")]
+        critique: bool,
+        #[serde(default = "default_true")]
+        revision: bool,
         #[serde(default = "default_threshold")]
         quality_threshold: f64,
     },
@@ -243,6 +273,10 @@ fn default_true() -> bool {
 
 fn default_threshold() -> f64 {
     0.65
+}
+
+fn default_debate_rounds() -> u32 {
+    1
 }
 
 impl Default for OrchestrationConfig {
@@ -293,44 +327,52 @@ impl Default for OrchestrationConfig {
         strategies.insert(
             "route".to_string(),
             StrategyDef {
+                priority: 10,
                 description: "Direct route to best model".to_string(),
                 when: StrategyCondition {
                     complexity: Some((0.0, 0.4)),
                     risk: Some(vec!["low".to_string()]),
                     ..Default::default()
                 },
+                budgets: StrategyBudgets::default(),
                 action: StrategyAction::Route {
                     use_model: "cheap_coder".to_string(),
                     verify: false,
                 },
+                fallback: FallbackPolicy::default(),
             },
         );
         strategies.insert(
             "cascade".to_string(),
             StrategyDef {
+                priority: 40,
                 description: "Cheap first, verify, escalate".to_string(),
                 when: StrategyCondition {
                     complexity: Some((0.4, 0.7)),
                     risk: Some(vec!["medium".to_string(), "high".to_string()]),
                     ..Default::default()
                 },
+                budgets: StrategyBudgets::default(),
                 action: StrategyAction::Cascade {
                     models: vec!["cheap_coder".to_string(), "frontier".to_string()],
                     verify_each: true,
                     escalate_on_fail: true,
                     quality_threshold: 0.65,
                 },
+                fallback: FallbackPolicy::default(),
             },
         );
         strategies.insert(
             "debate".to_string(),
             StrategyDef {
+                priority: 70,
                 description: "Multi-model debate with judge arbitration".to_string(),
                 when: StrategyCondition {
                     complexity: Some((0.7, 0.9)),
                     risk: Some(vec!["high".to_string(), "critical".to_string()]),
                     ..Default::default()
                 },
+                budgets: StrategyBudgets::default(),
                 action: StrategyAction::Debate {
                     debaters: vec![
                         "cheap_coder".to_string(),
@@ -338,19 +380,25 @@ impl Default for OrchestrationConfig {
                         "glm_coder".to_string(),
                     ],
                     judge: "frontier".to_string(),
+                    max_rounds: 1,
+                    critique: true,
+                    revision: true,
                     quality_threshold: 0.7,
                 },
+                fallback: FallbackPolicy::default(),
             },
         );
         strategies.insert(
             "moa".to_string(),
             StrategyDef {
+                priority: 90,
                 description: "Mixture of Agents — propose then aggregate".to_string(),
                 when: StrategyCondition {
                     complexity: Some((0.9, 1.0)),
                     risk: Some(vec!["critical".to_string()]),
                     ..Default::default()
                 },
+                budgets: StrategyBudgets::default(),
                 action: StrategyAction::MoA {
                     proposers: vec![
                         "cheap_coder".to_string(),
@@ -362,6 +410,7 @@ impl Default for OrchestrationConfig {
                     verify_each: true,
                     quality_threshold: 0.75,
                 },
+                fallback: FallbackPolicy::default(),
             },
         );
         Self {
@@ -375,6 +424,88 @@ impl Default for OrchestrationConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strategy_def_deserializes_release_fields() {
+        let yaml = r#"
+enabled: true
+models: {}
+strategies:
+  debate_high:
+    priority: 80
+    description: "Structured debate"
+    when:
+      complexity: [0.7, 1.0]
+      risk: ["high", "critical"]
+      has_tools: false
+      is_streaming: false
+      modalities: ["text"]
+    budgets:
+      max_calls: 6
+      max_latency_ms: 60000
+      max_cost_usd: 0.50
+    action:
+      type: debate
+      debaters: ["cheap_reasoner", "mid_reasoner"]
+      judge: "frontier_judge"
+      max_rounds: 1
+      critique: true
+      revision: true
+      quality_threshold: 0.8
+    fallback:
+      on_quality_fail: "frontier_single"
+      on_judge_fail: "backup_judge"
+      on_provider_fail: "passthrough"
+"#;
+        let config: OrchestrationConfig = serde_yaml::from_str(yaml).unwrap();
+        let strategy = config.strategies.get("debate_high").unwrap();
+
+        assert_eq!(strategy.priority, 80);
+        assert_eq!(strategy.when.has_tools, Some(false));
+        assert_eq!(strategy.when.is_streaming, Some(false));
+        assert_eq!(strategy.when.modalities, Some(vec!["text".to_string()]));
+        assert_eq!(strategy.budgets.max_calls, Some(6));
+        assert_eq!(strategy.budgets.max_latency_ms, Some(60000));
+        assert_eq!(strategy.budgets.max_cost_usd, Some(0.50));
+        assert_eq!(strategy.fallback.on_quality_fail.as_deref(), Some("frontier_single"));
+
+        match &strategy.action {
+            StrategyAction::Debate {
+                max_rounds,
+                critique,
+                revision,
+                quality_threshold,
+                ..
+            } => {
+                assert_eq!(*max_rounds, 1);
+                assert!(*critique);
+                assert!(*revision);
+                assert!((*quality_threshold - 0.8).abs() < f64::EPSILON);
+            }
+            other => panic!("expected Debate action, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn old_strategy_yaml_still_deserializes_with_defaults() {
+        let yaml = r#"
+enabled: true
+models: {}
+strategies:
+  route:
+    description: "Old route shape"
+    when: {}
+    action:
+      type: route
+      use_model: cheap_coder
+"#;
+        let config: OrchestrationConfig = serde_yaml::from_str(yaml).unwrap();
+        let strategy = config.strategies.get("route").unwrap();
+
+        assert_eq!(strategy.priority, 0);
+        assert_eq!(strategy.budgets.max_calls, None);
+        assert_eq!(strategy.fallback.on_quality_fail, None);
+    }
 
     #[test]
     fn default_config_has_models() {
@@ -518,6 +649,7 @@ strategies:
                 debaters,
                 judge,
                 quality_threshold,
+                ..
             } => {
                 assert!(
                     debaters.len() >= 2,

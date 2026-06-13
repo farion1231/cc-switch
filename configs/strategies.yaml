@@ -65,25 +65,44 @@ models:
 
 # ── Strategy Definitions ───────────────────────────────────────────────────
 # Strategies are matched by complexity + risk. First match wins.
+# `priority` gives deterministic ordering when multiple strategies match.
 
 strategies:
   # 低复杂度 → 用便宜快速的国产模型直接路由
   route:
+    priority: 10
     description: "简单任务直接路由到便宜模型"
     when:
-      complexity: [0, 0.4]
+      complexity: [0.0, 0.4]
       risk: ["low"]
+      has_tools: false
+      is_streaming: false
+      modalities: ["text"]
+    budgets:
+      max_calls: 1
+      max_latency_ms: 30000
+      max_cost_usd: 0.05
     action:
       type: route
       use_model: deepseek
       verify: false
+    fallback:
+      on_provider_fail: "passthrough"
 
   # 中复杂度 → DeepSeek 先答，质量不够则升级 GLM
   cascade:
+    priority: 40
     description: "DeepSeek 先答 → 质量检查 → 不达标升级到 GLM"
     when:
       complexity: [0.4, 0.7]
       risk: ["medium", "high"]
+      has_tools: false
+      is_streaming: false
+      modalities: ["text"]
+    budgets:
+      max_calls: 3
+      max_latency_ms: 60000
+      max_cost_usd: 0.20
     action:
       type: cascade
       models:
@@ -92,28 +111,54 @@ strategies:
       verify_each: true
       escalate_on_fail: true
       quality_threshold: 0.65
+    fallback:
+      on_quality_fail: "glm"
+      on_provider_fail: "passthrough"
 
   # 高复杂度 → 多模型辩论：DeepSeek + Kimi 各自回答，GLM 做 judge
   debate:
+    priority: 70
     description: "DeepSeek + Kimi 各自回答，GLM 做评判"
     when:
-      complexity: [0.7, 1.0]
+      complexity: [0.7, 0.95]
       risk: ["high", "critical"]
+      has_tools: false
+      is_streaming: false
+      modalities: ["text"]
+    budgets:
+      max_calls: 6
+      max_latency_ms: 90000
+      max_cost_usd: 0.50
     action:
       type: debate
       debaters:
         - deepseek
         - kimi
       judge: glm
-      quality_threshold: 0.75
+      max_rounds: 1
+      critique: true
+      revision: true
+      quality_threshold: 0.80
+    fallback:
+      on_quality_fail: "glm"
+      on_judge_fail: "glm"
+      on_provider_fail: "passthrough"
 
   # 极高复杂度 → MoA：多提议者 + 聚合
   moa:
+    priority: 90
     description: "DeepSeek + Kimi 提议，GLM 聚合"
     when:
-      complexity: [0.8, 1.0]
+      complexity: [0.85, 1.0]
       risk: ["critical"]
       task_type: ["coding", "architecture"]
+      has_tools: false
+      is_streaming: false
+      modalities: ["text"]
+    budgets:
+      max_calls: 5
+      max_latency_ms: 90000
+      max_cost_usd: 0.60
     action:
       type: moa
       proposers:
@@ -122,3 +167,6 @@ strategies:
       aggregator: glm
       verify_each: true
       quality_threshold: 0.80
+    fallback:
+      on_quality_fail: "glm"
+      on_provider_fail: "passthrough"
