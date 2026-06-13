@@ -247,6 +247,38 @@ pub struct SkillsShDiscoverableSkill {
     pub readme_url: Option<String>,
 }
 
+// ========== skill manifest 解析类型 ==========
+// 用于 resolve_via_manifest：解析 .claude-plugin/ 下 marketplace.json 与 plugin.json
+// 中显式声明的 skills[] 路径。
+
+/// `.claude-plugin/marketplace.json` metadata（只取 pluginRoot）。
+#[derive(Debug, Deserialize)]
+struct SkillMarketplaceMetadata {
+    /// marketplace 中所有 plugin source 的公共根目录。
+    #[serde(default, rename = "pluginRoot")]
+    plugin_root: Option<String>,
+}
+
+/// `.claude-plugin/marketplace.json` 中单个 plugin 条目（只取本地 source 与 skill 声明）。
+#[derive(Debug, Deserialize)]
+struct SkillManifestPlugin {
+    /// plugin 的本地 source；远程 object source 不处理。
+    #[serde(default)]
+    source: Option<serde_json::Value>,
+    /// 显式声明的 skill 相对路径（如 "./skills/review"）；无声明时为空。
+    #[serde(default)]
+    skills: Vec<String>,
+}
+
+/// `.claude-plugin/marketplace.json` 精简视图。
+#[derive(Debug, Deserialize)]
+struct SkillMarketplaceManifest {
+    #[serde(default)]
+    metadata: Option<SkillMarketplaceMetadata>,
+    #[serde(default)]
+    plugins: Vec<SkillManifestPlugin>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillBackupEntry {
@@ -2155,36 +2187,126 @@ impl SkillService {
 
     /// 将 discoverable skill 的目录信息重新解析为解压目录中的真实源目录。
     ///
-    /// 兼容三种情况：
-    /// 1. `skills/foo` 这类直接相对路径；
-    /// 2. 仅持有安装名 `foo`，需要在仓库中递归查找真实目录；
-    /// 3. 仓库根目录本身就是 skill，此时回退到解压根目录。
+    /// **核心原则：返回的目录必定含 `SKILL.md`**（以 SKILL.md 为锚点）。解析顺序：
+    /// 1. 直接相对路径命中（如 `skills/foo`），校验含 `SKILL.md`——明确路径优先；
+    /// 2. root `.claude-plugin/marketplace.json` 与 `plugin.json` 显式声明的 `skills[]`；
+    /// 3. 按安装名递归查找名字匹配 **且** 含 `SKILL.md` 的目录；
+    /// 4. 兜底：仓库根本身含 `SKILL.md`。
     fn resolve_skill_source_dir(root: &Path, raw_directory: &str) -> Option<PathBuf> {
         let source_rel = Self::sanitize_skill_source_path(raw_directory)?;
+        let install_name = source_rel
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())?;
+
+        // 1. 直接相对路径命中（明确路径优先）——必须校验 SKILL.md，否则同名空壳目录
+        //    （如 ast-grep/agent-skill 根下的 plugin 包目录 ast-grep/）会被误判为源目录。
         let direct = root.join(&source_rel);
-        if direct.is_dir() {
+        if direct.is_dir() && direct.join("SKILL.md").is_file() {
             return Some(direct);
         }
 
-        let target_name = source_rel.file_name()?.to_string_lossy().to_string();
-        if let Some(found) = Self::find_skill_dir_by_name(root, &target_name) {
+        // 2. manifest 显式声明（仅在 direct 失败后作为辅助发现）
+        if let Some(p) = Self::resolve_via_manifest(root, &source_rel, &install_name) {
+            return Some(p);
+        }
+
+        // 3. 按名字递归查找（find_skill_dir_by_name 已校验 SKILL.md）
+        if let Some(found) = Self::find_skill_dir_by_name(root, &install_name) {
             log::info!(
                 "Skill directory '{}' not found at direct path, using fallback: {}",
-                target_name,
+                install_name,
                 found.display()
             );
             return Some(found);
         }
 
-        if root.is_dir() && root.join("SKILL.md").exists() {
+        // 4. 兜底：仓库根本身是 skill
+        if root.join("SKILL.md").is_file() {
             log::info!(
                 "Skill directory '{}' not found, but SKILL.md exists at root, using repo root",
-                target_name,
+                install_name,
             );
             return Some(root.to_path_buf());
         }
 
         None
+    }
+
+    /// manifest 显式声明解析：读取 root `.claude-plugin/marketplace.json` 与 `plugin.json`
+    /// 中显式声明的 `skills[]` 路径。
+    ///
+    /// 仅在 direct 相对路径落空后作为辅助发现。只处理 root 级这两个文件，不扫描子目录；
+    /// 声明路径经 `sanitize_skill_source_path` 过滤（拒绝 `..`、绝对路径）并校验 `SKILL.md`；
+    /// 读取或解析失败静默返回 `None`，不阻塞降级。
+    fn resolve_via_manifest(root: &Path, source_rel: &Path, install_name: &str) -> Option<PathBuf> {
+        let claude_plugin_dir = root.join(".claude-plugin");
+
+        let mut declared_paths: Vec<PathBuf> = Vec::new();
+        if let Ok(content) = fs::read_to_string(claude_plugin_dir.join("marketplace.json")) {
+            if let Ok(manifest) = serde_json::from_str::<SkillMarketplaceManifest>(&content) {
+                let plugin_root = match manifest
+                    .metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.plugin_root.as_deref())
+                {
+                    Some(raw) => Self::sanitize_manifest_path(raw)?,
+                    None => PathBuf::new(),
+                };
+
+                for plugin in &manifest.plugins {
+                    let source = match plugin.source.as_ref() {
+                        Some(value) => {
+                            match value.as_str().and_then(Self::sanitize_manifest_path) {
+                                Some(path) => path,
+                                None => continue,
+                            }
+                        }
+                        None => PathBuf::new(),
+                    };
+                    for skill in &plugin.skills {
+                        if let Some(skill_path) = Self::sanitize_manifest_path(skill) {
+                            declared_paths.push(plugin_root.join(&source).join(skill_path));
+                        }
+                    }
+                }
+            }
+        }
+        if let Ok(content) = fs::read_to_string(claude_plugin_dir.join("plugin.json")) {
+            if let Ok(plugin) = serde_json::from_str::<SkillManifestPlugin>(&content) {
+                declared_paths.extend(
+                    plugin
+                        .skills
+                        .iter()
+                        .filter_map(|skill| Self::sanitize_manifest_path(skill)),
+                );
+            }
+        }
+
+        for sanitized in declared_paths {
+            let matches = sanitized.as_path() == source_rel
+                || sanitized
+                    .file_name()
+                    .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(install_name));
+            if !matches {
+                continue;
+            }
+            let candidate = root.join(&sanitized);
+            if candidate.join("SKILL.md").is_file() {
+                return Some(candidate);
+            }
+        }
+        None
+    }
+
+    /// 规范化 manifest 中的本地相对路径。支持 Claude manifest 常用的 `./foo` 与 `./` 写法。
+    fn sanitize_manifest_path(raw: &str) -> Option<PathBuf> {
+        let trimmed = raw.trim();
+        let local = trimmed.strip_prefix("./").unwrap_or(trimmed);
+        if local.is_empty() {
+            Some(PathBuf::new())
+        } else {
+            Self::sanitize_skill_source_path(local)
+        }
     }
 
     /// 去重技能列表（基于完整 key，不同仓库的同名 skill 分开显示）
@@ -3122,6 +3244,96 @@ mod tests {
         assert!(
             dest.join("SKILL.md").is_file(),
             "existing destination skill should be preserved"
+        );
+    }
+
+    #[test]
+    fn resolve_skill_source_dir_rejects_same_name_wrapper_without_skill_md() {
+        // 复刻 issue #4141：ast-grep/agent-skill 结构。仓库根下有同名目录 ast-grep/
+        // （plugin 包，无 SKILL.md），真正的 skill 在 ast-grep/skills/ast-grep/SKILL.md。
+        let temp = tempdir().expect("tempdir");
+        let wrapper = temp.path().join("ast-grep");
+        fs::create_dir_all(wrapper.join(".claude-plugin")).expect("create wrapper plugin dir");
+        fs::write(
+            wrapper.join(".claude-plugin").join("plugin.json"),
+            "{\"name\":\"ast-grep\"}",
+        )
+        .expect("write plugin.json");
+        let real_skill = wrapper.join("skills").join("ast-grep");
+        write_skill(&real_skill, "ast-grep");
+
+        // directory 只给了 skill 名 "ast-grep"（skills.sh API 的语义），不能命中空壳 wrapper。
+        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "ast-grep")
+            .expect("should resolve to the inner skill dir, not the same-name wrapper");
+
+        assert_eq!(resolved, real_skill);
+        assert!(resolved.join("SKILL.md").is_file());
+    }
+
+    #[test]
+    fn resolve_skill_source_dir_finds_two_level_catalog_skill() {
+        // catalog layout：skills/category/foo/SKILL.md（depth 3，find_skill_dir_by_name 可达）。
+        let temp = tempdir().expect("tempdir");
+        let catalog_skill = temp.path().join("skills").join("category").join("foo");
+        write_skill(&catalog_skill, "Foo Skill");
+
+        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "foo")
+            .expect("should resolve the two-level catalog skill by name");
+
+        assert_eq!(resolved, catalog_skill);
+    }
+
+    #[test]
+    fn resolve_skill_source_dir_uses_marketplace_explicit_skills_path() {
+        // marketplace.json 显式声明：plugin source + skills[] 共同决定 skill 路径。
+        let temp = tempdir().expect("tempdir");
+        let claude_plugin = temp.path().join(".claude-plugin");
+        fs::create_dir_all(&claude_plugin).expect("create .claude-plugin");
+        fs::write(
+            claude_plugin.join("marketplace.json"),
+            "{\"plugins\":[{\"name\":\"p\",\"source\":\"./p\",\"skills\":[\"./skills/review\"]}]}",
+        )
+        .expect("write marketplace.json");
+        let declared = temp.path().join("p").join("skills").join("review");
+        write_skill(&declared, "Review Skill");
+
+        // install 名 "review"，direct 不命中，应通过 marketplace 声明定位到 p/skills/review。
+        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "review")
+            .expect("should resolve via marketplace explicit skills[]");
+
+        assert_eq!(resolved, declared);
+    }
+
+    #[test]
+    fn resolve_skill_source_dir_uses_plugin_json_explicit_skills_path() {
+        // 单 plugin 仓库：root/.claude-plugin/plugin.json 直接声明 skills[]。
+        let temp = tempdir().expect("tempdir");
+        let claude_plugin = temp.path().join(".claude-plugin");
+        fs::create_dir_all(&claude_plugin).expect("create .claude-plugin");
+        fs::write(
+            claude_plugin.join("plugin.json"),
+            "{\"name\":\"single\",\"version\":\"1.0.0\",\"skills\":[\"./skills/lint\"]}",
+        )
+        .expect("write plugin.json");
+        let declared = temp.path().join("skills").join("lint");
+        write_skill(&declared, "Lint Skill");
+
+        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "lint")
+            .expect("should resolve via plugin.json explicit skills[]");
+
+        assert_eq!(resolved, declared);
+    }
+
+    #[test]
+    fn resolve_skill_source_dir_returns_none_when_no_skill_md_anywhere() {
+        let temp = tempdir().expect("tempdir");
+        fs::create_dir_all(temp.path().join("skills").join("foo")).expect("create empty skill dir");
+        fs::write(temp.path().join("README.md"), "no skills here").expect("write README");
+
+        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "foo");
+        assert!(
+            resolved.is_none(),
+            "no SKILL.md anywhere must resolve to None"
         );
     }
 }
