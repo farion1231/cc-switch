@@ -694,7 +694,7 @@ impl MultiAppConfig {
             AppType::OpenCode => &mut self.mcp.opencode,
             AppType::OpenClaw => &mut self.mcp.openclaw,
             AppType::Hermes => &mut self.mcp.hermes,
-            AppType::Atomcode => &mut self.mcp.openclaw, // Atomcode doesn't support MCP; reuse openclaw slot (always empty)
+            AppType::Atomcode => &mut self.mcp.claude_desktop, // Atomcode doesn't support MCP; reuse the unused claude_desktop slot
         }
     }
 

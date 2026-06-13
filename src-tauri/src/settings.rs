@@ -45,6 +45,8 @@ pub struct VisibleApps {
     pub openclaw: bool,
     #[serde(default)]
     pub hermes: bool,
+    #[serde(default)]
+    pub atomcode: bool,
 }
 
 impl Default for VisibleApps {
@@ -56,7 +58,8 @@ impl Default for VisibleApps {
             gemini: true,
             opencode: true,
             openclaw: true,
-            hermes: false, // 默认不显示，需用户手动启用
+            hermes: false,   // 默认不显示，需用户手动启用
+            atomcode: false, // 默认不显示，需用户手动启用
         }
     }
 }
@@ -72,7 +75,7 @@ impl VisibleApps {
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => self.openclaw,
             AppType::Hermes => self.hermes,
-            AppType::Atomcode => false, // Atomcode not yet in visible_apps; default hidden
+            AppType::Atomcode => self.atomcode,
         }
     }
 }

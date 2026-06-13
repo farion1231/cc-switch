@@ -148,7 +148,7 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
-        AppType::Atomcode => build_additive_app_settings(request),
+        AppType::Atomcode => build_atomcode_settings(request),
     };
 
     // Build usage script configuration if provided
@@ -506,6 +506,71 @@ fn build_hermes_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     json!(config)
 }
 
+/// Build Atomcode provider settings (flat snake_case fields).
+///
+/// Atomcode's `settingsConfig` is a flat JSON object with snake_case keys that
+/// maps directly onto `config.toml` via `merge_atomcode_provider_into_config`.
+/// A `providerKey` field is mandatory — that function returns an error if it is
+/// absent.  The key is derived from the provider name: lowercased, non-
+/// alphanumeric runs replaced with `-`, then leading/trailing `-` trimmed.
+/// If the result is empty the fallback key `"provider"` is used.
+///
+/// `type` is always `"openai"` (the only protocol atomcode recognises today).
+fn build_atomcode_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    // Derive providerKey from the provider name.
+    let raw = request.name.as_deref().unwrap_or("").to_lowercase();
+    let keyed: String = raw
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    // Collapse repeated dashes and trim leading/trailing dashes.
+    let provider_key = {
+        let mut prev_dash = false;
+        let collapsed: String = keyed
+            .chars()
+            .filter(|&c| {
+                if c == '-' {
+                    if prev_dash {
+                        return false;
+                    }
+                    prev_dash = true;
+                } else {
+                    prev_dash = false;
+                }
+                true
+            })
+            .collect();
+        let trimmed = collapsed.trim_matches('-').to_string();
+        if trimmed.is_empty() {
+            "provider".to_string()
+        } else {
+            trimmed
+        }
+    };
+
+    let endpoint = get_primary_endpoint(request);
+
+    let mut config = serde_json::Map::new();
+    config.insert("providerKey".to_string(), json!(provider_key));
+    config.insert("type".to_string(), json!("openai"));
+
+    if let Some(model) = &request.model {
+        config.insert("model".to_string(), json!(model));
+    } else {
+        config.insert("model".to_string(), json!(""));
+    }
+
+    if let Some(api_key) = &request.api_key {
+        config.insert("api_key".to_string(), json!(api_key));
+    }
+
+    if !endpoint.is_empty() {
+        config.insert("base_url".to_string(), json!(endpoint));
+    }
+
+    json!(config)
+}
+
 // =============================================================================
 // Config Merge Logic
 // =============================================================================
@@ -569,6 +634,11 @@ pub fn parse_and_merge_config(
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,
         // Additive mode apps use JSON config directly; pass through as-is
         "openclaw" | "opencode" | "hermes" => {
+            merge_additive_config(&mut merged, &config_value)?;
+        }
+        // Atomcode: flat snake_case config — merge common fields the same way,
+        // providerKey is injected by build_atomcode_settings at build time.
+        "atomcode" => {
             merge_additive_config(&mut merged, &config_value)?;
         }
         "" => {
