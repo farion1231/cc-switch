@@ -131,7 +131,7 @@ async fn handle_messages_for_app(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    // Orchestration: attempt for all requests; wrap buffered response as SSE when streaming
+    // Orchestration: only attempt for non-streaming, tool-free requests
     let is_streaming = body
         .get("stream")
         .and_then(|v| v.as_bool())
@@ -141,14 +141,8 @@ async fn handle_messages_for_app(
         .and_then(|t| t.as_array())
         .is_some_and(|a| !a.is_empty());
     if should_try_orchestrate(is_streaming, has_tools) {
-        if is_streaming {
-            if let Some(resp) = try_orchestrate_claude(&state, &body).await {
-                return wrap_as_sse_response(resp).await;
-            }
-        } else {
-            if let Some(resp) = try_orchestrate_claude(&state, &body).await {
-                return resp;
-            }
+        if let Some(resp) = try_orchestrate_claude(&state, &body).await {
+            return resp;
         }
     }
 
@@ -515,7 +509,7 @@ pub async fn handle_chat_completions(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    // Orchestration: attempt for all requests; wrap buffered response as SSE when streaming
+    // Orchestration: only attempt for non-streaming, tool-free requests
     let is_streaming = body
         .get("stream")
         .and_then(|v| v.as_bool())
@@ -525,14 +519,8 @@ pub async fn handle_chat_completions(
         .and_then(|t| t.as_array())
         .is_some_and(|a| !a.is_empty());
     if should_try_orchestrate(is_streaming, has_tools) {
-        if is_streaming {
-            if let Some(resp) = try_orchestrate_openai(&state, &body).await {
-                return wrap_as_sse_response(resp).await;
-            }
-        } else {
-            if let Some(resp) = try_orchestrate_openai(&state, &body).await {
-                return resp;
-            }
+        if let Some(resp) = try_orchestrate_openai(&state, &body).await {
+            return resp;
         }
     }
 
@@ -600,7 +588,7 @@ pub async fn handle_responses(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    // Orchestration: attempt for all requests; wrap buffered response as SSE when streaming
+    // Orchestration: only attempt for non-streaming, tool-free requests
     let is_streaming = body
         .get("stream")
         .and_then(|v| v.as_bool())
@@ -610,14 +598,8 @@ pub async fn handle_responses(
         .and_then(|t| t.as_array())
         .is_some_and(|a| !a.is_empty());
     if should_try_orchestrate(is_streaming, has_tools) {
-        if is_streaming {
-            if let Some(resp) = try_orchestrate_openai(&state, &body).await {
-                return wrap_as_sse_response(resp).await;
-            }
-        } else {
-            if let Some(resp) = try_orchestrate_openai(&state, &body).await {
-                return resp;
-            }
+        if let Some(resp) = try_orchestrate_openai(&state, &body).await {
+            return resp;
         }
     }
 
@@ -1293,8 +1275,12 @@ fn should_try_orchestrate(is_streaming: bool, has_tools: bool) -> bool {
     !is_streaming && !has_tools
 }
 
-/// Wrap a buffered orchestration response into an SSE stream,
-/// so that callers who requested `stream: true` receive the expected format.
+/// Wraps a buffered orchestration response as an SSE stream for streaming clients.
+///
+/// Currently unused: `should_try_orchestrate` returns `false` for streaming requests,
+/// so orchestration only runs on non-streaming bodies. Preserved for future
+/// streaming-aggregation support (e.g., when Debate/MoA can produce streaming output).
+#[allow(dead_code)]
 async fn wrap_as_sse_response(
     inner: Result<axum::response::Response, ProxyError>,
 ) -> Result<axum::response::Response, ProxyError> {
