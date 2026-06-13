@@ -861,6 +861,52 @@ base_url = "http://localhost:8080"
 
     #[test]
     #[serial]
+    fn import_opencode_providers_from_live_updates_existing_live_managed_provider() {
+        with_test_home(|state, _| {
+            let provider = opencode_provider("imported-opencode-update");
+            crate::opencode_config::set_provider(&provider.id, provider.settings_config.clone())
+                .expect("seed initial opencode live provider");
+
+            let imported = import_opencode_providers_from_live(state)
+                .expect("import initial opencode provider");
+            assert_eq!(imported, 1);
+
+            let mut updated_live = provider.settings_config.clone();
+            updated_live["options"]["apiKey"] = Value::String("updated-key".to_string());
+            updated_live["models"]["gpt-5.5"] = json!({ "name": "GPT-5.5" });
+            crate::opencode_config::set_provider(&provider.id, updated_live.clone())
+                .expect("update opencode live provider");
+
+            let imported = import_opencode_providers_from_live(state)
+                .expect("re-import updated opencode provider");
+            assert_eq!(imported, 1);
+
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, AppType::OpenCode.as_str())
+                .expect("query updated opencode provider")
+                .expect("updated opencode provider should exist");
+
+            assert_eq!(
+                saved.settings_config["options"]["apiKey"],
+                Value::String("updated-key".to_string())
+            );
+            assert_eq!(
+                saved.settings_config["models"]["gpt-5.5"]["name"],
+                Value::String("GPT-5.5".to_string())
+            );
+            assert_eq!(
+                saved
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.live_config_managed),
+                Some(true)
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn import_openclaw_providers_from_live_marks_provider_as_live_managed() {
         with_test_home(|state, _| {
             let mut provider = openclaw_provider("imported-openclaw");

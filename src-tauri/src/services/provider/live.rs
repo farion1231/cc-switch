@@ -1370,12 +1370,6 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
     let existing_ids = state.db.get_provider_ids("opencode")?;
 
     for (id, config) in providers {
-        // Skip if already exists in database
-        if existing_ids.contains(&id) {
-            log::debug!("OpenCode provider '{id}' already exists in database, skipping");
-            continue;
-        }
-
         // Convert to Value for settings_config
         let settings_config = match serde_json::to_value(&config) {
             Ok(v) => v,
@@ -1385,10 +1379,56 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
             }
         };
 
+        let display_name = config.name.clone().unwrap_or_else(|| id.clone());
+
+        if existing_ids.contains(&id) {
+            let Some(existing_provider) = state.db.get_provider_by_id(&id, "opencode")? else {
+                log::debug!(
+                    "OpenCode provider '{id}' exists in id index but could not be loaded, skipping"
+                );
+                continue;
+            };
+
+            let live_managed = existing_provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.live_config_managed)
+                == Some(true);
+
+            if !live_managed {
+                log::debug!("OpenCode provider '{id}' already exists in database, skipping");
+                continue;
+            }
+
+            let needs_update = existing_provider.name != display_name
+                || existing_provider.settings_config != settings_config;
+            if !needs_update {
+                log::debug!("OpenCode provider '{id}' already exists in database and is up-to-date");
+                continue;
+            }
+
+            let mut provider = existing_provider.clone();
+            provider.name = display_name;
+            provider.settings_config = settings_config;
+            provider
+                .meta
+                .get_or_insert_with(Default::default)
+                .live_config_managed = Some(true);
+
+            if let Err(e) = state.db.save_provider("opencode", &provider) {
+                log::warn!("Failed to update OpenCode provider '{id}' from live config: {e}");
+                continue;
+            }
+
+            imported += 1;
+            log::info!("Updated OpenCode provider '{id}' from live config");
+            continue;
+        }
+
         // Create provider
         let mut provider = Provider::with_id(
             id.clone(),
-            config.name.clone().unwrap_or_else(|| id.clone()),
+            display_name,
             settings_config,
             None,
         );
