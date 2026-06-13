@@ -400,4 +400,33 @@ strategies:
             other => panic!("expected Debate, got {other:?}"),
         }
     }
+
+    #[tokio::test]
+    async fn streaming_request_passthrough_even_when_strategy_matches() {
+        let yaml = r#"
+enabled: true
+models:
+  cheap_coder:
+    provider: deepseek
+    model: deepseek-chat
+    api_key_env: DEEPSEEK_API_KEY
+strategies:
+  route:
+    priority: 10
+    description: "Direct route"
+    when:
+      complexity: [0, 1]
+    action:
+      type: route
+      use_model: cheap_coder
+"#;
+        let (engine, _dir) = create_engine_with_yaml(yaml);
+        let body = json!({
+            "stream": true,
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+
+        let decision = engine.decide(&body).await;
+        assert!(matches!(decision, OrchestrationDecision::Passthrough));
+    }
 }

@@ -1285,8 +1285,12 @@ fn log_orchestration_usage(
 }
 
 /// Decide whether to attempt orchestration for this request.
-fn should_try_orchestrate(_is_streaming: bool, _has_tools: bool) -> bool {
-    true
+///
+/// Streaming and tool-using requests bypass orchestration: text-only Debate / MoA
+/// paths cannot meaningfully aggregate a streamed completion, and tool calls
+/// require the original request shape to be preserved for the provider.
+fn should_try_orchestrate(is_streaming: bool, has_tools: bool) -> bool {
+    !is_streaming && !has_tools
 }
 
 /// Wrap a buffered orchestration response into an SSE stream,
@@ -1469,7 +1473,9 @@ async fn try_orchestrate_openai(
 
 #[cfg(test)]
 mod tests {
-    use super::{responses_sse_to_response_value, should_use_claude_transform_streaming};
+    use super::{
+        responses_sse_to_response_value, should_try_orchestrate, should_use_claude_transform_streaming,
+    };
     use crate::proxy::ProxyError;
 
     #[test]
@@ -1555,5 +1561,13 @@ data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"upstr
 data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n\n";
 
         assert!(responses_sse_to_response_value(sse).is_err());
+    }
+
+    #[test]
+    fn should_not_orchestrate_streaming_or_tool_requests() {
+        assert!(!should_try_orchestrate(true, false));
+        assert!(!should_try_orchestrate(false, true));
+        assert!(!should_try_orchestrate(true, true));
+        assert!(should_try_orchestrate(false, false));
     }
 }
