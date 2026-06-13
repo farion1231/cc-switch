@@ -78,13 +78,13 @@ export function AppSwitcher({
             type="button"
             onClick={() => handleSwitch(app)}
             className={cn(
-              "group inline-flex items-center px-3 h-8 rounded-md text-sm font-medium transition-all duration-200",
+              "group inline-flex items-center px-3 h-8 rounded-lg text-sm font-medium transition-all duration-200",
               isActive
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground hover:bg-background/50",
             )}
           >
-            <span className="relative inline-flex shrink-0">
+            <span className="relative inline-flex shrink-0 text-foreground">
               <ProviderIcon
                 icon={appIconName[app]}
                 name={appDisplayName[app]}

@@ -19,6 +19,7 @@ import { settingsApi } from "@/lib/api";
 import { mcpPresets } from "@/config/mcpPresets";
 import { toast } from "sonner";
 import { MCP_APP_IDS } from "@/config/appConfig";
+import { useSettingsQuery } from "@/lib/query";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
@@ -53,6 +54,13 @@ const UnifiedMcpPanel = React.forwardRef<
   const deleteServerMutation = useDeleteMcpServer();
   const importMutation = useImportMcpFromApps();
 
+  const { data: settingsData } = useSettingsQuery();
+  const visibleAppIds = useMemo(() => {
+    const vis = settingsData?.visibleApps;
+    if (!vis) return MCP_APP_IDS;
+    return MCP_APP_IDS.filter((id) => vis[id]);
+  }, [settingsData?.visibleApps]);
+
   const serverEntries = useMemo((): Array<[string, McpServer]> => {
     if (!serversMap) return [];
     return Object.entries(serversMap);
@@ -69,12 +77,12 @@ const UnifiedMcpPanel = React.forwardRef<
       hermes: 0,
     };
     serverEntries.forEach(([_, server]) => {
-      for (const app of MCP_APP_IDS) {
+      for (const app of visibleAppIds) {
         if (server.apps[app]) counts[app]++;
       }
     });
     return counts;
-  }, [serverEntries]);
+  }, [serverEntries, visibleAppIds]);
 
   const filteredEntries = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
@@ -180,7 +188,7 @@ const UnifiedMcpPanel = React.forwardRef<
                     count: serverEntries.length,
                   })}
                   counts={enabledCounts}
-                  appIds={MCP_APP_IDS}
+                  appIds={visibleAppIds}
                 />
               </div>
               <div className="relative border-b border-border-default">
@@ -208,6 +216,7 @@ const UnifiedMcpPanel = React.forwardRef<
                     onToggleApp={handleToggleApp}
                     onEdit={handleEdit}
                     onDelete={handleDelete}
+                    appIds={visibleAppIds}
                     isLast={index === filteredEntries.length - 1}
                   />
                 ))
@@ -254,6 +263,7 @@ interface UnifiedMcpListItemProps {
   onToggleApp: (serverId: string, app: AppId, enabled: boolean) => void;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
+  appIds: AppId[];
   isLast?: boolean;
 }
 
@@ -263,6 +273,7 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
   onToggleApp,
   onEdit,
   onDelete,
+  appIds,
   isLast,
 }) => {
   const { t } = useTranslation();
@@ -320,7 +331,7 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
       <AppToggleGroup
         apps={server.apps}
         onToggle={(app, enabled) => onToggleApp(id, app, enabled)}
-        appIds={MCP_APP_IDS}
+        appIds={appIds}
       />
 
       <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">

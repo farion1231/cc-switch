@@ -34,6 +34,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
 import { SKILLS_APP_IDS } from "@/config/appConfig";
+import { useSettingsQuery } from "@/lib/query";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
@@ -105,6 +106,13 @@ const UnifiedSkillsPanel = React.forwardRef<
   const updateSkillMutation = useUpdateSkill();
   const [isUpdatingAll, setIsUpdatingAll] = useState(false);
 
+  const { data: settingsData } = useSettingsQuery();
+  const visibleAppIds = useMemo(() => {
+    const vis = settingsData?.visibleApps;
+    if (!vis) return SKILLS_APP_IDS;
+    return SKILLS_APP_IDS.filter((id) => vis[id]);
+  }, [settingsData?.visibleApps]);
+
   const updatesMap = useMemo(() => {
     const map: Record<string, SkillUpdateInfo> = {};
     if (skillUpdates) {
@@ -127,12 +135,12 @@ const UnifiedSkillsPanel = React.forwardRef<
     };
     if (!skills) return counts;
     skills.forEach((skill) => {
-      for (const app of SKILLS_APP_IDS) {
+      for (const app of visibleAppIds) {
         if (skill.apps[app]) counts[app]++;
       }
     });
     return counts;
-  }, [skills]);
+  }, [skills, visibleAppIds]);
 
   const filteredSkills = useMemo(() => {
     if (!skills) return [];
@@ -390,7 +398,7 @@ const UnifiedSkillsPanel = React.forwardRef<
                     count: skills?.length || 0,
                   })}
                   counts={enabledCounts}
-                  appIds={SKILLS_APP_IDS}
+                  appIds={visibleAppIds}
                 />
                 <div className="flex items-center gap-1.5 flex-shrink-0">
                   <div
@@ -475,6 +483,7 @@ const UnifiedSkillsPanel = React.forwardRef<
                     onUninstall={() => handleUninstall(skill)}
                     onUpdate={() => handleUpdateSkill(skill)}
                     isLast={index === filteredSkills.length - 1}
+                    appIds={visibleAppIds}
                   />
                 ))
               )}
@@ -502,6 +511,7 @@ const UnifiedSkillsPanel = React.forwardRef<
           isImporting={importMutation.isPending}
           onImport={handleImport}
           onClose={() => setImportDialogOpen(false)}
+          appIds={visibleAppIds}
         />
       )}
 
@@ -529,6 +539,7 @@ interface InstalledSkillListItemProps {
   onUninstall: () => void;
   onUpdate?: () => void;
   isLast?: boolean;
+  appIds: AppId[];
 }
 
 const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
@@ -539,6 +550,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   onUninstall,
   onUpdate,
   isLast,
+  appIds,
 }) => {
   const { t } = useTranslation();
 
@@ -599,7 +611,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
       <AppToggleGroup
         apps={skill.apps}
         onToggle={(app, enabled) => onToggleApp(skill.id, app, enabled)}
-        appIds={SKILLS_APP_IDS}
+        appIds={appIds}
       />
 
       <div
@@ -649,6 +661,7 @@ interface ImportSkillsDialogProps {
   isImporting: boolean;
   onImport: (imports: ImportSkillSelection[]) => void;
   onClose: () => void;
+  appIds: AppId[];
 }
 
 interface RestoreSkillsDialogProps {
@@ -774,6 +787,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
   isImporting,
   onImport,
   onClose,
+  appIds,
 }) => {
   const { t } = useTranslation();
   const [selected, setSelected] = useState<Set<string>>(
@@ -879,7 +893,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                           },
                         }));
                       }}
-                      appIds={SKILLS_APP_IDS}
+                      appIds={appIds}
                     />
                   </div>
                   <div
