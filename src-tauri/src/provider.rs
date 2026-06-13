@@ -199,6 +199,11 @@ impl Provider {
                 );
                 (base_url, api_key)
             }
+            // Atomcode (config.toml) stores credentials at the top level, similar to Hermes.
+            AppType::Atomcode => (
+                str_at(settings.get("base_url")),
+                str_at(settings.get("api_key")),
+            ),
         };
 
         // Normalize like the JS-script path (extract_base_url_from_provider) so a

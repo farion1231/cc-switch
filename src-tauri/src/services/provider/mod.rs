@@ -1947,6 +1947,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::Atomcode => Ok(String::new()), // Atomcode doesn't use common config snippets
         }
     }
 
@@ -1963,6 +1964,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::Atomcode => Ok(String::new()), // Atomcode doesn't use common config snippets
         }
     }
 
@@ -2351,6 +2353,16 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::Atomcode => {
+                // Atomcode: must be a JSON object with providerKey field
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.atomcode.settings.not_object",
+                        "Atomcode 配置必须是 JSON 对象",
+                        "Atomcode configuration must be a JSON object",
+                    ));
+                }
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -2551,6 +2563,30 @@ impl ProviderService {
                 let base_url = provider
                     .settings_config
                     .get("baseUrl")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                Ok((api_key, base_url))
+            }
+            AppType::Atomcode => {
+                // Atomcode stores api_key and base_url at the top level (snake_case)
+                let api_key = provider
+                    .settings_config
+                    .get("api_key")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.atomcode.api_key.missing",
+                            "缺少 API Key",
+                            "API key is missing",
+                        )
+                    })?
+                    .to_string();
+
+                let base_url = provider
+                    .settings_config
+                    .get("base_url")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();

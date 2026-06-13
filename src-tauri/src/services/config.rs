@@ -136,6 +136,9 @@ impl ConfigService {
             AppType::Hermes => {
                 // Hermes uses additive mode, no live sync needed
             }
+            AppType::Atomcode => {
+                // Atomcode switch-mode: handled by write_live_snapshot via write_atomcode_provider_live
+            }
         }
 
         Ok(())
