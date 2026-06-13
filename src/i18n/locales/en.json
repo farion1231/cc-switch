@@ -867,6 +867,7 @@
     "empty": "No Codex sessions found.",
     "action": "Codex sessions",
     "shareAll": "Share all",
+    "syncVisibility": "Sync visibility",
     "shareAllDone": "Session shared to all Codex providers.",
     "modelProvider": "Provider bucket",
     "visible": "Visible here",

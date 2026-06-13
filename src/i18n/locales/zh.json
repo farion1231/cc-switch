@@ -867,6 +867,7 @@
     "empty": "未找到 Codex 会话。",
     "action": "Codex 会话",
     "shareAll": "共享到全部",
+    "syncVisibility": "同步可见性",
     "shareAllDone": "会话已共享到所有 Codex 供应商。",
     "modelProvider": "Provider 桶",
     "visible": "当前可见",

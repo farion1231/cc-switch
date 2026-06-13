@@ -124,6 +124,26 @@ export function CodexSessionsDialog({
                       <div className="flex shrink-0 items-center gap-2">
                         <Button
                           size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            if (!sourcePath) return;
+                            void mutation.mutateAsync({
+                              sessionId: session.sessionId,
+                              sourcePath,
+                              providerIds: item.linkedProviderIds,
+                              linkMode: "manual",
+                              syncToCodex: true,
+                            });
+                          }}
+                          disabled={!sourcePath || mutation.isPending}
+                        >
+                          <RefreshCw className="h-4 w-4" />
+                          {t("codexSessions.syncVisibility", {
+                            defaultValue: "Sync visibility",
+                          })}
+                        </Button>
+                        <Button
+                          size="sm"
                           variant="outline"
                           onClick={() =>
                             void handleShareAll(session.sessionId, sourcePath)
@@ -193,7 +213,26 @@ export function CodexSessionsDialog({
                             key={candidate.id}
                             className="flex min-w-0 items-center gap-2 rounded-md border border-border-default px-2 py-1.5 text-sm"
                           >
-                            <Checkbox checked={checked} disabled />
+                            <Checkbox
+                              checked={checked}
+                              disabled={!sourcePath || mutation.isPending}
+                              onCheckedChange={(next) => {
+                                if (!sourcePath) return;
+                                const nextIds = new Set(item.linkedProviderIds);
+                                if (next === true) {
+                                  nextIds.add(candidate.id);
+                                } else {
+                                  nextIds.delete(candidate.id);
+                                }
+                                void mutation.mutateAsync({
+                                  sessionId: session.sessionId,
+                                  sourcePath,
+                                  providerIds: Array.from(nextIds),
+                                  linkMode: "manual",
+                                  syncToCodex: false,
+                                });
+                              }}
+                            />
                             <span className="truncate">{candidate.name}</span>
                           </label>
                         );

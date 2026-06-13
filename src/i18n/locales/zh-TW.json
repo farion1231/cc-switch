@@ -838,6 +838,7 @@
     "empty": "找不到 Codex 工作階段。",
     "action": "Codex 工作階段",
     "shareAll": "共享到全部",
+    "syncVisibility": "同步可見性",
     "shareAllDone": "工作階段已共享到所有 Codex 供應商。",
     "modelProvider": "Provider 桶",
     "visible": "目前可見",
