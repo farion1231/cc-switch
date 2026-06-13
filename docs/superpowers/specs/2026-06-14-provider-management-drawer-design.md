@@ -37,6 +37,24 @@ Each sub-configuration remains a normal Provider:
 
 The drawer is a display and organization layer.
 
+### Group Common Configuration
+
+Provider groups may expose "group common config" candidates. This is different from the existing app-level common config snippet used by the provider forms.
+
+Group common config means:
+
+- A logical provider group can have shared values such as base URL, API key, model mapping, API format, or other app-specific fields.
+- Each sub-config can opt into shared fields with checkboxes.
+- Opting in writes the selected shared values back into that sub-config's own Provider record.
+- The backend still only receives normal Provider records.
+
+This keeps the mental model simple:
+
+- The group is for organizing and reusing values.
+- The Provider remains the source of truth for what gets written into Claude Code, Codex, Gemini, OpenClaw, Hermes, or other target clients.
+
+The UI should present group common config as a convenience for editing related Provider records together, not as a new runtime layer.
+
 ### Optional Group Metadata
 
 Add optional fields to `ProviderMeta`:
@@ -44,9 +62,20 @@ Add optional fields to `ProviderMeta`:
 ```ts
 providerGroup?: string;
 providerVariantLabel?: string;
+groupCommonConfigEnabled?: Record<string, boolean>;
 ```
 
 Rust `ProviderMeta` should mirror these optional fields so metadata is not dropped during update flows.
+
+`groupCommonConfigEnabled` records which group-shared fields this Provider inherits. Initial field keys should be app-neutral where possible:
+
+- `apiKey`
+- `baseUrl`
+- `modelMapping`
+- `apiFormat`
+- `customUserAgent`
+
+Apps can ignore unsupported field keys.
 
 The first implementation should support both:
 
@@ -117,7 +146,25 @@ Compact rows should be stable height and should not expand except through the dr
 
 ### Drawer
 
-The drawer opens below a provider/group row. It lists related Provider records as sub-config rows.
+The drawer opens below a provider/group row. It lists related Provider records as sub-config rows and, when a group has more than one Provider, shows a small group common config section.
+
+The group common config section shows shared values detected from the group, for example:
+
+- Shared API key fingerprint.
+- Shared base URL or host.
+- Shared model mapping.
+- Shared API format.
+- Shared local proxy User-Agent.
+
+Each sub-config row can show checkboxes for supported shared fields:
+
+- `Use group API key`
+- `Use group base URL`
+- `Use group model mapping`
+- `Use group API format`
+- `Use group User-Agent`
+
+When checked, the shared field value is written into that Provider's own config. When unchecked, the Provider keeps or edits its own value independently.
 
 Each sub-config row shows:
 
@@ -128,6 +175,7 @@ Each sub-config row shows:
 - API format or routing mode.
 - Current/live status.
 - Edit, test, duplicate, delete, and configure usage actions.
+- Group common config inheritance checkboxes when supported.
 
 Example for Claude Code:
 
@@ -156,7 +204,7 @@ Model = gemini-2.5-pro
 Base URL = generativelanguage.googleapis.com
 ```
 
-The drawer is read-only summary UI. Full edits continue through the existing Edit Provider dialog.
+The drawer summary itself should stay lightweight. It may provide inheritance checkboxes for group common config, but full arbitrary edits continue through the existing Edit Provider dialog.
 
 ## Batch Operations
 
@@ -179,6 +227,13 @@ Unsupported operations:
 Delete confirmation must list the count and a small sample of provider names.
 
 ## Common Config Helper
+
+There are two distinct common-config concepts:
+
+1. App-level common config snippet, which already exists in provider forms.
+2. Group common config, which is scoped to one provider group drawer and is used to keep related Provider records aligned.
+
+### App-Level Common Config
 
 Existing forms already support writing common config snippets. Add an explicit helper:
 
@@ -208,6 +263,19 @@ Fields that may be included:
 
 This feature should reuse existing common-config APIs and hooks where possible. If the backend extraction already excludes the relevant fields for an app, the UI can call the existing extraction path and only add clearer labeling.
 
+### Group Common Config
+
+Group common config can include API and model fields because it is not global across the whole app. It only applies to selected Provider records inside one drawer group.
+
+For the first implementation:
+
+- Derive group common config candidates from the first selected/primary Provider in the group.
+- Let users apply individual fields to sibling sub-configs with checkboxes.
+- Persist the result by updating each affected Provider's normal `settingsConfig` and `meta.groupCommonConfigEnabled`.
+- Never store full API keys in group metadata; only store inheritance flags. The actual API key remains in each Provider's normal config after apply.
+
+This means a Minimax group can have one shared base URL and API key, while each sub-config keeps a different Claude model mapping, or vice versa.
+
 ## Component Boundaries
 
 Create focused frontend helpers instead of expanding `ProviderList.tsx` indefinitely:
@@ -215,6 +283,7 @@ Create focused frontend helpers instead of expanding `ProviderList.tsx` indefini
 - `providerSearch.ts`: extracts searchable text and safe fingerprints.
 - `providerSummary.ts`: extracts base URL, API key fingerprint, and model summaries.
 - `providerGrouping.ts`: creates grouped display rows from provider records.
+- `providerGroupCommonConfig.ts`: extracts supported group-shared fields and applies them to Provider config copies.
 - `ProviderManagementToolbar.tsx`: search, view mode, selection, and batch actions.
 - `ProviderCompactRow.tsx`: dense row UI.
 - `ProviderConfigDrawer.tsx`: expanded sub-config summary.
@@ -233,6 +302,7 @@ Create focused frontend helpers instead of expanding `ProviderList.tsx` indefini
 - Selection checkbox labels must include provider names.
 - Drawer toggles must expose expanded/collapsed state.
 - API keys must be masked before rendering.
+- Group common config must store inheritance flags only, not a second copy of secrets.
 - Batch delete must require confirmation.
 - Search must never include full raw keys in visible output.
 
@@ -244,6 +314,8 @@ Add or update tests for:
 - Full API key is not rendered in compact row or drawer.
 - Compact mode renders more concise rows and still wires actions.
 - Drawer groups related providers and shows model/API summaries.
+- Group common config checkboxes apply shared API/base/model fields by updating normal Provider records.
+- Group common config does not store raw API keys in metadata.
 - Selection supports visible results and clears invalid selections when filtering.
 - Batch delete calls the existing delete callback once per selected provider after confirmation.
 - Common-config helper label/action is present where supported.
@@ -259,6 +331,7 @@ Phase 1:
 - Compact mode.
 - Selection and batch actions.
 - Drawer summary with automatic grouping.
+- Group common config extraction and per-sub-config inheritance checkboxes.
 
 Phase 2:
 
@@ -269,4 +342,3 @@ Phase 2:
 Phase 3:
 
 - Optional advanced grouping controls if users need manual regrouping at scale.
-
