@@ -40,7 +40,6 @@ pub struct TaskClassifier;
 impl TaskClassifier {
     pub fn classify(body: &serde_json::Value) -> TaskProfile {
         let messages = body.get("messages").and_then(|m| m.as_array());
-        let tools = body.get("tools").and_then(|t| t.as_array());
 
         let content_text = extract_text_content(messages, " ");
         let msg_count = messages.map(|m| m.len()).unwrap_or(0);

@@ -1,4 +1,4 @@
-use crate::orchestration::classifier::{TaskClassifier, TaskProfile};
+use crate::orchestration::classifier::TaskClassifier;
 use crate::orchestration::config::StrategyAction;
 use crate::orchestration::executor::{ExecutionResult, StrategyExecutor};
 use crate::orchestration::health_checker::ModelHealthChecker;

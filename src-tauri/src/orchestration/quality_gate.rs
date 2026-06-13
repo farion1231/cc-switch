@@ -213,7 +213,6 @@ fn check_bracket_balance(text: &str) -> f64 {
     let mut in_line_comment = false;
     let mut in_block_comment = false;
     let mut prev_ch: Option<char> = None;
-    let mut prev_prev_ch: Option<char> = None;
 
     let chars: Vec<char> = text.chars().collect();
     for (i, &ch) in chars.iter().enumerate() {
@@ -222,7 +221,6 @@ fn check_bracket_balance(text: &str) -> f64 {
             if ch == '\n' {
                 in_line_comment = false;
             }
-            prev_prev_ch = prev_ch;
             prev_ch = Some(ch);
             continue;
         }
@@ -231,7 +229,6 @@ fn check_bracket_balance(text: &str) -> f64 {
             if prev_ch == Some('*') && ch == '/' {
                 in_block_comment = false;
             }
-            prev_prev_ch = prev_ch;
             prev_ch = Some(ch);
             continue;
         }
@@ -246,7 +243,6 @@ fn check_bracket_balance(text: &str) -> f64 {
                     } else {
                         in_triple_single = true;
                     }
-                    prev_prev_ch = prev_ch;
                     prev_ch = Some(ch);
                     continue;
                 }
@@ -259,7 +255,6 @@ fn check_bracket_balance(text: &str) -> f64 {
                     } else {
                         in_triple_double = true;
                     }
-                    prev_prev_ch = prev_ch;
                     prev_ch = Some(ch);
                     continue;
                 }
@@ -267,7 +262,6 @@ fn check_bracket_balance(text: &str) -> f64 {
         }
 
         if in_triple_single || in_triple_double {
-            prev_prev_ch = prev_ch;
             prev_ch = Some(ch);
             continue;
         }
@@ -280,7 +274,6 @@ fn check_bracket_balance(text: &str) -> f64 {
         }
 
         if in_double_quote || in_single_quote {
-            prev_prev_ch = prev_ch;
             prev_ch = Some(ch);
             continue;
         }
@@ -288,20 +281,17 @@ fn check_bracket_balance(text: &str) -> f64 {
         // Handle comment starts
         if ch == '/' && prev_ch == Some('/') {
             in_line_comment = true;
-            prev_prev_ch = prev_ch;
             prev_ch = Some(ch);
             continue;
         }
         if ch == '*' && prev_ch == Some('/') {
             in_block_comment = true;
-            prev_prev_ch = prev_ch;
             prev_ch = Some(ch);
             continue;
         }
         // Python-style comment
         if ch == '#' {
             in_line_comment = true;
-            prev_prev_ch = prev_ch;
             prev_ch = Some(ch);
             continue;
         }
@@ -317,7 +307,6 @@ fn check_bracket_balance(text: &str) -> f64 {
             _ => {}
         }
 
-        prev_prev_ch = prev_ch;
         prev_ch = Some(ch);
     }
 
