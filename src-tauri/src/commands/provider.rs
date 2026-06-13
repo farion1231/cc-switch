@@ -4,11 +4,12 @@ use tauri::{Emitter, State};
 use crate::app_config::AppType;
 use crate::commands::copilot::CopilotAuthState;
 use crate::error::AppError;
-use crate::provider::{ClaudeDesktopMode, Provider};
+use crate::provider::{ClaudeDesktopMode, ClaudeLauncherPermissionMode, Provider};
 use crate::services::{
     EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService, SwitchResult,
 };
 use crate::store::AppState;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 // 常量定义
@@ -1059,6 +1060,456 @@ mod import_claude_desktop_tests {
                 .label_override,
             None
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Claude launcher/profile commands
+// ---------------------------------------------------------------------------
+
+/// Synchronize a managed Claude profile for a provider.
+/// Creates the profile directory on demand, writes settings + MCP + onboarding.
+#[tauri::command]
+pub fn sync_claude_profile(
+    state: State<'_, AppState>,
+    provider_id: String,
+) -> Result<serde_json::Value, String> {
+    let provider = get_claude_provider(state.inner(), &provider_id)?;
+    let (result, _) =
+        crate::claude_profile::sync_profile_and_update_metadata(state.db.as_ref(), &provider)
+            .map_err(|e| e.to_string())?;
+
+    serde_json::to_value(&result).map_err(|e| e.to_string())
+}
+
+/// Get the status of a managed Claude profile.
+#[tauri::command]
+pub fn get_claude_profile_status(
+    state: State<'_, AppState>,
+    provider_id: String,
+) -> Result<serde_json::Value, String> {
+    let provider = get_claude_provider(state.inner(), &provider_id)?;
+
+    let status = crate::claude_profile::get_profile_status(&provider);
+    serde_json::to_value(&status).map_err(|e| e.to_string())
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeShortcutCommandResult {
+    pub info: crate::claude_shortcut::ShortcutInfo,
+    pub target_kind: String,
+    pub user_bin_dir: String,
+    pub path_on_path: bool,
+    pub path_export_snippet: Option<String>,
+    pub launch_command: Option<String>,
+    pub installed: bool,
+    pub removed: bool,
+    pub error: Option<String>,
+}
+
+fn get_claude_provider(state: &AppState, provider_id: &str) -> Result<Provider, String> {
+    state
+        .db
+        .get_provider_by_id(provider_id, "claude")
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Provider '{provider_id}' not found"))
+}
+
+fn resolve_launcher_target() -> (String, PathBuf) {
+    (
+        "user".to_string(),
+        crate::claude_shortcut::get_user_bin_dir(),
+    )
+}
+
+fn path_contains_dir(dir: &Path) -> bool {
+    let Ok(path_var) = std::env::var("PATH") else {
+        return false;
+    };
+
+    std::env::split_paths(&path_var).any(|entry| entry == dir)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn path_export_snippet(dir: &Path) -> String {
+    let dir = dir.to_string_lossy();
+    format!("export PATH='{}':\"$PATH\"", dir.replace('\'', "'\"'\"'"))
+}
+
+#[cfg(target_os = "windows")]
+fn path_export_snippet(dir: &Path) -> String {
+    format!("setx PATH \"{};%PATH%\"", dir.to_string_lossy())
+}
+
+fn shortcut_result(
+    db: &crate::database::Database,
+    provider: &Provider,
+    target_kind: String,
+    target_dir: &Path,
+    installed: bool,
+    removed: bool,
+    error: Option<String>,
+) -> Result<ClaudeShortcutCommandResult, String> {
+    let info = crate::claude_shortcut::get_shortcut_status(provider, target_dir)
+        .map_err(|e| e.to_string())?;
+    let user_bin = crate::claude_shortcut::get_user_bin_dir();
+    let path_on_path = path_contains_dir(target_dir);
+    let path_export_snippet = if path_on_path {
+        None
+    } else {
+        Some(path_export_snippet(target_dir))
+    };
+    let profile_target = crate::claude_profile::resolve_target(db, provider);
+    let profile_dir = profile_target.config_dir();
+    let launch_command = Some(crate::claude_profile::terminal_launch_command(
+        provider,
+        &profile_dir,
+    ));
+
+    Ok(ClaudeShortcutCommandResult {
+        info,
+        target_kind,
+        user_bin_dir: user_bin.to_string_lossy().to_string(),
+        path_on_path,
+        path_export_snippet,
+        launch_command,
+        installed,
+        removed,
+        error,
+    })
+}
+
+fn should_refresh_launcher_launch_command(
+    launch_command: Option<&str>,
+    profile_dir: &Path,
+    previous_shortcut_name: Option<&str>,
+) -> bool {
+    let Some(command) = launch_command
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return true;
+    };
+
+    previous_shortcut_name == Some(command)
+        || command == crate::claude_profile::default_launch_command(profile_dir)
+        || command.contains("cc-switch-launcher-settings.json")
+}
+
+#[tauri::command]
+pub fn update_claude_launcher_settings(
+    state: State<'_, AppState>,
+    provider_id: String,
+    enabled: Option<bool>,
+    shortcut_name: Option<String>,
+    launcher_permission_mode: Option<ClaudeLauncherPermissionMode>,
+) -> Result<serde_json::Value, String> {
+    let mut provider = get_claude_provider(state.inner(), &provider_id)?;
+
+    if let Some(name) = shortcut_name
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        crate::claude_shortcut::validate_shortcut_name(name).map_err(|e| e.to_string())?;
+    }
+
+    {
+        let meta = provider.meta.get_or_insert_with(Default::default);
+        if let Some(enabled) = enabled {
+            meta.parallel_config_enabled = Some(enabled);
+        }
+        if let Some(name) = shortcut_name
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            meta.shortcut_name = Some(name.to_string());
+        }
+        meta.launcher_permission_mode = launcher_permission_mode;
+    }
+
+    let should_sync = provider
+        .meta
+        .as_ref()
+        .map(|meta| {
+            meta.parallel_config_enabled()
+                || meta
+                    .managed_profile_path
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .is_some()
+        })
+        .unwrap_or(false);
+
+    if should_sync {
+        let (sync_result, updated) =
+            crate::claude_profile::sync_profile_and_update_metadata(state.db.as_ref(), &provider)
+                .map_err(|e| e.to_string())?;
+        if sync_result.status != crate::claude_profile::ProfileStatus::Ready {
+            return Err(sync_result
+                .error
+                .unwrap_or_else(|| "Profile sync failed after launcher settings update".into()));
+        }
+        provider = updated;
+    } else {
+        state
+            .db
+            .save_provider("claude", &provider)
+            .map_err(|e| e.to_string())?;
+    }
+
+    serde_json::to_value(provider).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_claude_shortcut_status(
+    state: State<'_, AppState>,
+    provider_id: String,
+    _target: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let provider = get_claude_provider(state.inner(), &provider_id)?;
+    let (target_kind, target_dir) = resolve_launcher_target();
+
+    let result = shortcut_result(
+        state.db.as_ref(),
+        &provider,
+        target_kind,
+        &target_dir,
+        false,
+        false,
+        None,
+    )?;
+    serde_json::to_value(result).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn install_claude_shortcut(
+    state: State<'_, AppState>,
+    provider_id: String,
+    _target: Option<String>,
+    shortcut_name: Option<String>,
+    launcher_permission_mode: Option<ClaudeLauncherPermissionMode>,
+    remove_previous_shortcut: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    let mut provider = get_claude_provider(state.inner(), &provider_id)?;
+    let previous_shortcut_name = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.shortcut_name.clone())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let previous_shortcut_target = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.shortcut_target.clone())
+        .map(PathBuf::from);
+    let previous_launch_command = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.launch_command.clone());
+
+    if let Some(mode) = launcher_permission_mode {
+        let meta = provider.meta.get_or_insert_with(Default::default);
+        meta.launcher_permission_mode = Some(mode);
+    }
+
+    let (sync_result, mut provider) =
+        crate::claude_profile::sync_profile_and_update_metadata(state.db.as_ref(), &provider)
+            .map_err(|e| e.to_string())?;
+
+    if sync_result.status != crate::claude_profile::ProfileStatus::Ready {
+        return Err(sync_result
+            .error
+            .unwrap_or_else(|| "Profile sync failed before shortcut install".to_string()));
+    }
+
+    let (target_kind, target_dir) = resolve_launcher_target();
+    let requested_shortcut_name = shortcut_name
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty());
+    if let Some(name) = requested_shortcut_name {
+        crate::claude_shortcut::validate_shortcut_name(name).map_err(|e| e.to_string())?;
+        let meta = provider.meta.get_or_insert_with(Default::default);
+        meta.shortcut_name = Some(name.to_string());
+    }
+    let shortcut_name_changed = requested_shortcut_name
+        .zip(previous_shortcut_name.as_deref())
+        .map(|(next, previous)| next != previous)
+        .unwrap_or(false);
+
+    let profile_dir = PathBuf::from(&sync_result.profile_dir);
+    let install_result =
+        crate::claude_shortcut::install_shortcut(&provider, &profile_dir, &target_dir);
+
+    match install_result {
+        Ok(path) => {
+            let command_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_else(|| {
+                    provider
+                        .meta
+                        .as_ref()
+                        .and_then(|meta| meta.shortcut_name.as_deref())
+                        .unwrap_or("claude")
+                })
+                .to_string();
+
+            let refresh_launch_command = should_refresh_launcher_launch_command(
+                previous_launch_command.as_deref(),
+                &profile_dir,
+                previous_shortcut_name.as_deref(),
+            );
+            let launch_command = refresh_launch_command.then(|| {
+                crate::claude_profile::default_launch_command_for_provider(&provider, &profile_dir)
+            });
+
+            let meta = provider.meta.get_or_insert_with(Default::default);
+            meta.shortcut_name = Some(command_name.clone());
+            meta.shortcut_target = Some(target_dir.to_string_lossy().to_string());
+            if let Some(command) = launch_command {
+                meta.launch_command = Some(command);
+            }
+            state
+                .db
+                .save_provider("claude", &provider)
+                .map_err(|e| e.to_string())?;
+
+            let mut cleanup_error = None;
+            if remove_previous_shortcut.unwrap_or(false) && shortcut_name_changed {
+                if let Some(previous_name) = previous_shortcut_name.as_deref() {
+                    let previous_target_dir =
+                        previous_shortcut_target.as_deref().unwrap_or(&target_dir);
+                    match crate::claude_shortcut::remove_shortcut_by_name(
+                        &provider,
+                        previous_name,
+                        previous_target_dir,
+                    ) {
+                        Ok(_) => {}
+                        Err(err) => cleanup_error = Some(err.to_string()),
+                    }
+                }
+            }
+
+            let result = shortcut_result(
+                state.db.as_ref(),
+                &provider,
+                target_kind,
+                &target_dir,
+                true,
+                false,
+                cleanup_error,
+            )?;
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
+        Err(err) => {
+            let err_text = err.to_string();
+            let result = shortcut_result(
+                state.db.as_ref(),
+                &provider,
+                target_kind,
+                &target_dir,
+                false,
+                false,
+                Some(err_text),
+            )?;
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
+    }
+}
+
+#[tauri::command]
+pub fn remove_claude_shortcut(
+    state: State<'_, AppState>,
+    provider_id: String,
+    _target: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let mut provider = get_claude_provider(state.inner(), &provider_id)?;
+    let (target_kind, target_dir) = resolve_launcher_target();
+
+    let removed = crate::claude_shortcut::remove_shortcut(&provider, &target_dir)
+        .map_err(|e| e.to_string())?;
+
+    let profile_dir = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_profile_path.as_ref())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let target = crate::claude_profile::resolve_target(state.db.as_ref(), &provider);
+            target.config_dir()
+        });
+    if let Some(meta) = provider.meta.as_mut() {
+        if removed {
+            let previous_shortcut = meta.shortcut_name.clone();
+            meta.shortcut_target = None;
+            if previous_shortcut.as_deref() == meta.launch_command.as_deref() {
+                meta.launch_command =
+                    Some(crate::claude_profile::default_launch_command(&profile_dir));
+            }
+        }
+    }
+    state
+        .db
+        .save_provider("claude", &provider)
+        .map_err(|e| e.to_string())?;
+
+    let result = shortcut_result(
+        state.db.as_ref(),
+        &provider,
+        target_kind,
+        &target_dir,
+        false,
+        removed,
+        None,
+    )?;
+    serde_json::to_value(result).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refreshes_launcher_launch_command_for_previous_managed_alias() {
+        let profile_dir = Path::new("/tmp/cc-switch-profile");
+
+        assert!(should_refresh_launcher_launch_command(
+            Some("claude-old"),
+            profile_dir,
+            Some("claude-old"),
+        ));
+        assert!(!should_refresh_launcher_launch_command(
+            Some("custom-claude-command"),
+            profile_dir,
+            Some("claude-old"),
+        ));
+    }
+
+    #[test]
+    fn refreshes_launcher_launch_command_for_generated_commands() {
+        let profile_dir = Path::new("/tmp/cc-switch-profile");
+        let default_command = crate::claude_profile::default_launch_command(profile_dir);
+
+        assert!(should_refresh_launcher_launch_command(
+            Some(&default_command),
+            profile_dir,
+            None,
+        ));
+        assert!(should_refresh_launcher_launch_command(
+            Some("CLAUDE_CONFIG_DIR=/tmp/profile claude --settings /tmp/profile/cc-switch-launcher-settings.json"),
+            profile_dir,
+            None,
+        ));
+        assert!(should_refresh_launcher_launch_command(
+            None,
+            profile_dir,
+            None,
+        ));
     }
 }
 

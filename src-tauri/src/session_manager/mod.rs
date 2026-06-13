@@ -25,6 +25,10 @@ pub struct SessionMeta {
     pub source_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_command: Option<String>,
+    /// The managed Claude profile directory, if this session belongs to a
+    /// managed profile rather than the default global Claude config.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -190,7 +194,10 @@ fn delete_session_with_roots(
 fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
     let roots = match provider_id {
         "codex" => codex::session_roots(),
-        "claude" => vec![crate::config::get_claude_config_dir().join("projects")],
+        "claude" => vec![
+            crate::config::get_claude_config_dir().join("projects"),
+            crate::config::get_managed_profile_root(),
+        ],
         "opencode" => vec![opencode::get_opencode_data_dir()],
         "openclaw" => vec![crate::openclaw_config::get_openclaw_dir().join("agents")],
         "gemini" => vec![crate::gemini_config::get_gemini_dir().join("tmp")],
@@ -261,6 +268,17 @@ mod tests {
         .expect("write source");
     }
 
+    fn write_claude_session(path: &Path, session_id: &str) {
+        std::fs::write(
+            path,
+            format!(
+                "{{\"sessionId\":\"{session_id}\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}}\n\
+                 {{\"message\":{{\"role\":\"user\",\"content\":\"hello\"}},\"timestamp\":\"2026-03-06T10:01:00Z\"}}\n",
+            ),
+        )
+        .expect("write source");
+    }
+
     #[test]
     fn accepts_source_path_under_any_allowed_provider_root() {
         let active_root = tempdir().expect("active root");
@@ -278,6 +296,30 @@ mod tests {
             ],
         )
         .expect("delete archived session");
+
+        assert!(deleted);
+        assert!(!source.exists());
+    }
+
+    #[test]
+    fn accepts_claude_source_path_under_managed_profile_root() {
+        let default_root = tempdir().expect("default root");
+        let managed_root = tempdir().expect("managed root");
+        let projects_dir = managed_root.path().join("profile").join("projects");
+        std::fs::create_dir_all(&projects_dir).expect("create projects dir");
+        let source = projects_dir.join("session.jsonl");
+        write_claude_session(&source, "session-123");
+
+        let deleted = delete_session_with_roots(
+            "claude",
+            "session-123",
+            &source,
+            &[
+                default_root.path().to_path_buf(),
+                managed_root.path().to_path_buf(),
+            ],
+        )
+        .expect("delete managed Claude session");
 
         assert!(deleted);
         assert!(!source.exists());

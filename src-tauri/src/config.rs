@@ -6,6 +6,153 @@ use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
 
+// ---------------------------------------------------------------------------
+// Claude config target abstraction
+// ---------------------------------------------------------------------------
+
+/// Represents a target for Claude Code configuration writes.
+///
+/// - `Default` writes to the global Claude config path (`~/.claude/`).
+/// - `ManagedProfile` writes to an isolated provider profile directory
+///   under the managed profile root (`~/.claude-cc-switch/<slug>/`).
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub enum ClaudeConfigTarget {
+    /// The default/global Claude Code configuration directory.
+    Default,
+    /// A managed provider profile with an isolated `CLAUDE_CONFIG_DIR`.
+    ManagedProfile {
+        /// Deterministic directory slug derived from the provider ID.
+        slug: String,
+        /// Optional override for the profile directory path.
+        /// When `None`, the path is derived from the slug and profile root.
+        path_override: Option<PathBuf>,
+    },
+}
+
+impl ClaudeConfigTarget {
+    /// Returns the config directory path for this target.
+    ///
+    /// - `Default`: `~/.claude/` (or the user-configured override dir).
+    /// - `ManagedProfile`: `<profile_root>/<slug>/`.
+    pub fn config_dir(&self) -> PathBuf {
+        match self {
+            ClaudeConfigTarget::Default => get_claude_config_dir(),
+            ClaudeConfigTarget::ManagedProfile {
+                slug,
+                path_override,
+            } => {
+                if let Some(custom) = path_override {
+                    return custom.clone();
+                }
+                get_managed_profile_root().join(slug)
+            }
+        }
+    }
+
+    /// Returns the `settings.json` path for this target.
+    pub fn settings_path(&self) -> PathBuf {
+        let dir = self.config_dir();
+        let settings = dir.join("settings.json");
+        if matches!(self, ClaudeConfigTarget::Default) && !settings.exists() {
+            let legacy = dir.join("claude.json");
+            if legacy.exists() {
+                return legacy;
+            }
+        }
+        settings
+    }
+
+    /// Returns the MCP/global config path for this target.
+    ///
+    /// - `Default`: `~/.claude.json` (or the legacy override-derived path).
+    /// - `ManagedProfile`: `<profile_dir>/.claude.json`.
+    pub fn mcp_path(&self) -> PathBuf {
+        match self {
+            ClaudeConfigTarget::Default => get_claude_mcp_path(),
+            ClaudeConfigTarget::ManagedProfile { .. } => {
+                // Managed profiles always use the internal .claude.json path.
+                self.config_dir().join(".claude.json")
+            }
+        }
+    }
+
+    /// Returns the `projects` directory path for session scanning.
+    #[allow(dead_code)]
+    pub fn projects_dir(&self) -> PathBuf {
+        self.config_dir().join("projects")
+    }
+
+    /// Returns the `CLAUDE_CONFIG_DIR` value for launching this target.
+    #[allow(dead_code)]
+    pub fn claude_config_dir_value(&self) -> PathBuf {
+        self.config_dir()
+    }
+}
+
+/// Returns the managed Claude profile root directory.
+///
+/// Default: `~/.claude-cc-switch/`. This directory is intentionally
+/// separate from `~/.cc-switch/` to avoid syncing profile runtime data
+/// (credentials, sessions, traces) via cloud sync.
+pub fn get_managed_profile_root() -> PathBuf {
+    // TODO: make configurable via settings in task 1.4
+    get_home_dir().join(".claude-cc-switch")
+}
+
+/// Derive a deterministic slug from a provider ID for use as a directory name.
+///
+/// Strips known CC Switch prefixes (`universal-claude-`, `provider-`) to
+/// produce a clean, human-readable slug. Falls back to the raw ID if no
+/// prefix matches. The result is safe for use as a directory name.
+pub fn derive_provider_slug(provider_id: &str) -> String {
+    let stripped = provider_id
+        .strip_prefix("universal-claude-")
+        .or_else(|| provider_id.strip_prefix("provider-"))
+        .unwrap_or(provider_id);
+
+    slugify(stripped)
+}
+
+/// Convert a string to a filesystem-safe slug.
+///
+/// - ASCII alphanumeric characters are preserved.
+/// - Spaces, underscores, and hyphens become hyphens.
+/// - Other characters are percent-encoded as `-<hex>`.
+/// - Consecutive hyphens are collapsed.
+/// - Leading/trailing hyphens are stripped.
+/// - Result is lowercased.
+pub fn slugify(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut prev_hyphen = false;
+
+    for ch in input.chars() {
+        if ch.is_ascii_alphanumeric() {
+            result.extend(ch.to_lowercase());
+            prev_hyphen = false;
+        } else if ch == ' ' || ch == '_' || ch == '-' {
+            if !prev_hyphen && !result.is_empty() {
+                result.push('-');
+                prev_hyphen = true;
+            }
+        } else {
+            // Percent-encode non-ASCII/special chars
+            for byte in ch.to_string().as_bytes() {
+                result.push('-');
+                result.push_str(&format!("{:02x}", byte));
+            }
+            prev_hyphen = true;
+        }
+    }
+
+    // Strip trailing hyphen
+    if result.ends_with('-') {
+        result.pop();
+    }
+
+    result
+}
+
 /// 获取用户主目录，带回退和日志
 ///
 /// ## Windows 注意事项
@@ -386,6 +533,118 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&sorted_a).unwrap(),
             serde_json::to_string(&sorted_b).unwrap(),
+        );
+    }
+
+    // ----- ClaudeConfigTarget tests -----
+
+    #[test]
+    fn claude_config_target_default_uses_global_paths() {
+        let target = ClaudeConfigTarget::Default;
+        let config_dir = target.config_dir();
+        assert!(
+            config_dir.ends_with(".claude"),
+            "default config dir should end with .claude, got: {}",
+            config_dir.display()
+        );
+        let mcp = target.mcp_path();
+        assert!(
+            mcp.ends_with(".claude.json"),
+            "default MCP path should be ~/.claude.json, got: {}",
+            mcp.display()
+        );
+    }
+
+    #[test]
+    fn claude_config_target_managed_profile_derives_path() {
+        let target = ClaudeConfigTarget::ManagedProfile {
+            slug: "kimi".to_string(),
+            path_override: None,
+        };
+        let config_dir = target.config_dir();
+        assert!(
+            config_dir.ends_with("kimi"),
+            "managed profile dir should end with slug, got: {}",
+            config_dir.display()
+        );
+        let mcp = target.mcp_path();
+        assert_eq!(
+            mcp,
+            config_dir.join(".claude.json"),
+            "managed profile MCP should be <dir>/.claude.json"
+        );
+        let settings = target.settings_path();
+        assert_eq!(
+            settings,
+            config_dir.join("settings.json"),
+            "managed profile settings should be <dir>/settings.json"
+        );
+    }
+
+    #[test]
+    fn claude_config_target_managed_profile_uses_override() {
+        let custom = PathBuf::from("/tmp/custom-profile");
+        let target = ClaudeConfigTarget::ManagedProfile {
+            slug: "ignored".to_string(),
+            path_override: Some(custom.clone()),
+        };
+        assert_eq!(target.config_dir(), custom);
+        assert_eq!(target.mcp_path(), custom.join(".claude.json"));
+    }
+
+    #[test]
+    fn claude_config_target_projects_dir() {
+        let target = ClaudeConfigTarget::ManagedProfile {
+            slug: "test".to_string(),
+            path_override: None,
+        };
+        assert_eq!(target.projects_dir(), target.config_dir().join("projects"));
+    }
+
+    // ----- Slug tests -----
+
+    #[test]
+    fn slugify_simple_ascii() {
+        assert_eq!(slugify("kimi"), "kimi");
+        assert_eq!(slugify("My Provider"), "my-provider");
+        assert_eq!(slugify("some_name"), "some-name");
+    }
+
+    #[test]
+    fn slugify_collapse_hyphens() {
+        assert_eq!(slugify("a--b"), "a-b");
+        assert_eq!(slugify("a  b"), "a-b");
+        assert_eq!(slugify("a - b"), "a-b");
+    }
+
+    #[test]
+    fn slugify_strips_leading_trailing_hyphens() {
+        assert_eq!(slugify("-hello-"), "hello");
+        assert_eq!(slugify("  hello  "), "hello");
+    }
+
+    #[test]
+    fn slugify_unicode() {
+        // Chinese characters are percent-encoded
+        let result = slugify("我的API");
+        assert!(!result.is_empty());
+        assert!(result.contains('-'));
+        // Should be deterministic
+        assert_eq!(result, slugify("我的API"));
+    }
+
+    #[test]
+    fn derive_provider_slug_strips_prefixes() {
+        assert_eq!(derive_provider_slug("universal-claude-kimi"), "kimi");
+        assert_eq!(derive_provider_slug("provider-abc"), "abc");
+        assert_eq!(derive_provider_slug("my-custom-id"), "my-custom-id");
+    }
+
+    #[test]
+    fn derive_provider_slug_cleans_result() {
+        assert_eq!(
+            derive_provider_slug("universal-claude-My Provider"),
+            "my-provider"
         );
     }
 }
