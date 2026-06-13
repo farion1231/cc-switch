@@ -33,7 +33,7 @@ pub(crate) use live::{
     build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
     provider_exists_in_live_config, strip_common_config_from_live_settings,
     sync_common_config_from_live, sync_current_provider_for_app_to_live,
-    write_live_with_common_config,
+    write_live_with_common_config, write_live_with_common_config_synced,
 };
 
 // Internal re-exports
@@ -1221,7 +1221,7 @@ impl ProviderService {
             state
                 .db
                 .set_current_provider(app_type.as_str(), &provider.id)?;
-            write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
+            write_live_with_common_config_synced(state.db.as_ref(), &app_type, &provider)?;
         }
 
         Ok(true)
@@ -1423,7 +1423,7 @@ impl ProviderService {
                     .map_err(|e| AppError::Message(format!("同步 Claude Live 配置失败: {e}")))?;
                 }
             } else {
-                write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
+                write_live_with_common_config_synced(state.db.as_ref(), &app_type, &provider)?;
                 // Sync MCP
                 McpService::sync_all_enabled(state)?;
             }

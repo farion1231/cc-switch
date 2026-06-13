@@ -1911,3 +1911,132 @@ fn provider_service_delete_current_provider_returns_error() {
         other => panic!("expected Config/Message error, got {other:?}"),
     }
 }
+
+#[test]
+fn update_current_claude_provider_preserves_live_common_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let settings_path = get_claude_settings_path();
+    if let Some(parent) = settings_path.parent() {
+        std::fs::create_dir_all(parent).expect("create claude settings dir");
+    }
+
+    // Live settings.json holds the *current* state, including a plugin the user
+    // just enabled in Claude Code ("plugin-b") that the DB snippet does not yet know about.
+    let live = json!({
+        "env": {
+            "ANTHROPIC_API_KEY": "old-key",
+            "ANTHROPIC_BASE_URL": "https://old.example.com"
+        },
+        "enabledPlugins": {
+            "plugin-a@market": true,
+            "plugin-b@market": true
+        },
+        "statusLine": {
+            "type": "command",
+            "command": "node /home/u/.claude/plugins/cache/hud/dist/index.js"
+        }
+    });
+    std::fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&live).expect("serialize live"),
+    )
+    .expect("seed claude live config");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "wiki".to_string();
+        manager.providers.insert(
+            "wiki".to_string(),
+            Provider::with_id(
+                "wiki".to_string(),
+                "Wiki".to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_API_KEY": "old-key",
+                        "ANTHROPIC_BASE_URL": "https://old.example.com"
+                    }
+                }),
+                None,
+            ),
+        );
+    }
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    // STALE snippet: only knows about plugin-a, not the newly-enabled plugin-b.
+    state
+        .db
+        .set_config_snippet(
+            AppType::Claude.as_str(),
+            Some(
+                r#"{
+                    "enabledPlugins": { "plugin-a@market": true },
+                    "statusLine": {
+                        "type": "command",
+                        "command": "node /home/u/.claude/plugins/cache/hud/dist/index.js"
+                    }
+                }"#
+                .to_string(),
+            ),
+        )
+        .expect("set stale snippet");
+    state
+        .db
+        .set_config_snippet_cleared(AppType::Claude.as_str(), false)
+        .expect("snippet not cleared");
+
+    // User edits the current provider in cc-switch (e.g. rotates the API key).
+    let updated = Provider::with_id(
+        "wiki".to_string(),
+        "Wiki".to_string(),
+        json!({
+            "env": {
+                "ANTHROPIC_API_KEY": "new-key",
+                "ANTHROPIC_BASE_URL": "https://old.example.com"
+            }
+        }),
+        None,
+    );
+    ProviderService::update(&state, AppType::Claude, None, updated).expect("update provider");
+
+    let live_after: serde_json::Value =
+        read_json_file(&settings_path).expect("read claude live settings");
+
+    assert_eq!(
+        live_after
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_API_KEY"))
+            .and_then(|key| key.as_str()),
+        Some("new-key"),
+        "update should apply the new provider auth"
+    );
+    assert_eq!(
+        live_after
+            .get("enabledPlugins")
+            .and_then(|p| p.get("plugin-b@market"))
+            .and_then(|v| v.as_bool()),
+        Some(true),
+        "update must not clobber a plugin enabled in Claude Code after the snippet was last synced"
+    );
+    assert_eq!(
+        live_after
+            .get("enabledPlugins")
+            .and_then(|p| p.get("plugin-a@market"))
+            .and_then(|v| v.as_bool()),
+        Some(true),
+        "previously-known plugin should also be preserved"
+    );
+    assert_eq!(
+        live_after
+            .get("statusLine")
+            .and_then(|s| s.get("command"))
+            .and_then(|c| c.as_str()),
+        Some("node /home/u/.claude/plugins/cache/hud/dist/index.js"),
+        "statusLine should be preserved"
+    );
+}

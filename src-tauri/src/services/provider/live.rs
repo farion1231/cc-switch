@@ -541,6 +541,32 @@ pub(crate) fn write_live_with_common_config(
     write_live_snapshot(app_type, &effective_provider)
 }
 
+/// Refresh the common-config snippet from the current live settings, then write
+/// the provider to live.
+///
+/// Use this for write paths that must preserve whatever was most recently written
+/// to the live config by the user or Claude Code (e.g. `update`/`add` of the
+/// current provider, and startup/restore sync). The provider-switch flow syncs
+/// the *outgoing* provider's live state itself and keeps calling
+/// [`write_live_with_common_config`] directly.
+///
+/// Additive-mode apps coexist in one file and do not use the snippet sync.
+pub(crate) fn write_live_with_common_config_synced(
+    db: &Database,
+    app_type: &AppType,
+    provider: &Provider,
+) -> Result<(), AppError> {
+    if !app_type.is_additive_mode() {
+        if let Err(err) = sync_common_config_from_live(db, app_type) {
+            log::warn!(
+                "Failed to sync common config from live before writing {}: {err}",
+                app_type.as_str()
+            );
+        }
+    }
+    write_live_with_common_config(db, app_type, provider)
+}
+
 /// Re-extract common config from the current live settings and persist it to the database.
 /// This ensures the common config snippet stays up-to-date (e.g. when plugins like
 /// claude-hud update their cache paths between versions).
@@ -969,7 +995,7 @@ pub(crate) fn sync_current_provider_for_app_to_live(
 
         let providers = state.db.get_all_providers(app_type.as_str())?;
         if let Some(provider) = providers.get(&current_id) {
-            write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
+            write_live_with_common_config_synced(state.db.as_ref(), app_type, provider)?;
         }
     }
 
