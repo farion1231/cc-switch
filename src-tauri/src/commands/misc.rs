@@ -2620,29 +2620,58 @@ exec bash --norc --noprofile
     result
 }
 
-/// macOS: Terminal.app
+/// Escape a value as an AppleScript string literal.
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal_app(script_file: &std::path::Path) -> Result<(), String> {
-    use std::process::Command;
+fn applescript_string_literal(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
 
-    let applescript = format!(
-        r#"tell application "Terminal"
-    activate
-    do script "bash '{}'"
+/// Build the launcher command literal used by AppleScript.
+#[cfg(target_os = "macos")]
+fn applescript_launcher_command(script_file: &std::path::Path) -> String {
+    applescript_string_literal(&format!(
+        "bash {}",
+        shell_single_quote(&script_file.to_string_lossy())
+    ))
+}
+
+/// macOS: Terminal.app AppleScript.
+/// A cold `activate` creates a default empty window before `do script` opens the command session.
+/// Use `launch` for cold starts so `do script` can create the only new session without reusing restored windows.
+#[cfg(target_os = "macos")]
+fn build_macos_terminal_applescript(script_file: &std::path::Path) -> String {
+    format!(
+        r#"set launcher_script to {launcher}
+set was_running to application "Terminal" is running
+tell application "Terminal"
+    if was_running then
+        activate
+        do script launcher_script
+    else
+        launch
+        do script launcher_script
+        activate
+    end if
 end tell"#,
-        script_file.display()
-    );
+        launcher = applescript_launcher_command(script_file)
+    )
+}
+
+/// Run AppleScript through `osascript -e` with shared error handling.
+#[cfg(target_os = "macos")]
+fn run_terminal_osascript(applescript: &str, terminal_label: &str) -> Result<(), String> {
+    use std::process::Command;
 
     let output = Command::new("osascript")
         .arg("-e")
-        .arg(&applescript)
+        .arg(applescript)
         .output()
         .map_err(|e| format!("执行 osascript 失败: {e}"))?;
 
     if !output.status.success() {
         let stderr = decode_command_output(&output.stderr);
         return Err(format!(
-            "Terminal.app 执行失败 (exit code: {:?}): {}",
+            "{terminal_label} 执行失败 (exit code: {:?}): {}",
             output.status.code(),
             stderr
         ));
@@ -2651,11 +2680,20 @@ end tell"#,
     Ok(())
 }
 
+/// macOS: Terminal.app
+#[cfg(target_os = "macos")]
+fn launch_macos_terminal_app(script_file: &std::path::Path) -> Result<(), String> {
+    run_terminal_osascript(
+        &build_macos_terminal_applescript(script_file),
+        "Terminal.app",
+    )
+}
+
 /// macOS: iTerm2
 #[cfg(target_os = "macos")]
 fn build_macos_iterm2_applescript(script_file: &std::path::Path) -> String {
     format!(
-        r#"set launcher_script to "bash '{}'"
+        r#"set launcher_script to {launcher}
 set was_running to application "iTerm" is running
 tell application "iTerm"
     if was_running then
@@ -2683,63 +2721,51 @@ tell application "iTerm"
         write text launcher_script
     end tell
 end tell"#,
-        script_file.display()
+        launcher = applescript_launcher_command(script_file)
     )
 }
 
 /// macOS: iTerm2
 #[cfg(target_os = "macos")]
 fn launch_macos_iterm2(script_file: &std::path::Path) -> Result<(), String> {
-    use std::process::Command;
-
-    let applescript = build_macos_iterm2_applescript(script_file);
-
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(&applescript)
-        .output()
-        .map_err(|e| format!("执行 osascript 失败: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = decode_command_output(&output.stderr);
-        return Err(format!(
-            "iTerm2 执行失败 (exit code: {:?}): {}",
-            output.status.code(),
-            stderr
-        ));
-    }
-
-    Ok(())
+    run_terminal_osascript(&build_macos_iterm2_applescript(script_file), "iTerm2")
 }
 
-/// macOS: Ghostty — use --quit-after-last-window-closed to avoid cloning existing tabs
+/// Keep the launcher path inside a `bash -c` string.
+/// A bare `.sh` passed through `open --args` may also be opened as a document.
+#[cfg(target_os = "macos")]
+fn build_macos_dash_c_command(script_file: &std::path::Path) -> String {
+    format!(
+        "exec bash {}",
+        shell_single_quote(&script_file.to_string_lossy())
+    )
+}
+
+/// macOS: Ghostty.
+/// Warm starts use AppleScript to create one command window.
+/// Cold starts use `initial-command` so the first default surface runs the launcher.
+/// Do not use `initial-window=false` plus `new window`: cold launch can still create the default window first.
+#[cfg(target_os = "macos")]
+fn build_macos_ghostty_applescript(script_file: &std::path::Path) -> String {
+    format!(
+        r#"set launcher_command to {launcher}
+set was_running to application "Ghostty" is running
+if was_running then
+    tell application "Ghostty"
+        new window with configuration {{command:launcher_command}}
+    end tell
+else
+    do shell script "open -na Ghostty --args --quit-after-last-window-closed=true " & quoted form of ("--initial-command=" & launcher_command)
+end if
+"#,
+        launcher = applescript_launcher_command(script_file)
+    )
+}
+
+/// macOS: Ghostty
 #[cfg(target_os = "macos")]
 fn launch_macos_ghostty(script_file: &std::path::Path) -> Result<(), String> {
-    use std::process::Command;
-
-    let output = Command::new("open")
-        .args([
-            "-na",
-            "Ghostty",
-            "--args",
-            "--quit-after-last-window-closed=true",
-            "-e",
-            "bash",
-        ])
-        .arg(script_file)
-        .output()
-        .map_err(|e| format!("启动 Ghostty 失败: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = decode_command_output(&output.stderr);
-        return Err(format!(
-            "Ghostty 启动失败 (exit code: {:?}): {}",
-            output.status.code(),
-            stderr
-        ));
-    }
-
-    Ok(())
+    run_terminal_osascript(&build_macos_ghostty_applescript(script_file), "Ghostty")
 }
 
 /// macOS: 使用 open -na 启动支持 --args 参数的终端（Alacritty/Kitty/WezTerm/Kaku）
@@ -2757,7 +2783,10 @@ fn launch_macos_open_app(
     if use_e_flag {
         cmd.arg("-e");
     }
-    cmd.arg("bash").arg(script_file);
+    // Keep the script path inside `bash -c`; a trailing bare `.sh` can be opened as a document.
+    cmd.arg("bash")
+        .arg("-c")
+        .arg(build_macos_dash_c_command(script_file));
 
     let output = cmd
         .output()
@@ -4691,6 +4720,124 @@ mod tests {
         assert!(running_branch.contains("if (count of windows) = 0 then"));
         assert!(running_branch.contains("create window with default profile"));
         assert!(running_branch.contains("create tab with default profile"));
+    }
+
+    /// Terminal `activate` creates a default empty window on cold start; `launch` does not.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn terminal_applescript_cold_start_uses_launch_before_do_script() {
+        let script = build_macos_terminal_applescript(Path::new("/tmp/cc_switch_launcher.sh"));
+
+        assert!(
+            script.contains(r#"set was_running to application "Terminal" is running"#),
+            "missing was_running detection:\n{script}"
+        );
+        // Cold launches avoid `activate` until after `do script`, so no default empty window is created first.
+        assert!(
+            script.contains(
+                "else\n        launch\n        do script launcher_script\n        activate"
+            ),
+            "cold start should launch before activating:\n{script}"
+        );
+        // Already-running launches should create a fresh session.
+        assert!(
+            script.contains(
+                "if was_running then\n        activate\n        do script launcher_script\n"
+            ),
+            "already-running branch should use bare do script:\n{script}"
+        );
+    }
+
+    /// Restored windows should not receive the launcher command.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn terminal_applescript_does_not_hijack_restored_windows() {
+        let script = build_macos_terminal_applescript(Path::new("/tmp/cc_switch_launcher.sh"));
+        assert!(
+            !script.contains(" in window 1"),
+            "should not inject into an existing/restored Terminal window:\n{script}"
+        );
+        assert!(
+            !script.contains("count of windows"),
+            "should not infer restored-window safety from window count:\n{script}"
+        );
+    }
+
+    /// Ghostty cold starts use `initial-command`; warm starts use the scripting dictionary.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn ghostty_applescript_cold_start_uses_initial_command() {
+        let script = build_macos_ghostty_applescript(Path::new("/tmp/cc_switch_launcher.sh"));
+
+        // Warm launches execute through the AppleScript command property, not `open -na ... -e`.
+        assert!(
+            script.contains(r#"set launcher_command to "bash '/tmp/cc_switch_launcher.sh'""#),
+            "missing launcher_command:\n{script}"
+        );
+        assert!(script.contains("if was_running then"));
+        assert!(script.contains("new window with configuration {command:launcher_command}"));
+        assert!(
+            !script.contains(" --args -e"),
+            "should not execute through open -na -e:\n{script}"
+        );
+        // Cold launches make Ghostty's first default surface execute the launcher.
+        assert!(script.contains(r#"set was_running to application "Ghostty" is running"#));
+        assert!(
+            script.contains(
+                r#"do shell script "open -na Ghostty --args --quit-after-last-window-closed=true " & quoted form of ("--initial-command=" & launcher_command)"#
+            ),
+            "cold start should use initial-command:\n{script}"
+        );
+        assert!(
+            !script.contains("--initial-window=false"),
+            "should not rely on initial-window=false:\n{script}"
+        );
+        assert!(
+            !script.contains("delay 0.5"),
+            "should not rely on a fixed delay:\n{script}"
+        );
+        assert!(
+            !script.contains("old_ids"),
+            "should not track default windows for closing:\n{script}"
+        );
+        assert!(
+            !script.contains("close window"),
+            "should not close a default window:\n{script}"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn dash_c_command_wraps_script_path_inside_quoted_arg() {
+        // The script path must stay inside the `-c` string, not as a bare argv.
+        let s = build_macos_dash_c_command(Path::new("/tmp/cc_switch_launcher_1.sh"));
+        assert_eq!(s, "exec bash '/tmp/cc_switch_launcher_1.sh'");
+
+        // Spaces and single quotes must stay shell-safe too.
+        let s2 = build_macos_dash_c_command(Path::new("/Users/me/it's dir/x.sh"));
+        assert_eq!(s2, r#"exec bash '/Users/me/it'"'"'s dir/x.sh'"#);
+    }
+
+    /// AppleScript launchers need both shell-path quoting and AppleScript string quoting.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn applescript_builders_safely_quote_special_paths() {
+        // First shell-quote the path, then wrap the whole command as an AppleScript string.
+        let expected = r#""bash '/Users/me/it'\"'\"'s dir/x.sh'""#;
+        let p = Path::new("/Users/me/it's dir/x.sh");
+        assert_eq!(applescript_launcher_command(p), expected);
+        assert!(
+            build_macos_terminal_applescript(p).contains(expected),
+            "Terminal did not quote safely"
+        );
+        assert!(
+            build_macos_iterm2_applescript(p).contains(expected),
+            "iTerm2 did not quote safely"
+        );
+        assert!(
+            build_macos_ghostty_applescript(p).contains(expected),
+            "Ghostty did not quote safely"
+        );
     }
 
     #[test]
