@@ -4,6 +4,7 @@ import type { Provider } from "@/types";
 import { CodexSessionsDialog } from "@/components/providers/CodexSessionsDialog";
 
 const useProviderCodexSessionsMock = vi.hoisted(() => vi.fn());
+const useCodexSessionUsageSummariesMock = vi.hoisted(() => vi.fn());
 const useSetCodexSessionProviderLinksMock = vi.hoisted(() => vi.fn());
 
 vi.mock("react-i18next", () => ({
@@ -20,6 +21,7 @@ vi.mock("react-i18next", () => ({
 vi.mock("@/lib/query/codexSessions", () => ({
   useProviderCodexSessions: (providerId?: string) =>
     useProviderCodexSessionsMock(providerId),
+  useCodexSessionUsageSummaries: () => useCodexSessionUsageSummariesMock(),
   useSetCodexSessionProviderLinks: (providerId: string) =>
     useSetCodexSessionProviderLinksMock(providerId),
 }));
@@ -40,6 +42,9 @@ describe("CodexSessionsDialog", () => {
       data: [],
       isLoading: false,
       refetch: vi.fn(),
+    });
+    useCodexSessionUsageSummariesMock.mockReturnValue({
+      data: [],
     });
     useSetCodexSessionProviderLinksMock.mockReturnValue({
       mutateAsync: vi.fn(),

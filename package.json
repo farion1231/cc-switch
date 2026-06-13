@@ -19,7 +19,7 @@
   "author": "Jason Young",
   "license": "MIT",
   "devDependencies": {
-    "@tauri-apps/cli": "^2.8.0",
+    "@tauri-apps/cli": "~2.10.1",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.0.1",
     "@testing-library/user-event": "^14.5.2",
@@ -68,11 +68,11 @@
     "@radix-ui/react-visually-hidden": "^1.2.4",
     "@tanstack/react-query": "^5.90.3",
     "@tanstack/react-virtual": "^3.13.23",
-    "@tauri-apps/api": "^2.8.0",
-    "@tauri-apps/plugin-dialog": "^2.4.0",
+    "@tauri-apps/api": "~2.10.1",
+    "@tauri-apps/plugin-dialog": "~2.6.0",
     "@tauri-apps/plugin-process": "^2.0.0",
     "@tauri-apps/plugin-store": "^2.0.0",
-    "@tauri-apps/plugin-updater": "^2.0.0",
+    "@tauri-apps/plugin-updater": "~2.10.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -91,5 +91,10 @@
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.3.1",
     "zod": "^4.1.12"
+  },
+  "pnpm": {
+    "overrides": {
+      "@tauri-apps/api": "2.10.1"
+    }
   }
 }

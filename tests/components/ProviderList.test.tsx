@@ -514,9 +514,10 @@ describe("ProviderList Component", () => {
     fireEvent.click(screen.getByTestId("drawer-alpha"));
 
     const drawer = screen.getByTestId("provider-config-drawer-group:minimax");
+    const alphaRow = screen.getByTestId("provider-config-drawer-row-alpha");
     expect(within(drawer).getByText("Minimax API A")).toBeInTheDocument();
     expect(within(drawer).getByText("Minimax API B")).toBeInTheDocument();
-    expect(within(drawer).getByText("sk-alp...3456")).toBeInTheDocument();
+    expect(within(alphaRow).getByText("sk-alp...3456")).toBeInTheDocument();
     expect(
       screen.queryByText("sk-alpha-secret-123456"),
     ).not.toBeInTheDocument();
