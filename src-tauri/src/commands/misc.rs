@@ -1069,6 +1069,34 @@ fn default_flag_for_shell(shell: &str) -> &'static str {
     }
 }
 
+fn fallback_user_shell() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "/bin/zsh"
+    } else {
+        "/bin/bash"
+    }
+}
+
+fn valid_user_shell_path(shell: &str) -> bool {
+    !shell.is_empty()
+        && shell.starts_with('/')
+        && is_valid_shell(shell)
+        && !shell.chars().any(char::is_control)
+}
+
+/// 获取用户默认 shell 的完整路径；异常或被污染的 SHELL 回退到平台默认值。
+fn get_user_shell() -> String {
+    std::env::var("SHELL")
+        .ok()
+        .filter(|shell| valid_user_shell_path(shell))
+        .unwrap_or_else(|| fallback_user_shell().to_string())
+}
+
+/// 构建 exec 行：引号保护 shell 路径，用户 shell 按默认交互式规则加载 rc 配置
+fn build_exec_line(shell: &str) -> String {
+    format!("exec {}", shell_single_quote(shell))
+}
+
 #[cfg(target_os = "windows")]
 fn try_get_version_wsl(
     tool: &str,
@@ -2568,24 +2596,29 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("terminal");
 
+    let shell = get_user_shell();
+    let exec_line = build_exec_line(&shell);
+
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
 
     // Write the shell script to a temp file
+    // 脚本使用 POSIX sh 语法确保可移植性，exec 行切换到用户交互式 shell
     let script_content = format!(
-        r#"#!/bin/bash
+        r#"#!/usr/bin/env sh
 trap 'rm -f "{config_path}" "{script_file}"' EXIT
 {cd_command}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
 claude --settings "{config_path}"
-exec bash --norc --noprofile
+{exec_line}
 "#,
         config_path = config_path,
         script_file = script_file.display(),
         cd_command = cd_command,
+        exec_line = exec_line,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -2604,7 +2637,7 @@ exec bash --norc --noprofile
         "ghostty" => launch_macos_ghostty(&script_file),
         "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
         "kaku" => launch_macos_open_app("Kaku", &script_file, true),
-        _ => launch_macos_terminal_app(&script_file), // "terminal" or default
+        _ => launch_macos_terminal_app(&script_file),
     };
 
     // If preferred terminal fails and it's not the default, try Terminal.app as fallback
@@ -2628,9 +2661,9 @@ fn launch_macos_terminal_app(script_file: &std::path::Path) -> Result<(), String
     let applescript = format!(
         r#"tell application "Terminal"
     activate
-    do script "bash '{}'"
+    do script "sh '{script_file}'"
 end tell"#,
-        script_file.display()
+        script_file = script_file.display()
     );
 
     let output = Command::new("osascript")
@@ -2655,7 +2688,7 @@ end tell"#,
 #[cfg(target_os = "macos")]
 fn build_macos_iterm2_applescript(script_file: &std::path::Path) -> String {
     format!(
-        r#"set launcher_script to "bash '{}'"
+        r#"set launcher_script to "sh '{script_file}'"
 set was_running to application "iTerm" is running
 tell application "iTerm"
     if was_running then
@@ -2683,7 +2716,7 @@ tell application "iTerm"
         write text launcher_script
     end tell
 end tell"#,
-        script_file.display()
+        script_file = script_file.display()
     )
 }
 
@@ -2724,7 +2757,7 @@ fn launch_macos_ghostty(script_file: &std::path::Path) -> Result<(), String> {
             "--args",
             "--quit-after-last-window-closed=true",
             "-e",
-            "bash",
+            "sh",
         ])
         .arg(script_file)
         .output()
@@ -2757,7 +2790,7 @@ fn launch_macos_open_app(
     if use_e_flag {
         cmd.arg("-e");
     }
-    cmd.arg("bash").arg(script_file);
+    cmd.arg("sh").arg(script_file);
 
     let output = cmd
         .output()
@@ -2801,9 +2834,9 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 
         rm -- "$0"
 
-        exec bash {}
+        exec sh {quoted_script}
         "#,
-        script_file.display(),
+        quoted_script = shell_single_quote(&script_file.to_string_lossy()),
     )
     .map_err(|e| format!("Failed to write to temporary script file for Warp: {e}"))?;
 
@@ -2835,6 +2868,9 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
 
     let preferred = crate::settings::get_preferred_terminal();
 
+    let shell = get_user_shell();
+    let exec_line = build_exec_line(&shell);
+
     // Default terminal list with their arguments
     let default_terminals = [
         ("gnome-terminal", vec!["--"]),
@@ -2854,17 +2890,18 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let cd_command = build_shell_cd_command(cwd);
 
     let script_content = format!(
-        r#"#!/bin/bash
+        r#"#!/usr/bin/env sh
 trap 'rm -f "{config_path}" "{script_file}"' EXIT
 {cd_command}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
 claude --settings "{config_path}"
-exec bash --norc --noprofile
+{exec_line}
 "#,
         config_path = config_path,
         script_file = script_file.display(),
         cd_command = cd_command,
+        exec_line = exec_line,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -2908,7 +2945,7 @@ exec bash --norc --noprofile
         if terminal_exists {
             let result = Command::new(terminal)
                 .args(&args)
-                .arg("bash")
+                .arg("sh")
                 .arg(script_file.to_string_lossy().as_ref())
                 .spawn();
 
@@ -3071,7 +3108,7 @@ fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), S
     Ok(())
 }
 
-/// 打开用户首选终端并在其中执行一段可信命令脚本。脚本尾部 `read -n 1` / `pause`
+/// 打开用户首选终端并在其中执行一段可信命令脚本。脚本尾部 `read -r` / `pause`
 /// 是刻意设计的——让命令退出后窗口不要瞬间关闭，用户才看得到 `command
 /// not found` / `ModuleNotFoundError` 这类诊断信息。
 ///
@@ -3085,14 +3122,14 @@ pub(crate) fn launch_terminal_running(command_line: &str, label: &str) -> Result
     let (script_file, script_content) = {
         let file = temp_dir.join(format!("cc_switch_{}_{}.sh", label, pid));
         let content = format!(
-            r#"#!/bin/bash
+            r#"#!/usr/bin/env sh
 trap 'rm -f "{script_path}"' EXIT
 echo "[cc-switch] Starting: {label}"
 echo ""
 {cmd}
 echo ""
-echo "[cc-switch] Command exited. Press any key to close."
-read -n 1 -s
+echo "[cc-switch] Command exited. Press Enter to close."
+read -r _
 "#,
             script_path = file.display(),
             label = label,
@@ -3188,7 +3225,7 @@ read -n 1 -s
             if terminal_exists {
                 let spawn_result = Command::new(terminal)
                     .args(&args)
-                    .arg("bash")
+                    .arg("sh")
                     .arg(script_file.to_string_lossy().as_ref())
                     .spawn();
                 match spawn_result {
@@ -3275,6 +3312,44 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn test_build_exec_line() {
+        assert_eq!(build_exec_line("/bin/zsh"), "exec '/bin/zsh'");
+        assert_eq!(build_exec_line("/bin/bash"), "exec '/bin/bash'");
+        assert_eq!(
+            build_exec_line("/opt/homebrew dir/bin/fish"),
+            "exec '/opt/homebrew dir/bin/fish'"
+        );
+        assert_eq!(
+            build_exec_line("/tmp/shell'quote/zsh"),
+            "exec '/tmp/shell'\"'\"'quote/zsh'"
+        );
+    }
+
+    #[test]
+    fn test_get_user_shell_fallback() {
+        // $SHELL 未设置时应按平台 fallback
+        // 此测试验证 fallback 逻辑，但不验证环境变量值（取决于运行环境）
+        let shell = get_user_shell();
+        // 至少应返回一个合法的绝对路径
+        assert!(valid_user_shell_path(&shell));
+        // basename 应为合法 shell 名
+        let basename = shell.rsplit('/').next().unwrap_or("sh");
+        assert!(["sh", "bash", "zsh", "fish", "dash"].contains(&basename));
+    }
+
+    #[test]
+    fn test_valid_user_shell_path() {
+        assert!(valid_user_shell_path("/bin/zsh"));
+        assert!(valid_user_shell_path("/usr/local/bin/bash"));
+        assert!(valid_user_shell_path("/opt/homebrew dir/bin/fish"));
+        assert!(!valid_user_shell_path(""));
+        assert!(!valid_user_shell_path("zsh"));
+        assert!(!valid_user_shell_path("/bin/zsh; rm -rf /"));
+        assert!(!valid_user_shell_path("/bin/zsh\n/bin/bash"));
+        assert!(!valid_user_shell_path("/usr/bin/powershell"));
+    }
 
     #[test]
     fn test_extract_version() {
