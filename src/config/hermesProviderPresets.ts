@@ -521,13 +521,13 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       base_url: "https://api.moonshot.cn/v1",
       api_key: "",
       api_mode: "chat_completions",
-      models: [{ id: "kimi-k2.6", name: "Kimi K2.6" }],
+      models: [{ id: "kimi-k2.7-code", name: "Kimi K2.7 Code" }],
     },
     category: "cn_official",
     icon: "kimi",
     iconColor: "#6366F1",
     suggestedDefaults: {
-      model: { default: "kimi-k2.6", provider: "kimi" },
+      model: { default: "kimi-k2.7-code", provider: "kimi" },
     },
   },
   {

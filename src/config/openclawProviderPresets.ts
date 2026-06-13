@@ -490,7 +490,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: "Kimi k2.6",
+    name: "Kimi K2.7 Code",
     websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
     apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
     settingsConfig: {
@@ -499,9 +499,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "kimi-k2.6",
-          name: "Kimi K2.6",
-          contextWindow: 131072,
+          id: "kimi-k2.7-code",
+          name: "Kimi K2.7 Code",
+          contextWindow: 262144,
           cost: { input: 0.002, output: 0.006 },
         },
       ],
@@ -523,8 +523,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "kimi/kimi-k2.6" },
-      modelCatalog: { "kimi/kimi-k2.6": { alias: "Kimi" } },
+      model: { primary: "kimi/kimi-k2.7-code" },
+      modelCatalog: { "kimi/kimi-k2.7-code": { alias: "Kimi" } },
     },
   },
   {

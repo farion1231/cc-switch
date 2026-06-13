@@ -426,12 +426,16 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "kimi",
       "https://api.moonshot.cn/v1",
-      "kimi-k2.6",
+      "kimi-k2.7-code",
     ),
     endpointCandidates: ["https://api.moonshot.cn/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
-      { model: "kimi-k2.6", displayName: "Kimi K2.6", contextWindow: 262144 },
+      {
+        model: "kimi-k2.7-code",
+        displayName: "Kimi K2.7 Code",
+        contextWindow: 262144,
+      },
     ]),
     codexChatReasoning: {
       supportsThinking: true,

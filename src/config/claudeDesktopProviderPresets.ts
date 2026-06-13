@@ -419,7 +419,11 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.moonshot.cn/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("kimi-k2.6", "kimi-k2.6", "kimi-k2.6"),
+    modelRoutes: brandedRoutes(
+      "kimi-k2.7-code",
+      "kimi-k2.7-code",
+      "kimi-k2.7-code",
+    ),
     icon: "kimi",
     iconColor: "#6366F1",
   },
