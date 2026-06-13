@@ -218,6 +218,7 @@ export function ProviderCard({
     appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
   const isCodexOauth =
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
+  const isKiro = provider.meta?.providerType === PROVIDER_TYPES.KIRO;
   const codexNeedsRouting = useMemo(() => {
     if (appId !== "codex" || provider.category === "official") return false;
     if (provider.meta?.apiFormat === "openai_chat") return true;
@@ -555,6 +556,7 @@ export function ProviderCard({
                 !isOfficial &&
                 !isCopilot &&
                 !isCodexOauth &&
+                !isKiro &&
                 !isClaudeThirdParty
                   ? () => onTest(provider)
                   : undefined
@@ -562,7 +564,8 @@ export function ProviderCard({
               onConfigureUsage={
                 (isOfficial && !supportsOfficialSubscription) ||
                 isCopilot ||
-                isCodexOauth
+                isCodexOauth ||
+                isKiro
                   ? undefined
                   : () => onConfigureUsage(provider)
               }
