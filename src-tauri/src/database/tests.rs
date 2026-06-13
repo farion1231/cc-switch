@@ -427,6 +427,76 @@ fn migration_v10_to_v11_rebuilds_rollups_with_request_model_dimension() {
 }
 
 #[test]
+fn migration_v11_to_v12_removes_duplicate_codex_session_usage() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    Database::set_user_version(&conn, 11).expect("set user_version=11");
+
+    for (request_id, session_id, created_at) in [
+        ("codex_session:child-a:1", "child-a", 1000),
+        ("codex_session:child-b:1", "child-b", 2000),
+    ] {
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                total_cost_usd, latency_ms, status_code, session_id, created_at, data_source
+             ) VALUES (?1, '_codex_session', 'codex', 'gpt-5.5', 'gpt-5.5',
+                       100, 30, 50, 0, '0.001', 0, 200, ?2, ?3, 'codex_session')",
+            params![request_id, session_id, created_at],
+        )
+        .expect("insert duplicate codex session row");
+    }
+
+    conn.execute(
+        "INSERT INTO proxy_request_logs (
+            request_id, provider_id, app_type, model, request_model,
+            input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+            total_cost_usd, latency_ms, status_code, session_id, created_at, data_source
+         ) VALUES ('codex_session:child-c:1', '_codex_session', 'codex', 'gpt-5.5', 'gpt-5.5',
+                   101, 30, 50, 0, '0.001', 0, 200, 'child-c', 3000, 'codex_session')",
+        [],
+    )
+    .expect("insert distinct codex session row");
+
+    conn.execute(
+        "INSERT INTO proxy_request_logs (
+            request_id, provider_id, app_type, model, request_model,
+            input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+            total_cost_usd, latency_ms, status_code, session_id, created_at, data_source
+         ) VALUES ('codex-proxy', 'openai', 'codex', 'gpt-5.5', 'gpt-5.5',
+                   100, 30, 50, 0, '0.001', 0, 200, NULL, 4000, 'proxy')",
+        [],
+    )
+    .expect("insert matching proxy row");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    let codex_session_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs
+             WHERE app_type = 'codex' AND data_source = 'codex_session'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count codex session rows");
+    assert_eq!(codex_session_count, 2);
+
+    let proxy_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = 'codex-proxy'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count proxy row");
+    assert_eq!(proxy_count, 1);
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after migration"),
+        SCHEMA_VERSION
+    );
+}
+
+#[test]
 fn schema_create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
     let conn = Connection::open_in_memory().expect("open memory db");
 
