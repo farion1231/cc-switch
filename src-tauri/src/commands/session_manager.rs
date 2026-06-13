@@ -83,3 +83,14 @@ pub async fn delete_sessions(
         .await
         .map_err(|e| format!("Failed to delete sessions: {e}"))
 }
+
+#[tauri::command]
+pub fn set_codex_session_provider_links(
+    state: tauri::State<'_, crate::store::AppState>,
+    request: crate::services::codex_session_sharing::SetCodexSessionProvidersRequest,
+) -> Result<
+    crate::services::codex_session_sharing::CodexSessionProviderUpdateResult,
+    crate::error::AppError,
+> {
+    crate::services::codex_session_sharing::set_codex_session_provider_links(&state.db, request)
+}
