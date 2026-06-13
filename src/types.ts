@@ -179,6 +179,11 @@ export interface ProviderMeta {
   custom_endpoints?: Record<string, CustomEndpoint>;
   // 是否在切换/同步到 live 时应用通用配置片段
   commonConfigEnabled?: boolean;
+  // Provider management grouping metadata. This only organizes existing
+  // Provider records in the UI; it does not create a runtime provider layer.
+  providerGroup?: string;
+  providerVariantLabel?: string;
+  groupCommonConfigEnabled?: Record<string, boolean>;
   // Claude Desktop 3P 配置写入模式
   claudeDesktopMode?: "direct" | "proxy";
   // Claude Desktop 本地路由模式：Claude-safe route -> upstream model
