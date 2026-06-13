@@ -23,6 +23,43 @@ pub struct TokenUsage {
     pub output_tokens: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelCallErrorKind {
+    ModelNotFound,
+    ProviderAuthFailed,
+    ProviderRateLimited,
+    ProviderTimeout,
+    ProviderHttp,
+    ResponseMalformed,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModelCallError {
+    pub kind: ModelCallErrorKind,
+    pub model_key: String,
+    pub message: String,
+}
+
+impl ModelCallError {
+    pub fn provider_timeout(model_key: &str, message: &str) -> Self {
+        Self {
+            kind: ModelCallErrorKind::ProviderTimeout,
+            model_key: model_key.to_string(),
+            message: message.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ModelCallTarget {
+    pub model_key: String,
+    pub provider_type: String,
+    pub model: String,
+    pub base_url: String,
+    pub api_key: String,
+    pub max_tokens: u32,
+}
+
 impl ModelCaller {
     pub fn new(models: HashMap<String, ModelConfig>) -> Result<Self, String> {
         let client = Client::builder()
@@ -170,6 +207,128 @@ impl ModelCaller {
     ) -> Result<ModelResponse, String> {
         let messages = build_messages_for_prompt(system, user_prompt);
         self.call(model_key, messages, None, temperature).await
+    }
+
+    /// Build the request URL for a provider-resolved target. Falls back to
+    /// provider-specific path conventions when the caller supplies a base URL
+    /// rather than a full endpoint.
+    pub fn build_target_url(target: &ModelCallTarget) -> Result<String, String> {
+        let base = target.base_url.trim_end_matches('/');
+        match target.provider_type.as_str() {
+            "anthropic" => Ok(format!("{base}/v1/messages")),
+            "openai_chat" | "openai" => {
+                if base.ends_with("/chat/completions") {
+                    Ok(base.to_string())
+                } else {
+                    Ok(format!("{base}/chat/completions"))
+                }
+            }
+            other => Err(format!("unsupported provider_type '{other}'")),
+        }
+    }
+
+    /// Call a provider-resolved target directly. Unlike [`call`](Self::call),
+    /// this method resolves the URL and auth headers from the supplied target
+    /// instead of looking up an env-var-backed `ModelConfig`. Returns a
+    /// structured [`ModelCallError`] so callers can branch on the failure
+    /// class (timeout, auth, rate-limit, malformed response) and drive
+    /// retry / fallback / cross-judge control flow accordingly.
+    pub async fn call_target(
+        &self,
+        target: &ModelCallTarget,
+        messages: Vec<Value>,
+        tools: Option<Vec<Value>>,
+        temperature: Option<f64>,
+    ) -> Result<ModelResponse, ModelCallError> {
+        let mut body = json!({
+            "model": target.model,
+            "messages": messages,
+            "max_tokens": target.max_tokens,
+            "stream": false,
+        });
+
+        if let Some(t) = temperature {
+            body["temperature"] = json!(t);
+        }
+        if let Some(ref t) = tools {
+            body["tools"] = json!(t);
+        }
+
+        let start = std::time::Instant::now();
+        let url = Self::build_target_url(target).map_err(|message| ModelCallError {
+            kind: ModelCallErrorKind::ProviderHttp,
+            model_key: target.model_key.clone(),
+            message,
+        })?;
+
+        let mut req = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json");
+        if target.provider_type == "anthropic" {
+            req = req
+                .header("x-api-key", &target.api_key)
+                .header("anthropic-version", "2023-06-01");
+        } else {
+            req = req.header("Authorization", format!("Bearer {}", target.api_key));
+        }
+
+        let resp = req.json(&body).send().await.map_err(|e| {
+            let message = e.to_string();
+            let kind = if e.is_timeout() {
+                ModelCallErrorKind::ProviderTimeout
+            } else {
+                ModelCallErrorKind::ProviderHttp
+            };
+            ModelCallError {
+                kind,
+                model_key: target.model_key.clone(),
+                message,
+            }
+        })?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let error_body = resp.text().await.unwrap_or_default();
+            let kind = match status.as_u16() {
+                401 | 403 => ModelCallErrorKind::ProviderAuthFailed,
+                429 => ModelCallErrorKind::ProviderRateLimited,
+                _ => ModelCallErrorKind::ProviderHttp,
+            };
+            return Err(ModelCallError {
+                kind,
+                model_key: target.model_key.clone(),
+                message: format!("status {status}: {error_body}"),
+            });
+        }
+
+        let resp_body: Value = resp.json().await.map_err(|e| ModelCallError {
+            kind: ModelCallErrorKind::ResponseMalformed,
+            model_key: target.model_key.clone(),
+            message: e.to_string(),
+        })?;
+
+        let latency_ms = start.elapsed().as_millis() as u64;
+        let content = Self::extract_content(&resp_body);
+        let usage = TokenUsage {
+            input_tokens: resp_body
+                .get("usage")
+                .and_then(|u| u.get("input_tokens").or_else(|| u.get("prompt_tokens")))
+                .and_then(|t| t.as_u64())
+                .unwrap_or(0),
+            output_tokens: resp_body
+                .get("usage")
+                .and_then(|u| u.get("output_tokens").or_else(|| u.get("completion_tokens")))
+                .and_then(|t| t.as_u64())
+                .unwrap_or(0),
+        };
+
+        Ok(ModelResponse {
+            content,
+            model: target.model.clone(),
+            usage,
+            latency_ms,
+        })
     }
 
     fn build_url(config: &ModelConfig) -> Result<String, String> {
@@ -329,5 +488,30 @@ mod tests {
             max_tokens: 1024,
         };
         assert!(ModelCaller::build_url(&config).is_err());
+    }
+
+    #[test]
+    fn model_call_error_kind_is_stable() {
+        let err = ModelCallError::provider_timeout("cheap_coder", "request timed out");
+        assert_eq!(err.kind, ModelCallErrorKind::ProviderTimeout);
+        assert_eq!(err.model_key, "cheap_coder");
+        assert!(err.message.contains("request timed out"));
+    }
+
+    #[test]
+    fn target_builds_openai_chat_url() {
+        let target = ModelCallTarget {
+            model_key: "frontier".to_string(),
+            provider_type: "openai_chat".to_string(),
+            model: "gpt-5-mini".to_string(),
+            base_url: "https://example.com/v1".to_string(),
+            api_key: "sk-test".to_string(),
+            max_tokens: 1024,
+        };
+
+        assert_eq!(
+            ModelCaller::build_target_url(&target).unwrap(),
+            "https://example.com/v1/chat/completions"
+        );
     }
 }
