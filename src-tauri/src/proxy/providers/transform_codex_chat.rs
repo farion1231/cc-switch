@@ -1398,6 +1398,14 @@ fn chat_tool_calls_to_response_output_items(
 
     if let Some(tool_calls) = message.get("tool_calls").and_then(|v| v.as_array()) {
         for (index, tool_call) in tool_calls.iter().enumerate() {
+            // Skip tool calls with missing function names (defensive: some models
+            // may generate tool calls without providing a valid name)
+            let function = tool_call.get("function").unwrap_or(&Value::Null);
+            let name = function.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if name.is_empty() {
+                log::warn!("[Codex] Skipping tool call with missing name");
+                continue;
+            }
             output.push(chat_tool_call_to_response_item(
                 tool_call,
                 index,
