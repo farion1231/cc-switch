@@ -5,7 +5,7 @@ use crate::orchestration::model_caller::{ModelCaller, ModelResponse};
 use crate::orchestration::quality_gate::QualityGate;
 use crate::orchestration::shuffle::CandidateShuffler;
 use futures::future::join_all;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
 
 pub struct StrategyExecutor {
@@ -374,10 +374,6 @@ impl StrategyExecutor {
 
         let debate_summary =
             Self::build_debate_judge_prompt(&revised_responses, critique_text.as_deref());
-        let _judge_messages = vec![json!({
-            "role": "user",
-            "content": debate_summary.clone()
-        })];
 
         let judge_resp = self
             .caller
@@ -510,29 +506,6 @@ impl StrategyExecutor {
              SCORE: <0.0 to 1.0>\n\
              REASONING: <brief explanation of synthesis>\n\
              ANSWER:\n<your synthesized response>",
-        );
-        prompt
-    }
-
-    fn build_debate_prompt_from_candidates(
-        candidates: &[crate::orchestration::shuffle::CandidateAnswer],
-    ) -> String {
-        let mut prompt = String::from("Multiple AI models have provided answers to the same question. Evaluate and synthesize the best response.\n\n");
-        for (i, cand) in candidates.iter().enumerate() {
-            prompt.push_str(&format!(
-                "--- Answer {} ---\n{}\n\n",
-                i + 1,
-                cand.content
-            ));
-        }
-        prompt.push_str(
-            "Based on the above answers, provide:\n\
-             1. A quality score from 0.0 to 1.0\n\
-             2. Your synthesized answer combining the best parts\n\
-             \n\
-             Format:\n\
-             SCORE: <number>\n\
-             ANSWER:\n<your response>",
         );
         prompt
     }
