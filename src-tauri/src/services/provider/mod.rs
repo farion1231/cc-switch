@@ -964,6 +964,44 @@ base_url = "http://localhost:8080"
 
     #[test]
     #[serial]
+    fn import_openclaw_providers_from_live_marks_primary_provider_as_current() {
+        with_test_home(|state, _| {
+            // Seed two OpenClaw live providers (minimax and deepseek), each with
+            // a single model so the importer keeps them.
+            for (id, model_id) in [("minimax", "minimax/MiniMax-M3"), ("deepseek", "deepseek/deepseek-v4-flash")] {
+                let mut p = openclaw_provider(id);
+                p.settings_config["models"] = json!([{ "id": model_id, "name": id }]);
+                crate::openclaw_config::set_provider(&p.id, p.settings_config.clone())
+                    .expect("seed openclaw live provider");
+            }
+
+            // Live config declares minimax as the active default.
+            crate::openclaw_config::set_default_model(&crate::openclaw_config::OpenClawDefaultModel {
+                primary: "minimax/MiniMax-M3".to_string(),
+                fallbacks: Vec::new(),
+                extra: std::collections::HashMap::new(),
+            })
+            .expect("seed openclaw default model");
+
+            let imported = import_openclaw_providers_from_live(state)
+                .expect("import openclaw providers from live");
+            assert_eq!(imported, 2);
+
+            let current = state
+                .db
+                .get_current_provider(AppType::OpenClaw.as_str())
+                .expect("query current provider");
+            assert_eq!(
+                current.as_deref(),
+                Some("minimax"),
+                "minimax should be marked current because it matches agents.defaults.model.primary"
+            );
+        });
+    }
+    }
+
+    #[test]
+    #[serial]
     fn update_persists_non_current_omo_variants_in_database() {
         with_test_home(|state, _| {
             for category in ["omo", "omo-slim"] {
