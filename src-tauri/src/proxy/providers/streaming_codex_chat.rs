@@ -429,8 +429,10 @@ impl ChatToResponsesState {
             if let Some(id) = id_delta {
                 state.call_id = id;
             }
-            if let Some(name) = name_delta {
-                state.name = name;
+            if let Some(ref name) = name_delta {
+                if !name.is_empty() {
+                    state.name.clone_from(name);
+                }
             }
             if !args_delta.is_empty() {
                 state.arguments.push_str(&args_delta);
@@ -465,7 +467,10 @@ impl ChatToResponsesState {
                 state.call_id = format!("call_{chat_index}");
             }
             if state.name.is_empty() {
-                state.name = "unknown_tool".to_string();
+                // Model never provided a valid name across all deltas — skip this tool call
+                log::warn!("[Codex] Skipping tool call with empty name (no delta provided a name)");
+                state.done = true;
+                return events;
             }
             state.output_index = Some(assigned);
             let is_custom_tool = self.tool_context.is_custom_tool_chat_name(&state.name);
@@ -696,6 +701,21 @@ impl ChatToResponsesState {
         for key in keys {
             let mut add_event: Option<Bytes> = None;
             if self.tools.get(&key).map(|state| state.done).unwrap_or(true) {
+                continue;
+            }
+
+            // Skip tool calls with missing names (defensive: some models generate
+            // tool call deltas without providing a valid function name)
+            let has_bad_name = self
+                .tools
+                .get(&key)
+                .map(|state| state.name.is_empty())
+                .unwrap_or(true);
+            if has_bad_name {
+                if let Some(state) = self.tools.get_mut(&key) {
+                    state.done = true;
+                }
+                log::warn!("[Codex] Skipping streaming tool call with missing name");
                 continue;
             }
 
