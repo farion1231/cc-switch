@@ -1265,18 +1265,18 @@ function App() {
                       variant="ghost"
                       size="sm"
                       onClick={() => mcpPanelRef.current?.openImport()}
-                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                      className="gap-1.5 hover:bg-black/5 dark:hover:bg-white/5"
                     >
-                      <Download className="w-4 h-4 mr-2" />
+                      <Download className="w-4 h-4" />
                       {t("mcp.importExisting")}
                     </Button>
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={() => mcpPanelRef.current?.openAdd()}
-                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                      className="gap-1.5 hover:bg-black/5 dark:hover:bg-white/5"
                     >
-                      <Plus className="w-4 h-4 mr-2" />
+                      <Plus className="w-4 h-4" />
                       {t("mcp.addMcp")}
                     </Button>
                   </>
