@@ -12,8 +12,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, Search, X } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -43,11 +42,24 @@ import {
   useCurrentOmoSlimProviderId,
 } from "@/lib/query/omo";
 import { useCallback } from "react";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi } from "@/lib/api/settings";
 import { CodexSessionsDialog } from "@/components/providers/CodexSessionsDialog";
+import {
+  ProviderManagementToolbar,
+  type ProviderViewMode,
+} from "@/components/providers/ProviderManagementToolbar";
+import { ProviderCompactRow } from "@/components/providers/ProviderCompactRow";
+import { ProviderConfigDrawer } from "@/components/providers/ProviderConfigDrawer";
+import {
+  buildProviderGroups,
+  type ProviderDisplayGroup,
+} from "@/lib/provider-management/providerGrouping";
+import {
+  applyGroupCommonConfig,
+  type GroupCommonConfigKey,
+} from "@/lib/provider-management/providerGroupCommonConfig";
+import { extractProviderSummary } from "@/lib/provider-management/providerSummary";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -191,9 +203,16 @@ export function ProviderList({
   );
 
   const [searchTerm, setSearchTerm] = useState("");
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<ProviderViewMode>("cards");
+  const [selectedProviderIds, setSelectedProviderIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [showStreamCheckConfirm, setShowStreamCheckConfirm] = useState(false);
+  const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
   const [pendingTestProvider, setPendingTestProvider] =
     useState<Provider | null>(null);
   const [codexSessionsProvider, setCodexSessionsProvider] =
@@ -278,44 +297,295 @@ export function ProviderList({
     },
   });
 
+  const updateProviderMutation = useMutation({
+    mutationFn: async ({
+      provider,
+      originalId,
+    }: {
+      provider: Provider;
+      originalId: string;
+    }) => providersApi.update(provider, appId, originalId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      toast.success(
+        t("provider.management.groupConfigSaved", {
+          defaultValue: "Provider config updated",
+        }),
+      );
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
       if ((event.metaKey || event.ctrlKey) && key === "f") {
         event.preventDefault();
-        setIsSearchOpen(true);
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
         return;
       }
 
-      if (key === "escape") {
-        setIsSearchOpen(false);
+      if (key === "escape" && searchTerm) {
+        setSearchTerm("");
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
-
-  useEffect(() => {
-    if (isSearchOpen) {
-      const frame = requestAnimationFrame(() => {
-        searchInputRef.current?.focus();
-        searchInputRef.current?.select();
-      });
-      return () => cancelAnimationFrame(frame);
-    }
-  }, [isSearchOpen]);
+  }, [searchTerm]);
 
   const filteredProviders = useMemo(() => {
-    const keyword = searchTerm.trim().toLowerCase();
-    if (!keyword) return sortedProviders;
+    const keywords = searchTerm
+      .trim()
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (keywords.length === 0) return sortedProviders;
     return sortedProviders.filter((provider) => {
-      const fields = [provider.name, provider.notes, provider.websiteUrl];
-      return fields.some((field) =>
-        field?.toString().toLowerCase().includes(keyword),
-      );
+      const haystack = extractProviderSummary(provider, appId)
+        .searchText.join(" ")
+        .toLowerCase();
+      return keywords.every((keyword) => haystack.includes(keyword));
     });
-  }, [searchTerm, sortedProviders]);
+  }, [appId, searchTerm, sortedProviders]);
+
+  const providerGroups = useMemo(
+    () => buildProviderGroups(filteredProviders, appId),
+    [appId, filteredProviders],
+  );
+
+  useEffect(() => {
+    const visibleIds = new Set(
+      filteredProviders.map((provider) => provider.id),
+    );
+    setSelectedProviderIds((previous) => {
+      const next = new Set(
+        Array.from(previous).filter((providerId) => visibleIds.has(providerId)),
+      );
+      return next.size === previous.size ? previous : next;
+    });
+  }, [filteredProviders]);
+
+  useEffect(() => {
+    const visibleGroupIds = new Set(providerGroups.map((group) => group.id));
+    setExpandedGroupIds((previous) => {
+      const next = new Set(
+        Array.from(previous).filter((groupId) => visibleGroupIds.has(groupId)),
+      );
+      return next.size === previous.size ? previous : next;
+    });
+  }, [providerGroups]);
+
+  const selectedProviders = useMemo(
+    () =>
+      filteredProviders.filter((provider) =>
+        selectedProviderIds.has(provider.id),
+      ),
+    [filteredProviders, selectedProviderIds],
+  );
+
+  const handleProviderSelectedChange = useCallback(
+    (providerId: string, selected: boolean) => {
+      setSelectedProviderIds((previous) => {
+        const next = new Set(previous);
+        if (selected) {
+          next.add(providerId);
+        } else {
+          next.delete(providerId);
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
+  const clearSelection = useCallback(() => {
+    setSelectedProviderIds(new Set());
+  }, []);
+
+  const handleBatchTest = useCallback(() => {
+    selectedProviders.forEach((provider) => handleTest(provider));
+  }, [handleTest, selectedProviders]);
+
+  const toggleGroupDrawer = useCallback((groupId: string) => {
+    setExpandedGroupIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(groupId)) {
+        next.delete(groupId);
+      } else {
+        next.add(groupId);
+      }
+      return next;
+    });
+  }, []);
+
+  const isConfigBatchProvider = useCallback(
+    (provider: Provider) =>
+      appId === "openclaw" ||
+      appId === "hermes" ||
+      (appId === "opencode" &&
+        provider.category !== "omo" &&
+        provider.category !== "omo-slim"),
+    [appId],
+  );
+
+  const getProviderDisplayState = useCallback(
+    (provider: Provider) => {
+      const isOmo = provider.category === "omo";
+      const isOmoSlim = provider.category === "omo-slim";
+      const isOmoCurrent = isOmo && provider.id === (currentOmoId || "");
+      const isOmoSlimCurrent =
+        isOmoSlim && provider.id === (currentOmoSlimId || "");
+      const isHermesCurrent =
+        appId === "hermes" && hermesCurrentProviderId === provider.id;
+      const isDefaultModel =
+        appId === "hermes"
+          ? isHermesCurrent
+          : isProviderDefaultModel(provider.id);
+      const isCurrent = isOmo
+        ? isOmoCurrent
+        : isOmoSlim
+          ? isOmoSlimCurrent
+          : appId === "hermes"
+            ? isHermesCurrent
+            : provider.id === currentProviderId;
+
+      return {
+        isOmo,
+        isOmoSlim,
+        isCurrent,
+        isDefaultModel,
+        isInConfig: isProviderInConfig(provider.id),
+        failoverPriority: getFailoverPriority(provider.id),
+        isInFailoverQueue: isInFailoverQueue(provider.id),
+      };
+    },
+    [
+      appId,
+      currentOmoId,
+      currentOmoSlimId,
+      currentProviderId,
+      getFailoverPriority,
+      hermesCurrentProviderId,
+      isInFailoverQueue,
+      isProviderDefaultModel,
+      isProviderInConfig,
+    ],
+  );
+
+  const selectedProvidersToAddToConfig = useMemo(
+    () =>
+      selectedProviders.filter(
+        (provider) =>
+          isConfigBatchProvider(provider) && !isProviderInConfig(provider.id),
+      ),
+    [isConfigBatchProvider, isProviderInConfig, selectedProviders],
+  );
+
+  const selectedProvidersToRemoveFromConfig = useMemo(
+    () =>
+      selectedProviders.filter((provider) => {
+        if (!onRemoveFromConfig || !isConfigBatchProvider(provider)) {
+          return false;
+        }
+        const state = getProviderDisplayState(provider);
+        return state.isInConfig && !state.isDefaultModel;
+      }),
+    [
+      getProviderDisplayState,
+      isConfigBatchProvider,
+      onRemoveFromConfig,
+      selectedProviders,
+    ],
+  );
+
+  const selectedProvidersToAddToFailover = useMemo(
+    () =>
+      selectedProviders.filter((provider) => {
+        const state = getProviderDisplayState(provider);
+        return (
+          isFailoverModeActive &&
+          !state.isOmo &&
+          !state.isOmoSlim &&
+          !state.isInFailoverQueue
+        );
+      }),
+    [getProviderDisplayState, isFailoverModeActive, selectedProviders],
+  );
+
+  const selectedProvidersToRemoveFromFailover = useMemo(
+    () =>
+      selectedProviders.filter((provider) => {
+        const state = getProviderDisplayState(provider);
+        return (
+          isFailoverModeActive &&
+          !state.isOmo &&
+          !state.isOmoSlim &&
+          state.isInFailoverQueue
+        );
+      }),
+    [getProviderDisplayState, isFailoverModeActive, selectedProviders],
+  );
+
+  const handleBatchAddToConfig = useCallback(() => {
+    selectedProvidersToAddToConfig.forEach((provider) => onSwitch(provider));
+    clearSelection();
+  }, [clearSelection, onSwitch, selectedProvidersToAddToConfig]);
+
+  const handleBatchRemoveFromConfig = useCallback(() => {
+    if (!onRemoveFromConfig) return;
+    selectedProvidersToRemoveFromConfig.forEach((provider) =>
+      onRemoveFromConfig(provider),
+    );
+    clearSelection();
+  }, [clearSelection, onRemoveFromConfig, selectedProvidersToRemoveFromConfig]);
+
+  const handleBatchAddToFailover = useCallback(() => {
+    selectedProvidersToAddToFailover.forEach((provider) =>
+      handleToggleFailover(provider.id, true),
+    );
+    clearSelection();
+  }, [clearSelection, handleToggleFailover, selectedProvidersToAddToFailover]);
+
+  const handleBatchRemoveFromFailover = useCallback(() => {
+    selectedProvidersToRemoveFromFailover.forEach((provider) =>
+      handleToggleFailover(provider.id, false),
+    );
+    clearSelection();
+  }, [
+    clearSelection,
+    handleToggleFailover,
+    selectedProvidersToRemoveFromFailover,
+  ]);
+
+  const handleConfirmBatchDelete = useCallback(() => {
+    selectedProviders.forEach((provider) => onDelete(provider));
+    setShowBatchDeleteConfirm(false);
+    clearSelection();
+  }, [clearSelection, onDelete, selectedProviders]);
+
+  const handleApplyGroupCommonConfig = useCallback(
+    (
+      provider: Provider,
+      sourceProvider: Provider,
+      keys: GroupCommonConfigKey[],
+    ) => {
+      const updatedProvider = applyGroupCommonConfig(
+        provider,
+        sourceProvider,
+        appId,
+        keys,
+      );
+      updateProviderMutation.mutate({
+        provider: updatedProvider,
+        originalId: provider.id,
+      });
+    },
+    [appId, updateProviderMutation],
+  );
 
   const claudeDesktopStatusMessages = useMemo(() => {
     if (appId !== "claude-desktop" || !claudeDesktopStatus) return [];
@@ -397,6 +667,33 @@ export function ProviderList({
     );
   }
 
+  const renderGroupDrawer = (group: ProviderDisplayGroup) => {
+    if (!group.isGrouped || !expandedGroupIds.has(group.id)) return null;
+
+    return (
+      <ProviderConfigDrawer
+        groupId={group.id}
+        groupLabel={group.label}
+        providers={group.providers}
+        primaryProvider={group.primaryProvider}
+        appId={appId}
+        onEdit={onEdit}
+        onDelete={onDelete}
+        onDuplicate={onDuplicate}
+        onConfigureUsage={onConfigureUsage}
+        onOpenTerminal={onOpenTerminal}
+        onOpenCodexSessions={
+          appId === "codex" ? setCodexSessionsProvider : undefined
+        }
+        onTest={handleTest}
+        isTesting={isChecking}
+        onApplyGroupCommonConfig={(provider, keys) =>
+          handleApplyGroupCommonConfig(provider, group.primaryProvider, keys)
+        }
+      />
+    );
+  };
+
   const renderProviderList = () => (
     <DndContext
       sensors={sensors}
@@ -404,72 +701,137 @@ export function ProviderList({
       onDragEnd={handleDragEnd}
     >
       <SortableContext
-        items={filteredProviders.map((provider) => provider.id)}
+        items={providerGroups.map((group) => group.primaryProvider.id)}
         strategy={verticalListSortingStrategy}
       >
         <div className="space-y-3">
-          {filteredProviders.map((provider) => {
-            const isOmo = provider.category === "omo";
-            const isOmoSlim = provider.category === "omo-slim";
-            const isOmoCurrent = isOmo && provider.id === (currentOmoId || "");
-            const isOmoSlimCurrent =
-              isOmoSlim && provider.id === (currentOmoSlimId || "");
-            const isHermesCurrent =
-              appId === "hermes" && hermesCurrentProviderId === provider.id;
+          {providerGroups.map((group) => {
+            const provider = group.primaryProvider;
+            const state = getProviderDisplayState(provider);
+            const isDrawerOpen = expandedGroupIds.has(group.id);
+
             return (
-              <SortableProviderCard
-                key={provider.id}
-                provider={provider}
-                isCurrent={
-                  isOmo
-                    ? isOmoCurrent
-                    : isOmoSlim
-                      ? isOmoSlimCurrent
-                      : appId === "hermes"
-                        ? isHermesCurrent
-                        : provider.id === currentProviderId
-                }
-                appId={appId}
-                isInConfig={isProviderInConfig(provider.id)}
-                isOmo={isOmo}
-                isOmoSlim={isOmoSlim}
-                onSwitch={onSwitch}
-                onEdit={onEdit}
-                onDelete={onDelete}
-                onRemoveFromConfig={onRemoveFromConfig}
-                onDisableOmo={onDisableOmo}
-                onDisableOmoSlim={onDisableOmoSlim}
-                onDuplicate={onDuplicate}
-                onConfigureUsage={onConfigureUsage}
-                onOpenWebsite={onOpenWebsite}
-                onOpenTerminal={onOpenTerminal}
-                onOpenCodexSessions={setCodexSessionsProvider}
-                onTest={handleTest}
-                isTesting={isChecking(provider.id)}
-                isProxyRunning={isProxyRunning}
-                isProxyTakeover={isProxyTakeover}
-                isAutoFailoverEnabled={isFailoverModeActive}
-                failoverPriority={getFailoverPriority(provider.id)}
-                isInFailoverQueue={isInFailoverQueue(provider.id)}
-                onToggleFailover={(enabled) =>
-                  handleToggleFailover(provider.id, enabled)
-                }
-                activeProviderId={activeProviderId}
-                // OpenClaw: default model / Hermes: model.provider === provider.id
-                isDefaultModel={
-                  appId === "hermes"
-                    ? isHermesCurrent
-                    : isProviderDefaultModel(provider.id)
-                }
-                onSetAsDefault={
-                  onSetAsDefault ? () => onSetAsDefault(provider) : undefined
-                }
-              />
+              <div key={group.id} className="space-y-2">
+                <SortableProviderCard
+                  provider={provider}
+                  isCurrent={state.isCurrent}
+                  isSelected={selectedProviderIds.has(provider.id)}
+                  onSelectedChange={(selected) =>
+                    handleProviderSelectedChange(provider.id, selected)
+                  }
+                  groupCount={group.providers.length}
+                  isDrawerOpen={isDrawerOpen}
+                  onToggleDrawer={
+                    group.isGrouped
+                      ? () => toggleGroupDrawer(group.id)
+                      : undefined
+                  }
+                  appId={appId}
+                  isInConfig={state.isInConfig}
+                  isOmo={state.isOmo}
+                  isOmoSlim={state.isOmoSlim}
+                  onSwitch={onSwitch}
+                  onEdit={onEdit}
+                  onDelete={onDelete}
+                  onRemoveFromConfig={onRemoveFromConfig}
+                  onDisableOmo={onDisableOmo}
+                  onDisableOmoSlim={onDisableOmoSlim}
+                  onDuplicate={onDuplicate}
+                  onConfigureUsage={onConfigureUsage}
+                  onOpenWebsite={onOpenWebsite}
+                  onOpenTerminal={onOpenTerminal}
+                  onOpenCodexSessions={
+                    appId === "codex" ? setCodexSessionsProvider : undefined
+                  }
+                  onTest={handleTest}
+                  isTesting={isChecking(provider.id)}
+                  isProxyRunning={isProxyRunning}
+                  isProxyTakeover={isProxyTakeover}
+                  isAutoFailoverEnabled={isFailoverModeActive}
+                  failoverPriority={state.failoverPriority}
+                  isInFailoverQueue={state.isInFailoverQueue}
+                  onToggleFailover={(enabled) =>
+                    handleToggleFailover(provider.id, enabled)
+                  }
+                  activeProviderId={activeProviderId}
+                  isDefaultModel={state.isDefaultModel}
+                  onSetAsDefault={
+                    onSetAsDefault ? () => onSetAsDefault(provider) : undefined
+                  }
+                />
+                {renderGroupDrawer(group)}
+              </div>
             );
           })}
         </div>
       </SortableContext>
     </DndContext>
+  );
+
+  const renderCompactList = () => (
+    <div className="overflow-hidden rounded-lg border border-border">
+      {providerGroups.map((group) => {
+        const provider = group.primaryProvider;
+        const state = getProviderDisplayState(provider);
+        const isDrawerOpen = expandedGroupIds.has(group.id);
+
+        return (
+          <div key={group.id}>
+            <ProviderCompactRow
+              provider={provider}
+              summary={extractProviderSummary(provider, appId)}
+              appId={appId}
+              isCurrent={state.isCurrent}
+              isInConfig={state.isInConfig}
+              isSelected={selectedProviderIds.has(provider.id)}
+              onSelectedChange={(selected) =>
+                handleProviderSelectedChange(provider.id, selected)
+              }
+              isDrawerOpen={isDrawerOpen}
+              onToggleDrawer={
+                group.isGrouped ? () => toggleGroupDrawer(group.id) : undefined
+              }
+              groupCount={group.providers.length}
+              isOmo={state.isOmo}
+              isOmoSlim={state.isOmoSlim}
+              onSwitch={() => onSwitch(provider)}
+              onEdit={() => onEdit(provider)}
+              onDelete={() => onDelete(provider)}
+              onDuplicate={() => onDuplicate(provider)}
+              onConfigureUsage={
+                onConfigureUsage ? () => onConfigureUsage(provider) : undefined
+              }
+              onOpenTerminal={
+                onOpenTerminal ? () => onOpenTerminal(provider) : undefined
+              }
+              onOpenCodexSessions={
+                appId === "codex"
+                  ? () => setCodexSessionsProvider(provider)
+                  : undefined
+              }
+              onTest={() => handleTest(provider)}
+              isTesting={isChecking(provider.id)}
+              isProxyTakeover={isProxyTakeover}
+              isAutoFailoverEnabled={isFailoverModeActive}
+              failoverPriority={state.failoverPriority}
+              isInFailoverQueue={state.isInFailoverQueue}
+              onToggleFailover={(enabled) =>
+                handleToggleFailover(provider.id, enabled)
+              }
+              isDefaultModel={state.isDefaultModel}
+              onSetAsDefault={
+                onSetAsDefault ? () => onSetAsDefault(provider) : undefined
+              }
+            />
+            {isDrawerOpen && (
+              <div className="border-b border-border bg-card px-3 py-3">
+                {renderGroupDrawer(group)}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 
   return (
@@ -489,69 +851,43 @@ export function ProviderList({
           </ul>
         </div>
       )}
-      <AnimatePresence>
-        {isSearchOpen && (
-          <motion.div
-            key="provider-search"
-            initial={{ opacity: 0, y: -8, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.98 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className="fixed left-1/2 top-[6.5rem] z-40 w-[min(90vw,26rem)] -translate-x-1/2 sm:right-6 sm:left-auto sm:translate-x-0"
-          >
-            <div className="p-4 space-y-3 border shadow-md rounded-2xl border-white/10 bg-background/95 shadow-black/20 backdrop-blur-md">
-              <div className="relative flex items-center gap-2">
-                <Search className="absolute w-4 h-4 -translate-y-1/2 pointer-events-none left-3 top-1/2 text-muted-foreground" />
-                <Input
-                  ref={searchInputRef}
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                  placeholder={t("provider.searchPlaceholder", {
-                    defaultValue: "Search name, notes, or URL...",
-                  })}
-                  aria-label={t("provider.searchAriaLabel", {
-                    defaultValue: "Search providers",
-                  })}
-                  className="pr-16 pl-9"
-                />
-                {searchTerm && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="absolute text-xs -translate-y-1/2 right-11 top-1/2"
-                    onClick={() => setSearchTerm("")}
-                  >
-                    {t("common.clear", { defaultValue: "Clear" })}
-                  </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="ml-auto"
-                  onClick={() => setIsSearchOpen(false)}
-                  aria-label={t("provider.searchCloseAriaLabel", {
-                    defaultValue: "Close provider search",
-                  })}
-                >
-                  <X className="w-4 h-4" />
-                </Button>
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                <span>
-                  {t("provider.searchScopeHint", {
-                    defaultValue: "Matches provider name, notes, and URL.",
-                  })}
-                </span>
-                <span>
-                  {t("provider.searchCloseHint", {
-                    defaultValue: "Press Esc to close",
-                  })}
-                </span>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <ProviderManagementToolbar
+        searchTerm={searchTerm}
+        onSearchTermChange={setSearchTerm}
+        searchInputRef={searchInputRef}
+        visibleCount={filteredProviders.length}
+        totalCount={sortedProviders.length}
+        selectedCount={selectedProviderIds.size}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
+        onClearSelection={clearSelection}
+        onBatchTest={selectedProviders.length ? handleBatchTest : undefined}
+        onBatchAddToConfig={
+          selectedProvidersToAddToConfig.length
+            ? handleBatchAddToConfig
+            : undefined
+        }
+        onBatchRemoveFromConfig={
+          selectedProvidersToRemoveFromConfig.length
+            ? handleBatchRemoveFromConfig
+            : undefined
+        }
+        onBatchAddToFailover={
+          selectedProvidersToAddToFailover.length
+            ? handleBatchAddToFailover
+            : undefined
+        }
+        onBatchRemoveFromFailover={
+          selectedProvidersToRemoveFromFailover.length
+            ? handleBatchRemoveFromFailover
+            : undefined
+        }
+        onBatchDelete={
+          selectedProviders.length
+            ? () => setShowBatchDeleteConfirm(true)
+            : undefined
+        }
+      />
 
       {filteredProviders.length === 0 ? (
         <div className="px-6 py-8 text-sm text-center border border-dashed rounded-lg border-border text-muted-foreground">
@@ -559,6 +895,8 @@ export function ProviderList({
             defaultValue: "No providers match your search.",
           })}
         </div>
+      ) : viewMode === "compact" ? (
+        renderCompactList()
       ) : (
         renderProviderList()
       )}
@@ -575,6 +913,22 @@ export function ProviderList({
           setPendingTestProvider(null);
         }}
       />
+      <ConfirmDialog
+        isOpen={showBatchDeleteConfirm}
+        title={t("provider.management.batchDeleteConfirmTitle", {
+          defaultValue: "Delete selected providers",
+        })}
+        message={t("provider.management.batchDeleteConfirmMessage", {
+          count: selectedProviders.length,
+          defaultValue:
+            "Delete {{count}} selected providers? This action cannot be undone.",
+        })}
+        confirmText={t("provider.management.batchDeleteConfirmAction", {
+          defaultValue: "Delete selected providers",
+        })}
+        onConfirm={handleConfirmBatchDelete}
+        onCancel={() => setShowBatchDeleteConfirm(false)}
+      />
       <CodexSessionsDialog
         open={Boolean(codexSessionsProvider)}
         provider={codexSessionsProvider}
@@ -590,6 +944,11 @@ export function ProviderList({
 interface SortableProviderCardProps {
   provider: Provider;
   isCurrent: boolean;
+  isSelected: boolean;
+  onSelectedChange: (selected: boolean) => void;
+  groupCount: number;
+  isDrawerOpen: boolean;
+  onToggleDrawer?: () => void;
   appId: AppId;
   isInConfig: boolean;
   isOmo: boolean;
@@ -622,6 +981,11 @@ interface SortableProviderCardProps {
 function SortableProviderCard({
   provider,
   isCurrent,
+  isSelected,
+  onSelectedChange,
+  groupCount,
+  isDrawerOpen,
+  onToggleDrawer,
   appId,
   isInConfig,
   isOmo,
@@ -668,6 +1032,11 @@ function SortableProviderCard({
       <ProviderCard
         provider={provider}
         isCurrent={isCurrent}
+        isSelected={isSelected}
+        onSelectedChange={onSelectedChange}
+        groupCount={groupCount}
+        isDrawerOpen={isDrawerOpen}
+        onToggleDrawer={onToggleDrawer}
         appId={appId}
         isInConfig={isInConfig}
         isOmo={isOmo}

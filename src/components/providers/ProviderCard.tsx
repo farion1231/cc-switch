@@ -1,5 +1,10 @@
 import { useMemo, useState, useEffect } from "react";
-import { GripVertical, ChevronDown, ChevronUp } from "lucide-react";
+import {
+  GripVertical,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type {
   DraggableAttributes,
@@ -18,6 +23,7 @@ import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
@@ -36,6 +42,11 @@ interface DragHandleProps {
 interface ProviderCardProps {
   provider: Provider;
   isCurrent: boolean;
+  isSelected?: boolean;
+  onSelectedChange?: (selected: boolean) => void;
+  groupCount?: number;
+  isDrawerOpen?: boolean;
+  onToggleDrawer?: () => void;
   appId: AppId;
   isInConfig?: boolean; // OpenCode: 是否已添加到 opencode.json
   isOmo?: boolean;
@@ -136,6 +147,11 @@ const extractApiUrl = (provider: Provider, fallbackText: string) => {
 export function ProviderCard({
   provider,
   isCurrent,
+  isSelected = false,
+  onSelectedChange,
+  groupCount = 1,
+  isDrawerOpen = false,
+  onToggleDrawer,
   appId,
   isInConfig = true,
   isOmo = false,
@@ -169,6 +185,7 @@ export function ProviderCard({
 
   // OMO and OMO Slim share the same card behavior
   const isAnyOmo = isOmo || isOmoSlim;
+  const isGrouped = groupCount > 1;
   const handleDisableAnyOmo = isOmoSlim ? onDisableOmoSlim : onDisableOmo;
   const isAdditiveMode = appId === "opencode" && !isAnyOmo;
 
@@ -326,6 +343,40 @@ export function ProviderCard({
       />
       <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-1 items-center gap-2">
+          {onSelectedChange && (
+            <Checkbox
+              checked={isSelected}
+              onCheckedChange={(checked) => onSelectedChange(checked === true)}
+              aria-label={t("provider.management.selectProvider", {
+                name: provider.name,
+                defaultValue: `Select ${provider.name}`,
+              })}
+              className="shrink-0"
+            />
+          )}
+
+          {onToggleDrawer && (
+            <button
+              type="button"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleDrawer();
+              }}
+              aria-expanded={isDrawerOpen}
+              aria-label={t("provider.management.toggleDrawer", {
+                name: provider.name,
+                defaultValue: `Toggle ${provider.name} details`,
+              })}
+            >
+              {isDrawerOpen ? (
+                <ChevronDown className="h-4 w-4" />
+              ) : (
+                <ChevronRight className="h-4 w-4" />
+              )}
+            </button>
+          )}
+
           <button
             type="button"
             className={cn(
@@ -364,6 +415,15 @@ export function ProviderCard({
               {isOmoSlim && (
                 <span className="inline-flex items-center rounded-md bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
                   Slim
+                </span>
+              )}
+
+              {isGrouped && (
+                <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                  {t("provider.management.groupCount", {
+                    count: groupCount,
+                    defaultValue: `${groupCount} configs`,
+                  })}
                 </span>
               )}
 
