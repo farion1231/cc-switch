@@ -28,6 +28,11 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+/// Codex fork/restore writes a dense copy of parent-thread history at the new
+/// session timestamp. Those copied token_count events are baseline state, not
+/// new usage for the forked session.
+const FORK_HISTORY_SNAPSHOT_WINDOW_MS: i64 = 1_000;
+
 /// 累计 token 用量（跟踪 total_token_usage 字段）
 #[derive(Debug, Clone, Default)]
 struct CumulativeTokens {
@@ -56,6 +61,9 @@ struct FileParseState {
     current_model: String,
     prev_total: Option<CumulativeTokens>,
     event_index: u32,
+    seen_session_meta: bool,
+    is_forked_session: bool,
+    session_started_at_ms: Option<i64>,
 }
 
 /// 归一化 Codex 模型名
@@ -140,6 +148,50 @@ fn parse_cumulative_tokens(total_usage: &serde_json::Value) -> Option<Cumulative
             .and_then(|v| v.as_u64())
             .unwrap_or(0),
     })
+}
+
+fn parse_timestamp_millis(timestamp: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(timestamp)
+        .ok()
+        .map(|dt| dt.timestamp_millis())
+}
+
+fn json_timestamp_millis(value: &serde_json::Value) -> Option<i64> {
+    value
+        .get("timestamp")
+        .and_then(|v| v.as_str())
+        .and_then(parse_timestamp_millis)
+}
+
+fn has_non_empty_string(payload: &serde_json::Value, key: &str) -> bool {
+    payload
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
+}
+
+fn session_meta_carries_fork_history(payload: &serde_json::Value) -> bool {
+    has_non_empty_string(payload, "forked_from_id")
+        || payload
+            .get("source")
+            .and_then(|source| source.get("subagent"))
+            .is_some()
+}
+
+fn is_fork_history_snapshot_event(state: &FileParseState, timestamp: Option<&str>) -> bool {
+    if !state.is_forked_session {
+        return false;
+    }
+
+    let Some(session_started_at_ms) = state.session_started_at_ms else {
+        return false;
+    };
+    let Some(event_at_ms) = timestamp.and_then(parse_timestamp_millis) else {
+        return false;
+    };
+
+    event_at_ms <= session_started_at_ms + FORK_HISTORY_SNAPSHOT_WINDOW_MS
 }
 
 /// 同步 Codex 使用数据（从 JSONL 会话日志）
@@ -255,6 +307,9 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
         current_model: "unknown".to_string(),
         prev_total: None,
         event_index: 0,
+        seen_session_meta: false,
+        is_forked_session: false,
+        session_started_at_ms: None,
     };
 
     let mut line_offset: i64 = 0;
@@ -296,8 +351,13 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
         };
 
         match event_type {
-            "session_meta" if state.session_id.is_none() => {
+            "session_meta" if !state.seen_session_meta => {
+                state.seen_session_meta = true;
+                state.session_started_at_ms = json_timestamp_millis(&value);
                 let payload = value.get("payload");
+                state.is_forked_session = payload
+                    .map(session_meta_carries_fork_history)
+                    .unwrap_or(false);
                 state.session_id = payload
                     .and_then(|p| {
                         p.get("session_id")
@@ -383,6 +443,21 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
                     continue; // 跳过 task 边界的零 delta 事件
                 }
 
+                // Forked Codex sessions replay parent history at the child
+                // session timestamp. The replay must update prev_total so the
+                // first real child event is charged only for its delta, but it
+                // must not create request log rows.
+                let timestamp = value
+                    .get("timestamp")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                if is_fork_history_snapshot_event(&state, timestamp.as_deref()) {
+                    if line_offset > last_offset {
+                        skipped += 1;
+                    }
+                    continue;
+                }
+
                 state.event_index += 1;
 
                 // 跳过已处理的行（但仍需解析以恢复状态）
@@ -393,12 +468,6 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
                 // 生成唯一 request_id
                 let session_id_str = state.session_id.as_deref().unwrap_or("unknown");
                 let request_id = format!("codex_session:{}:{}", session_id_str, state.event_index);
-
-                // 提取时间戳
-                let timestamp = value
-                    .get("timestamp")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
 
                 match insert_codex_session_entry(
                     db,
@@ -651,6 +720,110 @@ mod tests {
         });
         let tokens = parse_cumulative_tokens(&json).unwrap();
         assert_eq!(tokens.cached_input, 500);
+    }
+
+    #[test]
+    fn test_fork_history_snapshot_detection() {
+        let state = FileParseState {
+            session_id: Some("child-session".to_string()),
+            current_model: "gpt-5.5".to_string(),
+            prev_total: None,
+            event_index: 0,
+            seen_session_meta: true,
+            is_forked_session: true,
+            session_started_at_ms: parse_timestamp_millis("2026-06-13T12:28:19.000Z"),
+        };
+
+        assert!(is_fork_history_snapshot_event(
+            &state,
+            Some("2026-06-13T12:28:19.500Z")
+        ));
+        assert!(!is_fork_history_snapshot_event(
+            &state,
+            Some("2026-06-13T12:28:24.000Z")
+        ));
+    }
+
+    #[test]
+    fn test_sync_skips_fork_history_snapshot_but_keeps_new_usage() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempfile::tempdir().map_err(|e| AppError::Config(e.to_string()))?;
+        let file_path = temp.path().join("rollout-forked.jsonl");
+        let lines = [
+            serde_json::json!({
+                "timestamp": "2026-06-13T12:28:19.000Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "child-session",
+                    "forked_from_id": "parent-session",
+                    "source": "vscode"
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-06-13T12:28:19.100Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {
+                            "input_tokens": 1000,
+                            "cached_input_tokens": 900,
+                            "output_tokens": 100
+                        }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-06-13T12:28:19.200Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {
+                            "input_tokens": 1200,
+                            "cached_input_tokens": 1000,
+                            "output_tokens": 120
+                        }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-06-13T12:28:24.000Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "model": "gpt-5.5",
+                        "total_token_usage": {
+                            "input_tokens": 1300,
+                            "cached_input_tokens": 1050,
+                            "output_tokens": 150
+                        }
+                    }
+                }
+            }),
+        ]
+        .into_iter()
+        .map(|line| serde_json::to_string(&line).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+        fs::write(&file_path, format!("{lines}\n")).map_err(|e| AppError::Config(e.to_string()))?;
+
+        let (imported, skipped) = sync_single_codex_file(&db, &file_path)?;
+        assert_eq!(imported, 1);
+        assert_eq!(skipped, 2);
+
+        let conn = lock_conn!(db.conn);
+        let (input, cached, output): (i64, i64, i64) = conn.query_row(
+            "SELECT input_tokens, cache_read_tokens, output_tokens
+             FROM proxy_request_logs
+             WHERE request_id = 'codex_session:child-session:1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!((input, cached, output), (100, 50, 30));
+
+        Ok(())
     }
 
     #[test]
