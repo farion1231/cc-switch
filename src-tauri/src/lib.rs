@@ -21,7 +21,12 @@ mod linux_fix;
 mod mcp;
 mod openclaw_config;
 mod opencode_config;
-mod orchestration;
+// Public so integration tests under tests/ can reach the orchestration API
+// (StrategySelector, OrchestrationEngine, QualityDecision, etc.) via the
+// canonical `ec_switch_lib::orchestration::...` path.  The internal re-exports
+// in orchestration/mod.rs already make these names public, but Rust requires
+// every parent module in the path to be public as well.
+pub mod orchestration;
 mod panic_hook;
 mod prompt;
 mod prompt_files;
