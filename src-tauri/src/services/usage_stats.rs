@@ -1269,11 +1269,12 @@ impl Database {
         }
 
         let where_clause = format!("WHERE {}", conditions.join(" AND "));
+        let fresh_input = fresh_input_sql("l");
         let sql = format!(
             "SELECT
                 l.session_id,
                 COUNT(*) as request_count,
-                COALESCE(SUM(l.input_tokens), 0) as total_input_tokens,
+                COALESCE(SUM({fresh_input}), 0) as total_input_tokens,
                 COALESCE(SUM(l.output_tokens), 0) as total_output_tokens,
                 COALESCE(SUM(l.cache_read_tokens), 0) as total_cache_read_tokens,
                 COALESCE(SUM(l.cache_creation_tokens), 0) as total_cache_creation_tokens,
@@ -3133,7 +3134,7 @@ mod tests {
         let summary = &summaries[0];
         assert_eq!(summary.session_id, "session-a");
         assert_eq!(summary.request_count, 2);
-        assert_eq!(summary.total_input_tokens, 300);
+        assert_eq!(summary.total_input_tokens, 270);
         assert_eq!(summary.total_output_tokens, 50);
         assert_eq!(summary.total_cache_read_tokens, 30);
         assert_eq!(summary.total_cache_creation_tokens, 15);
