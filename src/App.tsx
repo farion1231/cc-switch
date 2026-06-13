@@ -1253,9 +1253,9 @@ function App() {
                     variant="ghost"
                     size="sm"
                     onClick={() => promptPanelRef.current?.openAdd()}
-                    className="hover:bg-black/5 dark:hover:bg-white/5"
+                    className="gap-1.5 hover:bg-black/5 dark:hover:bg-white/5"
                   >
-                    <Plus className="w-4 h-4 mr-2" />
+                    <Plus className="w-4 h-4" />
                     {t("prompts.add")}
                   </Button>
                 )}
@@ -1299,7 +1299,7 @@ function App() {
                             unifiedSkillsPanelRef.current?.openRestoreFromBackup()
                           }
                         >
-                          <History className="w-4 h-4 mr-2" />
+                          <History className="w-4 h-4" />
                           {t("skills.restoreFromBackup.button")}
                         </DropdownMenuItem>
                         <DropdownMenuItem
@@ -1307,7 +1307,7 @@ function App() {
                             unifiedSkillsPanelRef.current?.openInstallFromZip()
                           }
                         >
-                          <FolderArchive className="w-4 h-4 mr-2" />
+                          <FolderArchive className="w-4 h-4" />
                           {t("skills.installFromZip.button")}
                         </DropdownMenuItem>
                         <DropdownMenuItem
@@ -1315,7 +1315,7 @@ function App() {
                             unifiedSkillsPanelRef.current?.openImport()
                           }
                         >
-                          <Download className="w-4 h-4 mr-2" />
+                          <Download className="w-4 h-4" />
                           {t("skills.import")}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -1337,18 +1337,18 @@ function App() {
                       variant="ghost"
                       size="sm"
                       onClick={() => skillsPageRef.current?.refresh()}
-                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                      className="gap-1.5 hover:bg-black/5 dark:hover:bg-white/5"
                     >
-                      <RefreshCw className="w-4 h-4 mr-2" />
+                      <RefreshCw className="w-4 h-4" />
                       {t("skills.refresh")}
                     </Button>
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={() => skillsPageRef.current?.openRepoManager()}
-                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                      className="gap-1.5 hover:bg-black/5 dark:hover:bg-white/5"
                     >
-                      <Settings className="w-4 h-4 mr-2" />
+                      <Settings className="w-4 h-4" />
                       {t("skills.repoManager")}
                     </Button>
                   </>
