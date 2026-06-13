@@ -1102,13 +1102,11 @@ fn get_shell_name(shell_path: &str) -> String {
         .to_string()
 }
 
-/// 返回给定 shell 的交互式"干净启动" flags（不加载用户配置）
+/// 返回给定 shell 的额外交互式 flags。
+/// 这里保持为空，让用户 shell 按默认交互式规则加载 ~/.zshrc、~/.bashrc 等配置。
 fn interactive_flags_for_shell(shell_name: &str) -> &'static str {
-    match shell_name {
-        "bash" => "--norc --noprofile",
-        "zsh" => "--norcs --no-globalrcs",
-        _ => "",
-    }
+    let _ = shell_name;
+    ""
 }
 
 /// 构建 exec 行：interactive_flags 为空时不含尾部空格
@@ -3374,8 +3372,8 @@ mod tests {
 
     #[test]
     fn test_interactive_flags_for_shell() {
-        assert_eq!(interactive_flags_for_shell("bash"), "--norc --noprofile");
-        assert_eq!(interactive_flags_for_shell("zsh"), "--norcs --no-globalrcs");
+        assert_eq!(interactive_flags_for_shell("bash"), "");
+        assert_eq!(interactive_flags_for_shell("zsh"), "");
         assert_eq!(interactive_flags_for_shell("fish"), "");
         assert_eq!(interactive_flags_for_shell("dash"), "");
         assert_eq!(interactive_flags_for_shell("sh"), "");
