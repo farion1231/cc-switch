@@ -865,6 +865,7 @@
     "title": "{{name}} Codex セッション",
     "subtitle": "このプロバイダーに表示される Codex の会話を管理します。",
     "empty": "Codex セッションが見つかりません。",
+    "action": "Codex セッション",
     "shareAll": "すべてに共有",
     "shareAllDone": "セッションをすべての Codex プロバイダーに共有しました。",
     "modelProvider": "Provider バケット",

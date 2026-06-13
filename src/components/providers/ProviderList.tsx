@@ -47,6 +47,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi } from "@/lib/api/settings";
+import { CodexSessionsDialog } from "@/components/providers/CodexSessionsDialog";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -194,6 +195,8 @@ export function ProviderList({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [showStreamCheckConfirm, setShowStreamCheckConfirm] = useState(false);
   const [pendingTestProvider, setPendingTestProvider] =
+    useState<Provider | null>(null);
+  const [codexSessionsProvider, setCodexSessionsProvider] =
     useState<Provider | null>(null);
   const { data: claudeDesktopStatus } = useQuery({
     queryKey: ["claudeDesktopStatus"],
@@ -440,6 +443,7 @@ export function ProviderList({
                 onConfigureUsage={onConfigureUsage}
                 onOpenWebsite={onOpenWebsite}
                 onOpenTerminal={onOpenTerminal}
+                onOpenCodexSessions={setCodexSessionsProvider}
                 onTest={handleTest}
                 isTesting={isChecking(provider.id)}
                 isProxyRunning={isProxyRunning}
@@ -571,6 +575,14 @@ export function ProviderList({
           setPendingTestProvider(null);
         }}
       />
+      <CodexSessionsDialog
+        open={Boolean(codexSessionsProvider)}
+        provider={codexSessionsProvider}
+        providers={sortedProviders}
+        onOpenChange={(open) => {
+          if (!open) setCodexSessionsProvider(null);
+        }}
+      />
     </div>
   );
 }
@@ -592,6 +604,7 @@ interface SortableProviderCardProps {
   onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onOpenTerminal?: (provider: Provider) => void;
+  onOpenCodexSessions?: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
   isTesting: boolean;
   isProxyRunning: boolean;
@@ -623,6 +636,7 @@ function SortableProviderCard({
   onConfigureUsage,
   onOpenWebsite,
   onOpenTerminal,
+  onOpenCodexSessions,
   onTest,
   isTesting,
   isProxyRunning,
@@ -670,6 +684,7 @@ function SortableProviderCard({
         }
         onOpenWebsite={onOpenWebsite}
         onOpenTerminal={onOpenTerminal}
+        onOpenCodexSessions={onOpenCodexSessions}
         onTest={onTest}
         isTesting={isTesting}
         isProxyRunning={isProxyRunning}

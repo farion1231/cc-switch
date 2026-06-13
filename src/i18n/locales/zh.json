@@ -865,6 +865,7 @@
     "title": "{{name}} Codex 会话",
     "subtitle": "管理此供应商可见的 Codex 对话。",
     "empty": "未找到 Codex 会话。",
+    "action": "Codex 会话",
     "shareAll": "共享到全部",
     "shareAllDone": "会话已共享到所有 Codex 供应商。",
     "modelProvider": "Provider 桶",

@@ -4,6 +4,7 @@ import {
   Copy,
   Edit,
   Loader2,
+  MessagesSquare,
   Minus,
   Play,
   Plus,
@@ -33,6 +34,7 @@ interface ProviderActionsProps {
   onRemoveFromConfig?: () => void;
   onDisableOmo?: () => void;
   onOpenTerminal?: () => void;
+  onOpenCodexSessions?: () => void;
   isAutoFailoverEnabled?: boolean;
   isInFailoverQueue?: boolean;
   onToggleFailover?: (enabled: boolean) => void;
@@ -72,6 +74,7 @@ export function ProviderActions({
   onRemoveFromConfig,
   onDisableOmo,
   onOpenTerminal,
+  onOpenCodexSessions,
   isAutoFailoverEnabled = false,
   isInFailoverQueue = false,
   onToggleFailover,
@@ -336,6 +339,23 @@ export function ProviderActions({
         >
           <BarChart3 className="h-4 w-4" />
         </Button>
+
+        {appId === "codex" && onOpenCodexSessions && (
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onOpenCodexSessions}
+            title={t("codexSessions.action", {
+              defaultValue: "Codex sessions",
+            })}
+            className={cn(
+              iconButtonClass,
+              "hover:text-blue-600 dark:hover:text-blue-400",
+            )}
+          >
+            <MessagesSquare className="h-4 w-4" />
+          </Button>
+        )}
 
         {onOpenTerminal && (
           <Button

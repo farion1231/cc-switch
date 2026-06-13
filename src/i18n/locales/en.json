@@ -865,6 +865,7 @@
     "title": "{{name}} Codex Sessions",
     "subtitle": "Manage Codex conversations visible to this provider.",
     "empty": "No Codex sessions found.",
+    "action": "Codex sessions",
     "shareAll": "Share all",
     "shareAllDone": "Session shared to all Codex providers.",
     "modelProvider": "Provider bucket",

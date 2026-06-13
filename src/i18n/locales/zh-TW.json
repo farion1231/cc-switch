@@ -836,6 +836,7 @@
     "title": "{{name}} Codex 工作階段",
     "subtitle": "管理此供應商可見的 Codex 對話。",
     "empty": "找不到 Codex 工作階段。",
+    "action": "Codex 工作階段",
     "shareAll": "共享到全部",
     "shareAllDone": "工作階段已共享到所有 Codex 供應商。",
     "modelProvider": "Provider 桶",
