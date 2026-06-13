@@ -287,7 +287,7 @@ export function ProviderActions({
                 </Button>
               </span>
             </TooltipTrigger>
-            <TooltipContent>{buttonState.title}</TooltipContent>
+            <TooltipContent side="bottom">{buttonState.title}</TooltipContent>
           </Tooltip>
         ) : (
           <span
@@ -333,7 +333,7 @@ export function ProviderActions({
                 </Button>
               </span>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent side="bottom">
               {isReadOnly ? readOnlyHint : t("common.edit")}
             </TooltipContent>
           </Tooltip>
@@ -349,7 +349,7 @@ export function ProviderActions({
                 <Copy className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{t("provider.duplicate")}</TooltipContent>
+            <TooltipContent side="bottom">{t("provider.duplicate")}</TooltipContent>
           </Tooltip>
 
           <Tooltip>
@@ -379,7 +379,7 @@ export function ProviderActions({
                 </Button>
               </span>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent side="bottom">
               {t("modelTest.testProvider", "测试模型")}
             </TooltipContent>
           </Tooltip>
@@ -406,7 +406,7 @@ export function ProviderActions({
                 </Button>
               </span>
             </TooltipTrigger>
-            <TooltipContent>{t("provider.configureUsage")}</TooltipContent>
+            <TooltipContent side="bottom">{t("provider.configureUsage")}</TooltipContent>
           </Tooltip>
 
           {onOpenTerminal && (
@@ -424,7 +424,7 @@ export function ProviderActions({
                   <Terminal className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>
+              <TooltipContent side="bottom">
                 {t("provider.openTerminal", "打开终端")}
               </TooltipContent>
             </Tooltip>
@@ -453,7 +453,7 @@ export function ProviderActions({
                 </Button>
               </span>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent side="bottom">
               {isReadOnly ? readOnlyHint : t("common.delete")}
             </TooltipContent>
           </Tooltip>
