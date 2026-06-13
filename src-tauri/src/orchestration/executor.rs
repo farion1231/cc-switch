@@ -450,23 +450,6 @@ impl StrategyExecutor {
         prompt
     }
 
-    fn build_debate_prompt(responses: &[(String, ModelResponse)]) -> String {
-        let mut prompt = String::from("Multiple AI models have provided answers to the same question. Evaluate and synthesize the best response.\n\n");
-        for (i, (_key, resp)) in responses.iter().enumerate() {
-            prompt.push_str(&format!("--- Answer {} ---\n{}\n\n", i + 1, resp.content));
-        }
-        prompt.push_str(
-            "Based on the above answers, provide:\n\
-             1. A quality score from 0.0 to 1.0\n\
-             2. Your synthesized answer combining the best parts\n\
-             \n\
-             Format:\n\
-             SCORE: <number>\n\
-             ANSWER:\n<your response>",
-        );
-        prompt
-    }
-
     fn extract_score_from_judge(content: &str) -> Option<f64> {
         for line in content.lines() {
             let trimmed = line.trim();
@@ -521,72 +504,5 @@ mod tests {
     fn extract_score_missing_returns_none() {
         let content = "No score line here, just a regular response.";
         assert_eq!(StrategyExecutor::extract_score_from_judge(content), None);
-    }
-
-    #[test]
-    fn build_debate_prompt_format() {
-        let responses = vec![
-            (
-                "model_a".to_string(),
-                ModelResponse {
-                    content: "Answer from A".to_string(),
-                    model: "model-a".to_string(),
-                    usage: Default::default(),
-                    latency_ms: 100,
-                },
-            ),
-            (
-                "model_b".to_string(),
-                ModelResponse {
-                    content: "Answer from B".to_string(),
-                    model: "model-b".to_string(),
-                    usage: Default::default(),
-                    latency_ms: 200,
-                },
-            ),
-        ];
-        let prompt = StrategyExecutor::build_debate_prompt(&responses);
-        assert!(prompt.contains("Answer 1"));
-        assert!(prompt.contains("Answer 2"));
-        assert!(prompt.contains("Answer from A"));
-        assert!(prompt.contains("Answer from B"));
-        assert!(prompt.contains("SCORE:"));
-    }
-
-    #[test]
-    fn build_debate_prompt_hides_model_identity() {
-        let responses = vec![
-            (
-                "secret_model_alpha".to_string(),
-                ModelResponse {
-                    content: "Answer A".to_string(),
-                    model: "alpha-v2".to_string(),
-                    usage: Default::default(),
-                    latency_ms: 100,
-                },
-            ),
-            (
-                "secret_model_beta".to_string(),
-                ModelResponse {
-                    content: "Answer B".to_string(),
-                    model: "beta-v1".to_string(),
-                    usage: Default::default(),
-                    latency_ms: 200,
-                },
-            ),
-        ];
-        let prompt = StrategyExecutor::build_debate_prompt(&responses);
-        assert!(
-            !prompt.contains("secret_model_alpha"),
-            "must not leak model key"
-        );
-        assert!(
-            !prompt.contains("secret_model_beta"),
-            "must not leak model key"
-        );
-        assert!(!prompt.contains("alpha-v2"), "must not leak model name");
-        assert!(!prompt.contains("beta-v1"), "must not leak model name");
-        assert!(prompt.contains("Answer A"), "must include content");
-        assert!(prompt.contains("Answer B"), "must include content");
     }
 }

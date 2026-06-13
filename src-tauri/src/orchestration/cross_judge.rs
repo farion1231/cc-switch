@@ -7,6 +7,7 @@
 
 use crate::orchestration::model_caller::ModelCaller;
 use crate::orchestration::shuffle::{CandidateAnswer, ShuffledCandidates};
+use futures::future::try_join_all;
 use serde_json::json;
 
 // ---------------------------------------------------------------------------
@@ -102,14 +103,13 @@ impl CrossJudge {
             return Err("No judges configured".into());
         }
 
-        // Each judge scores all candidates independently.
-        let mut judge_scores = Vec::with_capacity(self.judges.len());
-        for judge in &self.judges {
-            let score = self
-                .call_judge(judge, prompt, &candidates.candidates, model_caller)
-                .await?;
-            judge_scores.push(score);
-        }
+        // Each judge scores all candidates independently — run in parallel.
+        let judge_futures: Vec<_> = self
+            .judges
+            .iter()
+            .map(|judge| self.call_judge(judge, prompt, &candidates.candidates, model_caller))
+            .collect();
+        let judge_scores = futures::future::try_join_all(judge_futures).await?;
 
         // Aggregate across judges.
         self.aggregate(judge_scores)
@@ -179,8 +179,13 @@ impl CrossJudge {
                 let best_idx = Self::argmax(&final_scores);
                 // Consensus is mainly about the consensus_level, still compute
                 // aggregated scores for the final_score field.
-                let _ = threshold; // used in consensus_level computation
-                (final_scores, best_idx)
+                let consensus_level = Self::compute_consensus_with_threshold(&scores, best_idx, *threshold);
+                return Ok(CrossJudgeResult {
+                    final_score: final_scores[best_idx],
+                    best_candidate_idx: best_idx,
+                    judge_scores: scores,
+                    consensus_level,
+                });
             }
         };
 
@@ -352,12 +357,20 @@ impl CrossJudge {
 
     /// Determine consensus level: how many judges agree on `best_idx`.
     fn compute_consensus(scores: &[IndividualJudgeScore], best_idx: usize) -> ConsensusLevel {
+        Self::compute_consensus_with_threshold(scores, best_idx, 0.5)
+    }
+
+    /// Determine consensus level using a configurable agreement threshold.
+    fn compute_consensus_with_threshold(
+        scores: &[IndividualJudgeScore],
+        best_idx: usize,
+        threshold: f64,
+    ) -> ConsensusLevel {
         let total = scores.len();
         if total == 0 {
             return ConsensusLevel::Low;
         }
 
-        // Count judges whose top-ranked candidate matches best_idx.
         let agreeing = scores
             .iter()
             .filter(|js| {
@@ -368,9 +381,10 @@ impl CrossJudge {
             })
             .count();
 
-        if agreeing == total {
+        let ratio = agreeing as f64 / total as f64;
+        if ratio >= 1.0 {
             ConsensusLevel::High
-        } else if agreeing as f64 / total as f64 > 0.5 {
+        } else if ratio > threshold {
             ConsensusLevel::Medium
         } else {
             ConsensusLevel::Low

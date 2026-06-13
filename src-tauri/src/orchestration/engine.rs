@@ -55,12 +55,12 @@ impl OrchestrationEngine {
 
     /// Enable health-aware routing. Call this after construction with a list of known model keys.
     pub fn enable_health_checks(&self, model_keys: &[String]) {
-        *self.health_checker.lock().unwrap() = Some(ModelHealthChecker::new(model_keys));
+        *self.health_checker.lock().unwrap_or_else(|e| e.into_inner()) = Some(ModelHealthChecker::new(model_keys));
     }
 
     /// Report the result of a model invocation so the health checker can react.
     pub fn report_model_result(&self, model_key: &str, success: bool, latency_ms: u64) {
-        if let Some(ref mut hc) = *self.health_checker.lock().unwrap() {
+        if let Some(ref mut hc) = *self.health_checker.lock().unwrap_or_else(|e| e.into_inner()) {
             hc.update_health(model_key, success, latency_ms);
         }
     }
@@ -95,7 +95,7 @@ impl OrchestrationEngine {
         );
 
         let health_filter = |models: Vec<String>| -> Vec<String> {
-            if let Some(ref hc) = *self.health_checker.lock().unwrap() {
+            if let Some(ref hc) = *self.health_checker.lock().unwrap_or_else(|e| e.into_inner()) {
                 let filtered: Vec<String> = models
                     .into_iter()
                     .filter(|m| {
@@ -120,7 +120,7 @@ impl OrchestrationEngine {
 
         match action {
             StrategyAction::Route { use_model, .. } => {
-                let ok = if let Some(ref hc) = *self.health_checker.lock().unwrap() {
+                let ok = if let Some(ref hc) = *self.health_checker.lock().unwrap_or_else(|e| e.into_inner()) {
                     hc.is_available(&use_model)
                 } else {
                     true
@@ -167,7 +167,7 @@ impl OrchestrationEngine {
                     );
                     return OrchestrationDecision::Passthrough;
                 }
-                let judge_ok = if let Some(ref hc) = *self.health_checker.lock().unwrap() {
+                let judge_ok = if let Some(ref hc) = *self.health_checker.lock().unwrap_or_else(|e| e.into_inner()) {
                     hc.is_available(&judge)
                 } else {
                     true
@@ -200,7 +200,7 @@ impl OrchestrationEngine {
                     );
                     return OrchestrationDecision::Passthrough;
                 }
-                let agg_ok = if let Some(ref hc) = *self.health_checker.lock().unwrap() {
+                let agg_ok = if let Some(ref hc) = *self.health_checker.lock().unwrap_or_else(|e| e.into_inner()) {
                     hc.is_available(&aggregator)
                 } else {
                     true
