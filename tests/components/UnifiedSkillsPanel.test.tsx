@@ -14,6 +14,10 @@ const installFromZipMock = vi.fn();
 const deleteSkillBackupMock = vi.fn();
 const restoreSkillBackupMock = vi.fn();
 
+vi.mock("@/lib/query", () => ({
+  useSettingsQuery: () => ({ data: undefined }),
+}));
+
 vi.mock("sonner", () => ({
   toast: {
     success: vi.fn(),
