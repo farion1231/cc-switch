@@ -63,19 +63,9 @@ export function getPresetDisplayName(
 
 export function getPresetSearchText(
   entry: PresetEntry,
-  presetCategoryLabels: Record<string, string>,
   t: PresetTranslator,
 ): string {
-  const presetCategory = entry.preset.category ?? "others";
-  const categoryLabel =
-    presetCategoryLabels[presetCategory] ?? String(t("providerPreset.other"));
-
-  return [
-    getPresetDisplayName(entry.preset, t),
-    entry.preset.name,
-    entry.preset.websiteUrl,
-    categoryLabel,
-  ]
+  return [getPresetDisplayName(entry.preset, t), entry.preset.name]
     .join(" ")
     .toLowerCase();
 }
@@ -83,7 +73,6 @@ export function getPresetSearchText(
 export function filterPresetEntries(
   entries: PresetEntry[],
   query: string,
-  presetCategoryLabels: Record<string, string>,
   t: PresetTranslator,
 ): PresetEntry[] {
   const normalizedQuery = query.trim().toLowerCase();
@@ -92,9 +81,7 @@ export function filterPresetEntries(
   }
 
   return entries.filter((entry) =>
-    getPresetSearchText(entry, presetCategoryLabels, t).includes(
-      normalizedQuery,
-    ),
+    getPresetSearchText(entry, t).includes(normalizedQuery),
   );
 }
 
@@ -117,7 +104,6 @@ export function sortPresetEntries(
 export interface PresetVisibilityOptions {
   query: string;
   sortMode: PresetSortMode;
-  presetCategoryLabels: Record<string, string>;
   t: PresetTranslator;
 }
 
@@ -125,13 +111,9 @@ export function getVisiblePresetEntries(
   entries: PresetEntry[],
   options: PresetVisibilityOptions,
 ): PresetEntry[] {
-  const { query, sortMode, presetCategoryLabels, t } = options;
+  const { query, sortMode, t } = options;
 
-  return sortPresetEntries(
-    filterPresetEntries(entries, query, presetCategoryLabels, t),
-    sortMode,
-    t,
-  );
+  return sortPresetEntries(filterPresetEntries(entries, query, t), sortMode, t);
 }
 
 interface ProviderPresetSelectorProps {
@@ -165,10 +147,9 @@ export function ProviderPresetSelector({
       getVisiblePresetEntries(presetEntries, {
         query: searchQuery,
         sortMode,
-        presetCategoryLabels,
         t,
       }),
-    [presetEntries, presetCategoryLabels, searchQuery, sortMode, t],
+    [presetEntries, searchQuery, sortMode, t],
   );
 
   const getCategoryHint = (): ReactNode => {

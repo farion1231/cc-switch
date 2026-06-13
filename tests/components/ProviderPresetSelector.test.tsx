@@ -153,52 +153,28 @@ describe("ProviderPresetSelector pure helpers", () => {
     );
   });
 
-  it("拼接显示名、原始名称、URL、分类 label，并统一 lower-case", () => {
-    const searchText = getPresetSearchText(
-      presetEntries[1],
-      presetCategoryLabels,
-      t,
-    );
+  it("仅拼接显示名与原始名称、统一 lower-case，不含 URL 或分类 label", () => {
+    const searchText = getPresetSearchText(presetEntries[1], t);
 
     expect(searchText).toContain("alpha 本地名");
     expect(searchText).toContain("alpha raw");
-    expect(searchText).toContain("https://alpha.example.com/v1");
-    expect(searchText).toContain("官方");
+    expect(searchText).not.toContain("example.com");
+    expect(searchText).not.toContain("官方");
     expect(searchText).toBe(searchText.toLowerCase());
   });
 
   it("空 query 返回原数组，非空 query 大小写不敏感匹配", () => {
+    expect(filterPresetEntries(presetEntries, "   ", t)).toBe(presetEntries);
     expect(
-      filterPresetEntries(presetEntries, "   ", presetCategoryLabels, t),
-    ).toBe(presetEntries);
-    expect(
-      getIds(
-        filterPresetEntries(
-          presetEntries,
-          "ALPHA 本地名",
-          presetCategoryLabels,
-          t,
-        ),
-      ),
+      getIds(filterPresetEntries(presetEntries, "ALPHA 本地名", t)),
     ).toEqual(["alpha"]);
   });
 
-  it("支持通过 URL 和分类 label 搜索", () => {
+  it("不再通过 URL 或分类 label 搜索（仅匹配名称）", () => {
     expect(
-      getIds(
-        filterPresetEntries(
-          presetEntries,
-          "cn-gateway.example.com",
-          presetCategoryLabels,
-          t,
-        ),
-      ),
-    ).toEqual(["beta"]);
-    expect(
-      getIds(
-        filterPresetEntries(presetEntries, "聚合", presetCategoryLabels, t),
-      ),
-    ).toEqual(["gamma"]);
+      getIds(filterPresetEntries(presetEntries, "cn-gateway.example.com", t)),
+    ).toEqual([]);
+    expect(getIds(filterPresetEntries(presetEntries, "聚合", t))).toEqual([]);
   });
 
   it("支持 A-Z 排序、original 副本恢复原顺序，并且 getVisible 先 filter 再 sort", () => {
@@ -222,7 +198,6 @@ describe("ProviderPresetSelector pure helpers", () => {
         getVisiblePresetEntries(presetEntries, {
           query: "a",
           sortMode: nameAscMode,
-          presetCategoryLabels,
           t,
         }),
       ),
