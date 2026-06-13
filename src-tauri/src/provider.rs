@@ -1,4 +1,4 @@
-use http::header::{HeaderValue, InvalidHeaderValue};
+use http::header::{HeaderName, HeaderValue, InvalidHeaderName, InvalidHeaderValue};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -464,6 +464,13 @@ pub struct ProviderMeta {
     /// Custom User-Agent for local proxy routing.
     #[serde(rename = "customUserAgent", skip_serializing_if = "Option::is_none")]
     pub custom_user_agent: Option<String>,
+    /// Provider-level custom headers injected by the local proxy.
+    #[serde(
+        rename = "customHeaders",
+        default,
+        skip_serializing_if = "IndexMap::is_empty"
+    )]
+    pub custom_headers: IndexMap<String, String>,
     /// 累加模式应用中，该 provider 是否已写入 live config。
     /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
     #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]
@@ -476,6 +483,13 @@ pub struct ProviderMeta {
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedProviderCustomHeader {
+    pub original_key: String,
+    pub name: HeaderName,
+    pub value: Option<HeaderValue>,
 }
 
 /// 解析 Provider 级自定义 User-Agent 字符串（单一真理来源）。
@@ -502,6 +516,71 @@ pub fn parse_custom_user_agent(
     }
 }
 
+pub fn parse_provider_custom_header(
+    key: &str,
+    value: &str,
+) -> Result<Option<ParsedProviderCustomHeader>, InvalidProviderCustomHeader> {
+    let trimmed_key = key.trim();
+    if trimmed_key.is_empty() {
+        return Ok(None);
+    }
+
+    let name = HeaderName::from_bytes(trimmed_key.as_bytes())
+        .map_err(InvalidProviderCustomHeader::InvalidName)?;
+    let trimmed_value = value.trim();
+    let value = if trimmed_value.is_empty() {
+        None
+    } else {
+        Some(
+            HeaderValue::from_str(trimmed_value)
+                .map_err(InvalidProviderCustomHeader::InvalidValue)?,
+        )
+    };
+
+    Ok(Some(ParsedProviderCustomHeader {
+        original_key: trimmed_key.to_string(),
+        name,
+        value,
+    }))
+}
+
+#[derive(Debug)]
+pub enum InvalidProviderCustomHeader {
+    InvalidName(InvalidHeaderName),
+    InvalidValue(InvalidHeaderValue),
+}
+
+impl std::fmt::Display for InvalidProviderCustomHeader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidName(err) => write!(f, "invalid header name: {err}"),
+            Self::InvalidValue(err) => write!(f, "invalid header value: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for InvalidProviderCustomHeader {}
+
+pub fn apply_custom_headers_to_http_map(
+    headers: &mut http::HeaderMap,
+    custom_headers: &[ParsedProviderCustomHeader],
+    protected_headers: &[&str],
+) {
+    for header in custom_headers {
+        if protected_headers
+            .iter()
+            .any(|name| header.name.as_str().eq_ignore_ascii_case(name))
+        {
+            continue;
+        }
+
+        headers.remove(&header.name);
+        if let Some(value) = &header.value {
+            headers.insert(header.name.clone(), value.clone());
+        }
+    }
+}
+
 impl ProviderMeta {
     /// Codex OAuth FAST mode 是否启用。默认关闭，因为 `service_tier="priority"`
     /// 会按更高速率消耗 ChatGPT 订阅配额，用户需显式开启以换取更低延迟。
@@ -512,6 +591,33 @@ impl ProviderMeta {
     /// 经校验的 Provider 级自定义 User-Agent。见 [`parse_custom_user_agent`]。
     pub fn custom_user_agent_header(&self) -> Result<Option<HeaderValue>, InvalidHeaderValue> {
         parse_custom_user_agent(self.custom_user_agent.as_deref())
+    }
+
+    /// Parsed provider-level custom headers. Invalid entries are skipped at runtime.
+    pub fn parsed_custom_headers(&self) -> Vec<ParsedProviderCustomHeader> {
+        let mut parsed = Vec::new();
+
+        for (key, value) in &self.custom_headers {
+            if let Ok(Some(entry)) = parse_provider_custom_header(key, value) {
+                parsed.push(entry);
+            }
+        }
+
+        if !self
+            .custom_headers
+            .iter()
+            .any(|(key, _)| key.trim().eq_ignore_ascii_case("user-agent"))
+        {
+            if let Ok(Some(value)) = self.custom_user_agent_header() {
+                parsed.push(ParsedProviderCustomHeader {
+                    original_key: "User-Agent".to_string(),
+                    name: HeaderName::from_static("user-agent"),
+                    value: Some(value),
+                });
+            }
+        }
+
+        parsed
     }
 
     /// 解析指定托管认证供应商绑定的账号 ID。
@@ -930,9 +1036,12 @@ pub struct OpenCodeModelLimit {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, OpenCodeProviderConfig, Provider,
-        ProviderManager, ProviderMeta, UniversalProvider,
+        apply_custom_headers_to_http_map, parse_provider_custom_header, ClaudeModelConfig,
+        CodexModelConfig, GeminiModelConfig, OpenCodeProviderConfig, ParsedProviderCustomHeader,
+        Provider, ProviderManager, ProviderMeta, UniversalProvider,
     };
+    use http::header::{HeaderName, HeaderValue};
+    use indexmap::IndexMap;
     use serde_json::json;
 
     #[test]
@@ -1471,6 +1580,120 @@ mod tests {
         assert_eq!(
             p.resolve_usage_credentials(&AppType::Claude),
             (String::new(), String::new())
+        );
+    }
+
+    #[test]
+    fn parse_provider_custom_header_supports_override_and_delete() {
+        let overridden = parse_provider_custom_header("User-Agent", "claude-code/0.1.0").unwrap();
+        let overridden = overridden.expect("header");
+        assert_eq!(overridden.name.as_str(), "user-agent");
+        assert_eq!(
+            overridden.value.as_ref().and_then(|v| v.to_str().ok()),
+            Some("claude-code/0.1.0")
+        );
+
+        let deleted = parse_provider_custom_header("Authorization", "   ").unwrap();
+        let deleted = deleted.expect("header");
+        assert_eq!(deleted.name.as_str(), "authorization");
+        assert!(deleted.value.is_none());
+    }
+
+    #[test]
+    fn parsed_custom_headers_falls_back_to_legacy_custom_user_agent() {
+        let meta = ProviderMeta {
+            custom_user_agent: Some("claude-code/0.1.0".to_string()),
+            ..Default::default()
+        };
+
+        let headers = meta.parsed_custom_headers();
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].name.as_str(), "user-agent");
+    }
+
+    #[test]
+    fn apply_custom_headers_to_http_map_overrides_and_removes() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer old"),
+        );
+        headers.insert(
+            http::header::USER_AGENT,
+            HeaderValue::from_static("old-agent"),
+        );
+
+        let custom_headers = vec![
+            ParsedProviderCustomHeader {
+                original_key: "Authorization".to_string(),
+                name: HeaderName::from_static("authorization"),
+                value: None,
+            },
+            ParsedProviderCustomHeader {
+                original_key: "User-Agent".to_string(),
+                name: HeaderName::from_static("user-agent"),
+                value: Some(HeaderValue::from_static("claude-code/0.1.0")),
+            },
+            ParsedProviderCustomHeader {
+                original_key: "x-api-key".to_string(),
+                name: HeaderName::from_static("x-api-key"),
+                value: Some(HeaderValue::from_static("sk-xxx")),
+            },
+        ];
+
+        apply_custom_headers_to_http_map(&mut headers, &custom_headers, &[]);
+
+        assert!(!headers.contains_key(http::header::AUTHORIZATION));
+        assert_eq!(
+            headers
+                .get(http::header::USER_AGENT)
+                .and_then(|value| value.to_str().ok()),
+            Some("claude-code/0.1.0")
+        );
+        assert_eq!(
+            headers
+                .get("x-api-key")
+                .and_then(|value| value.to_str().ok()),
+            Some("sk-xxx")
+        );
+    }
+
+    #[test]
+    fn provider_meta_custom_headers_prefer_explicit_user_agent_and_keep_empty_remove_semantics() {
+        let meta = ProviderMeta {
+            custom_user_agent: Some("legacy-agent/1.0".to_string()),
+            custom_headers: IndexMap::from([
+                ("User-Agent".to_string(), "explicit-agent/2.0".to_string()),
+                ("Authorization".to_string(), "   ".to_string()),
+                ("x-api-key".to_string(), "sk-live".to_string()),
+            ]),
+            ..Default::default()
+        };
+
+        let headers = meta.parsed_custom_headers();
+        let mut map = http::HeaderMap::new();
+        map.insert(
+            http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer old"),
+        );
+        apply_custom_headers_to_http_map(&mut map, &headers, &[]);
+
+        assert_eq!(
+            headers
+                .iter()
+                .filter(|header| header.name.as_str().eq_ignore_ascii_case("user-agent"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            map.get(http::header::USER_AGENT)
+                .and_then(|value| value.to_str().ok()),
+            Some("explicit-agent/2.0")
+        );
+        assert!(!map.contains_key(http::header::AUTHORIZATION));
+        assert_eq!(
+            map.get("x-api-key").and_then(|value| value.to_str().ok()),
+            Some("sk-live")
         );
     }
 }

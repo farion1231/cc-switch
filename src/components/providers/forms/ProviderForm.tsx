@@ -11,6 +11,7 @@ import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import { providersApi, settingsApi, type AppId } from "@/lib/api";
 import type {
   ProviderCategory,
+  ProviderCustomHeaderEntry,
   ProviderMeta,
   ProviderTestConfig,
   ClaudeApiFormat,
@@ -68,6 +69,7 @@ import JsonEditor from "@/components/JsonEditor";
 import { Label } from "@/components/ui/label";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { BasicFormFields } from "./BasicFormFields";
+import { CustomHeadersField } from "./CustomHeadersField";
 import { ClaudeFormFields } from "./ClaudeFormFields";
 import { ClaudeDesktopProviderForm } from "./ClaudeDesktopProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
@@ -173,6 +175,27 @@ export const normalizeCodexCatalogModelsForSave = (
   }
 
   return normalized;
+};
+
+export const providerCustomHeadersToEntries = (
+  meta?: ProviderMeta,
+): ProviderCustomHeaderEntry[] => {
+  return Object.entries(meta?.customHeaders ?? {}).map(([key, value]) => ({
+    key,
+    value,
+  }));
+};
+
+export const providerCustomHeadersToRecord = (
+  entries: ProviderCustomHeaderEntry[],
+): Record<string, string> | undefined => {
+  const normalized = Object.fromEntries(
+    entries
+      .map(({ key, value }) => [key.trim(), value] as const)
+      .filter(([key]) => key.length > 0),
+  );
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
 };
 
 const normalizeCodexChatReasoningForSave = (
@@ -356,6 +379,7 @@ function ProviderFormFull({
     });
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
+    setCustomHeaders(providerCustomHeadersToEntries(initialData?.meta));
   }, [appId, initialData, supportsFullUrl]);
 
   const defaultValues: ProviderFormData = useMemo(
@@ -513,6 +537,9 @@ function ProviderFormFull({
   const [customUserAgent, setCustomUserAgent] = useState<string>(
     () => initialData?.meta?.customUserAgent ?? "",
   );
+  const [customHeaders, setCustomHeaders] = useState<
+    ProviderCustomHeaderEntry[]
+  >(() => providerCustomHeadersToEntries(initialData?.meta));
 
   const {
     codexAuth,
@@ -1390,6 +1417,7 @@ function ProviderFormFull({
         localCodexApiFormat === "openai_chat"
           ? normalizeCodexChatReasoningForSave(codexChatReasoning)
           : undefined,
+      customHeaders: providerCustomHeadersToRecord(customHeaders),
       customUserAgent:
         (appId === "claude" || appId === "codex") && category !== "official"
           ? customUserAgent.trim() || undefined
@@ -2018,6 +2046,7 @@ function ProviderFormFull({
               isFullUrl={localIsFullUrl}
               onFullUrlChange={setLocalIsFullUrl}
               customUserAgent={customUserAgent}
+              customHeaders={customHeaders}
               onCustomUserAgentChange={setCustomUserAgent}
             />
           )}
@@ -2052,6 +2081,7 @@ function ProviderFormFull({
               onCatalogModelsChange={setCodexCatalogModels}
               speedTestEndpoints={speedTestEndpoints}
               customUserAgent={customUserAgent}
+              customHeaders={customHeaders}
               onCustomUserAgentChange={setCustomUserAgent}
             />
           )}
@@ -2326,6 +2356,17 @@ function ProviderFormFull({
                 onPricingConfigChange={setPricingConfig}
               />
             )}
+
+          <p className="text-xs text-muted-foreground">
+            {t("providerForm.customHeadersUserAgentHint", {
+              defaultValue:
+                "If you add a User-Agent row here, it takes precedence over the legacy custom User-Agent field.",
+            })}
+          </p>
+          <CustomHeadersField
+            value={customHeaders}
+            onChange={setCustomHeaders}
+          />
 
           {showButtons && (
             <div className="flex justify-end gap-2">

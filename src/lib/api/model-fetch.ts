@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { TFunction } from "i18next";
 import { toast } from "sonner";
+import type { ProviderCustomHeaderEntry } from "@/types";
 
 export interface FetchedModel {
   id: string;
@@ -19,13 +20,24 @@ export async function fetchModelsForConfig(
   isFullUrl?: boolean,
   modelsUrl?: string,
   customUserAgent?: string,
+  customHeaders?: ProviderCustomHeaderEntry[],
 ): Promise<FetchedModel[]> {
+  const customHeadersObject =
+    customHeaders && customHeaders.length > 0
+      ? Object.fromEntries(
+          customHeaders
+            .map(({ key, value }) => [key.trim(), value] as const)
+            .filter(([key]) => key.length > 0),
+        )
+      : undefined;
+
   return invoke("fetch_models_for_config", {
     baseUrl,
     apiKey,
     isFullUrl,
     modelsUrl,
     customUserAgent,
+    customHeaders: customHeadersObject,
   });
 }
 
