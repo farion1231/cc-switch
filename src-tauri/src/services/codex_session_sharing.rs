@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub struct CodexProviderVisibility {
     pub provider_id: String,
     pub linked: bool,
@@ -193,13 +194,6 @@ pub fn set_codex_session_provider_links(
     request: SetCodexSessionProvidersRequest,
 ) -> Result<CodexSessionProviderUpdateResult, AppError> {
     let link_mode = request.link_mode.as_deref().unwrap_or("manual");
-    db.replace_codex_session_provider_links(
-        &request.session_id,
-        &request.source_path,
-        &request.provider_ids,
-        link_mode,
-    )?;
-
     let sync = if request.sync_to_codex {
         Some(sync_codex_session_visibility(
             &request.source_path,
@@ -209,16 +203,33 @@ pub fn set_codex_session_provider_links(
         None
     };
 
-    Ok(CodexSessionProviderUpdateResult {
-        provider_ids: request.provider_ids,
-        sync,
-    })
+    let links = db.replace_codex_session_provider_links(
+        &request.session_id,
+        &request.source_path,
+        &request.provider_ids,
+        link_mode,
+    )?;
+    let provider_ids = links
+        .into_iter()
+        .map(|link| link.provider_id)
+        .collect::<Vec<_>>();
+
+    Ok(CodexSessionProviderUpdateResult { provider_ids, sync })
 }
 
 pub fn sync_codex_session_visibility(
     source_path: &str,
     provider_ids: &[String],
 ) -> Result<CodexVisibilitySyncResult, AppError> {
+    if provider_ids.is_empty() {
+        return Ok(CodexVisibilitySyncResult {
+            changed_jsonl_files: 0,
+            changed_state_rows: 0,
+            skipped: Vec::new(),
+            warnings: vec!["No target providers were selected".to_string()],
+        });
+    }
+
     let codex_dir = get_codex_config_dir();
     let backup_root = crate::config::get_app_config_dir()
         .join("backups")
@@ -235,12 +246,44 @@ pub fn sync_codex_session_visibility(
         changed_jsonl_files: u32::from(rewrite.changed),
         changed_state_rows: 0,
         skipped: Vec::new(),
-        warnings: if provider_ids.is_empty() {
-            vec!["No target providers were selected".to_string()]
-        } else {
-            Vec::new()
-        },
+        warnings: Vec::new(),
     })
+}
+
+fn merge_codex_sessions_with_links(
+    db: &Database,
+    current_provider_id: &str,
+    sessions: Vec<session_manager::SessionMeta>,
+) -> Result<Vec<ProviderCodexSession>, AppError> {
+    let mut out = Vec::new();
+    for session in sessions.into_iter().filter(|s| s.provider_id == "codex") {
+        let Some(source_path) = session.source_path.clone() else {
+            continue;
+        };
+        let links = db.get_codex_session_provider_links(&session.session_id, &source_path)?;
+        let linked_provider_ids = links
+            .into_iter()
+            .map(|link| link.provider_id)
+            .collect::<Vec<_>>();
+        let visible_to_current_provider = linked_provider_ids
+            .iter()
+            .any(|id| id == current_provider_id)
+            || session.model_provider.as_deref() == Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID);
+        out.push(ProviderCodexSession {
+            session,
+            linked_provider_ids,
+            visible_to_current_provider,
+        });
+    }
+    Ok(out)
+}
+
+pub fn list_provider_codex_sessions(
+    db: &Database,
+    provider_id: &str,
+) -> Result<Vec<ProviderCodexSession>, AppError> {
+    let sessions = session_manager::scan_sessions();
+    merge_codex_sessions_with_links(db, provider_id, sessions)
 }
 
 #[cfg(test)]
@@ -297,5 +340,94 @@ mod tests {
             .expect("read backup dir")
             .next()
             .is_some());
+    }
+
+    #[test]
+    fn sync_empty_provider_list_does_not_rewrite_jsonl() {
+        let result =
+            sync_codex_session_visibility("C:/missing/codex/session.jsonl", &[]).expect("sync");
+
+        assert_eq!(result.changed_jsonl_files, 0);
+        assert_eq!(result.changed_state_rows, 0);
+        assert_eq!(
+            result.warnings,
+            vec!["No target providers were selected".to_string()]
+        );
+    }
+
+    #[test]
+    fn set_links_does_not_persist_when_sync_fails() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let source_path = "C:/outside/missing-session.jsonl";
+
+        let err = set_codex_session_provider_links(
+            &db,
+            SetCodexSessionProvidersRequest {
+                session_id: "session-1".to_string(),
+                source_path: source_path.to_string(),
+                provider_ids: vec!["provider-a".to_string()],
+                link_mode: Some("manual".to_string()),
+                sync_to_codex: true,
+            },
+        )
+        .expect_err("sync should fail");
+
+        assert!(err.to_string().contains("missing-session.jsonl"));
+        assert!(db
+            .get_codex_session_provider_links("session-1", source_path)?
+            .is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn set_links_returns_deduplicated_provider_ids() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        let result = set_codex_session_provider_links(
+            &db,
+            SetCodexSessionProvidersRequest {
+                session_id: "session-1".to_string(),
+                source_path: "C:/Users/Test/.codex/sessions/session-1.jsonl".to_string(),
+                provider_ids: vec!["provider-a".to_string(), "provider-a".to_string()],
+                link_mode: Some("manual".to_string()),
+                sync_to_codex: false,
+            },
+        )?;
+
+        assert_eq!(result.provider_ids, vec!["provider-a".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn provider_session_listing_marks_linked_sessions() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        db.replace_codex_session_provider_links(
+            "session-1",
+            "C:/Users/Test/.codex/sessions/session-1.jsonl",
+            &["provider-a".to_string()],
+            "manual",
+        )?;
+
+        let sessions = vec![session_manager::SessionMeta {
+            provider_id: "codex".to_string(),
+            session_id: "session-1".to_string(),
+            model_provider: Some("custom".to_string()),
+            title: Some("hello".to_string()),
+            summary: None,
+            project_dir: None,
+            created_at: Some(1),
+            last_active_at: Some(2),
+            source_path: Some("C:/Users/Test/.codex/sessions/session-1.jsonl".to_string()),
+            resume_command: Some("codex resume session-1".to_string()),
+        }];
+
+        let visible = merge_codex_sessions_with_links(&db, "provider-a", sessions)?;
+        assert_eq!(visible.len(), 1);
+        assert!(visible[0].visible_to_current_provider);
+        assert_eq!(
+            visible[0].linked_provider_ids,
+            vec!["provider-a".to_string()]
+        );
+        Ok(())
     }
 }

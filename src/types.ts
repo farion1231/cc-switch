@@ -445,6 +445,32 @@ export interface SessionMessage {
   ts?: number;
 }
 
+export interface ProviderCodexSession {
+  session: SessionMeta;
+  linkedProviderIds: string[];
+  visibleToCurrentProvider: boolean;
+}
+
+export interface SetCodexSessionProvidersRequest {
+  sessionId: string;
+  sourcePath: string;
+  providerIds: string[];
+  linkMode?: "manual" | "all" | "native";
+  syncToCodex: boolean;
+}
+
+export interface CodexVisibilitySyncResult {
+  changedJsonlFiles: number;
+  changedStateRows: number;
+  skipped: string[];
+  warnings: string[];
+}
+
+export interface CodexSessionProviderUpdateResult {
+  providerIds: string[];
+  sync?: CodexVisibilitySyncResult;
+}
+
 // MCP 服务器连接参数（宽松：允许扩展字段）
 export interface McpServerSpec {
   // 可选：社区常见 .mcp.json 中 stdio 配置可不写 type
