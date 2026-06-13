@@ -96,6 +96,21 @@ pub struct ModelStats {
     pub avg_cost_per_request: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexSessionUsageSummary {
+    pub session_id: String,
+    pub request_count: u64,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_cache_read_tokens: u64,
+    pub total_cache_creation_tokens: u64,
+    pub total_cost_usd: String,
+    pub first_used_at: Option<i64>,
+    pub last_used_at: Option<i64>,
+    pub models: Vec<String>,
+}
+
 /// 请求日志过滤器
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -103,6 +118,7 @@ pub struct LogFilters {
     pub app_type: Option<String>,
     pub provider_name: Option<String>,
     pub model: Option<String>,
+    pub session_id: Option<String>,
     pub status_code: Option<u16>,
     pub start_date: Option<i64>,
     pub end_date: Option<i64>,
@@ -123,6 +139,8 @@ pub struct PaginatedLogs {
 #[serde(rename_all = "camelCase")]
 pub struct RequestLogDetail {
     pub request_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     pub provider_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_name: Option<String>,
@@ -154,15 +172,15 @@ pub struct RequestLogDetail {
     pub pricing_model: Option<String>,
 }
 
-/// 把 25 列的查询结果映射为 `RequestLogDetail`。
+/// 把 26 列的查询结果映射为 `RequestLogDetail`。
 ///
-/// 调用方的 SELECT **必须**按以下顺序返回 25 列：
+/// 调用方的 SELECT **必须**按以下顺序返回 26 列：
 /// `request_id, provider_id, provider_name, app_type, model, request_model,
 ///  cost_multiplier, input_tokens, output_tokens, cache_read_tokens,
 ///  cache_creation_tokens, input_cost_usd, output_cost_usd, cache_read_cost_usd,
 ///  cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
 ///  first_token_ms, duration_ms, status_code, error_message, created_at,
-///  data_source, pricing_model`
+///  data_source, pricing_model, session_id`
 ///
 /// 不需要 provider_name 时（如 backfill）SELECT `NULL AS provider_name` 占位即可。
 fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestLogDetail> {
@@ -194,6 +212,7 @@ fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reques
         created_at: row.get(22)?,
         data_source: row.get(23)?,
         pricing_model: row.get(24)?,
+        session_id: row.get(25)?,
     })
 }
 
@@ -1224,6 +1243,87 @@ impl Database {
         Ok(stats)
     }
 
+    /// 获取 Codex 会话维度使用汇总。
+    pub fn get_codex_session_usage_summaries(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+    ) -> Result<Vec<CodexSessionUsageSummary>, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        let mut conditions = vec![
+            effective_usage_log_filter("l"),
+            "l.app_type = 'codex'".to_string(),
+            "l.session_id IS NOT NULL".to_string(),
+            "TRIM(l.session_id) <> ''".to_string(),
+        ];
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(start) = start_date {
+            conditions.push("l.created_at >= ?".to_string());
+            params.push(Box::new(start));
+        }
+        if let Some(end) = end_date {
+            conditions.push("l.created_at <= ?".to_string());
+            params.push(Box::new(end));
+        }
+
+        let where_clause = format!("WHERE {}", conditions.join(" AND "));
+        let sql = format!(
+            "SELECT
+                l.session_id,
+                COUNT(*) as request_count,
+                COALESCE(SUM(l.input_tokens), 0) as total_input_tokens,
+                COALESCE(SUM(l.output_tokens), 0) as total_output_tokens,
+                COALESCE(SUM(l.cache_read_tokens), 0) as total_cache_read_tokens,
+                COALESCE(SUM(l.cache_creation_tokens), 0) as total_cache_creation_tokens,
+                COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost_usd,
+                MIN(l.created_at) as first_used_at,
+                MAX(l.created_at) as last_used_at,
+                GROUP_CONCAT(DISTINCT l.model) as models
+             FROM proxy_request_logs l
+             {where_clause}
+             GROUP BY l.session_id
+             ORDER BY last_used_at DESC"
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(params_refs.as_slice(), |row| {
+            let total_cost: f64 = row.get(6)?;
+            let models_csv: Option<String> = row.get(9)?;
+            let mut models: Vec<String> = models_csv
+                .unwrap_or_default()
+                .split(',')
+                .map(str::trim)
+                .filter(|model| !model.is_empty())
+                .map(ToString::to_string)
+                .collect();
+            models.sort();
+            models.dedup();
+
+            Ok(CodexSessionUsageSummary {
+                session_id: row.get(0)?,
+                request_count: row.get::<_, i64>(1)? as u64,
+                total_input_tokens: row.get::<_, i64>(2)? as u64,
+                total_output_tokens: row.get::<_, i64>(3)? as u64,
+                total_cache_read_tokens: row.get::<_, i64>(4)? as u64,
+                total_cache_creation_tokens: row.get::<_, i64>(5)? as u64,
+                total_cost_usd: format!("{total_cost:.6}"),
+                first_used_at: row.get(7)?,
+                last_used_at: row.get(8)?,
+                models,
+            })
+        })?;
+
+        let mut summaries = Vec::new();
+        for row in rows {
+            summaries.push(row?);
+        }
+
+        Ok(summaries)
+    }
+
     /// 获取请求日志列表（分页）
     pub fn get_request_logs(
         &self,
@@ -1247,6 +1347,10 @@ impl Database {
         if let Some(ref model) = filters.model {
             conditions.push("l.model LIKE ?".to_string());
             params.push(Box::new(format!("%{model}%")));
+        }
+        if let Some(ref session_id) = filters.session_id {
+            conditions.push("l.session_id = ?".to_string());
+            params.push(Box::new(session_id.clone()));
         }
         if let Some(status) = filters.status_code {
             conditions.push("l.status_code = ?".to_string());
@@ -1290,7 +1394,7 @@ impl Database {
                     l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
                     l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
-                    l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model
+                    l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model, l.session_id
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              {where_clause}
@@ -1333,7 +1437,7 @@ impl Database {
                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                     input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                     is_streaming, latency_ms, first_token_ms, duration_ms,
-                    status_code, error_message, created_at, l.data_source, l.pricing_model
+                    status_code, error_message, created_at, l.data_source, l.pricing_model, l.session_id
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              WHERE l.request_id = ?"
@@ -1489,7 +1593,7 @@ impl Database {
                         input_cost_usd, output_cost_usd, cache_read_cost_usd,
                         cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
                         first_token_ms, duration_ms, status_code, error_message, created_at,
-                        data_source, pricing_model
+                        data_source, pricing_model, session_id
              FROM proxy_request_logs
              WHERE CAST(total_cost_usd AS REAL) <= 0
                AND (input_tokens > 0 OR output_tokens > 0
@@ -2910,6 +3014,133 @@ mod tests {
         assert!(request_ids.contains(&"session-model-mismatch"));
         assert!(request_ids.contains(&"session-matches-error-proxy"));
         assert!(request_ids.contains(&"claude-session-cache-creation-mismatch"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn get_request_logs_filters_by_session_id() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "codex-session-a-log",
+                "codex",
+                "_codex_session",
+                "gpt-5.4",
+                "codex_session",
+                10_000,
+                100,
+                20,
+                10,
+                5,
+                200,
+                "0.10",
+            )?;
+            insert_usage_log(
+                &conn,
+                "codex-session-b-log",
+                "codex",
+                "_codex_session",
+                "gpt-5.4",
+                "codex_session",
+                10_001,
+                200,
+                30,
+                20,
+                10,
+                200,
+                "0.20",
+            )?;
+            conn.execute(
+                "UPDATE proxy_request_logs SET session_id = ?1 WHERE request_id = ?2",
+                params!["session-a", "codex-session-a-log"],
+            )?;
+            conn.execute(
+                "UPDATE proxy_request_logs SET session_id = ?1 WHERE request_id = ?2",
+                params!["session-b", "codex-session-b-log"],
+            )?;
+        }
+
+        let logs = db.get_request_logs(
+            &LogFilters {
+                session_id: Some("session-a".to_string()),
+                ..LogFilters::default()
+            },
+            0,
+            10,
+        )?;
+
+        assert_eq!(logs.total, 1);
+        assert_eq!(logs.data.len(), 1);
+        assert_eq!(logs.data[0].request_id, "codex-session-a-log");
+        assert_eq!(logs.data[0].session_id.as_deref(), Some("session-a"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn get_codex_session_usage_summaries_groups_by_session() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "codex-session-summary-1",
+                "codex",
+                "_codex_session",
+                "gpt-5.4",
+                "codex_session",
+                10_000,
+                100,
+                20,
+                10,
+                5,
+                200,
+                "0.10",
+            )?;
+            insert_usage_log(
+                &conn,
+                "codex-session-summary-2",
+                "codex",
+                "_codex_session",
+                "gpt-5.4",
+                "codex_session",
+                10_100,
+                200,
+                30,
+                20,
+                10,
+                200,
+                "0.25",
+            )?;
+            conn.execute(
+                "UPDATE proxy_request_logs SET session_id = ?1 WHERE request_id IN (?2, ?3)",
+                params![
+                    "session-a",
+                    "codex-session-summary-1",
+                    "codex-session-summary-2"
+                ],
+            )?;
+        }
+
+        let summaries = db.get_codex_session_usage_summaries(None, None)?;
+
+        assert_eq!(summaries.len(), 1);
+        let summary = &summaries[0];
+        assert_eq!(summary.session_id, "session-a");
+        assert_eq!(summary.request_count, 2);
+        assert_eq!(summary.total_input_tokens, 300);
+        assert_eq!(summary.total_output_tokens, 50);
+        assert_eq!(summary.total_cache_read_tokens, 30);
+        assert_eq!(summary.total_cache_creation_tokens, 15);
+        assert_eq!(summary.total_cost_usd, "0.350000");
+        assert_eq!(summary.first_used_at, Some(10_000));
+        assert_eq!(summary.last_used_at, Some(10_100));
+        assert_eq!(summary.models, vec!["gpt-5.4".to_string()]);
 
         Ok(())
     }

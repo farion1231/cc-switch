@@ -9,6 +9,7 @@ export interface TokenUsage {
 
 export interface RequestLog {
   requestId: string;
+  sessionId?: string;
   providerId: string;
   providerName?: string;
   appType: string;
@@ -113,10 +114,24 @@ export interface ModelStats {
   avgCostPerRequest: string;
 }
 
+export interface CodexSessionUsageSummary {
+  sessionId: string;
+  requestCount: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheCreationTokens: number;
+  totalCostUsd: string;
+  firstUsedAt?: number;
+  lastUsedAt?: number;
+  models: string[];
+}
+
 export interface LogFilters {
   appType?: string;
   providerName?: string;
   model?: string;
+  sessionId?: string;
   statusCode?: number;
   startDate?: number;
   endDate?: number;
