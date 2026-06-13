@@ -308,7 +308,9 @@ impl StreamCheckService {
             .and_then(|meta| meta.custom_user_agent_header().ok().flatten())
     }
 
-    fn provider_custom_headers(provider: &Provider) -> Vec<crate::provider::ParsedProviderCustomHeader> {
+    fn provider_custom_headers(
+        provider: &Provider,
+    ) -> Vec<crate::provider::ParsedProviderCustomHeader> {
         provider
             .meta
             .as_ref()
@@ -760,7 +762,11 @@ impl StreamCheckService {
             .map_err(|e| AppError::Message(format!("Failed to build request: {e}")))?;
         // Keep Copilot health checks on the same header path as production forwarding;
         // custom provider headers should not silently diverge here.
-        crate::provider::apply_custom_headers_to_http_map(request.headers_mut(), &custom_headers, &[]);
+        crate::provider::apply_custom_headers_to_http_map(
+            request.headers_mut(),
+            &custom_headers,
+            &[],
+        );
 
         let response = client
             .execute(request)
@@ -1769,9 +1775,9 @@ mod tests {
 
     #[test]
     fn test_provider_custom_headers_for_health_check_skips_copilot() {
+        use crate::provider::ProviderMeta;
         use crate::proxy::providers::AuthInfo;
         use crate::proxy::providers::AuthStrategy;
-        use crate::provider::ProviderMeta;
 
         let mut p = make_provider(serde_json::json!({
             "baseUrl": "https://api.githubcopilot.com",

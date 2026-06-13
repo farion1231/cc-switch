@@ -180,12 +180,10 @@ export const normalizeCodexCatalogModelsForSave = (
 export const providerCustomHeadersToEntries = (
   meta?: ProviderMeta,
 ): ProviderCustomHeaderEntry[] => {
-  return Object.entries(meta?.customHeaders ?? {}).map(
-    ([key, value]) => ({
-      key,
-      value,
-    }),
-  );
+  return Object.entries(meta?.customHeaders ?? {}).map(([key, value]) => ({
+    key,
+    value,
+  }));
 };
 
 export const providerCustomHeadersToRecord = (
@@ -539,9 +537,9 @@ function ProviderFormFull({
   const [customUserAgent, setCustomUserAgent] = useState<string>(
     () => initialData?.meta?.customUserAgent ?? "",
   );
-  const [customHeaders, setCustomHeaders] = useState<ProviderCustomHeaderEntry[]>(
-    () => providerCustomHeadersToEntries(initialData?.meta),
-  );
+  const [customHeaders, setCustomHeaders] = useState<
+    ProviderCustomHeaderEntry[]
+  >(() => providerCustomHeadersToEntries(initialData?.meta));
 
   const {
     codexAuth,
@@ -2365,7 +2363,10 @@ function ProviderFormFull({
                 "If you add a User-Agent row here, it takes precedence over the legacy custom User-Agent field.",
             })}
           </p>
-          <CustomHeadersField value={customHeaders} onChange={setCustomHeaders} />
+          <CustomHeadersField
+            value={customHeaders}
+            onChange={setCustomHeaders}
+          />
 
           {showButtons && (
             <div className="flex justify-end gap-2">

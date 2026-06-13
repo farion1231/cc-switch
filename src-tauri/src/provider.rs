@@ -1585,8 +1585,7 @@ mod tests {
 
     #[test]
     fn parse_provider_custom_header_supports_override_and_delete() {
-        let overridden =
-            parse_provider_custom_header("User-Agent", "claude-code/0.1.0").unwrap();
+        let overridden = parse_provider_custom_header("User-Agent", "claude-code/0.1.0").unwrap();
         let overridden = overridden.expect("header");
         assert_eq!(overridden.name.as_str(), "user-agent");
         assert_eq!(
@@ -1619,7 +1618,10 @@ mod tests {
             http::header::AUTHORIZATION,
             HeaderValue::from_static("Bearer old"),
         );
-        headers.insert(http::header::USER_AGENT, HeaderValue::from_static("old-agent"));
+        headers.insert(
+            http::header::USER_AGENT,
+            HeaderValue::from_static("old-agent"),
+        );
 
         let custom_headers = vec![
             ParsedProviderCustomHeader {
@@ -1656,7 +1658,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn provider_meta_custom_headers_prefer_explicit_user_agent_and_keep_empty_remove_semantics() {
         let meta = ProviderMeta {
@@ -1671,7 +1672,10 @@ mod tests {
 
         let headers = meta.parsed_custom_headers();
         let mut map = http::HeaderMap::new();
-        map.insert(http::header::AUTHORIZATION, HeaderValue::from_static("Bearer old"));
+        map.insert(
+            http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer old"),
+        );
         apply_custom_headers_to_http_map(&mut map, &headers, &[]);
 
         assert_eq!(
@@ -1688,8 +1692,7 @@ mod tests {
         );
         assert!(!map.contains_key(http::header::AUTHORIZATION));
         assert_eq!(
-            map.get("x-api-key")
-                .and_then(|value| value.to_str().ok()),
+            map.get("x-api-key").and_then(|value| value.to_str().ok()),
             Some("sk-live")
         );
     }
