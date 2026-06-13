@@ -28,6 +28,25 @@ const SSO_SCOPES: &[&str] = &[
 const DEFAULT_START_URL: &str = "https://view.awsapps.com/start";
 const DEFAULT_REGION: &str = "us-east-1";
 
+/// AWS Builder ID 共享 profileArn 兑底。
+///
+/// Builder ID 账号的 `ListAvailableProfiles` 有时返回空（或不返回可用 profile），
+/// 导致 runtime 请求缺少 profileArn 而失败。此时回退到 Builder ID 用户共享的
+/// 固定 profileArn（抓包确认）。仅适用于 Builder ID（DEFAULT_START_URL），
+/// 企业 IdC 用户有自己组织的 profile，不适用。
+const BUILDER_ID_PROFILE_ARN: &str =
+    "arn:aws:codewhisperer:us-east-1:638616132270:profile/AAAACCCCXXXX";
+
+/// 当账号是 AWS Builder ID（DEFAULT_START_URL 的 IdC）且未能动态获取到 profileArn 时，
+/// 返回共享兑底 profileArn；其他情况返回 None。
+fn builder_id_fallback_profile_arn(auth_method: &str, start_url: Option<&str>) -> Option<String> {
+    if auth_method == "idc" && start_url == Some(DEFAULT_START_URL) {
+        Some(BUILDER_ID_PROFILE_ARN.to_string())
+    } else {
+        None
+    }
+}
+
 /// 刷新缓冲（5 分钟）：在实际过期前提前刷新，避免边界请求 403
 const EXPIRES_BUFFER_MS: i64 = 5 * 60 * 1000;
 
@@ -960,7 +979,22 @@ impl KiroAuthManager {
             .get_region_for_account(Some(&id))
             .await
             .unwrap_or_else(|| DEFAULT_REGION.to_string());
-        let fetched = self.fetch_profile_arn(&token, &region).await;
+        // 读取账号的 auth_method / start_url 用于 Builder ID 兑底判断
+        let (auth_method, start_url) = {
+            let local = self.local_accounts.read().await;
+            local
+                .get(&id)
+                .map(|a| (a.auth_method.clone(), a.start_url.clone()))
+                .or_else(|| {
+                    self.read_dynamic_account(&id)
+                        .map(|a| (a.auth_method, a.start_url))
+                })
+                .unwrap_or_else(|| (String::new(), None))
+        };
+        let fetched = self
+            .fetch_profile_arn(&token, &region)
+            .await
+            .or_else(|| builder_id_fallback_profile_arn(&auth_method, start_url.as_deref()));
         if let Some(arn) = fetched.as_ref() {
             // 回写到本地快照（如果该账号在 local_accounts 中），避免重复拉取
             let updated = {
@@ -1189,10 +1223,11 @@ impl KiroAuthManager {
             pending.remove(device_code);
         }
 
-        // 尝试获取 profileArn
+        // 尝试获取 profileArn；Builder ID 拿不到时回退到共享固定 profileArn
         let profile_arn = self
             .fetch_profile_arn(&token_data.access_token, &info.region)
-            .await;
+            .await
+            .or_else(|| builder_id_fallback_profile_arn("idc", Some(&info.start_url)));
 
         let account_id = profile_arn.clone().unwrap_or_else(|| {
             // fallback: generate a uuid
@@ -1625,6 +1660,26 @@ mod tests {
         assert!(!is_api_key("aoaAAAAtoken"));
         assert!(!is_api_key(""));
         assert!(!is_api_key("sk-ant-xxx"));
+    }
+
+    #[test]
+    fn builder_id_fallback_only_for_builder_id() {
+        use super::{builder_id_fallback_profile_arn, BUILDER_ID_PROFILE_ARN, DEFAULT_START_URL};
+        // Builder ID（idc + 默认 start_url）→ 兑底
+        assert_eq!(
+            builder_id_fallback_profile_arn("idc", Some(DEFAULT_START_URL)).as_deref(),
+            Some(BUILDER_ID_PROFILE_ARN)
+        );
+        // 企业 IdC（其他 start_url）→ 不兑底
+        assert_eq!(
+            builder_id_fallback_profile_arn("idc", Some("https://my-org.awsapps.com/start")),
+            None
+        );
+        // 社交 / apikey → 不兑底
+        assert_eq!(builder_id_fallback_profile_arn("desktop", None), None);
+        assert_eq!(builder_id_fallback_profile_arn("apikey", None), None);
+        // idc 但无 start_url → 不兑底
+        assert_eq!(builder_id_fallback_profile_arn("idc", None), None);
     }
 
     #[test]
