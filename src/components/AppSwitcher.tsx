@@ -79,9 +79,7 @@ export function AppSwitcher({
             onClick={() => handleSwitch(app)}
             className={cn(
               "group inline-flex items-center px-3 h-8 rounded-lg text-sm font-medium transition-all duration-200",
-              isActive
-                ? "bg-background shadow-sm"
-                : "hover:bg-background/50",
+              isActive ? "bg-background shadow-sm" : "hover:bg-background/50",
             )}
           >
             <span className="relative inline-flex shrink-0">
@@ -115,7 +113,9 @@ export function AppSwitcher({
             <span
               className={cn(
                 "transition-all duration-200 whitespace-nowrap overflow-hidden",
-                isActive ? "text-foreground" : "text-muted-foreground group-hover:text-foreground",
+                isActive
+                  ? "text-foreground"
+                  : "text-muted-foreground group-hover:text-foreground",
                 compact
                   ? "max-w-0 opacity-0 ml-0"
                   : "max-w-[120px] opacity-100 ml-2",

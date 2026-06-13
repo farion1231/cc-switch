@@ -153,7 +153,9 @@ const UnifiedSkillsPanel = React.forwardRef<
         skill.repoOwner && skill.repoName
           ? `${skill.repoOwner}/${skill.repoName}`.toLowerCase()
           : "";
-      return name.includes(query) || desc.includes(query) || source.includes(query);
+      return (
+        name.includes(query) || desc.includes(query) || source.includes(query)
+      );
     });
   }, [skills, searchQuery]);
 
@@ -408,8 +410,7 @@ const UnifiedSkillsPanel = React.forwardRef<
                         skillUpdates && skillUpdates.length > 0
                           ? "200px"
                           : "0px",
-                      opacity:
-                        skillUpdates && skillUpdates.length > 0 ? 1 : 0,
+                      opacity: skillUpdates && skillUpdates.length > 0 ? 1 : 0,
                     }}
                   >
                     <Button

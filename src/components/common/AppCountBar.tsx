@@ -34,9 +34,7 @@ export const AppCountBar: React.FC<AppCountBarProps> = ({
                 <TooltipTrigger asChild>
                   <div
                     className={`flex items-center gap-1 px-1.5 h-6 rounded-md text-xs transition-opacity ${
-                      count > 0
-                        ? "font-medium"
-                        : "opacity-30"
+                      count > 0 ? "font-medium" : "opacity-30"
                     }`}
                   >
                     {icon}

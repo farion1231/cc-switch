@@ -349,16 +349,15 @@ export function ProviderActions({
                 <Copy className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">{t("provider.duplicate")}</TooltipContent>
+            <TooltipContent side="bottom">
+              {t("provider.duplicate")}
+            </TooltipContent>
           </Tooltip>
 
           <Tooltip>
             <TooltipTrigger asChild>
               <span
-                className={cn(
-                  "inline-flex",
-                  !onTest && "cursor-not-allowed",
-                )}
+                className={cn("inline-flex", !onTest && "cursor-not-allowed")}
               >
                 <Button
                   size="icon"
@@ -406,7 +405,9 @@ export function ProviderActions({
                 </Button>
               </span>
             </TooltipTrigger>
-            <TooltipContent side="bottom">{t("provider.configureUsage")}</TooltipContent>
+            <TooltipContent side="bottom">
+              {t("provider.configureUsage")}
+            </TooltipContent>
           </Tooltip>
 
           {onOpenTerminal && (
