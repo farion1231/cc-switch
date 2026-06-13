@@ -285,6 +285,12 @@ mod tests {
             verifiability: 0.8,
             has_image: false,
             need_code: true,
+            has_audio: false,
+            has_tools: false,
+            is_streaming: false,
+            requires_exact_format: false,
+            eligible_for_orchestration: true,
+            ineligibility_reason: None,
         };
 
         logger.log_request(&profile, "req-c");

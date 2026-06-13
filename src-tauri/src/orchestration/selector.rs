@@ -96,6 +96,12 @@ mod tests {
             verifiability: 0.1,
             has_image: false,
             need_code: false,
+            has_audio: false,
+            has_tools: false,
+            is_streaming: false,
+            requires_exact_format: false,
+            eligible_for_orchestration: true,
+            ineligibility_reason: None,
         };
         let config = default_config();
         let result = StrategySelector::select(&profile, &config);
@@ -113,6 +119,12 @@ mod tests {
             verifiability: 0.9,
             has_image: false,
             need_code: true,
+            has_audio: false,
+            has_tools: false,
+            is_streaming: false,
+            requires_exact_format: false,
+            eligible_for_orchestration: true,
+            ineligibility_reason: None,
         };
         let config = default_config();
         let result = StrategySelector::select(&profile, &config);
@@ -131,6 +143,12 @@ mod tests {
             verifiability: 0.1,
             has_image: false,
             need_code: false,
+            has_audio: false,
+            has_tools: false,
+            is_streaming: false,
+            requires_exact_format: false,
+            eligible_for_orchestration: true,
+            ineligibility_reason: None,
         };
         let mut config = OrchestrationConfig::default();
         config.strategies.clear();

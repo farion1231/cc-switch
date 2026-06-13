@@ -27,6 +27,12 @@ pub struct TaskProfile {
     pub verifiability: f64,
     pub has_image: bool,
     pub need_code: bool,
+    pub has_audio: bool,
+    pub has_tools: bool,
+    pub is_streaming: bool,
+    pub requires_exact_format: bool,
+    pub eligible_for_orchestration: bool,
+    pub ineligibility_reason: Option<String>,
 }
 
 pub struct TaskClassifier;
@@ -38,8 +44,14 @@ impl TaskClassifier {
 
         let content_text = extract_text_content(messages);
         let msg_count = messages.map(|m| m.len()).unwrap_or(0);
-        let has_tools = tools.map(|t| !t.is_empty()).unwrap_or(false);
         let has_image = detect_image(messages);
+
+        let has_tools = Self::has_tools(body);
+        let is_streaming = Self::is_streaming(body);
+        let has_audio = Self::has_audio(body);
+        let requires_exact_format = Self::requires_exact_format(body);
+        let (eligible_for_orchestration, ineligibility_reason) =
+            Self::orchestration_eligibility(is_streaming, has_tools, has_audio);
 
         let task_type = Self::detect_task_type(&content_text, has_tools, has_image);
         let complexity = Self::calc_complexity(&content_text, msg_count, has_tools);
@@ -54,7 +66,92 @@ impl TaskClassifier {
             verifiability,
             has_image,
             need_code,
+            has_audio,
+            has_tools,
+            is_streaming,
+            requires_exact_format,
+            eligible_for_orchestration,
+            ineligibility_reason,
         }
+    }
+
+    fn has_tools(body: &serde_json::Value) -> bool {
+        body.get("tools")
+            .and_then(|v| v.as_array())
+            .map(|tools| !tools.is_empty())
+            .unwrap_or(false)
+    }
+
+    fn is_streaming(body: &serde_json::Value) -> bool {
+        body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false)
+    }
+
+    fn has_audio(body: &serde_json::Value) -> bool {
+        let Some(messages) = body.get("messages").and_then(|v| v.as_array()) else {
+            return false;
+        };
+
+        messages.iter().any(|message| {
+            let Some(content) = message.get("content") else {
+                return false;
+            };
+            if let Some(items) = content.as_array() {
+                return items.iter().any(|item| {
+                    matches!(
+                        item.get("type").and_then(|v| v.as_str()),
+                        Some("input_audio") | Some("audio") | Some("audio_url")
+                    ) || item.get("audio").is_some()
+                });
+            }
+            false
+        })
+    }
+
+    fn requires_exact_format(body: &serde_json::Value) -> bool {
+        let text = Self::extract_text(body).to_ascii_lowercase();
+        text.contains("return json")
+            || text.contains("valid json")
+            || text.contains("exact format")
+            || text.contains("do not include anything else")
+    }
+
+    fn orchestration_eligibility(
+        is_streaming: bool,
+        has_tools: bool,
+        has_audio: bool,
+    ) -> (bool, Option<String>) {
+        if is_streaming || has_tools || has_audio {
+            return (false, Some("streaming_or_tools_or_audio".to_string()));
+        }
+        (true, None)
+    }
+
+    fn extract_text(body: &serde_json::Value) -> String {
+        let Some(messages) = body.get("messages").and_then(|v| v.as_array()) else {
+            return String::new();
+        };
+
+        messages
+            .iter()
+            .filter_map(|message| message.get("content"))
+            .flat_map(|content| {
+                if let Some(s) = content.as_str() {
+                    vec![s.to_string()]
+                } else if let Some(items) = content.as_array() {
+                    items
+                        .iter()
+                        .filter_map(|item| {
+                            item.get("text")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     fn detect_task_type(text: &str, has_tools: bool, has_image: bool) -> TaskType {
@@ -249,5 +346,47 @@ mod tests {
         let profile = TaskClassifier::classify(&body);
         assert_eq!(profile.task_type, TaskType::Image);
         assert!(profile.has_image);
+    }
+
+    #[test]
+    fn classify_detects_streaming_tools_and_audio() {
+        let body = json!({
+            "stream": true,
+            "tools": [{"name": "shell"}],
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "input_audio", "audio": {"data": "abc", "format": "wav"}},
+                    {"type": "text", "text": "transcribe this"}
+                ]
+            }]
+        });
+
+        let profile = TaskClassifier::classify(&body);
+
+        assert!(profile.is_streaming);
+        assert!(profile.has_tools);
+        assert!(profile.has_audio);
+        assert!(!profile.eligible_for_orchestration);
+        assert_eq!(
+            profile.ineligibility_reason.as_deref(),
+            Some("streaming_or_tools_or_audio")
+        );
+    }
+
+    #[test]
+    fn classify_text_request_is_eligible() {
+        let body = json!({
+            "stream": false,
+            "messages": [{"role": "user", "content": "explain merge sort"}]
+        });
+
+        let profile = TaskClassifier::classify(&body);
+
+        assert!(!profile.is_streaming);
+        assert!(!profile.has_tools);
+        assert!(!profile.has_audio);
+        assert!(profile.eligible_for_orchestration);
+        assert_eq!(profile.ineligibility_reason, None);
     }
 }
