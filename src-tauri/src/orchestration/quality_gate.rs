@@ -51,6 +51,54 @@ pub struct QualityResult {
     pub individual_scores: Vec<(String, f64)>,
 }
 
+/// Enforceable action a downstream consumer must take in response to a
+/// `QualityResult`.  This is what turns a passive score into control flow —
+/// callers match on `QualityAction` to decide whether to accept, retry,
+/// escalate, fall back, or surface a visible failure.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QualityAction {
+    Accept,
+    Retry,
+    Escalate,
+    Fallback,
+    FailVisible,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QualityDecision {
+    pub action: QualityAction,
+    pub score: f64,
+    pub threshold: f64,
+    pub reason: String,
+}
+
+impl QualityDecision {
+    pub fn from_result(result: &QualityResult, threshold: f64) -> Self {
+        if result.score >= threshold && result.passed {
+            return Self {
+                action: QualityAction::Accept,
+                score: result.score,
+                threshold,
+                reason: format!(
+                    "score {:.2} met threshold {:.2}",
+                    result.score, threshold
+                ),
+            };
+        }
+
+        Self {
+            action: QualityAction::Fallback,
+            score: result.score,
+            threshold,
+            reason: format!(
+                "score {:.2} below threshold {:.2}",
+                result.score, threshold
+            ),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // QualityGate implementation
 // ---------------------------------------------------------------------------
@@ -1294,5 +1342,33 @@ path = "/usr/local/bad"
             "TODO/FIXME penalty should be minor, got {}",
             score
         );
+    }
+
+    // ---- QualityDecision: enforceable control flow ----
+
+    #[test]
+    fn quality_decision_accepts_score_at_threshold() {
+        let result = QualityResult {
+            passed: true,
+            score: 0.82,
+            individual_scores: vec![("rubric".to_string(), 0.82)],
+        };
+
+        let decision = QualityDecision::from_result(&result, 0.80);
+        assert_eq!(decision.action, QualityAction::Accept);
+        assert_eq!(decision.score, 0.82);
+    }
+
+    #[test]
+    fn quality_decision_falls_back_below_threshold() {
+        let result = QualityResult {
+            passed: false,
+            score: 0.62,
+            individual_scores: vec![("rubric".to_string(), 0.62)],
+        };
+
+        let decision = QualityDecision::from_result(&result, 0.80);
+        assert_eq!(decision.action, QualityAction::Fallback);
+        assert!(decision.reason.contains("below threshold"));
     }
 }
