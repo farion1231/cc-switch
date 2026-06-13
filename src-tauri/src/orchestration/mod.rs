@@ -25,6 +25,7 @@ pub mod selector;
 pub mod shuffle;
 pub mod spot_check;
 pub mod stats_engine;
+pub mod trace_ledger;
 pub mod workflow_assembler;
 pub mod workflow_lifecycle;
 
@@ -50,4 +51,5 @@ pub use selector::StrategySelector;
 pub use shuffle::{CandidateAnswer, CandidateShuffler, ShuffledCandidates};
 pub use spot_check::SpotChecker;
 pub use stats_engine::StatsEngine;
+pub use trace_ledger::{TraceLedger, TraceStep};
 pub use workflow_assembler::WorkflowAssembler;
