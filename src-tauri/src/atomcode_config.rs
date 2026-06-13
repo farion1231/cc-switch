@@ -61,6 +61,9 @@ fn json_scalar_to_toml(value: &Value) -> Option<toml_edit::Value> {
 }
 
 /// 纯函数：把一个 atomcode provider（settings）合并进现有 config.toml 文本。
+///
+/// The provider block is fully owned and replaced by cc-switch on every write;
+/// any pre-existing unknown fields inside that block are not preserved.
 pub fn merge_atomcode_provider_into_config(
     existing: &str,
     settings: &Value,
@@ -120,7 +123,7 @@ pub fn extract_atomcode_provider_settings(config_text: &str) -> Result<Value, Ap
     }
 
     let toml_val: toml::Value = toml::from_str(config_text)
-        .map_err(|e| AppError::Message(format!("Invalid atomcode config.toml: {e}")))?;
+        .map_err(|e| AppError::toml(&get_atomcode_config_path(), e))?;
 
     let Some(providers) = toml_val.get("providers").and_then(|p| p.as_table()) else {
         return Err(AppError::localized(
@@ -226,7 +229,7 @@ enabled = true
     }
 
     #[test]
-    fn merge_upserts_existing_block_fields() {
+    fn merge_replaces_existing_block_fields() {
         let existing = r#"default_provider = "deepseek"
 
 [providers.deepseek]
