@@ -942,6 +942,15 @@ export function ClaudeDesktopProviderForm({
                             : t("claudeDesktop.routeRoleSonnet", {
                                 defaultValue: "Sonnet",
                               });
+                    // Haiku 档示范映射到轻量模型（flash），其余档映射到 pro；
+                    // 两列占位联动，保持每行「菜单显示名 ↔ 实际请求模型」品牌一致。
+                    const isHaikuRole = role === "haiku";
+                    const labelPlaceholder = isHaikuRole
+                      ? "DeepSeek V4 Flash"
+                      : "DeepSeek V4 Pro";
+                    const modelPlaceholder = isHaikuRole
+                      ? "deepseek-v4-flash"
+                      : "deepseek-v4-pro";
                     return (
                       <div
                         key={route.rowId}
@@ -957,7 +966,7 @@ export function ClaudeDesktopProviderForm({
                               labelOverride: event.target.value,
                             })
                           }
-                          placeholder="DeepSeek V4 Pro"
+                          placeholder={labelPlaceholder}
                         />
                         <div className="flex gap-1">
                           <Input
@@ -965,7 +974,7 @@ export function ClaudeDesktopProviderForm({
                             onChange={(event) =>
                               updateRoute(index, { model: event.target.value })
                             }
-                            placeholder="kimi-k2 / deepseek-chat"
+                            placeholder={modelPlaceholder}
                             className="flex-1"
                           />
                           {fetchedModels.length > 0 && (
