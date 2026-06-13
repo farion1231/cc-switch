@@ -454,8 +454,36 @@ impl StrategyExecutor {
             return Err("All MoA proposers failed".to_string());
         }
 
-        // Phase 2: Aggregator synthesizes the best answer
-        let aggregation_prompt = Self::build_moa_aggregation_prompt(&proposals);
+        // Phase 2: Ranker scores each proposal; weak proposals are filtered out
+        // before aggregation. If the ranker fails or yields no valid scores, we
+        // fall back to aggregating all proposals.
+        let ranking_prompt = Self::build_moa_ranking_prompt(&proposals);
+        let ranking_resp = self
+            .caller
+            .call_prompt(aggregator_key, MOA_AGGREGATOR_SYSTEM, &ranking_prompt, Some(0.0))
+            .await?;
+        total_input += ranking_resp.usage.input_tokens;
+        total_output += ranking_resp.usage.output_tokens;
+
+        let scores = Self::parse_moa_scores(&ranking_resp.content);
+        let ranked_proposals: Vec<(String, ModelResponse)> = if scores.is_empty() {
+            proposals.clone()
+        } else {
+            scores
+                .into_iter()
+                .filter(|(_, score)| *score >= 0.50)
+                .filter_map(|(idx, _)| proposals.get(idx).cloned())
+                .collect()
+        };
+
+        let proposals_for_aggregation = if ranked_proposals.is_empty() {
+            proposals.clone()
+        } else {
+            ranked_proposals
+        };
+
+        // Phase 3: Aggregator synthesizes the best answer
+        let aggregation_prompt = Self::build_moa_aggregation_prompt(&proposals_for_aggregation);
         let aggregator_resp = self
             .caller
             .call_prompt(
@@ -469,11 +497,36 @@ impl StrategyExecutor {
         total_input += aggregator_resp.usage.input_tokens;
         total_output += aggregator_resp.usage.output_tokens;
 
-        // Phase 3: Quality gate on the aggregated result
+        // Phase 4: Quality gate on the aggregated result
         let quality_result = self
             .quality_gate
             .verify(&aggregator_resp.content, None, Some(&self.caller), None)
             .await;
+
+        // Threshold gate: if the aggregate score is below the configured threshold,
+        // fall back to the best-ranked proposal instead of returning the weak
+        // aggregate. This makes quality_threshold actually control MoA flow.
+        if quality_result.score < quality_threshold {
+            if let Some((model_key, best_resp)) = proposals_for_aggregation.first() {
+                log::warn!(
+                    "[MoA] aggregate score {:.2} below threshold {:.2}; falling back to best proposal '{}'",
+                    quality_result.score,
+                    quality_threshold,
+                    model_key
+                );
+                return Ok(ExecutionResult {
+                    content: best_resp.content.clone(),
+                    model_used: best_resp.model.clone(),
+                    strategy: "moa_fallback_best_candidate".to_string(),
+                    total_latency_ms: start.elapsed().as_millis() as u64,
+                    total_input_tokens: total_input,
+                    total_output_tokens: total_output,
+                    cascade_attempts: proposals.len() as u32,
+                    verified: false,
+                    judge_score: Some(quality_result.score),
+                });
+            }
+        }
 
         Ok(ExecutionResult {
             content: aggregator_resp.content,
@@ -508,6 +561,47 @@ impl StrategyExecutor {
              ANSWER:\n<your synthesized response>",
         );
         prompt
+    }
+
+    fn build_moa_ranking_prompt(proposals: &[(String, ModelResponse)]) -> String {
+        let mut prompt = String::from(
+            "Rank these candidate answers for correctness, completeness, instruction following, and format compliance.\n\n",
+        );
+        for (i, (key, resp)) in proposals.iter().enumerate() {
+            prompt.push_str(&format!("Candidate {} ({})\n{}\n\n", i + 1, key, resp.content));
+        }
+        prompt.push_str(
+            "Return exactly one line:\nSCORES_JSON: [{\"candidate\":1,\"score\":0.0},{\"candidate\":2,\"score\":0.0}]",
+        );
+        prompt
+    }
+
+    fn parse_moa_scores(content: &str) -> Vec<(usize, f64)> {
+        let Some((_, json_part)) = content.split_once("SCORES_JSON:") else {
+            return Vec::new();
+        };
+        let parsed: Value = match serde_json::from_str(json_part.trim()) {
+            Ok(v) => v,
+            Err(_) => return Vec::new(),
+        };
+        let Some(items) = parsed.as_array() else {
+            return Vec::new();
+        };
+
+        let mut scores: Vec<(usize, f64)> = items
+            .iter()
+            .filter_map(|item| {
+                let candidate = item.get("candidate").and_then(|v| v.as_u64())?;
+                let score = item.get("score").and_then(|v| v.as_f64())?;
+                if candidate == 0 {
+                    return None;
+                }
+                Some(((candidate - 1) as usize, score.clamp(0.0, 1.0)))
+            })
+            .collect();
+
+        scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scores
     }
 
     fn extract_score_from_judge(content: &str) -> Option<f64> {
@@ -614,5 +708,36 @@ mod tests {
     fn extract_score_missing_returns_none() {
         let content = "No score line here, just a regular response.";
         assert_eq!(StrategyExecutor::extract_score_from_judge(content), None);
+    }
+
+    #[test]
+    fn moa_ranking_prompt_contains_scores_and_candidates() {
+        let proposals = vec![
+            ("a".to_string(), ModelResponse {
+                content: "weak answer".to_string(),
+                model: "a-model".to_string(),
+                usage: Default::default(),
+                latency_ms: 10,
+            }),
+            ("b".to_string(), ModelResponse {
+                content: "strong answer".to_string(),
+                model: "b-model".to_string(),
+                usage: Default::default(),
+                latency_ms: 20,
+            }),
+        ];
+
+        let prompt = StrategyExecutor::build_moa_ranking_prompt(&proposals);
+        assert!(prompt.contains("Candidate 1"));
+        assert!(prompt.contains("Candidate 2"));
+        assert!(prompt.contains("SCORES_JSON"));
+    }
+
+    #[test]
+    fn parse_moa_scores_sorts_descending() {
+        let content = r#"SCORES_JSON: [{"candidate":2,"score":0.9},{"candidate":1,"score":0.4}]"#;
+        let scores = StrategyExecutor::parse_moa_scores(content);
+
+        assert_eq!(scores, vec![(1, 0.9), (0, 0.4)]);
     }
 }
