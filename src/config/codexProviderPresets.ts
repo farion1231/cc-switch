@@ -949,7 +949,11 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://api.atlascloud.ai/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
-      { model: "zai-org/glm-5.1", displayName: "GLM 5.1" },
+      {
+        model: "zai-org/glm-5.1",
+        displayName: "GLM 5.1",
+        contextWindow: 200000,
+      },
     ]),
     isPartner: true,
     partnerPromotionKey: "atlascloud",
