@@ -49,7 +49,7 @@ describe("ClaudeDesktopProviderForm", () => {
       },
     });
 
-    // 固定三档（Sonnet / Opus / Haiku）下有三个菜单显示名输入，取 Sonnet（首个）。
+    // 固定四档（Sonnet / Opus / Fable / Haiku）下有四个菜单显示名输入，取 Sonnet（首个）。
     const input = screen.getAllByPlaceholderText(
       "DeepSeek V4 Pro",
     )[0] as HTMLInputElement;
@@ -115,7 +115,11 @@ describe("ClaudeDesktopProviderForm", () => {
     });
 
     // 固定四档：每档各一个「菜单显示名」输入框，无论初始只配了几档。
-    expect(screen.getAllByPlaceholderText("DeepSeek V4 Pro")).toHaveLength(4);
+    // Haiku 档的占位示例是 "DeepSeek V4 Flash"、其余三档是 "DeepSeek V4 Pro"
+    // （见组件的 role-consistent 占位逻辑），故用正则同时匹配两种占位、数满四档。
+    expect(
+      screen.getAllByPlaceholderText(/DeepSeek V4 (Pro|Flash)/),
+    ).toHaveLength(4);
   });
 
   it("代理模式初始无路由且默认路由未就绪时不渲染空四档", () => {
@@ -177,14 +181,14 @@ describe("ClaudeDesktopProviderForm", () => {
       "claude-fable-5": { model: "upstream-old" },
       "claude-haiku-4-5": { model: "upstream-old" },
     });
-    expect(
-      Object.keys(submitted.meta.claudeDesktopModelRoutes).sort(),
-    ).toEqual([
-      "claude-fable-5",
-      "claude-haiku-4-5",
-      "claude-opus-4-8",
-      "claude-sonnet-4-6",
-    ]);
+    expect(Object.keys(submitted.meta.claudeDesktopModelRoutes).sort()).toEqual(
+      [
+        "claude-fable-5",
+        "claude-haiku-4-5",
+        "claude-opus-4-8",
+        "claude-sonnet-4-6",
+      ],
+    );
   });
 
   it("回填空档时继承 Sonnet 的 1M 声明", async () => {
