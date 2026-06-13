@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  useCodexSessionUsageSummaries,
   useProviderCodexSessions,
   useSetCodexSessionProviderLinks,
 } from "@/lib/query/codexSessions";
@@ -22,6 +23,10 @@ interface CodexSessionsDialogProps {
   provider: Provider | null;
   providers: Provider[];
   onOpenChange: (open: boolean) => void;
+}
+
+function formatTokens(value: number) {
+  return new Intl.NumberFormat().format(value);
 }
 
 export function CodexSessionsDialog({
@@ -37,11 +42,16 @@ export function CodexSessionsDialog({
     isLoading,
     refetch,
   } = useProviderCodexSessions(providerId);
+  const { data: usageSummaries = [] } = useCodexSessionUsageSummaries();
   const mutation = useSetCodexSessionProviderLinks(providerId ?? "");
 
   const codexProviders = useMemo(
     () => providers.filter((candidate) => candidate.id),
     [providers],
+  );
+  const usageBySession = useMemo(
+    () => new Map(usageSummaries.map((summary) => [summary.sessionId, summary])),
+    [usageSummaries],
   );
 
   const handleShareAll = async (sessionId: string, sourcePath?: string) => {
@@ -107,6 +117,7 @@ export function CodexSessionsDialog({
               {sessions.map((item) => {
                 const session = item.session;
                 const sourcePath = session.sourcePath;
+                const usage = usageBySession.get(session.sessionId);
                 return (
                   <div
                     key={`${session.sessionId}:${sourcePath ?? ""}`}
@@ -201,6 +212,41 @@ export function CodexSessionsDialog({
                         })}
                         : {item.linkedProviderIds.length}
                       </span>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                      <div className="rounded-md bg-muted/60 p-2">
+                        <div className="text-muted-foreground">
+                          {t("usage.inputTokens")}
+                        </div>
+                        <div className="font-medium">
+                          {formatTokens(usage?.totalInputTokens ?? 0)}
+                        </div>
+                      </div>
+                      <div className="rounded-md bg-muted/60 p-2">
+                        <div className="text-muted-foreground">
+                          {t("usage.outputTokens")}
+                        </div>
+                        <div className="font-medium">
+                          {formatTokens(usage?.totalOutputTokens ?? 0)}
+                        </div>
+                      </div>
+                      <div className="rounded-md bg-muted/60 p-2">
+                        <div className="text-muted-foreground">
+                          {t("usage.cacheReadTokens")}
+                        </div>
+                        <div className="font-medium">
+                          {formatTokens(usage?.totalCacheReadTokens ?? 0)}
+                        </div>
+                      </div>
+                      <div className="rounded-md bg-muted/60 p-2">
+                        <div className="text-muted-foreground">
+                          {t("usage.cost")}
+                        </div>
+                        <div className="font-medium">
+                          ${usage?.totalCostUsd ?? "0.000000"}
+                        </div>
+                      </div>
                     </div>
 
                     <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">

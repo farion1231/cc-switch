@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { sessionsApi } from "@/lib/api/sessions";
+import { usageApi } from "@/lib/api/usage";
 import type { SetCodexSessionProvidersRequest } from "@/types";
 
 export const codexSessionKeys = {
@@ -13,6 +14,13 @@ export function useProviderCodexSessions(providerId?: string) {
       : (["codex-sessions", "none"] as const),
     queryFn: () => sessionsApi.listProviderCodexSessions(providerId!),
     enabled: Boolean(providerId),
+  });
+}
+
+export function useCodexSessionUsageSummaries() {
+  return useQuery({
+    queryKey: ["codex-session-usage-summaries"],
+    queryFn: () => usageApi.getCodexSessionUsageSummaries(),
   });
 }
 
