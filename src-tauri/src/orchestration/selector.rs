@@ -35,6 +35,18 @@ impl StrategySelector {
             return None;
         }
 
+        // Format-sensitive requests (strict JSON, schema-validated, code with exact
+        // syntax requirements) must NOT be routed through Debate/MoA/Cascade, because
+        // those strategies wrap model output in SCORE/REASONING/BEST/ANSWER scaffolding
+        // that breaks downstream parsers. Short-circuit to Passthrough so the request
+        // reaches the upstream provider untouched.
+        if profile.requires_exact_format {
+            log::info!(
+                "[Orchestration] requires_exact_format=true; skipping orchestration to preserve output format"
+            );
+            return None;
+        }
+
         let mut candidates: Vec<(String, StrategyAction, f64, i32)> = Vec::new();
         let mut rejected = Vec::new();
 
@@ -44,10 +56,24 @@ impl StrategySelector {
         for name in names {
             let def = &config.strategies[name];
             let score = Self::match_score(profile, &def.when);
-            if score <= 0.0 {
+            // C5 fix: require minimum 0.5 score for expensive-strategy eligibility.
+            // Without this, a partial-match (e.g. 0.33 from risk=critical alone) plus
+            // priority sort lets trivial prompts force MoA/Debate — denial-of-wallet.
+            let is_expensive = matches!(
+                def.action,
+                StrategyAction::Cascade { .. }
+                    | StrategyAction::Debate { .. }
+                    | StrategyAction::MoA { .. }
+            );
+            let min_threshold = if is_expensive { 0.5 } else { 0.0 };
+            if score <= min_threshold {
                 rejected.push(RejectedStrategy {
                     strategy_name: name.clone(),
-                    reason: "condition_score_zero".to_string(),
+                    reason: if is_expensive && score <= 0.5 {
+                        "expensive_strategy_below_min_score".to_string()
+                    } else {
+                        "condition_score_zero".to_string()
+                    },
                 });
                 continue;
             }
@@ -360,5 +386,87 @@ strategies:
         let config = OrchestrationConfig::default();
 
         assert!(StrategySelector::select_detailed(&profile, &config).is_none());
+    }
+
+    #[test]
+    fn requires_exact_format_short_circuits_to_passthrough() {
+        // C3 fix: JSON-only / schema-validated requests must NOT be routed through
+        // Debate/MoA/Cascade because the scaffolding (SCORE/REASONING/BEST/ANSWER)
+        // corrupts strict-JSON output. Selector returns None so engine passes through.
+        let profile = TaskProfile {
+            task_type: TaskType::Coding,
+            complexity: 0.5,
+            risk: RiskLevel::Medium,
+            verifiability: 0.9,
+            has_image: false,
+            need_code: true,
+            has_audio: false,
+            has_tools: false,
+            is_streaming: false,
+            requires_exact_format: true,
+            eligible_for_orchestration: true,
+            ineligibility_reason: None,
+        };
+        let config = default_config();
+        let result = StrategySelector::select(&profile, &config);
+        assert!(
+            result.is_none(),
+            "requires_exact_format=true must short-circuit to Passthrough"
+        );
+    }
+
+    #[test]
+    fn expensive_strategies_require_minimum_half_match_score() {
+        // C5 fix: a trivial prompt that only trips risk=critical (0.5 partial match
+        // from risk alone against MoA's complexity+risk condition) must NOT reach
+        // MoA. Without the threshold, priority 90 lets it beat cheaper strategies.
+        let profile = TaskProfile {
+            task_type: TaskType::Chat,
+            complexity: 0.1, // MoA condition is [0.9, 1.0] — misses
+            risk: RiskLevel::Critical, // MoA condition includes "critical" — matches
+            verifiability: 0.1,
+            has_image: false,
+            need_code: false,
+            has_audio: false,
+            has_tools: false,
+            is_streaming: false,
+            requires_exact_format: false,
+            eligible_for_orchestration: true,
+            ineligibility_reason: None,
+        };
+        let config = default_config();
+        let result = StrategySelector::select(&profile, &config);
+        if let Some((name, _)) = result {
+            assert_ne!(
+                name, "moa",
+                "MoA must not be reachable with 0.5 partial-match score (cost-amplification vector)"
+            );
+        }
+    }
+
+    #[test]
+    fn expensive_strategy_at_full_match_still_eligible() {
+        // Sanity: the new threshold doesn't break the legitimate path.
+        // MoA at full match (complexity + risk both match) = 1.0 score → eligible.
+        let profile = TaskProfile {
+            task_type: TaskType::Coding,
+            complexity: 0.95, // matches MoA [0.9, 1.0]
+            risk: RiskLevel::Critical, // matches MoA ["critical"]
+            verifiability: 0.9,
+            has_image: false,
+            need_code: true,
+            has_audio: false,
+            has_tools: false,
+            is_streaming: false,
+            requires_exact_format: false,
+            eligible_for_orchestration: true,
+            ineligibility_reason: None,
+        };
+        let config = default_config();
+        let result = StrategySelector::select(&profile, &config);
+        assert!(result.is_some(), "full match must remain eligible");
+        let (name, action) = result.unwrap();
+        assert_eq!(name, "moa");
+        assert!(matches!(action, StrategyAction::MoA { .. }));
     }
 }

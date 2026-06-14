@@ -1,3 +1,4 @@
+use crate::orchestration::config::validate_base_url;
 use crate::provider::Provider;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -239,8 +240,10 @@ fn extract_model(provider: &Provider) -> Option<String> {
 }
 
 /// Extract the base URL from common env/settings keys, falling back to the
-/// provider's `website_url`. Trailing slashes are trimmed for callers that
-/// concatenate paths.
+/// provider's `website_url`. Every candidate URL must pass [`validate_base_url`]
+/// (HTTPS-only, no internal/private hosts). Invalid URLs are rejected with a
+/// warning so a poisoned provider entry cannot exfiltrate API keys to internal
+/// addresses (e.g. cloud metadata endpoints at 169.254.169.254).
 fn extract_base_url(provider: &Provider) -> Option<String> {
     let env = provider.settings_config.get("env");
     let explicit = env
@@ -253,7 +256,7 @@ fn extract_base_url(provider: &Provider) -> Option<String> {
         .map(|s| s.trim_end_matches('/').to_string());
 
     if let Some(url) = explicit {
-        return Some(url);
+        return validate_or_reject_base_url(provider, &url);
     }
 
     if let Some(homepage) = provider.website_url.clone() {
@@ -263,10 +266,28 @@ fn extract_base_url(provider: &Provider) -> Option<String> {
             provider.id,
             homepage
         );
-        return Some(homepage);
+        return validate_or_reject_base_url(provider, &homepage);
     }
 
     None
+}
+
+/// Apply the SSRF guard to a base URL candidate. On validation failure, log
+/// and return `None` so the caller's `build_target` surfaces a missing-URL
+/// error rather than silently shipping credentials to an internal host.
+fn validate_or_reject_base_url(provider: &Provider, url: &str) -> Option<String> {
+    match validate_base_url(url) {
+        Ok(()) => Some(url.to_string()),
+        Err(reason) => {
+            log::warn!(
+                "Provider '{}' base URL '{}' rejected by SSRF guard: {}",
+                provider.id,
+                url,
+                reason
+            );
+            None
+        }
+    }
 }
 
 /// Extract the API key from common env/settings keys, in priority order.
@@ -514,5 +535,91 @@ mod tests {
             "Debug output must not leak api_key: {dbg}"
         );
         assert!(dbg.contains("<redacted>"), "Debug output should mark redaction: {dbg}");
+    }
+
+    #[test]
+    fn rejects_cloud_metadata_endpoint_via_ssrf_guard() {
+        // Provider entry poisoned with AWS metadata endpoint as base URL.
+        // SSRF guard must reject it instead of returning it for call_target to POST to.
+        let p = provider(
+            "claude-metadata",
+            "anthropic",
+            "claude-1",
+            "https://169.254.169.254",
+            "sk-exfil-target",
+        );
+        let result =
+            ProviderModelResolver::resolve_role("frontier", &IndexMap::from([("claude-metadata".to_string(), p)]), &[ModelCapability::Text]);
+        assert!(
+            result.is_err(),
+            "SSRF guard must reject 169.254.169.254 base URL, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_localhost_base_url_via_ssrf_guard() {
+        let p = provider(
+            "claude-local",
+            "anthropic",
+            "claude-1",
+            "https://localhost",
+            "sk-local",
+        );
+        let result =
+            ProviderModelResolver::resolve_role("frontier", &IndexMap::from([("claude-local".to_string(), p)]), &[ModelCapability::Text]);
+        assert!(
+            result.is_err(),
+            "SSRF guard must reject localhost base URL, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_http_scheme_base_url_via_ssrf_guard() {
+        // validate_base_url requires HTTPS. A plaintext http:// URL must be rejected
+        // even if the host is otherwise valid.
+        let p = provider(
+            "claude-http",
+            "anthropic",
+            "claude-1",
+            "http://api.example.com",
+            "sk-test",
+        );
+        let result =
+            ProviderModelResolver::resolve_role("frontier", &IndexMap::from([("claude-http".to_string(), p)]), &[ModelCapability::Text]);
+        assert!(
+            result.is_err(),
+            "SSRF guard must reject non-HTTPS base URL, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_website_url_fallback_pointing_to_internal_host() {
+        // When explicit base URL is missing, the resolver falls back to website_url.
+        // That fallback must also pass the SSRF guard, otherwise a poisoned provider
+        // with a malicious homepage could still exfiltrate credentials.
+        let mut p = Provider::with_id(
+            "claude-internal".to_string(),
+            "Provider claude-internal".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "sk-test",
+                    "ANTHROPIC_MODEL": "claude-1",
+                }
+            }),
+            Some("https://10.0.0.5".to_string()),
+        );
+        p.meta = Some(ProviderMeta {
+            provider_type: Some("anthropic".to_string()),
+            ..ProviderMeta::default()
+        });
+        let result = ProviderModelResolver::resolve_role(
+            "frontier",
+            &IndexMap::from([("claude-internal".to_string(), p)]),
+            &[ModelCapability::Text],
+        );
+        assert!(
+            result.is_err(),
+            "SSRF guard must reject website_url fallback to internal host, got: {result:?}"
+        );
     }
 }

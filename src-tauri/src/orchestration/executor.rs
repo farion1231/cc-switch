@@ -397,7 +397,7 @@ impl StrategyExecutor {
         }
 
         Ok(ExecutionResult {
-            content: judge_resp.content,
+            content: Self::extract_answer_from_judge(&judge_resp.content),
             model_used: judge_resp.model,
             strategy: "debate".to_string(),
             total_latency_ms: start.elapsed().as_millis() as u64,
@@ -616,6 +616,20 @@ impl StrategyExecutor {
         None
     }
 
+    fn extract_answer_from_judge(content: &str) -> String {
+        if let Some(idx) = content.find("ANSWER:") {
+            let after_marker = &content[idx + "ANSWER:".len()..];
+            return after_marker
+                .trim_start_matches(['\n', '\r', ' ', '\t'])
+                .trim_end()
+                .to_string();
+        }
+        log::warn!(
+            "[Debate] judge response missing ANSWER: marker; returning raw content (may include rubric)"
+        );
+        content.trim().to_string()
+    }
+
     fn build_debate_critique_prompt(candidates: &[(String, ModelResponse)]) -> String {
         let mut prompt = String::from(
             "Review the candidate answers. Identify factual errors, missing requirements, unsafe claims, and format violations.\n\n",
@@ -708,6 +722,36 @@ mod tests {
     fn extract_score_missing_returns_none() {
         let content = "No score line here, just a regular response.";
         assert_eq!(StrategyExecutor::extract_score_from_judge(content), None);
+    }
+
+    #[test]
+    fn extract_answer_strips_rubric_before_answer_marker() {
+        let content = "Critique: candidate 1 missed X.\nScore reasoning: ...\nSCORE: 0.85\nANSWER:\nThe best approach is X because Y.";
+        let answer = StrategyExecutor::extract_answer_from_judge(content);
+        assert_eq!(answer, "The best approach is X because Y.");
+        assert!(!answer.contains("Critique"));
+        assert!(!answer.contains("SCORE:"));
+    }
+
+    #[test]
+    fn extract_answer_handles_inline_answer_marker() {
+        let content = "Some preamble.\nANSWER: Short inline answer.";
+        let answer = StrategyExecutor::extract_answer_from_judge(content);
+        assert_eq!(answer, "Short inline answer.");
+    }
+
+    #[test]
+    fn extract_answer_returns_trimmed_content_when_no_marker() {
+        let content = "  just the raw content without marker  \n";
+        let answer = StrategyExecutor::extract_answer_from_judge(content);
+        assert_eq!(answer, "just the raw content without marker");
+    }
+
+    #[test]
+    fn extract_answer_handles_multiline_answer_body() {
+        let content = "SCORE: 0.9\nANSWER:\nLine one.\nLine two.\nLine three.";
+        let answer = StrategyExecutor::extract_answer_from_judge(content);
+        assert_eq!(answer, "Line one.\nLine two.\nLine three.");
     }
 
     #[test]
