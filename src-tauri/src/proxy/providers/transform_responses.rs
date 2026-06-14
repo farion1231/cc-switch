@@ -355,6 +355,23 @@ pub(crate) fn build_anthropic_usage_from_responses(usage: Option<&Value>) -> Val
         result["cache_creation_input_tokens"] = v.clone();
     }
 
+    // OpenAI/Responses 的 input(prompt_tokens/input_tokens)含缓存命中，Anthropic input_tokens 不含
+    // → 减去 cache_read 与 cache_creation，使其成为 fresh input。本函数在计量意义上是 claude 专属
+    // （Codex Responses 透传走 from_codex_response_*，不调用本函数），故可安全在此扣减。三桶互斥，
+    // 恒等：input + cache_read + cache_creation == 上游 input(inclusive)。与 build_anthropic_usage_json
+    // (#2774) 及 transform_gemini 的 saturating_sub 对称；一处同时覆盖非流式与流式(streaming_responses)。
+    let cached = result
+        .get("cache_read_input_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let cache_creation = result
+        .get("cache_creation_input_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    if cached > 0 || cache_creation > 0 {
+        result["input_tokens"] = json!(input.saturating_sub(cached).saturating_sub(cache_creation));
+    }
+
     result
 }
 
@@ -1156,7 +1173,8 @@ mod tests {
         });
 
         let result = responses_to_anthropic(input).unwrap();
-        assert_eq!(result["usage"]["input_tokens"], 100);
+        // input_tokens(100) 含 cached(80)，转换后 input 应为 fresh = 100 - 80 = 20
+        assert_eq!(result["usage"]["input_tokens"], 20);
         assert_eq!(result["usage"]["output_tokens"], 50);
         assert_eq!(result["usage"]["cache_read_input_tokens"], 80);
     }
@@ -1180,6 +1198,9 @@ mod tests {
         });
 
         let result = responses_to_anthropic(input).unwrap();
+        // cache_read(60)+cache_creation(20) 均从 input(100) 扣除，fresh = 100 - 60 - 20 = 20
+        // 守恒：input(20) + cache_read(60) + cache_creation(20) == 上游 input(100)
+        assert_eq!(result["usage"]["input_tokens"], 20);
         assert_eq!(result["usage"]["cache_read_input_tokens"], 60);
         assert_eq!(result["usage"]["cache_creation_input_tokens"], 20);
     }
@@ -1642,7 +1663,8 @@ mod tests {
                 "cached_tokens": 80
             }
         })));
-        assert_eq!(result["input_tokens"], json!(100));
+        // input_tokens(100) 含 nested cached(80)，转换后 input 应为 fresh = 100 - 80 = 20
+        assert_eq!(result["input_tokens"], json!(20));
         assert_eq!(result["output_tokens"], json!(50));
         assert_eq!(result["cache_read_input_tokens"], json!(80));
     }
@@ -1657,7 +1679,24 @@ mod tests {
             },
             "cache_read_input_tokens": 100
         })));
+        // 直传 cache_read(100) 优先于 nested(80)；input(100) - 100 = 0（fresh）
+        assert_eq!(result["input_tokens"], json!(0));
         assert_eq!(result["cache_read_input_tokens"], json!(100)); // Direct field overrides nested
+    }
+
+    #[test]
+    fn test_build_usage_clamps_input_when_cache_exceeds_input() {
+        // input(100) < cache_read(60)+cache_creation(50)=110：saturating 钳到 0，防下溢。
+        // 钉桩：阻止未来把 saturating_sub 误改成普通减法(debug panic / release wrap)。
+        let result = build_anthropic_usage_from_responses(Some(&json!({
+            "input_tokens": 100,
+            "output_tokens": 10,
+            "cache_read_input_tokens": 60,
+            "cache_creation_input_tokens": 50
+        })));
+        assert_eq!(result["input_tokens"], json!(0));
+        assert_eq!(result["cache_read_input_tokens"], json!(60));
+        assert_eq!(result["cache_creation_input_tokens"], json!(50));
     }
 
     #[test]

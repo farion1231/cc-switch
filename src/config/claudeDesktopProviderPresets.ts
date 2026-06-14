@@ -25,13 +25,16 @@ export interface ClaudeDesktopRoutePreset {
 }
 
 /**
- * Claude Desktop 3P fail-all 校验只接受 `claude-(sonnet|opus|haiku)-*` 形式的
- * routeId（1.6259.1+，实测 2026-05-13）。所有预设工厂、表单角色下拉、
- * 后端 `next_catalog_safe_route_id` 都从此映射派生 routeId，避免散落硬编码。
+ * Claude Desktop 3P fail-all 校验接受的角色名。Desktop 1.12603.1+ 起白名单
+ * 纳入 fable（app.asar 内 ["sonnet","opus","haiku","fable","mythos"]，实测
+ * 2026-06-13）；此前 1.6259.1 仅接受 sonnet/opus/haiku。mythos 官方未公开
+ * 发布，暂不暴露给用户。所有预设工厂、表单角色下拉、后端
+ * `next_catalog_safe_route_id` 都从此映射派生 routeId，避免散落硬编码。
  */
 export const CLAUDE_DESKTOP_ROLE_ROUTE_IDS = {
   sonnet: "claude-sonnet-4-6",
-  opus: "claude-opus-4-7",
+  opus: "claude-opus-4-8",
+  fable: "claude-fable-5",
   haiku: "claude-haiku-4-5",
 } as const;
 
@@ -152,7 +155,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
-    websiteUrl: "https://www.shengsuanyun.com",
+    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
     apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
     category: "aggregator",
     baseUrl: "https://router.shengsuanyun.com/api",
@@ -160,7 +163,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiFormat: "anthropic",
     modelRoutes: mappedRoutes(
       "anthropic/claude-sonnet-4.6",
-      "anthropic/claude-opus-4.7",
+      "anthropic/claude-opus-4.8",
       "anthropic/claude-haiku-4.5",
     ),
     isPartner: true,
@@ -241,6 +244,32 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#3370FF",
   },
   {
+    name: "CCSub",
+    websiteUrl: "https://www.ccsub.net",
+    apiKeyUrl: "https://www.ccsub.net/register?ref=Y6Z8DXEA",
+    category: "aggregator",
+    baseUrl: "https://www.ccsub.net",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(true),
+    isPartner: true,
+    partnerPromotionKey: "ccsub",
+    icon: "ccsub",
+  },
+  {
+    name: "Unity2.ai",
+    websiteUrl: "https://unity2.ai",
+    apiKeyUrl: "https://unity2.ai/register?source=ccs",
+    category: "aggregator",
+    baseUrl: "https://api.unity2.ai",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(true),
+    isPartner: true,
+    partnerPromotionKey: "unity2",
+    icon: "unity2",
+  },
+  {
     name: "Gemini Native",
     websiteUrl: "https://ai.google.dev/gemini-api",
     apiKeyUrl: "https://aistudio.google.com/app/apikey",
@@ -250,9 +279,9 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "proxy",
     apiFormat: "gemini_native",
     modelRoutes: brandedRoutes(
-      "gemini-3.1-pro",
-      "gemini-3.1-pro",
-      "gemini-3-flash",
+      "gemini-3.5-flash",
+      "gemini-3.5-flash",
+      "gemini-3.5-flash",
     ),
     endpointCandidates: ["https://generativelanguage.googleapis.com"],
     icon: "gemini",
@@ -284,7 +313,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiFormat: "openai_responses",
     providerType: "codex_oauth",
     requiresOAuth: true,
-    modelRoutes: brandedRoutes("gpt-5.4", "gpt-5.4", "gpt-5.4-mini"),
+    modelRoutes: brandedRoutes("gpt-5.5", "gpt-5.5", "gpt-5.4-mini"),
     icon: "openai",
     iconColor: "#000000",
   },
@@ -304,7 +333,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#1E88E5",
   },
   {
-    name: "OpenCode Go (DeepSeek V4 Flash)",
+    name: "OpenCode Go",
     websiteUrl: "https://opencode.ai",
     category: "third_party",
     baseUrl: "https://opencode.ai/zen/go",
@@ -327,7 +356,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://open.bigmodel.cn/api/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("glm-5", "glm-5", "glm-5"),
+    modelRoutes: brandedRoutes("glm-5.1", "glm-5.1", "glm-5.1"),
     icon: "zhipu",
     iconColor: "#0F62FE",
   },
@@ -339,7 +368,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.z.ai/api/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("glm-5", "glm-5", "glm-5"),
+    modelRoutes: brandedRoutes("glm-5.1", "glm-5.1", "glm-5.1"),
     icon: "zhipu",
     iconColor: "#0F62FE",
   },
@@ -385,18 +414,22 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "Kimi",
-    websiteUrl: "https://platform.moonshot.cn/console",
+    websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
     category: "cn_official",
     baseUrl: "https://api.moonshot.cn/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("kimi-k2.6", "kimi-k2.6", "kimi-k2.6"),
+    modelRoutes: brandedRoutes(
+      "kimi-k2.7-code",
+      "kimi-k2.7-code",
+      "kimi-k2.7-code",
+    ),
     icon: "kimi",
     iconColor: "#6366F1",
   },
   {
     name: "Kimi For Coding",
-    websiteUrl: "https://www.kimi.com/code/docs/",
+    websiteUrl: "https://www.kimi.com/code/docs/?aff=cc-switch",
     category: "cn_official",
     baseUrl: "https://api.kimi.com/coding/",
     mode: "proxy",
@@ -447,9 +480,9 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: brandedRoutes(
-      "ZhipuAI/GLM-5",
-      "ZhipuAI/GLM-5",
-      "ZhipuAI/GLM-5",
+      "ZhipuAI/GLM-5.1",
+      "ZhipuAI/GLM-5.1",
+      "ZhipuAI/GLM-5.1",
     ),
     icon: "modelscope",
     iconColor: "#624AFF",
@@ -528,6 +561,22 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     endpointCandidates: ["https://aihubmix.com", "https://api.aihubmix.com"],
     icon: "aihubmix",
     iconColor: "#006FFB",
+  },
+  {
+    name: "CherryIN",
+    websiteUrl: "https://open.cherryin.ai",
+    apiKeyUrl: "https://open.cherryin.ai/console/token",
+    category: "aggregator",
+    baseUrl: "https://open.cherryin.net",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: mappedRoutes(
+      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-opus-4.8",
+      "anthropic/claude-haiku-4.5",
+    ),
+    endpointCandidates: ["https://open.cherryin.net"],
+    icon: "cherryin",
   },
   {
     name: "SiliconFlow",
@@ -647,8 +696,6 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
     endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
     icon: "sudocode",
   },
   {
@@ -785,17 +832,17 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "SSSAiCode",
-    websiteUrl: "https://www.sssaicode.com",
-    apiKeyUrl: "https://www.sssaicode.com/register?ref=DCP0SM",
+    websiteUrl: "https://sssaicodeapi.com",
+    apiKeyUrl: "https://sssaicodeapi.com/register?ref=DCP0SM",
     category: "third_party",
-    baseUrl: "https://node-hk.sssaicode.com/api",
+    baseUrl: "https://node-hk.sssaicodeapi.com/api",
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
     endpointCandidates: [
-      "https://node-hk.sssaicode.com/api",
-      "https://claude2.sssaicode.com/api",
-      "https://anti.sssaicode.com/api",
+      "https://node-hk.sssaicodeapi.com/api",
+      "https://node-hk.sssaiapi.com/api",
+      "https://node-cf.sssaicodeapi.com/api",
     ],
     isPartner: true,
     partnerPromotionKey: "sssaicode",
@@ -888,7 +935,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiFormat: "anthropic",
     modelRoutes: mappedRoutes(
       "anthropic/claude-sonnet-4.6",
-      "anthropic/claude-opus-4.7",
+      "anthropic/claude-opus-4.8",
       "anthropic/claude-haiku-4.5",
       true,
     ),
@@ -905,7 +952,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiFormat: "anthropic",
     modelRoutes: mappedRoutes(
       "anthropic/claude-sonnet-4.6",
-      "anthropic/claude-opus-4.7",
+      "anthropic/claude-opus-4.8",
       "anthropic/claude-haiku-4.5",
       true,
     ),
@@ -920,27 +967,13 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: brandedRoutes(
-      "zai-org/glm-5",
-      "zai-org/glm-5",
-      "zai-org/glm-5",
+      "zai-org/glm-5.1",
+      "zai-org/glm-5.1",
+      "zai-org/glm-5.1",
     ),
     endpointCandidates: ["https://api.novita.ai/anthropic"],
     icon: "novita",
     iconColor: "#000000",
-  },
-  {
-    name: "LemonData",
-    websiteUrl: "https://lemondata.cc",
-    apiKeyUrl: "https://lemondata.cc/r/FFX1ZDUP",
-    category: "third_party",
-    baseUrl: "https://api.lemondata.cc",
-    apiKeyField: "ANTHROPIC_API_KEY",
-    mode: "direct",
-    apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
-    isPartner: true,
-    partnerPromotionKey: "lemondata",
-    icon: "lemondata",
   },
   {
     name: "Nvidia",

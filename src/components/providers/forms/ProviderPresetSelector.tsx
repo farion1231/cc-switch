@@ -1,7 +1,21 @@
+import { useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ClaudeIcon, CodexIcon, GeminiIcon } from "@/components/BrandIcons";
-import { Zap, Star, Layers, Settings2 } from "lucide-react";
+import { ArrowUpAZ, Search, Zap, Star, Layers, Settings2 } from "lucide-react";
 import type { ProviderPreset } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
 import type { GeminiProviderPreset } from "@/config/geminiProviderPresets";
@@ -16,7 +30,17 @@ import {
 } from "@/config/universalProviderPresets";
 import { ProviderIcon } from "@/components/ProviderIcon";
 
-type AnyPreset =
+type PresetTranslator = (key: string) => unknown;
+
+export const PresetSortMode = {
+  Original: "original",
+  NameAsc: "nameAsc",
+} as const;
+
+export type PresetSortMode =
+  (typeof PresetSortMode)[keyof typeof PresetSortMode];
+
+export type AnyPreset =
   | ProviderPreset
   | CodexProviderPreset
   | GeminiProviderPreset
@@ -25,10 +49,72 @@ type AnyPreset =
   | OpenClawProviderPreset
   | HermesProviderPreset;
 
-type PresetEntry = {
+export type PresetEntry = {
   id: string;
   preset: AnyPreset;
 };
+
+export function getPresetDisplayName(
+  preset: AnyPreset,
+  t: PresetTranslator,
+): string {
+  return preset.nameKey ? String(t(preset.nameKey)) : preset.name;
+}
+
+export function getPresetSearchText(
+  entry: PresetEntry,
+  t: PresetTranslator,
+): string {
+  return [getPresetDisplayName(entry.preset, t), entry.preset.name]
+    .join(" ")
+    .toLowerCase();
+}
+
+export function filterPresetEntries(
+  entries: PresetEntry[],
+  query: string,
+  t: PresetTranslator,
+): PresetEntry[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return entries;
+  }
+
+  return entries.filter((entry) =>
+    getPresetSearchText(entry, t).includes(normalizedQuery),
+  );
+}
+
+export function sortPresetEntries(
+  entries: PresetEntry[],
+  sortMode: PresetSortMode,
+  t: PresetTranslator,
+): PresetEntry[] {
+  if (sortMode === PresetSortMode.Original) {
+    return [...entries];
+  }
+
+  return [...entries].sort((a, b) =>
+    getPresetDisplayName(a.preset, t).localeCompare(
+      getPresetDisplayName(b.preset, t),
+    ),
+  );
+}
+
+export interface PresetVisibilityOptions {
+  query: string;
+  sortMode: PresetSortMode;
+  t: PresetTranslator;
+}
+
+export function getVisiblePresetEntries(
+  entries: PresetEntry[],
+  options: PresetVisibilityOptions,
+): PresetEntry[] {
+  const { query, sortMode, t } = options;
+
+  return sortPresetEntries(filterPresetEntries(entries, query, t), sortMode, t);
+}
 
 interface ProviderPresetSelectorProps {
   selectedPresetId: string | null;
@@ -50,8 +136,23 @@ export function ProviderPresetSelector({
   category,
 }: ProviderPresetSelectorProps) {
   const { t } = useTranslation();
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortMode, setSortMode] = useState<PresetSortMode>(
+    PresetSortMode.Original,
+  );
 
-  const getCategoryHint = (): React.ReactNode => {
+  const visiblePresetEntries = useMemo(
+    () =>
+      getVisiblePresetEntries(presetEntries, {
+        query: searchQuery,
+        sortMode,
+        t,
+      }),
+    [presetEntries, searchQuery, sortMode, t],
+  );
+
+  const getCategoryHint = (): ReactNode => {
     switch (category) {
       case "official":
         return t("providerForm.officialHint", {
@@ -83,6 +184,14 @@ export function ProviderPresetSelector({
           defaultValue: "选择预设后可继续调整下方字段。",
         });
     }
+  };
+
+  const toggleSortMode = () => {
+    setSortMode((current) =>
+      current === PresetSortMode.Original
+        ? PresetSortMode.NameAsc
+        : PresetSortMode.Original,
+    );
   };
 
   const renderPresetIcon = (preset: AnyPreset) => {
@@ -130,7 +239,88 @@ export function ProviderPresetSelector({
 
   return (
     <div className="space-y-3">
-      <FormLabel>{t("providerPreset.label")}</FormLabel>
+      <div className="flex items-center justify-between gap-2">
+        <FormLabel>{t("providerPreset.label")}</FormLabel>
+        <TooltipProvider delayDuration={300}>
+          <div className="flex items-center gap-1">
+            <Popover open={searchOpen} onOpenChange={setSearchOpen}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={t("providerPreset.searchAriaLabel", {
+                        defaultValue: "Search provider presets",
+                      })}
+                      className={
+                        searchQuery.trim()
+                          ? "size-8 bg-accent text-foreground"
+                          : "size-8"
+                      }
+                    >
+                      <Search className="size-4" />
+                    </Button>
+                  </PopoverTrigger>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {t("providerPreset.searchTooltip", {
+                    defaultValue: "Search presets",
+                  })}
+                </TooltipContent>
+              </Tooltip>
+              <PopoverContent
+                align="end"
+                className="w-72 p-2 border-border-default"
+              >
+                <Input
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder={t("providerPreset.searchPlaceholder", {
+                    defaultValue: "Search presets...",
+                  })}
+                  aria-label={t("providerPreset.searchAriaLabel", {
+                    defaultValue: "Search provider presets",
+                  })}
+                  autoFocus
+                />
+              </PopoverContent>
+            </Popover>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t("providerPreset.sortAriaLabel", {
+                    defaultValue: "Toggle preset sorting",
+                  })}
+                  aria-pressed={sortMode === PresetSortMode.NameAsc}
+                  onClick={toggleSortMode}
+                  className={
+                    sortMode === PresetSortMode.NameAsc
+                      ? "size-8 bg-accent text-foreground"
+                      : "size-8"
+                  }
+                >
+                  <ArrowUpAZ className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {sortMode === PresetSortMode.NameAsc
+                  ? t("providerPreset.sortOriginalTooltip", {
+                      defaultValue: "Restore original order",
+                    })
+                  : t("providerPreset.sortNameAscTooltip", {
+                      defaultValue: "Sort A-Z",
+                    })}
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        </TooltipProvider>
+      </div>
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
@@ -144,7 +334,15 @@ export function ProviderPresetSelector({
           {t("providerPreset.custom")}
         </button>
 
-        {presetEntries.map((entry) => {
+        {visiblePresetEntries.length === 0 && (
+          <div className="w-full rounded-md border border-dashed border-border-default px-3 py-2 text-xs text-muted-foreground">
+            {t("providerPreset.noSearchResults", {
+              defaultValue: "No matching presets.",
+            })}
+          </div>
+        )}
+
+        {visiblePresetEntries.map((entry) => {
           const isSelected = selectedPresetId === entry.id;
           const isPartner = entry.preset.isPartner;
           const presetCategory = entry.preset.category ?? "others";
@@ -161,9 +359,7 @@ export function ProviderPresetSelector({
               }
             >
               {renderPresetIcon(entry.preset)}
-              {entry.preset.nameKey
-                ? t(entry.preset.nameKey)
-                : entry.preset.name}
+              {getPresetDisplayName(entry.preset, t)}
               {isPartner && (
                 <span className="absolute -top-1 -right-1 flex items-center gap-0.5 rounded-full bg-gradient-to-r from-amber-500 to-yellow-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-md">
                   <Star className="h-2.5 w-2.5 fill-current" />

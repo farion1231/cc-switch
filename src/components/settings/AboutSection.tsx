@@ -32,7 +32,6 @@ import type {
   ToolInstallationReport,
 } from "@/lib/api/settings";
 import { useUpdate } from "@/contexts/UpdateContext";
-import { relaunchApp } from "@/lib/updater";
 import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
 import appIcon from "@/assets/icons/app-icon.png";
@@ -195,14 +194,8 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   );
   const [showInstallCommands, setShowInstallCommands] = useState(false);
 
-  const {
-    hasUpdate,
-    updateInfo,
-    updateHandle,
-    checkUpdate,
-    resetDismiss,
-    isChecking,
-  } = useUpdate();
+  const { hasUpdate, updateInfo, checkUpdate, resetDismiss, isChecking } =
+    useUpdate();
 
   const [wslShellByTool, setWslShellByTool] = useState<
     Record<string, WslShellPreference>
@@ -392,7 +385,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   }, [t, updateInfo?.availableVersion, version]);
 
   const handleCheckUpdate = useCallback(async () => {
-    if (hasUpdate && updateHandle) {
+    if (hasUpdate) {
       if (isPortable) {
         try {
           await settingsApi.checkUpdates();
@@ -405,11 +398,16 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       setIsDownloading(true);
       try {
         resetDismiss();
-        await updateHandle.downloadAndInstall();
-        await relaunchApp();
+        const installed = await settingsApi.installUpdateAndRestart();
+        if (!installed) {
+          toast.success(t("settings.upToDate"), { closeButton: true });
+        }
       } catch (error) {
         console.error("[AboutSection] Update failed", error);
-        toast.error(t("settings.updateFailed"));
+        toast.error(t("settings.updateFailed"), {
+          description: extractErrorMessage(error) || undefined,
+          closeButton: true,
+        });
         try {
           await settingsApi.checkUpdates();
         } catch (fallbackError) {
@@ -433,7 +431,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       console.error("[AboutSection] Check update failed", error);
       toast.error(t("settings.checkUpdateFailed"));
     }
-  }, [checkUpdate, hasUpdate, isPortable, resetDismiss, t, updateHandle]);
+  }, [checkUpdate, hasUpdate, isPortable, resetDismiss, t]);
 
   const handleCopyInstallCommands = useCallback(async () => {
     try {

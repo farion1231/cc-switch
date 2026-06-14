@@ -57,11 +57,17 @@ pub fn anthropic_to_gemini_with_shadow(
         .map(|snapshot| snapshot.turns)
         .unwrap_or_default();
 
-    if let Some(system) = build_system_instruction(body.get("system"))? {
+    let messages = body.get("messages").and_then(|value| value.as_array());
+
+    let system_instruction = build_system_instruction(
+        body.get("system"),
+        messages.map(|messages| messages.as_slice()),
+    )?;
+    if let Some(system) = system_instruction {
         result["systemInstruction"] = system;
     }
 
-    if let Some(messages) = body.get("messages").and_then(|value| value.as_array()) {
+    if let Some(messages) = messages {
         result["contents"] = json!(convert_messages_to_contents(messages, &shadow_turns)?);
     }
 
@@ -269,31 +275,26 @@ pub fn extract_gemini_model(body: &Value) -> Option<&str> {
     body.get("model").and_then(|value| value.as_str())
 }
 
-fn build_system_instruction(system: Option<&Value>) -> Result<Option<Value>, ProxyError> {
-    let Some(system) = system else {
-        return Ok(None);
-    };
+fn build_system_instruction(
+    system: Option<&Value>,
+    messages: Option<&[Value]>,
+) -> Result<Option<Value>, ProxyError> {
+    let mut texts = Vec::new();
 
-    if let Some(text) = system.as_str() {
-        if text.is_empty() {
-            return Ok(None);
-        }
-        return Ok(Some(json!({
-            "parts": [{ "text": text }]
-        })));
+    if let Some(system) = system {
+        collect_system_texts(system, &mut texts)?;
     }
 
-    let Some(blocks) = system.as_array() else {
-        return Err(ProxyError::TransformError(
-            "Anthropic system must be a string or an array".to_string(),
-        ));
-    };
-
-    let texts: Vec<&str> = blocks
-        .iter()
-        .filter_map(|block| block.get("text").and_then(|value| value.as_str()))
-        .filter(|text| !text.is_empty())
-        .collect();
+    if let Some(messages) = messages {
+        for message in messages {
+            if message.get("role").and_then(|value| value.as_str()) != Some("system") {
+                continue;
+            }
+            if let Some(content) = message.get("content") {
+                collect_system_texts(content, &mut texts)?;
+            }
+        }
+    }
 
     if texts.is_empty() {
         return Ok(None);
@@ -302,6 +303,31 @@ fn build_system_instruction(system: Option<&Value>) -> Result<Option<Value>, Pro
     Ok(Some(json!({
         "parts": [{ "text": texts.join("\n\n") }]
     })))
+}
+
+fn collect_system_texts(value: &Value, texts: &mut Vec<String>) -> Result<(), ProxyError> {
+    if let Some(text) = value.as_str() {
+        if !text.is_empty() {
+            texts.push(text.to_string());
+        }
+        return Ok(());
+    }
+
+    let Some(blocks) = value.as_array() else {
+        return Err(ProxyError::TransformError(
+            "Anthropic system must be a string or an array".to_string(),
+        ));
+    };
+
+    texts.extend(
+        blocks
+            .iter()
+            .filter_map(|block| block.get("text").and_then(|value| value.as_str()))
+            .filter(|text| !text.is_empty())
+            .map(ToString::to_string),
+    );
+
+    Ok(())
 }
 
 fn build_generation_config(body: &Value) -> Option<Value> {
@@ -383,6 +409,9 @@ fn convert_messages_to_contents(
             .get("role")
             .and_then(|value| value.as_str())
             .unwrap_or("user");
+        if role == "system" {
+            continue;
+        }
 
         let gemini_role = if role == "assistant" { "model" } else { "user" };
 
@@ -1072,7 +1101,7 @@ pub(crate) fn build_anthropic_usage(usage: Option<&Value>) -> Value {
         });
     };
 
-    let input_tokens = usage
+    let prompt_tokens = usage
         .get("promptTokenCount")
         .and_then(|value| value.as_u64())
         .unwrap_or(0);
@@ -1080,18 +1109,26 @@ pub(crate) fn build_anthropic_usage(usage: Option<&Value>) -> Value {
         .get("totalTokenCount")
         .and_then(|value| value.as_u64())
         .unwrap_or(0);
-    let output_tokens = total_tokens.saturating_sub(input_tokens);
+    let cached_tokens = usage
+        .get("cachedContentTokenCount")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    // Gemini 的 promptTokenCount 含缓存命中（cachedContentTokenCount）；而 Anthropic
+    // 语义下 input_tokens 必须是不含 cache 的 fresh input、cache_read 单列。本路径转成
+    // Anthropic 后以 app_type=claude 记账，calculator 对 claude 设 input_includes_cache_read
+    // =false 不再从 input 扣 cache，因此这里必须先扣减，否则缓存 token 会被双重计费
+    // （一次按完整 input 价、一次按 cache_read 价）。output 仍按 total-prompt 计算
+    // （prompt 是总输入，扣减只作用于 input/cache 的拆分，不影响 output）。
+    let input_tokens = prompt_tokens.saturating_sub(cached_tokens);
+    let output_tokens = total_tokens.saturating_sub(prompt_tokens);
 
     let mut result = json!({
         "input_tokens": input_tokens,
         "output_tokens": output_tokens
     });
 
-    if let Some(cached) = usage
-        .get("cachedContentTokenCount")
-        .and_then(|value| value.as_u64())
-    {
-        result["cache_read_input_tokens"] = json!(cached);
+    if cached_tokens > 0 {
+        result["cache_read_input_tokens"] = json!(cached_tokens);
     }
 
     result
@@ -1147,6 +1184,32 @@ mod tests {
         assert_eq!(result["contents"][0]["role"], "user");
         assert_eq!(result["contents"][0]["parts"][0]["text"], "Hello");
         assert_eq!(result["generationConfig"]["maxOutputTokens"], 128);
+    }
+
+    #[test]
+    fn anthropic_to_gemini_merges_system_messages_into_system_instruction() {
+        let input = json!({
+            "model": "gemini-3-pro",
+            "system": [{ "type": "text", "text": "Top level system." }],
+            "messages": [
+                { "role": "system", "content": "Message system." },
+                {
+                    "role": "system",
+                    "content": [{ "type": "text", "text": "Block system." }]
+                },
+                { "role": "user", "content": "Hello" }
+            ]
+        });
+
+        let result = anthropic_to_gemini(input).unwrap();
+
+        assert_eq!(
+            result["systemInstruction"]["parts"][0]["text"],
+            "Top level system.\n\nMessage system.\n\nBlock system."
+        );
+        assert_eq!(result["contents"].as_array().unwrap().len(), 1);
+        assert_eq!(result["contents"][0]["role"], "user");
+        assert_eq!(result["contents"][0]["parts"][0]["text"], "Hello");
     }
 
     #[test]
@@ -1315,7 +1378,11 @@ mod tests {
         assert_eq!(result["content"][0]["type"], "text");
         assert_eq!(result["content"][0]["text"], "Hello from Gemini");
         assert_eq!(result["stop_reason"], "end_turn");
-        assert_eq!(result["usage"]["input_tokens"], 12);
+        // input_tokens = promptTokenCount(12) - cachedContentTokenCount(3) = 9（fresh input）。
+        // Gemini 的 promptTokenCount 含缓存命中，但 Anthropic 语义要求 input 不含 cache、
+        // cache_read 单列；二者相加(9+3)=总输入 12。扣减避免本路径以 app_type=claude
+        // 记账时把缓存 token 双重计费。
+        assert_eq!(result["usage"]["input_tokens"], 9);
         assert_eq!(result["usage"]["output_tokens"], 8);
         assert_eq!(result["usage"]["cache_read_input_tokens"], 3);
     }

@@ -110,6 +110,9 @@ const generatePresetTemplates = (
 
   // 官方余额查询模板不需要脚本，使用专用 Rust 查询
   [TEMPLATE_TYPES.BALANCE]: "",
+
+  // 官方订阅额度查询不需要脚本，使用 CLI/OAuth 凭据调用官方 API
+  [TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION]: "",
 });
 
 // 模板名称国际化键映射
@@ -120,6 +123,8 @@ const TEMPLATE_NAME_KEYS: Record<string, string> = {
   [TEMPLATE_TYPES.GITHUB_COPILOT]: "usageScript.templateCopilot",
   [TEMPLATE_TYPES.TOKEN_PLAN]: "usageScript.templateTokenPlan",
   [TEMPLATE_TYPES.BALANCE]: "usageScript.templateBalance",
+  [TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION]:
+    "usageScript.templateOfficialSubscription",
 };
 
 /** 官方余额查询供应商检测 */
@@ -141,6 +146,45 @@ function detectBalanceProvider(baseUrl: string | undefined): boolean {
   return BALANCE_PROVIDERS.some((bp) => bp.pattern.test(baseUrl));
 }
 
+function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
+  if (!["claude", "codex", "gemini"].includes(appId)) return false;
+  if (provider.category === "official") return true;
+
+  const config = provider.settingsConfig as Record<string, any>;
+  if (appId === "claude") {
+    const baseUrl = config?.env?.ANTHROPIC_BASE_URL;
+    return !baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === "");
+  }
+  if (appId === "codex") {
+    const apiKey = config?.auth?.OPENAI_API_KEY;
+    const bearerToken =
+      typeof config?.config === "string"
+        ? extractCodexExperimentalBearerToken(config.config)
+        : undefined;
+    return (
+      !bearerToken &&
+      (!apiKey || (typeof apiKey === "string" && apiKey.trim() === ""))
+    );
+  }
+  if (appId === "gemini") {
+    const env = config?.env || {};
+    const apiKey = env.GEMINI_API_KEY;
+    const baseUrl = env.GOOGLE_GEMINI_BASE_URL;
+    return (
+      (!apiKey || (typeof apiKey === "string" && apiKey.trim() === "")) &&
+      (!baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === ""))
+    );
+  }
+  return false;
+}
+
+const NATIVE_USAGE_TEMPLATES = new Set<string>([
+  TEMPLATE_TYPES.GITHUB_COPILOT,
+  TEMPLATE_TYPES.TOKEN_PLAN,
+  TEMPLATE_TYPES.BALANCE,
+  TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION,
+]);
+
 const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   provider,
   appId,
@@ -161,74 +205,110 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     apiKey: string | undefined;
     baseUrl: string | undefined;
   } => {
-    try {
-      const config = provider.settingsConfig;
-      if (!config) return { apiKey: undefined, baseUrl: undefined };
+    const trimTrailingSlash = (url: string | undefined) =>
+      typeof url === "string" ? url.replace(/\/+$/, "") : url;
+    const raw = ((): {
+      apiKey: string | undefined;
+      baseUrl: string | undefined;
+    } => {
+      try {
+        const config = provider.settingsConfig;
+        if (!config) return { apiKey: undefined, baseUrl: undefined };
 
-      // 处理不同应用的配置格式
-      if (appId === "claude") {
-        // Claude: { env: { ANTHROPIC_AUTH_TOKEN | ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL } }
-        const env = (config as any).env || {};
-        return {
-          apiKey: env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY,
-          baseUrl: env.ANTHROPIC_BASE_URL,
-        };
-      } else if (appId === "codex") {
-        // Codex: { auth: { OPENAI_API_KEY }, config: TOML string with base_url }
-        const auth = (config as any).auth || {};
-        const configToml = (config as any).config || "";
-        const apiKey =
-          typeof auth.OPENAI_API_KEY === "string" && auth.OPENAI_API_KEY.trim()
-            ? auth.OPENAI_API_KEY
-            : extractCodexExperimentalBearerToken(configToml);
-        return {
-          apiKey,
-          baseUrl: extractCodexBaseUrl(configToml),
-        };
-      } else if (appId === "gemini") {
-        // Gemini: { env: { GEMINI_API_KEY, GOOGLE_GEMINI_BASE_URL } }
-        const env = (config as any).env || {};
-        return {
-          apiKey: env.GEMINI_API_KEY,
-          baseUrl: env.GOOGLE_GEMINI_BASE_URL,
-        };
-      } else if (appId === "hermes") {
-        // Hermes: settingsConfig 顶层扁平（snake_case，对应 config.yaml）
-        return {
-          apiKey: (config as any).api_key,
-          baseUrl: (config as any).base_url,
-        };
-      } else if (appId === "openclaw") {
-        // OpenClaw: settingsConfig 顶层扁平（camelCase，对应 openclaw.json）
-        return {
-          apiKey: (config as any).apiKey,
-          baseUrl: (config as any).baseUrl,
-        };
+        // 处理不同应用的配置格式
+        if (appId === "claude" || appId === "claude-desktop") {
+          // Claude / Claude Desktop: { env: { ANTHROPIC_AUTH_TOKEN | ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL } }
+          // Key fallbacks mirror the backend resolver (Provider::resolve_usage_credentials).
+          const env = (config as any).env || {};
+          return {
+            apiKey:
+              env.ANTHROPIC_AUTH_TOKEN ||
+              env.ANTHROPIC_API_KEY ||
+              env.OPENROUTER_API_KEY ||
+              env.GOOGLE_API_KEY,
+            baseUrl: env.ANTHROPIC_BASE_URL,
+          };
+        } else if (appId === "codex") {
+          // Codex: { auth: { OPENAI_API_KEY }, config: TOML string with base_url }
+          const auth = (config as any).auth || {};
+          const configToml = (config as any).config || "";
+          const apiKey =
+            typeof auth.OPENAI_API_KEY === "string" &&
+            auth.OPENAI_API_KEY.trim()
+              ? auth.OPENAI_API_KEY
+              : extractCodexExperimentalBearerToken(configToml);
+          return {
+            apiKey,
+            baseUrl: extractCodexBaseUrl(configToml),
+          };
+        } else if (appId === "gemini") {
+          // Gemini: { env: { GEMINI_API_KEY, GOOGLE_GEMINI_BASE_URL } }
+          // Key fallback mirrors the backend resolver (Provider::resolve_usage_credentials).
+          const env = (config as any).env || {};
+          return {
+            apiKey: env.GEMINI_API_KEY || env.GOOGLE_API_KEY,
+            baseUrl: env.GOOGLE_GEMINI_BASE_URL,
+          };
+        } else if (appId === "hermes") {
+          // Hermes: settingsConfig 顶层扁平（snake_case，对应 config.yaml）
+          return {
+            apiKey: (config as any).api_key,
+            baseUrl: (config as any).base_url,
+          };
+        } else if (appId === "openclaw") {
+          // OpenClaw: settingsConfig 顶层扁平（camelCase，对应 openclaw.json）
+          return {
+            apiKey: (config as any).apiKey,
+            baseUrl: (config as any).baseUrl,
+          };
+        } else if (appId === "opencode") {
+          // OpenCode (OMO): 凭据嵌在 options.{baseURL, apiKey}（SDK options 对象）
+          const options = (config as any).options || {};
+          return {
+            apiKey: options.apiKey,
+            baseUrl: options.baseURL,
+          };
+        }
+        return { apiKey: undefined, baseUrl: undefined };
+      } catch (error) {
+        console.error("Failed to extract provider credentials:", error);
+        return { apiKey: undefined, baseUrl: undefined };
       }
-      return { apiKey: undefined, baseUrl: undefined };
-    } catch (error) {
-      console.error("Failed to extract provider credentials:", error);
-      return { apiKey: undefined, baseUrl: undefined };
-    }
+    })();
+    // Trim the trailing slash to mirror the backend resolver
+    // (Provider::resolve_usage_credentials), so `{{baseUrl}}/path` never
+    // produces a double slash regardless of which path runs the query.
+    return { apiKey: raw.apiKey, baseUrl: trimTrailingSlash(raw.baseUrl) };
   };
 
   const providerCredentials = getProviderCredentials();
+  const isOfficialSubscription = isOfficialSubscriptionProvider(
+    provider,
+    appId,
+  );
 
   const [script, setScript] = useState<UsageScript>(() => {
     const savedScript = provider.meta?.usage_script;
     if (savedScript) {
+      const normalizedScript = createUsageScript(savedScript);
+      if (
+        isOfficialSubscription &&
+        normalizedScript.templateType !== TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION
+      ) {
+        return createUsageScript();
+      }
       // 已有配置：如果是 coding_plan 但没有 codingPlanProvider，自动检测填充
       if (
-        savedScript.templateType === TEMPLATE_TYPES.TOKEN_PLAN &&
-        !savedScript.codingPlanProvider
+        normalizedScript.templateType === TEMPLATE_TYPES.TOKEN_PLAN &&
+        !normalizedScript.codingPlanProvider
       ) {
         return {
-          ...savedScript,
+          ...normalizedScript,
           codingPlanProvider:
             detectCodingPlanProvider(providerCredentials.baseUrl) || "kimi",
         };
       }
-      return savedScript;
+      return normalizedScript;
     }
 
     const autoDetected = detectCodingPlanProvider(providerCredentials.baseUrl);
@@ -240,12 +320,24 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       return createUsageScript();
     }
 
+    if (isOfficialSubscription) {
+      return createUsageScript();
+    }
+
     return createUsageScript({
       code: PRESET_TEMPLATES[TEMPLATE_TYPES.GENERAL],
     });
   });
 
   const [testing, setTesting] = useState(false);
+
+  // {{apiKey}}/{{baseUrl}} 实际注入值，镜像后端 resolve_script_credentials 的
+  // 优先级：脚本配置中的显式非空值优先（旧配置可能携带），否则回退供应商凭据。
+  const effectiveScriptCredentials = {
+    apiKey: script.apiKey?.trim() || providerCredentials.apiKey,
+    baseUrl:
+      script.baseUrl?.trim().replace(/\/+$/, "") || providerCredentials.baseUrl,
+  };
 
   // 🔧 失焦时的验证（严格）- 仅确保有效整数
   const validateTimeout = (value: string): number => {
@@ -302,8 +394,16 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         return TEMPLATE_TYPES.GITHUB_COPILOT;
       }
       // 优先使用保存的 templateType
-      if (existingScript?.templateType) {
+      if (
+        existingScript?.templateType &&
+        (!isOfficialSubscription ||
+          existingScript.templateType === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION)
+      ) {
         return existingScript.templateType as string;
+      }
+      // 官方 CLI/OAuth 供应商默认使用官方订阅额度模板，但开关默认关闭
+      if (isOfficialSubscription) {
+        return TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
       }
       // 向后兼容：根据字段推断模板类型
       // 检测 NEW_API 模板（有 accessToken 或 userId）
@@ -353,12 +453,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   };
 
   const handleSave = () => {
-    // Copilot、Coding Plan、Balance 模板不需要脚本验证
-    if (
-      selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT &&
-      selectedTemplate !== TEMPLATE_TYPES.TOKEN_PLAN &&
-      selectedTemplate !== TEMPLATE_TYPES.BALANCE
-    ) {
+    // 专用模板不需要脚本验证
+    if (!NATIVE_USAGE_TEMPLATES.has(selectedTemplate || "")) {
       if (script.enabled && !script.code.trim()) {
         toast.error(t("usageScript.scriptEmpty"));
         return;
@@ -378,6 +474,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         | "github_copilot"
         | "token_plan"
         | "balance"
+        | "official_subscription"
         | undefined,
     };
     onSave(scriptWithTemplate);
@@ -387,6 +484,28 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const handleTest = async () => {
     setTesting(true);
     try {
+      // 官方订阅额度模板使用 CLI/OAuth 凭据和官方 API
+      if (selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION) {
+        const { subscriptionApi } = await import("@/lib/api/subscription");
+        const quota = await subscriptionApi.getQuota(appId);
+        if (quota.success && quota.tiers.length > 0) {
+          const summary = quota.tiers
+            .map((tier) => `${tier.name}: ${Math.round(tier.utilization)}%`)
+            .join(", ");
+          toast.success(`${t("usageScript.testSuccess")}${summary}`, {
+            duration: 3000,
+            closeButton: true,
+          });
+          queryClient.setQueryData(["subscription", "quota", appId], quota);
+        } else {
+          toast.error(
+            `${t("usageScript.testFailed")}: ${quota.error || t("endpointTest.noResult")}`,
+            { duration: 5000 },
+          );
+        }
+        return;
+      }
+
       // 官方余额查询模板使用专用 API
       if (selectedTemplate === TEMPLATE_TYPES.BALANCE) {
         const baseUrl = providerCredentials.baseUrl ?? "";
@@ -419,8 +538,14 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
       // Coding Plan 模板使用专用 API
       if (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN) {
-        const baseUrl = providerCredentials.baseUrl ?? "";
-        const apiKey = providerCredentials.apiKey ?? "";
+        // ZenMux 使用用户在脚本配置中手动填入的 API Key 和 Base URL
+        const isZenMux = script.codingPlanProvider === "zenmux";
+        const baseUrl = isZenMux
+          ? (script.baseUrl ?? "")
+          : (providerCredentials.baseUrl ?? "");
+        const apiKey = isZenMux
+          ? (script.apiKey ?? "")
+          : (providerCredentials.apiKey ?? "");
         const { subscriptionApi } = await import("@/lib/api/subscription");
         const quota = await subscriptionApi.getCodingPlanQuota(baseUrl, apiKey);
         if (quota.success && quota.tiers.length > 0) {
@@ -561,13 +686,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     const preset = PRESET_TEMPLATES[presetName];
     if (preset !== undefined) {
       if (presetName === TEMPLATE_TYPES.CUSTOM) {
-        // 🔧 自定义模式：用户应该在脚本中直接写完整 URL 和凭证，而不是依赖变量替换
-        // 这样可以避免同源检查导致的问题
-        // 如果用户想使用变量，需要手动在配置中设置 baseUrl/apiKey
+        // 自定义模板没有凭证输入框：清空显式覆盖值后，测试与真实查询
+        // 都会在后端回退到供应商配置（Provider::resolve_usage_credentials），
+        // 与下方“支持的变量”区域展示的 {{apiKey}}/{{baseUrl}} 取值一致。
         setScript({
           ...script,
           code: preset,
-          // 清除凭证，用户可选择手动输入或保持空
           apiKey: undefined,
           baseUrl: undefined,
           accessToken: undefined,
@@ -601,6 +725,20 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         const autoDetected = detectCodingPlanProvider(
           providerCredentials.baseUrl,
         );
+        const provider = script.codingPlanProvider || autoDetected || "kimi";
+        // ZenMux 允许手动填写 API Key 和 Base URL，不清除
+        const isZenMux = provider === "zenmux";
+        setScript({
+          ...script,
+          code: "",
+          apiKey: isZenMux ? script.apiKey : undefined,
+          baseUrl: isZenMux ? script.baseUrl : undefined,
+          accessToken: undefined,
+          userId: undefined,
+          codingPlanProvider: provider,
+        });
+      } else if (presetName === TEMPLATE_TYPES.BALANCE) {
+        // 官方余额查询模板不需要脚本，使用 Rust 原生查询
         setScript({
           ...script,
           code: "",
@@ -608,11 +746,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           baseUrl: undefined,
           accessToken: undefined,
           userId: undefined,
-          codingPlanProvider:
-            script.codingPlanProvider || autoDetected || "kimi",
         });
-      } else if (presetName === TEMPLATE_TYPES.BALANCE) {
-        // 官方余额查询模板不需要脚本，使用 Rust 原生查询
+      } else if (presetName === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION) {
+        // 官方订阅额度查询不需要脚本，使用 CLI/OAuth 凭据
         setScript({
           ...script,
           code: "",
@@ -628,7 +764,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
   const shouldShowCredentialsConfig =
     selectedTemplate === TEMPLATE_TYPES.GENERAL ||
-    selectedTemplate === TEMPLATE_TYPES.NEW_API;
+    selectedTemplate === TEMPLATE_TYPES.NEW_API ||
+    (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
+      script.codingPlanProvider === "zenmux");
 
   const footer = (
     <>
@@ -646,7 +784,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           variant="outline"
           size="sm"
           onClick={handleFormat}
-          disabled={!script.enabled}
+          disabled={
+            !script.enabled ||
+            NATIVE_USAGE_TEMPLATES.has(selectedTemplate || "")
+          }
           title={t("usageScript.format")}
         >
           <Wand2 size={14} className="mr-1" />
@@ -707,8 +848,15 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                   if (isCopilotProvider) {
                     return name === TEMPLATE_TYPES.GITHUB_COPILOT;
                   }
+                  // 官方 CLI/OAuth 供应商只显示官方订阅额度模板
+                  if (isOfficialSubscription) {
+                    return name === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
+                  }
                   // 非 Copilot 供应商不显示 copilot 模板
-                  return name !== TEMPLATE_TYPES.GITHUB_COPILOT;
+                  return (
+                    name !== TEMPLATE_TYPES.GITHUB_COPILOT &&
+                    name !== TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION
+                  );
                 })
                 .map((name) => {
                   const isSelected = selectedTemplate === name;
@@ -745,9 +893,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                       {"{{baseUrl}}"}
                     </code>
                     <span className="text-muted-foreground/50">=</span>
-                    {providerCredentials.baseUrl ? (
+                    {effectiveScriptCredentials.baseUrl ? (
                       <code className="text-foreground/70 break-all font-mono">
-                        {providerCredentials.baseUrl}
+                        {effectiveScriptCredentials.baseUrl}
                       </code>
                     ) : (
                       <span className="text-muted-foreground/50 italic">
@@ -762,11 +910,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                       {"{{apiKey}}"}
                     </code>
                     <span className="text-muted-foreground/50">=</span>
-                    {providerCredentials.apiKey ? (
+                    {effectiveScriptCredentials.apiKey ? (
                       <>
                         {showApiKey ? (
                           <code className="text-foreground/70 break-all font-mono">
-                            {providerCredentials.apiKey}
+                            {effectiveScriptCredentials.apiKey}
                           </code>
                         ) : (
                           <code className="text-foreground/70 font-mono">
@@ -827,6 +975,15 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                     </span>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* 官方订阅额度模式：自动提示 */}
+            {selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION && (
+              <div className="space-y-2 border-t border-white/10 pt-3">
+                <p className="text-sm text-muted-foreground">
+                  {t("usageScript.officialSubscriptionHint")}
+                </p>
               </div>
             )}
 
@@ -1025,6 +1182,66 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                       </div>
                     </>
                   )}
+
+                  {selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
+                    script.codingPlanProvider === "zenmux" && (
+                      <>
+                        <div className="space-y-2">
+                          <Label htmlFor="usage-zenmux-base-url">
+                            {t("usageScript.baseUrl")}
+                          </Label>
+                          <Input
+                            id="usage-zenmux-base-url"
+                            type="text"
+                            value={script.baseUrl || ""}
+                            onChange={(e) =>
+                              setScript({ ...script, baseUrl: e.target.value })
+                            }
+                            placeholder="https://api.zenmux.com/v1/..."
+                            autoComplete="off"
+                            className="border-white/10"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="usage-zenmux-api-key">API Key</Label>
+                          <div className="relative">
+                            <Input
+                              id="usage-zenmux-api-key"
+                              type={showApiKey ? "text" : "password"}
+                              value={script.apiKey || ""}
+                              onChange={(e) =>
+                                setScript({
+                                  ...script,
+                                  apiKey: e.target.value,
+                                })
+                              }
+                              placeholder="sk-..."
+                              autoComplete="off"
+                              className="border-white/10"
+                            />
+                            {script.apiKey && (
+                              <button
+                                type="button"
+                                onClick={() => setShowApiKey(!showApiKey)}
+                                className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
+                                aria-label={
+                                  showApiKey
+                                    ? t("apiKeyInput.hide")
+                                    : t("apiKeyInput.show")
+                                }
+                              >
+                                {showApiKey ? (
+                                  <EyeOff size={16} />
+                                ) : (
+                                  <Eye size={16} />
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </>
+                    )}
                 </div>
               </div>
             )}
@@ -1096,43 +1313,41 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             </div>
           </div>
 
-          {/* 提取器代码 - Copilot 模板不需要 */}
-          {selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT &&
-            selectedTemplate !== TEMPLATE_TYPES.TOKEN_PLAN && (
-              <div className="space-y-4 glass rounded-xl border border-white/10 p-6">
-                <div className="flex items-center justify-between">
-                  <Label className="text-base font-medium">
-                    {t("usageScript.extractorCode")}
-                  </Label>
-                  <div className="text-xs text-muted-foreground">
-                    {t("usageScript.extractorHint")}
-                  </div>
+          {/* 提取器代码 - 专用模板不需要 */}
+          {!NATIVE_USAGE_TEMPLATES.has(selectedTemplate || "") && (
+            <div className="space-y-4 glass rounded-xl border border-white/10 p-6">
+              <div className="flex items-center justify-between">
+                <Label className="text-base font-medium">
+                  {t("usageScript.extractorCode")}
+                </Label>
+                <div className="text-xs text-muted-foreground">
+                  {t("usageScript.extractorHint")}
                 </div>
-                <JsonEditor
-                  id="usage-code"
-                  value={script.code || ""}
-                  onChange={(value) =>
-                    setScript((prev) => ({ ...prev, code: value }))
-                  }
-                  height={480}
-                  language="javascript"
-                  showMinimap={false}
-                />
               </div>
-            )}
+              <JsonEditor
+                id="usage-code"
+                value={script.code || ""}
+                onChange={(value) =>
+                  setScript((prev) => ({ ...prev, code: value }))
+                }
+                height={480}
+                language="javascript"
+                showMinimap={false}
+              />
+            </div>
+          )}
 
-          {/* 帮助信息 - Copilot 模板不需要 */}
-          {selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT &&
-            selectedTemplate !== TEMPLATE_TYPES.TOKEN_PLAN && (
-              <div className="glass rounded-xl border border-white/10 p-6 text-sm text-foreground/90">
-                <h4 className="font-medium mb-2">
-                  {t("usageScript.scriptHelp")}
-                </h4>
-                <div className="space-y-3 text-xs">
-                  <div>
-                    <strong>{t("usageScript.configFormat")}</strong>
-                    <pre className="mt-1 p-2 bg-black/20 text-foreground rounded border border-white/10 text-[10px] overflow-x-auto">
-                      {`({
+          {/* 帮助信息 - 专用模板不需要 */}
+          {!NATIVE_USAGE_TEMPLATES.has(selectedTemplate || "") && (
+            <div className="glass rounded-xl border border-white/10 p-6 text-sm text-foreground/90">
+              <h4 className="font-medium mb-2">
+                {t("usageScript.scriptHelp")}
+              </h4>
+              <div className="space-y-3 text-xs">
+                <div>
+                  <strong>{t("usageScript.configFormat")}</strong>
+                  <pre className="mt-1 p-2 bg-black/20 text-foreground rounded border border-white/10 text-[10px] overflow-x-auto">
+                    {`({
   request: {
     url: "{{baseUrl}}/api/usage",
     method: "POST",
@@ -1149,39 +1364,39 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     };
   }
 })`}
-                    </pre>
-                  </div>
+                  </pre>
+                </div>
 
-                  <div>
-                    <strong>{t("usageScript.extractorFormat")}</strong>
-                    <ul className="mt-1 space-y-0.5 ml-2">
-                      <li>{t("usageScript.fieldIsValid")}</li>
-                      <li>{t("usageScript.fieldInvalidMessage")}</li>
-                      <li>{t("usageScript.fieldRemaining")}</li>
-                      <li>{t("usageScript.fieldUnit")}</li>
-                      <li>{t("usageScript.fieldPlanName")}</li>
-                      <li>{t("usageScript.fieldTotal")}</li>
-                      <li>{t("usageScript.fieldUsed")}</li>
-                      <li>{t("usageScript.fieldExtra")}</li>
-                    </ul>
-                  </div>
+                <div>
+                  <strong>{t("usageScript.extractorFormat")}</strong>
+                  <ul className="mt-1 space-y-0.5 ml-2">
+                    <li>{t("usageScript.fieldIsValid")}</li>
+                    <li>{t("usageScript.fieldInvalidMessage")}</li>
+                    <li>{t("usageScript.fieldRemaining")}</li>
+                    <li>{t("usageScript.fieldUnit")}</li>
+                    <li>{t("usageScript.fieldPlanName")}</li>
+                    <li>{t("usageScript.fieldTotal")}</li>
+                    <li>{t("usageScript.fieldUsed")}</li>
+                    <li>{t("usageScript.fieldExtra")}</li>
+                  </ul>
+                </div>
 
-                  <div className="text-muted-foreground">
-                    <strong>{t("usageScript.tips")}</strong>
-                    <ul className="mt-1 space-y-0.5 ml-2">
-                      <li>
-                        {t("usageScript.tip1", {
-                          apiKey: "{{apiKey}}",
-                          baseUrl: "{{baseUrl}}",
-                        })}
-                      </li>
-                      <li>{t("usageScript.tip2")}</li>
-                      <li>{t("usageScript.tip3")}</li>
-                    </ul>
-                  </div>
+                <div className="text-muted-foreground">
+                  <strong>{t("usageScript.tips")}</strong>
+                  <ul className="mt-1 space-y-0.5 ml-2">
+                    <li>
+                      {t("usageScript.tip1", {
+                        apiKey: "{{apiKey}}",
+                        baseUrl: "{{baseUrl}}",
+                      })}
+                    </li>
+                    <li>{t("usageScript.tip2")}</li>
+                    <li>{t("usageScript.tip3")}</li>
+                  </ul>
                 </div>
               </div>
-            )}
+            </div>
+          )}
         </div>
       )}
 

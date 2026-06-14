@@ -306,6 +306,21 @@ describe("App integration with MSW", () => {
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalled();
     });
+    toastErrorMock.mockReset();
+    expect(() => {
+      emitTauriEvent("s3-sync-status-updated", null);
+    }).not.toThrow();
+    expect(toastErrorMock).not.toHaveBeenCalled();
+
+    emitTauriEvent("s3-sync-status-updated", {
+      source: "auto",
+      status: "error",
+      error: "s3 timeout",
+    });
+
+    await waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalled();
+    });
   }, 20000);
 
   it("duplicates openclaw providers with a generated key that avoids live-only ids", async () => {

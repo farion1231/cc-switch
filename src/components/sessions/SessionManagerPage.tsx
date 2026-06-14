@@ -48,12 +48,15 @@ import { SessionItem } from "./SessionItem";
 import { SessionMessageItem } from "./SessionMessageItem";
 import { SessionTocDialog, SessionTocSidebar } from "./SessionToc";
 import {
+  extractCodexPromptPreview,
+  formatSessionMessagePreview,
   formatSessionTitle,
   formatTimestamp,
   getBaseName,
   getProviderIconName,
   getProviderLabel,
   getSessionKey,
+  shouldHideCodexMessageFromToc,
 } from "./utils";
 
 type ProviderFilter =
@@ -167,18 +170,28 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     });
   }, [sessions]);
 
+  const isCodexSession = selectedSession?.providerId === "codex";
+
   // 提取用户消息用于目录
   const userMessagesToc = useMemo(() => {
     return messages
       .map((msg, index) => ({ msg, index }))
-      .filter(({ msg }) => msg.role.toLowerCase() === "user")
-      .map(({ msg, index }) => ({
-        index,
-        preview:
-          msg.content.slice(0, 50) + (msg.content.length > 50 ? "..." : ""),
-        ts: msg.ts,
-      }));
-  }, [messages]);
+      .filter(({ msg }) => {
+        if (msg.role.toLowerCase() !== "user") return false;
+        return !(isCodexSession && shouldHideCodexMessageFromToc(msg.content));
+      })
+      .map(({ msg, index }) => {
+        const previewContent = isCodexSession
+          ? extractCodexPromptPreview(msg.content)
+          : msg.content;
+
+        return {
+          index,
+          preview: formatSessionMessagePreview(previewContent),
+          ts: msg.ts,
+        };
+      });
+  }, [isCodexSession, messages]);
 
   const scrollToMessage = (index: number) => {
     virtualizer.scrollToIndex(index, { align: "center", behavior: "smooth" });

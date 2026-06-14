@@ -29,7 +29,7 @@ export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
     display: "Sisyphus",
     descKey: "omo.agentDesc.sisyphus",
     tooltipKey: "omo.agentTooltip.sisyphus",
-    recommended: "claude-opus-4-7",
+    recommended: "claude-opus-4-8",
     group: "main",
   },
   {
@@ -45,7 +45,7 @@ export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
     display: "Prometheus",
     descKey: "omo.agentDesc.prometheus",
     tooltipKey: "omo.agentTooltip.prometheus",
-    recommended: "claude-opus-4-7",
+    recommended: "claude-opus-4-8",
     group: "main",
   },
   {
@@ -120,7 +120,7 @@ export const OMO_BUILTIN_CATEGORIES: OmoCategoryDef[] = [
     display: "Visual Engineering",
     descKey: "omo.categoryDesc.visualEngineering",
     tooltipKey: "omo.categoryTooltip.visualEngineering",
-    recommended: "gemini-3.1-pro",
+    recommended: "gemini-3.5-flash",
   },
   {
     key: "ultrabrain",
@@ -141,7 +141,7 @@ export const OMO_BUILTIN_CATEGORIES: OmoCategoryDef[] = [
     display: "Artistry",
     descKey: "omo.categoryDesc.artistry",
     tooltipKey: "omo.categoryTooltip.artistry",
-    recommended: "gemini-3.1-pro",
+    recommended: "gemini-3.5-flash",
   },
   {
     key: "quick",
@@ -162,7 +162,7 @@ export const OMO_BUILTIN_CATEGORIES: OmoCategoryDef[] = [
     display: "Unspecified High",
     descKey: "omo.categoryDesc.unspecifiedHigh",
     tooltipKey: "omo.categoryTooltip.unspecifiedHigh",
-    recommended: "claude-opus-4-7",
+    recommended: "claude-opus-4-8",
   },
   {
     key: "writing",
@@ -281,8 +281,8 @@ export const OMO_BACKGROUND_TASK_PLACEHOLDER = `{
     "google": 10
   },
   "modelConcurrency": {
-    "anthropic/claude-opus-4-7": 2,
-    "google/gemini-3-flash": 10
+    "anthropic/claude-opus-4-8": 2,
+    "google/gemini-3.5-flash": 10
   }
 }`;
 
@@ -320,7 +320,7 @@ export const OMO_SLIM_BUILTIN_AGENTS: OmoAgentDef[] = [
     display: "Orchestrator",
     descKey: "omo.slimAgentDesc.orchestrator",
     tooltipKey: "omo.slimAgentTooltip.orchestrator",
-    recommended: "claude-opus-4-7",
+    recommended: "claude-opus-4-8",
     group: "main",
   },
   {
@@ -328,7 +328,7 @@ export const OMO_SLIM_BUILTIN_AGENTS: OmoAgentDef[] = [
     display: "Oracle",
     descKey: "omo.slimAgentDesc.oracle",
     tooltipKey: "omo.slimAgentTooltip.oracle",
-    recommended: "gpt-5.4",
+    recommended: "gpt-5.5",
     group: "sub",
   },
   {
@@ -336,7 +336,7 @@ export const OMO_SLIM_BUILTIN_AGENTS: OmoAgentDef[] = [
     display: "Librarian",
     descKey: "omo.slimAgentDesc.librarian",
     tooltipKey: "omo.slimAgentTooltip.librarian",
-    recommended: "gemini-3-flash",
+    recommended: "gemini-3.5-flash",
     group: "sub",
   },
   {
@@ -344,7 +344,7 @@ export const OMO_SLIM_BUILTIN_AGENTS: OmoAgentDef[] = [
     display: "Explorer",
     descKey: "omo.slimAgentDesc.explorer",
     tooltipKey: "omo.slimAgentTooltip.explorer",
-    recommended: "grok-code-fast-1",
+    recommended: "grok-build-0.1",
     group: "sub",
   },
   {
@@ -352,7 +352,7 @@ export const OMO_SLIM_BUILTIN_AGENTS: OmoAgentDef[] = [
     display: "Designer",
     descKey: "omo.slimAgentDesc.designer",
     tooltipKey: "omo.slimAgentTooltip.designer",
-    recommended: "gemini-3-pro",
+    recommended: "gemini-3.5-flash",
     group: "sub",
   },
   {
@@ -360,7 +360,7 @@ export const OMO_SLIM_BUILTIN_AGENTS: OmoAgentDef[] = [
     display: "Fixer",
     descKey: "omo.slimAgentDesc.fixer",
     tooltipKey: "omo.slimAgentTooltip.fixer",
-    recommended: "gpt-5.4",
+    recommended: "gpt-5.5",
     group: "sub",
   },
   {

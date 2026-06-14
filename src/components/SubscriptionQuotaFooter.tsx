@@ -9,6 +9,7 @@ interface SubscriptionQuotaFooterProps {
   appId: AppId;
   inline?: boolean;
   isCurrent?: boolean;
+  autoQueryInterval?: number;
 }
 
 interface SubscriptionQuotaViewProps {
@@ -309,6 +310,8 @@ export const TierBadge: React.FC<{
     : tier.name;
   const countdown = countdownStr(tier.resetsAt);
 
+  const hasUsd = tier.usedValueUsd != null && tier.maxValueUsd != null;
+
   return (
     <div className="flex items-center gap-0.5">
       <span className="text-gray-500 dark:text-gray-400">{label}:</span>
@@ -317,6 +320,11 @@ export const TierBadge: React.FC<{
       >
         {t("subscription.utilization", { value: Math.round(tier.utilization) })}
       </span>
+      {hasUsd && (
+        <span className="text-muted-foreground/60">
+          (${tier.usedValueUsd!.toFixed(2)}/${tier.maxValueUsd!.toFixed(2)})
+        </span>
+      )}
       {countdown && (
         <span className="text-muted-foreground/60 ml-0.5 flex items-center gap-px">
           <Clock size={10} />
@@ -390,12 +398,18 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
   appId,
   inline = false,
   isCurrent = false,
+  autoQueryInterval = 5,
 }) => {
   const {
     data: quota,
     isFetching: loading,
     refetch,
-  } = useSubscriptionQuota(appId, isCurrent, isCurrent);
+  } = useSubscriptionQuota(
+    appId,
+    isCurrent,
+    isCurrent && autoQueryInterval > 0,
+    autoQueryInterval,
+  );
 
   if (!isCurrent) return null;
 

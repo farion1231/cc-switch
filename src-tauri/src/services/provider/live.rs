@@ -596,6 +596,32 @@ fn restore_live_settings_for_provider_backfill(
         );
     }
 
+    // 统一会话开关注入的共享 `custom` 路由只属于 live 配置；切换回填时
+    // 必须剥掉，否则官方供应商的存储配置被污染，关闭开关后无法还原。
+    if provider.category.as_deref() == Some("official") {
+        if let Err(err) =
+            crate::codex_config::strip_codex_unified_session_bucket_from_settings(&mut settings)
+        {
+            log::warn!(
+                "Failed to strip unified session bucket while backfilling '{}': {err}",
+                provider.id
+            );
+        }
+    }
+
+    // `modelCatalog` is a cc-switch–private field whose SSOT is the DB. Live's
+    // `config.toml` only carries a lossy projection (`model_catalog_json` →
+    // generated catalog file) that proxy takeover/restore cycles and Codex.app
+    // config rewrites can drop, so `read_live_settings` may reconstruct it as
+    // absent. Never let a switch-away backfill from Live erase the stored
+    // mapping: prefer the DB provider's `modelCatalog`, falling back to whatever
+    // Live reconstructed only when the DB has none.
+    if let Some(stored_catalog) = provider.settings_config.get("modelCatalog") {
+        if let Some(obj) = settings.as_object_mut() {
+            obj.insert("modelCatalog".to_string(), stored_catalog.clone());
+        }
+    }
+
     settings
 }
 
@@ -910,6 +936,48 @@ pub(crate) fn sync_current_provider_for_app_to_live(
     Ok(())
 }
 
+fn sync_current_provider_for_app_respecting_takeover(
+    state: &AppState,
+    app_type: &AppType,
+) -> Result<(), AppError> {
+    let current_id = match crate::settings::get_effective_current_provider(&state.db, app_type)? {
+        Some(id) => id,
+        None => return Ok(()),
+    };
+
+    let providers = state.db.get_all_providers(app_type.as_str())?;
+    let Some(provider) = providers.get(&current_id) else {
+        return Ok(());
+    };
+
+    let has_live_backup = futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
+        .ok()
+        .flatten()
+        .is_some();
+    let live_taken_over = state
+        .proxy_service
+        .detect_takeover_in_live_config_for_app(app_type);
+
+    // `enabled` is set only after takeover writes complete. During that
+    // activation window, backup/live placeholders are the authoritative signal
+    // that normal provider sync must not rewrite the managed live file.
+    if has_live_backup || live_taken_over {
+        if matches!(app_type, AppType::ClaudeDesktop) {
+            write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
+        } else {
+            futures::executor::block_on(
+                state
+                    .proxy_service
+                    .update_live_backup_from_provider(app_type.as_str(), provider),
+            )
+            .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+        }
+        return Ok(());
+    }
+
+    write_live_with_common_config(state.db.as_ref(), app_type, provider)
+}
+
 /// Sync current provider to live configuration
 ///
 /// 使用有效的当前供应商 ID（验证过存在性）。
@@ -924,19 +992,10 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
             // Additive mode: sync ALL providers
             sync_all_providers_to_live(state, &app_type)?;
         } else {
-            // Switch mode: sync only current provider
-            let current_id =
-                match crate::settings::get_effective_current_provider(&state.db, &app_type)? {
-                    Some(id) => id,
-                    None => continue,
-                };
-
-            let providers = state.db.get_all_providers(app_type.as_str())?;
-            if let Some(provider) = providers.get(&current_id) {
-                write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
-            }
-            // Note: get_effective_current_provider already validates existence,
-            // so providers.get() should always succeed here
+            // Switch mode: sync only current provider. During proxy takeover,
+            // update the restore backup instead of rewriting the taken-over
+            // live file.
+            sync_current_provider_for_app_respecting_takeover(state, &app_type)?;
         }
     }
 
@@ -1085,6 +1144,22 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
     // - 用户手动点 ProviderEmptyState 的导入按钮时，与官方 seed 共存而不被阻塞
     if state.db.has_non_official_seed_provider(app_type.as_str())? {
         return Ok(false);
+    }
+
+    // 拒绝把"被代理接管的 Live"导入为供应商：接管期间 Live 里只有
+    // PROXY_MANAGED 占位符和本地代理地址，不是用户的真实配置。一旦导入，
+    // 它会成为 current provider（SSOT），后续"无备份恢复"路径会把占位符
+    // 当真实配置写回 Live，永久卡在已失效的本地代理上。
+    // 典型触发场景：代理接管开启时切换 app_config_dir 并重启，新数据库首启导入。
+    if state
+        .proxy_service
+        .detect_takeover_in_live_config_for_app(&app_type)
+    {
+        return Err(AppError::localized(
+            "provider.import.live_taken_over",
+            "Live 配置当前处于代理接管状态（包含占位符），不能导入为供应商。请先关闭代理接管或恢复 Live 配置后重试。",
+            "The live config is currently taken over by the proxy (contains placeholders) and cannot be imported as a provider. Disable proxy takeover or restore the live config first.",
+        ));
     }
 
     let settings_config = match app_type {
@@ -1646,5 +1721,79 @@ mod tests {
             .map(|value| value.as_str().expect("tool id should be string"))
             .collect();
         assert_eq!(values, vec!["tool2"]);
+    }
+
+    #[test]
+    fn codex_switch_backfill_preserves_stored_model_catalog_when_live_lacks_it() {
+        // Reproduces the data-loss bug: switching away from a Codex provider
+        // backfills the outgoing provider from Live, but Live's config.toml had
+        // already lost its `model_catalog_json` projection (proxy cycle /
+        // Codex.app rewrite), so `read_live_settings` reconstructs no catalog.
+        // The stored mapping must survive the backfill.
+        let mut provider = Provider::with_id(
+            "deepseek".to_string(),
+            "DeepSeek".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-deepseek" },
+                "config": "model_provider = \"custom\"\nmodel = \"deepseek-v4-pro\"\n",
+                "modelCatalog": {
+                    "models": [
+                        { "model": "deepseek-v4-pro", "contextWindow": 1_000_000 }
+                    ]
+                }
+            }),
+            None,
+        );
+        provider.category = Some("cn_official".to_string());
+
+        // Live snapshot as captured during switch: no `modelCatalog` field.
+        let live_settings = json!({
+            "auth": { "OPENAI_API_KEY": "sk-deepseek" },
+            "config": "model_provider = \"custom\"\nmodel = \"deepseek-v4-pro\"\n"
+        });
+
+        let result =
+            restore_live_settings_for_provider_backfill(&AppType::Codex, &provider, live_settings);
+
+        assert_eq!(
+            result.get("modelCatalog"),
+            provider.settings_config.get("modelCatalog"),
+            "switch-away backfill must keep the DB-stored modelCatalog when Live has none"
+        );
+    }
+
+    #[test]
+    fn codex_switch_backfill_keeps_live_catalog_when_db_has_none() {
+        // When the DB provider has no stored catalog, a catalog reconstructed
+        // from Live (if any) should be left intact — the DB-preference overlay
+        // must not wipe it.
+        let mut provider = Provider::with_id(
+            "deepseek".to_string(),
+            "DeepSeek".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-deepseek" },
+                "config": "model_provider = \"custom\"\nmodel = \"deepseek-v4-pro\"\n"
+            }),
+            None,
+        );
+        provider.category = Some("cn_official".to_string());
+
+        let live_settings = json!({
+            "auth": { "OPENAI_API_KEY": "sk-deepseek" },
+            "config": "model_provider = \"custom\"\nmodel = \"deepseek-v4-pro\"\n",
+            "modelCatalog": { "models": [ { "model": "deepseek-v4-pro" } ] }
+        });
+
+        let result = restore_live_settings_for_provider_backfill(
+            &AppType::Codex,
+            &provider,
+            live_settings.clone(),
+        );
+
+        assert_eq!(
+            result.get("modelCatalog"),
+            live_settings.get("modelCatalog"),
+            "backfill must keep the Live-reconstructed catalog when the DB has none"
+        );
     }
 }

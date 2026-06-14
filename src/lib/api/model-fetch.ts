@@ -18,12 +18,14 @@ export async function fetchModelsForConfig(
   apiKey: string,
   isFullUrl?: boolean,
   modelsUrl?: string,
+  customUserAgent?: string,
 ): Promise<FetchedModel[]> {
   return invoke("fetch_models_for_config", {
     baseUrl,
     apiKey,
     isFullUrl,
     modelsUrl,
+    customUserAgent,
   });
 }
 
