@@ -125,6 +125,7 @@ const VALID_APPS: AppId[] = [
   "opencode",
   "openclaw",
   "hermes",
+  "atomcode",
 ];
 
 const getInitialApp = (): AppId => {
