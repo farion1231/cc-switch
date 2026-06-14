@@ -431,6 +431,9 @@ impl Database {
 
     /// 生成一致性快照备份，返回备份文件路径（不存在主库时返回 None）
     pub(crate) fn backup_database_file(&self) -> Result<Option<PathBuf>, AppError> {
+        if self.is_in_memory {
+            return Ok(None);
+        }
         let db_path = get_app_config_dir().join("cc-switch.db");
         if !db_path.exists() {
             return Ok(None);
@@ -1239,6 +1242,81 @@ mod tests {
             Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
             None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
         }
+
+        result
+    }
+
+    #[test]
+    #[serial]
+    fn selective_sync_import_on_memory_db_does_not_touch_redirected_backup_dir(
+    ) -> Result<(), AppError> {
+        // Reproduces the CI race that flipped CI red on this branch.
+        //
+        // The other selective_sync_import_* tests create memory Databases and call
+        // `replace_tables_from_sql_strings`, which unconditionally invokes
+        // `backup_database_file()`. Once a sibling test sets `CC_SWITCH_TEST_HOME`
+        // and Database::init() lands a real cc-switch.db inside it, the memory-DB
+        // siblings start writing safety backups into that redirected path, blowing
+        // up the "exactly one new safety backup" assertion.
+        //
+        // We reproduce the "landmine" deterministically: set CC_SWITCH_TEST_HOME,
+        // place an existing cc-switch.db there, then run the memory-DB import and
+        // assert that no backup is written.
+        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        let test_home =
+            std::env::temp_dir().join("cc-switch-selective-sync-memory-no-backup-test");
+        let _ = std::fs::remove_dir_all(&test_home);
+        std::fs::create_dir_all(&test_home).expect("create test home");
+        std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
+
+        let result = (|| -> Result<(), AppError> {
+            let app_dir = get_app_config_dir();
+            std::fs::create_dir_all(&app_dir).expect("create app dir");
+            std::fs::write(app_dir.join("cc-switch.db"), b"landmine")
+                .expect("plant landmine cc-switch.db");
+            let backup_dir = app_dir.join("backups");
+            let backups_before = std::fs::read_dir(&backup_dir)
+                .ok()
+                .into_iter()
+                .flat_map(|entries| entries.filter_map(|e| e.ok()))
+                .filter(|e| e.path().extension().map(|ext| ext == "db").unwrap_or(false))
+                .count();
+
+            let remote_db = Database::memory()?;
+            {
+                let conn = crate::database::lock_conn!(remote_db.conn);
+                conn.execute(
+                    "INSERT INTO mcp_servers (
+                        id, name, server_config, tags,
+                        enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_hermes
+                    ) VALUES ('remote-mcp', 'Remote MCP', '{}', '[]', 1, 0, 0, 0, 0)",
+                    [],
+                )?;
+            }
+            let remote_sql = remote_db.export_sql_string_for_tables(&["mcp_servers"])?;
+
+            let local_db = Database::memory()?;
+            local_db.replace_tables_from_sql_strings(&[remote_sql.as_str()], &["mcp_servers"])?;
+
+            let backups_after = std::fs::read_dir(&backup_dir)
+                .ok()
+                .into_iter()
+                .flat_map(|entries| entries.filter_map(|e| e.ok()))
+                .filter(|e| e.path().extension().map(|ext| ext == "db").unwrap_or(false))
+                .count();
+
+            assert_eq!(
+                backups_after, backups_before,
+                "memory Database must not write safety backups into the redirected app dir"
+            );
+            Ok(())
+        })();
+
+        match old_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&test_home);
 
         result
     }
