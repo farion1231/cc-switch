@@ -511,7 +511,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.minimaxi.com/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("MiniMax-M2.7", "MiniMax-M2.7", "MiniMax-M2.7"),
+    modelRoutes: brandedRoutes("MiniMax-M3", "MiniMax-M3", "MiniMax-M3"),
     isPartner: true,
     partnerPromotionKey: "minimax_cn",
     theme: {
@@ -529,7 +529,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.minimax.io/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("MiniMax-M2.7", "MiniMax-M2.7", "MiniMax-M2.7"),
+    modelRoutes: brandedRoutes("MiniMax-M3", "MiniMax-M3", "MiniMax-M3"),
     isPartner: true,
     partnerPromotionKey: "minimax_en",
     theme: {
@@ -587,9 +587,9 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: brandedRoutes(
-      "Pro/MiniMaxAI/MiniMax-M2.7",
-      "Pro/MiniMaxAI/MiniMax-M2.7",
-      "Pro/MiniMaxAI/MiniMax-M2.7",
+      "Pro/MiniMaxAI/MiniMax-M3",
+      "Pro/MiniMaxAI/MiniMax-M3",
+      "Pro/MiniMaxAI/MiniMax-M3",
     ),
     isPartner: true,
     partnerPromotionKey: "siliconflow",
@@ -605,9 +605,9 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: brandedRoutes(
-      "MiniMaxAI/MiniMax-M2.7",
-      "MiniMaxAI/MiniMax-M2.7",
-      "MiniMaxAI/MiniMax-M2.7",
+      "MiniMaxAI/MiniMax-M3",
+      "MiniMaxAI/MiniMax-M3",
+      "MiniMaxAI/MiniMax-M3",
     ),
     isPartner: true,
     partnerPromotionKey: "siliconflow",
