@@ -1332,6 +1332,19 @@ impl RequestForwarder {
             adapter.build_url(&base_url, &effective_endpoint)
         };
 
+        // Ollama/本地模型兼容：适配器 build_url 可能丢失 endpoint，手动拼接
+        let url = if codex_responses_to_chat && !effective_endpoint.is_empty() {
+            let ep = effective_endpoint.trim_start_matches('/');
+            let check = format!("/{ep}");
+            if !url.contains(&check) {
+                let base = url.trim_end_matches('/');
+                format!("{base}/{ep}")
+            } else {
+                url
+            }
+        } else {
+            url
+        };
         // 记录映射后的出站模型名（此时 mapped_body 已完成接管映射 / [1m] 剥离 /
         // Copilot 归一化）。格式转换后若 body 仍带 model 字段会在下方刷新覆盖；
         // gemini_native 等模型在 URL 中的格式则保留此处的转换前真值。

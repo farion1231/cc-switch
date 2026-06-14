@@ -1310,4 +1310,52 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     endpointCandidates: ["https://api.therouter.ai/v1"],
     category: "aggregator",
   },
+  {
+    name: "Ollama (Local)",
+    websiteUrl: "https://ollama.com",
+    category: "local",
+    auth: generateThirdPartyAuth("ollama"),
+    config: generateThirdPartyConfig(
+      "ollama",
+      "http://127.0.0.1:11434/v1",
+      "qwen3.5:9b",
+    ),
+    endpointCandidates: ["http://127.0.0.1:11434/v1"],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      {
+        model: "qwen3.5:9b",
+        displayName: "Qwen 3.5 9B (Local)",
+        contextWindow: 131072,
+      },
+      {
+        model: "qwen2.5:14b",
+        displayName: "Qwen 2.5 14B (Local)",
+        contextWindow: 131072,
+      },
+      {
+        model: "qwen2.5:7b",
+        displayName: "Qwen 2.5 7B (Local)",
+        contextWindow: 131072,
+      },
+      {
+        model: "qwen3:8b",
+        displayName: "Qwen 3 8B (Local)",
+        contextWindow: 32768,
+      },
+      {
+        model: "gpt-oss:20b",
+        displayName: "GPT-OSS 20B (Local)",
+        contextWindow: 32768,
+      },
+    ]),
+    codexChatReasoning: {
+      supportsThinking: true,
+      supportsEffort: false,
+      thinkingParam: "thinking",
+      outputFormat: "reasoning",
+    },
+    icon: "ollama",
+    iconColor: "#FFFFFF",
+  },
 ];
