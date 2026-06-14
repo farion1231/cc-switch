@@ -1078,10 +1078,30 @@ fn fallback_user_shell() -> &'static str {
 }
 
 fn valid_user_shell_path(shell: &str) -> bool {
-    !shell.is_empty()
-        && shell.starts_with('/')
-        && is_valid_shell(shell)
-        && !shell.chars().any(char::is_control)
+    if shell.is_empty()
+        || !shell.starts_with('/')
+        || !is_valid_shell(shell)
+        || shell.chars().any(char::is_control)
+    {
+        return false;
+    }
+
+    let path = std::path::Path::new(shell);
+    path.is_file() && is_executable_file(path)
+}
+
+#[cfg(unix)]
+fn is_executable_file(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    path.metadata()
+        .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(path: &std::path::Path) -> bool {
+    path.is_file()
 }
 
 /// 获取用户默认 shell 的完整路径；异常或被污染的 SHELL 回退到平台默认值。
@@ -3368,6 +3388,15 @@ mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
 
+    #[cfg(unix)]
+    fn set_test_executable(path: &Path, executable: bool) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mode = if executable { 0o755 } else { 0o644 };
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+            .expect("fixture permissions should be set");
+    }
+
     #[test]
     fn test_build_exec_line() {
         assert_eq!(build_exec_line("/bin/zsh"), "exec '/bin/zsh' -l");
@@ -3395,6 +3424,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_get_user_shell_fallback() {
         // $SHELL 未设置时应按平台 fallback
@@ -3407,15 +3437,45 @@ mod tests {
         assert!(["sh", "bash", "zsh", "fish", "dash"].contains(&basename));
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_valid_user_shell_path() {
-        assert!(valid_user_shell_path("/bin/zsh"));
-        assert!(valid_user_shell_path("/usr/local/bin/bash"));
-        assert!(valid_user_shell_path("/opt/homebrew dir/bin/fish"));
+        let temp = tempfile::tempdir().expect("temp dir should be created");
+        let executable_zsh = temp.path().join("zsh");
+        std::fs::write(&executable_zsh, "#!/usr/bin/env sh\n")
+            .expect("shell fixture should be written");
+        set_test_executable(&executable_zsh, true);
+
+        let executable_fish_dir = temp.path().join("homebrew dir/bin");
+        std::fs::create_dir_all(&executable_fish_dir)
+            .expect("shell fixture directory should be created");
+        let executable_fish = executable_fish_dir.join("fish");
+        std::fs::write(&executable_fish, "#!/usr/bin/env sh\n")
+            .expect("shell fixture should be written");
+        set_test_executable(&executable_fish, true);
+
+        let non_executable_bash = temp.path().join("bash");
+        std::fs::write(&non_executable_bash, "#!/usr/bin/env sh\n")
+            .expect("shell fixture should be written");
+        set_test_executable(&non_executable_bash, false);
+
+        assert!(valid_user_shell_path(&executable_zsh.to_string_lossy()));
+        assert!(valid_user_shell_path(&executable_fish.to_string_lossy()));
         assert!(!valid_user_shell_path(""));
         assert!(!valid_user_shell_path("zsh"));
-        assert!(!valid_user_shell_path("/bin/zsh; rm -rf /"));
-        assert!(!valid_user_shell_path("/bin/zsh\n/bin/bash"));
+        assert!(!valid_user_shell_path(
+            &temp.path().join("missing/zsh").to_string_lossy()
+        ));
+        assert!(!valid_user_shell_path(
+            &non_executable_bash.to_string_lossy()
+        ));
+        assert!(!valid_user_shell_path(
+            &temp.path().join("zsh; rm -rf /").to_string_lossy()
+        ));
+        assert!(!valid_user_shell_path(&format!(
+            "{}\n/bin/bash",
+            executable_zsh.to_string_lossy()
+        )));
         assert!(!valid_user_shell_path("/usr/bin/powershell"));
     }
 
