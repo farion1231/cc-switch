@@ -107,16 +107,12 @@ export interface UsageResult {
   error?: string;
 }
 
-// 供应商单独的模型测试配置
+// 供应商单独的连通检测配置（覆盖全局配置）
 export interface ProviderTestConfig {
   // 是否启用单独配置（false 时使用全局配置）
   enabled: boolean;
-  // 测试用的模型名称（覆盖全局配置）
-  testModel?: string;
   // 超时时间（秒）
   timeoutSecs?: number;
-  // 测试提示词
-  testPrompt?: string;
   // 降级阈值（毫秒）
   degradedThresholdMs?: number;
   // 最大重试次数

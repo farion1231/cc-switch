@@ -232,9 +232,6 @@ export function ProviderCard({
     provider.meta?.apiFormat,
     (provider.settingsConfig as Record<string, any>)?.config,
   ]);
-  const isClaudeThirdParty =
-    appId === "claude" && provider.category === "third_party";
-
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用（OpenCode/OpenClaw/Hermes）：使用 isInConfig 代替 isCurrent
   const shouldAutoQuery =
@@ -551,11 +548,13 @@ export function ProviderCard({
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}
               onTest={
+                // 连通检测对所有供应商开放（官方会回退到客户端实际会连的官方端点），
+                // 唯独 Claude Desktop 官方除外：它是原生 1P 模式（走 claude.ai，cc-switch
+                // 不在请求路径上），没有可靠的探测目标，故隐藏其检测按钮。
                 onTest &&
-                !isOfficial &&
-                !isCopilot &&
-                !isCodexOauth &&
-                !isClaudeThirdParty
+                !(
+                  appId === "claude-desktop" && provider.category === "official"
+                )
                   ? () => onTest(provider)
                   : undefined
               }

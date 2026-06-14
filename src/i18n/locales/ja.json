@@ -98,6 +98,7 @@
     "windowClose": "ウィンドウを閉じる"
   },
   "provider": {
+    "connectivityCheck": "接続チェック",
     "tabProvider": "プロバイダー",
     "tabUniversal": "統一プロバイダー",
     "noProviders": "まだプロバイダーがありません",
@@ -2515,6 +2516,11 @@
     "stopWithRestoreFailed": "停止に失敗しました: {{detail}}"
   },
   "streamCheck": {
+    "reachable": "{{providerName}} は接続可能 ({{responseTimeMs}}ms)",
+    "reachableSlow": "{{providerName}} は接続可能だが低速 ({{responseTimeMs}}ms)",
+    "unreachable": "{{providerName}} に接続できません: {{message}}",
+    "unreachableHint": "接続を確立できませんでした（DNS / 接続 / TLS / タイムアウト）。base_url とネットワークを確認してください。",
+    "connectivityNote": "接続チェックはプロバイダーのアドレスに到達できるかを確認するだけで、実際のモデルリクエストは送信しません。何らかの応答があれば「到達可能」とみなされますが、認証やモデル設定が正しいことを保証するものではありません。",
     "configSaved": "ヘルスチェック設定を保存しました",
     "configSaveFailed": "保存に失敗しました",
     "testModels": "テストモデル",

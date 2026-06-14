@@ -98,6 +98,7 @@
     "windowClose": "Close window"
   },
   "provider": {
+    "connectivityCheck": "Connectivity check",
     "tabProvider": "Provider",
     "tabUniversal": "Universal",
     "noProviders": "No providers added yet",
@@ -2515,6 +2516,11 @@
     "stopWithRestoreFailed": "Stop failed: {{detail}}"
   },
   "streamCheck": {
+    "reachable": "{{providerName}} is reachable ({{responseTimeMs}}ms)",
+    "reachableSlow": "{{providerName}} reachable but slow ({{responseTimeMs}}ms)",
+    "unreachable": "{{providerName}} unreachable: {{message}}",
+    "unreachableHint": "Could not establish a connection (DNS / connect / TLS / timeout). Check the base_url and your network.",
+    "connectivityNote": "Connectivity check only probes whether the provider address is reachable; it does not send a real model request. Any response counts as \"reachable\" — which does not guarantee that auth or model settings are correct.",
     "configSaved": "Health check config saved",
     "configSaveFailed": "Save failed",
     "testModels": "Test Models",

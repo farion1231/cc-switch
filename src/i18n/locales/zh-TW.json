@@ -98,6 +98,7 @@
     "windowClose": "關閉視窗"
   },
   "provider": {
+    "connectivityCheck": "檢測連通",
     "tabProvider": "供應商",
     "tabUniversal": "通用供應商",
     "noProviders": "尚未新增任何供應商",
@@ -2487,6 +2488,11 @@
     "stopWithRestoreFailed": "停止失敗：{{detail}}"
   },
   "streamCheck": {
+    "reachable": "{{providerName}} 連通正常 ({{responseTimeMs}}ms)",
+    "reachableSlow": "{{providerName}} 連通但較慢 ({{responseTimeMs}}ms)",
+    "unreachable": "{{providerName}} 無法連通: {{message}}",
+    "unreachableHint": "無法建立連線（DNS / 連線 / TLS / 逾時）。請檢查 base_url 與網路。",
+    "connectivityNote": "連通檢測僅探測供應商位址是否可達，不發送真實模型請求。收到任意回應即視為「可達」——這不代表驗證或模型設定一定正確。",
     "configSaved": "健康檢測設定已儲存",
     "configSaveFailed": "儲存失敗",
     "testModels": "測試模型",
