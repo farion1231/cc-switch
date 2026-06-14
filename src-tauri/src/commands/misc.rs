@@ -1094,7 +1094,21 @@ fn get_user_shell() -> String {
 
 /// 构建 exec 行：引号保护 shell 路径，用户 shell 按默认交互式规则加载 rc 配置
 fn build_exec_line(shell: &str) -> String {
-    format!("exec {}", shell_single_quote(shell))
+    match shell.rsplit('/').next().unwrap_or(shell) {
+        "bash" | "zsh" | "fish" => format!("exec {} -l", shell_single_quote(shell)),
+        _ => format!("exec {}", shell_single_quote(shell)),
+    }
+}
+
+/// 构建 provider 命令行：通过用户 shell 的登录/交互模式执行，确保 GUI 启动的终端也加载用户 PATH。
+fn build_provider_command_line(shell: &str, config_path: &str) -> String {
+    let claude_command = format!("claude --settings {}", shell_single_quote(config_path));
+    format!(
+        "{} {} {}",
+        shell_single_quote(shell),
+        default_flag_for_shell(shell),
+        shell_single_quote(&claude_command)
+    )
 }
 
 #[cfg(target_os = "windows")]
@@ -2603,6 +2617,7 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
+    let provider_command = build_provider_command_line(&shell, &config_path);
 
     // Write the shell script to a temp file
     // 脚本使用 POSIX sh 语法确保可移植性，exec 行切换到用户交互式 shell
@@ -2612,12 +2627,13 @@ trap 'rm -f "{config_path}" "{script_file}"' EXIT
 {cd_command}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
-claude --settings "{config_path}"
+{provider_command}
 {exec_line}
 "#,
         config_path = config_path,
         script_file = script_file.display(),
         cd_command = cd_command,
+        provider_command = provider_command,
         exec_line = exec_line,
     );
 
@@ -2925,6 +2941,7 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
+    let provider_command = build_provider_command_line(&shell, &config_path);
 
     let script_content = format!(
         r#"#!/usr/bin/env sh
@@ -2932,12 +2949,13 @@ trap 'rm -f "{config_path}" "{script_file}"' EXIT
 {cd_command}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
-claude --settings "{config_path}"
+{provider_command}
 {exec_line}
 "#,
         config_path = config_path,
         script_file = script_file.display(),
         cd_command = cd_command,
+        provider_command = provider_command,
         exec_line = exec_line,
     );
 
@@ -3352,15 +3370,28 @@ mod tests {
 
     #[test]
     fn test_build_exec_line() {
-        assert_eq!(build_exec_line("/bin/zsh"), "exec '/bin/zsh'");
-        assert_eq!(build_exec_line("/bin/bash"), "exec '/bin/bash'");
+        assert_eq!(build_exec_line("/bin/zsh"), "exec '/bin/zsh' -l");
+        assert_eq!(build_exec_line("/bin/bash"), "exec '/bin/bash' -l");
         assert_eq!(
             build_exec_line("/opt/homebrew dir/bin/fish"),
-            "exec '/opt/homebrew dir/bin/fish'"
+            "exec '/opt/homebrew dir/bin/fish' -l"
         );
+        assert_eq!(build_exec_line("/bin/sh"), "exec '/bin/sh'");
         assert_eq!(
             build_exec_line("/tmp/shell'quote/zsh"),
-            "exec '/tmp/shell'\"'\"'quote/zsh'"
+            "exec '/tmp/shell'\"'\"'quote/zsh' -l"
+        );
+    }
+
+    #[test]
+    fn test_build_provider_command_line_uses_user_shell_environment() {
+        assert_eq!(
+            build_provider_command_line("/bin/zsh", "/tmp/claude config.json"),
+            "'/bin/zsh' -lic 'claude --settings '\"'\"'/tmp/claude config.json'\"'\"''"
+        );
+        assert_eq!(
+            build_provider_command_line("/bin/sh", "/tmp/claude config.json"),
+            "'/bin/sh' -c 'claude --settings '\"'\"'/tmp/claude config.json'\"'\"''"
         );
     }
 
