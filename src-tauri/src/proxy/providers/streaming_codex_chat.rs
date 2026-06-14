@@ -141,6 +141,7 @@ impl ChatToResponsesState {
         if let Some(delta) = choice.get("delta") {
             if let Some(reasoning) = chat_delta_reasoning_text(delta) {
                 events.extend(self.push_reasoning_delta(&reasoning));
+                self.append_reasoning_to_active_tools(&reasoning);
             }
 
             if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
@@ -520,6 +521,34 @@ impl ChatToResponsesState {
         }
 
         events
+    }
+
+    fn append_reasoning_to_active_tools(&mut self, delta: &str) {
+        if delta.trim().is_empty() {
+            return;
+        }
+
+        for state in self.tools.values_mut().filter(|state| !state.done) {
+            if state.reasoning_content.is_empty() {
+                state.reasoning_content = delta.trim_start().to_string();
+            } else {
+                state.reasoning_content.push_str(delta);
+            }
+        }
+    }
+
+    fn has_substantive_output(&self) -> bool {
+        !self.text.text.trim().is_empty()
+            || !self.reasoning.text.trim().is_empty()
+            || !self.inline_think.buffer.trim().is_empty()
+            || !self.output_items.is_empty()
+            || self.tools.values().any(|state| {
+                state.added
+                    || !state.call_id.trim().is_empty()
+                    || !state.name.trim().is_empty()
+                    || !state.arguments.trim().is_empty()
+                    || !state.reasoning_content.trim().is_empty()
+            })
     }
 
     fn finalize(&mut self) -> Vec<Bytes> {
@@ -949,8 +978,20 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
         }
 
         if !stream_failed {
-            for event in state.finalize() {
-                yield Ok(event);
+            if state.completed || state.finish_reason.is_some() {
+                for event in state.finalize() {
+                    yield Ok(event);
+                }
+            } else if state.has_substantive_output() {
+                state.finish_reason = Some("length".to_string());
+                for event in state.finalize() {
+                    yield Ok(event);
+                }
+            } else {
+                yield Ok(state.failed_event(
+                    "Upstream Chat Completions stream ended before sending finish_reason".to_string(),
+                    Some("stream_truncated".to_string()),
+                ));
             }
         }
     }
@@ -1135,6 +1176,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn preserves_late_reasoning_content_on_streamed_tool_call_items() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_tool_late_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_tool_late_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\":\\\"README.md\\\"}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_tool_late_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"reasoning_content\":\"Need file.\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_tool_late_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.output_item.done"));
+        assert!(output.contains("\"type\":\"function_call\""));
+        assert!(output.contains("\"reasoning_content\":\"Need file.\""));
+    }
+
+    #[tokio::test]
     async fn restores_namespace_on_streamed_tool_call_items() {
         let request = json!({
             "model": "gpt-5.4",
@@ -1206,6 +1263,31 @@ mod tests {
         let output = String::from_utf8(bytes.concat()).unwrap();
 
         assert!(output.contains("event: response.failed"));
+        assert!(!output.contains("event: response.completed"));
+    }
+
+    #[tokio::test]
+    async fn stream_end_with_output_without_finish_reason_emits_incomplete_without_failed() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_truncated\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.completed"));
+        assert!(output.contains("\"status\":\"incomplete\""));
+        assert!(output.contains("\"incomplete_details\":{\"reason\":\"max_output_tokens\"}"));
+        assert!(!output.contains("event: response.failed"));
+    }
+
+    #[tokio::test]
+    async fn stream_end_without_output_or_finish_reason_emits_failed_without_completed() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_truncated\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{}}]}\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.failed"));
+        assert!(output.contains("stream_truncated"));
         assert!(!output.contains("event: response.completed"));
     }
 

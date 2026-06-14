@@ -596,6 +596,19 @@ fn restore_live_settings_for_provider_backfill(
         );
     }
 
+    // 统一会话开关注入的共享 `custom` 路由只属于 live 配置；切换回填时
+    // 必须剥掉，否则官方供应商的存储配置被污染，关闭开关后无法还原。
+    if provider.category.as_deref() == Some("official") {
+        if let Err(err) =
+            crate::codex_config::strip_codex_unified_session_bucket_from_settings(&mut settings)
+        {
+            log::warn!(
+                "Failed to strip unified session bucket while backfilling '{}': {err}",
+                provider.id
+            );
+        }
+    }
+
     // `modelCatalog` is a cc-switch–private field whose SSOT is the DB. Live's
     // `config.toml` only carries a lossy projection (`model_catalog_json` →
     // generated catalog file) that proxy takeover/restore cycles and Codex.app
@@ -1131,6 +1144,22 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
     // - 用户手动点 ProviderEmptyState 的导入按钮时，与官方 seed 共存而不被阻塞
     if state.db.has_non_official_seed_provider(app_type.as_str())? {
         return Ok(false);
+    }
+
+    // 拒绝把"被代理接管的 Live"导入为供应商：接管期间 Live 里只有
+    // PROXY_MANAGED 占位符和本地代理地址，不是用户的真实配置。一旦导入，
+    // 它会成为 current provider（SSOT），后续"无备份恢复"路径会把占位符
+    // 当真实配置写回 Live，永久卡在已失效的本地代理上。
+    // 典型触发场景：代理接管开启时切换 app_config_dir 并重启，新数据库首启导入。
+    if state
+        .proxy_service
+        .detect_takeover_in_live_config_for_app(&app_type)
+    {
+        return Err(AppError::localized(
+            "provider.import.live_taken_over",
+            "Live 配置当前处于代理接管状态（包含占位符），不能导入为供应商。请先关闭代理接管或恢复 Live 配置后重试。",
+            "The live config is currently taken over by the proxy (contains placeholders) and cannot be imported as a provider. Disable proxy takeover or restore the live config first.",
+        ));
     }
 
     let settings_config = match app_type {

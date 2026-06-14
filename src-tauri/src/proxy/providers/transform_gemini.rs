@@ -1101,7 +1101,7 @@ pub(crate) fn build_anthropic_usage(usage: Option<&Value>) -> Value {
         });
     };
 
-    let input_tokens = usage
+    let prompt_tokens = usage
         .get("promptTokenCount")
         .and_then(|value| value.as_u64())
         .unwrap_or(0);
@@ -1109,18 +1109,26 @@ pub(crate) fn build_anthropic_usage(usage: Option<&Value>) -> Value {
         .get("totalTokenCount")
         .and_then(|value| value.as_u64())
         .unwrap_or(0);
-    let output_tokens = total_tokens.saturating_sub(input_tokens);
+    let cached_tokens = usage
+        .get("cachedContentTokenCount")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    // Gemini 的 promptTokenCount 含缓存命中（cachedContentTokenCount）；而 Anthropic
+    // 语义下 input_tokens 必须是不含 cache 的 fresh input、cache_read 单列。本路径转成
+    // Anthropic 后以 app_type=claude 记账，calculator 对 claude 设 input_includes_cache_read
+    // =false 不再从 input 扣 cache，因此这里必须先扣减，否则缓存 token 会被双重计费
+    // （一次按完整 input 价、一次按 cache_read 价）。output 仍按 total-prompt 计算
+    // （prompt 是总输入，扣减只作用于 input/cache 的拆分，不影响 output）。
+    let input_tokens = prompt_tokens.saturating_sub(cached_tokens);
+    let output_tokens = total_tokens.saturating_sub(prompt_tokens);
 
     let mut result = json!({
         "input_tokens": input_tokens,
         "output_tokens": output_tokens
     });
 
-    if let Some(cached) = usage
-        .get("cachedContentTokenCount")
-        .and_then(|value| value.as_u64())
-    {
-        result["cache_read_input_tokens"] = json!(cached);
+    if cached_tokens > 0 {
+        result["cache_read_input_tokens"] = json!(cached_tokens);
     }
 
     result
@@ -1370,7 +1378,11 @@ mod tests {
         assert_eq!(result["content"][0]["type"], "text");
         assert_eq!(result["content"][0]["text"], "Hello from Gemini");
         assert_eq!(result["stop_reason"], "end_turn");
-        assert_eq!(result["usage"]["input_tokens"], 12);
+        // input_tokens = promptTokenCount(12) - cachedContentTokenCount(3) = 9（fresh input）。
+        // Gemini 的 promptTokenCount 含缓存命中，但 Anthropic 语义要求 input 不含 cache、
+        // cache_read 单列；二者相加(9+3)=总输入 12。扣减避免本路径以 app_type=claude
+        // 记账时把缓存 token 双重计费。
+        assert_eq!(result["usage"]["input_tokens"], 9);
         assert_eq!(result["usage"]["output_tokens"], 8);
         assert_eq!(result["usage"]["cache_read_input_tokens"], 3);
     }

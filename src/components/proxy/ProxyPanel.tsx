@@ -144,6 +144,8 @@ export function ProxyPanel({
         return false;
       }
     };
+    const normalizedAddress =
+      addressTrimmed === "localhost" ? "127.0.0.1" : addressTrimmed;
     const isValidAddress =
       addressTrimmed === "localhost" ||
       addressTrimmed === "0.0.0.0" ||
@@ -181,7 +183,7 @@ export function ProxyPanel({
     try {
       await updateGlobalConfig.mutateAsync({
         ...globalConfig,
-        listenAddress: addressTrimmed,
+        listenAddress: normalizedAddress,
         listenPort: port,
       });
       toast.success(

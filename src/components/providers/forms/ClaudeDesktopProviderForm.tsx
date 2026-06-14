@@ -117,7 +117,7 @@ const CLAUDE_ROUTE_PREFIX = "claude-";
 const ANTHROPIC_CLAUDE_ROUTE_PREFIX = "anthropic/claude-";
 const LEGACY_ONE_M_MARKER = "[1m]";
 const ROLE_ROUTE_IDS = CLAUDE_DESKTOP_ROLE_ROUTE_IDS;
-const ROLE_ORDER: RouteRole[] = ["sonnet", "opus", "haiku"];
+const ROLE_ORDER: RouteRole[] = ["sonnet", "opus", "fable", "haiku"];
 
 function envString(
   settingsConfig: Record<string, unknown> | undefined,
@@ -138,8 +138,10 @@ function clonePlainRecord(value: unknown): Record<string, unknown> {
 
 function routeRoleFromId(route: string): RouteRole {
   const normalized = route.trim().toLowerCase();
+  // 与后端 claude_role_keyword 同序（opus → haiku → fable → sonnet）。
   if (normalized.includes("opus")) return "opus";
   if (normalized.includes("haiku")) return "haiku";
+  if (normalized.includes("fable")) return "fable";
   return "sonnet";
 }
 
@@ -193,9 +195,10 @@ function initialRouteRows(
   });
 }
 
-// Proxy 模式对齐 Claude Code：固定 Sonnet / Opus / Haiku 三档。
-// 把任意来源的 route 行按角色归类到固定三槽（缺档留空），保证 UI 永远三行、
-// 用户不会漏配 Haiku 导致子 agent 找不到模型。
+// Proxy 模式对齐 Claude Code：固定 Sonnet / Opus / Fable / Haiku 四档。
+// 把任意来源的 route 行按角色归类到固定四槽（缺档留空），保证 UI 永远四行、
+// 用户不会漏配某档导致子 agent 找不到模型。
+// （fable 自 Desktop 1.12603.1+ 起被 fail-all 校验放行，可作为独立档位。）
 function normalizeProxyRows(rows: RouteRow[]): RouteRow[] {
   return ROLE_ORDER.map((role) => {
     const match = rows.find(
@@ -221,7 +224,8 @@ function isClaudeSafeRoute(route: string) {
 
   // 角色前缀后必须还有实际模型标识，拒绝 claude-sonnet- 这类退化值
   // （否则会写入 profile 并触发 Claude Desktop fail-all 拒收整组）。
-  return ["sonnet-", "opus-", "haiku-"].some(
+  // 与后端 is_claude_safe_model_id 镜像；fable 自 Desktop 1.12603.1+ 起被校验放行。
+  return ["sonnet-", "opus-", "haiku-", "fable-"].some(
     (prefix) =>
       routeTail.startsWith(prefix) && routeTail.length > prefix.length,
   );
@@ -574,9 +578,9 @@ export function ClaudeDesktopProviderForm({
       .filter((route) => route.route || route.model);
 
     if (mode === "proxy") {
-      // 固定三档（Sonnet / Opus / Haiku），route_id 由 UI 生成、恒合法，
+      // 固定四档（Sonnet / Opus / Fable / Haiku），route_id 由 UI 生成、恒合法，
       // 因此只要求至少填一个实际请求模型；留空档继承第一个已填档（Sonnet 优先），
-      // 对齐 Claude Code 的兜底，保证落库三档齐全、子 agent 不会找不到 Haiku。
+      // 对齐 Claude Code 的兜底，保证落库四档齐全、子 agent 不会找不到模型。
       const primary = routeEntries.find((route) => route.model);
       if (!primary) {
         toast.error(
@@ -931,9 +935,22 @@ export function ClaudeDesktopProviderForm({
                           ? t("claudeDesktop.routeRoleHaiku", {
                               defaultValue: "Haiku",
                             })
-                          : t("claudeDesktop.routeRoleSonnet", {
-                              defaultValue: "Sonnet",
-                            });
+                          : role === "fable"
+                            ? t("claudeDesktop.routeRoleFable", {
+                                defaultValue: "Fable",
+                              })
+                            : t("claudeDesktop.routeRoleSonnet", {
+                                defaultValue: "Sonnet",
+                              });
+                    // Haiku 档示范映射到轻量模型（flash），其余档映射到 pro；
+                    // 两列占位联动，保持每行「菜单显示名 ↔ 实际请求模型」品牌一致。
+                    const isHaikuRole = role === "haiku";
+                    const labelPlaceholder = isHaikuRole
+                      ? "DeepSeek V4 Flash"
+                      : "DeepSeek V4 Pro";
+                    const modelPlaceholder = isHaikuRole
+                      ? "deepseek-v4-flash"
+                      : "deepseek-v4-pro";
                     return (
                       <div
                         key={route.rowId}
@@ -949,7 +966,7 @@ export function ClaudeDesktopProviderForm({
                               labelOverride: event.target.value,
                             })
                           }
-                          placeholder="DeepSeek V4 Pro"
+                          placeholder={labelPlaceholder}
                         />
                         <div className="flex gap-1">
                           <Input
@@ -957,7 +974,7 @@ export function ClaudeDesktopProviderForm({
                             onChange={(event) =>
                               updateRoute(index, { model: event.target.value })
                             }
-                            placeholder="kimi-k2 / deepseek-chat"
+                            placeholder={modelPlaceholder}
                             className="flex-1"
                           />
                           {fetchedModels.length > 0 && (

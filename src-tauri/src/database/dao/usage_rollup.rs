@@ -75,6 +75,15 @@ impl Database {
             return Ok(0);
         }
 
+        // 剪枝是不可逆的：明细一旦汇总删除，0 成本行就永远失去按 pricing_model
+        // 补价重算的机会（启动序列里 seed 定价先于 rollup、但启动回填在 rollup
+        // 之后；周期任务同理）。所以剪枝前先尽力回填一次。失败仅告警不阻断——
+        // 否则一行损坏的定价数据会永久卡死日志清理。
+        // 注意必须在 SAVEPOINT 之外调用：回填内部自己开顶层事务。
+        if let Err(e) = Self::backfill_missing_usage_costs_on_conn(&conn, None) {
+            log::warn!("Pre-prune cost backfill failed, pruning anyway: {e}");
+        }
+
         // Use a savepoint for atomicity
         conn.execute("SAVEPOINT rollup_prune;", [])
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -106,15 +115,18 @@ impl Database {
     fn do_rollup_and_prune(conn: &rusqlite::Connection, cutoff: i64) -> Result<u64, AppError> {
         // Aggregate old logs, merging with any pre-existing rollup rows via LEFT JOIN.
         let effective_filter = effective_usage_log_filter("l");
+        // request_model 维度保留路由接管的「客户端别名 → 真实模型」映射，
+        // pricing_model 维度保留写入时的计价基准（request 计价模式下与 model 分叉）；
+        // 明细行的这两列可能为 NULL（历史/手工数据），归一为 ''。
         let aggregation_sql = format!(
             "INSERT OR REPLACE INTO usage_daily_rollups
-                (date, app_type, provider_id, model,
+                (date, app_type, provider_id, model, request_model, pricing_model,
                  request_count, success_count,
                  input_tokens, output_tokens,
                  cache_read_tokens, cache_creation_tokens,
                  total_cost_usd, avg_latency_ms)
             SELECT
-                d, a, p, m,
+                d, a, p, m, rm, pm,
                 COALESCE(old.request_count, 0) + new_req,
                 COALESCE(old.success_count, 0) + new_succ,
                 COALESCE(old.input_tokens, 0) + new_in,
@@ -131,6 +143,8 @@ impl Database {
                 SELECT
                     date(l.created_at, 'unixepoch', 'localtime') as d,
                     l.app_type as a, l.provider_id as p, l.model as m,
+                    COALESCE(l.request_model, '') as rm,
+                    COALESCE(l.pricing_model, '') as pm,
                     COUNT(*) as new_req,
                     SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END) as new_succ,
                     COALESCE(SUM(l.input_tokens), 0) as new_in,
@@ -141,11 +155,12 @@ impl Database {
                     COALESCE(AVG(l.latency_ms), 0) as new_lat
                 FROM proxy_request_logs l
                 WHERE l.created_at < ?1 AND {effective_filter}
-                GROUP BY d, a, p, m
+                GROUP BY d, a, p, m, rm, pm
             ) agg
             LEFT JOIN usage_daily_rollups old
                 ON old.date = agg.d AND old.app_type = agg.a
-                AND old.provider_id = agg.p AND old.model = agg.m"
+                AND old.provider_id = agg.p AND old.model = agg.m
+                AND old.request_model = agg.rm AND old.pricing_model = agg.pm"
         );
 
         conn.execute(&aggregation_sql, [cutoff])
@@ -322,6 +337,144 @@ mod tests {
             })?;
         assert_eq!(remaining, 0);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_rollup_preserves_request_model_dimension() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let now = chrono::Utc::now().timestamp();
+        let old_ts = now - 40 * 86400;
+
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            // 路由接管行：model 是真实上游模型，request_model 是客户端别名。
+            // 同 model 下两个不同别名必须各自成行，prune 后映射关系仍可审计。
+            for (i, request_model) in [
+                ("a", "claude-sonnet-4-6"),
+                ("b", "claude-sonnet-4-6"),
+                ("c", "claude-haiku-4-5"),
+            ] {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model, request_model,
+                        input_tokens, output_tokens, total_cost_usd,
+                        latency_ms, status_code, created_at
+                    ) VALUES (?1, 'p1', 'claude', 'kimi-k2', ?2, 100, 50, '0.01', 100, 200, ?3)",
+                    rusqlite::params![format!("takeover-{i}"), request_model, old_ts],
+                )?;
+            }
+        }
+
+        let deleted = db.rollup_and_prune(30)?;
+        assert_eq!(deleted, 3);
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let mut stmt = conn.prepare(
+            "SELECT request_model, request_count FROM usage_daily_rollups
+             WHERE model = 'kimi-k2' ORDER BY request_model",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        assert_eq!(
+            rows,
+            vec![
+                ("claude-haiku-4-5".to_string(), 1),
+                ("claude-sonnet-4-6".to_string(), 2),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_rollup_preserves_pricing_model_dimension() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let now = chrono::Utc::now().timestamp();
+        let old_ts = now - 40 * 86400;
+
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            // request 计价模式下 pricing_model 与 model 分叉，必须各自成行
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model, pricing_model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES ('pm-a', 'p1', 'claude', 'kimi-k2', 'claude-sonnet-4-6', 'kimi-k2',
+                          100, 50, '0.01', 100, 200, ?1)",
+                rusqlite::params![old_ts],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model, pricing_model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES ('pm-b', 'p1', 'claude', 'kimi-k2', 'claude-sonnet-4-6', 'claude-sonnet-4-6',
+                          100, 50, '0.30', 100, 200, ?1)",
+                rusqlite::params![old_ts],
+            )?;
+        }
+
+        let deleted = db.rollup_and_prune(30)?;
+        assert_eq!(deleted, 2);
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let mut stmt = conn.prepare(
+            "SELECT pricing_model, total_cost_usd FROM usage_daily_rollups
+             WHERE model = 'kimi-k2' ORDER BY pricing_model",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].0, "claude-sonnet-4-6");
+        assert_eq!(rows[1].0, "kimi-k2");
+        Ok(())
+    }
+
+    #[test]
+    fn test_rollup_backfills_costs_before_pruning() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let now = chrono::Utc::now().timestamp();
+        let old_ts = now - 40 * 86400;
+
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            // >30 天的 0 成本行：pricing_model（gpt-5.5）在 seed 定价表中有价。
+            // 剪枝是不可逆的，rollup 必须先回填再汇总，否则按 0 永久入账。
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model, pricing_model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES ('prune-backfill', 'p1', 'codex', 'gpt-5.5', 'gpt-5.5', 'gpt-5.5',
+                          1000000, 0, '0', 100, 200, ?1)",
+                rusqlite::params![old_ts],
+            )?;
+        }
+
+        let deleted = db.rollup_and_prune(30)?;
+        assert_eq!(deleted, 1);
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let total_cost: f64 = conn.query_row(
+            "SELECT CAST(total_cost_usd AS REAL) FROM usage_daily_rollups
+             WHERE model = 'gpt-5.5'",
+            [],
+            |row| row.get(0),
+        )?;
+        // gpt-5.5 input $5/M × 1M tokens，回填后再汇总
+        assert!(
+            (total_cost - 5.0).abs() < 1e-6,
+            "expected backfilled cost 5.0, got {total_cost}"
+        );
         Ok(())
     }
 

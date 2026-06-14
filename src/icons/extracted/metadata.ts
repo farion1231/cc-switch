@@ -133,6 +133,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["byteplus", "volcengine", "ark", "modelark"],
     defaultColor: "#3370FF",
   },
+  ccsub: {
+    name: "ccsub",
+    displayName: "CCSub",
+    category: "ai-provider",
+    keywords: ["ccsub", "aggregator", "relay", "claude", "codex", "gateway"],
+    defaultColor: "#1E88E5",
+  },
   chatglm: {
     name: "chatglm",
     displayName: "chatglm",
@@ -377,13 +384,6 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["hermes", "agent", "nous", "nousresearch"],
     defaultColor: "#000000",
   },
-  lemondata: {
-    name: "lemondata",
-    displayName: "LemonData",
-    category: "ai-provider",
-    keywords: ["lemondata", "lemon", "lemoncode"],
-    defaultColor: "#F5C518",
-  },
   packycode: {
     name: "packycode",
     displayName: "PackyCode",
@@ -431,6 +431,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["hunyuan"],
     defaultColor: "#00A4FF",
+  },
+  unity2: {
+    name: "unity2",
+    displayName: "Unity2.ai",
+    category: "ai-provider",
+    keywords: ["unity2", "aggregator", "relay", "claude", "codex", "gateway"],
+    defaultColor: "#000000",
   },
   vercel: {
     name: "vercel",

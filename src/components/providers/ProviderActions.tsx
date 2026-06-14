@@ -7,7 +7,6 @@ import {
   Minus,
   Play,
   Plus,
-  ShieldAlert,
   Terminal,
   TestTube2,
   Trash2,
@@ -43,6 +42,18 @@ interface ProviderActionsProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+}
+
+// 主按钮的呈现状态。title 用于 disabled 态向用户解释为何不可点击；
+// 因 Button 基类带 disabled:pointer-events-none，title 必须挂在外层非禁用
+// 的 wrapper 上才会在 hover 时显示（见下方 <span> 包裹）。
+interface MainButtonState {
+  disabled: boolean;
+  variant: "default" | "secondary";
+  className: string;
+  icon: JSX.Element;
+  text: string;
+  title?: string;
 }
 
 export function ProviderActions({
@@ -108,7 +119,7 @@ export function ProviderActions({
     }
   };
 
-  const getMainButtonState = () => {
+  const getMainButtonState = (): MainButtonState => {
     if (isOmo) {
       if (isCurrent) {
         return {
@@ -174,16 +185,6 @@ export function ProviderActions({
       };
     }
 
-    if (isOfficialBlockedByProxy) {
-      return {
-        disabled: true,
-        variant: "secondary" as const,
-        className: "opacity-40 cursor-not-allowed",
-        icon: <ShieldAlert className="h-4 w-4" />,
-        text: t("provider.blockedByProxy", { defaultValue: "已拦截" }),
-      };
-    }
-
     if (isCurrent) {
       return {
         disabled: true,
@@ -192,6 +193,17 @@ export function ProviderActions({
           "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700",
         icon: <Check className="h-4 w-4" />,
         text: t("provider.inUse"),
+      };
+    }
+
+    if (isOfficialBlockedByProxy) {
+      return {
+        disabled: true,
+        variant: "default" as const,
+        className: "",
+        icon: <Play className="h-4 w-4" />,
+        text: t("provider.enable"),
+        title: t("provider.blockedByProxyHint"),
       };
     }
 
@@ -247,16 +259,26 @@ export function ProviderActions({
           );
         })()}
 
-      <Button
-        size="sm"
-        variant={buttonState.variant}
-        onClick={handleMainButtonClick}
-        disabled={buttonState.disabled}
-        className={cn("w-[4.5rem] px-2.5", buttonState.className)}
+      {/* wrapper span 承接 hover：disabled 按钮自身 pointer-events:none，
+          原生 title 与 cursor 都必须挂在未禁用的外层元素上才会生效 */}
+      <span
+        title={buttonState.title}
+        className={cn(
+          "inline-flex",
+          buttonState.disabled && "cursor-not-allowed",
+        )}
       >
-        {buttonState.icon}
-        {buttonState.text}
-      </Button>
+        <Button
+          size="sm"
+          variant={buttonState.variant}
+          onClick={handleMainButtonClick}
+          disabled={buttonState.disabled}
+          className={cn("w-[4.5rem] px-2.5", buttonState.className)}
+        >
+          {buttonState.icon}
+          {buttonState.text}
+        </Button>
+      </span>
 
       <div className="flex items-center gap-1">
         <Button

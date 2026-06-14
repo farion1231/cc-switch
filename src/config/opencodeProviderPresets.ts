@@ -408,6 +408,62 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "CCSub",
+    websiteUrl: "https://www.ccsub.net",
+    apiKeyUrl: "https://www.ccsub.net/register?ref=Y6Z8DXEA",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "CCSub",
+      options: {
+        baseURL: "https://www.ccsub.net/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-5.5": { name: "GPT-5.5" },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ccsub",
+    icon: "ccsub",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "Unity2.ai",
+    websiteUrl: "https://unity2.ai",
+    apiKeyUrl: "https://unity2.ai/register?source=ccs",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Unity2.ai",
+      options: {
+        baseURL: "https://api.unity2.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-5.5": { name: "GPT-5.5" },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "unity2",
+    icon: "unity2",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "DeepSeek",
     websiteUrl: "https://platform.deepseek.com",
     apiKeyUrl: "https://platform.deepseek.com/api_keys",
@@ -532,19 +588,19 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "Kimi k2.6",
-    websiteUrl: "https://platform.moonshot.cn/console",
-    apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
+    name: "Kimi K2.7 Code",
+    websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
+    apiKeyUrl: "https://platform.moonshot.cn/console/api-keys?aff=cc-switch",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "Kimi k2.6",
+      name: "Kimi K2.7 Code",
       options: {
         baseURL: "https://api.moonshot.cn/v1",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "kimi-k2.6": { name: "Kimi K2.6" },
+        "kimi-k2.7-code": { name: "Kimi K2.7 Code" },
       },
     },
     category: "cn_official",
@@ -566,8 +622,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "Kimi For Coding",
-    websiteUrl: "https://www.kimi.com/code/docs/",
-    apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
+    websiteUrl: "https://www.kimi.com/code/docs/?aff=cc-switch",
+    apiKeyUrl: "https://platform.moonshot.cn/console/api-keys?aff=cc-switch",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "Kimi For Coding",
@@ -1250,7 +1306,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     websiteUrl: "https://apinebula.com",
     apiKeyUrl: "https://apinebula.com/02rw5X",
     settingsConfig: {
-      npm: "@ai-sdk/openai",
+      npm: "@ai-sdk/openai-compatible",
       name: "APINebula",
       options: {
         baseURL: "https://apinebula.com/v1",
@@ -1318,8 +1374,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
     icon: "sudocode",
     templateValues: {
       apiKey: {
@@ -1540,13 +1594,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "SSSAiCode",
-    websiteUrl: "https://www.sssaicode.com",
-    apiKeyUrl: "https://www.sssaicode.com/register?ref=DCP0SM",
+    websiteUrl: "https://sssaicodeapi.com",
+    apiKeyUrl: "https://sssaicodeapi.com/register?ref=DCP0SM",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "SSSAiCode",
       options: {
-        baseURL: "https://node-hk.sssaicode.com/api/v1",
+        baseURL: "https://node-hk.sssaicodeapi.com/api/v1",
         apiKey: "",
         setCacheKey: true,
       },
@@ -1654,34 +1708,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       apiKey: {
         label: "API Key",
         placeholder: "sk-...",
-        editorValue: "",
-      },
-    },
-  },
-  {
-    name: "LemonData",
-    websiteUrl: "https://lemondata.cc",
-    apiKeyUrl: "https://lemondata.cc/r/FFX1ZDUP",
-    settingsConfig: {
-      npm: "@ai-sdk/openai-compatible",
-      name: "LemonData",
-      options: {
-        baseURL: "https://api.lemondata.cc/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "gpt-5.5": { name: "GPT-5.5" },
-      },
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "lemondata",
-    icon: "lemondata",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
         editorValue: "",
       },
     },

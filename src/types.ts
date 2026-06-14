@@ -219,6 +219,8 @@ export interface ProviderMeta {
   codexFastMode?: boolean;
   // Codex Responses -> Chat Completions reasoning capability metadata
   codexChatReasoning?: CodexChatReasoning;
+  // Custom User-Agent for local proxy routing. Only applied by the local proxy.
+  customUserAgent?: string;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
@@ -289,6 +291,20 @@ export interface WebDavSyncSettings {
   status?: WebDavSyncStatus;
 }
 
+// S3 同步配置
+export interface S3SyncSettings {
+  enabled?: boolean;
+  autoSync?: boolean;
+  region?: string;
+  bucket?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  endpoint?: string;
+  remoteRoot?: string;
+  profile?: string;
+  status?: WebDavSyncStatus;
+}
+
 export type RemoteSnapshotLayout = "current" | "legacy";
 
 // 远端快照信息（下载前预览）
@@ -335,6 +351,11 @@ export interface Settings {
   enableFailoverToggle?: boolean;
   // Preserve Codex ChatGPT login in auth.json when switching third-party providers
   preserveCodexOfficialAuthOnSwitch?: boolean;
+  // Run official Codex under the shared "custom" provider id so future
+  // sessions share one resume-history bucket with third-party providers
+  unifyCodexSessionHistory?: boolean;
+  // User opted in (enable dialog checkbox) to migrate existing official sessions
+  unifyCodexMigrateExisting?: boolean;
   // User has confirmed the failover toggle first-run notice
   failoverConfirmed?: boolean;
   // User has confirmed the first-run welcome notice
@@ -381,6 +402,9 @@ export interface Settings {
 
   // ===== WebDAV v2 同步设置 =====
   webdavSync?: WebDavSyncSettings;
+
+  // ===== S3 同步设置 =====
+  s3Sync?: S3SyncSettings;
 
   // ===== 备份策略设置 =====
   // Auto-backup interval in hours (0=disabled, default 24)

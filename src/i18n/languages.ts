@@ -21,9 +21,9 @@ export function normalizeLanguage(value?: string | null): Language {
   ) {
     return "zh-TW";
   }
-  if (normalized === "en" || normalized === "ja" || normalized === "ru") {
-    return normalized;
-  }
+  if (normalized.startsWith("en")) return "en";
+  if (normalized.startsWith("ja")) return "ja";
+  if (normalized.startsWith("ru")) return "ru";
   if (normalized.startsWith("zh")) return "zh";
 
   return DEFAULT_LANGUAGE;
