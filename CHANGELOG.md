@@ -5,6 +5,29 @@ All notable changes to EC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.17.0] - 2026-06-14
+
+Milestone 1 of the orchestration release core — deterministic strategy selection, Provider-backed model resolution, enforceable Debate/MoA quality gates, a trace ledger, mock-based E2E tests, and a minimal eval harness. Also merges upstream `cc-switch` 3.16.x changes (Codex Goal Mode and Remote Compaction controls, Codex Live Config preservation, About page redesign as Tool Management, refreshed default models and pricing, partner links refresh, Shared Frontend Utilities) and rebrands fork to EC Switch.
+
+**Stats**: orchestration release core Milestone 1 (13 sequential tasks) + upstream merge from origin/main (3.16.0 / 3.16.1 / 3.16.2).
+
+### Added
+
+- **Orchestration Release Core (Milestone 1)**: Deterministic strategy selector, Provider-backed model resolver, structured ModelCaller errors, band-based QualityGate decisions (Retry / Escalate / Fallback / FailVisible), Debate threshold + critique + revision + fallback, MoA ranking + filtering + fallback, TraceLedger wired into HistoryStore, engine + proxy integration guards (streaming / tool-bearing requests bypass orchestration), E2E mock tests, minimal eval harness.
+- **Orchestration Trace Ledger**: Every orchestration run records task type, complexity, strategy chosen, models used, token totals, latency, quality score, and verdict into `orchestration_requests` table (DB schema v11) for post-hoc audit and evaluation.
+- **Upstream Merged (origin/main)**: Codex Goal Mode and Remote Compaction controls, Codex Live Config Preservation (live reads no longer force-rewrite `model_provider`; provider-scoped `experimental_bearer_token` preserves OAuth state across third-party switches), Tool Install / Upgrade Strategy with source anchoring, About Page redesign as Tool Management, refreshed default models (Claude Opus 4.8, GPT-5.5), partner links refresh, Shared Frontend Utilities (`deepClone` helper + `useTauriEvent` hook), 22 Codex third-party presets with explicit Chat Completions routing, Codex Chat Reasoning Auto-Detection, Codex Model Mapping Table, Codex Third-Party Providers unified into `custom` history bucket, Traditional Chinese (`zh-TW`) localization, German README.
+
+### Changed
+
+- **Database schema bumped v11 → v12**: usage_daily_rollups gains `request_model` and `pricing_model` columns (rebuilt as primary-key members) so route-takeover flows where `model ≠ request_model` remain auditable after detail prune; historical rows back-filled with `''`.
+- **App identity**: `cc-switch` branding renamed to `ec-switch` (productName, identifier `com.ecswitch.desktop`, package name, sync protocol identifier, webdav default remote root, model catalog filename, lib crate name `ec_switch_lib`). Legacy detection constants preserved for migration from prior installs.
+
+### Fixed
+
+- **Mutex poison recovery**: All orchestration Mutex locks now use `.unwrap_or_else(|e| e.into_inner())` so a single panic does not permanently poison engine state across the proxy lifetime.
+- **Dead Debate helper removed**: Removed unused `build_debate_prompt` and its 2 tests; Debate flow now goes through executor's caller abstraction.
+- **Parallel cross-judge**: Cross-judge now runs panelists concurrently via `try_join_all`; previous sequential impl caused cascade latency.
+
 ## [3.16.2] - 2026-06-07
 
 Development since v3.16.1 focuses on broadening data portability and usage observability — S3-compatible cloud sync, OpenCode session usage import, and an opt-in official-subscription quota template — while hardening Codex Chat Completions routing (stream truncation, `tool_choice` / custom-tool / reasoning-token edge cases, file and audio attachments, and a Codex CLI models endpoint), strengthening proxy robustness (ephemeral ports, takeover/placeholder restore, system-message normalization, clearer upstream errors, and a text-only image fallback), fixing coding-plan quota lookups (Zhipu, MiniMax) and several Windows/macOS issues, adding the CherryIN and ZenMux providers, and refreshing the user manual.
