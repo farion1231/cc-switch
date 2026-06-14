@@ -19,6 +19,13 @@ export interface WebDavTestResult {
   message?: string;
 }
 
+export interface CodexUnifyHistoryRestoreResult {
+  restoredJsonlFiles: number;
+  restoredStateRows: number;
+  /** 还原被跳过的原因（如当前目录没有账本）；存在时不应报成功 */
+  skippedReason?: string;
+}
+
 export interface WebDavSyncResult {
   status: string;
 }
@@ -30,6 +37,16 @@ export const settingsApi = {
 
   async save(settings: Settings): Promise<boolean> {
     return await invoke("save_settings", { settings });
+  },
+
+  /** 是否存在统一 Codex 会话历史的迁移备份（关闭弹窗据此显示"恢复备份"勾选） */
+  async hasCodexUnifyHistoryBackup(): Promise<boolean> {
+    return await invoke("has_codex_unify_history_backup");
+  },
+
+  /** 按迁移备份账本把当时迁入共享桶的官方会话还原回 openai 桶（幂等） */
+  async restoreCodexUnifiedHistory(): Promise<CodexUnifyHistoryRestoreResult> {
+    return await invoke("restore_codex_unified_history");
   },
 
   async restart(): Promise<boolean> {

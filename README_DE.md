@@ -107,11 +107,6 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
-<td width="180"><a href="https://lemondata.cc/r/FFX1ZDUP"><img src="assets/partners/logos/lemondata.png" alt="LemonData" width="150"></a></td>
-<td>Danke an LemonData für die Unterstützung dieses Projekts! LemonData ist eine leistungsstarke KI-API-Aggregationsplattform — ein API-Schlüssel für mehr als 300 Modelle, darunter GPT, Claude, Gemini, DeepSeek und weitere. Alle Modelle zu Preisen 30–70 % unter den offiziellen Tarifen, mit automatischem Failover, intelligentem Routing und unbegrenzter Nebenläufigkeit. Neukunden erhalten bei der Registrierung sofort 1 $ Gratisguthaben — registrieren Sie sich über <a href="https://lemondata.cc/r/FFX1ZDUP">diesen Link</a>, um Ihren Bonus einzulösen und sofort mit dem Entwickeln zu beginnen</strong>!</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://ctok.ai"><img src="assets/partners/logos/ctok.png" alt="CTok" width="150"></a></td>
 <td>Danke an CTok.ai für die Unterstützung dieses Projekts! CTok.ai widmet sich dem Aufbau einer Komplettlösung für KI-Programmierwerkzeuge. Wir bieten professionelle Claude-Code-Pakete und Dienste einer technischen Community, mit Unterstützung für Google Gemini und OpenAI Codex. Durch sorgfältig gestaltete Pläne und eine professionelle Tech-Community geben wir Entwicklern verlässliche Servicegarantien und kontinuierlichen technischen Support an die Hand und machen KI-gestützte Programmierung zu einem echten Produktivitätswerkzeug. Klicken Sie <a href="https://ctok.ai">hier</a>, um sich zu registrieren!</td>
 </tr>

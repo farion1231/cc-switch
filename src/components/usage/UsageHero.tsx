@@ -33,6 +33,8 @@ import {
 interface UsageHeroProps {
   range: UsageRangeSelection;
   appType?: string;
+  providerName?: string;
+  model?: string;
   refreshIntervalMs: number;
 }
 
@@ -48,11 +50,6 @@ const TITLE_THEMES: Record<AppType | "all", TitleTheme> = {
   claude: {
     accent: "text-amber-600 dark:text-amber-400",
     iconBg: "bg-amber-500/10",
-  },
-  "claude-desktop": {
-    // 与 Claude Code 同属 Anthropic 品牌，用更深的 orange 区分
-    accent: "text-orange-600 dark:text-orange-400",
-    iconBg: "bg-orange-500/10",
   },
   codex: {
     // OpenAI/Codex 走黑白单色调；中性灰在深浅模式都能透出方块底色，
@@ -164,14 +161,20 @@ function AppGlyph({
 export function UsageHero({
   range,
   appType,
+  providerName,
+  model,
   refreshIntervalMs,
 }: UsageHeroProps) {
   const { t, i18n } = useTranslation();
   const lang = getResolvedLang(i18n);
 
-  const { data, isLoading } = useUsageSummaryByApp(range, {
-    refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
-  });
+  const { data, isLoading } = useUsageSummaryByApp(
+    range,
+    { providerName, model },
+    {
+      refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
+    },
+  );
 
   // No client-side filtering: Hero's totals must match the Trend/Logs/Stats
   // below, which all go through the backend's full set of app_types. The
