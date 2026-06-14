@@ -600,6 +600,25 @@ pub fn run() {
                             log::warn!("✗ Codex provider template bucket migration failed: {e}");
                         }
                     }
+
+                    // 统一会话开关的官方历史迁移：开关开启但上次未完成（如文件被占用
+                    // 中途失败）时在启动期重试；函数内部自门控，开关关闭时直接跳过。
+                    match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
+                        Ok(outcome) => {
+                            if let Some(reason) = outcome.skipped_reason {
+                                log::debug!("○ Codex official history unify migration skipped: {reason}");
+                            } else {
+                                log::info!(
+                                    "✓ Codex official history unify migration completed: jsonl_files={}, state_rows={}",
+                                    outcome.migrated_jsonl_files,
+                                    outcome.migrated_state_rows
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("✗ Codex official history unify migration failed: {e}");
+                        }
+                    }
                 });
             }
 
@@ -1156,6 +1175,8 @@ pub fn run() {
             commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,
+            commands::has_codex_unify_history_backup,
+            commands::restore_codex_unified_history,
             commands::get_rectifier_config,
             commands::set_rectifier_config,
             commands::get_optimizer_config,
