@@ -179,14 +179,51 @@ const TOOL_APP_IDS: Record<ToolName, AppId> = {
   hermes: "hermes",
 };
 
+// 工具版本探测代价高：每个工具一次 `--version` 子进程 + 一次 npm/github/pypi 网络请求。
+// 设置页用 Radix Tabs，非激活 Tab 会被卸载——每次切回「关于」都重挂 AboutSection，若都
+// 全量重查纯属浪费。用「模块级」缓存（生命周期 = JS 模块 = 应用会话，不随组件卸载销毁）
+// 跨重挂存活：重挂时若缓存仍新鲜（距上次全量加载 < TTL）直接复用、跳过探测；超期或用户
+// 手动「刷新」才强制重查。at = 最近一次「全量加载」完成时刻；单工具刷新（切 shell / 升级
+// 后）只更新数据、不重置 at，避免一次局部刷新把整体 TTL 续命。
+const TOOL_VERSIONS_CACHE_TTL_MS = 10 * 60 * 1000; // 10 分钟
+let toolVersionsCache: { data: ToolVersion[]; at: number } | null = null;
+// 应用自身版本（getVersion，本地毫秒级、无网络）也缓存一份，纯为重挂时免去 loading 闪烁。
+let appVersionCache: string | null = null;
+
+// 把探测结果按 name 合并进已有列表：替换同名项、追加新项；空列表时直接采用新结果。
+// 组件 state 与模块缓存共用同一套合并语义（单工具与全量探测都经此函数）。
+function mergeToolVersions(
+  prev: ToolVersion[],
+  updated: ToolVersion[],
+): ToolVersion[] {
+  if (prev.length === 0) return updated;
+  const byName = new Map(updated.map((t) => [t.name, t]));
+  const merged = prev.map((t) => byName.get(t.name) ?? t);
+  const existing = new Set(prev.map((t) => t.name));
+  for (const u of updated) {
+    if (!existing.has(u.name)) merged.push(u);
+  }
+  return merged;
+}
+
 export function AboutSection({ isPortable }: AboutSectionProps) {
   // ... (use hooks as before) ...
   const { t } = useTranslation();
-  const [version, setVersion] = useState<string | null>(null);
-  const [isLoadingVersion, setIsLoadingVersion] = useState(true);
+  // 惰性初始化自模块缓存：重挂时首帧即渲染上次的值，避免 loading 闪烁；首次挂载缓存
+  // 为空则回退到原始初值（null / loading）。
+  const [version, setVersion] = useState<string | null>(() => appVersionCache);
+  const [isLoadingVersion, setIsLoadingVersion] = useState(
+    () => appVersionCache === null,
+  );
   const [isDownloading, setIsDownloading] = useState(false);
-  const [toolVersions, setToolVersions] = useState<ToolVersion[]>([]);
-  const [isLoadingTools, setIsLoadingTools] = useState(true);
+  const [toolVersions, setToolVersions] = useState<ToolVersion[]>(
+    () => toolVersionsCache?.data ?? [],
+  );
+  // 有缓存（哪怕已超期）就先展示旧值、初始不 loading；超期时由挂载副作用触发后台
+  // 重查（stale-while-revalidate）。无缓存（首次）才从 loading 起步。
+  const [isLoadingTools, setIsLoadingTools] = useState(
+    () => toolVersionsCache === null,
+  );
   const [toolActions, setToolActions] = useState<
     Partial<Record<ToolName, ToolLifecycleAction>>
   >({});
@@ -258,16 +295,15 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           wslOverrides,
         );
 
-        setToolVersions((prev) => {
-          if (prev.length === 0) return updated;
-          const byName = new Map(updated.map((t) => [t.name, t]));
-          const merged = prev.map((t) => byName.get(t.name) ?? t);
-          const existing = new Set(prev.map((t) => t.name));
-          for (const u of updated) {
-            if (!existing.has(u.name)) merged.push(u);
-          }
-          return merged;
-        });
+        setToolVersions((prev) => mergeToolVersions(prev, updated));
+        // 同步进模块缓存，供切 Tab 重挂时复用。时间戳沿用上次「全量加载」的（单工具
+        // 刷新不算全量、不重置 TTL）；缓存为空时以 at=0 起步——0 是「尚未完成全量加载」
+        // 的过期哨兵，确保探测中途切走/切回时，残缺缓存被判过期而触发重查，而非把半套
+        // 数据当成完整结果复用。真实时间戳只由 loadAllToolVersions 的 finally 盖上。
+        toolVersionsCache = {
+          data: mergeToolVersions(toolVersionsCache?.data ?? [], updated),
+          at: toolVersionsCache?.at ?? 0,
+        };
 
         // 返回刷新结果，调用方可据此判断版本是否真的探到（避免读 state 撞 stale closure）。
         return updated;
@@ -285,24 +321,42 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     [],
   );
 
-  const loadAllToolVersions = useCallback(async () => {
-    setIsLoadingTools(true);
-    try {
-      // 逐工具并发探测：每个工具一完成就合并进 toolVersions 并清掉自己的 loadingTools
-      // 标志，对应卡片随即独立刷新——而非等全部探测完才一次性显示（后端原本对 6 个工具
-      // 串行 await `--version` + 网络请求，总耗时是累加；并发后压成「最慢的那一个」）。
-      // 复用 refreshToolVersions：它已内建按 name 合并 + per-tool loading + 自身 try/catch
-      // 兜底（单工具失败返回 [] 不拖累其余），故 Promise.all 永不 reject。Respect current
-      // UI overrides (shell / flag) by passing wslShellByTool through.
-      await Promise.all(
-        TOOL_NAMES.map((toolName) =>
-          refreshToolVersions([toolName], wslShellByTool),
-        ),
-      );
-    } finally {
-      setIsLoadingTools(false);
-    }
-  }, [wslShellByTool, refreshToolVersions]);
+  const loadAllToolVersions = useCallback(
+    async (options?: { force?: boolean }) => {
+      const force = options?.force ?? false;
+      // 命中新鲜缓存：切回「关于」Tab 触发的重挂直接复用上次结果，跳过 6 个 `--version`
+      // 子进程 + 6 个 latest 版本网络请求。手动「刷新」传 force 绕过缓存强制重查。
+      if (
+        !force &&
+        toolVersionsCache &&
+        Date.now() - toolVersionsCache.at < TOOL_VERSIONS_CACHE_TTL_MS
+      ) {
+        setToolVersions(toolVersionsCache.data);
+        setIsLoadingTools(false);
+        return;
+      }
+      setIsLoadingTools(true);
+      try {
+        // 逐工具并发探测：每个工具一完成就合并进 toolVersions（并写模块缓存）、清掉自己
+        // 的 loadingTools 标志，对应卡片随即独立刷新——而非等全部探测完才一次性显示（后端
+        // 原本对 6 个工具串行 await，总耗时累加；并发后压成「最慢的那一个」）。refreshTool-
+        // Versions 已内建按 name 合并 + per-tool loading + try/catch 兜底（单工具失败返回 []
+        // 不拖累其余），故 Promise.all 永不 reject。Respect current shell/flag overrides.
+        await Promise.all(
+          TOOL_NAMES.map((toolName) =>
+            refreshToolVersions([toolName], wslShellByTool),
+          ),
+        );
+      } finally {
+        // 全量探测结束：把缓存时间戳刷新为现在，标记「刚完成一次全量加载」、重置 TTL。
+        if (toolVersionsCache) {
+          toolVersionsCache = { ...toolVersionsCache, at: Date.now() };
+        }
+        setIsLoadingTools(false);
+      }
+    },
+    [wslShellByTool, refreshToolVersions],
+  );
 
   const handleToolShellChange = async (toolName: ToolName, value: string) => {
     const wslShell = value === "auto" ? null : value;
@@ -337,6 +391,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     const loadAppVersion = async () => {
       try {
         const appVersion = await getVersion();
+        appVersionCache = appVersion;
         if (active) {
           setVersion(appVersion);
         }
@@ -920,7 +975,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
               size="sm"
               variant="outline"
               className="h-7 gap-1.5 text-xs"
-              onClick={() => loadAllToolVersions()}
+              onClick={() => loadAllToolVersions({ force: true })}
               disabled={isLoadingTools || isAnyBusy}
             >
               <RefreshCw
