@@ -4,7 +4,11 @@ import { useProvidersQuery } from "@/lib/query/queries";
 import type { AtomcodeProviderSettingsConfig } from "@/config/atomcodeProviderPresets";
 
 type AtomcodeType = "openai" | "claude" | "ollama";
-const VALID_ATOMCODE_TYPES: readonly AtomcodeType[] = ["openai", "claude", "ollama"];
+const VALID_ATOMCODE_TYPES: readonly AtomcodeType[] = [
+  "openai",
+  "claude",
+  "ollama",
+];
 
 interface UseAtomcodeFormStateParams {
   initialData?: {
@@ -47,7 +51,12 @@ export interface AtomcodeFormState {
   handleAtomcodeThinkingEnabledChange: (enabled: boolean) => void;
   handleAtomcodeThinkingBudgetChange: (budget: number | undefined) => void;
   resetAtomcodeState: (
-    config?: Partial<AtomcodeProviderSettingsConfig & { thinking_enabled?: boolean; thinking_budget?: number }>,
+    config?: Partial<
+      AtomcodeProviderSettingsConfig & {
+        thinking_enabled?: boolean;
+        thinking_budget?: number;
+      }
+    >,
   ) => void;
 }
 
@@ -122,12 +131,11 @@ export function useAtomcodeFormState({
     return typeof raw === "number" && raw > 0 ? raw : undefined;
   });
 
-  const [atomcodeThinkingEnabled, setAtomcodeThinkingEnabled] = useState<boolean>(
-    () => {
+  const [atomcodeThinkingEnabled, setAtomcodeThinkingEnabled] =
+    useState<boolean>(() => {
       if (appId !== "atomcode") return false;
       return parseAtomcodeField(initialData, "thinking_enabled", false);
-    },
-  );
+    });
 
   const [atomcodeThinkingBudget, setAtomcodeThinkingBudget] = useState<
     number | undefined
@@ -253,7 +261,8 @@ export function useAtomcodeFormState({
       );
       setAtomcodeThinkingEnabled(config?.thinking_enabled ?? false);
       setAtomcodeThinkingBudget(
-        typeof config?.thinking_budget === "number" && config.thinking_budget > 0
+        typeof config?.thinking_budget === "number" &&
+          config.thinking_budget > 0
           ? config.thinking_budget
           : undefined,
       );

@@ -123,7 +123,7 @@ pub fn extract_atomcode_provider_settings(config_text: &str) -> Result<Value, Ap
     }
 
     let toml_val: toml::Value = toml::from_str(config_text)
-        .map_err(|e| AppError::toml(&get_atomcode_config_path(), e))?;
+        .map_err(|e| AppError::toml(get_atomcode_config_path(), e))?;
 
     let Some(providers) = toml_val.get("providers").and_then(|p| p.as_table()) else {
         return Err(AppError::localized(

@@ -47,10 +47,26 @@ interface AtomcodeFormFieldsProps {
   onThinkingBudgetChange: (budget: number | undefined) => void;
 }
 
-const ATOMCODE_TYPE_OPTIONS: { value: AtomcodeType; labelKey: string; defaultLabel: string }[] = [
-  { value: "openai", labelKey: "atomcode.form.typeOpenai", defaultLabel: "OpenAI" },
-  { value: "claude", labelKey: "atomcode.form.typeClaude", defaultLabel: "Claude" },
-  { value: "ollama", labelKey: "atomcode.form.typeOllama", defaultLabel: "Ollama" },
+const ATOMCODE_TYPE_OPTIONS: {
+  value: AtomcodeType;
+  labelKey: string;
+  defaultLabel: string;
+}[] = [
+  {
+    value: "openai",
+    labelKey: "atomcode.form.typeOpenai",
+    defaultLabel: "OpenAI",
+  },
+  {
+    value: "claude",
+    labelKey: "atomcode.form.typeClaude",
+    defaultLabel: "Claude",
+  },
+  {
+    value: "ollama",
+    labelKey: "atomcode.form.typeOllama",
+    defaultLabel: "Ollama",
+  },
 ];
 
 export function AtomcodeFormFields({
@@ -167,7 +183,9 @@ export function AtomcodeFormFields({
       {/* Context window (optional) */}
       <div className="space-y-2">
         <FormLabel htmlFor="atomcode-context-window">
-          {t("atomcode.form.contextWindow", { defaultValue: "上下文长度（可选）" })}
+          {t("atomcode.form.contextWindow", {
+            defaultValue: "上下文长度（可选）",
+          })}
         </FormLabel>
         <Input
           id="atomcode-context-window"
@@ -204,7 +222,8 @@ export function AtomcodeFormFields({
               </FormLabel>
               <p className="text-xs text-muted-foreground">
                 {t("atomcode.form.thinkingEnabledHint", {
-                  defaultValue: "启用 Claude 的扩展思考功能（extended thinking）。",
+                  defaultValue:
+                    "启用 Claude 的扩展思考功能（extended thinking）。",
                 })}
               </p>
             </div>
