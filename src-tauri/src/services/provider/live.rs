@@ -21,6 +21,9 @@ use super::gemini_auth::{
 };
 use super::normalize_claude_models_in_value;
 
+const CLAUDE_OFFICIAL_TOP_LEVEL_API_KEYS: [&str; 3] =
+    ["apiBaseUrl", "primaryModel", "smallFastModel"];
+
 pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
     let mut v = settings.clone();
     if let Some(obj) = v.as_object_mut() {
@@ -31,6 +34,31 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
         obj.remove("openrouterCompatMode");
     }
     v
+}
+
+fn sanitize_claude_provider_settings_for_live(provider: &Provider) -> Value {
+    let mut settings = sanitize_claude_settings_for_live(&provider.settings_config);
+    if provider.category.as_deref() == Some("official") {
+        remove_claude_api_overrides(&mut settings);
+    }
+    settings
+}
+
+fn remove_claude_api_overrides(settings: &mut Value) {
+    let Some(obj) = settings.as_object_mut() else {
+        return;
+    };
+
+    for key in CLAUDE_OFFICIAL_TOP_LEVEL_API_KEYS {
+        obj.remove(key);
+    }
+
+    if let Some(env) = obj.get_mut("env").and_then(Value::as_object_mut) {
+        env.retain(|key, _| !key.starts_with("ANTHROPIC_"));
+        if env.is_empty() {
+            obj.remove("env");
+        }
+    }
 }
 
 pub(crate) fn provider_exists_in_live_config(
@@ -740,7 +768,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
-            let settings = sanitize_claude_settings_for_live(&provider.settings_config);
+            let settings = sanitize_claude_provider_settings_for_live(provider);
             write_json_file(&path, &settings)?;
         }
         AppType::ClaudeDesktop => {
@@ -1599,6 +1627,36 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::ffi::OsString;
+
+    struct TempHome {
+        _dir: tempfile::TempDir,
+        original_test_home: Option<OsString>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = tempfile::TempDir::new().expect("create temp home");
+            let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            crate::settings::reload_settings().expect("reload settings");
+
+            Self {
+                _dir: dir,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            match &self.original_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            crate::settings::reload_settings().expect("reload settings");
+        }
+    }
 
     #[test]
     fn claude_common_config_apply_and_remove_roundtrip_for_non_overlapping_fields() {
@@ -1622,6 +1680,54 @@ mod tests {
         let stripped =
             remove_common_config_from_settings(&AppType::Claude, &applied, snippet).unwrap();
         assert_eq!(stripped, settings);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn official_claude_live_write_removes_api_auth_env() {
+        let _home = TempHome::new();
+        let mut provider = Provider::with_id(
+            "claude-official".to_string(),
+            "Claude Official".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "stale-auth-token",
+                    "ANTHROPIC_API_KEY": "stale-api-key",
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "ANTHROPIC_MODEL": "stale-model",
+                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+                },
+                "apiBaseUrl": "https://api.example.com",
+                "primaryModel": "stale-primary",
+                "smallFastModel": "stale-small",
+                "permissions": { "allow": ["Bash"] }
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+
+        write_live_snapshot(&AppType::Claude, &provider)
+            .expect("write official Claude live config");
+
+        let written: Value = read_json_file(&get_claude_settings_path()).expect("read live config");
+        let env = written.get("env").and_then(Value::as_object);
+        assert!(
+            env.is_none_or(|env| !env.keys().any(|key| key.starts_with("ANTHROPIC_"))),
+            "official Claude live config must not keep ANTHROPIC_* env: {written}"
+        );
+        assert!(written.get("apiBaseUrl").is_none());
+        assert!(written.get("primaryModel").is_none());
+        assert!(written.get("smallFastModel").is_none());
+        assert_eq!(
+            written
+                .pointer("/env/CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC")
+                .and_then(Value::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            written.pointer("/permissions/allow/0"),
+            Some(&json!("Bash"))
+        );
     }
 
     #[test]

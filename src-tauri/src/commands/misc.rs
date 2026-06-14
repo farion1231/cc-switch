@@ -18,6 +18,12 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+const CLAUDE_API_AUTH_ENV_KEYS: [&str; 3] = [
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_BASE_URL",
+];
+
 /// 打开外部链接
 #[tauri::command]
 pub async fn open_external(app: AppHandle, url: String) -> Result<bool, String> {
@@ -2403,6 +2409,12 @@ pub async fn open_provider_terminal(
         .get(&providerId)
         .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
 
+    if is_claude_official_provider(&app_type, provider) {
+        launch_official_claude_terminal(launch_cwd.as_deref())
+            .map_err(|e| format!("启动终端失败: {e}"))?;
+        return Ok(true);
+    }
+
     // 从提供商配置中提取环境变量
     let config = &provider.settings_config;
     let env_vars = extract_env_vars_from_config(config, &app_type);
@@ -2412,6 +2424,10 @@ pub async fn open_provider_terminal(
         .map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
+}
+
+fn is_claude_official_provider(app_type: &AppType, provider: &crate::provider::Provider) -> bool {
+    *app_type == AppType::Claude && provider.category.as_deref() == Some("official")
 }
 
 /// 从提供商配置中提取环境变量
@@ -2520,19 +2536,43 @@ fn launch_terminal_with_env(
 
     #[cfg(target_os = "macos")]
     {
-        launch_macos_terminal(&config_file, cwd)?;
+        launch_macos_terminal(Some(&config_file), cwd)?;
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
     {
-        launch_linux_terminal(&config_file, cwd)?;
+        launch_linux_terminal(Some(&config_file), cwd)?;
         Ok(())
     }
 
     #[cfg(target_os = "windows")]
     {
-        launch_windows_terminal(&temp_dir, &config_file, cwd)?;
+        launch_windows_terminal(&temp_dir, Some(&config_file), cwd)?;
+        return Ok(());
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    Err("不支持的操作系统".to_string())
+}
+
+fn launch_official_claude_terminal(cwd: Option<&Path>) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        launch_macos_terminal(None, cwd)?;
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        launch_linux_terminal(None, cwd)?;
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let temp_dir = std::env::temp_dir();
+        launch_windows_terminal(&temp_dir, None, cwd)?;
         return Ok(());
     }
 
@@ -2560,9 +2600,75 @@ fn write_claude_config(
     std::fs::write(config_file, config_json).map_err(|e| format!("写入配置文件失败: {e}"))
 }
 
+#[cfg(not(target_os = "windows"))]
+fn build_claude_terminal_invocation(config_file: Option<&std::path::Path>) -> String {
+    if let Some(config_file) = config_file {
+        return format!(
+            "claude --settings {}",
+            shell_single_quote(&config_file.to_string_lossy())
+        );
+    }
+
+    format!("unset {}\nclaude", CLAUDE_API_AUTH_ENV_KEYS.join(" "))
+}
+
+#[cfg(target_os = "windows")]
+fn build_claude_terminal_invocation(config_file: Option<&std::path::Path>) -> String {
+    if let Some(config_file) = config_file {
+        return format!(
+            "claude --settings \"{}\"",
+            escape_windows_batch_value(&config_file.to_string_lossy())
+        );
+    }
+
+    let mut lines: Vec<String> = CLAUDE_API_AUTH_ENV_KEYS
+        .iter()
+        .map(|key| format!("set {key}="))
+        .collect();
+    lines.push("claude".to_string());
+    lines.join("\r\n")
+}
+
+#[cfg(not(target_os = "windows"))]
+fn build_claude_terminal_intro(config_file: Option<&std::path::Path>) -> String {
+    if let Some(config_file) = config_file {
+        return format!(
+            "echo \"Using provider-specific claude config:\"\necho \"{}\"",
+            config_file.display()
+        );
+    }
+
+    "echo \"Using Claude official auth\"".to_string()
+}
+
+#[cfg(target_os = "windows")]
+fn build_claude_terminal_intro(config_file: Option<&std::path::Path>) -> String {
+    if let Some(config_file) = config_file {
+        let config_path = escape_windows_batch_value(&config_file.to_string_lossy());
+        return format!("echo Using provider-specific claude config:\r\necho {config_path}");
+    }
+
+    "echo Using Claude official auth".to_string()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn build_claude_terminal_cleanup(
+    script_file: &std::path::Path,
+    config_file: Option<&std::path::Path>,
+) -> String {
+    let mut cleanup = format!("\"{}\"", script_file.display());
+    if let Some(config_file) = config_file {
+        cleanup.push_str(&format!(" \"{}\"", config_file.display()));
+    }
+    cleanup
+}
+
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
+fn launch_macos_terminal(
+    config_file: Option<&std::path::Path>,
+    cwd: Option<&Path>,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
     let preferred = crate::settings::get_preferred_terminal();
@@ -2570,22 +2676,18 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
 
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
+    let cleanup_paths = build_claude_terminal_cleanup(&script_file, config_file);
+    let intro = build_claude_terminal_intro(config_file);
+    let claude_command = build_claude_terminal_invocation(config_file);
 
     // Write the shell script to a temp file
     let script_content = format!(
-        r#"#!/bin/bash
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-{cd_command}
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-claude --settings "{config_path}"
-exec bash --norc --noprofile
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
+        "#!/bin/bash\ntrap 'rm -f {cleanup_paths}' EXIT\n{cd_command}{intro}\n{claude_command}\nexec bash --norc --noprofile\n",
+        cleanup_paths = cleanup_paths,
         cd_command = cd_command,
+        intro = intro,
+        claude_command = claude_command,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -2866,7 +2968,10 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 
 /// Linux: 根据用户首选终端启动
 #[cfg(target_os = "linux")]
-fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
+fn launch_linux_terminal(
+    config_file: Option<&std::path::Path>,
+    cwd: Option<&Path>,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
@@ -2887,21 +2992,17 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     // Create temp script file
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
+    let cleanup_paths = build_claude_terminal_cleanup(&script_file, config_file);
+    let intro = build_claude_terminal_intro(config_file);
+    let claude_command = build_claude_terminal_invocation(config_file);
 
     let script_content = format!(
-        r#"#!/bin/bash
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-{cd_command}
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-claude --settings "{config_path}"
-exec bash --norc --noprofile
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
+        "#!/bin/bash\ntrap 'rm -f {cleanup_paths}' EXIT\n{cd_command}{intro}\n{claude_command}\nexec bash --norc --noprofile\n",
+        cleanup_paths = cleanup_paths,
         cd_command = cd_command,
+        intro = intro,
+        claude_command = claude_command,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -2979,29 +3080,31 @@ fn which_command(cmd: &str) -> bool {
 #[cfg(target_os = "windows")]
 fn launch_windows_terminal(
     temp_dir: &std::path::Path,
-    config_file: &std::path::Path,
+    config_file: Option<&std::path::Path>,
     cwd: Option<&Path>,
 ) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("cmd");
 
     let bat_file = temp_dir.join(format!("cc_switch_claude_{}.bat", std::process::id()));
-    let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
     let cwd_command = build_windows_cwd_command(cwd);
+    let intro = build_claude_terminal_intro(config_file);
+    let claude_command = build_claude_terminal_invocation(config_file);
+    let cleanup_config = config_file
+        .map(|path| {
+            format!(
+                "del \"{}\" >nul 2>&1\r\n",
+                escape_windows_batch_value(&path.to_string_lossy())
+            )
+        })
+        .unwrap_or_default();
 
     let content = format!(
-        "@echo off
-{cwd_command}
-echo Using provider-specific claude config:
-echo {}
-claude --settings \"{}\"
-del \"{}\" >nul 2>&1
-del \"%~f0\" >nul 2>&1
-",
-        config_path_for_batch,
-        config_path_for_batch,
-        config_path_for_batch,
+        "@echo off\r\n{cwd_command}{intro}\r\n{claude_command}\r\n{cleanup_config}del \"%~f0\" >nul 2>&1\r\n",
         cwd_command = cwd_command,
+        intro = intro,
+        claude_command = claude_command,
+        cleanup_config = cleanup_config,
     );
 
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
@@ -4691,6 +4794,34 @@ mod tests {
         let command = build_shell_cd_command(Some(Path::new("/tmp/project O'Brien")));
 
         assert_eq!(command, "cd '/tmp/project O'\"'\"'Brien' || exit 1\n");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn official_claude_terminal_invocation_clears_api_env_and_uses_default_settings() {
+        let command = build_claude_terminal_invocation(None);
+
+        assert!(
+            command.contains("unset ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_BASE_URL"),
+            "official Claude launch must clear API auth env: {command}"
+        );
+        assert!(
+            command.lines().any(|line| line == "claude"),
+            "official Claude launch should run the default claude command: {command}"
+        );
+        assert!(
+            !command.contains("--settings"),
+            "official Claude launch must not inject provider-specific settings: {command}"
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn provider_claude_terminal_invocation_uses_provider_settings() {
+        let command = build_claude_terminal_invocation(Some(Path::new("/tmp/cc switch.json")));
+
+        assert!(command.contains("claude --settings '/tmp/cc switch.json'"));
+        assert!(!command.contains("unset ANTHROPIC_AUTH_TOKEN"));
     }
 
     #[cfg(target_os = "macos")]
