@@ -884,7 +884,7 @@ pub fn prepare_codex_live_config_text_with_optional_catalog(
     }
 }
 
-fn merge_existing_codex_mcp_servers(
+pub(crate) fn merge_existing_codex_mcp_servers(
     target_config_text: &str,
     existing_config_text: &str,
 ) -> Result<String, AppError> {
@@ -944,12 +944,6 @@ pub fn write_codex_provider_live_with_catalog(
 ) -> Result<(), AppError> {
     let prepared_config = config_text
         .map(|text| prepare_codex_config_text_with_model_catalog(settings, text))
-        .transpose()?;
-    let prepared_config = prepared_config
-        .map(|text| {
-            let existing_live = read_codex_config_text()?;
-            merge_existing_codex_mcp_servers(&text, &existing_live)
-        })
         .transpose()?;
 
     write_codex_live_for_provider(category, auth, prepared_config.as_deref())
@@ -1873,7 +1867,7 @@ command = "oops"
     }
 
     #[test]
-    fn write_codex_provider_live_with_catalog_preserves_existing_mcp_servers() {
+    fn write_codex_provider_live_with_catalog_does_not_merge_live_mcp_servers_by_itself() {
         let temp_home = tempfile::tempdir().expect("create temp home");
         let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
         std::env::set_var("CC_SWITCH_TEST_HOME", temp_home.path());
@@ -1911,14 +1905,11 @@ base_url = "https://provider-b.example/v1"
 
             write_codex_provider_live_with_catalog(&settings, Some("custom"), auth, config_text)?;
 
-            let written = std::fs::read_to_string(get_codex_config_path()).expect("read written config");
+            let written =
+                std::fs::read_to_string(get_codex_config_path()).expect("read written config");
             assert!(
-                written.contains("[mcp_servers.live_only]"),
-                "provider live write should preserve preexisting live MCP servers"
-            );
-            assert!(
-                written.contains(r#"command = "live-only-command""#),
-                "provider live write should preserve preexisting MCP server contents"
+                !written.contains("[mcp_servers.live_only]"),
+                "generic codex provider write should not merge live MCP servers without caller context"
             );
 
             Ok(())
