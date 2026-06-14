@@ -4,6 +4,7 @@
 import _apikeyfun from "./apikeyfun.png";
 import _apinebula from "./apinebula_icon.png";
 import _atlascloud from "./atlascloud_icon.png";
+import _atomcode from "./atomcode.png";
 import _claudeapi from "./ClaudeApi.png";
 import _byteplus from "./byteplus.png";
 import _ccsub from "./ccsub.svg?url";
@@ -98,6 +99,7 @@ export const iconUrls: Record<string, string> = {
   apikeyfun: _apikeyfun,
   apinebula: _apinebula,
   atlascloud: _atlascloud,
+  atomcode: _atomcode,
   byteplus: _byteplus,
   ccsub: _ccsub,
   claudeapi: _claudeapi,
