@@ -30,6 +30,7 @@ import {
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
+import type { ActiveTarget } from "@/types/proxy";
 import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
   providersApi,
@@ -260,6 +261,13 @@ function App() {
     );
     return target?.provider_id;
   }, [proxyStatus?.active_targets, activeApp]);
+  const activeProviderTargets = useMemo<ActiveTarget[]>(() => {
+    return (
+      proxyStatus?.active_provider_sessions?.filter(
+        (t) => t.app_type === activeApp,
+      ) ?? []
+    );
+  }, [proxyStatus?.active_provider_sessions, activeApp]);
 
   const { data, isLoading, refetch } = useProvidersQuery(activeApp, {
     isProxyRunning,
@@ -955,6 +963,7 @@ function App() {
                         isProxyRunning && isCurrentAppTakeoverActive
                       }
                       activeProviderId={activeProviderId}
+                      activeProviderTargets={activeProviderTargets}
                       onSwitch={switchProvider}
                       onEdit={(provider) => {
                         setEditingProvider(provider);

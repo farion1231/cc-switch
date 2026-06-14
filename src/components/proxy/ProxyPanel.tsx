@@ -356,7 +356,7 @@ export function ProxyPanel({
                   <div className="grid gap-2 sm:grid-cols-2">
                     {status.active_targets.map((target) => (
                       <div
-                        key={target.app_type}
+                        key={`${target.app_type}:${target.provider_id}`}
                         className="flex items-center justify-between rounded-md border border-border bg-background/60 px-2 py-1.5 text-xs"
                       >
                         <span className="text-muted-foreground">
@@ -368,6 +368,11 @@ export function ProxyPanel({
                         >
                           {target.provider_name}
                         </span>
+                        {(target.active_connections ?? 0) > 0 && (
+                          <span className="ml-2 rounded bg-emerald-500/10 px-1.5 py-0.5 font-medium text-emerald-700 dark:text-emerald-300">
+                            {target.active_connections}
+                          </span>
+                        )}
                       </div>
                     ))}
                   </div>

@@ -18,6 +18,7 @@ import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Provider } from "@/types";
+import type { ActiveTarget } from "@/types/proxy";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import { useDragSort } from "@/hooks/useDragSort";
@@ -45,8 +46,17 @@ import {
 import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi } from "@/lib/api/settings";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -67,6 +77,7 @@ interface ProviderListProps {
   isProxyRunning?: boolean; // 代理服务运行状态
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管）
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
+  activeProviderTargets?: ActiveTarget[];
   onSetAsDefault?: (provider: Provider) => void; // OpenClaw: set as default model
 }
 
@@ -89,6 +100,7 @@ export function ProviderList({
   isProxyRunning = false,
   isProxyTakeover = false,
   activeProviderId,
+  activeProviderTargets = [],
   onSetAsDefault,
 }: ProviderListProps) {
   const { t } = useTranslation();
@@ -151,9 +163,16 @@ export function ProviderList({
   const { data: failoverQueue } = useFailoverQueue(appId);
   const addToQueue = useAddToFailoverQueue();
   const removeFromQueue = useRemoveFromFailoverQueue();
+  const [showFailoverEnabledOnly, setShowFailoverEnabledOnly] = useState(false);
 
   const isFailoverModeActive =
     isProxyTakeover === true && isAutoFailoverEnabled === true;
+
+  useEffect(() => {
+    if (!isFailoverModeActive) {
+      setShowFailoverEnabledOnly(false);
+    }
+  }, [isFailoverModeActive]);
 
   const isOpenCode = appId === "opencode";
   const { data: currentOmoId } = useCurrentOmoProviderId(isOpenCode);
@@ -173,7 +192,9 @@ export function ProviderList({
   const isInFailoverQueue = useCallback(
     (providerId: string): boolean => {
       if (!isFailoverModeActive || !failoverQueue) return false;
-      return failoverQueue.some((item) => item.providerId === providerId);
+      return failoverQueue.some(
+        (item) => item.providerId === providerId && item.enabled !== false,
+      );
     },
     [isFailoverModeActive, failoverQueue],
   );
@@ -195,6 +216,10 @@ export function ProviderList({
   const [showStreamCheckConfirm, setShowStreamCheckConfirm] = useState(false);
   const [pendingTestProvider, setPendingTestProvider] =
     useState<Provider | null>(null);
+  const [activeSessionsDialog, setActiveSessionsDialog] = useState<{
+    providerName: string;
+    sessionIds: string[];
+  } | null>(null);
   const { data: claudeDesktopStatus } = useQuery({
     queryKey: ["claudeDesktopStatus"],
     queryFn: () => providersApi.getClaudeDesktopStatus(),
@@ -303,16 +328,40 @@ export function ProviderList({
     }
   }, [isSearchOpen]);
 
-  const filteredProviders = useMemo(() => {
+  const visibleProviders = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
-    if (!keyword) return sortedProviders;
     return sortedProviders.filter((provider) => {
+      if (showFailoverEnabledOnly && !isInFailoverQueue(provider.id)) {
+        return false;
+      }
+      if (!keyword) return true;
+
       const fields = [provider.name, provider.notes, provider.websiteUrl];
       return fields.some((field) =>
         field?.toString().toLowerCase().includes(keyword),
       );
     });
-  }, [searchTerm, sortedProviders]);
+  }, [isInFailoverQueue, searchTerm, showFailoverEnabledOnly, sortedProviders]);
+
+  const activeSessionsByProvider = useMemo(() => {
+    const map = new Map<string, { count: number; sessionIds: string[] }>();
+    for (const target of activeProviderTargets) {
+      if (target.app_type !== appId) continue;
+      const sessionIds = target.session_ids ?? [];
+      const count = Math.max(target.active_connections ?? 0, sessionIds.length);
+      const existing = map.get(target.provider_id);
+      if (existing) {
+        existing.count += count;
+        existing.sessionIds.push(...sessionIds);
+      } else {
+        map.set(target.provider_id, { count, sessionIds: [...sessionIds] });
+      }
+    }
+    for (const value of map.values()) {
+      value.sessionIds = Array.from(new Set(value.sessionIds)).sort();
+    }
+    return map;
+  }, [activeProviderTargets, appId]);
 
   const claudeDesktopStatusMessages = useMemo(() => {
     if (appId !== "claude-desktop" || !claudeDesktopStatus) return [];
@@ -401,11 +450,11 @@ export function ProviderList({
       onDragEnd={handleDragEnd}
     >
       <SortableContext
-        items={filteredProviders.map((provider) => provider.id)}
+        items={visibleProviders.map((provider) => provider.id)}
         strategy={verticalListSortingStrategy}
       >
         <div className="space-y-3">
-          {filteredProviders.map((provider) => {
+          {visibleProviders.map((provider) => {
             const isOmo = provider.category === "omo";
             const isOmoSlim = provider.category === "omo-slim";
             const isOmoCurrent = isOmo && provider.id === (currentOmoId || "");
@@ -413,6 +462,7 @@ export function ProviderList({
               isOmoSlim && provider.id === (currentOmoSlimId || "");
             const isHermesCurrent =
               appId === "hermes" && hermesCurrentProviderId === provider.id;
+            const activeSessions = activeSessionsByProvider.get(provider.id);
             return (
               <SortableProviderCard
                 key={provider.id}
@@ -451,6 +501,13 @@ export function ProviderList({
                   handleToggleFailover(provider.id, enabled)
                 }
                 activeProviderId={activeProviderId}
+                activeConnectionCount={activeSessions?.count ?? 0}
+                onShowActiveSessions={() =>
+                  setActiveSessionsDialog({
+                    providerName: provider.name,
+                    sessionIds: activeSessions?.sessionIds ?? [],
+                  })
+                }
                 // OpenClaw: default model / Hermes: model.provider === provider.id
                 isDefaultModel={
                   appId === "hermes"
@@ -549,11 +606,32 @@ export function ProviderList({
         )}
       </AnimatePresence>
 
-      {filteredProviders.length === 0 ? (
+      {isFailoverModeActive && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2">
+          <span className="text-sm text-muted-foreground">
+            {t("provider.showFailoverEnabledOnly", {
+              defaultValue: "只显示启用",
+            })}
+          </span>
+          <Switch
+            checked={showFailoverEnabledOnly}
+            onCheckedChange={setShowFailoverEnabledOnly}
+            aria-label={t("provider.showFailoverEnabledOnly", {
+              defaultValue: "只显示启用",
+            })}
+          />
+        </div>
+      )}
+
+      {visibleProviders.length === 0 ? (
         <div className="px-6 py-8 text-sm text-center border border-dashed rounded-lg border-border text-muted-foreground">
-          {t("provider.noSearchResults", {
-            defaultValue: "No providers match your search.",
-          })}
+          {showFailoverEnabledOnly && !searchTerm.trim()
+            ? t("provider.noFailoverEnabledProviders", {
+                defaultValue: "没有已启用的故障转移供应商。",
+              })
+            : t("provider.noSearchResults", {
+                defaultValue: "No providers match your search.",
+              })}
         </div>
       ) : (
         renderProviderList()
@@ -571,6 +649,53 @@ export function ProviderList({
           setPendingTestProvider(null);
         }}
       />
+
+      <Dialog
+        open={activeSessionsDialog !== null}
+        onOpenChange={(open) => {
+          if (!open) setActiveSessionsDialog(null);
+        }}
+      >
+        <DialogContent className="max-w-xl" zIndex="top">
+          <DialogHeader>
+            <DialogTitle>
+              {t("provider.activeSessionsTitle", {
+                defaultValue: "活跃会话",
+              })}
+            </DialogTitle>
+            <DialogDescription>
+              {activeSessionsDialog?.providerName ?? ""}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[50vh] space-y-2 overflow-y-auto px-6 py-4">
+            {activeSessionsDialog?.sessionIds.length ? (
+              activeSessionsDialog.sessionIds.map((sessionId) => (
+                <div
+                  key={sessionId}
+                  className="rounded-md border border-border bg-muted/30 px-3 py-2 font-mono text-xs break-all"
+                >
+                  {sessionId}
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                {t("provider.noActiveSessions", {
+                  defaultValue: "暂无活跃会话 ID。",
+                })}
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setActiveSessionsDialog(null)}
+            >
+              {t("common.close", { defaultValue: "关闭" })}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -601,6 +726,8 @@ interface SortableProviderCardProps {
   isInFailoverQueue: boolean;
   onToggleFailover: (enabled: boolean) => void;
   activeProviderId?: string;
+  activeConnectionCount?: number;
+  onShowActiveSessions?: () => void;
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
@@ -632,6 +759,8 @@ function SortableProviderCard({
   isInFailoverQueue,
   onToggleFailover,
   activeProviderId,
+  activeConnectionCount,
+  onShowActiveSessions,
   isDefaultModel,
   onSetAsDefault,
 }: SortableProviderCardProps) {
@@ -684,6 +813,8 @@ function SortableProviderCard({
         isInFailoverQueue={isInFailoverQueue}
         onToggleFailover={onToggleFailover}
         activeProviderId={activeProviderId}
+        activeConnectionCount={activeConnectionCount}
+        onShowActiveSessions={onShowActiveSessions}
         // OpenClaw: default model
         isDefaultModel={isDefaultModel}
         onSetAsDefault={onSetAsDefault}

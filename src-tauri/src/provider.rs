@@ -380,6 +380,35 @@ pub struct CodexChatReasoningConfig {
     pub output_format: Option<String>,
 }
 
+/// Provider 级本地负载限制。
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ProviderLoadLimits {
+    /// 同时转发到该 Provider 的最大请求数。None/0 表示不限制。
+    #[serde(rename = "maxConcurrent", skip_serializing_if = "Option::is_none")]
+    pub max_concurrent: Option<u32>,
+    /// 每分钟最多发往该 Provider 的请求数。None/0 表示不限制。
+    #[serde(rename = "rpm", skip_serializing_if = "Option::is_none")]
+    pub rpm: Option<u32>,
+}
+
+impl ProviderLoadLimits {
+    pub fn has_limits(&self) -> bool {
+        self.max_concurrent.unwrap_or(0) > 0 || self.rpm.unwrap_or(0) > 0
+    }
+
+    pub fn max_concurrent_limit(&self) -> Option<usize> {
+        self.max_concurrent
+            .filter(|value| *value > 0)
+            .map(|value| value as usize)
+    }
+
+    pub fn rpm_limit(&self) -> Option<usize> {
+        self.rpm
+            .filter(|value| *value > 0)
+            .map(|value| value as usize)
+    }
+}
+
 /// 供应商元数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
@@ -429,6 +458,9 @@ pub struct ProviderMeta {
     /// 每月消费限额（USD）
     #[serde(rename = "limitMonthlyUsd", skip_serializing_if = "Option::is_none")]
     pub limit_monthly_usd: Option<String>,
+    /// 本地转发负载限制，用于多中转并行调度。
+    #[serde(rename = "loadLimits", skip_serializing_if = "Option::is_none")]
+    pub load_limits: Option<ProviderLoadLimits>,
     /// 供应商单独的模型测试配置
     #[serde(rename = "testConfig", skip_serializing_if = "Option::is_none")]
     pub test_config: Option<ProviderTestConfig>,

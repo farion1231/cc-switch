@@ -89,6 +89,9 @@ pub struct ProxyStatus {
     /// 当前活跃的代理目标列表
     #[serde(default)]
     pub active_targets: Vec<ActiveTarget>,
+    /// 当前实际绑定了活跃会话的 Provider 列表
+    #[serde(default)]
+    pub active_provider_sessions: Vec<ActiveTarget>,
 }
 
 /// 活跃的代理目标信息
@@ -97,6 +100,12 @@ pub struct ActiveTarget {
     pub app_type: String, // "Claude" | "Codex" | "Gemini"
     pub provider_name: String,
     pub provider_id: String,
+    /// 该 Provider 当前绑定的活跃会话数。
+    #[serde(default)]
+    pub active_connections: usize,
+    /// 当前绑定到该 Provider 的会话 ID 列表。
+    #[serde(default)]
+    pub session_ids: Vec<String>,
 }
 
 /// 代理服务器信息

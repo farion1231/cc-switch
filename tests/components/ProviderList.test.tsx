@@ -8,6 +8,8 @@ import { ProviderList } from "@/components/providers/ProviderList";
 const useDragSortMock = vi.fn();
 const useSortableMock = vi.fn();
 const providerCardRenderSpy = vi.fn();
+let autoFailoverEnabled = false;
+let failoverQueue: Array<{ providerId: string; providerName: string }> = [];
 
 vi.mock("@/hooks/useDragSort", () => ({
   useDragSort: (...args: unknown[]) => useDragSortMock(...args),
@@ -63,6 +65,15 @@ vi.mock("@/components/providers/ProviderCard", () => ({
         <span data-testid={`drag-attr-${provider.id}`}>
           {props.dragHandleProps?.attributes?.["data-dnd-id"] ?? "none"}
         </span>
+        <span data-testid={`active-count-${provider.id}`}>
+          {props.activeConnectionCount ?? 0}
+        </span>
+        <button
+          data-testid={`active-sessions-${provider.id}`}
+          onClick={() => props.onShowActiveSessions?.()}
+        >
+          active sessions
+        </button>
       </div>
     );
   },
@@ -90,8 +101,8 @@ vi.mock("@/hooks/useStreamCheck", () => ({
 }));
 
 vi.mock("@/lib/query/failover", () => ({
-  useAutoFailoverEnabled: () => ({ data: false }),
-  useFailoverQueue: () => ({ data: [] }),
+  useAutoFailoverEnabled: () => ({ data: autoFailoverEnabled }),
+  useFailoverQueue: () => ({ data: failoverQueue }),
   useAddToFailoverQueue: () => ({ mutate: vi.fn() }),
   useRemoveFromFailoverQueue: () => ({ mutate: vi.fn() }),
   useReorderFailoverQueue: () => ({ mutate: vi.fn() }),
@@ -139,6 +150,8 @@ beforeEach(() => {
     sensors: [],
     handleDragEnd: vi.fn(),
   });
+  autoFailoverEnabled = false;
+  failoverQueue = [];
 });
 
 describe("ProviderList Component", () => {
@@ -235,12 +248,12 @@ describe("ProviderList Component", () => {
     // Drag attributes from useSortable
     expect(
       providerCardRenderSpy.mock.calls[0][0].dragHandleProps?.attributes[
-      "data-dnd-id"
+        "data-dnd-id"
       ],
     ).toBe("b");
     expect(
       providerCardRenderSpy.mock.calls[1][0].dragHandleProps?.attributes[
-      "data-dnd-id"
+        "data-dnd-id"
       ],
     ).toBe("a");
 
@@ -305,5 +318,124 @@ describe("ProviderList Component", () => {
     expect(
       screen.getByText("No providers match your search."),
     ).toBeInTheDocument();
+  });
+
+  it("can show only providers enabled in failover mode", () => {
+    const providerA = createProvider({ id: "a", name: "A" });
+    const providerB = createProvider({ id: "b", name: "B" });
+
+    autoFailoverEnabled = true;
+    failoverQueue = [{ providerId: "b", providerName: "B" }];
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerA, providerB],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ a: providerA, b: providerB }}
+        currentProviderId=""
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        isProxyTakeover
+      />,
+    );
+
+    expect(screen.getByTestId("provider-card-a")).toBeInTheDocument();
+    expect(screen.getByTestId("provider-card-b")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("switch", { name: "只显示启用" }));
+
+    expect(screen.queryByTestId("provider-card-a")).not.toBeInTheDocument();
+    expect(screen.getByTestId("provider-card-b")).toBeInTheDocument();
+  });
+
+  it("passes active session counts by provider", () => {
+    const providerA = createProvider({ id: "a", name: "A" });
+    const providerB = createProvider({ id: "b", name: "B" });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerA, providerB],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ a: providerA, b: providerB }}
+        currentProviderId=""
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        activeProviderTargets={[
+          {
+            app_type: "claude",
+            provider_id: "a",
+            provider_name: "A",
+            active_connections: 2,
+            session_ids: ["s2", "s1"],
+          },
+          {
+            app_type: "codex",
+            provider_id: "b",
+            provider_name: "B",
+            active_connections: 1,
+            session_ids: ["ignored"],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByTestId("active-count-a")).toHaveTextContent("2");
+    expect(screen.getByTestId("active-count-b")).toHaveTextContent("0");
+    expect(providerCardRenderSpy.mock.calls[0][0].activeSessionIds).toBe(
+      undefined,
+    );
+  });
+
+  it("shows active session ids dialog", () => {
+    const providerA = createProvider({ id: "a", name: "A" });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerA],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ a: providerA }}
+        currentProviderId=""
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        activeProviderTargets={[
+          {
+            app_type: "claude",
+            provider_id: "a",
+            provider_name: "A",
+            active_connections: 2,
+            session_ids: ["session-b", "session-a"],
+          },
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("active-sessions-a"));
+
+    expect(screen.getByText("活跃会话")).toBeInTheDocument();
+    expect(screen.getByText("session-a")).toBeInTheDocument();
+    expect(screen.getByText("session-b")).toBeInTheDocument();
   });
 });
