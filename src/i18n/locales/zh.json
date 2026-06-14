@@ -164,6 +164,10 @@
     "usageSaveFailed": "用量查询配置保存失败",
     "geminiConfig": "Gemini 配置",
     "geminiConfigHint": "使用 .env 格式配置 Gemini",
+    "exportAliases": "导出别名",
+    "exportAliasesTitle": "Shell 别名",
+    "exportAliasesDesc": "将以下内容添加到 ~/.zshrc 或 ~/.bashrc，即可用不同供应商多开 Claude 实例：",
+    "exportAliasesCopied": "已复制到剪贴板",
     "form": {
       "gemini": {
         "model": "模型",
