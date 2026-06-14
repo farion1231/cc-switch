@@ -427,6 +427,65 @@ fn migration_v10_to_v11_rebuilds_rollups_with_request_model_dimension() {
 }
 
 #[test]
+fn schema_creates_codex_session_provider_links_table() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    assert!(Database::table_exists(&conn, "codex_session_provider_links").unwrap());
+    for column in [
+        "session_id",
+        "source_path",
+        "provider_id",
+        "link_mode",
+        "created_at",
+        "updated_at",
+    ] {
+        assert!(
+            Database::has_column(&conn, "codex_session_provider_links", column).unwrap(),
+            "missing codex_session_provider_links.{column}"
+        );
+    }
+}
+
+#[test]
+fn codex_session_provider_links_round_trip() -> Result<(), AppError> {
+    let db = Database::memory()?;
+    let links = db.replace_codex_session_provider_links(
+        "session-1",
+        "C:/Users/Test/.codex/sessions/2026/06/13/session-1.jsonl",
+        &["provider-a".to_string(), "provider-b".to_string()],
+        "manual",
+    )?;
+
+    assert_eq!(links.len(), 2);
+    assert_eq!(
+        db.get_codex_session_provider_links(
+            "session-1",
+            "C:/Users/Test/.codex/sessions/2026/06/13/session-1.jsonl"
+        )?
+        .into_iter()
+        .map(|link| link.provider_id)
+        .collect::<Vec<_>>(),
+        vec!["provider-a".to_string(), "provider-b".to_string()]
+    );
+
+    db.delete_codex_session_provider_link(
+        "session-1",
+        "C:/Users/Test/.codex/sessions/2026/06/13/session-1.jsonl",
+        "provider-a",
+    )?;
+
+    let remaining = db.get_codex_session_provider_links(
+        "session-1",
+        "C:/Users/Test/.codex/sessions/2026/06/13/session-1.jsonl",
+    )?;
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].provider_id, "provider-b");
+    Ok(())
+}
+
+#[test]
 fn schema_create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
     let conn = Connection::open_in_memory().expect("open memory db");
 

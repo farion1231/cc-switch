@@ -1,5 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { SessionMessage, SessionMeta } from "@/types";
+import type {
+  CodexSessionProviderUpdateResult,
+  ProviderCodexSession,
+  SessionMessage,
+  SessionMeta,
+  SetCodexSessionProvidersRequest,
+} from "@/types";
 
 export interface DeleteSessionOptions {
   providerId: string;
@@ -15,6 +21,18 @@ export interface DeleteSessionResult extends DeleteSessionOptions {
 export const sessionsApi = {
   async list(): Promise<SessionMeta[]> {
     return await invoke("list_sessions");
+  },
+
+  async listProviderCodexSessions(
+    providerId: string,
+  ): Promise<ProviderCodexSession[]> {
+    return await invoke("list_provider_codex_sessions", { providerId });
+  },
+
+  async setCodexSessionProviderLinks(
+    request: SetCodexSessionProvidersRequest,
+  ): Promise<CodexSessionProviderUpdateResult> {
+    return await invoke("set_codex_session_provider_links", { request });
   },
 
   async getMessages(

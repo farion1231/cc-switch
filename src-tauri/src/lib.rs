@@ -1340,6 +1340,7 @@ pub fn run() {
             // Usage statistics
             commands::get_usage_summary,
             commands::get_usage_summary_by_app,
+            commands::get_codex_session_usage_summaries,
             commands::get_usage_trends,
             commands::get_provider_stats,
             commands::get_model_stats,
@@ -1359,9 +1360,11 @@ pub fn run() {
             commands::save_stream_check_config,
             // Session manager
             commands::list_sessions,
+            commands::list_provider_codex_sessions,
             commands::get_session_messages,
             commands::delete_session,
             commands::delete_sessions,
+            commands::set_codex_session_provider_links,
             commands::launch_session_terminal,
             commands::get_tool_versions,
             commands::run_tool_lifecycle_action,

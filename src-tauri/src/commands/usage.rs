@@ -43,6 +43,18 @@ pub fn get_usage_summary_by_app(
     )
 }
 
+/// 获取 Codex 会话维度使用汇总
+#[tauri::command]
+pub fn get_codex_session_usage_summaries(
+    state: State<'_, AppState>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+) -> Result<Vec<CodexSessionUsageSummary>, AppError> {
+    state
+        .db
+        .get_codex_session_usage_summaries(start_date, end_date)
+}
+
 /// 获取每日趋势
 #[tauri::command]
 pub fn get_usage_trends(

@@ -242,6 +242,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
         session_id: session_id.clone(),
+        model_provider: None,
         title,
         summary,
         project_dir,

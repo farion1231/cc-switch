@@ -386,6 +386,21 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub common_config_enabled: Option<bool>,
+    /// Provider management grouping metadata. UI-only organization for existing
+    /// Provider records; not a runtime provider layer.
+    #[serde(rename = "providerGroup", skip_serializing_if = "Option::is_none")]
+    pub provider_group: Option<String>,
+    #[serde(
+        rename = "providerVariantLabel",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub provider_variant_label: Option<String>,
+    #[serde(
+        default,
+        rename = "groupCommonConfigEnabled",
+        skip_serializing_if = "HashMap::is_empty"
+    )]
+    pub group_common_config_enabled: HashMap<String, bool>,
     /// Claude Desktop 3P 写入模式：direct（直连）或 proxy（预留）
     #[serde(rename = "claudeDesktopMode", skip_serializing_if = "Option::is_none")]
     pub claude_desktop_mode: Option<ClaudeDesktopMode>,

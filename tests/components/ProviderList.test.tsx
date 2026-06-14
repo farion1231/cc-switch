@@ -1,4 +1,10 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ReactElement } from "react";
@@ -8,6 +14,57 @@ import { ProviderList } from "@/components/providers/ProviderList";
 const useDragSortMock = vi.fn();
 const useSortableMock = vi.fn();
 const providerCardRenderSpy = vi.fn();
+const streamCheckMocks = vi.hoisted(() => ({
+  checkProvider: vi.fn(),
+  isChecking: vi.fn(),
+}));
+const settingsApiMocks = vi.hoisted(() => ({
+  get: vi.fn(),
+  save: vi.fn(),
+}));
+const providerApiMocks = vi.hoisted(() => ({
+  update: vi.fn(),
+  updateSortOrder: vi.fn(),
+  updateTrayMenu: vi.fn(),
+  getOpenCodeLiveProviderIds: vi.fn(),
+  getClaudeDesktopStatus: vi.fn(),
+  importOpenCodeFromLive: vi.fn(),
+  importOpenClawFromLive: vi.fn(),
+  importHermesFromLive: vi.fn(),
+  importClaudeDesktopFromClaude: vi.fn(),
+  importDefault: vi.fn(),
+}));
+
+vi.mock("@/lib/api/providers", () => ({
+  providersApi: {
+    update: (...args: unknown[]) => providerApiMocks.update(...args),
+    updateSortOrder: (...args: unknown[]) =>
+      providerApiMocks.updateSortOrder(...args),
+    updateTrayMenu: (...args: unknown[]) =>
+      providerApiMocks.updateTrayMenu(...args),
+    getOpenCodeLiveProviderIds: (...args: unknown[]) =>
+      providerApiMocks.getOpenCodeLiveProviderIds(...args),
+    getClaudeDesktopStatus: (...args: unknown[]) =>
+      providerApiMocks.getClaudeDesktopStatus(...args),
+    importOpenCodeFromLive: (...args: unknown[]) =>
+      providerApiMocks.importOpenCodeFromLive(...args),
+    importOpenClawFromLive: (...args: unknown[]) =>
+      providerApiMocks.importOpenClawFromLive(...args),
+    importHermesFromLive: (...args: unknown[]) =>
+      providerApiMocks.importHermesFromLive(...args),
+    importClaudeDesktopFromClaude: (...args: unknown[]) =>
+      providerApiMocks.importClaudeDesktopFromClaude(...args),
+    importDefault: (...args: unknown[]) =>
+      providerApiMocks.importDefault(...args),
+  },
+}));
+
+vi.mock("@/lib/api/settings", () => ({
+  settingsApi: {
+    get: (...args: unknown[]) => settingsApiMocks.get(...args),
+    save: (...args: unknown[]) => settingsApiMocks.save(...args),
+  },
+}));
 
 vi.mock("@/hooks/useDragSort", () => ({
   useDragSort: (...args: unknown[]) => useDragSortMock(...args),
@@ -23,10 +80,31 @@ vi.mock("@/components/providers/ProviderCard", () => ({
       onDelete,
       onDuplicate,
       onConfigureUsage,
+      isSelected,
+      onSelectedChange,
+      groupCount,
+      onToggleDrawer,
     } = props;
 
     return (
       <div data-testid={`provider-card-${provider.id}`}>
+        {onSelectedChange && (
+          <button
+            data-testid={`select-${provider.id}`}
+            data-selected={isSelected ? "true" : "false"}
+            onClick={() => onSelectedChange(!isSelected)}
+          >
+            select
+          </button>
+        )}
+        {onToggleDrawer && (
+          <button
+            data-testid={`drawer-${provider.id}`}
+            onClick={() => onToggleDrawer()}
+          >
+            drawer {groupCount}
+          </button>
+        )}
         <button
           data-testid={`switch-${provider.id}`}
           onClick={() => onSwitch(provider)}
@@ -84,8 +162,9 @@ vi.mock("@dnd-kit/sortable", async () => {
 // Mock hooks that use QueryClient
 vi.mock("@/hooks/useStreamCheck", () => ({
   useStreamCheck: () => ({
-    checkProvider: vi.fn(),
-    isChecking: () => false,
+    checkProvider: (...args: unknown[]) =>
+      streamCheckMocks.checkProvider(...args),
+    isChecking: (...args: unknown[]) => streamCheckMocks.isChecking(...args),
   }),
 }));
 
@@ -124,6 +203,29 @@ beforeEach(() => {
   useDragSortMock.mockReset();
   useSortableMock.mockReset();
   providerCardRenderSpy.mockClear();
+  Object.values(providerApiMocks).forEach((mock) => mock.mockReset());
+  Object.values(settingsApiMocks).forEach((mock) => mock.mockReset());
+  Object.values(streamCheckMocks).forEach((mock) => mock.mockReset());
+  providerApiMocks.update.mockResolvedValue(true);
+  providerApiMocks.updateSortOrder.mockResolvedValue(true);
+  providerApiMocks.updateTrayMenu.mockResolvedValue(true);
+  providerApiMocks.getOpenCodeLiveProviderIds.mockResolvedValue([]);
+  providerApiMocks.getClaudeDesktopStatus.mockResolvedValue({
+    supported: true,
+    configured: false,
+    proxyRunning: false,
+    staleRawModels: false,
+    missingRouteMappings: false,
+    gatewayTokenConfigured: true,
+  });
+  providerApiMocks.importOpenCodeFromLive.mockResolvedValue(0);
+  providerApiMocks.importOpenClawFromLive.mockResolvedValue(0);
+  providerApiMocks.importHermesFromLive.mockResolvedValue(0);
+  providerApiMocks.importClaudeDesktopFromClaude.mockResolvedValue(0);
+  providerApiMocks.importDefault.mockResolvedValue(false);
+  settingsApiMocks.get.mockResolvedValue({ streamCheckConfirmed: true });
+  settingsApiMocks.save.mockResolvedValue(true);
+  streamCheckMocks.isChecking.mockReturnValue(false);
 
   useSortableMock.mockImplementation(({ id }: { id: string }) => ({
     setNodeRef: vi.fn(),
@@ -235,12 +337,12 @@ describe("ProviderList Component", () => {
     // Drag attributes from useSortable
     expect(
       providerCardRenderSpy.mock.calls[0][0].dragHandleProps?.attributes[
-      "data-dnd-id"
+        "data-dnd-id"
       ],
     ).toBe("b");
     expect(
       providerCardRenderSpy.mock.calls[1][0].dragHandleProps?.attributes[
-      "data-dnd-id"
+        "data-dnd-id"
       ],
     ).toBe("a");
 
@@ -264,7 +366,72 @@ describe("ProviderList Component", () => {
     );
   });
 
-  it("filters providers with the search input", () => {
+  it("filters providers with the visible search input across id, base URL, and model", () => {
+    const providerAlpha = createProvider({
+      id: "alpha",
+      name: "Alpha Labs",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://alpha.example.com/v1",
+          ANTHROPIC_DEFAULT_SONNET_MODEL: "sonnet-alpha",
+        },
+      },
+    });
+    const providerBeta = createProvider({
+      id: "beta",
+      name: "Beta Works",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://beta.example.com/v1",
+          ANTHROPIC_DEFAULT_OPUS_MODEL: "opus-beta",
+        },
+      },
+    });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerAlpha, providerBeta],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ alpha: providerAlpha, beta: providerBeta }}
+        currentProviderId=""
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    const searchInput = screen.getByPlaceholderText(
+      "Search providers, URLs, models, or key fingerprints...",
+    );
+
+    // Initially both providers are rendered
+    expect(screen.getByTestId("provider-card-alpha")).toBeInTheDocument();
+    expect(screen.getByTestId("provider-card-beta")).toBeInTheDocument();
+
+    fireEvent.change(searchInput, { target: { value: "opus-beta" } });
+    expect(screen.queryByTestId("provider-card-alpha")).not.toBeInTheDocument();
+    expect(screen.getByTestId("provider-card-beta")).toBeInTheDocument();
+
+    fireEvent.change(searchInput, { target: { value: "alpha.example.com" } });
+    expect(screen.getByTestId("provider-card-alpha")).toBeInTheDocument();
+    expect(screen.queryByTestId("provider-card-beta")).not.toBeInTheDocument();
+
+    fireEvent.change(searchInput, { target: { value: "gamma" } });
+    expect(screen.queryByTestId("provider-card-alpha")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("provider-card-beta")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("No providers match your search."),
+    ).toBeInTheDocument();
+  });
+
+  it("switches to compact mode and renders compact rows", () => {
     const providerAlpha = createProvider({ id: "alpha", name: "Alpha Labs" });
     const providerBeta = createProvider({ id: "beta", name: "Beta Works" });
 
@@ -287,23 +454,528 @@ describe("ProviderList Component", () => {
       />,
     );
 
-    fireEvent.keyDown(window, { key: "f", metaKey: true });
-    const searchInput = screen.getByPlaceholderText(
-      "Search name, notes, or URL...",
-    );
-    // Initially both providers are rendered
-    expect(screen.getByTestId("provider-card-alpha")).toBeInTheDocument();
-    expect(screen.getByTestId("provider-card-beta")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Compact/ }));
 
-    fireEvent.change(searchInput, { target: { value: "beta" } });
-    expect(screen.queryByTestId("provider-card-alpha")).not.toBeInTheDocument();
-    expect(screen.getByTestId("provider-card-beta")).toBeInTheDocument();
-
-    fireEvent.change(searchInput, { target: { value: "gamma" } });
-    expect(screen.queryByTestId("provider-card-alpha")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("provider-card-beta")).not.toBeInTheDocument();
     expect(
-      screen.getByText("No providers match your search."),
+      screen.getByTestId("provider-compact-row-alpha"),
     ).toBeInTheDocument();
+    expect(screen.getByTestId("provider-compact-row-beta")).toBeInTheDocument();
+    expect(screen.queryByTestId("provider-card-alpha")).not.toBeInTheDocument();
+  });
+
+  it("selects visible providers and shows the selected count", () => {
+    const providerAlpha = createProvider({ id: "alpha", name: "Alpha Labs" });
+    const providerBeta = createProvider({ id: "beta", name: "Beta Works" });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerAlpha, providerBeta],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ alpha: providerAlpha, beta: providerBeta }}
+        currentProviderId=""
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("select-alpha"));
+
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+    expect(screen.getByTestId("select-alpha")).toHaveAttribute(
+      "data-selected",
+      "true",
+    );
+  });
+
+  it("opens a provider group drawer with safe sub-config summaries", () => {
+    const providerAlpha = createProvider({
+      id: "alpha",
+      name: "Minimax API A",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.minimax.test/v1",
+          ANTHROPIC_AUTH_TOKEN: "sk-alpha-secret-123456",
+          ANTHROPIC_DEFAULT_SONNET_MODEL: "minimax-2.5",
+        },
+      },
+      meta: { providerGroup: "Minimax" },
+    });
+    const providerBeta = createProvider({
+      id: "beta",
+      name: "Minimax API B",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.minimax.test/v1",
+          ANTHROPIC_AUTH_TOKEN: "sk-beta-secret-654321",
+          ANTHROPIC_DEFAULT_OPUS_MODEL: "minimax-2.7",
+        },
+      },
+      meta: { providerGroup: "Minimax" },
+    });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerAlpha, providerBeta],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ alpha: providerAlpha, beta: providerBeta }}
+        currentProviderId=""
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("drawer-alpha"));
+
+    const drawer = screen.getByTestId("provider-config-drawer-group:minimax");
+    const alphaRow = screen.getByTestId("provider-config-drawer-row-alpha");
+    expect(within(drawer).getByText("Minimax API A")).toBeInTheDocument();
+    expect(within(drawer).getByText("Minimax API B")).toBeInTheDocument();
+    expect(within(alphaRow).getByText("sk-alp...3456")).toBeInTheDocument();
+    expect(
+      screen.queryByText("sk-alpha-secret-123456"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("uses the active provider as the folded group surface and common-config source", async () => {
+    const providerAlpha = createProvider({
+      id: "alpha",
+      name: "Minimax API A",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.minimax.test/v1",
+          ANTHROPIC_AUTH_TOKEN: "sk-alpha-secret-123456",
+          ANTHROPIC_DEFAULT_SONNET_MODEL: "minimax-2.5",
+        },
+      },
+      meta: { providerGroup: "Minimax" },
+    });
+    const providerBeta = createProvider({
+      id: "beta",
+      name: "Minimax API B",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.minimax.test/v1",
+          ANTHROPIC_AUTH_TOKEN: "sk-beta-secret-654321",
+          ANTHROPIC_DEFAULT_OPUS_MODEL: "minimax-2.7",
+        },
+      },
+      meta: { providerGroup: "Minimax" },
+    });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerAlpha, providerBeta],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ alpha: providerAlpha, beta: providerBeta }}
+        currentProviderId="beta"
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId("provider-card-alpha")).not.toBeInTheDocument();
+    expect(screen.getByTestId("provider-card-beta")).toBeInTheDocument();
+    expect(providerCardRenderSpy).toHaveBeenCalledTimes(1);
+    expect(providerCardRenderSpy.mock.calls[0][0].provider.id).toBe("beta");
+    expect(screen.getByTestId("is-current-beta")).toHaveTextContent("current");
+
+    fireEvent.click(screen.getByTestId("drawer-beta"));
+
+    const drawer = screen.getByTestId("provider-config-drawer-group:minimax");
+    expect(within(drawer).getByText("Minimax API A")).toBeInTheDocument();
+    expect(within(drawer).getByText("Minimax API B")).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "Use group API key for Minimax API A",
+      }),
+    );
+
+    await waitFor(() => expect(providerApiMocks.update).toHaveBeenCalled());
+    const [updatedProvider, appId, originalId] =
+      providerApiMocks.update.mock.calls[0];
+
+    expect(appId).toBe("claude");
+    expect(originalId).toBe("alpha");
+    expect(updatedProvider.settingsConfig.env.ANTHROPIC_AUTH_TOKEN).toBe(
+      "sk-beta-secret-654321",
+    );
+    expect(JSON.stringify(updatedProvider.meta)).not.toContain(
+      "sk-beta-secret-654321",
+    );
+  });
+
+  it("folds duplicate branded providers with the same name into one drawer", () => {
+    const providerAlpha = createProvider({
+      id: "kimi-a",
+      name: "Kimi For Coding",
+      category: "cn_official",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api-a.example.com/coding",
+          ANTHROPIC_AUTH_TOKEN: "sk-alpha-secret-123456",
+          ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-for-coding",
+        },
+      },
+    });
+    const providerBeta = createProvider({
+      id: "kimi-b",
+      name: "Kimi For Coding",
+      category: "cn_official",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api-b.example.com/coding",
+          ANTHROPIC_AUTH_TOKEN: "sk-beta-secret-654321",
+          ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-for-coding",
+        },
+      },
+    });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerAlpha, providerBeta],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ "kimi-a": providerAlpha, "kimi-b": providerBeta }}
+        currentProviderId="kimi-b"
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.queryByTestId("provider-card-kimi-a"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("provider-card-kimi-b")).toBeInTheDocument();
+    expect(screen.getByTestId("drawer-kimi-b")).toHaveTextContent("2");
+
+    fireEvent.click(screen.getByTestId("drawer-kimi-b"));
+
+    const drawer = screen.getByTestId(
+      "provider-config-drawer-name:kimi-for-coding",
+    );
+    expect(
+      screen.getByTestId("provider-config-drawer-row-kimi-a"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("provider-config-drawer-row-kimi-b"),
+    ).toBeInTheDocument();
+    expect(within(drawer).getByText("api-a.example.com")).toBeInTheDocument();
+    expect(within(drawer).getByText("api-b.example.com")).toBeInTheDocument();
+  });
+
+  it("uses the folded group id as the sortable id for grouped providers", () => {
+    const providerAlpha = createProvider({
+      id: "kimi-a",
+      name: "Kimi For Coding",
+      category: "cn_official",
+    });
+    const providerBeta = createProvider({
+      id: "kimi-b",
+      name: "Kimi For Coding",
+      category: "cn_official",
+    });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerAlpha, providerBeta],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ "kimi-a": providerAlpha, "kimi-b": providerBeta }}
+        currentProviderId="kimi-b"
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("drag-attr-kimi-b")).toHaveTextContent(
+      "name:kimi-for-coding",
+    );
+    expect(useSortableMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "name:kimi-for-coding" }),
+    );
+  });
+
+  it("applies group common API key without storing raw secrets in metadata", async () => {
+    const providerAlpha = createProvider({
+      id: "alpha",
+      name: "Minimax API A",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.minimax.test/v1",
+          ANTHROPIC_AUTH_TOKEN: "sk-alpha-secret-123456",
+        },
+      },
+      meta: { providerGroup: "Minimax" },
+    });
+    const providerBeta = createProvider({
+      id: "beta",
+      name: "Minimax API B",
+      settingsConfig: { env: {} },
+      meta: { providerGroup: "Minimax" },
+    });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerAlpha, providerBeta],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ alpha: providerAlpha, beta: providerBeta }}
+        currentProviderId=""
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("drawer-alpha"));
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "Use group API key for Minimax API B",
+      }),
+    );
+
+    await waitFor(() => expect(providerApiMocks.update).toHaveBeenCalled());
+    const [updatedProvider, appId, originalId] =
+      providerApiMocks.update.mock.calls[0];
+
+    expect(appId).toBe("claude");
+    expect(originalId).toBe("beta");
+    expect(updatedProvider.settingsConfig.env.ANTHROPIC_AUTH_TOKEN).toBe(
+      "sk-alpha-secret-123456",
+    );
+    expect(updatedProvider.meta.groupCommonConfigEnabled).toEqual({
+      apiKey: true,
+    });
+    expect(JSON.stringify(updatedProvider.meta)).not.toContain(
+      "sk-alpha-secret-123456",
+    );
+  });
+
+  it("confirms and forwards batch delete through the batch callback", () => {
+    const providerAlpha = createProvider({ id: "alpha", name: "Alpha Labs" });
+    const providerBeta = createProvider({ id: "beta", name: "Beta Works" });
+    const handleDelete = vi.fn();
+    const handleBatchDelete = vi.fn();
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerAlpha, providerBeta],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ alpha: providerAlpha, beta: providerBeta }}
+        currentProviderId=""
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={handleDelete}
+        onBatchDelete={handleBatchDelete}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("select-alpha"));
+    fireEvent.click(screen.getByTestId("select-beta"));
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete selected providers" }),
+    );
+
+    expect(handleBatchDelete).toHaveBeenCalledTimes(1);
+    expect(handleBatchDelete).toHaveBeenCalledWith([
+      providerAlpha,
+      providerBeta,
+    ]);
+    expect(handleDelete).not.toHaveBeenCalled();
+  });
+
+  it("adds selected providers to live config sequentially", async () => {
+    const providerAlpha = createProvider({ id: "alpha", name: "Alpha Labs" });
+    const providerBeta = createProvider({ id: "beta", name: "Beta Works" });
+    let resolveAlpha!: () => void;
+    const alphaSwitch = new Promise<void>((resolve) => {
+      resolveAlpha = resolve;
+    });
+    const handleSwitch = vi.fn((provider: Provider) =>
+      provider.id === "alpha" ? alphaSwitch : Promise.resolve(),
+    );
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerAlpha, providerBeta],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ alpha: providerAlpha, beta: providerBeta }}
+        currentProviderId=""
+        appId="opencode"
+        onSwitch={handleSwitch}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    await screen.findByRole("button", { name: "Cards" });
+    fireEvent.click(screen.getByTestId("select-alpha"));
+    fireEvent.click(screen.getByTestId("select-beta"));
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Add selected" }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Add selected" }));
+
+    expect(handleSwitch).toHaveBeenCalledTimes(1);
+    expect(handleSwitch).toHaveBeenCalledWith(providerAlpha);
+
+    resolveAlpha();
+
+    await waitFor(() => expect(handleSwitch).toHaveBeenCalledTimes(2));
+    expect(handleSwitch).toHaveBeenNthCalledWith(2, providerBeta);
+  });
+
+  it("forwards batch remove-from-config through the batch callback", async () => {
+    const providerAlpha = createProvider({ id: "alpha", name: "Alpha Labs" });
+    const providerBeta = createProvider({ id: "beta", name: "Beta Works" });
+    const handleRemoveFromConfig = vi.fn();
+    const handleBatchRemoveFromConfig = vi.fn();
+
+    providerApiMocks.getOpenCodeLiveProviderIds.mockResolvedValue([
+      "alpha",
+      "beta",
+    ]);
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerAlpha, providerBeta],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ alpha: providerAlpha, beta: providerBeta }}
+        currentProviderId=""
+        appId="opencode"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onRemoveFromConfig={handleRemoveFromConfig}
+        onBatchRemoveFromConfig={handleBatchRemoveFromConfig}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    await screen.findByRole("button", { name: "Cards" });
+    fireEvent.click(screen.getByTestId("select-alpha"));
+    fireEvent.click(screen.getByTestId("select-beta"));
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Remove selected" }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Remove selected" }));
+
+    expect(handleBatchRemoveFromConfig).toHaveBeenCalledTimes(1);
+    expect(handleBatchRemoveFromConfig).toHaveBeenCalledWith([
+      providerAlpha,
+      providerBeta,
+    ]);
+    expect(handleRemoveFromConfig).not.toHaveBeenCalled();
+  });
+
+  it("tests every selected provider directly", async () => {
+    const providerAlpha = createProvider({ id: "alpha", name: "Alpha Labs" });
+    const providerBeta = createProvider({ id: "beta", name: "Beta Works" });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerAlpha, providerBeta],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ alpha: providerAlpha, beta: providerBeta }}
+        currentProviderId=""
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("select-alpha"));
+    fireEvent.click(screen.getByTestId("select-beta"));
+    fireEvent.click(screen.getByRole("button", { name: "Test selected" }));
+
+    await waitFor(() =>
+      expect(streamCheckMocks.checkProvider).toHaveBeenCalledTimes(2),
+    );
+    expect(streamCheckMocks.checkProvider).toHaveBeenNthCalledWith(
+      1,
+      "alpha",
+      "Alpha Labs",
+    );
+    expect(streamCheckMocks.checkProvider).toHaveBeenNthCalledWith(
+      2,
+      "beta",
+      "Beta Works",
+    );
   });
 });
