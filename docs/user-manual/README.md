@@ -1,4 +1,4 @@
-# CC Switch User Manual / 用户手册 / ユーザーマニュアル
+# EC Switch User Manual / 用户手册 / ユーザーマニュアル
 
 > Claude Code / Claude Desktop / Codex / Gemini CLI / OpenCode / OpenClaw / Hermes
 
@@ -14,7 +14,7 @@
 
 - Documentation version: v3.16.0
 - Last updated: 2026-05-29
-- Compatible with CC Switch v3.16.0+
+- Compatible with EC Switch v3.16.0+
 
 ## Links
 

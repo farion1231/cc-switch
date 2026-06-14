@@ -894,7 +894,7 @@ mod integration_tests {
     async fn live_s3_put_get_head_roundtrip() {
         crate::proxy::http_client::init(None).ok();
         let creds = test_creds();
-        let key = "cc-switch-sync/v2/default/_integration_test.json";
+        let key = "ec-switch-sync/v2/default/_integration_test.json";
         let data = br#"{"test":true,"ts":12345}"#;
 
         // PUT
@@ -916,7 +916,7 @@ mod integration_tests {
         println!("PASS: head_object OK");
 
         // 404
-        let r = get_object(&creds, "cc-switch-sync/_no_such_key", 1024).await;
+        let r = get_object(&creds, "ec-switch-sync/_no_such_key", 1024).await;
         assert!(r.is_ok());
         assert!(r.unwrap().is_none());
         println!("PASS: get_object(404) returned None");
