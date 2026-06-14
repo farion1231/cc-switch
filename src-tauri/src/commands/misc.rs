@@ -2765,7 +2765,15 @@ end if
 /// macOS: Ghostty
 #[cfg(target_os = "macos")]
 fn launch_macos_ghostty(script_file: &std::path::Path) -> Result<(), String> {
-    run_terminal_osascript(&build_macos_ghostty_applescript(script_file), "Ghostty")
+    match run_terminal_osascript(&build_macos_ghostty_applescript(script_file), "Ghostty") {
+        Ok(()) => Ok(()),
+        Err(applescript_error) => {
+            log::warn!(
+                "Ghostty AppleScript launch failed, falling back to open -na: {applescript_error}"
+            );
+            launch_macos_open_app("Ghostty", script_file, true)
+        }
+    }
 }
 
 /// macOS: 使用 open -na 启动支持 --args 参数的终端（Alacritty/Kitty/WezTerm/Kaku）
