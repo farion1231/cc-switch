@@ -344,17 +344,16 @@ describe("ProviderPresetSelector", () => {
     ).toBeInTheDocument();
   });
 
-  it("所有预设按钮使用固定 200px 宽度,视觉对齐一致", () => {
+  it("所有预设按钮填满网格列宽(w-full)实现等宽对齐", () => {
     renderSelector();
 
     const presetButtons = screen.getAllByRole("button");
-    const widthClass = "w-[200px]";
-    const fixedWidthButtons = presetButtons.filter((btn) =>
-      btn.className.includes(widthClass),
+    const fullWidthButtons = presetButtons.filter((btn) =>
+      btn.className.includes("w-full"),
     );
 
-    // 至少包含 custom + 4 个预设 = 5 个固定宽度按钮
-    expect(fixedWidthButtons.length).toBeGreaterThanOrEqual(5);
+    // 至少包含 custom + 4 个预设 = 5 个等宽按钮(搜索/排序按钮为 size-8 不计入)
+    expect(fullWidthButtons.length).toBeGreaterThanOrEqual(5);
   });
 
   it("preset.icon 存在时按钮内渲染图标元素(img/svg)", () => {
@@ -402,6 +401,16 @@ describe("ProviderPresetSelector", () => {
     expect(placeholder).not.toBeNull();
   });
 
+  it("custom 按钮同样渲染占位元素,文字与带图标的预设按钮对齐", () => {
+    renderSelector();
+
+    const customButton = screen.getByRole("button", {
+      name: "providerPreset.custom",
+    });
+    const placeholder = customButton.querySelector("span[aria-hidden]");
+    expect(placeholder).not.toBeNull();
+  });
+
   it("点击放大镜 inline 切换搜索输入框可见性,ESC 收起并清空", async () => {
     const user = userEvent.setup();
     renderSelector();
@@ -432,6 +441,30 @@ describe("ProviderPresetSelector", () => {
       }),
     ).not.toBeInTheDocument();
     // 收起后所有预设恢复显示
+    expect(
+      screen.getByRole("button", { name: "preset.gamma" }),
+    ).toBeInTheDocument();
+  });
+
+  it("点击搜索区域外自动收起并清空", async () => {
+    const user = userEvent.setup();
+    renderSelector();
+
+    await user.click(getSearchButton());
+    await user.type(getSearchInput(), "gateway");
+    expect(getSearchInput()).toBeInTheDocument();
+
+    // 点击搜索区域外的元素(custom 按钮)应收起搜索框
+    await user.click(
+      screen.getByRole("button", { name: "providerPreset.custom" }),
+    );
+
+    expect(
+      screen.queryByRole("textbox", {
+        name: /providerPreset\.(searchInput|searchPlaceholder)|搜索预设|search/i,
+      }),
+    ).not.toBeInTheDocument();
+    // 收起后清空 query,所有预设恢复显示
     expect(
       screen.getByRole("button", { name: "preset.gamma" }),
     ).toBeInTheDocument();

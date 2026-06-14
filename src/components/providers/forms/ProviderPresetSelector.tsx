@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { Button } from "@/components/ui/button";
@@ -148,6 +148,25 @@ export function ProviderPresetSelector({
   const [sortMode, setSortMode] = useState<PresetSortMode>(
     PresetSortMode.Original,
   );
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+
+  // 点击搜索区域外时收起并清空,对齐旧 Popover 的「点击外部关闭」行为
+  useEffect(() => {
+    if (!searchOpen) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        searchContainerRef.current &&
+        !searchContainerRef.current.contains(event.target as Node)
+      ) {
+        setSearchOpen(false);
+        setSearchQuery("");
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [searchOpen]);
 
   const visiblePresetEntries = useMemo(
     () =>
@@ -234,7 +253,7 @@ export function ProviderPresetSelector({
 
   const getPresetButtonClass = (isSelected: boolean, preset: AnyPreset) => {
     const baseClass =
-      "inline-flex items-center justify-start gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors w-[200px] max-w-[200px]";
+      "inline-flex items-center justify-start gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors w-full";
 
     if (isSelected) {
       if (preset.theme?.backgroundColor) {
@@ -261,7 +280,7 @@ export function ProviderPresetSelector({
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
         <FormLabel>{t("providerPreset.label")}</FormLabel>
-        <div className="flex items-center gap-2">
+        <div ref={searchContainerRef} className="flex items-center gap-2">
           {searchOpen && (
             <Input
               value={searchQuery}
@@ -334,21 +353,22 @@ export function ProviderPresetSelector({
           </Button>
         </div>
       </div>
-      <div className="flex flex-wrap gap-2">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2">
         <button
           type="button"
           onClick={() => onPresetChange("custom")}
-          className={`inline-flex items-center justify-start gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors w-[200px] max-w-[200px] ${
+          className={`inline-flex items-center justify-start gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors w-full ${
             selectedPresetId === "custom"
               ? "bg-blue-500 text-white dark:bg-blue-600"
               : "bg-accent text-muted-foreground hover:bg-accent/80"
           }`}
         >
-          {t("providerPreset.custom")}
+          <span className="inline-block w-4 h-4 flex-shrink-0" aria-hidden />
+          <span className="truncate">{t("providerPreset.custom")}</span>
         </button>
 
         {visiblePresetEntries.length === 0 && (
-          <div className="w-full rounded-md border border-dashed border-border-default px-3 py-2 text-xs text-muted-foreground">
+          <div className="col-span-full rounded-md border border-dashed border-border-default px-3 py-2 text-xs text-muted-foreground">
             {t("providerPreset.noSearchResults", {
               defaultValue: "No matching presets.",
             })}
@@ -387,19 +407,24 @@ export function ProviderPresetSelector({
 
       {onUniversalPresetSelect && universalProviderPresets.length > 0 && (
         <>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2">
             {universalProviderPresets.map((preset) => (
               <button
                 key={`universal-${preset.providerType}`}
                 type="button"
                 onClick={() => onUniversalPresetSelect(preset)}
-                className="inline-flex items-center justify-start gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-accent text-muted-foreground hover:bg-accent/80 relative w-[200px] max-w-[200px]"
+                className="inline-flex items-center justify-start gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-accent text-muted-foreground hover:bg-accent/80 relative w-full"
                 title={t("universalProvider.hint", {
                   defaultValue:
                     "跨应用统一配置，自动同步到 Claude/Codex/Gemini",
                 })}
               >
-                <ProviderIcon icon={preset.icon} name={preset.name} size={14} className="flex-shrink-0" />
+                <ProviderIcon
+                  icon={preset.icon}
+                  name={preset.name}
+                  size={14}
+                  className="flex-shrink-0"
+                />
                 <span className="truncate">{preset.name}</span>
                 <span className="absolute -top-1 -right-1 flex items-center gap-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-md">
                   <Layers className="h-2.5 w-2.5" />
@@ -410,7 +435,7 @@ export function ProviderPresetSelector({
               <button
                 type="button"
                 onClick={onManageUniversalProviders}
-                className="inline-flex items-center justify-start gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-accent text-muted-foreground hover:bg-accent/80 w-[200px] max-w-[200px]"
+                className="inline-flex items-center justify-start gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-accent text-muted-foreground hover:bg-accent/80 w-full"
                 title={t("universalProvider.manage", {
                   defaultValue: "管理统一供应商",
                 })}
