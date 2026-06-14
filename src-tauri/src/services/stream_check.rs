@@ -49,12 +49,13 @@ pub struct StreamCheckConfig {
 
 impl Default for StreamCheckConfig {
     fn default() -> Self {
-        // 可达性探测打的是 base_url 的小请求（仅读响应头），不等待模型生成，
-        // 因此超时与阈值都远小于旧的真实请求检查（45s / 6000ms）。
+        // 可达性探测打的是 base_url 的小请求（仅读响应头），不等待模型生成，故超时远小于
+        // 旧的真实请求检查（45s → 8s）；降级阈值沿用旧尺度 6000ms——探测 TTFB 一般远低于
+        // 此，仅在确实很慢时才标"较慢"，避免把 1 秒多的正常延迟误判为降级。
         Self {
             timeout_secs: 8,
             max_retries: 1,
-            degraded_threshold_ms: 1500,
+            degraded_threshold_ms: 6000,
         }
     }
 }
@@ -187,6 +188,10 @@ impl StreamCheckService {
     /// 连通性探测只需打到 base（origin 或用户配置的 base 路径）即可——任何 HTTP
     /// 响应都证明端口可达，因此无需像旧的真实请求检查那样解析具体 API 路径
     /// （`/v1/messages` vs `/chat/completions` vs `:streamGenerateContent`）。
+    ///
+    /// 官方供应商（`category == "official"`）base_url 故意留空（走客户端默认/OAuth 端点），
+    /// 没有 cc-switch 能可靠探测的目标——这类供应商的连通检测按钮在前端已隐藏
+    /// （见 `ProviderCard.tsx`），故此处对其提取失败直接报错即可，不做官方端点回退。
     fn resolve_base_url(app_type: &AppType, provider: &Provider) -> Result<String, AppError> {
         match app_type {
             // 累加模式应用的 settings_config 结构与 Claude/Codex/Gemini 不同，
@@ -197,72 +202,12 @@ impl StreamCheckService {
             }
             AppType::OpenClaw => Self::extract_openclaw_base_url(provider),
             AppType::Hermes => Self::extract_hermes_base_url(provider),
-            AppType::ClaudeDesktop => Self::base_url_or_official_fallback(
-                ClaudeAdapter::new().extract_base_url(provider),
-                app_type,
-                provider,
-            ),
-            _ => Self::base_url_or_official_fallback(
-                get_adapter(app_type).extract_base_url(provider),
-                app_type,
-                provider,
-            ),
-        }
-    }
-
-    /// adapter 提取成功（且非空）→ 直接用；否则：
-    /// - 官方供应商（`category == "official"`）base_url 故意留空——客户端在 base_url
-    ///   未设时默认走官方端点，因此回退到官方默认端点，使可达性探测探的就是客户端
-    ///   实际会连的地址；
-    /// - 非官方且提取失败 → 保留"缺 base_url"错误（真实配置缺失；若也回退到官方端点，
-    ///   会给忘填 base_url 的第三方中转误显绿灯）。
-    fn base_url_or_official_fallback(
-        extracted: Result<String, impl std::fmt::Display>,
-        app_type: &AppType,
-        provider: &Provider,
-    ) -> Result<String, AppError> {
-        if let Ok(url) = &extracted {
-            if !url.trim().is_empty() {
-                return Ok(url.clone());
-            }
-        }
-
-        if Self::is_official(provider) {
-            if let Some(endpoint) = Self::official_fallback_endpoint(app_type) {
-                return Ok(endpoint.to_string());
-            }
-        }
-
-        match extracted {
-            Ok(_) => Err(AppError::Message("缺少 base_url".to_string())),
-            Err(e) => Err(AppError::Message(format!(
-                "Failed to extract base_url: {e}"
-            ))),
-        }
-    }
-
-    /// 官方供应商判定：单一事实源是 `category == "official"`（与前端一致）；
-    /// 内置官方种子入库时由 `init_default_official_providers` 标注该值。
-    fn is_official(provider: &Provider) -> bool {
-        provider.category.as_deref() == Some("official")
-    }
-
-    /// 官方模式的默认探测端点——即客户端在 base_url 未设时实际会连的官方地址。
-    /// Codex 官方走 ChatGPT Plus/Pro OAuth 后端，故指向 chatgpt.com 而非 api.openai.com。
-    ///
-    /// **ClaudeDesktop 故意返回 None**：Claude Desktop 官方 = 原生 1P 模式（切换时写
-    /// `deploymentMode=1p`、删 3P profile，见 `claude_desktop_config.rs`），应用走 claude.ai
-    /// 消费端后端而非 api.anthropic.com 开发者 API，cc-switch 不在请求路径上，也没有可靠的
-    /// 1P 端点常量可探。回退到 api.anthropic.com 会探错目标（误报可达/不可达），故不回退
-    /// （前端同步隐藏其检测按钮）。
-    fn official_fallback_endpoint(app_type: &AppType) -> Option<&'static str> {
-        match app_type {
-            AppType::Claude => Some("https://api.anthropic.com"),
-            AppType::Codex => Some("https://chatgpt.com/backend-api/codex"),
-            AppType::Gemini => Some("https://generativelanguage.googleapis.com"),
-            AppType::ClaudeDesktop | AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
-                None
-            }
+            AppType::ClaudeDesktop => ClaudeAdapter::new()
+                .extract_base_url(provider)
+                .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}"))),
+            _ => get_adapter(app_type)
+                .extract_base_url(provider)
+                .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}"))),
         }
     }
 
@@ -465,7 +410,8 @@ mod tests {
         let config = StreamCheckConfig::default();
         assert_eq!(config.timeout_secs, 8);
         assert_eq!(config.max_retries, 1);
-        assert_eq!(config.degraded_threshold_ms, 1500);
+        // 降级阈值沿用旧尺度，避免把 1 秒多的正常延迟误判为"较慢"
+        assert_eq!(config.degraded_threshold_ms, 6000);
     }
 
     #[test]
@@ -619,58 +565,19 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_base_url_official_falls_back_to_default_endpoint() {
-        // 官方 Claude（category=official，空 env）→ 回退到 api.anthropic.com
-        let mut claude = make_provider(serde_json::json!({ "env": {} }));
-        claude.category = Some("official".to_string());
-        assert_eq!(
-            StreamCheckService::resolve_base_url(&AppType::Claude, &claude).unwrap(),
-            "https://api.anthropic.com"
-        );
-
-        // 官方 Codex（空 auth+config）→ 回退到 ChatGPT 后端
-        let mut codex = make_provider(serde_json::json!({ "auth": {}, "config": "" }));
-        codex.category = Some("official".to_string());
-        assert_eq!(
-            StreamCheckService::resolve_base_url(&AppType::Codex, &codex).unwrap(),
-            "https://chatgpt.com/backend-api/codex"
-        );
-
-        // 官方 Gemini（空 env+config）→ 回退到 generativelanguage
-        let mut gemini = make_provider(serde_json::json!({ "env": {}, "config": {} }));
-        gemini.category = Some("official".to_string());
-        assert_eq!(
-            StreamCheckService::resolve_base_url(&AppType::Gemini, &gemini).unwrap(),
-            "https://generativelanguage.googleapis.com"
-        );
-    }
-
-    #[test]
-    fn test_resolve_base_url_non_official_missing_base_url_still_errors() {
-        // 非官方且无 base_url → 仍报错，不误回退到官方端点给"绿灯"
-        let p = make_provider(serde_json::json!({ "env": {} }));
-        assert!(StreamCheckService::resolve_base_url(&AppType::Claude, &p).is_err());
-    }
-
-    #[test]
-    fn test_resolve_base_url_explicit_wins_over_official_fallback() {
-        // 官方但显式配了 base_url（少见）→ 用显式值，不回退
-        let mut p = make_provider(
+    fn test_resolve_base_url_uses_explicit_url_or_errors_when_missing() {
+        // 有显式 base_url → 直接用
+        let p = make_provider(
             serde_json::json!({ "env": { "ANTHROPIC_BASE_URL": "https://relay.example/v1" } }),
         );
-        p.category = Some("official".to_string());
         assert_eq!(
             StreamCheckService::resolve_base_url(&AppType::Claude, &p).unwrap(),
             "https://relay.example/v1"
         );
-    }
 
-    #[test]
-    fn test_resolve_base_url_claude_desktop_official_does_not_fall_back() {
-        // Claude Desktop 官方 = 原生 1P 模式，走 claude.ai 而非 api.anthropic.com，
-        // 无可靠探测目标 → 不回退（提取失败即报错；前端也隐藏其检测按钮）。
-        let mut desktop = make_provider(serde_json::json!({ "env": {} }));
-        desktop.category = Some("official".to_string());
-        assert!(StreamCheckService::resolve_base_url(&AppType::ClaudeDesktop, &desktop).is_err());
+        // 缺 base_url（官方留空 / 用户忘填）→ 报错。官方供应商的检测按钮在前端已隐藏，
+        // 不会走到这里；不做官方端点回退（避免给忘填地址的第三方误显绿灯）。
+        let empty = make_provider(serde_json::json!({ "env": {} }));
+        assert!(StreamCheckService::resolve_base_url(&AppType::Claude, &empty).is_err());
     }
 }

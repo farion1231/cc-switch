@@ -548,13 +548,12 @@ export function ProviderCard({
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}
               onTest={
-                // 连通检测对所有供应商开放（官方会回退到客户端实际会连的官方端点），
-                // 唯独 Claude Desktop 官方除外：它是原生 1P 模式（走 claude.ai，cc-switch
-                // 不在请求路径上），没有可靠的探测目标，故隐藏其检测按钮。
-                onTest &&
-                !(
-                  appId === "claude-desktop" && provider.category === "official"
-                )
+                // 连通检测对第三方/自定义/Copilot/Codex-OAuth 供应商开放（这些正是旧的
+                // 真实请求探测会误报、而可达性探测能正确处理的对象）。官方供应商
+                // (category === "official") 一律隐藏：它们 base_url 故意留空、走客户端
+                // 默认/OAuth 端点，cc-switch 没有可靠的探测目标（尤其 Claude Desktop
+                // 官方是原生 1P 模式，根本不在请求路径上）。
+                onTest && provider.category !== "official"
                   ? () => onTest(provider)
                   : undefined
               }

@@ -21,7 +21,7 @@ export function ModelTestConfigPanel() {
   const [config, setConfig] = useState({
     timeoutSecs: "8",
     maxRetries: "1",
-    degradedThresholdMs: "1500",
+    degradedThresholdMs: "6000",
   });
 
   useEffect(() => {
@@ -56,7 +56,7 @@ export function ModelTestConfigPanel() {
       const parsed: StreamCheckConfig = {
         timeoutSecs: parseNum(config.timeoutSecs, 8),
         maxRetries: parseNum(config.maxRetries, 1),
-        degradedThresholdMs: parseNum(config.degradedThresholdMs, 1500),
+        degradedThresholdMs: parseNum(config.degradedThresholdMs, 6000),
       };
       await saveStreamCheckConfig(parsed);
       toast.success(t("streamCheck.configSaved"), {
@@ -137,9 +137,9 @@ export function ModelTestConfigPanel() {
             <Input
               id="degradedThresholdMs"
               type="number"
-              min={200}
-              max={10000}
-              step={100}
+              min={1000}
+              max={30000}
+              step={1000}
               value={config.degradedThresholdMs}
               onChange={(e) =>
                 setConfig({ ...config, degradedThresholdMs: e.target.value })

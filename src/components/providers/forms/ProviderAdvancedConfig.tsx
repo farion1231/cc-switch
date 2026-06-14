@@ -144,7 +144,7 @@ export function ProviderAdvancedConfig({
                   id="degraded-threshold"
                   type="number"
                   min={100}
-                  max={10000}
+                  max={60000}
                   value={testConfig.degradedThresholdMs || ""}
                   onChange={(e) =>
                     onTestConfigChange({
@@ -154,7 +154,7 @@ export function ProviderAdvancedConfig({
                         : undefined,
                     })
                   }
-                  placeholder="1500"
+                  placeholder="6000"
                   disabled={!testConfig.enabled}
                 />
               </div>
