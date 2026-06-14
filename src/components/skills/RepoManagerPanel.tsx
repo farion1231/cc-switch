@@ -3,14 +3,21 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Trash2, ExternalLink, Plus } from "lucide-react";
+import { Trash2, ExternalLink, Plus, RefreshCw, Loader2 } from "lucide-react";
 import { settingsApi } from "@/lib/api";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
-import type { DiscoverableSkill, SkillRepo } from "@/lib/api/skills";
+import type {
+  DiscoverableSkill,
+  SkillRepo,
+  SkillRepoFetchFailure,
+} from "@/lib/api/skills";
 
 interface RepoManagerPanelProps {
   repos: SkillRepo[];
   skills: DiscoverableSkill[];
+  failures?: SkillRepoFetchFailure[];
+  retryingRepos?: ReadonlySet<string>;
+  onRetry: (repo: SkillRepo) => Promise<void>;
   onAdd: (repo: SkillRepo) => Promise<void>;
   onRemove: (owner: string, name: string) => Promise<void>;
   onClose: () => void;
@@ -19,6 +26,9 @@ interface RepoManagerPanelProps {
 export function RepoManagerPanel({
   repos,
   skills,
+  failures = [],
+  retryingRepos = new Set(),
+  onRetry,
   onAdd,
   onRemove,
   onClose,
@@ -30,11 +40,16 @@ export function RepoManagerPanel({
 
   const getSkillCount = (repo: SkillRepo) =>
     skills.filter(
-      (skill) =>
-        skill.repoOwner === repo.owner &&
-        skill.repoName === repo.name &&
-        (skill.repoBranch || "main") === (repo.branch || "main"),
+      (skill) => skill.repoOwner === repo.owner && skill.repoName === repo.name,
     ).length;
+
+  const getFailure = (repo: SkillRepo) =>
+    failures.find(
+      (failure) => failure.owner === repo.owner && failure.name === repo.name,
+    );
+
+  const getRepoKey = (repo: SkillRepo) =>
+    `${repo.owner}/${repo.name}@${repo.branch || "main"}`;
 
   const parseRepoUrl = (
     url: string,
@@ -146,48 +161,70 @@ export function RepoManagerPanel({
           </div>
         ) : (
           <div className="space-y-3">
-            {repos.map((repo) => (
-              <div
-                key={`${repo.owner}/${repo.name}`}
-                className="flex items-center justify-between glass-card rounded-xl px-4 py-3"
-              >
-                <div>
-                  <div className="text-sm font-medium text-foreground">
-                    {repo.owner}/{repo.name}
+            {repos.map((repo) => {
+              const failure = getFailure(repo);
+              const isRetrying = retryingRepos.has(getRepoKey(repo));
+              return (
+                <div
+                  key={`${repo.owner}/${repo.name}`}
+                  className="flex items-center justify-between glass-card rounded-xl px-4 py-3"
+                >
+                  <div>
+                    <div className="text-sm font-medium text-foreground">
+                      {repo.owner}/{repo.name}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {t("skills.repo.branch")}: {repo.branch || "main"}
+                      <span className="ml-3 inline-flex items-center rounded-full border border-border-default px-2 py-0.5 text-[11px]">
+                        {failure
+                          ? t("skills.repo.loadFailed")
+                          : t("skills.repo.skillCount", {
+                              count: getSkillCount(repo),
+                            })}
+                      </span>
+                    </div>
                   </div>
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    {t("skills.repo.branch")}: {repo.branch || "main"}
-                    <span className="ml-3 inline-flex items-center rounded-full border border-border-default px-2 py-0.5 text-[11px]">
-                      {t("skills.repo.skillCount", {
-                        count: getSkillCount(repo),
-                      })}
-                    </span>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      type="button"
+                      onClick={() => onRetry(repo)}
+                      disabled={isRetrying}
+                      title={t("skills.repo.retry")}
+                      aria-label={t("skills.repo.retry")}
+                      className="h-8 w-8"
+                    >
+                      {isRetrying ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4" />
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      type="button"
+                      onClick={() => handleOpenRepo(repo.owner, repo.name)}
+                      title={t("common.view", { defaultValue: "查看" })}
+                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      type="button"
+                      onClick={() => onRemove(repo.owner, repo.name)}
+                      title={t("common.delete")}
+                      className="hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    type="button"
-                    onClick={() => handleOpenRepo(repo.owner, repo.name)}
-                    title={t("common.view", { defaultValue: "查看" })}
-                    className="hover:bg-black/5 dark:hover:bg-white/5"
-                  >
-                    <ExternalLink className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    type="button"
-                    onClick={() => onRemove(repo.owner, repo.name)}
-                    title={t("common.delete")}
-                    className="hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

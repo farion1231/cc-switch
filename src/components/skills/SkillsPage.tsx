@@ -1,9 +1,10 @@
 import {
-  useState,
   useMemo,
   useEffect,
   forwardRef,
   useImperativeHandle,
+  useRef,
+  useState,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -15,7 +16,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { RefreshCw, Search, Loader2 } from "lucide-react";
+import {
+  Check,
+  Loader2,
+  MoreHorizontal,
+  RefreshCw,
+  Search,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import { SkillCard } from "./SkillCard";
 import { RepoManagerPanel } from "./RepoManagerPanel";
@@ -26,6 +34,7 @@ import {
   useSkillRepos,
   useAddSkillRepo,
   useRemoveSkillRepo,
+  useRetrySkillRepo,
   useSearchSkillsSh,
 } from "@/hooks/useSkills";
 import type { AppId } from "@/lib/api/types";
@@ -33,21 +42,33 @@ import type {
   DiscoverableSkill,
   SkillRepo,
   SkillsShDiscoverableSkill,
+  SkillRepoFetchFailure,
 } from "@/lib/api/skills";
-import { formatSkillError } from "@/lib/errors/skillErrorParser";
+import {
+  formatSkillError,
+  formatSkillRepoFailure,
+  getSkillRepoFailureReasonKey,
+} from "@/lib/errors/skillErrorParser";
+import {
+  beginSkillDiscovery,
+  failSkillDiscovery,
+  getSkillDiscoveryTaskSnapshot,
+  useSkillDiscoveryTask,
+} from "@/stores/skillDiscoveryTask";
 
 interface SkillsPageProps {
   initialApp?: AppId;
 }
 
 export interface SkillsPageHandle {
-  refresh: () => void;
+  refresh: (force?: boolean) => Promise<void>;
   openRepoManager: () => void;
 }
 
 type SearchSource = "repos" | "skillssh";
 
 const SKILLSSH_PAGE_SIZE = 20;
+const REPO_SKILL_BATCH_SIZE = 48;
 
 /**
  * Skills 发现面板
@@ -62,6 +83,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const [filterStatus, setFilterStatus] = useState<
       "all" | "installed" | "uninstalled"
     >("all");
+    const [repoSkillLimit, setRepoSkillLimit] = useState(REPO_SKILL_BATCH_SIZE);
 
     // skills.sh 搜索状态
     const [searchSource, setSearchSource] = useState<SearchSource>("repos");
@@ -77,13 +99,17 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
 
     // Queries
     const {
-      data: discoverableSkills,
+      data: discoveryResult,
       isLoading: loadingDiscoverable,
       isFetching: fetchingDiscoverable,
+      isError: discoveryFailed,
+      error: discoveryError,
       refetch: refetchDiscoverable,
+      forceRefetch: forceRefetchDiscoverable,
     } = useDiscoverableSkills();
+    const discoverableSkills = discoveryResult?.skills ?? [];
     const { data: installedSkills } = useInstalledSkills();
-    const { data: repos = [], refetch: refetchRepos } = useSkillRepos();
+    const { data: repos = [], isLoading: loadingRepos } = useSkillRepos();
 
     // skills.sh 搜索
     const {
@@ -116,6 +142,19 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const installMutation = useInstallSkill();
     const addRepoMutation = useAddSkillRepo();
     const removeRepoMutation = useRemoveSkillRepo();
+    const retryRepoMutation = useRetrySkillRepo();
+    const [retryingRepos, setRetryingRepos] = useState<Set<string>>(
+      () => new Set(),
+    );
+    const discoveryTask = useSkillDiscoveryTask();
+    const initialConnectionStartedAt = useRef(Date.now());
+    const [initialContentReady, setInitialContentReady] = useState(
+      () =>
+        discoverableSkills.length > 0 ||
+        Object.values(discoveryTask.repositories).some(
+          (progress) => (progress.skills?.length ?? 0) > 0,
+        ),
+    );
 
     // 已安装的 skill key 集合（使用 directory + repoOwner + repoName 组合判断）
     const installedKeys = useMemo(() => {
@@ -132,22 +171,47 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
 
     type DiscoverableSkillItem = DiscoverableSkill & { installed: boolean };
 
-    // 从可发现技能中提取所有仓库选项
+    // 从已添加仓库中提取所有仓库选项，避免网络失败时仓库从筛选项消失
     const repoOptions = useMemo(() => {
-      if (!discoverableSkills) return [];
-      const repoSet = new Set<string>();
-      discoverableSkills.forEach((s) => {
-        if (s.repoOwner && s.repoName) {
-          repoSet.add(`${s.repoOwner}/${s.repoName}`);
-        }
-      });
-      return Array.from(repoSet).sort();
-    }, [discoverableSkills]);
+      return repos
+        .filter((repo) => repo.enabled)
+        .map((repo) => `${repo.owner}/${repo.name}`)
+        .sort();
+    }, [repos]);
+    const repoOptionSet = useMemo(() => new Set(repoOptions), [repoOptions]);
+
+    const visibleDiscoverableSkills = useMemo(() => {
+      const merged = new Map(
+        discoverableSkills
+          .filter(
+            (skill) =>
+              loadingRepos ||
+              repoOptionSet.has(`${skill.repoOwner}/${skill.repoName}`),
+          )
+          .map((skill) => [skill.key, skill] as const),
+      );
+      Object.entries(discoveryTask.repositories)
+        .filter(([repo]) => loadingRepos || repoOptionSet.has(repo))
+        .map(([, progress]) => progress)
+        .flatMap((progress) => progress.skills ?? [])
+        .forEach((skill) => merged.set(skill.key, skill));
+      return Array.from(merged.values());
+    }, [
+      discoverableSkills,
+      discoveryTask.repositories,
+      loadingRepos,
+      repoOptionSet,
+    ]);
+
+    useEffect(() => {
+      if (filterRepo !== "all" && !repoOptionSet.has(filterRepo)) {
+        setFilterRepo("all");
+      }
+    }, [filterRepo, repoOptionSet]);
 
     // 为发现列表补齐 installed 状态，供 SkillCard 使用
     const skills: DiscoverableSkillItem[] = useMemo(() => {
-      if (!discoverableSkills) return [];
-      return discoverableSkills.map((d) => {
+      return visibleDiscoverableSkills.map((d) => {
         // 同时处理 / 和 \ 路径分隔符（兼容 Windows 和 Unix）
         const installName =
           d.directory.split(/[/\\]/).pop()?.toLowerCase() ||
@@ -159,7 +223,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
           installed: installedKeys.has(key),
         };
       });
-    }, [discoverableSkills, installedKeys]);
+    }, [installedKeys, visibleDiscoverableSkills]);
 
     // 检查 skills.sh 结果的安装状态
     const isSkillsShInstalled = (skill: SkillsShDiscoverableSkill): boolean => {
@@ -169,14 +233,130 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
 
     const loading =
       searchSource === "repos"
-        ? loadingDiscoverable || fetchingDiscoverable
+        ? loadingDiscoverable || fetchingDiscoverable || discoveryTask.active
         : false;
+    const discoveryRepoProgress = discoveryTask.repositories;
+
+    useEffect(() => {
+      if (initialContentReady) return;
+
+      if (skills.length > 0) {
+        const elapsed = Date.now() - initialConnectionStartedAt.current;
+        const timeoutId = window.setTimeout(
+          () => setInitialContentReady(true),
+          Math.max(0, 800 - elapsed),
+        );
+        return () => window.clearTimeout(timeoutId);
+      }
+
+      if (discoveryFailed) {
+        setInitialContentReady(true);
+        return;
+      }
+
+      if (
+        discoveryResult !== undefined &&
+        !loadingRepos &&
+        !loading &&
+        !discoveryTask.active
+      ) {
+        setInitialContentReady(true);
+      }
+    }, [
+      discoveryResult,
+      discoveryFailed,
+      discoveryTask.active,
+      initialContentReady,
+      loading,
+      loadingRepos,
+      skills.length,
+    ]);
+
+    const renderFailures = (failures: SkillRepoFetchFailure[]) => (
+      <div className="space-y-1">
+        {failures.map((failure) => (
+          <div
+            data-repo-failure
+            key={`${failure.owner}/${failure.name}@${failure.branch}`}
+          >
+            {formatSkillRepoFailure(failure, t)}
+          </div>
+        ))}
+      </div>
+    );
+
+    const getDiscoveryStatus = (repo: string) => {
+      const progress = discoveryRepoProgress[repo];
+      if (!progress) {
+        return {
+          icon: <MoreHorizontal className="h-4 w-4 text-muted-foreground" />,
+          title: t("skills.discoveryStatus.waiting"),
+        };
+      }
+      switch (progress.phase) {
+        case "loading":
+        case "scanning":
+          return {
+            icon: <Loader2 className="h-4 w-4 animate-spin text-blue-500" />,
+            title: t(
+              progress.phase === "loading"
+                ? "skills.discoveryStatus.loading"
+                : "skills.discoveryStatus.scanning",
+            ),
+          };
+        case "completed":
+          return {
+            icon: <Check className="h-4 w-4 text-emerald-500" />,
+            title: t("skills.discoveryStatus.completed", {
+              count: progress.skillCount ?? 0,
+            }),
+          };
+        case "failed":
+          return {
+            icon: <X className="h-4 w-4 text-red-500" />,
+            title: t(getSkillRepoFailureReasonKey(progress.error ?? "")),
+          };
+      }
+    };
+
+    const handleRefresh = async (force = false) => {
+      if (getSkillDiscoveryTaskSnapshot().active) return;
+      setRepoSkillLimit(REPO_SKILL_BATCH_SIZE);
+      beginSkillDiscovery();
+      try {
+        const discoverResult = force
+          ? await forceRefetchDiscoverable()
+          : await refetchDiscoverable();
+        if ("error" in discoverResult && discoverResult.error) {
+          throw discoverResult.error;
+        }
+        const failures = discoverResult.data?.failures ?? [];
+        if (failures.length > 0) {
+          toast.error(t("skills.discoveryPartialFailed"), {
+            description: renderFailures(failures),
+            closeButton: true,
+            duration: Infinity,
+          });
+        }
+      } catch (error) {
+        failSkillDiscovery();
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        const { title, description } = formatSkillError(
+          errorMessage,
+          t,
+          "skills.loadFailed",
+        );
+        toast.error(title, {
+          description,
+          closeButton: true,
+          duration: Infinity,
+        });
+      }
+    };
 
     useImperativeHandle(ref, () => ({
-      refresh: () => {
-        refetchDiscoverable();
-        refetchRepos();
-      },
+      refresh: handleRefresh,
       openRepoManager: () => setRepoManagerOpen(true),
     }));
 
@@ -203,7 +383,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
           skill = toDiscoverableSkill(found);
         }
       } else {
-        skill = discoverableSkills?.find((s) => s.key === key);
+        skill = visibleDiscoverableSkills.find((s) => s.key === key);
       }
 
       if (!skill) {
@@ -243,15 +423,22 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const handleAddRepo = async (repo: SkillRepo) => {
       try {
         await addRepoMutation.mutateAsync(repo);
-        // Await discovery so we can report the real count
-        const { data: freshSkills } = await refetchDiscoverable();
-        const count =
-          freshSkills?.filter(
-            (s) =>
-              s.repoOwner === repo.owner &&
-              s.repoName === repo.name &&
-              (s.repoBranch || "main") === (repo.branch || "main"),
-          ).length ?? 0;
+        const freshDiscovery = await retryRepoMutation.mutateAsync(repo);
+        if (freshDiscovery.failures.length > 0) {
+          toast.error(
+            t("skills.repo.addDiscoveryFailed", {
+              owner: repo.owner,
+              name: repo.name,
+            }),
+            {
+              description: renderFailures(freshDiscovery.failures),
+              closeButton: true,
+              duration: Infinity,
+            },
+          );
+          return;
+        }
+        const count = freshDiscovery.skills.length;
         toast.success(
           t("skills.repo.addSuccess", {
             owner: repo.owner,
@@ -276,6 +463,43 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
       } catch (error) {
         toast.error(t("common.error"), {
           description: String(error),
+        });
+      }
+    };
+
+    const handleRetryRepo = async (repo: SkillRepo) => {
+      const repoKey = `${repo.owner}/${repo.name}@${repo.branch || "main"}`;
+      setRetryingRepos((current) => new Set(current).add(repoKey));
+      try {
+        const result = await retryRepoMutation.mutateAsync(repo);
+        if (result.failures.length > 0) {
+          toast.error(t("skills.repo.retryFailed"), {
+            description: renderFailures(result.failures),
+            closeButton: true,
+            duration: Infinity,
+          });
+          return;
+        }
+
+        toast.success(
+          t("skills.repo.retrySuccess", {
+            owner: repo.owner,
+            name: repo.name,
+            count: result.skills.length,
+          }),
+          { closeButton: true },
+        );
+      } catch {
+        toast.error(t("skills.repo.retryFailed"), {
+          description: t("skills.repo.failureReason.unknown"),
+          closeButton: true,
+          duration: Infinity,
+        });
+      } finally {
+        setRetryingRepos((current) => {
+          const next = new Set(current);
+          next.delete(repoKey);
+          return next;
         });
       }
     };
@@ -310,16 +534,34 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
         return name.includes(query) || repo.includes(query);
       });
     }, [skills, searchQuery, filterRepo, filterStatus]);
+    const displayedRepoSkills = useMemo(
+      () => filteredSkills.slice(0, repoSkillLimit),
+      [filteredSkills, repoSkillLimit],
+    );
 
     // 是否有更多 skills.sh 结果
     const hasMoreSkillsSh =
       skillsShResult && accumulatedResults.length < skillsShResult.totalCount;
 
-    // 无仓库时默认切换到 skills.sh
+    // 无已添加仓库时默认切换到 skills.sh；有仓库但加载失败/识别为空时仍留在仓库模式
     const effectiveSource =
-      searchSource === "repos" && skills.length === 0 && !loading
+      searchSource === "repos" &&
+      repos.length === 0 &&
+      !loadingRepos &&
+      discoveryResult !== undefined &&
+      !loading
         ? "skillssh"
         : searchSource;
+
+    const showInitialConnection =
+      effectiveSource === "repos" &&
+      !initialContentReady &&
+      !discoveryFailed &&
+      (loadingRepos ||
+        discoveryResult === undefined ||
+        loading ||
+        discoveryTask.active ||
+        skills.length > 0);
 
     return (
       <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden bg-background/50">
@@ -367,18 +609,31 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                       type="text"
                       placeholder={t("skills.searchPlaceholder")}
                       value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onChange={(e) => {
+                        setSearchQuery(e.target.value);
+                        setRepoSkillLimit(REPO_SKILL_BATCH_SIZE);
+                      }}
                       className="pl-9 pr-3"
                     />
                   </div>
                   {/* 仓库筛选 */}
                   <div className="w-full md:w-56">
-                    <Select value={filterRepo} onValueChange={setFilterRepo}>
+                    <Select
+                      value={filterRepo}
+                      onValueChange={(value) => {
+                        setFilterRepo(value);
+                        setRepoSkillLimit(REPO_SKILL_BATCH_SIZE);
+                      }}
+                    >
                       <SelectTrigger className="bg-card border shadow-sm text-foreground">
                         <SelectValue
                           placeholder={t("skills.filter.repo")}
                           className="text-left truncate"
-                        />
+                        >
+                          {filterRepo === "all"
+                            ? t("skills.filter.allRepos")
+                            : filterRepo}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent className="bg-card text-foreground shadow-lg max-h-64 min-w-[var(--radix-select-trigger-width)]">
                         <SelectItem
@@ -394,8 +649,16 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                             className="text-left pr-3 [&[data-state=checked]>span:first-child]:hidden"
                             title={repo}
                           >
-                            <span className="truncate block max-w-[200px]">
-                              {repo}
+                            <span className="flex w-full items-center justify-between gap-3">
+                              <span className="truncate block max-w-[180px]">
+                                {repo}
+                              </span>
+                              <span
+                                className="shrink-0"
+                                title={getDiscoveryStatus(repo).title}
+                              >
+                                {getDiscoveryStatus(repo).icon}
+                              </span>
                             </span>
                           </SelectItem>
                         ))}
@@ -406,11 +669,12 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                   <div className="w-full md:w-36">
                     <Select
                       value={filterStatus}
-                      onValueChange={(val) =>
+                      onValueChange={(val) => {
                         setFilterStatus(
                           val as "all" | "installed" | "uninstalled",
-                        )
-                      }
+                        );
+                        setRepoSkillLimit(REPO_SKILL_BATCH_SIZE);
+                      }}
                     >
                       <SelectTrigger className="bg-card border shadow-sm text-foreground">
                         <SelectValue
@@ -484,9 +748,52 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
             {/* 内容区域 */}
             {effectiveSource === "repos" ? (
               /* ===== 仓库模式 ===== */
-              loading ? (
-                <div className="flex items-center justify-center h-64">
+              showInitialConnection ? (
+                <div
+                  className="flex flex-col items-center justify-center h-64 text-center"
+                  role="status"
+                >
                   <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+                  <p className="mt-4 text-sm font-medium text-foreground">
+                    {repos.length > 0
+                      ? t("skills.discoveryInitialConnectingCount", {
+                          count: repos.filter((repo) => repo.enabled).length,
+                        })
+                      : t("skills.discoveryInitialConnecting")}
+                  </p>
+                  {repoOptions.length > 0 && (
+                    <div className="mt-3 space-y-1 text-xs text-muted-foreground">
+                      {repoOptions.slice(0, 3).map((repo) => (
+                        <div key={repo}>{repo}</div>
+                      ))}
+                      {repoOptions.length > 3 && (
+                        <div>
+                          {t("skills.discoveryMoreRepositories", {
+                            count: repoOptions.length - 3,
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : discoveryFailed && skills.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-64 text-center">
+                  <p className="text-lg font-medium text-foreground">
+                    {t("skills.loadFailed")}
+                  </p>
+                  {discoveryError && (
+                    <p className="mt-2 max-w-xl text-sm text-muted-foreground">
+                      {
+                        formatSkillError(
+                          discoveryError instanceof Error
+                            ? discoveryError.message
+                            : String(discoveryError),
+                          t,
+                          "skills.loadFailed",
+                        ).description
+                      }
+                    </p>
+                  )}
                 </div>
               ) : skills.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-64 text-center">
@@ -514,16 +821,36 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                   </p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredSkills.map((skill) => (
-                    <SkillCard
-                      key={skill.key}
-                      skill={skill}
-                      onInstall={handleInstall}
-                      onUninstall={handleUninstall}
-                    />
-                  ))}
-                </div>
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {displayedRepoSkills.map((skill) => (
+                      <SkillCard
+                        key={skill.key}
+                        skill={skill}
+                        onInstall={handleInstall}
+                        onUninstall={handleUninstall}
+                      />
+                    ))}
+                  </div>
+                  {displayedRepoSkills.length < filteredSkills.length && (
+                    <div className="mt-6 flex justify-center">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() =>
+                          setRepoSkillLimit(
+                            (current) => current + REPO_SKILL_BATCH_SIZE,
+                          )
+                        }
+                      >
+                        {t("skills.discoveryLoadMore", {
+                          shown: displayedRepoSkills.length,
+                          total: filteredSkills.length,
+                        })}
+                      </Button>
+                    </div>
+                  )}
+                </>
               )
             ) : (
               /* ===== skills.sh 模式 ===== */
@@ -605,6 +932,9 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
           <RepoManagerPanel
             repos={repos}
             skills={skills}
+            failures={discoveryResult?.failures ?? []}
+            retryingRepos={retryingRepos}
+            onRetry={handleRetryRepo}
             onAdd={handleAddRepo}
             onRemove={handleRemoveRepo}
             onClose={() => setRepoManagerOpen(false)}

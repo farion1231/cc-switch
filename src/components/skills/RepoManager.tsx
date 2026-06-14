@@ -38,10 +38,7 @@ export function RepoManager({
 
   const getSkillCount = (repo: SkillRepo) =>
     skills.filter(
-      (skill) =>
-        skill.repoOwner === repo.owner &&
-        skill.repoName === repo.name &&
-        (skill.repoBranch || "main") === (repo.branch || "main"),
+      (skill) => skill.repoOwner === repo.owner && skill.repoName === repo.name,
     ).length;
 
   const parseRepoUrl = (

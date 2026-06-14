@@ -16,6 +16,7 @@ import {
   Brain,
   Wrench,
   RefreshCw,
+  Loader2,
   History,
   BarChart2,
   Download,
@@ -90,6 +91,11 @@ import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
+import type { SkillDiscoveryProgress } from "@/lib/api/skills";
+import {
+  applySkillDiscoveryProgress,
+  useSkillDiscoveryTask,
+} from "@/stores/skillDiscoveryTask";
 
 type View =
   | "providers"
@@ -245,6 +251,11 @@ function App() {
   const mcpPanelRef = useRef<any>(null);
   const skillsPageRef = useRef<any>(null);
   const unifiedSkillsPanelRef = useRef<any>(null);
+  const skillsDiscoveryRefreshState = useSkillDiscoveryTask();
+  useTauriEvent<SkillDiscoveryProgress>(
+    "skill-discovery-progress",
+    applySkillDiscoveryProgress,
+  );
   const addActionButtonClass =
     "bg-orange-500 hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 dark:shadow-orange-500/40 rounded-full w-8 h-8";
 
@@ -1325,11 +1336,26 @@ function App() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => skillsPageRef.current?.refresh()}
+                      onClick={(event) =>
+                        skillsPageRef.current?.refresh(event.shiftKey)
+                      }
+                      disabled={skillsDiscoveryRefreshState.active}
                       className="hover:bg-black/5 dark:hover:bg-white/5"
+                      title={t("skills.discoveryForceRefreshHint")}
                     >
-                      <RefreshCw className="w-4 h-4 mr-2" />
-                      {t("skills.refresh")}
+                      {skillsDiscoveryRefreshState.active ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-4 h-4 mr-2" />
+                      )}
+                      {skillsDiscoveryRefreshState.active
+                        ? skillsDiscoveryRefreshState.total > 0
+                          ? t("skills.discoveryRefreshProgress", {
+                              current: skillsDiscoveryRefreshState.completed,
+                              total: skillsDiscoveryRefreshState.total,
+                            })
+                          : t("skills.discoveryInitialConnecting")
+                        : t("skills.refresh")}
                     </Button>
                     <Button
                       variant="ghost"

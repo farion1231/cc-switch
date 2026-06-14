@@ -95,6 +95,58 @@ export interface SkillUpdateInfo {
   name: string;
   currentHash?: string;
   remoteHash: string;
+  status:
+    | "latest"
+    | "updateAvailable"
+    | "localModified"
+    | "conflict"
+    | "missing"
+    | "notChecked";
+}
+
+export interface SkillUpdateProgress {
+  phase: "connecting" | "checking" | "downloading" | "scanning";
+  current: number;
+  total: number;
+  repo: string;
+}
+
+/** 仓库拉取失败摘要 */
+export interface SkillRepoFetchFailure {
+  owner: string;
+  name: string;
+  branch: string;
+  error: string;
+}
+
+export interface SkillRepoIdentity {
+  owner: string;
+  name: string;
+  branch: string;
+}
+
+/** 可发现 Skills 扫描结果 */
+export interface SkillDiscoveryResult {
+  skills: DiscoverableSkill[];
+  failures: SkillRepoFetchFailure[];
+  refreshedRepositories?: SkillRepoIdentity[];
+}
+
+export interface SkillDiscoveryProgress {
+  phase: "loading" | "scanning" | "completed" | "failed";
+  completed: number;
+  total: number;
+  repo: string;
+  requestId?: string;
+  skillCount?: number;
+  error?: string;
+  skills?: DiscoverableSkill[];
+}
+
+/** Skills 更新检查结果 */
+export interface SkillUpdateCheckResult {
+  updates: SkillUpdateInfo[];
+  failures: SkillRepoFetchFailure[];
 }
 
 /** 存储位置迁移结果 */
@@ -189,14 +241,27 @@ export const skillsApi = {
     return await invoke("import_skills_from_apps", { imports });
   },
 
-  /** 发现可安装的 Skills（从仓库获取） */
-  async discoverAvailable(): Promise<DiscoverableSkill[]> {
-    return await invoke("discover_available_skills");
+  /** 立即读取持久化的 Skills 发现缓存，不发起网络请求 */
+  async getCachedDiscoverable(): Promise<SkillDiscoveryResult> {
+    return await invoke("get_cached_discoverable_skills");
+  },
+
+  /** 刷新可安装的 Skills（从仓库获取） */
+  async discoverAvailable(
+    force = false,
+    requestId?: string,
+  ): Promise<SkillDiscoveryResult> {
+    return await invoke("discover_available_skills", { force, requestId });
+  },
+
+  /** 重新发现单个仓库中的 Skills */
+  async discoverRepo(repo: SkillRepo): Promise<SkillDiscoveryResult> {
+    return await invoke("discover_repo_skills", { repo });
   },
 
   /** 检查 Skills 更新 */
-  async checkUpdates(): Promise<SkillUpdateInfo[]> {
-    return await invoke("check_skill_updates");
+  async checkUpdates(force = false): Promise<SkillUpdateCheckResult> {
+    return await invoke("check_skill_updates", { force });
   },
 
   /** 更新单个 Skill */
