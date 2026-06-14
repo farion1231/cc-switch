@@ -9,10 +9,13 @@ use crate::error::AppError;
 use serde_json::{json, Value};
 use std::fs;
 use std::process::Command;
-use toml_edit::DocumentMut;
+use toml_edit::{Array, DocumentMut, InlineTable, Item};
 
 pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
+const CODEX_MODELS_CACHE_FILENAME: &str = "models_cache.json";
+const CODEX_MODELS_CACHE_BACKUP_FILENAME: &str = "models_cache.cc-switch-backup.json";
+const CC_SWITCH_CODEX_MODELS_CACHE_ETAG: &str = "cc-switch-model-catalog";
 const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
 
 /// Reserved built-in provider IDs from OpenAI Codex's config/model-provider
@@ -324,6 +327,7 @@ fn codex_catalog_model_entry(
     };
 
     entry_obj.insert("slug".to_string(), json!(model));
+    entry_obj.insert("model".to_string(), json!(model));
     entry_obj.insert("display_name".to_string(), json!(display_name));
     entry_obj.insert("description".to_string(), json!(display_name));
     entry_obj.insert("context_window".to_string(), json!(context_window));
@@ -410,7 +414,7 @@ fn find_codex_model_template(catalog: &Value) -> Option<Value> {
 }
 
 fn load_codex_model_template_from_cache() -> Result<Option<Value>, AppError> {
-    let path = get_codex_config_dir().join("models_cache.json");
+    let path = get_codex_config_dir().join(CODEX_MODELS_CACHE_FILENAME);
     if !path.exists() {
         return Ok(None);
     }
@@ -665,19 +669,81 @@ fn codex_model_catalog_from_specs(specs: &[CodexCatalogModelSpec], template: &Va
     json!({ "models": entries })
 }
 
-fn codex_model_catalog_from_settings(
-    settings: &Value,
-    config_text: &str,
-) -> Result<Option<Value>, AppError> {
-    let specs = codex_catalog_model_specs(settings, config_text);
-    if specs.is_empty() {
-        return Ok(None);
+fn codex_provider_models_toml_array(specs: &[CodexCatalogModelSpec]) -> Item {
+    let mut array = Array::default();
+    for spec in specs {
+        let mut model = InlineTable::new();
+        model.insert("model", spec.model.as_str().into());
+        model.insert("id", spec.model.as_str().into());
+        model.insert("display_name", spec.display_name.as_str().into());
+        model.insert("displayName", spec.display_name.as_str().into());
+        model.insert(
+            "context_window",
+            i64::try_from(spec.context_window)
+                .unwrap_or(i64::MAX)
+                .into(),
+        );
+        model.insert(
+            "contextWindow",
+            i64::try_from(spec.context_window)
+                .unwrap_or(i64::MAX)
+                .into(),
+        );
+        model.insert("hidden", false.into());
+        array.push(toml_edit::Value::InlineTable(model));
     }
-
-    let template = load_codex_model_catalog_template()?;
-    Ok(Some(codex_model_catalog_from_specs(&specs, &template)))
+    Item::Value(toml_edit::Value::Array(array))
 }
 
+fn set_active_codex_provider_models(doc: &mut DocumentMut, specs: &[CodexCatalogModelSpec]) {
+    if specs.is_empty() {
+        return;
+    }
+    let Some(provider_id) = active_codex_model_provider_id(doc) else {
+        return;
+    };
+    if !is_custom_codex_model_provider_id(&provider_id) {
+        return;
+    }
+
+    if doc.get("model_providers").is_none() {
+        doc["model_providers"] = toml_edit::table();
+    }
+    let Some(model_providers) = doc
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_mut())
+    else {
+        return;
+    };
+    if !model_providers.contains_key(&provider_id) {
+        model_providers[&provider_id] = toml_edit::table();
+    }
+    if let Some(provider_table) = model_providers
+        .get_mut(provider_id.as_str())
+        .and_then(|item| item.as_table_mut())
+    {
+        provider_table["models"] = codex_provider_models_toml_array(specs);
+    }
+}
+
+fn remove_active_codex_provider_models(doc: &mut DocumentMut) {
+    let Some(provider_id) = active_codex_model_provider_id(doc) else {
+        return;
+    };
+    if !is_custom_codex_model_provider_id(&provider_id) {
+        return;
+    }
+    if let Some(provider_table) = doc
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_mut())
+        .and_then(|table| table.get_mut(provider_id.as_str()))
+        .and_then(|item| item.as_table_mut())
+    {
+        provider_table.remove("models");
+    }
+}
+
+#[cfg(test)]
 fn set_codex_model_catalog_json_field(
     config_text: &str,
     catalog_path: Option<&Path>,
@@ -694,10 +760,7 @@ fn set_codex_model_catalog_json_field(
             let should_remove = doc
                 .get("model_catalog_json")
                 .and_then(|item| item.as_str())
-                .map(|path| {
-                    Path::new(path).file_name().and_then(|name| name.to_str())
-                        == Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
-                })
+                .map(codex_model_catalog_path_is_cc_switch_owned)
                 .unwrap_or(false);
             if should_remove {
                 doc.as_table_mut().remove("model_catalog_json");
@@ -708,6 +771,128 @@ fn set_codex_model_catalog_json_field(
     Ok(doc.to_string())
 }
 
+fn set_codex_model_catalog_projection_fields(
+    config_text: &str,
+    catalog_path: Option<&Path>,
+    specs: Option<&[CodexCatalogModelSpec]>,
+) -> Result<String, AppError> {
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+
+    match (catalog_path, specs) {
+        (Some(_), Some(specs)) => {
+            doc["model_catalog_json"] = toml_edit::value(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+            set_active_codex_provider_models(&mut doc, specs);
+        }
+        _ => {
+            let should_remove = doc
+                .get("model_catalog_json")
+                .and_then(|item| item.as_str())
+                .map(codex_model_catalog_path_is_cc_switch_owned)
+                .unwrap_or(false);
+            if should_remove {
+                doc.as_table_mut().remove("model_catalog_json");
+                remove_active_codex_provider_models(&mut doc);
+            }
+        }
+    }
+
+    Ok(doc.to_string())
+}
+
+fn codex_model_catalog_path_is_cc_switch_owned(path: &str) -> bool {
+    Path::new(path).file_name().and_then(|name| name.to_str())
+        == Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+}
+
+fn get_codex_models_cache_path() -> PathBuf {
+    get_codex_config_dir().join(CODEX_MODELS_CACHE_FILENAME)
+}
+
+fn get_codex_models_cache_backup_path() -> PathBuf {
+    get_codex_config_dir().join(CODEX_MODELS_CACHE_BACKUP_FILENAME)
+}
+
+fn codex_models_cache_is_cc_switch_owned(cache: &Value) -> bool {
+    cache.get("etag").and_then(|etag| etag.as_str()) == Some(CC_SWITCH_CODEX_MODELS_CACHE_ETAG)
+}
+
+fn read_json_file_if_exists(path: &Path) -> Result<Option<Value>, AppError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    read_json_file(path).map(Some)
+}
+
+fn current_utc_rfc3339_nanos() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+}
+
+fn sync_codex_models_cache_with_cc_switch_catalog(catalog: &Value) -> Result<(), AppError> {
+    let Some(models) = catalog.get("models").and_then(|models| models.as_array()) else {
+        return Ok(());
+    };
+    if models.is_empty() {
+        return Ok(());
+    }
+
+    let cache_path = get_codex_models_cache_path();
+    let backup_path = get_codex_models_cache_backup_path();
+    let existing_cache = read_json_file_if_exists(&cache_path)?;
+    let client_version = existing_cache
+        .as_ref()
+        .and_then(|cache| cache.get("client_version"))
+        .and_then(|version| version.as_str())
+        .map(ToString::to_string);
+
+    let Some(client_version) = client_version else {
+        log::warn!(
+            "skip Codex models_cache sync: existing cache has no client_version, path={}",
+            cache_path.display()
+        );
+        return Ok(());
+    };
+
+    if let Some(cache) = existing_cache.as_ref() {
+        if !codex_models_cache_is_cc_switch_owned(cache) && !backup_path.exists() {
+            if let Some(parent) = backup_path.parent() {
+                fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+            }
+            fs::copy(&cache_path, &backup_path).map_err(|e| AppError::io(&backup_path, e))?;
+        }
+    }
+
+    let cache = json!({
+        "fetched_at": current_utc_rfc3339_nanos(),
+        "etag": CC_SWITCH_CODEX_MODELS_CACHE_ETAG,
+        "client_version": client_version,
+        "models": models,
+    });
+    write_json_file(&cache_path, &cache)
+}
+
+fn restore_codex_models_cache_if_cc_switch_owned() -> Result<(), AppError> {
+    let cache_path = get_codex_models_cache_path();
+    let backup_path = get_codex_models_cache_backup_path();
+    let Some(cache) = read_json_file_if_exists(&cache_path)? else {
+        return Ok(());
+    };
+    if !codex_models_cache_is_cc_switch_owned(&cache) {
+        return Ok(());
+    }
+
+    if backup_path.exists() {
+        let backup = fs::read(&backup_path).map_err(|e| AppError::io(&backup_path, e))?;
+        atomic_write(&cache_path, &backup)?;
+        delete_file(&backup_path).ok();
+    } else {
+        delete_file(&cache_path).ok();
+    }
+    Ok(())
+}
+
 /// Generate Codex `model_catalog_json` from provider settings and inject/remove
 /// the top-level TOML field that points Codex to the generated file.
 pub fn prepare_codex_config_text_with_model_catalog(
@@ -715,13 +900,22 @@ pub fn prepare_codex_config_text_with_model_catalog(
     config_text: &str,
 ) -> Result<String, AppError> {
     let catalog_path = get_codex_model_catalog_path();
+    let specs = codex_catalog_model_specs(settings, config_text);
 
-    if let Some(catalog) = codex_model_catalog_from_settings(settings, config_text)? {
-        let config_text = set_codex_model_catalog_json_field(config_text, Some(&catalog_path))?;
+    if !specs.is_empty() {
+        let template = load_codex_model_catalog_template()?;
+        let catalog = codex_model_catalog_from_specs(&specs, &template);
+        let config_text = set_codex_model_catalog_projection_fields(
+            config_text,
+            Some(&catalog_path),
+            Some(&specs),
+        )?;
         write_json_file(&catalog_path, &catalog)?;
+        sync_codex_models_cache_with_cc_switch_catalog(&catalog)?;
         Ok(config_text)
     } else {
-        set_codex_model_catalog_json_field(config_text, None)
+        restore_codex_models_cache_if_cc_switch_owned()?;
+        set_codex_model_catalog_projection_fields(config_text, None, None)
     }
 }
 
@@ -737,13 +931,12 @@ pub fn prepare_codex_config_text_with_model_catalog(
 /// be a downgrade we can't safely round-trip.
 ///
 /// `displayName` and `contextWindow` are omitted from the returned entry when
-/// the on-disk value matches the fallback that
-/// `codex_model_catalog_from_settings` injects for unset inputs (slug for
-/// display_name, `model_context_window` or 128_000 for context_window). This
-/// preserves the "user left it blank" intent across round-trip; an unavoidable
-/// edge case is that a user-typed value that happens to equal the fallback
-/// will also collapse to blank, but the next save writes the same fallback so
-/// behavior stays consistent.
+/// the on-disk value matches the fallback that catalog projection injects for
+/// unset inputs (slug for display_name, `model_context_window` or 128_000).
+/// This preserves the "user left it blank" intent across round-trip; an
+/// unavoidable edge case is that a user-typed value that happens to equal the
+/// fallback will also collapse to blank, but the next save writes the same
+/// fallback so behavior stays consistent.
 ///
 /// All failure modes (missing file, parse error, no `model_catalog_json`,
 /// entries without `slug`) collapse to `Ok(None)` so callers can treat this
@@ -812,6 +1005,7 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
     for entry in models {
         let Some(model) = entry
             .get("slug")
+            .or_else(|| entry.get("model"))
             .and_then(|v| v.as_str())
             .map(str::trim)
             .filter(|s| !s.is_empty())
@@ -1437,6 +1631,67 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
 mod tests {
     use super::*;
     use serde_json::json;
+    use serial_test::serial;
+
+    struct TestHomeGuard {
+        _dir: tempfile::TempDir,
+        original_home: Option<String>,
+        original_userprofile: Option<String>,
+        original_test_home: Option<String>,
+    }
+
+    impl TestHomeGuard {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().expect("create temp home");
+            let original_home = std::env::var("HOME").ok();
+            let original_userprofile = std::env::var("USERPROFILE").ok();
+            let original_test_home = std::env::var("CC_SWITCH_TEST_HOME").ok();
+
+            std::env::set_var("HOME", dir.path());
+            std::env::set_var("USERPROFILE", dir.path());
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+
+            Self {
+                _dir: dir,
+                original_home,
+                original_userprofile,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for TestHomeGuard {
+        fn drop(&mut self) {
+            match &self.original_home {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+            match &self.original_userprofile {
+                Some(value) => std::env::set_var("USERPROFILE", value),
+                None => std::env::remove_var("USERPROFILE"),
+            }
+            match &self.original_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+
+    fn seed_codex_models_cache(models: Value) {
+        let cache_path = get_codex_models_cache_path();
+        std::fs::create_dir_all(cache_path.parent().expect("cache parent"))
+            .expect("create cache parent");
+        write_json_file(
+            &cache_path,
+            &json!({
+                "fetched_at": "2026-06-01T00:00:00.000000000Z",
+                "etag": "official-cache",
+                "client_version": "0.140.0",
+                "models": models,
+            }),
+        )
+        .expect("seed models cache");
+    }
 
     #[test]
     fn unified_session_bucket_injects_for_empty_official_config() {
@@ -2082,6 +2337,10 @@ base_url = "https://production.api/v1"
             Some("deepseek-v4-flash")
         );
         assert_eq!(
+            models[0].get("model").and_then(|value| value.as_str()),
+            Some("deepseek-v4-flash")
+        );
+        assert_eq!(
             models[0]
                 .get("context_window")
                 .and_then(|value| value.as_u64()),
@@ -2184,7 +2443,8 @@ name = "any"
         let catalog = r#"{
             "models": [
                 { "slug": "deepseek-v4-pro", "display_name": "deepseek-v4-pro", "context_window": 1000000 },
-                { "slug": "deepseek-v4-flash", "display_name": "DeepSeek Flash", "context_window": 1000000 }
+                { "slug": "deepseek-v4-flash", "display_name": "DeepSeek Flash", "context_window": 1000000 },
+                { "model": "qwen3.6", "display_name": "Qwen 3.6", "context_window": 262144 }
             ]
         }"#;
         let result = build_simplified_catalog_from_texts(config, catalog).expect("entries found");
@@ -2192,7 +2452,7 @@ name = "any"
             .get("models")
             .and_then(|m| m.as_array())
             .expect("models array");
-        assert_eq!(models.len(), 2);
+        assert_eq!(models.len(), 3);
 
         // First entry: display_name == slug → displayName squashed; explicit
         // context_window != default 128_000 → preserved.
@@ -2210,6 +2470,10 @@ name = "any"
         assert_eq!(
             models[1].get("displayName").and_then(|v| v.as_str()),
             Some("DeepSeek Flash")
+        );
+        assert_eq!(
+            models[2].get("model").and_then(|v| v.as_str()),
+            Some("qwen3.6")
         );
     }
 
@@ -2260,10 +2524,10 @@ name = "any"
         assert!(
             build_simplified_catalog_from_texts(
                 "",
-                r#"{"models": [{"display_name": "no slug"}]}"#,
+                r#"{"models": [{"display_name": "no model id"}]}"#,
             )
             .is_none(),
-            "entries lacking slug are skipped; a fully-skipped catalog yields None"
+            "entries lacking slug/model are skipped; a fully-skipped catalog yields None"
         );
     }
 
@@ -2424,6 +2688,144 @@ model = "glm-5"
             Some("/Users/me/.codex/my-custom-catalog.json"),
             "None arm should NOT remove user-owned catalog"
         );
+    }
+
+    #[test]
+    #[serial]
+    fn model_catalog_projects_inline_models_for_custom_provider_picker() {
+        let _home = TestHomeGuard::new();
+        seed_codex_models_cache(json!([{
+            "slug": "gpt-5.5",
+            "display_name": "GPT-5.5",
+            "model_messages": { "instructions_template": "template" },
+            "base_instructions": "base",
+            "context_window": 128000,
+            "max_context_window": 128000
+        }]));
+
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "qwen3.6", "displayName": "Qwen 3.6", "contextWindow": "262144" },
+                    { "model": "deepseek-v4-flash", "displayName": "DeepSeek V4 Flash", "contextWindow": "64000" }
+                ]
+            }
+        });
+        let config = r#"model_provider = "custom"
+model = "qwen3.6"
+
+[model_providers.custom]
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+"#;
+
+        let prepared = prepare_codex_config_text_with_model_catalog(&settings, config)
+            .expect("prepare config");
+        let parsed: toml::Value = toml::from_str(&prepared).expect("parse prepared config");
+        assert_eq!(
+            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
+            Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+        );
+
+        let provider_models = parsed
+            .get("model_providers")
+            .and_then(|providers| providers.get("custom"))
+            .and_then(|provider| provider.get("models"))
+            .and_then(|models| models.as_array())
+            .expect("custom provider should expose inline models");
+        let provider_model_ids = provider_models
+            .iter()
+            .filter_map(|model| model.get("model").and_then(|value| value.as_str()))
+            .collect::<Vec<_>>();
+        assert!(provider_model_ids.contains(&"qwen3.6"));
+        assert!(provider_model_ids.contains(&"deepseek-v4-flash"));
+
+        let catalog: Value =
+            read_json_file(&get_codex_model_catalog_path()).expect("read generated catalog");
+        let catalog_models = catalog
+            .get("models")
+            .and_then(|models| models.as_array())
+            .expect("catalog models array");
+        assert!(
+            catalog_models.iter().any(|model| {
+                model.get("slug").and_then(|value| value.as_str()) == Some("qwen3.6")
+                    && model.get("model").and_then(|value| value.as_str()) == Some("qwen3.6")
+            }),
+            "generated catalog entries should carry both slug and model for Codex readers"
+        );
+
+        let cache: Value = read_json_file(&get_codex_models_cache_path()).expect("read cache");
+        assert_eq!(
+            cache.get("etag").and_then(|etag| etag.as_str()),
+            Some(CC_SWITCH_CODEX_MODELS_CACHE_ETAG)
+        );
+        assert_eq!(
+            cache
+                .get("client_version")
+                .and_then(|version| version.as_str()),
+            Some("0.140.0")
+        );
+        let cache_model_ids = cache
+            .get("models")
+            .and_then(|models| models.as_array())
+            .expect("cache models array")
+            .iter()
+            .filter_map(|model| model.get("model").and_then(|value| value.as_str()))
+            .collect::<Vec<_>>();
+        assert!(cache_model_ids.contains(&"qwen3.6"));
+        assert!(cache_model_ids.contains(&"deepseek-v4-flash"));
+    }
+
+    #[test]
+    #[serial]
+    fn removing_model_catalog_restores_previous_codex_models_cache() {
+        let _home = TestHomeGuard::new();
+        seed_codex_models_cache(json!([{
+            "slug": "gpt-5.5",
+            "display_name": "GPT-5.5",
+            "model_messages": { "instructions_template": "template" },
+            "base_instructions": "base",
+            "context_window": 128000,
+            "max_context_window": 128000
+        }]));
+
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "qwen3.6", "displayName": "Qwen 3.6" },
+                    { "model": "deepseek-v4-flash", "displayName": "DeepSeek V4 Flash" }
+                ]
+            }
+        });
+        let custom_config = r#"model_provider = "custom"
+
+[model_providers.custom]
+base_url = "http://127.0.0.1:15721/v1"
+"#;
+        prepare_codex_config_text_with_model_catalog(&settings, custom_config)
+            .expect("prepare custom config");
+
+        let official_config = r#"model_provider = "openai"
+model_catalog_json = "cc-switch-model-catalog.json"
+"#;
+        let restored =
+            prepare_codex_config_text_with_model_catalog(&json!({}), official_config).unwrap();
+        assert!(!restored.contains("model_catalog_json"));
+
+        let cache: Value =
+            read_json_file(&get_codex_models_cache_path()).expect("read restored cache");
+        assert_eq!(
+            cache.get("etag").and_then(|etag| etag.as_str()),
+            Some("official-cache")
+        );
+        let slugs = cache
+            .get("models")
+            .and_then(|models| models.as_array())
+            .expect("models array")
+            .iter()
+            .filter_map(|model| model.get("slug").and_then(|slug| slug.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(slugs, vec!["gpt-5.5"]);
     }
 
     #[test]
