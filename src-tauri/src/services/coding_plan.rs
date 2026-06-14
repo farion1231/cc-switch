@@ -95,7 +95,7 @@ async fn query_kimi(api_key: &str) -> SubscriptionQuota {
         .get("https://api.kimi.com/coding/v1/usages")
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await;
 
@@ -308,7 +308,7 @@ async fn query_zhipu(base_url: &str, api_key: &str) -> SubscriptionQuota {
         .header("Authorization", api_key) // 注意：智谱不加 Bearer 前缀
         .header("Content-Type", "application/json")
         .header("Accept-Language", "en-US,en")
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await;
 
@@ -391,7 +391,7 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> SubscriptionQuota {
         .get(&url)
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Content-Type", "application/json")
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await;
 
@@ -463,7 +463,7 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> SubscriptionQuota {
         .get(base_url)
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await;
 
@@ -666,7 +666,8 @@ pub async fn get_coding_plan_quota(
             success: false,
             tiers: vec![],
             extra_usage: None,
-            error: None,
+            // 与 balance::get_balance 一致：给出明确错误，避免 footer 显示无信息的失败
+            error: Some("API key is empty".to_string()),
             queried_at: None,
         });
     }
@@ -681,9 +682,10 @@ pub async fn get_coding_plan_quota(
                 success: false,
                 tiers: vec![],
                 extra_usage: None,
-                error: None,
+                // 域名未命中已知套餐供应商（如第三方中转站）：给出明确错误而非静默失败
+                error: Some("Unknown coding plan provider".to_string()),
                 queried_at: None,
-            })
+            });
         }
     };
 
