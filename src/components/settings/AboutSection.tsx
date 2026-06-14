@@ -329,18 +329,19 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
 
   useEffect(() => {
     let active = true;
-    const load = async () => {
-      try {
-        const [appVersion] = await Promise.all([
-          getVersion(),
-          loadAllToolVersions(),
-        ]);
 
+    // 本软件自身版本走本地调用（getVersion，无网络，毫秒级），与工具版本探测彼此独立。
+    // 之前两者被塞进同一个 Promise.all，导致 setVersion / setIsLoadingVersion 被压在
+    // 「全部工具检查完成」之后——图标下方的版本徽标因此要干等 6 个工具全检完才显示。
+    // 拆成两条独立链路：应用版本一拿到就立刻显示，工具探测各自渐进刷新，互不阻塞。
+    const loadAppVersion = async () => {
+      try {
+        const appVersion = await getVersion();
         if (active) {
           setVersion(appVersion);
         }
       } catch (error) {
-        console.error("[AboutSection] Failed to load info", error);
+        console.error("[AboutSection] Failed to load app version", error);
         if (active) {
           setVersion(null);
         }
@@ -351,7 +352,8 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       }
     };
 
-    void load();
+    void loadAppVersion();
+    void loadAllToolVersions();
     return () => {
       active = false;
     };
