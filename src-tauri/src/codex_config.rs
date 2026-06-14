@@ -888,10 +888,6 @@ fn merge_existing_codex_mcp_servers(
     target_config_text: &str,
     existing_config_text: &str,
 ) -> Result<String, AppError> {
-    if existing_config_text.trim().is_empty() {
-        return Ok(target_config_text.to_string());
-    }
-
     let mut target_doc = if target_config_text.trim().is_empty() {
         DocumentMut::new()
     } else {
@@ -899,9 +895,17 @@ fn merge_existing_codex_mcp_servers(
             .parse::<DocumentMut>()
             .map_err(|e| AppError::Message(format!("Invalid Codex target config.toml: {e}")))?
     };
-    let existing_doc = existing_config_text
-        .parse::<DocumentMut>()
-        .map_err(|e| AppError::Message(format!("Invalid existing Codex config.toml: {e}")))?;
+    if existing_config_text.trim().is_empty() {
+        return Ok(target_doc.to_string());
+    }
+
+    let existing_doc = match existing_config_text.parse::<DocumentMut>() {
+        Ok(doc) => doc,
+        Err(err) => {
+            log::warn!("Failed to parse existing Codex config.toml for MCP merge: {err}");
+            return Ok(target_doc.to_string());
+        }
+    };
 
     let Some(existing_mcp_servers) = existing_doc.get("mcp_servers") else {
         return Ok(target_doc.to_string());
@@ -1839,6 +1843,93 @@ command = "legacy-command"
             Some("legacy-command"),
             "live-only MCP entries should be preserved during provider writes"
         );
+    }
+
+    #[test]
+    fn merge_existing_mcp_servers_skips_invalid_existing_toml() {
+        let target = r#"model_provider = "provider-b"
+model = "gpt-5"
+
+[model_providers.provider-b]
+name = "Provider B"
+base_url = "https://provider-b.example/v1"
+"#;
+        let existing = r#"[mcp_servers.broken
+command = "oops"
+"#;
+
+        let merged = merge_existing_codex_mcp_servers(target, existing).expect("merge config");
+        let parsed: toml::Value = toml::from_str(&merged).expect("parse merged config");
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|value| value.as_str()),
+            Some("provider-b"),
+            "invalid existing live TOML should not block provider config writes"
+        );
+        assert!(
+            parsed.get("mcp_servers").is_none(),
+            "invalid existing live TOML should be ignored rather than partially merged"
+        );
+    }
+
+    #[test]
+    fn write_codex_provider_live_with_catalog_preserves_existing_mcp_servers() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp_home.path());
+
+        let result = (|| -> Result<(), AppError> {
+            let codex_dir = get_codex_config_dir();
+            std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+            std::fs::write(
+                get_codex_config_path(),
+                r#"model_provider = "provider-a"
+model = "gpt-4"
+
+[model_providers.provider-a]
+name = "Provider A"
+base_url = "https://provider-a.example/v1"
+
+[mcp_servers.live_only]
+command = "live-only-command"
+"#,
+            )
+            .expect("seed existing config");
+
+            let settings = json!({
+                "auth": { "OPENAI_API_KEY": "key-b" },
+                "config": r#"model_provider = "provider-b"
+model = "gpt-5"
+
+[model_providers.provider-b]
+name = "Provider B"
+base_url = "https://provider-b.example/v1"
+"#
+            });
+            let auth = settings.get("auth").expect("auth config");
+            let config_text = settings.get("config").and_then(Value::as_str);
+
+            write_codex_provider_live_with_catalog(&settings, Some("custom"), auth, config_text)?;
+
+            let written = std::fs::read_to_string(get_codex_config_path()).expect("read written config");
+            assert!(
+                written.contains("[mcp_servers.live_only]"),
+                "provider live write should preserve preexisting live MCP servers"
+            );
+            assert!(
+                written.contains(r#"command = "live-only-command""#),
+                "provider live write should preserve preexisting MCP server contents"
+            );
+
+            Ok(())
+        })();
+
+        match old_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+
+        result.expect("write should succeed");
     }
 
     #[test]
