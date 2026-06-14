@@ -1,6 +1,7 @@
 use crate::orchestration::classifier::TaskClassifier;
 use crate::orchestration::config::StrategyAction;
 use crate::orchestration::executor::{ExecutionResult, StrategyExecutor};
+use crate::orchestration::TaskProfile;
 use crate::orchestration::health_checker::ModelHealthChecker;
 use crate::orchestration::loader::StrategyLoader;
 use serde_json::Value;
@@ -262,6 +263,26 @@ impl OrchestrationEngine {
             return OrchestrationOutcome::Passthrough;
         }
 
+        if self.executor_has_trace_ledger() {
+            let profile = TaskClassifier::classify(body);
+            let raw_prompt = extract_raw_prompt(&messages);
+            match self
+                .executor
+                .as_ref()
+                .expect("executor set when trace ledger present")
+                .execute_with_profile(&decision, &profile, &raw_prompt, messages, tools)
+                .await
+            {
+                Ok(result) => return OrchestrationOutcome::Executed { decision, result },
+                Err(e) => {
+                    return OrchestrationOutcome::Fallback {
+                        reason: e,
+                        decision,
+                    }
+                }
+            }
+        }
+
         match self.execute(&decision, messages, tools).await {
             Ok(result) => OrchestrationOutcome::Executed { decision, result },
             Err(e) => OrchestrationOutcome::Fallback {
@@ -269,6 +290,14 @@ impl OrchestrationEngine {
                 decision,
             },
         }
+    }
+
+    /// Returns `true` when the attached executor has a trace ledger. The engine
+    /// uses this to gate the profile-aware execution path so that test engines
+    /// (no ledger) keep the plain `execute` path while production engines
+    /// (ledger attached) record traces.
+    pub fn executor_has_trace_ledger(&self) -> bool {
+        self.executor.as_ref().is_some_and(|e| e.has_trace_ledger())
     }
 
     pub async fn get_config(&self) -> crate::orchestration::config::OrchestrationConfig {
@@ -303,6 +332,21 @@ pub enum OrchestrationOutcome {
         reason: String,
         decision: OrchestrationDecision,
     },
+}
+
+/// Concatenates the textual `content` of each message into a single prompt
+/// snapshot for the trace ledger. Tool calls / function calls are skipped —
+/// only `content` strings survive, in arrival order, joined by newlines.
+fn extract_raw_prompt(messages: &[Value]) -> String {
+    messages
+        .iter()
+        .filter_map(|m| {
+            m.get("content")
+                .and_then(|c| c.as_str())
+                .map(|s| s.to_string())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]

@@ -74,6 +74,18 @@ pub struct QualityDecision {
 }
 
 impl QualityDecision {
+    /// Map a [`QualityResult`] against `threshold` into an enforceable action.
+    ///
+    /// Score bands relative to `threshold`:
+    /// - `score >= threshold` (and `result.passed`) → [`QualityAction::Accept`]
+    /// - `score >= 0.75 * threshold` → [`QualityAction::Retry`] (near-miss, try again with lower temp)
+    /// - `score >= 0.50 * threshold` → [`QualityAction::Escalate`] (escalate to stronger model)
+    /// - `score >= 0.25 * threshold` → [`QualityAction::Fallback`] (use best-effort output)
+    /// - `score <  0.25 * threshold` → [`QualityAction::FailVisible`] (catastrophic, surface failure)
+    ///
+    /// Bands below `Accept` use fractions of `threshold` so they scale with the
+    /// configured strictness of the gate: a tight `threshold=0.9` will `Retry`
+    /// a `0.7` score, while a loose `threshold=0.5` will `Accept` it.
     pub fn from_result(result: &QualityResult, threshold: f64) -> Self {
         if result.score >= threshold && result.passed {
             return Self {
@@ -87,14 +99,26 @@ impl QualityDecision {
             };
         }
 
+        let action = if result.score >= 0.75 * threshold {
+            QualityAction::Retry
+        } else if result.score >= 0.50 * threshold {
+            QualityAction::Escalate
+        } else if result.score >= 0.25 * threshold {
+            QualityAction::Fallback
+        } else {
+            QualityAction::FailVisible
+        };
+
+        let reason = format!(
+            "score {:.2} below threshold {:.2}; action={:?}",
+            result.score, threshold, action,
+        );
+
         Self {
-            action: QualityAction::Fallback,
+            action,
             score: result.score,
             threshold,
-            reason: format!(
-                "score {:.2} below threshold {:.2}",
-                result.score, threshold
-            ),
+            reason,
         }
     }
 }
@@ -1349,15 +1373,51 @@ path = "/usr/local/bad"
     }
 
     #[test]
-    fn quality_decision_falls_back_below_threshold() {
+    fn quality_decision_retries_near_miss() {
+        // score 0.62 vs threshold 0.80 → ratio 0.775, in [0.75, 1.0) → Retry
         let result = QualityResult {
             passed: false,
             score: 0.62,
             individual_scores: vec![("rubric".to_string(), 0.62)],
         };
+        let decision = QualityDecision::from_result(&result, 0.80);
+        assert_eq!(decision.action, QualityAction::Retry);
+        assert!(decision.reason.contains("below threshold"));
+    }
 
+    #[test]
+    fn quality_decision_escalates_for_mid_band_miss() {
+        // score 0.45 vs threshold 0.80 → ratio 0.5625, in [0.50, 0.75) → Escalate
+        let result = QualityResult {
+            passed: false,
+            score: 0.45,
+            individual_scores: vec![("rubric".to_string(), 0.45)],
+        };
+        let decision = QualityDecision::from_result(&result, 0.80);
+        assert_eq!(decision.action, QualityAction::Escalate);
+    }
+
+    #[test]
+    fn quality_decision_falls_back_for_low_band_miss() {
+        // score 0.30 vs threshold 0.80 → ratio 0.375, in [0.25, 0.50) → Fallback
+        let result = QualityResult {
+            passed: false,
+            score: 0.30,
+            individual_scores: vec![("rubric".to_string(), 0.30)],
+        };
         let decision = QualityDecision::from_result(&result, 0.80);
         assert_eq!(decision.action, QualityAction::Fallback);
-        assert!(decision.reason.contains("below threshold"));
+    }
+
+    #[test]
+    fn quality_decision_fails_visible_for_catastrophic_miss() {
+        // score 0.10 vs threshold 0.80 → ratio 0.125, below 0.25 → FailVisible
+        let result = QualityResult {
+            passed: false,
+            score: 0.10,
+            individual_scores: vec![("rubric".to_string(), 0.10)],
+        };
+        let decision = QualityDecision::from_result(&result, 0.80);
+        assert_eq!(decision.action, QualityAction::FailVisible);
     }
 }

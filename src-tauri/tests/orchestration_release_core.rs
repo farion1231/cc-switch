@@ -51,10 +51,15 @@ strategies:
 
 #[test]
 fn release_core_quality_decision_fallback_is_explicit() {
+    // Score 0.30 vs threshold 0.80 → ratio 0.375, lands in the Fallback band
+    // [0.25, 0.50) * threshold. Band-aware scoring replaced the old
+    // "anything below threshold → Fallback" rule so callers can distinguish
+    // near-miss (Retry), mid-miss (Escalate), low-miss (Fallback), and
+    // catastrophic miss (FailVisible).
     let result = QualityResult {
         passed: false,
-        score: 0.40,
-        individual_scores: vec![("judge".to_string(), 0.40)],
+        score: 0.30,
+        individual_scores: vec![("judge".to_string(), 0.30)],
     };
     let decision = QualityDecision::from_result(&result, 0.80);
 

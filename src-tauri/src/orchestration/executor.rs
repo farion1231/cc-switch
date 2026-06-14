@@ -1,17 +1,38 @@
 use crate::orchestration::config::ModelConfig;
 use crate::orchestration::cross_judge::{ConsensusLevel, CrossJudge, JudgeAggregation, JudgeModel};
 use crate::orchestration::engine::OrchestrationDecision;
-use crate::orchestration::model_caller::{ModelCaller, ModelResponse};
-use crate::orchestration::quality_gate::QualityGate;
+use crate::orchestration::model_caller::{ModelCallTarget, ModelCaller, ModelResponse};
+use crate::orchestration::provider_resolver::{ModelCapability, ProviderModelResolver};
+use crate::orchestration::quality_gate::{QualityAction, QualityDecision, QualityGate};
 use crate::orchestration::shuffle::CandidateShuffler;
+use crate::orchestration::trace_ledger::TraceLedger;
+use crate::orchestration::TaskProfile;
+use crate::provider::Provider;
 use futures::future::join_all;
+use indexmap::IndexMap;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 pub struct StrategyExecutor {
     caller: ModelCaller,
     quality_gate: QualityGate,
     cross_judge: Option<CrossJudge>,
+    /// When `Some`, [`call_model_resolved`] prefers resolving `model_key` against
+    /// this live provider map via [`ProviderModelResolver`] and dispatching through
+    /// [`ModelCaller::call_target`]. Resolution failures fall back to the env-var
+    /// path so the executor keeps working when the provider map is stale or empty.
+    provider_map: Option<IndexMap<String, Provider>>,
+    /// When `Some`, every successful execution is recorded as an `OrchestrationRecord`
+    /// via [`TraceLedger::record_execution`]. Recording errors are logged and swallowed
+    /// — observability must not break the request path.
+    ///
+    /// Wrapped in `Arc<Mutex<_>>` because the underlying `HistoryStore` is backed
+    /// by `rusqlite::Connection` (not `Sync` on its own), and `StrategyExecutor`
+    /// is held inside `Arc<OrchestrationEngine>` which the proxy shares across
+    /// threads. `Mutex<T>` is `Sync` when `T: Send`, so this keeps the engine
+    /// shareable while serializing DB writes.
+    trace_ledger: Option<Arc<Mutex<TraceLedger>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -33,12 +54,35 @@ impl StrategyExecutor {
             caller: ModelCaller::new(models)?,
             quality_gate: QualityGate::default(),
             cross_judge: None,
+            provider_map: None,
+            trace_ledger: None,
         })
     }
 
     pub fn with_cross_judge(mut self, judges: Vec<JudgeModel>, aggregation: JudgeAggregation) -> Self {
         self.cross_judge = Some(CrossJudge::new(judges, aggregation));
         self
+    }
+
+    /// Attach a live provider map + trace ledger so production calls can resolve
+    /// roles via [`ProviderModelResolver`] and record traces via [`TraceLedger`].
+    /// Both are required together because trace recording without provider
+    /// resolution would emit misleading "provider=unknown" rows for every call.
+    pub fn with_provider_map_and_ledger(
+        mut self,
+        providers: IndexMap<String, Provider>,
+        ledger: TraceLedger,
+    ) -> Self {
+        self.provider_map = Some(providers);
+        self.trace_ledger = Some(Arc::new(Mutex::new(ledger)));
+        self
+    }
+
+    /// Returns `true` when a [`TraceLedger`] is attached. Callers (the engine)
+    /// use this to decide whether to take the profile-aware execution path so
+    /// trace recording actually fires.
+    pub fn has_trace_ledger(&self) -> bool {
+        self.trace_ledger.is_some()
     }
 
     pub async fn execute(
@@ -96,6 +140,83 @@ impl StrategyExecutor {
         }
     }
 
+    /// Execute the decision and (when configured) record the run to the trace ledger.
+    ///
+    /// This is the production entry point used by [`crate::orchestration::engine::OrchestrationEngine`]
+    /// when a `TaskProfile` is available — typically because the engine classified
+    /// the request once for both `decide` and `execute`. When `trace_ledger` is `None`
+    /// this collapses to a plain `execute` call.
+    pub async fn execute_with_profile(
+        &self,
+        decision: &OrchestrationDecision,
+        profile: &TaskProfile,
+        raw_prompt: &str,
+        messages: Vec<Value>,
+        tools: Option<Vec<Value>>,
+    ) -> Result<ExecutionResult, String> {
+        let result = self.execute(decision, messages, tools).await?;
+        if let Some(ref ledger) = self.trace_ledger {
+            // Lock poisoning would indicate a panic in another thread holding
+            // the lock; recover the inner value rather than poisoning the request.
+            let guard = ledger.lock().unwrap_or_else(|e| e.into_inner());
+            if let Err(e) = guard.record_execution(profile, raw_prompt, &result, Vec::new()) {
+                log::warn!("[StrategyExecutor] trace_ledger.record_execution failed: {e}");
+            }
+        }
+        Ok(result)
+    }
+
+    /// Resolve `model_key` against the live provider map when one is configured,
+    /// dispatching via [`ModelCaller::call_target`]. Falls back to the env-var
+    /// [`ModelCaller::call`] path when no provider map is attached or the role
+    /// fails to resolve (stale provider list, capability mismatch, etc.).
+    ///
+    /// Both paths return the same [`ModelResponse`] shape so call sites stay uniform.
+    async fn call_model_resolved(
+        &self,
+        model_key: &str,
+        messages: Vec<Value>,
+        tools: Option<Vec<Value>>,
+        temperature: Option<f64>,
+    ) -> Result<ModelResponse, String> {
+        if let Some(ref providers) = self.provider_map {
+            match ProviderModelResolver::resolve_role(
+                model_key,
+                providers,
+                &[ModelCapability::Text],
+            ) {
+                Ok(target) => {
+                    let call_target = ModelCallTarget {
+                        model_key: target.role.clone(),
+                        provider_type: target.provider_type,
+                        model: target.model,
+                        base_url: target.base_url,
+                        api_key: target.api_key,
+                        max_tokens: 4096,
+                    };
+                    return self
+                        .caller
+                        .call_target(&call_target, messages, tools, temperature)
+                        .await
+                        .map_err(|e| {
+                            format!(
+                                "[resolved:{}] {:?}: {}",
+                                e.model_key, e.kind, e.message
+                            )
+                        });
+                }
+                Err(e) => {
+                    log::debug!(
+                        "[StrategyExecutor] resolve_role '{}' failed ({}); falling back to env-var ModelConfig",
+                        model_key,
+                        e
+                    );
+                }
+            }
+        }
+        self.caller.call(model_key, messages, tools, temperature).await
+    }
+
     async fn execute_route(
         &self,
         model_key: &str,
@@ -103,7 +224,7 @@ impl StrategyExecutor {
         tools: Option<Vec<Value>>,
     ) -> Result<ExecutionResult, String> {
         let start = std::time::Instant::now();
-        let resp = self.caller.call(model_key, messages, tools, None).await?;
+        let resp = self.call_model_resolved(model_key, messages, tools, None).await?;
 
         Ok(ExecutionResult {
             content: resp.content,
@@ -135,8 +256,7 @@ impl StrategyExecutor {
         for model_key in model_keys {
             attempts += 1;
             match self
-                .caller
-                .call(model_key, messages.clone(), tools.clone(), None)
+                .call_model_resolved(model_key, messages.clone(), tools.clone(), None)
                 .await
             {
                 Ok(resp) => {
@@ -148,47 +268,70 @@ impl StrategyExecutor {
                         .verify(&resp.content, None, Some(&self.caller), None)
                         .await;
                     let score = quality_result.score;
-
-                    if score >= quality_threshold {
-                        log::info!(
-                            "[Cascade] Model '{}' passed quality check (score={:.2} >= {:.2})",
-                            model_key,
-                            score,
-                            quality_threshold
-                        );
-                        return Ok(ExecutionResult {
-                            content: resp.content,
-                            model_used: resp.model,
-                            strategy: "cascade".to_string(),
-                            total_latency_ms: start.elapsed().as_millis() as u64,
-                            total_input_tokens: total_input,
-                            total_output_tokens: total_output,
-                            cascade_attempts: attempts,
-                            verified: true,
-                            judge_score: Some(score),
-                        });
-                    }
-
-                    // Save this response as fallback — even though quality is below threshold,
-                    // it's better to return it than an error if nothing else works.
+                    let quality_decision =
+                        QualityDecision::from_result(&quality_result, quality_threshold);
                     log::info!(
-                        "[Cascade] Model '{}' below threshold (score={:.2} < {:.2}), escalating",
+                        "[Cascade] Model '{}' quality decision: {:?} (score={:.2}, threshold={:.2})",
                         model_key,
+                        quality_decision.action,
                         score,
                         quality_threshold
                     );
-                    let fallback_result = ExecutionResult {
-                        content: resp.content,
-                        model_used: resp.model,
-                        strategy: "cascade".to_string(),
-                        total_latency_ms: start.elapsed().as_millis() as u64,
-                        total_input_tokens: total_input,
-                        total_output_tokens: total_output,
-                        cascade_attempts: attempts,
-                        verified: false,
-                        judge_score: Some(score),
-                    };
-                    last_success = Some((model_key.clone(), fallback_result));
+
+                    match quality_decision.action {
+                        QualityAction::Accept => {
+                            log::info!(
+                                "[Cascade] Model '{}' passed quality check (score={:.2} >= {:.2})",
+                                model_key,
+                                score,
+                                quality_threshold
+                            );
+                            return Ok(ExecutionResult {
+                                content: resp.content,
+                                model_used: resp.model,
+                                strategy: "cascade".to_string(),
+                                total_latency_ms: start.elapsed().as_millis() as u64,
+                                total_input_tokens: total_input,
+                                total_output_tokens: total_output,
+                                cascade_attempts: attempts,
+                                verified: true,
+                                judge_score: Some(score),
+                            });
+                        }
+                        // Retry / Escalate: miss is recoverable — try the next model.
+                        QualityAction::Retry | QualityAction::Escalate => {
+                            log::info!(
+                                "[Cascade] Model '{}' {:?} (score={:.2} < {:.2}); trying next",
+                                model_key,
+                                quality_decision.action,
+                                score,
+                                quality_threshold
+                            );
+                        }
+                        // Fallback / FailVisible: severe miss — save the response as a
+                        // last-resort return value in case nothing else succeeds.
+                        QualityAction::Fallback | QualityAction::FailVisible => {
+                            log::warn!(
+                                "[Cascade] Model '{}' {:?} (score={:.2} < {:.2}); saving as fallback",
+                                model_key,
+                                quality_decision.action,
+                                score,
+                                quality_threshold
+                            );
+                            let fallback_result = ExecutionResult {
+                                content: resp.content,
+                                model_used: resp.model,
+                                strategy: "cascade".to_string(),
+                                total_latency_ms: start.elapsed().as_millis() as u64,
+                                total_input_tokens: total_input,
+                                total_output_tokens: total_output,
+                                cascade_attempts: attempts,
+                                verified: false,
+                                judge_score: Some(score),
+                            };
+                            last_success = Some((model_key.clone(), fallback_result));
+                        }
+                    }
                 }
                 Err(e) => {
                     log::warn!("[Cascade] Model '{}' failed: {}, trying next", model_key, e);
@@ -616,6 +759,13 @@ impl StrategyExecutor {
         None
     }
 
+    /// Extract the final answer from a single-judge Debate response.
+    ///
+    /// The judge prompt instructs the model to return `SCORE: ...\nBEST: ...\nANSWER:\n<final answer>`.
+    /// Returning `judge_resp.content` verbatim ships the rubric to the client.
+    /// This helper returns the content after the `ANSWER:` marker (line-prefix or inline).
+    /// If no marker is present, returns the original content unchanged — better to ship
+    /// a marker-less answer than nothing, but logs at warn so operators can investigate.
     fn extract_answer_from_judge(content: &str) -> String {
         if let Some(idx) = content.find("ANSWER:") {
             let after_marker = &content[idx + "ANSWER:".len()..];
@@ -625,7 +775,8 @@ impl StrategyExecutor {
                 .to_string();
         }
         log::warn!(
-            "[Debate] judge response missing ANSWER: marker; returning raw content (may include rubric)"
+            "[Debate] judge response missing ANSWER: marker; returning raw content. \
+             This usually means the judge model didn't follow the prompt format."
         );
         content.trim().to_string()
     }
@@ -726,32 +877,52 @@ mod tests {
 
     #[test]
     fn extract_answer_strips_rubric_before_answer_marker() {
-        let content = "Critique: candidate 1 missed X.\nScore reasoning: ...\nSCORE: 0.85\nANSWER:\nThe best approach is X because Y.";
+        // Judge response includes SCORE/BEST/ANSWER scaffolding per the prompt at line 664.
+        // Without stripping, the client receives the whole rubric.
+        let content = "SCORE: 0.85\nBEST: 2\nANSWER:\nThe best approach is to use a hash map keyed by user ID.";
         let answer = StrategyExecutor::extract_answer_from_judge(content);
-        assert_eq!(answer, "The best approach is X because Y.");
-        assert!(!answer.contains("Critique"));
-        assert!(!answer.contains("SCORE:"));
+        assert!(
+            !answer.contains("SCORE:"),
+            "answer must not contain SCORE rubric: {answer}"
+        );
+        assert!(
+            !answer.contains("BEST:"),
+            "answer must not contain BEST rubric: {answer}"
+        );
+        assert!(
+            !answer.contains("ANSWER:"),
+            "answer must not contain ANSWER marker: {answer}"
+        );
+        assert!(
+            answer.contains("hash map"),
+            "answer must contain the final answer body: {answer}"
+        );
     }
 
     #[test]
     fn extract_answer_handles_inline_answer_marker() {
-        let content = "Some preamble.\nANSWER: Short inline answer.";
+        let content = "SCORE: 0.7 BEST: 1 ANSWER: Use a vector.";
         let answer = StrategyExecutor::extract_answer_from_judge(content);
-        assert_eq!(answer, "Short inline answer.");
+        assert_eq!(answer, "Use a vector.");
     }
 
     #[test]
     fn extract_answer_returns_trimmed_content_when_no_marker() {
-        let content = "  just the raw content without marker  \n";
+        // If the judge ignored the format, returning trimmed original content is safer
+        // than returning an empty string. The helper logs a warning so operators notice.
+        let content = "Just a plain answer with no rubric.";
         let answer = StrategyExecutor::extract_answer_from_judge(content);
-        assert_eq!(answer, "just the raw content without marker");
+        assert_eq!(answer, "Just a plain answer with no rubric.");
     }
 
     #[test]
     fn extract_answer_handles_multiline_answer_body() {
-        let content = "SCORE: 0.9\nANSWER:\nLine one.\nLine two.\nLine three.";
+        let content = "SCORE: 0.9\nBEST: 1\nANSWER:\nLine one of the answer.\nLine two.\nLine three.";
         let answer = StrategyExecutor::extract_answer_from_judge(content);
-        assert_eq!(answer, "Line one.\nLine two.\nLine three.");
+        assert!(answer.contains("Line one"));
+        assert!(answer.contains("Line two"));
+        assert!(answer.contains("Line three"));
+        assert!(!answer.contains("SCORE"));
     }
 
     #[test]

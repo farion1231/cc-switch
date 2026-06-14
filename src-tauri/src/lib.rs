@@ -436,6 +436,7 @@ pub fn run() {
                 use crate::commands::OrchestrationState;
                 use crate::orchestration::executor::StrategyExecutor;
                 use crate::orchestration::loader::StrategyLoader;
+                use crate::orchestration::trace_ledger::TraceLedger;
                 use crate::orchestration::OrchestrationEngine;
 
                 let strategies_path = StrategyLoader::default_strategies_path();
@@ -447,6 +448,46 @@ pub fn run() {
                     }
                 };
                 let executor = StrategyExecutor::new(config.models.clone())?;
+
+                // Attach a live provider map + trace ledger so production calls
+                // resolve roles via ProviderModelResolver and record to TraceLedger.
+                // Falls back silently when DB has no providers or trace.db can't
+                // be opened — engine keeps working in the env-var path.
+                let executor = {
+                    let trace_path = strategies_path.with_file_name("trace.db");
+                    let ledger = match TraceLedger::new(&trace_path) {
+                        Ok(l) => Some(l),
+                        Err(e) => {
+                            log::warn!(
+                                "[Orchestration] TraceLedger open at {} failed: {}",
+                                trace_path.display(),
+                                e
+                            );
+                            None
+                        }
+                    };
+                    let providers = app_state
+                        .db
+                        .get_all_providers("claude_code")
+                        .or_else(|_| app_state.db.get_all_providers("codex"))
+                        .ok();
+                    match (providers, ledger) {
+                        (Some(p), Some(l)) if !p.is_empty() => {
+                            log::info!(
+                                "[Orchestration] attaching provider_map ({} providers) + trace_ledger",
+                                p.len()
+                            );
+                            executor.with_provider_map_and_ledger(p, l)
+                        }
+                        _ => {
+                            log::info!(
+                                "[Orchestration] no providers or no ledger; running env-var executor"
+                            );
+                            executor
+                        }
+                    }
+                };
+
                 let engine = Arc::new(OrchestrationEngine::with_executor(strategies_path, executor));
 
                 // Share the same Arc with ProxyService
