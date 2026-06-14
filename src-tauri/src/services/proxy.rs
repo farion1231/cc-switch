@@ -5512,6 +5512,16 @@ requires_openai_auth = true
             .proxy_service
             .write_codex_live_for_provider(&provider_a.settings_config, Some(&provider_a))
             .expect("seed live codex config");
+        let live_with_extra_mcp = format!(
+            "{}\n[mcp_servers.live_only]\ncommand = \"live-only-command\"\n",
+            std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+                .expect("read seeded live config")
+        );
+        crate::codex_config::write_codex_live_atomic(
+            &json!({ "OPENAI_API_KEY": "key-a" }),
+            Some(&live_with_extra_mcp),
+        )
+        .expect("add live-only mcp entry");
         assert!(
             !state
                 .proxy_service
@@ -5569,6 +5579,14 @@ requires_openai_auth = true
         assert!(
             config_text.contains(r#"command = "shared-command""#),
             "config.toml must include common config content after switch"
+        );
+        assert!(
+            config_text.contains("[mcp_servers.live_only]"),
+            "provider switch during restored-backup flow must preserve live-only MCP entries"
+        );
+        assert!(
+            config_text.contains(r#"command = "live-only-command""#),
+            "live-only MCP entry content must survive restored-backup provider switch"
         );
     }
 

@@ -884,6 +884,54 @@ pub fn prepare_codex_live_config_text_with_optional_catalog(
     }
 }
 
+fn merge_existing_codex_mcp_servers(
+    target_config_text: &str,
+    existing_config_text: &str,
+) -> Result<String, AppError> {
+    if existing_config_text.trim().is_empty() {
+        return Ok(target_config_text.to_string());
+    }
+
+    let mut target_doc = if target_config_text.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        target_config_text
+            .parse::<DocumentMut>()
+            .map_err(|e| AppError::Message(format!("Invalid Codex target config.toml: {e}")))?
+    };
+    let existing_doc = existing_config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid existing Codex config.toml: {e}")))?;
+
+    let Some(existing_mcp_servers) = existing_doc.get("mcp_servers") else {
+        return Ok(target_doc.to_string());
+    };
+
+    match target_doc.get_mut("mcp_servers") {
+        Some(target_mcp_servers) => {
+            if let (Some(target_table), Some(existing_table)) = (
+                target_mcp_servers.as_table_like_mut(),
+                existing_mcp_servers.as_table_like(),
+            ) {
+                for (server_id, server_item) in existing_table.iter() {
+                    if target_table.get(server_id).is_none() {
+                        target_table.insert(server_id, server_item.clone());
+                    }
+                }
+            } else {
+                log::warn!(
+                    "Codex config contains a non-table mcp_servers section; skipping MCP merge"
+                );
+            }
+        }
+        None => {
+            target_doc["mcp_servers"] = existing_mcp_servers.clone();
+        }
+    }
+
+    Ok(target_doc.to_string())
+}
+
 pub fn write_codex_provider_live_with_catalog(
     settings: &Value,
     category: Option<&str>,
@@ -892,6 +940,12 @@ pub fn write_codex_provider_live_with_catalog(
 ) -> Result<(), AppError> {
     let prepared_config = config_text
         .map(|text| prepare_codex_config_text_with_model_catalog(settings, text))
+        .transpose()?;
+    let prepared_config = prepared_config
+        .map(|text| {
+            let existing_live = read_codex_config_text()?;
+            merge_existing_codex_mcp_servers(&text, &existing_live)
+        })
         .transpose()?;
 
     write_codex_live_for_provider(category, auth, prepared_config.as_deref())
@@ -1735,6 +1789,55 @@ model = "gpt-5.4"
                 .and_then(|v| v.as_str()),
             Some("vendor_alpha"),
             "profile provider references should be preserved"
+        );
+    }
+
+    #[test]
+    fn merge_existing_mcp_servers_preserves_live_only_entries() {
+        let target = r#"model_provider = "provider-b"
+model = "gpt-5"
+
+[model_providers.provider-b]
+name = "Provider B"
+base_url = "https://provider-b.example/v1"
+
+[mcp_servers.shared]
+command = "new-command"
+"#;
+        let existing = r#"model_provider = "provider-a"
+model = "gpt-4"
+
+[model_providers.provider-a]
+name = "Provider A"
+base_url = "https://provider-a.example/v1"
+
+[mcp_servers.shared]
+command = "old-command"
+
+[mcp_servers.legacy]
+command = "legacy-command"
+"#;
+
+        let merged = merge_existing_codex_mcp_servers(target, existing).expect("merge config");
+        let parsed: toml::Value = toml::from_str(&merged).expect("parse merged config");
+
+        assert_eq!(
+            parsed
+                .get("mcp_servers")
+                .and_then(|value| value.get("shared"))
+                .and_then(|value| value.get("command"))
+                .and_then(|value| value.as_str()),
+            Some("new-command"),
+            "target config should win on conflicting MCP entries"
+        );
+        assert_eq!(
+            parsed
+                .get("mcp_servers")
+                .and_then(|value| value.get("legacy"))
+                .and_then(|value| value.get("command"))
+                .and_then(|value| value.as_str()),
+            Some("legacy-command"),
+            "live-only MCP entries should be preserved during provider writes"
         );
     }
 
