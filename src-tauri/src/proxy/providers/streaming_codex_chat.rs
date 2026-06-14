@@ -444,7 +444,7 @@ impl ChatToResponsesState {
                 }
             }
 
-            if !state.added && (!state.call_id.is_empty() || !state.name.is_empty()) {
+            if !state.added && !state.call_id.is_empty() && !state.name.is_empty() {
                 should_add = true;
                 pending_arguments = state.arguments.clone();
             } else if state.added {
@@ -465,12 +465,6 @@ impl ChatToResponsesState {
             state.added = true;
             if state.call_id.is_empty() {
                 state.call_id = format!("call_{chat_index}");
-            }
-            if state.name.is_empty() {
-                // Model never provided a valid name across all deltas — skip this tool call
-                log::warn!("[Codex] Skipping tool call with empty name (no delta provided a name)");
-                state.done = true;
-                return events;
             }
             state.output_index = Some(assigned);
             let is_custom_tool = self.tool_context.is_custom_tool_chat_name(&state.name);
