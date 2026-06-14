@@ -210,7 +210,7 @@ impl StreamCheckService {
         // 或 `npm` 字段显式指定。它们不走 get_adapter 路径，而是直接分发。
         if matches!(
             app_type,
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Atomcode
         ) {
             return Self::check_once_without_adapter(app_type, provider, config, start).await;
         }
@@ -278,9 +278,9 @@ impl StreamCheckService {
                 )
                 .await
             }
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Atomcode => {
                 // Already handled via early dispatch above
-                unreachable!("OpenCode/OpenClaw/Hermes 已通过 check_once_without_adapter 处理")
+                unreachable!("OpenCode/OpenClaw/Hermes/Atomcode 已通过 check_once_without_adapter 处理")
             }
         };
 
@@ -777,7 +777,17 @@ impl StreamCheckService {
                 )
                 .await
             }
-            _ => unreachable!("check_once_without_adapter 只处理 OpenCode/OpenClaw/Hermes"),
+            AppType::Atomcode => {
+                Self::check_atomcode_stream(
+                    &client,
+                    provider,
+                    &model_to_test,
+                    test_prompt,
+                    request_timeout,
+                )
+                .await
+            }
+            _ => unreachable!("check_once_without_adapter 只处理 OpenCode/OpenClaw/Hermes/Atomcode"),
         };
 
         let response_time = start.elapsed().as_millis() as u64;
@@ -1161,6 +1171,69 @@ impl StreamCheckService {
         .await
     }
 
+    // Atomcode 的 settings_config 是一个扁平 snake_case 对象：
+    // { providerKey, type, model, api_key, base_url, ... }（OpenAI 兼容协议）。
+    fn extract_atomcode_base_url(provider: &Provider) -> Result<String, AppError> {
+        provider
+            .settings_config
+            .get("base_url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::localized(
+                    "atomcode_base_url_missing",
+                    "Atomcode 供应商缺少 base_url",
+                    "Atomcode provider is missing `base_url`",
+                )
+            })
+    }
+
+    fn extract_atomcode_api_key(provider: &Provider) -> Result<String, AppError> {
+        provider
+            .settings_config
+            .get("api_key")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::localized(
+                    "atomcode_api_key_missing",
+                    "Atomcode 供应商缺少 api_key",
+                    "Atomcode provider is missing `api_key`",
+                )
+            })
+    }
+
+    /// Atomcode 流式检查分发器
+    ///
+    /// Atomcode 是 switch 模式，settings_config 是扁平 snake_case JSON 对象：
+    /// `{ providerKey, type, model, api_key, base_url, ... }`，默认 OpenAI 兼容协议。
+    /// 直接用 `base_url`/`api_key` 字段发起 chat completions 健康检查。
+    async fn check_atomcode_stream(
+        client: &Client,
+        provider: &Provider,
+        model: &str,
+        test_prompt: &str,
+        timeout: std::time::Duration,
+    ) -> Result<(u16, String), AppError> {
+        let base_url = Self::extract_atomcode_base_url(provider)?;
+        let api_key = Self::extract_atomcode_api_key(provider)?;
+        let auth = AuthInfo::new(api_key, AuthStrategy::Bearer);
+        Self::check_claude_stream(
+            client,
+            &base_url,
+            &auth,
+            model,
+            test_prompt,
+            timeout,
+            provider,
+            Some("openai_chat"),
+            None,
+        )
+        .await
+    }
+
     /// OpenCode 流式检查分发器
     ///
     /// OpenCode 用 `npm` 字段（AI SDK 包名）隐式指定协议。映射关系参见
@@ -1439,6 +1512,15 @@ impl StreamCheckService {
                 // OpenClaw/Hermes use models array in settings_config
                 // Try to extract first model from the models array
                 Self::extract_openclaw_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
+            }
+            AppType::Atomcode => {
+                // Atomcode stores model at the top level in settings_config
+                provider
+                    .settings_config
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| config.codex_model.clone())
             }
         }
     }

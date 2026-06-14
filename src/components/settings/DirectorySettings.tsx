@@ -20,6 +20,7 @@ interface DirectorySettingsProps {
   opencodeDir?: string;
   openclawDir?: string;
   hermesDir?: string;
+  atomcodeDir?: string;
   onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
   onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
   onResetDirectory: (app: DirectoryAppId) => Promise<void>;
@@ -37,6 +38,7 @@ export function DirectorySettings({
   opencodeDir,
   openclawDir,
   hermesDir,
+  atomcodeDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
@@ -157,6 +159,17 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("hermes", val)}
           onBrowse={() => onBrowseDirectory("hermes")}
           onReset={() => onResetDirectory("hermes")}
+        />
+
+        <DirectoryInput
+          label={t("settings.atomcodeConfigDir")}
+          description={undefined}
+          value={atomcodeDir}
+          resolvedValue={resolvedDirs.atomcode}
+          placeholder={t("settings.browsePlaceholderAtomcode")}
+          onChange={(val) => onDirectoryChange("atomcode", val)}
+          onBrowse={() => onBrowseDirectory("atomcode")}
+          onReset={() => onResetDirectory("atomcode")}
         />
       </section>
     </div>

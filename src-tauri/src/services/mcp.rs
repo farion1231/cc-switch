@@ -137,6 +137,10 @@ impl McpService {
             AppType::Hermes => {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
+            AppType::Atomcode => {
+                // Atomcode doesn't support MCP, skip
+                log::debug!("Atomcode does not support MCP, skipping sync");
+            }
         }
         Ok(())
     }
@@ -172,6 +176,10 @@ impl McpService {
             AppType::Hermes => {
                 mcp::remove_server_from_hermes(id)?;
             }
+            AppType::Atomcode => {
+                // Atomcode doesn't support MCP, skip
+                log::debug!("Atomcode does not support MCP, skipping remove");
+            }
         }
         Ok(())
     }
@@ -181,7 +189,7 @@ impl McpService {
         let servers = Self::get_all_servers(state)?;
 
         for app in AppType::all() {
-            if matches!(app, AppType::OpenClaw | AppType::ClaudeDesktop) {
+            if matches!(app, AppType::OpenClaw | AppType::ClaudeDesktop | AppType::Atomcode) {
                 continue;
             }
 

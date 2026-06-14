@@ -1,5 +1,6 @@
 mod app_config;
 mod app_store;
+mod atomcode_config;
 mod auto_launch;
 mod claude_desktop_config;
 mod claude_mcp;

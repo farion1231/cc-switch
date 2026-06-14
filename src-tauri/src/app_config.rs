@@ -30,6 +30,7 @@ impl McpApps {
             AppType::OpenClaw => false, // OpenClaw doesn't support MCP
             AppType::Hermes => self.hermes,
             AppType::ClaudeDesktop => false,
+            AppType::Atomcode => false, // Atomcode doesn't support MCP
         }
     }
 
@@ -43,6 +44,7 @@ impl McpApps {
             AppType::OpenClaw => {} // OpenClaw doesn't support MCP, ignore
             AppType::Hermes => self.hermes = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P provider config doesn't support MCP here
+            AppType::Atomcode => {} // Atomcode doesn't support MCP
         }
     }
 
@@ -99,6 +101,7 @@ impl SkillApps {
             AppType::Hermes => self.hermes,
             AppType::OpenClaw => false, // OpenClaw doesn't support Skills
             AppType::ClaudeDesktop => false,
+            AppType::Atomcode => false, // Atomcode doesn't support Skills
         }
     }
 
@@ -112,6 +115,7 @@ impl SkillApps {
             AppType::Hermes => self.hermes = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support Skills, ignore
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
+            AppType::Atomcode => {} // Atomcode doesn't support Skills
         }
     }
 
@@ -351,6 +355,7 @@ pub enum AppType {
     OpenCode,
     OpenClaw,
     Hermes,
+    Atomcode,
 }
 
 impl AppType {
@@ -363,6 +368,7 @@ impl AppType {
             AppType::OpenCode => "opencode",
             AppType::OpenClaw => "openclaw",
             AppType::Hermes => "hermes",
+            AppType::Atomcode => "atomcode",
         }
     }
 
@@ -374,6 +380,7 @@ impl AppType {
         matches!(
             self,
             AppType::OpenCode | AppType::OpenClaw | AppType::Hermes
+            // Atomcode is switch-mode, not added here
         )
     }
 
@@ -387,6 +394,7 @@ impl AppType {
             AppType::OpenCode,
             AppType::OpenClaw,
             AppType::Hermes,
+            AppType::Atomcode,
         ]
         .into_iter()
     }
@@ -405,10 +413,11 @@ impl FromStr for AppType {
             "opencode" => Ok(AppType::OpenCode),
             "openclaw" => Ok(AppType::OpenClaw),
             "hermes" => Ok(AppType::Hermes),
+            "atomcode" => Ok(AppType::Atomcode),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, opencode, openclaw, hermes。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, opencode, openclaw, hermes."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, opencode, openclaw, hermes, atomcode。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, opencode, openclaw, hermes, atomcode."),
             )),
         }
     }
@@ -434,6 +443,9 @@ pub struct CommonConfigSnippets {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hermes: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub atomcode: Option<String>,
 }
 
 impl CommonConfigSnippets {
@@ -447,6 +459,7 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode.as_ref(),
             AppType::OpenClaw => self.openclaw.as_ref(),
             AppType::Hermes => self.hermes.as_ref(),
+            AppType::Atomcode => self.atomcode.as_ref(),
         }
     }
 
@@ -460,6 +473,7 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode = snippet,
             AppType::OpenClaw => self.openclaw = snippet,
             AppType::Hermes => self.hermes = snippet,
+            AppType::Atomcode => self.atomcode = snippet,
         }
     }
 }
@@ -503,6 +517,7 @@ impl Default for MultiAppConfig {
         apps.insert("opencode".to_string(), ProviderManager::default());
         apps.insert("openclaw".to_string(), ProviderManager::default());
         apps.insert("hermes".to_string(), ProviderManager::default());
+        apps.insert("atomcode".to_string(), ProviderManager::default());
 
         Self {
             version: 2,
@@ -665,6 +680,7 @@ impl MultiAppConfig {
             AppType::OpenCode => &self.mcp.opencode,
             AppType::OpenClaw => &self.mcp.openclaw,
             AppType::Hermes => &self.mcp.hermes,
+            AppType::Atomcode => &self.mcp.claude_desktop, // Atomcode doesn't support MCP; reuse the unused claude_desktop slot
         }
     }
 
@@ -678,6 +694,7 @@ impl MultiAppConfig {
             AppType::OpenCode => &mut self.mcp.opencode,
             AppType::OpenClaw => &mut self.mcp.openclaw,
             AppType::Hermes => &mut self.mcp.hermes,
+            AppType::Atomcode => &mut self.mcp.claude_desktop, // Atomcode doesn't support MCP; reuse the unused claude_desktop slot
         }
     }
 
@@ -804,6 +821,7 @@ impl MultiAppConfig {
             AppType::OpenCode => &mut config.prompts.opencode.prompts,
             AppType::OpenClaw => &mut config.prompts.openclaw.prompts,
             AppType::Hermes => &mut config.prompts.hermes.prompts,
+            AppType::Atomcode => &mut config.prompts.claude_desktop.prompts, // Atomcode doesn't support prompts; unreachable in practice
         };
 
         prompts.insert(id, prompt);
@@ -846,6 +864,7 @@ impl MultiAppConfig {
                 AppType::OpenCode => &self.mcp.opencode.servers,
                 AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
                 AppType::Hermes => continue,   // Hermes didn't exist in v3.6.x, skip
+                AppType::Atomcode => continue, // Atomcode doesn't support MCP, skip
             };
 
             for (id, entry) in old_servers {

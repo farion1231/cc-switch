@@ -763,12 +763,14 @@
     "openclawConfigDirDescription": "OpenClaw の設定ディレクトリ（openclaw.json）を上書きします。",
     "hermesConfigDir": "Hermes 設定ディレクトリ",
     "hermesConfigDirDescription": "Hermes の設定ディレクトリ（config.yaml）を上書きします。",
+    "atomcodeConfigDir": "AtomCode 設定ディレクトリ",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
     "browsePlaceholderOpencode": "例: /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
+    "browsePlaceholderAtomcode": "例: /home/<your-username>/.atomcode",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
     "checkForUpdates": "アップデートを確認",
@@ -878,7 +880,8 @@
     "gemini": "Gemini",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "atomcode": "AtomCode"
   },
   "sessionManager": {
     "title": "セッション管理",

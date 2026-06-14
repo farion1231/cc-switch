@@ -763,12 +763,14 @@
     "openclawConfigDirDescription": "覆盖 OpenClaw 配置目录 (openclaw.json)。",
     "hermesConfigDir": "Hermes 配置目录",
     "hermesConfigDirDescription": "覆盖 Hermes 配置目录 (config.yaml)。",
+    "atomcodeConfigDir": "AtomCode 配置目录",
     "browsePlaceholderClaude": "例如：/home/<你的用户名>/.claude",
     "browsePlaceholderCodex": "例如：/home/<你的用户名>/.codex",
     "browsePlaceholderGemini": "例如：/home/<你的用户名>/.gemini",
     "browsePlaceholderOpencode": "例如：/home/<你的用户名>/.config/opencode",
     "browsePlaceholderOpenclaw": "例如：/home/<你的用户名>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<你的用户名>/.hermes",
+    "browsePlaceholderAtomcode": "例如：/home/<你的用户名>/.atomcode",
     "browseDirectory": "浏览目录",
     "resetDefault": "恢复默认目录（需保存后生效）",
     "checkForUpdates": "检查更新",
@@ -878,7 +880,8 @@
     "gemini": "Gemini",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "atomcode": "AtomCode"
   },
   "sessionManager": {
     "title": "会话管理",

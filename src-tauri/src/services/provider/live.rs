@@ -347,7 +347,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
             }
             _ => false,
         },
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => false,
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop | AppType::Atomcode => false,
     }
 }
 
@@ -417,7 +417,7 @@ pub(crate) fn remove_common_config_from_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop | AppType::Atomcode => {
             Ok(settings.clone())
         }
     }
@@ -474,7 +474,7 @@ fn apply_common_config_to_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop | AppType::Atomcode => {
             Ok(settings.clone())
         }
     }
@@ -875,6 +875,9 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
+        AppType::Atomcode => {
+            crate::atomcode_config::write_atomcode_provider_live(&provider.settings_config)?;
+        }
     }
     Ok(())
 }
@@ -1124,6 +1127,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = crate::hermes_config::yaml_to_json(&yaml_config)?;
             Ok(config)
         }
+        AppType::Atomcode => crate::atomcode_config::read_atomcode_live_settings(),
     }
 }
 
@@ -1221,6 +1225,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
             unreachable!("additive mode apps are handled by early return")
         }
+        AppType::Atomcode => crate::atomcode_config::read_atomcode_live_settings()?,
     };
 
     let mut provider = Provider::with_id(
