@@ -6,6 +6,7 @@ use crate::app_config::AppType;
 use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
 use crate::database::Database;
 use crate::provider::Provider;
+use crate::proxy::request_log::RequestLogStore;
 use crate::proxy::server::ProxyServer;
 use crate::proxy::switch_lock::SwitchLockManager;
 use crate::proxy::types::*;
@@ -58,6 +59,8 @@ pub struct ProxyService {
     /// AppHandle，用于传递给 ProxyServer 以支持故障转移时的 UI 更新
     app_handle: Arc<RwLock<Option<tauri::AppHandle>>>,
     switch_locks: SwitchLockManager,
+    /// 请求日志存储，独立于代理服务器生命周期
+    request_log_store: Arc<RequestLogStore>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -72,6 +75,7 @@ impl ProxyService {
             server: Arc::new(RwLock::new(None)),
             app_handle: Arc::new(RwLock::new(None)),
             switch_locks: SwitchLockManager::new(),
+            request_log_store: Arc::new(RequestLogStore::new()),
         }
     }
 
@@ -446,7 +450,7 @@ impl ProxyService {
 
         // 4. 创建并启动服务器
         let app_handle = self.app_handle.read().await.clone();
-        let server = ProxyServer::new(config.clone(), self.db.clone(), app_handle);
+        let server = ProxyServer::new(config.clone(), self.db.clone(), app_handle, self.request_log_store.clone());
         let info = server
             .start()
             .await
@@ -2589,7 +2593,7 @@ impl ProxyService {
             }
 
             let app_handle = self.app_handle.read().await.clone();
-            let new_server = ProxyServer::new(new_config.clone(), self.db.clone(), app_handle);
+            let new_server = ProxyServer::new(new_config.clone(), self.db.clone(), app_handle, self.request_log_store.clone());
             let info = new_server
                 .start()
                 .await
@@ -2693,6 +2697,62 @@ impl ProxyService {
             log::info!("已重置 Provider {provider_id} (app: {app_type}) 的熔断器");
         }
         Ok(())
+    }
+
+    // ==================== 请求日志管理 ====================
+
+    /// 获取所有请求日志
+    pub async fn get_captured_request_logs(
+        &self,
+    ) -> Result<Vec<crate::proxy::request_log::ProxyRequestLogEntry>, String> {
+        Ok(self.request_log_store.get_all().await)
+    }
+
+    /// 获取请求日志摘要列表（不含 request_body/response_body）
+    pub async fn get_captured_request_log_summaries(
+        &self,
+    ) -> Result<Vec<crate::proxy::request_log::RequestLogSummary>, String> {
+        Ok(self.request_log_store.get_all_summaries().await)
+    }
+
+    /// 获取单条请求日志详情
+    pub async fn get_captured_request_log_detail(
+        &self,
+        id: &str,
+    ) -> Result<Option<crate::proxy::request_log::ProxyRequestLogEntry>, String> {
+        Ok(self.request_log_store.get_by_id(id).await)
+    }
+
+    /// 清空请求日志
+    pub async fn clear_captured_request_logs(&self) -> Result<(), String> {
+        self.request_log_store.clear().await;
+        Ok(())
+    }
+
+    /// 设置请求日志捕获开关
+    pub async fn set_request_log_capture_enabled(&self, enabled: bool) -> Result<(), String> {
+        self.request_log_store.set_enabled(enabled);
+        log::info!(
+            "请求日志捕获已{}",
+            if enabled { "启用" } else { "禁用" }
+        );
+        Ok(())
+    }
+
+    /// 获取请求日志捕获开关状态
+    pub async fn is_request_log_capture_enabled(&self) -> bool {
+        self.request_log_store.is_enabled()
+    }
+
+    /// Gets the maximum number of log entries to retain
+    pub fn get_request_log_max_entries(&self) -> usize {
+        self.request_log_store.get_max_entries()
+    }
+
+    /// Sets the maximum number of log entries to retain
+    pub async fn set_request_log_max_entries(&self, max: usize) {
+        self.request_log_store.set_max_entries(max).await;
+        log::info!("Request log max entries set to {}", max);
     }
 }
 

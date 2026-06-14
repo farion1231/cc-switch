@@ -7,6 +7,7 @@ use super::{
     handler_config::{StreamUsageEventFilter, UsageParserConfig},
     handler_context::{RequestContext, StreamingTimeoutConfig},
     hyper_client::ProxyResponse,
+    request_log::RequestLogStore,
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
     usage::parser::TokenUsage,
@@ -18,6 +19,7 @@ use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::Value;
+use tauri::Emitter;
 use std::{
     io::Read,
     sync::{
@@ -200,6 +202,7 @@ pub async fn handle_streaming(
     state: &ProxyState,
     parser_config: &UsageParserConfig,
     connection_guard: Option<ActiveConnectionGuard>,
+    log_id: Option<String>,
 ) -> Response {
     let status = response.status();
     log::debug!(
@@ -236,6 +239,18 @@ pub async fn handle_streaming(
     // 获取流式超时配置
     let timeout_config = ctx.streaming_timeout_config();
 
+    // Build response_log_info (if log_id exists and request_log is enabled)
+    let response_log_info = if let Some(id) = &log_id {
+        if state.request_log_store.is_enabled() {
+            let latency_ms = ctx.latency_ms();
+            Some((state.request_log_store.clone(), id.clone(), latency_ms, status.as_u16(), state.app_handle.clone()))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // 创建带日志和超时的透传流
     let logged_stream = create_logged_passthrough_stream(
         stream,
@@ -243,6 +258,7 @@ pub async fn handle_streaming(
         usage_collector,
         timeout_config,
         connection_guard,
+        response_log_info,
     );
 
     let body = axum::body::Body::from_stream(logged_stream);
@@ -263,6 +279,7 @@ pub async fn handle_non_streaming(
     parser_config: &UsageParserConfig,
     // guard 在函数 scope 内持有，整包响应读取完成后随函数返回一并 drop
     _connection_guard: Option<ActiveConnectionGuard>,
+    log_id: Option<String>,
 ) -> Result<Response, ProxyError> {
     // 整包超时：仅在故障转移开启且配置值非零时生效
     let body_timeout =
@@ -353,6 +370,32 @@ pub async fn handle_non_streaming(
         log::debug!("[{}] usage logging 已关闭，跳过非流式 usage 解析", ctx.tag);
     }
 
+    // If log_id exists and request_log is enabled, attempt to backfill response_body
+    if let Some(id) = &log_id {
+        if state.request_log_store.is_enabled() {
+            let latency_ms = ctx.latency_ms();
+            let response_body = serde_json::from_slice::<Value>(&body_bytes).ok();
+            let store = state.request_log_store.clone();
+            let id = id.clone();
+            let status_code = status.as_u16();
+            let app_handle = state.app_handle.clone();
+            tokio::spawn(async move {
+                let has_body = response_body.is_some();
+                store.update_response(&id, status_code, latency_ms, response_body).await;
+                if has_body {
+                    if let Some(app) = &app_handle {
+                        let _ = app.emit("proxy-request-log-updated", serde_json::json!({
+                            "id": id,
+                            "status_code": status_code,
+                            "latency_ms": latency_ms,
+                            "has_response_body": true,
+                        }));
+                    }
+                }
+            });
+        }
+    }
+
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);
     for (key, value) in response_headers.iter() {
@@ -375,11 +418,12 @@ pub async fn process_response(
     state: &ProxyState,
     parser_config: &UsageParserConfig,
     connection_guard: Option<ActiveConnectionGuard>,
+    log_id: Option<String>,
 ) -> Result<Response, ProxyError> {
     if is_sse_response(&response) {
-        Ok(handle_streaming(response, ctx, state, parser_config, connection_guard).await)
+        Ok(handle_streaming(response, ctx, state, parser_config, connection_guard, log_id).await)
     } else {
-        handle_non_streaming(response, ctx, state, parser_config, connection_guard).await
+        handle_non_streaming(response, ctx, state, parser_config, connection_guard, log_id).await
     }
 }
 
@@ -731,6 +775,7 @@ pub fn create_logged_passthrough_stream(
     usage_collector: Option<SseUsageCollector>,
     timeout_config: StreamingTimeoutConfig,
     connection_guard: Option<ActiveConnectionGuard>,
+    response_log_info: Option<(Arc<RequestLogStore>, String, u64, u16, Option<tauri::AppHandle>)>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let _conn_guard = connection_guard;
@@ -738,9 +783,22 @@ pub fn create_logged_passthrough_stream(
         let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut collector = usage_collector;
         let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
-        let inspect_sse_events =
-            collector.is_some() || log::log_enabled!(log::Level::Debug);
         let mut is_first_chunk = true;
+
+        // Collect SSE events for response_body backfill (only when response_log_info is present)
+        // Uses head+tail strategy to cap memory: keep first HEAD_CAP and last TAIL_CAP events.
+        const HEAD_CAP: usize = 50;
+        const TAIL_CAP: usize = 50;
+        let mut sse_log_head: Option<Vec<Value>> = if response_log_info.is_some() {
+            Some(Vec::with_capacity(HEAD_CAP))
+        } else {
+            None
+        };
+        let mut sse_log_tail: std::collections::VecDeque<Value> = std::collections::VecDeque::new();
+        let mut sse_log_total: usize = 0;
+
+        let inspect_sse_events =
+            collector.is_some() || log::log_enabled!(log::Level::Debug) || sse_log_head.is_some();
 
         // 超时配置
         let first_byte_timeout = if timeout_config.first_byte_timeout > 0 {
@@ -804,13 +862,45 @@ pub fn create_logged_passthrough_stream(
                                                 Some(c) if c.should_collect(data) => {
                                                     match serde_json::from_str::<Value>(data) {
                                                         Ok(json_value) => {
+                                                            if let Some(ref mut head) = sse_log_head {
+                                                                sse_log_total += 1;
+                                                                if head.len() < HEAD_CAP {
+                                                                    head.push(json_value.clone());
+                                                                } else {
+                                                                    if sse_log_tail.len() >= TAIL_CAP {
+                                                                        sse_log_tail.pop_front();
+                                                                    }
+                                                                    sse_log_tail.push_back(json_value.clone());
+                                                                }
+                                                            }
                                                             c.push(json_value).await;
                                                             true
                                                         }
                                                         Err(_) => false,
                                                     }
                                                 }
-                                                _ => false,
+                                                _ => {
+                                                    if sse_log_head.is_some() {
+                                                        match serde_json::from_str::<Value>(data) {
+                                                            Ok(json_value) => {
+                                                                sse_log_total += 1;
+                                                                let head = sse_log_head.as_mut().unwrap();
+                                                                if head.len() < HEAD_CAP {
+                                                                    head.push(json_value);
+                                                                } else {
+                                                                    if sse_log_tail.len() >= TAIL_CAP {
+                                                                        sse_log_tail.pop_front();
+                                                                    }
+                                                                    sse_log_tail.push_back(json_value);
+                                                                }
+                                                                true
+                                                            }
+                                                            Err(_) => false,
+                                                        }
+                                                    } else {
+                                                        false
+                                                    }
+                                                }
                                             };
                                             if collected {
                                                 log::debug!("[{tag}] <<< SSE 事件: {data}");
@@ -845,6 +935,32 @@ pub fn create_logged_passthrough_stream(
         }
         if let Some(guard) = &mut finish_guard {
             guard.disarm();
+        }
+
+        // After stream ends, merge head+tail and backfill asynchronously
+        if let Some((store, log_id, latency_ms, status_code, app_handle)) = response_log_info {
+            if let Some(head) = sse_log_head {
+                if !head.is_empty() || !sse_log_tail.is_empty() {
+                    let mut merged = head;
+                    let skipped = sse_log_total.saturating_sub(merged.len() + sse_log_tail.len());
+                    if skipped > 0 {
+                        merged.push(serde_json::json!({"type": "__truncated", "skipped_count": skipped}));
+                    }
+                    merged.extend(sse_log_tail);
+                    let response_body = Value::Array(merged);
+                    tokio::spawn(async move {
+                        store.update_response(&log_id, status_code, latency_ms, Some(response_body)).await;
+                        if let Some(app) = &app_handle {
+                            let _ = app.emit("proxy-request-log-updated", serde_json::json!({
+                                "id": log_id,
+                                "status_code": status_code,
+                                "latency_ms": latency_ms,
+                                "has_response_body": true,
+                            }));
+                        }
+                    });
+                }
+            }
         }
     }
 }
@@ -1029,6 +1145,7 @@ mod tests {
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             app_handle: None,
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
+            request_log_store: Arc::new(Default::default()),
         }
     }
 

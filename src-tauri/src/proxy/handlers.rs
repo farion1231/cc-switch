@@ -35,12 +35,75 @@ use super::{
     usage::parser::TokenUsage,
     ProxyError,
 };
+use super::request_log::{create_log_entry, RequestLogEventPayload};
 use crate::app_config::AppType;
 use crate::database::PRICING_SOURCE_REQUEST;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use bytes::Bytes;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
+use tauri::Emitter;
+
+// ============================================================================
+// Request Log Capture Helpers
+// ============================================================================
+
+/// Records request log and emits event to frontend
+async fn capture_request_log(
+    state: &ProxyState,
+    ctx: &RequestContext,
+    method: &str,
+    endpoint: &str,
+    is_stream: bool,
+    body: &Value,
+) -> Option<String> {
+    let store = &state.request_log_store;
+    if !store.is_enabled() {
+        return None;
+    }
+
+    let entry = create_log_entry(
+        ctx.app_type_str,
+        &ctx.provider.name,
+        &ctx.provider.id,
+        method,
+        endpoint,
+        &ctx.request_model,
+        is_stream,
+        body,
+        Some(ctx.session_id.clone()),
+    );
+    let log_id = entry.id.clone();
+
+    // Emit concise event to frontend
+    if let Some(app) = &state.app_handle {
+        let payload = RequestLogEventPayload::from(&entry);
+        if let Err(e) = app.emit("proxy-request-log", &payload) {
+            log::debug!("Failed to emit request log event: {e}");
+        }
+    }
+
+    store.push(entry).await;
+    Some(log_id)
+}
+
+/// Updates request log response info; emits event only for final updates (with response_body)
+/// to avoid flooding the frontend. For streaming requests, the final event comes from
+/// response_processor after SSE collection completes. For non-streaming non-body updates,
+/// we still emit so the frontend gets status/latency.
+async fn update_request_log_response(state: &ProxyState, log_id: Option<&str>, status_code: u16, latency_ms: u64, response_body: Option<Value>) {
+    if let Some(id) = log_id {
+        state.request_log_store.update_response(id, status_code, latency_ms, response_body).await;
+        if let Some(app) = &state.app_handle {
+            let _ = app.emit("proxy-request-log-updated", json!({
+                "id": id,
+                "status_code": status_code,
+                "latency_ms": latency_ms,
+                "has_response_body": false,
+            }));
+        }
+    }
+}
 
 // ============================================================================
 // 健康检查和状态查询（简单端点）
@@ -183,6 +246,9 @@ async fn handle_messages_for_app(
         .and_then(|s| s.as_bool())
         .unwrap_or(false);
 
+    // 捕获请求日志
+    let log_id = capture_request_log(&state, &ctx, method.as_str(), endpoint, is_stream, &body).await;
+
     // 转发请求
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
@@ -202,10 +268,26 @@ async fn handle_messages_for_app(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            update_request_log_response(
+                &state,
+                log_id.as_deref(),
+                map_proxy_error_to_status(&err.error),
+                ctx.latency_ms(),
+                None,
+            ).await;
             log_forward_error(&state, &ctx, is_stream, &err.error);
             return Err(err.error);
         }
     };
+
+    // 更新请求日志的响应信息
+    update_request_log_response(
+        &state,
+        log_id.as_deref(),
+        result.response.status().as_u16(),
+        ctx.latency_ms(),
+        None,
+    ).await;
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
@@ -231,6 +313,7 @@ async fn handle_messages_for_app(
             is_stream,
             &api_format,
             connection_guard,
+            log_id,
         )
         .await;
     }
@@ -242,6 +325,7 @@ async fn handle_messages_for_app(
         &state,
         &CLAUDE_PARSER_CONFIG,
         connection_guard,
+        log_id,
     )
     .await
 }
@@ -284,6 +368,7 @@ async fn handle_claude_transform(
     is_stream: bool,
     api_format: &str,
     connection_guard: Option<ActiveConnectionGuard>,
+    log_id: Option<String>,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
     let is_codex_oauth = ctx
@@ -395,12 +480,16 @@ async fn handle_claude_transform(
         // 获取流式超时配置
         let timeout_config = ctx.streaming_timeout_config();
 
+        let response_log_info = log_id.map(|id| {
+            (state.request_log_store.clone(), id, ctx.start_time.elapsed().as_millis() as u64, status.as_u16(), state.app_handle.clone())
+        });
         let logged_stream = create_logged_passthrough_stream(
             sse_stream,
             "Claude/OpenRouter",
             usage_collector,
             timeout_config,
             connection_guard,
+            response_log_info,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -599,6 +688,8 @@ pub async fn handle_chat_completions(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    let log_id = capture_request_log(&state, &ctx, method.as_str(), &endpoint, is_stream, &body).await;
+
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
         .forward_with_retry(
@@ -617,10 +708,13 @@ pub async fn handle_chat_completions(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            update_request_log_response(&state, log_id.as_deref(), map_proxy_error_to_status(&err.error), ctx.latency_ms(), None).await;
             log_forward_error(&state, &ctx, is_stream, &err.error);
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
         }
     };
+
+    update_request_log_response(&state, log_id.as_deref(), result.response.status().as_u16(), ctx.latency_ms(), None).await;
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
@@ -633,6 +727,7 @@ pub async fn handle_chat_completions(
         &state,
         &OPENAI_PARSER_CONFIG,
         connection_guard,
+        log_id,
     )
     .await
 }
@@ -665,6 +760,8 @@ pub async fn handle_responses(
         .unwrap_or(false);
     let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
 
+    let log_id = capture_request_log(&state, &ctx, method.as_str(), &endpoint, is_stream, &body).await;
+
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
         .forward_with_retry(
@@ -683,10 +780,13 @@ pub async fn handle_responses(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            update_request_log_response(&state, log_id.as_deref(), map_proxy_error_to_status(&err.error), ctx.latency_ms(), None).await;
             log_forward_error(&state, &ctx, is_stream, &err.error);
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
         }
     };
+
+    update_request_log_response(&state, log_id.as_deref(), result.response.status().as_u16(), ctx.latency_ms(), None).await;
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
@@ -701,6 +801,7 @@ pub async fn handle_responses(
             is_stream,
             connection_guard,
             codex_tool_context,
+            log_id,
         )
         .await;
     }
@@ -711,6 +812,7 @@ pub async fn handle_responses(
         &state,
         &CODEX_PARSER_CONFIG,
         connection_guard,
+        log_id,
     )
     .await
 }
@@ -743,6 +845,8 @@ pub async fn handle_responses_compact(
         .unwrap_or(false);
     let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
 
+    let log_id = capture_request_log(&state, &ctx, method.as_str(), &endpoint, is_stream, &body).await;
+
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
         .forward_with_retry(
@@ -761,10 +865,13 @@ pub async fn handle_responses_compact(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            update_request_log_response(&state, log_id.as_deref(), map_proxy_error_to_status(&err.error), ctx.latency_ms(), None).await;
             log_forward_error(&state, &ctx, is_stream, &err.error);
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
         }
     };
+
+    update_request_log_response(&state, log_id.as_deref(), result.response.status().as_u16(), ctx.latency_ms(), None).await;
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
@@ -779,6 +886,7 @@ pub async fn handle_responses_compact(
             is_stream,
             connection_guard,
             codex_tool_context,
+            log_id,
         )
         .await;
     }
@@ -789,6 +897,7 @@ pub async fn handle_responses_compact(
         &state,
         &CODEX_PARSER_CONFIG,
         connection_guard,
+        log_id,
     )
     .await
 }
@@ -800,6 +909,7 @@ async fn handle_codex_chat_to_responses_transform(
     is_stream: bool,
     connection_guard: Option<ActiveConnectionGuard>,
     tool_context: transform_codex_chat::CodexToolContext,
+    log_id: Option<String>,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
 
@@ -879,12 +989,16 @@ async fn handle_codex_chat_to_responses_transform(
             None
         };
 
+        let response_log_info = log_id.map(|id| {
+            (state.request_log_store.clone(), id, ctx.start_time.elapsed().as_millis() as u64, status.as_u16(), state.app_handle.clone())
+        });
         let logged_stream = create_logged_passthrough_stream(
             sse_stream,
             ctx.tag,
             usage_collector,
             ctx.streaming_timeout_config(),
             connection_guard,
+            response_log_info,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -1319,6 +1433,8 @@ pub async fn handle_gemini(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    let log_id = capture_request_log(&state, &ctx, method.as_str(), endpoint, is_stream, &body).await;
+
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
         .forward_with_retry(
@@ -1337,10 +1453,13 @@ pub async fn handle_gemini(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
+            update_request_log_response(&state, log_id.as_deref(), map_proxy_error_to_status(&err.error), ctx.latency_ms(), None).await;
             log_forward_error(&state, &ctx, is_stream, &err.error);
             return Err(err.error);
         }
     };
+
+    update_request_log_response(&state, log_id.as_deref(), result.response.status().as_u16(), ctx.latency_ms(), None).await;
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
@@ -1353,6 +1472,7 @@ pub async fn handle_gemini(
         &state,
         &GEMINI_PARSER_CONFIG,
         connection_guard,
+        log_id,
     )
     .await
 }
