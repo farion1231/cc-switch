@@ -21,6 +21,7 @@ export interface AtomcodeProviderPreset {
   settingsConfig: AtomcodeProviderSettingsConfig;
   category?: ProviderCategory;
   isPartner?: boolean;
+  partnerPromotionKey?: string;
   icon?: string;
   iconColor?: string;
 }
