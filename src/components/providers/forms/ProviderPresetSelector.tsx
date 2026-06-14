@@ -3,17 +3,6 @@ import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { ClaudeIcon, CodexIcon, GeminiIcon } from "@/components/BrandIcons";
 import { ArrowUpAZ, Search, Zap, Star, Layers, Settings2 } from "lucide-react";
 import type { ProviderPreset } from "@/config/claudeProviderPresets";
@@ -214,26 +203,38 @@ export function ProviderPresetSelector({
   };
 
   const renderPresetIcon = (preset: AnyPreset) => {
-    const iconType = preset.theme?.icon;
-    if (!iconType) return null;
-
-    switch (iconType) {
-      case "claude":
-        return <ClaudeIcon size={14} />;
-      case "codex":
-        return <CodexIcon size={14} />;
-      case "gemini":
-        return <GeminiIcon size={14} />;
-      case "generic":
-        return <Zap size={14} />;
-      default:
-        return null;
+    if (preset.icon) {
+      return (
+        <ProviderIcon
+          icon={preset.icon}
+          name={preset.name}
+          color={preset.iconColor}
+          size={16}
+          className="flex-shrink-0"
+        />
+      );
     }
+
+    const iconType = preset.theme?.icon;
+    if (iconType) {
+      switch (iconType) {
+        case "claude":
+          return <ClaudeIcon size={14} />;
+        case "codex":
+          return <CodexIcon size={14} />;
+        case "gemini":
+          return <GeminiIcon size={14} />;
+        case "generic":
+          return <Zap size={14} />;
+      }
+    }
+
+    return <span className="inline-block w-4 h-4 flex-shrink-0" aria-hidden />;
   };
 
   const getPresetButtonClass = (isSelected: boolean, preset: AnyPreset) => {
     const baseClass =
-      "inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors";
+      "inline-flex items-center justify-start gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors w-[200px] max-w-[200px]";
 
     if (isSelected) {
       if (preset.theme?.backgroundColor) {
@@ -260,91 +261,84 @@ export function ProviderPresetSelector({
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
         <FormLabel>{t("providerPreset.label")}</FormLabel>
-        <TooltipProvider delayDuration={300}>
-          <div className="flex items-center gap-1">
-            <Popover open={searchOpen} onOpenChange={setSearchOpen}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <PopoverTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      aria-label={t("providerPreset.searchAriaLabel", {
-                        defaultValue: "Search provider presets",
-                      })}
-                      className={
-                        searchQuery.trim()
-                          ? "size-8 bg-accent text-foreground"
-                          : "size-8"
-                      }
-                    >
-                      <Search className="size-4" />
-                    </Button>
-                  </PopoverTrigger>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {t("providerPreset.searchTooltip", {
-                    defaultValue: "Search presets",
-                  })}
-                </TooltipContent>
-              </Tooltip>
-              <PopoverContent
-                align="end"
-                className="w-72 p-2 border-border-default"
-              >
-                <Input
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  placeholder={t("providerPreset.searchPlaceholder", {
-                    defaultValue: "Search presets...",
-                  })}
-                  aria-label={t("providerPreset.searchAriaLabel", {
-                    defaultValue: "Search provider presets",
-                  })}
-                  autoFocus
-                />
-              </PopoverContent>
-            </Popover>
+        <div className="flex items-center gap-2">
+          {searchOpen && (
+            <Input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setSearchQuery("");
+                  setSearchOpen(false);
+                }
+              }}
+              placeholder={t("providerPreset.searchPlaceholder", {
+                defaultValue: "Search presets...",
+              })}
+              aria-label={t("providerPreset.searchAriaLabel", {
+                defaultValue: "Search provider presets",
+              })}
+              className="w-48 h-8"
+              autoFocus
+            />
+          )}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={t("providerPreset.searchAriaLabel", {
+              defaultValue: "Search provider presets",
+            })}
+            aria-pressed={searchOpen}
+            onClick={() => {
+              setSearchOpen((v) => !v);
+              if (searchOpen) setSearchQuery("");
+            }}
+            title={t("providerPreset.searchTooltip", {
+              defaultValue: "Search presets",
+            })}
+            className={
+              searchOpen || searchQuery.trim()
+                ? "size-8 bg-accent text-foreground"
+                : "size-8"
+            }
+          >
+            <Search className="size-4" />
+          </Button>
 
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label={t("providerPreset.sortAriaLabel", {
-                    defaultValue: "Toggle preset sorting",
-                  })}
-                  aria-pressed={sortMode === PresetSortMode.NameAsc}
-                  onClick={toggleSortMode}
-                  className={
-                    sortMode === PresetSortMode.NameAsc
-                      ? "size-8 bg-accent text-foreground"
-                      : "size-8"
-                  }
-                >
-                  <ArrowUpAZ className="size-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {sortMode === PresetSortMode.NameAsc
-                  ? t("providerPreset.sortOriginalTooltip", {
-                      defaultValue: "Restore original order",
-                    })
-                  : t("providerPreset.sortNameAscTooltip", {
-                      defaultValue: "Sort A-Z",
-                    })}
-              </TooltipContent>
-            </Tooltip>
-          </div>
-        </TooltipProvider>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={t("providerPreset.sortAriaLabel", {
+              defaultValue: "Toggle preset sorting",
+            })}
+            aria-pressed={sortMode === PresetSortMode.NameAsc}
+            onClick={toggleSortMode}
+            title={
+              sortMode === PresetSortMode.NameAsc
+                ? t("providerPreset.sortOriginalTooltip", {
+                    defaultValue: "Restore original order",
+                  })
+                : t("providerPreset.sortNameAscTooltip", {
+                    defaultValue: "Sort A-Z",
+                  })
+            }
+            className={
+              sortMode === PresetSortMode.NameAsc
+                ? "size-8 bg-accent text-foreground"
+                : "size-8"
+            }
+          >
+            <ArrowUpAZ className="size-4" />
+          </Button>
+        </div>
       </div>
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
           onClick={() => onPresetChange("custom")}
-          className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+          className={`inline-flex items-center justify-start gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors w-[200px] max-w-[200px] ${
             selectedPresetId === "custom"
               ? "bg-blue-500 text-white dark:bg-blue-600"
               : "bg-accent text-muted-foreground hover:bg-accent/80"
@@ -378,7 +372,9 @@ export function ProviderPresetSelector({
               }
             >
               {renderPresetIcon(entry.preset)}
-              {getPresetDisplayName(entry.preset, t)}
+              <span className="truncate">
+                {getPresetDisplayName(entry.preset, t)}
+              </span>
               {isPartner && (
                 <span className="absolute -top-1 -right-1 flex items-center gap-0.5 rounded-full bg-gradient-to-r from-amber-500 to-yellow-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-md">
                   <Star className="h-2.5 w-2.5 fill-current" />
@@ -397,14 +393,14 @@ export function ProviderPresetSelector({
                 key={`universal-${preset.providerType}`}
                 type="button"
                 onClick={() => onUniversalPresetSelect(preset)}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-accent text-muted-foreground hover:bg-accent/80 relative"
+                className="inline-flex items-center justify-start gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-accent text-muted-foreground hover:bg-accent/80 relative w-[200px] max-w-[200px]"
                 title={t("universalProvider.hint", {
                   defaultValue:
                     "跨应用统一配置，自动同步到 Claude/Codex/Gemini",
                 })}
               >
-                <ProviderIcon icon={preset.icon} name={preset.name} size={14} />
-                {preset.name}
+                <ProviderIcon icon={preset.icon} name={preset.name} size={14} className="flex-shrink-0" />
+                <span className="truncate">{preset.name}</span>
                 <span className="absolute -top-1 -right-1 flex items-center gap-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-md">
                   <Layers className="h-2.5 w-2.5" />
                 </span>
@@ -414,15 +410,17 @@ export function ProviderPresetSelector({
               <button
                 type="button"
                 onClick={onManageUniversalProviders}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-accent text-muted-foreground hover:bg-accent/80"
+                className="inline-flex items-center justify-start gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-accent text-muted-foreground hover:bg-accent/80 w-[200px] max-w-[200px]"
                 title={t("universalProvider.manage", {
                   defaultValue: "管理统一供应商",
                 })}
               >
-                <Settings2 className="h-4 w-4" />
-                {t("universalProvider.manage", {
-                  defaultValue: "管理",
-                })}
+                <Settings2 className="h-4 w-4 flex-shrink-0" />
+                <span className="truncate">
+                  {t("universalProvider.manage", {
+                    defaultValue: "管理",
+                  })}
+                </span>
               </button>
             )}
           </div>
