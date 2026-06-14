@@ -288,18 +288,21 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   const loadAllToolVersions = useCallback(async () => {
     setIsLoadingTools(true);
     try {
-      // Respect current UI overrides (shell / flag) when doing a full refresh.
-      const versions = await settingsApi.getToolVersions(
-        [...TOOL_NAMES],
-        wslShellByTool,
+      // 逐工具并发探测：每个工具一完成就合并进 toolVersions 并清掉自己的 loadingTools
+      // 标志，对应卡片随即独立刷新——而非等全部探测完才一次性显示（后端原本对 6 个工具
+      // 串行 await `--version` + 网络请求，总耗时是累加；并发后压成「最慢的那一个」）。
+      // 复用 refreshToolVersions：它已内建按 name 合并 + per-tool loading + 自身 try/catch
+      // 兜底（单工具失败返回 [] 不拖累其余），故 Promise.all 永不 reject。Respect current
+      // UI overrides (shell / flag) by passing wslShellByTool through.
+      await Promise.all(
+        TOOL_NAMES.map((toolName) =>
+          refreshToolVersions([toolName], wslShellByTool),
+        ),
       );
-      setToolVersions(versions);
-    } catch (error) {
-      console.error("[AboutSection] Failed to load tool versions", error);
     } finally {
       setIsLoadingTools(false);
     }
-  }, [wslShellByTool]);
+  }, [wslShellByTool, refreshToolVersions]);
 
   const handleToolShellChange = async (toolName: ToolName, value: string) => {
     const wslShell = value === "auto" ? null : value;
@@ -950,8 +953,14 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             const tool = toolVersionByName.get(toolName);
             const appConfig = APP_ICON_MAP[TOOL_APP_IDS[toolName]];
             const displayName = TOOL_DISPLAY_NAMES[toolName];
+            // 单卡片 loading 用「结果是否已到」而非「整批是否结束」驱动，实现渐进式刷新：
+            //   - loadingTools[t]：本工具探测在途（首次加载或单工具刷新）；
+            //   - isLoadingTools && !has(t)：整批进行中且该工具尚未返回——覆盖首帧/刷新时
+            //     未完成卡片的 loading 外观。某工具结果一落进 toolVersions，has(t) 即为 true，
+            //     该卡片立刻脱离 loading（哪怕全局 isLoadingTools 还为 true），其它卡片不受影响。
             const isToolVersionLoading =
-              isLoadingTools || Boolean(loadingTools[toolName]);
+              Boolean(loadingTools[toolName]) ||
+              (isLoadingTools && !toolVersionByName.has(toolName));
             const isOutdated = isUpdateAvailable(
               tool?.version,
               tool?.latest_version,
@@ -1054,9 +1063,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                     <Select
                       value={wslShellByTool[toolName]?.wslShell || "auto"}
                       onValueChange={(v) => handleToolShellChange(toolName, v)}
-                      disabled={
-                        isLoadingTools || loadingTools[toolName] || isAnyBusy
-                      }
+                      disabled={isToolVersionLoading || isAnyBusy}
                     >
                       <SelectTrigger className="h-7 w-[82px] text-xs">
                         <SelectValue />
@@ -1075,9 +1082,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                       onValueChange={(v) =>
                         handleToolShellFlagChange(toolName, v)
                       }
-                      disabled={
-                        isLoadingTools || loadingTools[toolName] || isAnyBusy
-                      }
+                      disabled={isToolVersionLoading || isAnyBusy}
                     >
                       <SelectTrigger className="h-7 w-[82px] text-xs">
                         <SelectValue />
