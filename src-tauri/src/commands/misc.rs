@@ -1126,9 +1126,16 @@ fn build_provider_command_line(shell: &str, config_path: &str) -> String {
     format!(
         "{} {} {}",
         shell_single_quote(shell),
-        default_flag_for_shell(shell),
+        provider_command_flag_for_shell(shell),
         shell_single_quote(&claude_command)
     )
+}
+
+fn provider_command_flag_for_shell(shell: &str) -> &'static str {
+    match shell.rsplit('/').next().unwrap_or(shell) {
+        "dash" | "sh" => "-c",
+        _ => "-lc",
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -3416,7 +3423,7 @@ mod tests {
     fn test_build_provider_command_line_uses_user_shell_environment() {
         assert_eq!(
             build_provider_command_line("/bin/zsh", "/tmp/claude config.json"),
-            "'/bin/zsh' -lic 'claude --settings '\"'\"'/tmp/claude config.json'\"'\"''"
+            "'/bin/zsh' -lc 'claude --settings '\"'\"'/tmp/claude config.json'\"'\"''"
         );
         assert_eq!(
             build_provider_command_line("/bin/sh", "/tmp/claude config.json"),
