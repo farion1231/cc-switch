@@ -1856,7 +1856,9 @@ command = "oops"
         let parsed: toml::Value = toml::from_str(&merged).expect("parse merged config");
 
         assert_eq!(
-            parsed.get("model_provider").and_then(|value| value.as_str()),
+            parsed
+                .get("model_provider")
+                .and_then(|value| value.as_str()),
             Some("provider-b"),
             "invalid existing live TOML should not block provider config writes"
         );
