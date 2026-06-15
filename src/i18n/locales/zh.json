@@ -710,12 +710,14 @@
           "ghostty": "Ghostty",
           "wezterm": "WezTerm",
           "kaku": "Kaku",
-          "warp": "Warp"
+          "warp": "Warp",
+          "cubeShell": "CubeShell"
         },
         "windows": {
           "cmd": "命令提示符",
           "powershell": "PowerShell",
-          "wt": "Windows Terminal"
+          "wt": "Windows Terminal",
+          "cubeShell": "CubeShell"
         },
         "linux": {
           "gnomeTerminal": "GNOME Terminal",
@@ -723,7 +725,8 @@
           "xfce4Terminal": "Xfce4 Terminal",
           "alacritty": "Alacritty",
           "kitty": "Kitty",
-          "ghostty": "Ghostty"
+          "ghostty": "Ghostty",
+          "cubeShell": "CubeShell"
         }
       }
     },
