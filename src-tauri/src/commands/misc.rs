@@ -733,9 +733,15 @@ async fn get_single_tool_version_impl(
     } else {
         #[cfg(target_os = "windows")]
         {
-            // Windows 上只执行已经定位到的真实可执行文件，避免 `cmd /C tool`
-            // 误触发 App Execution Alias 或协议处理器。
-            scan_cli_version(tool)
+            // 先用 `where`（标准 PATH 解析）探测 PATH 默认命中的真实可执行文件，
+            // 找不到才 fallback 到 `scan_cli_version` 的常见目录扫描。
+            // 这一路径能覆盖用户改了 npm prefix 后目录不在 GUI 进程 PATH 中的场景；
+            // 仍只执行 `where` 定位到的真身，不直接 `cmd /C tool`，避免误触发 App
+            // Execution Alias / 协议处理器。
+            match try_get_version_windows(tool) {
+                ShellProbe::NotFound(_) => scan_cli_version(tool),
+                found => found,
+            }
         }
 
         #[cfg(not(target_os = "windows"))]
@@ -1025,6 +1031,54 @@ fn try_get_version(tool: &str) -> ShellProbe {
                 // = 命令存在但 --version 自身报错退出，须如实上报、不 fallback 掩盖。
                 let err = if stderr.is_empty() { stdout } else { stderr };
                 if out.status.code() == Some(127) || err.is_empty() {
+                    ShellProbe::NotFound(NOT_INSTALLED.to_string())
+                } else {
+                    ShellProbe::FoundButFailed(last_lines(err.trim(), 4))
+                }
+            }
+        }
+        Err(_) => ShellProbe::NotFound(NOT_INSTALLED.to_string()),
+    }
+}
+
+/// 在 Windows 平台通过 `where`（标准 PATH 解析）探测版本。
+///
+/// 与非 Windows 的 `try_get_version` 对称：先用 `resolve_path_default` 解析命令行
+/// 默认命中的真实可执行文件，找到后只对该真身跑 `--version`（不直接 `cmd /C {tool}`，
+/// 以免误触发 App Execution Alias / 协议处理器）；解析不到时返回 `NotFound`，由
+/// 调用方 fallback 到 `scan_cli_version` 的常见目录扫描。
+///
+/// 这一路径与 `scan_cli_version` 的关键差异：`scan_cli_version` 用的是**进程级**
+/// `std::env::var_os("PATH")`（GUI 进程的 PATH），用户改了 npm prefix 后，若新目录
+/// 仅由 shell profile / 系统环境注入而未进入 Tauri 进程 PATH，文件存在性检查就会
+/// 漏掉。`where` 走的是 shell 侧的标准 PATH 解析，能覆盖自定义 npm prefix 等场景。
+#[cfg(target_os = "windows")]
+fn try_get_version_windows(tool: &str) -> ShellProbe {
+    let tool_path = match resolve_path_default(tool) {
+        Some(p) => p,
+        None => return ShellProbe::NotFound(NOT_INSTALLED.to_string()),
+    };
+
+    let new_path = std::env::var_os("PATH")
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    match run_windows_tool_version_command(&tool_path, &new_path) {
+        Ok(out) => {
+            let stdout = decode_command_output(&out.stdout).trim().to_string();
+            let stderr = decode_command_output(&out.stderr).trim().to_string();
+            if out.status.success() {
+                let raw = if stdout.is_empty() { &stderr } else { &stdout };
+                if raw.is_empty() {
+                    ShellProbe::NotFound(NOT_INSTALLED.to_string())
+                } else {
+                    ShellProbe::Found(extract_version(raw))
+                }
+            } else {
+                // `where` 命中了真实可执行文件，但 `--version` 自身非零退出
+                // （如工具要求更高 Node 版本）——如实上报，不 fallback 掩盖。
+                let err = if stderr.is_empty() { stdout } else { stderr };
+                if err.is_empty() {
                     ShellProbe::NotFound(NOT_INSTALLED.to_string())
                 } else {
                     ShellProbe::FoundButFailed(last_lines(err.trim(), 4))
