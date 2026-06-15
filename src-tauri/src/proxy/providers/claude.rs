@@ -19,7 +19,6 @@ use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
 use serde_json::{json, Value};
 
-const ANTHROPIC_THINKING_PLACEHOLDER: &str = "tool call";
 const ANTHROPIC_REDACTED_THINKING_PLACEHOLDER: &str = "[redacted thinking]";
 // Keep hints lowercase; matching lowercases only the input value.
 const REASONING_VENDOR_HINTS: &[&str] = &["moonshot", "kimi", "deepseek", "mimo", "xiaomimimo"];
@@ -127,12 +126,16 @@ fn should_normalize_anthropic_tool_thinking_history(
     .any(is_reasoning_vendor_identifier)
 }
 
-/// DeepSeek's Anthropic-compatible endpoint requires thinking history to be
-/// replayed on every assistant turn that contains tool_use. Some Anthropic SDK
-/// clients keep the tool history but drop or redact the thinking block, which
-/// makes DeepSeek reject the next request with `content[].thinking ... must be
-/// passed back`. Normalize only the narrow tool-call history shape for
-/// providers known to require plain `thinking` blocks.
+/// Normalize the tool-call history for reasoning providers (DeepSeek, Kimi, etc.).
+///
+/// Performs only safe structural transforms:
+/// - Strips `signature` fields from thinking blocks (Anthropic-internal, rejected by third parties).
+/// - Converts `redacted_thinking` blocks to `thinking` with placeholder text.
+///
+/// **Does NOT inject placeholder thinking blocks.** Filling empty/missing thinking
+/// is handled reactively by `thinking_rectifier::rectify_thinking_required`
+/// — it fires *only* when the upstream API actually rejects the request,
+/// avoiding unnecessary injection that degrades output quality at long context.
 pub fn normalize_anthropic_tool_thinking_history_for_provider(
     body: &mut Value,
     provider: &Provider,
@@ -246,49 +249,24 @@ fn normalize_anthropic_tool_thinking_history(body: &mut Value) -> bool {
             continue;
         }
 
-        let mut has_thinking = false;
         for block in content.iter_mut() {
             match block.get("type").and_then(Value::as_str) {
                 Some("thinking") => {
-                    let has_non_empty_thinking = block
-                        .get("thinking")
-                        .and_then(Value::as_str)
-                        .is_some_and(|text| !text.trim().is_empty());
                     if let Some(obj) = block.as_object_mut() {
                         if obj.remove("signature").is_some() {
                             changed = true;
                         }
-                        if !has_non_empty_thinking {
-                            obj.insert(
-                                "thinking".to_string(),
-                                json!(ANTHROPIC_THINKING_PLACEHOLDER),
-                            );
-                            changed = true;
-                        }
                     }
-                    has_thinking = true;
                 }
                 Some("redacted_thinking") => {
                     *block = json!({
                         "type": "thinking",
                         "thinking": ANTHROPIC_REDACTED_THINKING_PLACEHOLDER
                     });
-                    has_thinking = true;
                     changed = true;
                 }
                 _ => {}
             }
-        }
-
-        if !has_thinking {
-            content.insert(
-                0,
-                json!({
-                    "type": "thinking",
-                    "thinking": ANTHROPIC_THINKING_PLACEHOLDER
-                }),
-            );
-            changed = true;
         }
     }
 
@@ -2084,7 +2062,10 @@ mod tests {
     }
 
     #[test]
-    fn test_deepseek_anthropic_tool_history_injects_missing_thinking() {
+    fn test_deepseek_anthropic_tool_history_preserves_structure_without_injection() {
+        // normalize_anthropic_tool_thinking_history now only does safe transforms
+        // (strip signature, convert redacted_thinking). It does NOT inject "tool call"
+        // placeholders — that is handled reactively by thinking_rectifier.
         let provider = create_provider(json!({
             "env": {
                 "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
@@ -2108,12 +2089,13 @@ mod tests {
             "anthropic",
         );
 
-        assert!(changed);
+        // No change: message has text + tool_use, no redacted_thinking to convert,
+        // no signature to strip. No placeholder thinking is injected.
+        assert!(!changed);
         let content = body["messages"][0]["content"].as_array().unwrap();
-        assert_eq!(content[0]["type"], "thinking");
-        assert_eq!(content[0]["thinking"], ANTHROPIC_THINKING_PLACEHOLDER);
-        assert_eq!(content[1]["type"], "text");
-        assert_eq!(content[2]["type"], "tool_use");
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "tool_use");
     }
 
     #[test]
@@ -2175,7 +2157,9 @@ mod tests {
     }
 
     #[test]
-    fn test_kimi_anthropic_tool_history_injects_missing_thinking() {
+    fn test_kimi_anthropic_tool_history_preserves_structure_without_injection() {
+        // Same as test_deepseek_anthropic_tool_history_preserves_structure_without_injection:
+        // normalize no longer injects placeholder thinking blocks.
         let provider = create_provider(json!({
             "env": {
                 "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding",
@@ -2198,11 +2182,11 @@ mod tests {
             "anthropic",
         );
 
-        assert!(changed);
+        // No change: no redacted_thinking, no signature.
+        assert!(!changed);
         let content = body["messages"][0]["content"].as_array().unwrap();
-        assert_eq!(content[0]["type"], "thinking");
-        assert_eq!(content[0]["thinking"], ANTHROPIC_THINKING_PLACEHOLDER);
-        assert_eq!(content[1]["type"], "tool_use");
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "tool_use");
     }
 
     #[test]

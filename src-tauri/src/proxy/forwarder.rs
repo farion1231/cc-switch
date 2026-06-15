@@ -16,7 +16,9 @@ use super::{
     },
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
-        normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
+        normalize_thinking_type, rectify_anthropic_request,
+        rectify_thinking_required, should_rectify_thinking_required,
+        should_rectify_thinking_signature,
     },
     types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
@@ -951,6 +953,88 @@ impl RequestForwarder {
                                         return Err(err);
                                     }
                                     continue;
+                                }
+                            }
+                        }
+                    }
+
+                    // ━━━ 反应式 thinking 注入 ━━━
+                    // 仅在上游 API 要求回传 thinking 块时才触发（DeepSeek / Kimi /
+                    // Moonshot 等 vendor）。与 pre-normalize 不同，此处是错误驱动的按需修
+                    // 复：先让原始请求直发，上游拒绝 400 后再注入占位 thinking 块重试。
+                    // 避免了预注入在长上下文下的副作用（输出退化、正文折叠到 thinking 块）。
+                    if is_anthropic_provider {
+                        let error_message = extract_error_message(&e);
+                        if should_rectify_thinking_required(
+                            error_message.as_deref(),
+                            &self.rectifier_config,
+                        ) {
+                            if rectifier_retried {
+                                log::warn!(
+                                    "[{app_type_str}] [RECT-020] thinking 必须回传整流已尝试，跳过"
+                                );
+                            } else {
+                                let thinking_rectified =
+                                    rectify_thinking_required(&mut provider_body);
+                                if thinking_rectified.applied {
+                                    log::info!(
+                                        "[{app_type_str}] [RECT-021] 反应式 thinking 注入: {} 个占位块",
+                                        thinking_rectified.injected_thinking_blocks
+                                    );
+                                    let _ = std::mem::replace(&mut rectifier_retried, true);
+
+                                    match self
+                                        .forward(
+                                            app_type,
+                                            &method,
+                                            provider,
+                                            endpoint,
+                                            &provider_body,
+                                            &headers,
+                                            &extensions,
+                                            adapter.as_ref(),
+                                        )
+                                        .await
+                                    {
+                                        Ok((response, claude_api_format, outbound_model)) => {
+                                            log::info!(
+                                                "[{app_type_str}] [RECT-022] 反应式 thinking 注入重试成功"
+                                            );
+                                            self.record_success_result(
+                                                &provider.id,
+                                                app_type_str,
+                                                used_half_open_permit,
+                                            )
+                                            .await;
+                                            return Ok(ForwardResult {
+                                                response,
+                                                provider: provider.clone(),
+                                                claude_api_format,
+                                                outbound_model,
+                                                connection_guard: None,
+                                            });
+                                        }
+                                        Err(retry_err) => {
+                                            log::warn!(
+                                                "[{app_type_str}] [RECT-023] 反应式 thinking 注入重试仍失败: {retry_err}"
+                                            );
+                                            if let Some(err) = self
+                                                .handle_rectifier_retry_failure(
+                                                    retry_err,
+                                                    provider,
+                                                    app_type_str,
+                                                    used_half_open_permit,
+                                                    "thinking 必须回传整流",
+                                                    &mut last_error,
+                                                    &mut last_provider,
+                                                )
+                                                .await
+                                            {
+                                                return Err(err);
+                                            }
+                                            continue;
+                                        }
+                                    }
                                 }
                             }
                         }
