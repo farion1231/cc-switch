@@ -100,6 +100,22 @@ fn default_remote_root() -> String {
 fn default_profile() -> String {
     "default".to_string()
 }
+fn default_s3_url_style() -> S3UrlStyle {
+    S3UrlStyle::Auto
+}
+
+/// S3 URL 风格
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum S3UrlStyle {
+    /// 自动判断（AWS → Virtual-Hosted，自定义 → Path-Style）
+    #[default]
+    Auto,
+    /// 强制 Virtual-Hosted Style
+    VirtualHosted,
+    /// 强制 Path-Style
+    PathStyle,
+}
 
 /// WebDAV 同步设置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -198,6 +214,8 @@ pub struct S3SyncSettings {
     pub remote_root: String,
     #[serde(default = "default_profile")]
     pub profile: String,
+    #[serde(default = "default_s3_url_style")]
+    pub url_style: S3UrlStyle,
     #[serde(default)]
     pub status: WebDavSyncStatus,
 }
@@ -214,6 +232,7 @@ impl Default for S3SyncSettings {
             endpoint: String::new(),
             remote_root: default_remote_root(),
             profile: default_profile(),
+            url_style: S3UrlStyle::Auto,
             status: WebDavSyncStatus::default(),
         }
     }
