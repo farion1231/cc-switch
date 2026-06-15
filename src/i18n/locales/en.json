@@ -2164,6 +2164,7 @@
     "discover": "Discover Skills",
     "import": "Import Existing",
     "importDescription": "Select skills to import into CC Switch unified management",
+    "selectAll": "Select All",
     "importSuccess": "Successfully imported {{count}} skills",
     "importSelected": "Import Selected ({{count}})",
     "noUnmanagedFound": "No skills to import found. All skills are already managed by CC Switch.",

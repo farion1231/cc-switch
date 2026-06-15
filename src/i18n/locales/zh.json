@@ -2164,6 +2164,7 @@
     "discover": "发现技能",
     "import": "导入已有",
     "importDescription": "选择要导入到 CC Switch 统一管理的技能",
+    "selectAll": "全选",
     "importSuccess": "成功导入 {{count}} 个技能",
     "importSelected": "导入已选 ({{count}})",
     "noUnmanagedFound": "未发现需要导入的技能。所有技能已在 CC Switch 统一管理中。",

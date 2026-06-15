@@ -732,9 +732,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
   onClose,
 }) => {
   const { t } = useTranslation();
-  const [selected, setSelected] = useState<Set<string>>(
-    new Set(skills.map((s) => s.directory)),
-  );
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectedApps, setSelectedApps] = useState<
     Record<string, ImportSkillSelection["apps"]>
   >(() =>
@@ -763,6 +761,14 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
     setSelected(newSelected);
   };
 
+  const allSelected = selected.size === skills.length;
+
+  const toggleSelectAll = () => {
+    setSelected(
+      allSelected ? new Set() : new Set(skills.map((skill) => skill.directory)),
+    );
+  };
+
   const handleImport = () => {
     onImport(
       Array.from(selected).map((directory) => ({
@@ -787,6 +793,15 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           <p className="text-sm text-muted-foreground mb-4">
             {t("skills.importDescription")}
           </p>
+
+          <label className="flex items-center gap-2 mb-3 text-sm font-medium">
+            <input
+              type="checkbox"
+              checked={allSelected}
+              onChange={toggleSelectAll}
+            />
+            {t("skills.selectAll")}
+          </label>
 
           <div className="flex-1 overflow-y-auto space-y-2 mb-4">
             {skills.map((skill) => (
