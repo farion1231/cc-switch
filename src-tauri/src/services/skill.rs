@@ -438,12 +438,14 @@ fn parse_agents_lock() -> HashMap<String, LockRepoInfo> {
 
 /// 批量操作请求
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BatchSkillRequest {
     pub id: String,
 }
 
 /// 批量操作结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BatchSkillResult {
     pub id: String,
     pub success: bool,
