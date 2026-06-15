@@ -12,6 +12,7 @@ use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
 use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
 use crate::database::Database;
 use crate::error::AppError;
+use crate::openclaw_config;
 use crate::provider::Provider;
 use crate::services::mcp::McpService;
 use crate::store::AppState;
