@@ -708,6 +708,7 @@ impl StreamCheckService {
     /// Gemini 流式检查
     ///
     /// 使用 Gemini 原生 API 格式 (streamGenerateContent)
+    #[allow(clippy::too_many_arguments)]
     async fn check_gemini_stream(
         client: &Client,
         base_url: &str,

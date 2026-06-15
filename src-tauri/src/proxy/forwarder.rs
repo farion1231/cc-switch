@@ -1643,7 +1643,6 @@ impl RequestForwarder {
         let mut ordered_headers = http::HeaderMap::new();
         let mut saw_auth = false;
         let mut saw_accept_encoding = false;
-        let mut saw_user_agent = false;
         let mut saw_anthropic_beta = false;
         let mut saw_anthropic_version = false;
 
@@ -1728,10 +1727,6 @@ impl RequestForwarder {
                 .iter()
                 .find(|header| header.name.as_str().eq_ignore_ascii_case(key_str))
             {
-                if key_str.eq_ignore_ascii_case("user-agent") {
-                    saw_user_agent = true;
-                }
-
                 if let Some(ref value) = custom_header.value {
                     ordered_headers.append(custom_header.name.clone(), value.clone());
                 }
