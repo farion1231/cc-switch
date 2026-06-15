@@ -78,10 +78,7 @@ fn batch_uninstall_all_succeed() {
 
     let results = SkillService::batch_uninstall(
         &state.db,
-        &[
-            BatchSkillRequest { id: id1 },
-            BatchSkillRequest { id: id2 },
-        ],
+        &[BatchSkillRequest { id: id1 }, BatchSkillRequest { id: id2 }],
     );
 
     assert_eq!(results.len(), 2);
@@ -159,10 +156,7 @@ fn batch_toggle_app_all_succeed() {
     // Disable claude for both
     let results = SkillService::batch_toggle_app(
         &state.db,
-        &[
-            BatchSkillRequest { id: id1 },
-            BatchSkillRequest { id: id2 },
-        ],
+        &[BatchSkillRequest { id: id1 }, BatchSkillRequest { id: id2 }],
         &AppType::Claude,
         false,
     );

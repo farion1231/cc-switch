@@ -2222,7 +2222,10 @@
     "batchDeleteFailed": "批量删除失败，请稍后重试",
     "batchToggleSuccess": "已成功更新 {{count}} 个 Skill",
     "batchTogglePartial": "已更新 {{success}} 个 Skill，{{failed}} 个失败",
-    "batchToggleFailed": "批量更新失败，请稍后重试"
+    "batchToggleFailed": "批量更新失败，请稍后重试",
+    "batchToggleApp": "批量{{action}} {{app}}（{{count}} 个 Skill）",
+    "batchToggleEnable": "启用",
+    "batchToggleDisable": "禁用"
   },
   "deeplink": {
     "confirmImport": "确认导入供应商配置",

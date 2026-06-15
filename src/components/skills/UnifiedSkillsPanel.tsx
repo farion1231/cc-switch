@@ -10,7 +10,12 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   type ImportSkillSelection,
   type SkillBackupEntry,
@@ -34,7 +39,7 @@ import type { AppId } from "@/lib/api/types";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
-import { SKILLS_APP_IDS } from "@/config/appConfig";
+import { SKILLS_APP_IDS, APP_ICON_MAP } from "@/config/appConfig";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
@@ -317,17 +322,27 @@ const UnifiedSkillsPanel = React.forwardRef<
         try {
           const results = await batchUninstallMutation.mutateAsync(ids);
           setConfirmDialog(null);
+          setSelectedSkills(new Set());
           const succeeded = results.filter((r) => r.success).length;
           const failed = results.filter((r) => !r.success).length;
           if (failed === 0) {
-            toast.success(t("skills.batchDeleteSuccess", { count: succeeded }), { closeButton: true });
+            toast.success(
+              t("skills.batchDeleteSuccess", { count: succeeded }),
+              { closeButton: true },
+            );
           } else if (succeeded > 0) {
-            toast.warning(t("skills.batchDeletePartial", { success: succeeded, failed }), { closeButton: true });
+            toast.warning(
+              t("skills.batchDeletePartial", { success: succeeded, failed }),
+              { closeButton: true },
+            );
           } else {
             toast.error(t("skills.batchDeleteFailed"), { closeButton: true });
           }
         } catch (error) {
-          toast.error(t("skills.batchDeleteFailed"), { description: String(error) });
+          setConfirmDialog(null);
+          toast.error(t("skills.batchDeleteFailed"), {
+            description: String(error),
+          });
         }
       },
     });
@@ -344,18 +359,30 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
     const enabled = enabledCount < ids.length / 2;
     try {
-      const results = await batchToggleAppMutation.mutateAsync({ ids, app, enabled });
+      const results = await batchToggleAppMutation.mutateAsync({
+        ids,
+        app,
+        enabled,
+      });
+      setSelectedSkills(new Set());
       const succeeded = results.filter((r) => r.success).length;
       const failed = results.filter((r) => !r.success).length;
       if (failed === 0) {
-        toast.success(t("skills.batchToggleSuccess", { count: succeeded }), { closeButton: true });
+        toast.success(t("skills.batchToggleSuccess", { count: succeeded }), {
+          closeButton: true,
+        });
       } else if (succeeded > 0) {
-        toast.warning(t("skills.batchTogglePartial", { success: succeeded, failed }), { closeButton: true });
+        toast.warning(
+          t("skills.batchTogglePartial", { success: succeeded, failed }),
+          { closeButton: true },
+        );
       } else {
         toast.error(t("skills.batchToggleFailed"), { closeButton: true });
       }
     } catch (error) {
-      toast.error(t("skills.batchToggleFailed"), { description: String(error) });
+      toast.error(t("skills.batchToggleFailed"), {
+        description: String(error),
+      });
     }
   };
 
@@ -446,7 +473,9 @@ const UnifiedSkillsPanel = React.forwardRef<
               setSelectedSkills(new Set());
             }}
           >
-            {selectionMode ? t("skills.batchManageExit") : t("skills.batchManage")}
+            {selectionMode
+              ? t("skills.batchManageExit")
+              : t("skills.batchManage")}
           </Button>
           <div
             className="transition-all duration-300 ease-out overflow-hidden"
@@ -496,68 +525,121 @@ const UnifiedSkillsPanel = React.forwardRef<
 
       {/* 批量操作栏 */}
       {selectionMode && (
-        <div className="flex items-center gap-2 py-2 px-3 mt-2 rounded-lg border border-border-default bg-muted/30">
-          <button
-            type="button"
-            className="flex items-center gap-1 text-xs"
-            onClick={() => {
-              if (selectedSkills.size === (skills?.length ?? 0)) {
-                handleDeselectAll();
-              } else {
-                handleSelectAll();
+        <TooltipProvider delayDuration={300}>
+          <div className="flex items-center gap-2 py-2 px-3 mt-2 rounded-lg border border-border-default bg-muted/30">
+            <button
+              type="button"
+              className="flex items-center gap-1 text-xs"
+              role="checkbox"
+              aria-checked={
+                selectedSkills.size === (skills?.length ?? 0) &&
+                (skills?.length ?? 0) > 0
               }
-            }}
-          >
-            <div className={`w-4 h-4 rounded border flex items-center justify-center ${
-              selectedSkills.size === (skills?.length ?? 0) && (skills?.length ?? 0) > 0
-                ? "bg-primary border-primary"
-                : "border-border-default"
-            }`}>
-              {selectedSkills.size === (skills?.length ?? 0) && (skills?.length ?? 0) > 0 && (
-                <Check size={12} className="text-primary-foreground" />
-              )}
-            </div>
-            <span className="text-muted-foreground">
-              {selectedSkills.size === (skills?.length ?? 0)
-                ? t("skills.batchDeselectAll")
-                : t("skills.batchSelectAll")}
-            </span>
-          </button>
-          <span className="text-xs text-muted-foreground">
-            {t("skills.batchSelectedCount", { count: selectedSkills.size })}
-          </span>
-          <div className="flex-1" />
-          <div className="flex items-center gap-1">
-            {SKILLS_APP_IDS.map((app) => (
-              <button
-                key={app}
-                type="button"
-                className="w-7 h-7 rounded-lg flex items-center justify-center transition-all hover:opacity-100 opacity-70"
-                onClick={() => handleBatchToggleApp(app)}
-                disabled={batchToggleAppMutation.isPending || selectedSkills.size === 0}
+              aria-label={
+                selectedSkills.size === (skills?.length ?? 0)
+                  ? t("skills.batchDeselectAll")
+                  : t("skills.batchSelectAll")
+              }
+              onClick={() => {
+                if (selectedSkills.size === (skills?.length ?? 0)) {
+                  handleDeselectAll();
+                } else {
+                  handleSelectAll();
+                }
+              }}
+            >
+              <div
+                className={`w-4 h-4 rounded border flex items-center justify-center ${
+                  selectedSkills.size === (skills?.length ?? 0) &&
+                  (skills?.length ?? 0) > 0
+                    ? "bg-primary border-primary"
+                    : "border-border-default"
+                }`}
               >
-                {app.charAt(0).toUpperCase()}
-              </button>
-            ))}
+                {selectedSkills.size === (skills?.length ?? 0) &&
+                  (skills?.length ?? 0) > 0 && (
+                    <Check size={12} className="text-primary-foreground" />
+                  )}
+              </div>
+              <span className="text-muted-foreground">
+                {selectedSkills.size === (skills?.length ?? 0)
+                  ? t("skills.batchDeselectAll")
+                  : t("skills.batchSelectAll")}
+              </span>
+            </button>
+            <span className="text-xs text-muted-foreground">
+              {t("skills.batchSelectedCount", { count: selectedSkills.size })}
+            </span>
+            <div className="flex-1" />
+            <div className="flex items-center gap-1">
+              {SKILLS_APP_IDS.map((app) => {
+                const appConfig = APP_ICON_MAP[app];
+                let enabledCount = 0;
+                for (const skill of skills ?? []) {
+                  if (selectedSkills.has(skill.id) && skill.apps[app]) {
+                    enabledCount++;
+                  }
+                }
+                const willEnable = enabledCount < selectedSkills.size / 2;
+                return (
+                  <Tooltip key={app}>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="w-7 h-7 rounded-lg flex items-center justify-center transition-all hover:opacity-100 opacity-70"
+                        onClick={() => handleBatchToggleApp(app)}
+                        disabled={
+                          batchToggleAppMutation.isPending ||
+                          selectedSkills.size === 0
+                        }
+                        aria-label={t("skills.batchToggleApp", {
+                          app: appConfig.label,
+                          action: willEnable
+                            ? t("skills.batchToggleEnable")
+                            : t("skills.batchToggleDisable"),
+                          count: selectedSkills.size,
+                        })}
+                      >
+                        {batchToggleAppMutation.isPending ? (
+                          <Loader2 size={12} className="animate-spin" />
+                        ) : (
+                          appConfig.icon
+                        )}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <p>
+                        {appConfig.label} —{" "}
+                        {willEnable
+                          ? t("skills.batchToggleEnable")
+                          : t("skills.batchToggleDisable")}
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              })}
+            </div>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              className="h-7 text-xs gap-1"
+              onClick={handleBatchDelete}
+              disabled={
+                batchUninstallMutation.isPending || selectedSkills.size === 0
+              }
+            >
+              {batchUninstallMutation.isPending ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <Trash2 size={12} />
+              )}
+              {batchUninstallMutation.isPending
+                ? t("skills.batchDeleting")
+                : t("skills.batchDelete")}
+            </Button>
           </div>
-          <Button
-            type="button"
-            variant="destructive"
-            size="sm"
-            className="h-7 text-xs gap-1"
-            onClick={handleBatchDelete}
-            disabled={batchUninstallMutation.isPending || selectedSkills.size === 0}
-          >
-            {batchUninstallMutation.isPending ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <Trash2 size={12} />
-            )}
-            {batchUninstallMutation.isPending
-              ? t("skills.batchDeleting")
-              : t("skills.batchDelete")}
-          </Button>
-        </div>
+        </TooltipProvider>
       )}
 
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
@@ -690,6 +772,9 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
         <div className="flex-shrink-0 mr-2">
           <button
             type="button"
+            role="checkbox"
+            aria-checked={isSelected}
+            aria-label={skill.name}
             className={`w-4 h-4 rounded border flex items-center justify-center ${
               isSelected
                 ? "bg-primary border-primary"
@@ -697,7 +782,9 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
             }`}
             onClick={() => onToggleSelection(skill.id)}
           >
-            {isSelected && <Check size={12} className="text-primary-foreground" />}
+            {isSelected && (
+              <Check size={12} className="text-primary-foreground" />
+            )}
           </button>
         </div>
       )}

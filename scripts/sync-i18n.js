@@ -46,7 +46,7 @@ function setNestedValue(obj, keyPath, value) {
   const keys = keyPath.split(".");
   let current = obj;
   for (let i = 0; i < keys.length - 1; i++) {
-    if (!current[keys[i]] || typeof current[keys[i]] !== "object") {
+    if (current[keys[i]] == null || typeof current[keys[i]] !== "object") {
       current[keys[i]] = {};
     }
     current = current[keys[i]];
@@ -54,7 +54,7 @@ function setNestedValue(obj, keyPath, value) {
   current[keys[keys.length - 1]] = value;
 }
 
-function syncLanguage(sourceData, targetData, targetLang) {
+function syncLanguage(sourceData, targetData) {
   const sourceKeys = getNestedKeys(sourceData);
   const targetKeys = getNestedKeys(targetData);
 
@@ -86,7 +86,7 @@ let totalMissing = 0;
 for (const lang of TARGET_LANGUAGES) {
   const targetPath = path.join(localesDir, `${lang}.json`);
   const targetData = loadJson(targetPath);
-  const { missingKeys, updatedData } = syncLanguage(sourceData, targetData, lang);
+  const { missingKeys, updatedData } = syncLanguage(sourceData, targetData);
 
   if (missingKeys.length > 0) {
     saveJson(targetPath, updatedData);

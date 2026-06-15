@@ -50,7 +50,7 @@ describe("batch uninstall cache update", () => {
   it("returns existing cache unchanged when no cache exists", () => {
     const succeededIds = new Set(["skill-a"]);
     // oldData is undefined → should return undefined
-    const oldData: InstalledSkill[] | undefined = undefined;
+    const oldData = undefined as InstalledSkill[] | undefined;
     const updated = oldData
       ? oldData.filter((s) => !succeededIds.has(s.id))
       : oldData;

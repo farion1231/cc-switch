@@ -450,6 +450,8 @@ pub struct BatchSkillResult {
     pub id: String,
     pub success: bool,
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backup_path: Option<String>,
 }
 
 // ========== SkillService ==========
@@ -2878,25 +2880,22 @@ impl SkillService {
         mut operation: F,
     ) -> Vec<BatchSkillResult>
     where
-        F: FnMut(&str) -> Result<bool, String>,
+        F: FnMut(&str) -> Result<Option<String>, String>,
     {
         requests
             .iter()
             .map(|request| match operation(&request.id) {
-                Ok(true) => BatchSkillResult {
+                Ok(backup_path) => BatchSkillResult {
                     id: request.id.clone(),
                     success: true,
                     error: None,
-                },
-                Ok(false) => BatchSkillResult {
-                    id: request.id.clone(),
-                    success: false,
-                    error: Some("operation returned false".to_string()),
+                    backup_path,
                 },
                 Err(error) => BatchSkillResult {
                     id: request.id.clone(),
                     success: false,
                     error: Some(error),
+                    backup_path: None,
                 },
             })
             .collect()
@@ -2908,7 +2907,7 @@ impl SkillService {
         requests: &[BatchSkillRequest],
     ) -> Vec<BatchSkillResult> {
         Self::collect_batch_results(requests, |id| match Self::uninstall(db, id) {
-            Ok(_result) => Ok(true),
+            Ok(result) => Ok(result.backup_path),
             Err(e) => Err(e.to_string()),
         })
     }
@@ -2922,7 +2921,7 @@ impl SkillService {
     ) -> Vec<BatchSkillResult> {
         Self::collect_batch_results(requests, |id| {
             match Self::toggle_app(db, id, app, enabled) {
-                Ok(()) => Ok(true),
+                Ok(()) => Ok(None),
                 Err(e) => Err(e.to_string()),
             }
         })

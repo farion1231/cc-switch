@@ -7,7 +7,6 @@ import {
 import {
   skillsApi,
   type SkillBackupEntry,
-  type BatchSkillResult,
   type DiscoverableSkill,
   type ImportSkillSelection,
   type InstalledSkill,
@@ -356,7 +355,7 @@ export function useBatchUninstallSkills() {
 
 /**
  * 批量切换 Skills 的应用启用状态
- * 成功后直接更新缓存
+ * 成功后乐观更新缓存，与 useBatchUninstallSkills 策略一致
  */
 export function useBatchToggleSkillApp() {
   const queryClient = useQueryClient();
@@ -370,9 +369,23 @@ export function useBatchToggleSkillApp() {
       app: AppId;
       enabled: boolean;
     }) => skillsApi.batchToggleApp(ids, app, enabled),
-    onSuccess: () => {
-      // 批量切换后刷新缓存
-      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
+    onSuccess: (results, { app, enabled }) => {
+      const succeededIds = new Set(
+        results.filter((r) => r.success).map((r) => r.id),
+      );
+      // 乐观更新 installed 缓存中成功切换的 skill 的 apps 状态
+      queryClient.setQueryData<InstalledSkill[]>(
+        ["skills", "installed"],
+        (oldData) => {
+          if (!oldData) return oldData;
+          return oldData.map((s) => {
+            if (succeededIds.has(s.id)) {
+              return { ...s, apps: { ...s.apps, [app]: enabled } };
+            }
+            return s;
+          });
+        },
+      );
     },
   });
 }

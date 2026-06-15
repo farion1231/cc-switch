@@ -2222,7 +2222,10 @@
     "batchDeleteFailed": "一括削除に失敗しました。後でもう一度お試しください。",
     "batchToggleSuccess": "{{count}} 個のスキルを更新しました",
     "batchTogglePartial": "{{success}} 個のスキルを更新しましたが、{{failed}} 個が失敗しました",
-    "batchToggleFailed": "一括更新に失敗しました。後でもう一度お試しください。"
+    "batchToggleFailed": "一括更新に失敗しました。後でもう一度お試しください。",
+    "batchToggleApp": "{{app}} を一括{{action}}（{{count}} 個のスキル）",
+    "batchToggleEnable": "有効化",
+    "batchToggleDisable": "無効化"
   },
   "deeplink": {
     "confirmImport": "プロバイダーのインポートを確認",

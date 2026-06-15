@@ -8,8 +8,8 @@ use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
 use crate::error::format_skill_error;
 use crate::services::skill::{
     BatchSkillRequest, BatchSkillResult, DiscoverableSkill, ImportSkillSelection, MigrationResult,
-    Skill, SkillBackupEntry, SkillRepo, SkillService, SkillStorageLocation,
-    SkillUninstallResult, SkillUpdateInfo, SkillsShSearchResult,
+    Skill, SkillBackupEntry, SkillRepo, SkillService, SkillStorageLocation, SkillUninstallResult,
+    SkillUpdateInfo, SkillsShSearchResult,
 };
 use crate::store::AppState;
 use std::str::FromStr;
@@ -114,7 +114,8 @@ pub fn batch_toggle_skill_app(
     enabled: bool,
     app_state: State<'_, AppState>,
 ) -> Result<Vec<BatchSkillResult>, String> {
-    let app_type = parse_app_type(&app)?;
+    let app_type =
+        parse_app_type(&app).map_err(|e| format!("Invalid app type '{}': {}", app, e))?;
     Ok(SkillService::batch_toggle_app(
         &app_state.db,
         &requests,

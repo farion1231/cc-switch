@@ -2224,7 +2224,10 @@
     "batchDeleteFailed": "批次刪除失敗，請稍後重試",
     "batchToggleSuccess": "已成功更新 {{count}} 個 Skill",
     "batchTogglePartial": "已更新 {{success}} 個 Skill，{{failed}} 個失敗",
-    "batchToggleFailed": "批次更新失敗，請稍後重試"
+    "batchToggleFailed": "批次更新失敗，請稍後重試",
+    "batchToggleApp": "批次{{action}} {{app}}（{{count}} 個 Skill）",
+    "batchToggleEnable": "啟用",
+    "batchToggleDisable": "停用"
   },
   "deeplink": {
     "confirmImport": "確認匯入供應商設定",

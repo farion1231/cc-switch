@@ -2222,7 +2222,10 @@
     "batchDeleteFailed": "Batch delete failed. Please try again later.",
     "batchToggleSuccess": "Successfully updated {{count}} skills",
     "batchTogglePartial": "Updated {{success}} skills, {{failed}} failed",
-    "batchToggleFailed": "Batch update failed. Please try again later."
+    "batchToggleFailed": "Batch update failed. Please try again later.",
+    "batchToggleApp": "Batch {{action}} {{app}} ({{count}} skills)",
+    "batchToggleEnable": "enable",
+    "batchToggleDisable": "disable"
   },
   "deeplink": {
     "confirmImport": "Confirm Import Provider",

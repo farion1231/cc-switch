@@ -109,6 +109,7 @@ export interface BatchSkillResult {
   id: string;
   success: boolean;
   error?: string;
+  backupPath?: string;
 }
 
 /** skills.sh 可发现的技能 */
