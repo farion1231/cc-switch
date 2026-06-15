@@ -287,21 +287,15 @@ pub struct UsageResult {
     pub error: Option<String>,
 }
 
-/// 供应商单独的模型测试配置
+/// 供应商单独的连通检测配置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderTestConfig {
     /// 是否启用单独配置（false 时使用全局配置）
     #[serde(default)]
     pub enabled: bool,
-    /// 测试用的模型名称（覆盖全局配置）
-    #[serde(rename = "testModel", skip_serializing_if = "Option::is_none")]
-    pub test_model: Option<String>,
     /// 超时时间（秒）
     #[serde(rename = "timeoutSecs", skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
-    /// 测试提示词
-    #[serde(rename = "testPrompt", skip_serializing_if = "Option::is_none")]
-    pub test_prompt: Option<String>,
     /// 降级阈值（毫秒）
     #[serde(
         rename = "degradedThresholdMs",

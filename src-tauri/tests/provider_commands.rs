@@ -588,3 +588,30 @@ fn switch_provider_codex_missing_auth_returns_error_and_keeps_state() {
         "current provider should remain empty or be the attempted id on failure, got: {current_id:?}"
     );
 }
+
+#[test]
+fn import_refuses_live_config_under_proxy_takeover() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    ensure_test_home();
+
+    // 接管态 Codex Live：auth 是 PROXY_MANAGED 占位符，不是用户真实配置
+    let auth = json!({"OPENAI_API_KEY": "PROXY_MANAGED"});
+    let config = r#"model = "gpt-5"
+"#;
+    write_codex_live_atomic(&auth, Some(config)).expect("seed taken-over codex live");
+
+    let state = create_test_state().expect("create test state");
+
+    import_default_config_test_hook(&state, AppType::Codex)
+        .expect_err("importing a taken-over live config must fail");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
+        .expect("get codex providers");
+    assert!(
+        providers.is_empty(),
+        "taken-over live import must not create providers"
+    );
+}

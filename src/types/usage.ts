@@ -122,6 +122,20 @@ export interface LogFilters {
   endDate?: number;
 }
 
+/**
+ * Dashboard 顶栏的全局筛选维度，作用于 Hero / 趋势图 / 三个统计 Tab。
+ *
+ * - `providerName` 按展示名精确匹配（与 Provider 统计列表同口径，含
+ *   "Claude (Session)" 等会话占位名）；
+ * - `model` 按「有效计价模型」匹配（pricing_model 优先、回落 model，
+ *   与模型统计的分组口径一致）。
+ */
+export interface UsageScopeFilters {
+  appType?: string;
+  providerName?: string;
+  model?: string;
+}
+
 export interface ProviderLimitStatus {
   providerId: string;
   dailyUsage: string;
@@ -141,28 +155,26 @@ export interface UsageRangeSelection {
 }
 
 /**
- * App types whose token usage is reliably collected by the proxy.
+ * App types surfaced as dashboard filter buttons.
  *
- * `claude-desktop` was previously hidden because its rows looked like pure
- * failure noise — that was an accounting bug: streaming/transform usage of
- * the Desktop gateway was logged under app_type "claude", leaving only
- * edge-case rows under "claude-desktop". The backend now attributes all
- * Desktop traffic to "claude-desktop", so it is a first-class filter option.
+ * `claude-desktop` is intentionally NOT listed: the Desktop gateway's proxy
+ * traffic is still recorded under its own `app_type` (preserving route-takeover
+ * billing audit — the request detail panel shows the real value), but the
+ * dashboard folds it into `claude` for display. It is the embedded Claude Code
+ * runtime running inside the Desktop shell, and Desktop *chat* usage never
+ * passes through this app at all, so a separate "Claude Desktop" bucket would
+ * only ever show a partial number and mislead users into reading it as the
+ * Desktop's full usage. The backend collapses `claude-desktop → claude` in
+ * every dashboard query (see `folded_app_type_sql`).
  * `opencode` / `openclaw` / `hermes` have no proxy handler at all — they
  * appear only as managed apps elsewhere.
  */
-export type AppType =
-  | "claude"
-  | "claude-desktop"
-  | "codex"
-  | "gemini"
-  | "opencode";
+export type AppType = "claude" | "codex" | "gemini" | "opencode";
 
 export type AppTypeFilter = "all" | AppType;
 
 export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "claude",
-  "claude-desktop",
   "codex",
   "gemini",
   "opencode",

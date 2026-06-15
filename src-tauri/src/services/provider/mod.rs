@@ -42,6 +42,48 @@ use live::{
 };
 use usage::validate_usage_script;
 
+/// 统一会话开关变更后，立即按新开关状态重写当前官方 Codex 供应商的
+/// live 配置，使开关即时生效（无需等下一次切换）。
+/// 当前供应商非官方（或不存在）时为 no-op：注入只作用于官方配置，
+/// 第三方 live 配置不受开关影响。
+pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, AppError> {
+    let current_id = ProviderService::current(state, AppType::Codex)?;
+    if current_id.is_empty() {
+        return Ok(false);
+    }
+    let providers = state.db.get_all_providers(AppType::Codex.as_str())?;
+    let Some(provider) = providers.get(&current_id) else {
+        return Ok(false);
+    };
+    if provider.category.as_deref() != Some("official") {
+        return Ok(false);
+    }
+
+    // 代理接管期间 live 归代理所有（开启代理时官方供应商只警告不拦截，
+    // 二者可以共存）。与切换/保存路径一致：以 backup/占位符为所有权信号，
+    // 只更新备份，注入后的配置由接管释放时的恢复路径落盘。
+    let has_live_backup =
+        futures::executor::block_on(state.db.get_live_backup(AppType::Codex.as_str()))
+            .ok()
+            .flatten()
+            .is_some();
+    let live_taken_over = state
+        .proxy_service
+        .detect_takeover_in_live_config_for_app(&AppType::Codex);
+    if has_live_backup || live_taken_over {
+        futures::executor::block_on(
+            state
+                .proxy_service
+                .update_live_backup_from_provider(AppType::Codex.as_str(), provider),
+        )
+        .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+        return Ok(true);
+    }
+
+    live::write_live_with_common_config(&state.db, &AppType::Codex, provider)?;
+    Ok(true)
+}
+
 /// Provider business logic service
 pub struct ProviderService;
 

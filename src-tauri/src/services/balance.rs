@@ -72,7 +72,7 @@ async fn query_deepseek(api_key: &str) -> UsageResult {
         .get("https://api.deepseek.com/user/balance")
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(15))
         .send()
         .await;
 
@@ -144,7 +144,7 @@ async fn query_stepfun(api_key: &str) -> UsageResult {
         .get("https://api.stepfun.com/v1/accounts")
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(15))
         .send()
         .await;
 
@@ -203,7 +203,7 @@ async fn query_siliconflow(api_key: &str, is_cn: bool) -> UsageResult {
         .get(&url)
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(15))
         .send()
         .await;
 
@@ -267,7 +267,7 @@ async fn query_openrouter(api_key: &str) -> UsageResult {
         .get("https://openrouter.ai/api/v1/credits")
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(15))
         .send()
         .await;
 
@@ -327,7 +327,7 @@ async fn query_novita(api_key: &str) -> UsageResult {
         .get("https://api.novita.ai/v3/user/balance")
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(15))
         .send()
         .await;
 

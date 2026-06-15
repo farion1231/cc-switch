@@ -453,6 +453,8 @@ function ProviderFormFull({
     defaultSonnetModelName,
     defaultOpusModel,
     defaultOpusModelName,
+    defaultFableModel,
+    defaultFableModelName,
     handleModelChange,
   } = useModelState({
     settingsConfig: form.getValues("settingsConfig"),
@@ -2021,6 +2023,8 @@ function ProviderFormFull({
               defaultOpusModel={defaultOpusModel}
               defaultOpusModelName={defaultOpusModelName}
               imageModel={localImageModel}
+              defaultFableModel={defaultFableModel}
+              defaultFableModelName={defaultFableModelName}
               onModelChange={handleModelChange}
               onImageModelChange={setLocalImageModel}
               speedTestEndpoints={speedTestEndpoints}
