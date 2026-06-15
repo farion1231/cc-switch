@@ -2,10 +2,9 @@ import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Save, Loader2 } from "lucide-react";
+import { Save, Loader2, Info } from "lucide-react";
 import { toast } from "sonner";
 import {
   getStreamCheckConfig,
@@ -20,13 +19,9 @@ export function ModelTestConfigPanel() {
   const [error, setError] = useState<string | null>(null);
   // 使用字符串状态以支持完全清空数字输入框
   const [config, setConfig] = useState({
-    timeoutSecs: "45",
-    maxRetries: "2",
+    timeoutSecs: "8",
+    maxRetries: "1",
     degradedThresholdMs: "6000",
-    claudeModel: "claude-haiku-4-5-20251001",
-    codexModel: "gpt-5.5@low",
-    geminiModel: "gemini-3.5-flash",
-    testPrompt: "Who are you?",
   });
 
   useEffect(() => {
@@ -42,10 +37,6 @@ export function ModelTestConfigPanel() {
         timeoutSecs: String(data.timeoutSecs),
         maxRetries: String(data.maxRetries),
         degradedThresholdMs: String(data.degradedThresholdMs),
-        claudeModel: data.claudeModel,
-        codexModel: data.codexModel,
-        geminiModel: data.geminiModel,
-        testPrompt: data.testPrompt || "Who are you?",
       });
     } catch (e) {
       setError(String(e));
@@ -63,13 +54,9 @@ export function ModelTestConfigPanel() {
     try {
       setIsSaving(true);
       const parsed: StreamCheckConfig = {
-        timeoutSecs: parseNum(config.timeoutSecs, 45),
-        maxRetries: parseNum(config.maxRetries, 2),
+        timeoutSecs: parseNum(config.timeoutSecs, 8),
+        maxRetries: parseNum(config.maxRetries, 1),
         degradedThresholdMs: parseNum(config.degradedThresholdMs, 6000),
-        claudeModel: config.claudeModel,
-        codexModel: config.codexModel,
-        geminiModel: config.geminiModel,
-        testPrompt: config.testPrompt || "Who are you?",
       };
       await saveStreamCheckConfig(parsed);
       toast.success(t("streamCheck.configSaved"), {
@@ -98,49 +85,16 @@ export function ModelTestConfigPanel() {
         </Alert>
       )}
 
-      {/* 测试模型配置 */}
-      <div className="space-y-4">
-        <h4 className="text-sm font-medium text-muted-foreground">
-          {t("streamCheck.testModels")}
-        </h4>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="claudeModel">{t("streamCheck.claudeModel")}</Label>
-            <Input
-              id="claudeModel"
-              value={config.claudeModel}
-              onChange={(e) =>
-                setConfig({ ...config, claudeModel: e.target.value })
-              }
-              placeholder="claude-3-5-haiku-latest"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="codexModel">{t("streamCheck.codexModel")}</Label>
-            <Input
-              id="codexModel"
-              value={config.codexModel}
-              onChange={(e) =>
-                setConfig({ ...config, codexModel: e.target.value })
-              }
-              placeholder="gpt-4o-mini"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="geminiModel">{t("streamCheck.geminiModel")}</Label>
-            <Input
-              id="geminiModel"
-              value={config.geminiModel}
-              onChange={(e) =>
-                setConfig({ ...config, geminiModel: e.target.value })
-              }
-              placeholder="gemini-1.5-flash"
-            />
-          </div>
-        </div>
-      </div>
+      {/* 连通检测语义说明：可达 ≠ 配置正确 */}
+      <Alert>
+        <Info className="h-4 w-4" />
+        <AlertDescription>
+          {t("streamCheck.connectivityNote", {
+            defaultValue:
+              "连通检测仅探测供应商地址是否可达，不发送真实模型请求。收到任意响应即视为“可达”——这不代表鉴权或模型配置一定正确。",
+          })}
+        </AlertDescription>
+      </Alert>
 
       {/* 检查参数配置 */}
       <div className="space-y-4">
@@ -153,8 +107,8 @@ export function ModelTestConfigPanel() {
             <Input
               id="timeoutSecs"
               type="number"
-              min={10}
-              max={120}
+              min={2}
+              max={60}
               value={config.timeoutSecs}
               onChange={(e) =>
                 setConfig({ ...config, timeoutSecs: e.target.value })
@@ -192,21 +146,6 @@ export function ModelTestConfigPanel() {
               }
             />
           </div>
-        </div>
-
-        {/* 检查提示词配置 */}
-        <div className="space-y-2">
-          <Label htmlFor="testPrompt">{t("streamCheck.testPrompt")}</Label>
-          <Textarea
-            id="testPrompt"
-            value={config.testPrompt}
-            onChange={(e) =>
-              setConfig({ ...config, testPrompt: e.target.value })
-            }
-            placeholder="Who are you?"
-            rows={2}
-            className="min-h-[60px]"
-          />
         </div>
       </div>
 
