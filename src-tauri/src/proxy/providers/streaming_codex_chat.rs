@@ -660,11 +660,9 @@ impl ChatToResponsesState {
         // of a think tag, drop it (reasoning is already in reasoning_content).
         // Otherwise emit as text so we don't silently drop content.
         if let Some(pending) = self.pending_short_delta.take() {
-            if strip_leading_think_open_tag(&pending).is_none() {
-                if !pending.trim().is_empty() {
-                    events.extend(self.push_text_delta(&pending));
-                }
-            }
+            if strip_leading_think_open_tag(&pending).is_none() && !pending.trim().is_empty() {
+    events.extend(self.push_text_delta(&pending));
+}
         }
         // 流结束时，不完整的 think 块直接丢弃（reasoning_content 已有）
         if let Some(pending) = self.pending_think_content.take() {
