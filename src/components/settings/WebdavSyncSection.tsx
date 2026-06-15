@@ -38,6 +38,7 @@ import type { SettingsFormState } from "@/hooks/useSettings";
 import type {
   RemoteSnapshotInfo,
   S3SyncSettings,
+  S3UrlStyle,
   WebDavSyncSettings,
 } from "@/types";
 
@@ -289,6 +290,9 @@ export function WebdavSyncSection({
   const [s3Profile, setS3Profile] = useState(s3Config?.profile ?? "default");
   const [s3AutoSync, setS3AutoSync] = useState(s3Config?.autoSync ?? false);
   const [s3Enabled, setS3Enabled] = useState(s3Config?.enabled ?? false);
+  const [s3UrlStyle, setS3UrlStyle] = useState<S3UrlStyle>(
+    s3Config?.urlStyle ?? "auto",
+  );
   const [s3SecretTouched, setS3SecretTouched] = useState(false);
   const [s3Dirty, setS3Dirty] = useState(false);
   const [s3JustSaved, setS3JustSaved] = useState(false);
@@ -384,6 +388,7 @@ export function WebdavSyncSection({
     setS3Profile(s3Config.profile ?? "default");
     setS3AutoSync(s3Config.autoSync ?? false);
     setS3Enabled(s3Config.enabled ?? false);
+    setS3UrlStyle(s3Config.urlStyle ?? "auto");
     setS3SecretTouched(false);
   }, [s3Config, s3Dirty]);
 
@@ -679,6 +684,7 @@ export function WebdavSyncSection({
       endpoint: s3Endpoint.trim() || undefined,
       remoteRoot: s3RemoteRoot.trim() || "cc-switch-sync",
       profile: s3Profile.trim() || "default",
+      urlStyle: s3UrlStyle,
     };
   }, [
     s3Enabled,
@@ -690,6 +696,7 @@ export function WebdavSyncSection({
     s3Endpoint,
     s3RemoteRoot,
     s3Profile,
+    s3UrlStyle,
   ]);
 
   // ─── S3 Handlers ──────────────────────────────────────────
@@ -1391,6 +1398,41 @@ export function WebdavSyncSection({
                 disabled={isS3Loading}
               />
             </div>
+
+            {/* URL Style selector - hide for AWS S3 (always virtual-hosted) */}
+            {s3Preset !== "aws-s3" && (
+              <div className="flex items-center gap-4">
+                <label className="w-40 text-xs font-medium text-foreground shrink-0">
+                  {t("settings.s3Sync.urlStyle")}
+                  <span className="block text-[10px] font-normal text-muted-foreground">
+                    {t("settings.s3Sync.urlStyleHint")}
+                  </span>
+                </label>
+                <Select
+                  value={s3UrlStyle}
+                  onValueChange={(value) => {
+                    setS3UrlStyle(value as S3UrlStyle);
+                    markS3Dirty();
+                  }}
+                  disabled={isS3Loading}
+                >
+                  <SelectTrigger className="text-xs flex-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">
+                      {t("settings.s3Sync.urlStyleAuto")}
+                    </SelectItem>
+                    <SelectItem value="virtualHosted">
+                      {t("settings.s3Sync.urlStyleVirtualHosted")}
+                    </SelectItem>
+                    <SelectItem value="pathStyle">
+                      {t("settings.s3Sync.urlStylePathStyle")}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             {/* Auto Sync toggle */}
             <div className="flex items-start gap-4">

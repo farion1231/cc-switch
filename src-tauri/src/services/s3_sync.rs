@@ -241,6 +241,7 @@ fn creds_for(settings: &S3SyncSettings) -> S3Credentials {
         region: settings.region.clone(),
         bucket: settings.bucket.clone(),
         endpoint: settings.endpoint.clone(),
+        url_style: settings.url_style.clone(),
     }
 }
 
