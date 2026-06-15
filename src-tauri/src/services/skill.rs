@@ -1400,9 +1400,9 @@ impl SkillService {
                 let skill = skill_map.get(id.as_str())?;
                 let doc_path = if let Some(subdir) = subdirectory {
                     format!(
-                        "{}/{}",
+                        "{}/{}/SKILL.md",
                         subdir.trim_end_matches('/'),
-                        format!("{}/SKILL.md", skill.directory.trim_end_matches('/'))
+                        skill.directory.trim_end_matches('/')
                     )
                 } else {
                     skill
