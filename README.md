@@ -4,7 +4,7 @@
 
 ### 基于 [farion1231/cc-switch](https://github.com/farion1231/cc-switch) 的个人增强 Fork,聚焦多账号、用量可视化与 Codex 工作流
 
-[![Version](https://img.shields.io/badge/version-3.16.2-blue.svg)](https://github.com/ajia1206/cc-switch/releases)
+[![Version](https://img.shields.io/badge/version-3.16.3-blue.svg)](https://github.com/ajia1206/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](https://github.com/ajia1206/cc-switch/releases)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
