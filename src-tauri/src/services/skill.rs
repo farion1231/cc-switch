@@ -2871,6 +2871,62 @@ impl SkillService {
             query: resp.query,
         })
     }
+
+    /// 批量操作结果收集器（与 sessions 的 collect_delete_session_outcomes 模式一致）
+    fn collect_batch_results<F>(
+        requests: &[BatchSkillRequest],
+        mut operation: F,
+    ) -> Vec<BatchSkillResult>
+    where
+        F: FnMut(&str) -> Result<bool, String>,
+    {
+        requests
+            .iter()
+            .map(|request| match operation(&request.id) {
+                Ok(true) => BatchSkillResult {
+                    id: request.id.clone(),
+                    success: true,
+                    error: None,
+                },
+                Ok(false) => BatchSkillResult {
+                    id: request.id.clone(),
+                    success: false,
+                    error: Some("operation returned false".to_string()),
+                },
+                Err(error) => BatchSkillResult {
+                    id: request.id.clone(),
+                    success: false,
+                    error: Some(error),
+                },
+            })
+            .collect()
+    }
+
+    /// 批量卸载 Skills
+    pub fn batch_uninstall(
+        db: &Arc<Database>,
+        requests: &[BatchSkillRequest],
+    ) -> Vec<BatchSkillResult> {
+        Self::collect_batch_results(requests, |id| match Self::uninstall(db, id) {
+            Ok(_result) => Ok(true),
+            Err(e) => Err(e.to_string()),
+        })
+    }
+
+    /// 批量切换 Skills 的应用启用状态
+    pub fn batch_toggle_app(
+        db: &Arc<Database>,
+        requests: &[BatchSkillRequest],
+        app: &AppType,
+        enabled: bool,
+    ) -> Vec<BatchSkillResult> {
+        Self::collect_batch_results(requests, |id| {
+            match Self::toggle_app(db, id, app, enabled) {
+                Ok(()) => Ok(true),
+                Err(e) => Err(e.to_string()),
+            }
+        })
+    }
 }
 
 // ========== 迁移支持 ==========
