@@ -434,6 +434,27 @@ pnpm build
 pnpm tauri build --debug
 ```
 
+### 使用构建脚本（推荐）
+
+本项目提供了 `scripts\build.ps1` 一键打包脚本，可自动检测环境依赖并生成安装包（MSI/EXE/DMG/AppImage）。
+
+```bash
+# 标准发布构建
+.\scripts\build.ps1
+
+# 构建调试版本
+.\scripts\build.ps1 -Debug
+
+# 跳过依赖安装（已安装过依赖时）
+.\scripts\build.ps1 -SkipInstall
+
+# 指定代理地址（国内网络环境需要代理访问 GitHub 时）
+.\scripts\build.ps1 -Proxy "http://localhost:7890"
+```
+
+> **网络代理说明**：脚本启动时会自动检测 `https://github.com` 连通性，若无法直接访问则尝试使用代理。
+> 默认代理地址为 `http://localhost:7890`，可通过 `-Proxy` 参数自定义，传空字符串 `""` 则跳过代理配置。
+
 ### Rust 后端开发
 
 ```bash
