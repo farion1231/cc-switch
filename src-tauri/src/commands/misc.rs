@@ -638,7 +638,7 @@ fn build_tool_action_line(
         // (npm/pnpm)或 .exe(volta),静态命令头部是 `npm`(也是 .cmd)、`py` 等——
         // 全部加 `call ` 前缀,风格统一且语义正确。含空格的头部已被 `win_quote_path_for_batch`
         // 加上双引号,call 对带引号的路径解析正常。
-        return Ok(format!("call {command}"));
+        Ok(format!("call {command}"))
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -2607,7 +2607,7 @@ fn launch_terminal_with_env(
     #[cfg(target_os = "windows")]
     {
         launch_windows_terminal(&temp_dir, &config_file, cwd)?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -3106,6 +3106,7 @@ del \"%~f0\" >nul 2>&1
     result
 }
 
+#[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(dead_code))]
 fn build_shell_cd_command(cwd: Option<&Path>) -> String {
     cwd.map(|dir| {
         format!(
@@ -3116,6 +3117,7 @@ fn build_shell_cd_command(cwd: Option<&Path>) -> String {
     .unwrap_or_default()
 }
 
+#[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(dead_code))]
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
