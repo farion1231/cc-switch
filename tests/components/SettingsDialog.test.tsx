@@ -140,6 +140,10 @@ vi.mock("@/hooks/useImportExport", () => ({
 vi.mock("@/lib/api", () => ({
   settingsApi: {
     restart: vi.fn().mockResolvedValue(true),
+    getDefaultSkillEnvOutputPath: vi
+      .fn()
+      .mockResolvedValue("/tmp/skill-env.env"),
+    pickSkillEnvOutputFile: vi.fn().mockResolvedValue(null),
   },
 }));
 
@@ -277,6 +281,8 @@ describe("SettingsPage Component", () => {
     toastErrorMock.mockReset();
     settingsApi = (await import("@/lib/api")).settingsApi;
     settingsApi.restart.mockClear();
+    settingsApi.getDefaultSkillEnvOutputPath.mockClear();
+    settingsApi.pickSkillEnvOutputFile.mockClear();
   });
 
   afterEach(() => {
@@ -344,9 +350,7 @@ describe("SettingsPage Component", () => {
     fireEvent.click(screen.getByText("settings.advanced.data.title"));
 
     // 有文件时，点击导入按钮执行 importConfig
-    fireEvent.click(
-      screen.getByRole("button", { name: /settings\.import/ }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /settings\.import/ }));
     expect(importExportMock.importConfig).toHaveBeenCalled();
 
     fireEvent.click(
