@@ -1006,6 +1006,49 @@ impl RequestForwarder {
                                                 used_half_open_permit,
                                             )
                                             .await;
+
+                                            {
+                                                let mut current_providers =
+                                                    self.current_providers.write().await;
+                                                current_providers.insert(
+                                                    app_type_str.to_string(),
+                                                    (provider.id.clone(), provider.name.clone()),
+                                                );
+                                            }
+
+                                            {
+                                                let mut status = self.status.write().await;
+                                                status.success_requests += 1;
+                                                status.last_error = None;
+                                                let should_switch =
+                                                    self.current_provider_id_at_start.as_str()
+                                                        != provider.id.as_str();
+                                                if should_switch {
+                                                    status.failover_count += 1;
+                                                    let fm = self.failover_manager.clone();
+                                                    let ah = self.app_handle.clone();
+                                                    let pid = provider.id.clone();
+                                                    let pname = provider.name.clone();
+                                                    let at = app_type_str.to_string();
+                                                    tokio::spawn(async move {
+                                                        let _ = fm
+                                                            .try_switch(
+                                                                ah.as_ref(),
+                                                                &at,
+                                                                &pid,
+                                                                &pname,
+                                                            )
+                                                            .await;
+                                                    });
+                                                }
+                                                if status.total_requests > 0 {
+                                                    status.success_rate =
+                                                        (status.success_requests as f32
+                                                            / status.total_requests as f32)
+                                                            * 100.0;
+                                                }
+                                            }
+
                                             return Ok(ForwardResult {
                                                 response,
                                                 provider: provider.clone(),

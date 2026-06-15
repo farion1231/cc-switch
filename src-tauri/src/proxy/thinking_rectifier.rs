@@ -278,12 +278,12 @@ pub fn should_rectify_thinking_required(
     let lower = msg.to_lowercase();
 
     // "content[].thinking in the thinking mode must be passed back to the API"
-    // DeepSeek / Kimi / Moonshot 等 vendor 的典型错误消息。
-    // 与 CCH 对齐：只对精确的 thinking-backpass 错误触发,避免误扩。
-    lower.contains("thinking")
+    // DeepSeek / Kimi / Moonshot 等 vendor 的典型错误消息。兼容
+    // 以 "thinking" 或 "reasoning_content" 表述的回传错误 (两者语义等价)。
+    (lower.contains("thinking") || lower.contains("reasoning_content"))
         && (lower.contains("must be passed back")
             || lower.contains("must start with a thinking block")
-            || lower.contains("reasoning_content") && lower.contains("must be"))
+            || lower.contains("must be"))
 }
 
 /// 反应式注入 thinking 占位块
@@ -840,6 +840,15 @@ mod tests {
     fn test_detect_thinking_must_be_passed_back() {
         assert!(should_rectify_thinking_required(
             Some("content[0].thinking in the thinking mode must be passed back to the API"),
+            &enabled_config()
+        ));
+    }
+
+    #[test]
+    fn test_detect_reasoning_content_must_be_passed_back() {
+        // Some vendors phrase the error in terms of reasoning_content rather than thinking.
+        assert!(should_rectify_thinking_required(
+            Some("reasoning_content must be passed back to the API"),
             &enabled_config()
         ));
     }
