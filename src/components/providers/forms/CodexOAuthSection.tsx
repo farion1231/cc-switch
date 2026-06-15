@@ -198,7 +198,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
         accountSelect
       )}
 
-      {mode === "manage" && onFastModeChange && (
+      {onFastModeChange && (
         <div className="flex items-center justify-between rounded-md border bg-muted/30 p-3">
           <div className="space-y-1 pr-4">
             <Label className="text-sm font-medium">
