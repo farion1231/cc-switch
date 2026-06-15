@@ -1469,9 +1469,9 @@ impl SkillService {
                 let skill = skill_map.get(id.as_str())?;
                 let doc_path = if let Some(subdir) = subdirectory {
                     format!(
-                        "{}/{}",
+                        "{}/{}/SKILL.md",
                         subdir.trim_end_matches('/'),
-                        format!("{}/SKILL.md", skill.directory.trim_end_matches('/'))
+                        skill.directory.trim_end_matches('/')
                     )
                 } else {
                     skill
@@ -1482,12 +1482,12 @@ impl SkillService {
                             format!("{}/SKILL.md", skill.directory.trim_end_matches('/'))
                         })
                 };
-                let readme_url = Some(Self::build_skill_doc_url(
+                let readme_url = Self::build_skill_doc_url(
                     repo_owner,
                     repo_name,
                     repo_branch,
                     &doc_path,
-                ));
+                );
                 let new_id = format!("{}/{}:{}", repo_owner, repo_name, skill.directory);
                 Some((id.clone(), new_id, readme_url))
             })
