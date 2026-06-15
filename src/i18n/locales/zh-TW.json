@@ -1142,6 +1142,7 @@
     "selectAccount": "選擇帳號",
     "selectAccountPlaceholder": "選擇一個 ChatGPT 帳號",
     "useDefaultAccount": "使用預設帳號",
+    "noneOptionLabel": "暫不綁定託管帳號，使用瀏覽器登入",
     "loggedInAccounts": "已登入帳號",
     "defaultAccount": "預設",
     "selected": "已選取",

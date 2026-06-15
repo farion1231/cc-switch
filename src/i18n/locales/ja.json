@@ -1170,6 +1170,7 @@
     "selectAccount": "アカウントを選択",
     "selectAccountPlaceholder": "ChatGPT アカウントを選択",
     "useDefaultAccount": "デフォルトアカウントを使用",
+    "noneOptionLabel": "管理アカウントをバインドせず、ブラウザでログイン",
     "loggedInAccounts": "ログイン済みアカウント",
     "defaultAccount": "デフォルト",
     "selected": "選択中",

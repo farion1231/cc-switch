@@ -1170,6 +1170,7 @@
     "selectAccount": "选择账号",
     "selectAccountPlaceholder": "选择一个 ChatGPT 账号",
     "useDefaultAccount": "使用默认账号",
+    "noneOptionLabel": "暂不绑定托管账号，使用浏览器登录",
     "loggedInAccounts": "已登录账号",
     "defaultAccount": "默认",
     "selected": "已选中",

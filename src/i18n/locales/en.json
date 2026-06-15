@@ -1170,6 +1170,7 @@
     "selectAccount": "Select account",
     "selectAccountPlaceholder": "Choose a ChatGPT account",
     "useDefaultAccount": "Use default account",
+    "noneOptionLabel": "Don't bind a managed account, use browser login",
     "loggedInAccounts": "Logged in accounts",
     "defaultAccount": "Default",
     "selected": "Selected",
