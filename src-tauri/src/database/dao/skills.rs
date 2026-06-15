@@ -291,3 +291,45 @@ impl Database {
         Ok(count)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::skill::SkillStore;
+
+    #[test]
+    fn default_repo_init_preserves_existing_custom_branch() {
+        let db = Database::memory().expect("memory db");
+        let default_repo = SkillStore::default()
+            .repos
+            .into_iter()
+            .next()
+            .expect("default repo");
+        let custom_branch = "custom-branch".to_string();
+
+        db.save_skill_repo(&SkillRepo {
+            source_type: "github".to_string(),
+            source_host: "github.com".to_string(),
+            owner: default_repo.owner.clone(),
+            name: default_repo.name.clone(),
+            branch: custom_branch.clone(),
+            enabled: true,
+        })
+        .expect("save custom branch repo");
+
+        let inserted = db.init_default_skill_repos().expect("init default repos");
+        let repos = db.get_skill_repos().expect("get repos");
+        let matching_repo = repos
+            .iter()
+            .find(|repo| {
+                repo.normalized_source_type() == default_repo.normalized_source_type()
+                    && repo.normalized_source_host() == default_repo.normalized_source_host()
+                    && repo.owner == default_repo.owner
+                    && repo.name == default_repo.name
+            })
+            .expect("existing default repo identity");
+
+        assert_eq!(inserted, 0);
+        assert_eq!(matching_repo.branch, custom_branch);
+    }
+}
