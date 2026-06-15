@@ -196,11 +196,14 @@ impl Database {
             return Ok(0);
         }
 
-        let conn = lock_conn!(self.conn);
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         let mut affected = 0;
 
         for (old_id, new_id, readme_url) in updates {
-            let rows = conn
+            let rows = tx
                 .execute(
                     "UPDATE skills SET id = ?1, repo_owner = ?2, repo_name = ?3, repo_branch = ?4, readme_url = ?5 WHERE id = ?6",
                     params![new_id, repo_owner, repo_name, repo_branch, readme_url, old_id],
@@ -209,6 +212,7 @@ impl Database {
             affected += rows;
         }
 
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
         Ok(affected)
     }
 
