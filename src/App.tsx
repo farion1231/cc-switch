@@ -26,6 +26,7 @@ import {
   Shield,
   Cpu,
   LayoutDashboard,
+  SquareTerminal,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -90,6 +91,7 @@ import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
+import { SkillEnvEditorDialog } from "@/components/SkillEnvEditorDialog";
 
 type View =
   | "providers"
@@ -171,6 +173,7 @@ function App() {
   const [currentView, setCurrentView] = useState<View>(getInitialView);
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [isSkillEnvOpen, setIsSkillEnvOpen] = useState(false);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
 
   useEffect(() => {
@@ -1352,6 +1355,17 @@ function App() {
                     />
 
                     <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setIsSkillEnvOpen(true)}
+                        className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                        title={t("skillEnv.title", {
+                          defaultValue: "Skill 环境变量",
+                        })}
+                      >
+                        <SquareTerminal className="w-4 h-4" />
+                      </Button>
                       <AnimatePresence mode="wait">
                         <motion.div
                           key={
@@ -1612,6 +1626,10 @@ function App() {
       />
 
       <DeepLinkImportDialog />
+      <SkillEnvEditorDialog
+        open={isSkillEnvOpen}
+        onOpenChange={setIsSkillEnvOpen}
+      />
       <FirstRunNoticeDialog />
     </div>
   );

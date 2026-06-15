@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 use tauri::AppHandle;
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_updater::UpdaterExt;
 
 fn merge_settings_for_save(
@@ -117,6 +118,59 @@ pub async fn save_settings(
         }
     }
     Ok(true)
+}
+
+#[tauri::command]
+pub async fn get_default_skill_env_output_path() -> Result<String, String> {
+    Ok(crate::skill_env::default_output_path()
+        .display()
+        .to_string())
+}
+
+#[tauri::command]
+pub async fn pick_skill_env_output_file<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    #[allow(non_snake_case)] currentPath: Option<String>,
+) -> Result<Option<String>, String> {
+    let fallback = crate::skill_env::default_output_path();
+    let current = currentPath
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(crate::skill_env::resolve_path)
+        .unwrap_or(fallback);
+    let default_name = current
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(if cfg!(target_os = "windows") {
+            "env.ps1"
+        } else {
+            "env.sh"
+        });
+
+    let mut dialog = app.dialog().file().set_file_name(default_name);
+    if let Some(parent) = current.parent() {
+        dialog = dialog.set_directory(parent);
+    }
+    let result = dialog.blocking_save_file();
+    Ok(result.map(|p| p.to_string()))
+}
+
+#[tauri::command]
+pub async fn get_skill_env_state() -> Result<crate::skill_env::SkillEnvState, String> {
+    crate::skill_env::read_state().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn save_skill_env(
+    #[allow(non_snake_case)] content: String,
+) -> Result<crate::skill_env::SkillEnvSaveResult, String> {
+    crate::skill_env::save_and_refresh(&content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn refresh_skill_env() -> Result<crate::skill_env::SkillEnvSaveResult, String> {
+    crate::skill_env::refresh_from_source().map_err(|e| e.to_string())
 }
 
 #[derive(serde::Serialize)]

@@ -30,6 +30,7 @@
     "copy": "複製",
     "view": "檢視",
     "back": "返回",
+    "close": "關閉",
     "refresh": "重新整理",
     "refreshing": "重新整理中...",
     "import": "匯入",
@@ -41,6 +42,21 @@
     "auto": "自動",
     "enabled": "已啟用",
     "notSet": "未設定"
+  },
+  "skillEnv": {
+    "title": "Skill 環境變數",
+    "description": "使用 .env 格式設定全域 Skill 環境變數。儲存後會寫入來源檔案並產生目前系統的環境變數檔案。",
+    "loadFailed": "讀取環境變數失敗",
+    "saveSuccess": "環境變數已儲存並套用",
+    "saveFailed": "儲存環境變數失敗",
+    "reloadApply": "重新載入並套用",
+    "refreshSuccess": "環境變數已重新載入並套用",
+    "refreshFailed": "重新載入環境變數失敗",
+    "refreshCount": "已重新載入 {{count}} 個變數",
+    "sourcePath": "來源檔案：{{path}}",
+    "outputPath": "產生檔案：{{path}}",
+    "parsedCount": "變數數量：{{count}}",
+    "restartHint": "儲存/重新載入後，CC Switch 後續啟動的行程會使用新變數；已執行中的客戶端需要重新啟動。"
   },
   "firstRunNotice": {
     "title": "歡迎使用 CC Switch",
@@ -716,6 +732,13 @@
       "symlink": "軟連結",
       "copy": "檔案複製",
       "symlinkHint": "軟連結節省磁碟空間並支援即時同步。注意：Windows 可能需要管理員權限或開啟開發者模式"
+    },
+    "skillEnv": {
+      "pathTitle": "Skill 環境變數儲存位置",
+      "pathDescription": "設定 CC Switch 產生的系統環境變數檔案路徑。變數內容可從主頁面的環境變數按鈕編輯。",
+      "pathSaved": "Skill 環境變數儲存位置已儲存",
+      "resetDefault": "還原預設路徑",
+      "effectivePath": "目前生效路徑：{{path}}"
     },
     "terminal": {
       "title": "首選終端機",

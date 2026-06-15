@@ -30,6 +30,7 @@
     "copy": "コピー",
     "view": "表示",
     "back": "戻る",
+    "close": "閉じる",
     "refresh": "更新",
     "refreshing": "更新中...",
     "import": "インポート",
@@ -41,6 +42,21 @@
     "auto": "自動",
     "enabled": "有効",
     "notSet": "未設定"
+  },
+  "skillEnv": {
+    "title": "Skill 環境変数",
+    "description": ".env 形式でグローバル Skill 環境変数を設定します。保存するとソースファイルを書き込み、このシステム用の環境変数ファイルを生成します。",
+    "loadFailed": "環境変数の読み込みに失敗しました",
+    "saveSuccess": "環境変数を保存して適用しました",
+    "saveFailed": "環境変数の保存に失敗しました",
+    "reloadApply": "再読み込みして適用",
+    "refreshSuccess": "環境変数を再読み込みして適用しました",
+    "refreshFailed": "環境変数の再読み込みに失敗しました",
+    "refreshCount": "{{count}} 個の変数を再読み込みしました",
+    "sourcePath": "ソースファイル：{{path}}",
+    "outputPath": "生成ファイル：{{path}}",
+    "parsedCount": "変数数：{{count}}",
+    "restartHint": "保存/再読み込み後、CC Switch が新しく起動するプロセスでは新しい変数が使われます。既に実行中のクライアントは再起動が必要です。"
   },
   "firstRunNotice": {
     "title": "CC Switch へようこそ",
@@ -716,6 +732,13 @@
       "symlink": "シンボリックリンク",
       "copy": "ファイルコピー",
       "symlinkHint": "シンボリックリンクはディスク容量を節約し、リアルタイム同期を有効にします。注意：Windowsでは管理者権限または開発者モードが必要な場合があります"
+    },
+    "skillEnv": {
+      "pathTitle": "Skill 環境変数ファイル",
+      "pathDescription": "CC Switch が生成するシステム環境変数ファイルのパスを設定します。変数はメイン画面の環境変数ボタンから編集します。",
+      "pathSaved": "Skill 環境変数ファイルのパスを保存しました",
+      "resetDefault": "既定のパスに戻す",
+      "effectivePath": "有効なパス：{{path}}"
     },
     "terminal": {
       "title": "優先ターミナル",
