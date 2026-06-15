@@ -328,7 +328,7 @@ fn write_secure(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
             .open(path)
             .map_err(|e| AppError::io(path, e))?;
         file.write_all(bytes).map_err(|e| AppError::io(path, e))?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(unix))]

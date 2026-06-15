@@ -32,7 +32,10 @@ export function SkillEnvPathSettings({
         if (active) setDefaultPath(path);
       })
       .catch((error) => {
-        console.warn("[SkillEnvPathSettings] Failed to load default path", error);
+        console.warn(
+          "[SkillEnvPathSettings] Failed to load default path",
+          error,
+        );
       });
     return () => {
       active = false;
