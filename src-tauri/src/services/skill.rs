@@ -3115,13 +3115,7 @@ impl SkillService {
 
 // ========== 迁移支持 ==========
 
-/// 从 lock 文件信息构建 skill 的 ID、仓库字段和 readme URL
-///
-/// 返回 (id, repo_owner, repo_name, repo_branch, readme_url)
-fn build_repo_info_from_lock(
-    lock: &HashMap<String, LockRepoInfo>,
-    dir_name: &str,
-) -> (
+type LockRepoInfoParts = (
     String,
     Option<String>,
     Option<String>,
@@ -3129,7 +3123,15 @@ fn build_repo_info_from_lock(
     Option<String>,
     Option<String>,
     Option<String>,
-) {
+);
+
+/// 从 lock 文件信息构建 skill 的 ID、仓库字段和 readme URL
+///
+/// 返回 (id, repo_source_type, repo_source_host, repo_owner, repo_name, repo_branch, readme_url)
+fn build_repo_info_from_lock(
+    lock: &HashMap<String, LockRepoInfo>,
+    dir_name: &str,
+) -> LockRepoInfoParts {
     match lock.get(dir_name) {
         Some(info) => {
             let branch = info.branch.clone();

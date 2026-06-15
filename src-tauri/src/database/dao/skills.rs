@@ -265,9 +265,16 @@ impl Database {
     pub fn init_default_skill_repos(&self) -> Result<usize, AppError> {
         // 获取已有仓库列表
         let existing = self.get_skill_repos()?;
-        let existing_keys: std::collections::HashSet<(String, String)> = existing
+        let existing_keys: std::collections::HashSet<(String, String, String, String)> = existing
             .iter()
-            .map(|r| (r.repo_key(), r.branch.clone()))
+            .map(|r| {
+                (
+                    r.normalized_source_type(),
+                    r.normalized_source_host(),
+                    r.owner.clone(),
+                    r.name.clone(),
+                )
+            })
             .collect();
 
         // 获取默认仓库列表
@@ -276,7 +283,12 @@ impl Database {
 
         // 仅插入缺失的默认仓库
         for repo in &default_store.repos {
-            let key = (repo.repo_key(), repo.branch.clone());
+            let key = (
+                repo.normalized_source_type(),
+                repo.normalized_source_host(),
+                repo.owner.clone(),
+                repo.name.clone(),
+            );
             if !existing_keys.contains(&key) {
                 self.save_skill_repo(repo)?;
                 count += 1;
@@ -288,5 +300,47 @@ impl Database {
             log::info!("补充默认 Skill 仓库完成，新增 {count} 个");
         }
         Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::skill::SkillStore;
+
+    #[test]
+    fn default_repo_init_preserves_existing_custom_branch() {
+        let db = Database::memory().expect("memory db");
+        let default_repo = SkillStore::default()
+            .repos
+            .into_iter()
+            .next()
+            .expect("default repo");
+        let custom_branch = "custom-branch".to_string();
+
+        db.save_skill_repo(&SkillRepo {
+            source_type: "github".to_string(),
+            source_host: "github.com".to_string(),
+            owner: default_repo.owner.clone(),
+            name: default_repo.name.clone(),
+            branch: custom_branch.clone(),
+            enabled: true,
+        })
+        .expect("save custom branch repo");
+
+        let inserted = db.init_default_skill_repos().expect("init default repos");
+        let repos = db.get_skill_repos().expect("get repos");
+        let matching_repo = repos
+            .iter()
+            .find(|repo| {
+                repo.normalized_source_type() == default_repo.normalized_source_type()
+                    && repo.normalized_source_host() == default_repo.normalized_source_host()
+                    && repo.owner == default_repo.owner
+                    && repo.name == default_repo.name
+            })
+            .expect("existing default repo identity");
+
+        assert_eq!(inserted, SkillStore::default().repos.len() - 1);
+        assert_eq!(matching_repo.branch, custom_branch);
     }
 }
