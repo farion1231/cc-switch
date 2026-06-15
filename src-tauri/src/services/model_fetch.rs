@@ -4,6 +4,7 @@
 //! 主要面向第三方聚合站（硅基流动、OpenRouter 等），以及把 Anthropic
 //! 协议挂在兼容子路径上的官方供应商（DeepSeek、Kimi、智谱 GLM 等）。
 
+use reqwest::header::{HeaderValue, USER_AGENT};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -55,6 +56,7 @@ pub async fn fetch_models(
     api_key: &str,
     is_full_url: bool,
     models_url_override: Option<&str>,
+    user_agent: Option<HeaderValue>,
 ) -> Result<Vec<FetchedModel>, String> {
     if api_key.is_empty() {
         return Err("API Key is required to fetch models".to_string());
@@ -66,13 +68,16 @@ pub async fn fetch_models(
 
     for url in &candidates {
         log::debug!("[ModelFetch] Trying endpoint: {url}");
-        let response = match client
+        let mut request = client
             .get(url)
             .header("Authorization", format!("Bearer {api_key}"))
-            .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
-            .send()
-            .await
-        {
+            .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS));
+        // 自定义 User-Agent：部分 /models 端点同样有 UA 白名单（如 Kimi Coding Plan），
+        // 与转发 / 检测路径共用同一 UA，避免"代理可用但取模型失败"。
+        if let Some(ua) = &user_agent {
+            request = request.header(USER_AGENT, ua.clone());
+        }
+        let response = match request.send().await {
             Ok(r) => r,
             Err(e) => {
                 return Err(format!("Request failed: {e}"));

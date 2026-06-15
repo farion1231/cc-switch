@@ -1,8 +1,11 @@
+import { cloneElement, isValidElement } from "react";
 import { useTranslation } from "react-i18next";
 import { motion } from "framer-motion";
 import { Card, CardContent } from "@/components/ui/card";
 import { useUsageSummaryByApp } from "@/lib/query/usage";
 import { cn } from "@/lib/utils";
+import { APP_ICON_MAP } from "@/config/appConfig";
+import type { AppId } from "@/lib/api/types";
 import {
   Activity,
   ArrowDownToLine,
@@ -30,6 +33,8 @@ import {
 interface UsageHeroProps {
   range: UsageRangeSelection;
   appType?: string;
+  providerName?: string;
+  model?: string;
   refreshIntervalMs: number;
 }
 
@@ -47,8 +52,10 @@ const TITLE_THEMES: Record<AppType | "all", TitleTheme> = {
     iconBg: "bg-amber-500/10",
   },
   codex: {
-    accent: "text-emerald-600 dark:text-emerald-400",
-    iconBg: "bg-emerald-500/10",
+    // OpenAI/Codex 走黑白单色调；中性灰在深浅模式都能透出方块底色，
+    // 不像纯黑 bg-black/10 在深色背景下会糊掉。
+    accent: "text-neutral-700 dark:text-neutral-300",
+    iconBg: "bg-neutral-500/10",
   },
   gemini: {
     accent: "text-sky-600 dark:text-sky-400",
@@ -130,17 +137,44 @@ function deriveCacheWriteState(appTypes: string[]): CacheWriteState {
   return "partial";
 }
 
+/**
+ * Hero 标题图标：选中具体应用时显示该应用的品牌图标，"全部"时回退到通用闪电。
+ * 复用 APP_ICON_MAP（与侧边栏 / 应用切换器同一套图标），用 cloneElement 放大到
+ * 与原闪电一致的 20px；品牌图标自带配色，外层方块仍按 titleTheme 主题色着色。
+ */
+function AppGlyph({
+  appType,
+  accentClass,
+}: {
+  appType?: string;
+  accentClass: string;
+}) {
+  if (appType && appType in APP_ICON_MAP) {
+    const base = APP_ICON_MAP[appType as AppId].icon;
+    if (isValidElement<{ size?: number }>(base)) {
+      return cloneElement(base, { size: 20 });
+    }
+  }
+  return <Zap className={cn("h-5 w-5", accentClass)} />;
+}
+
 export function UsageHero({
   range,
   appType,
+  providerName,
+  model,
   refreshIntervalMs,
 }: UsageHeroProps) {
   const { t, i18n } = useTranslation();
   const lang = getResolvedLang(i18n);
 
-  const { data, isLoading } = useUsageSummaryByApp(range, {
-    refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
-  });
+  const { data, isLoading } = useUsageSummaryByApp(
+    range,
+    { providerName, model },
+    {
+      refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
+    },
+  );
 
   // No client-side filtering: Hero's totals must match the Trend/Logs/Stats
   // below, which all go through the backend's full set of app_types. The
@@ -217,7 +251,7 @@ export function UsageHero({
                     titleTheme.iconBg,
                   )}
                 >
-                  <Zap className={cn("h-5 w-5", titleTheme.accent)} />
+                  <AppGlyph appType={appType} accentClass={titleTheme.accent} />
                 </div>
                 <div>
                   <div className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 mb-0.5">

@@ -163,19 +163,34 @@ export function SettingsPage({
 
   // 通用设置即时保存（无需手动点击）
   // 使用 autoSaveSettings 避免误触发系统 API（开机自启、Claude 插件等）
+  // 返回保存是否成功：需要在保存成功后追加动作的调用方（如统一会话历史
+  // 关闭后的备份还原）据此短路，其余调用方可忽略返回值。
   const handleAutoSave = useCallback(
-    async (updates: Partial<SettingsFormState>) => {
-      if (!settings) return;
+    async (updates: Partial<SettingsFormState>): Promise<boolean> => {
+      if (!settings) return false;
+      // 乐观更新前捕获旧值：autoSaveSettings 发送的是全量表单状态，后端按
+      // diff 触发副作用（如统一会话开关的 live 重写与历史迁移）。保存失败
+      // 不回滚的话，失败的变更会滞留在表单里，被之后任意一次无关保存原样
+      // 重放，绕过确认弹窗。
+      const previousValues = Object.fromEntries(
+        Object.keys(updates).map((key) => [
+          key,
+          settings[key as keyof SettingsFormState],
+        ]),
+      ) as Partial<SettingsFormState>;
       updateSettings(updates);
       try {
         await autoSaveSettings(updates);
+        return true;
       } catch (error) {
         console.error("[SettingsPage] Failed to autosave settings", error);
+        updateSettings(previousValues);
         toast.error(
           t("settings.saveFailedGeneric", {
             defaultValue: "保存失败，请重试",
           }),
         );
+        return false;
       }
     },
     [autoSaveSettings, settings, t, updateSettings],

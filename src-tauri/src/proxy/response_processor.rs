@@ -35,28 +35,41 @@ use tokio::sync::Mutex;
 /// 根据 content-encoding 解压响应体字节
 ///
 /// reqwest 自动解压已禁用（为了透传 accept-encoding），需要手动解压。
-fn decompress_body(content_encoding: &str, body: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+/// 返回 `Ok(None)` 表示编码不受支持、原样透传——此时调用方必须保留
+/// content-encoding 头，否则下游（诊断/客户端）会把压缩字节误当明文。
+fn decompress_body(content_encoding: &str, body: &[u8]) -> Result<Option<Vec<u8>>, std::io::Error> {
     match content_encoding {
         "gzip" | "x-gzip" => {
             let mut decoder = flate2::read::GzDecoder::new(body);
             let mut decompressed = Vec::new();
             decoder.read_to_end(&mut decompressed)?;
-            Ok(decompressed)
+            Ok(Some(decompressed))
         }
         "deflate" => {
-            let mut decoder = flate2::read::DeflateDecoder::new(body);
+            // RFC 9110: deflate 指 zlib 包裹格式；但部分上游发 raw deflate 流。
+            // 先按规范尝试 zlib，失败再回退 raw —— 否则合规上游必然解压失败，
+            // 原始压缩字节会被 fail-open 透传给 JSON 解析（#2234 形态 C 之一）。
             let mut decompressed = Vec::new();
-            decoder.read_to_end(&mut decompressed)?;
-            Ok(decompressed)
+            let mut zlib = flate2::read::ZlibDecoder::new(body);
+            match zlib.read_to_end(&mut decompressed) {
+                Ok(_) => Ok(Some(decompressed)),
+                Err(zlib_err) => {
+                    log::debug!("deflate 按 zlib 解压失败（{zlib_err}），回退 raw deflate");
+                    let mut decompressed = Vec::new();
+                    let mut raw = flate2::read::DeflateDecoder::new(body);
+                    raw.read_to_end(&mut decompressed)?;
+                    Ok(Some(decompressed))
+                }
+            }
         }
         "br" => {
             let mut decompressed = Vec::new();
             brotli::BrotliDecompress(&mut std::io::Cursor::new(body), &mut decompressed)?;
-            Ok(decompressed)
+            Ok(Some(decompressed))
         }
         _ => {
             log::warn!("未知的 content-encoding: {content_encoding}，跳过解压");
-            Ok(body.to_vec())
+            Ok(None)
         }
     }
 }
@@ -150,10 +163,13 @@ pub(crate) async fn read_decoded_body(
     if let Some(encoding) = get_content_encoding(&headers) {
         log::debug!("[{tag}] 解压非流式响应: content-encoding={encoding}");
         match decompress_body(&encoding, &raw_bytes) {
-            Ok(decompressed) => {
+            Ok(Some(decompressed)) => {
                 body_bytes = Bytes::from(decompressed);
                 decoded = true;
             }
+            // 不支持的编码：原样透传且保留 content-encoding 头，
+            // 让下游诊断/客户端知道这仍是压缩字节
+            Ok(None) => {}
             Err(e) => {
                 log::warn!("[{tag}] 解压失败 ({encoding}): {e}，使用原始数据");
             }
@@ -270,14 +286,21 @@ pub async fn handle_non_streaming(
         if let Ok(json_value) = serde_json::from_slice::<Value>(&body_bytes) {
             // 解析使用量
             if let Some(usage) = (parser_config.response_parser)(&json_value) {
-                // 优先使用 usage 中解析出的模型名称，其次使用响应中的 model 字段，最后回退到请求模型
-                let model = if let Some(ref m) = usage.model {
-                    m.clone()
-                } else if let Some(m) = json_value.get("model").and_then(|m| m.as_str()) {
-                    m.to_string()
-                } else {
-                    ctx.request_model.clone()
-                };
+                // 归因优先级：usage 解析出的模型 → 响应 model 字段 → 映射后的出站
+                // 模型（路由接管真值）→ 客户端请求模型。空字符串视为缺失。
+                let model = usage
+                    .model
+                    .clone()
+                    .filter(|m| !m.is_empty())
+                    .or_else(|| {
+                        json_value
+                            .get("model")
+                            .and_then(|m| m.as_str())
+                            .filter(|m| !m.is_empty())
+                            .map(str::to_string)
+                    })
+                    .or_else(|| ctx.outbound_model.clone())
+                    .unwrap_or_else(|| ctx.request_model.clone());
 
                 spawn_log_usage(
                     state,
@@ -292,8 +315,10 @@ pub async fn handle_non_streaming(
                 let model = json_value
                     .get("model")
                     .and_then(|m| m.as_str())
-                    .unwrap_or(&ctx.request_model)
-                    .to_string();
+                    .filter(|m| !m.is_empty())
+                    .map(str::to_string)
+                    .or_else(|| ctx.outbound_model.clone())
+                    .unwrap_or_else(|| ctx.request_model.clone());
                 spawn_log_usage(
                     state,
                     ctx,
@@ -318,7 +343,7 @@ pub async fn handle_non_streaming(
                 state,
                 ctx,
                 TokenUsage::default(),
-                &ctx.request_model,
+                ctx.outbound_model.as_deref().unwrap_or(&ctx.request_model),
                 &ctx.request_model,
                 status.as_u16(),
                 false,
@@ -500,7 +525,16 @@ fn create_usage_collector(
     let state = state.clone();
     let provider_id = ctx.provider.id.clone();
     let request_model = ctx.request_model.clone();
-    let app_type_str = parser_config.app_type_str;
+    // 流式事件缺失模型名时的归因兜底：映射后的出站模型（路由接管真值）优先，
+    // 其次才是客户端请求别名
+    let fallback_model = ctx
+        .outbound_model
+        .clone()
+        .unwrap_or_else(|| ctx.request_model.clone());
+    // 用 ctx 的 app_type 而不是 parser_config 的：Claude Desktop 流式透传复用
+    // CLAUDE_PARSER_CONFIG（app_type_str="claude"），按 parser_config 记账会把
+    // claude-desktop 的行错记到 claude 名下，导致供应商计价覆盖解析不到。
+    let app_type_str = ctx.app_type_str;
     let tag = ctx.tag;
     let start_time = ctx.start_time;
     let stream_parser = parser_config.stream_parser;
@@ -512,13 +546,14 @@ fn create_usage_collector(
         parser_config.stream_event_filter,
         move |events, first_token_ms| {
             if let Some(usage) = stream_parser(&events) {
-                let model = model_extractor(&events, &request_model);
+                let model = model_extractor(&events, &fallback_model);
                 let latency_ms = start_time.elapsed().as_millis() as u64;
 
                 let state = state.clone();
                 let provider_id = provider_id.clone();
                 let session_id = session_id.clone();
                 let request_model = request_model.clone();
+                let outbound_model = fallback_model.clone();
 
                 tokio::spawn(async move {
                     log_usage_internal(
@@ -527,6 +562,7 @@ fn create_usage_collector(
                         app_type_str,
                         &model,
                         &request_model,
+                        &outbound_model,
                         usage,
                         latency_ms,
                         first_token_ms,
@@ -537,12 +573,13 @@ fn create_usage_collector(
                     .await;
                 });
             } else {
-                let model = model_extractor(&events, &request_model);
+                let model = model_extractor(&events, &fallback_model);
                 let latency_ms = start_time.elapsed().as_millis() as u64;
                 let state = state.clone();
                 let provider_id = provider_id.clone();
                 let session_id = session_id.clone();
                 let request_model = request_model.clone();
+                let outbound_model = fallback_model.clone();
 
                 tokio::spawn(async move {
                     log_usage_internal(
@@ -551,6 +588,7 @@ fn create_usage_collector(
                         app_type_str,
                         &model,
                         &request_model,
+                        &outbound_model,
                         TokenUsage::default(),
                         latency_ms,
                         first_token_ms,
@@ -588,6 +626,11 @@ fn spawn_log_usage(
     let app_type_str = ctx.app_type_str.to_string();
     let model = model.to_string();
     let request_model = request_model.to_string();
+    // 「按请求计价」模式的锚点：映射后的出站模型，无映射时等于 request_model
+    let outbound_model = ctx
+        .outbound_model
+        .clone()
+        .unwrap_or_else(|| ctx.request_model.clone());
     let latency_ms = ctx.latency_ms();
     let session_id = ctx.session_id.clone();
 
@@ -598,6 +641,7 @@ fn spawn_log_usage(
             &app_type_str,
             &model,
             &request_model,
+            &outbound_model,
             usage,
             latency_ms,
             None,
@@ -618,6 +662,11 @@ pub(crate) fn usage_logging_enabled(state: &ProxyState) -> bool {
 }
 
 /// 内部使用量记录函数
+///
+/// `outbound_model` 是「按请求计价」模式的锚点：实际发往上游的模型
+/// （路由接管映射后的真值，无映射时等于 request_model）。该模式的语义是
+/// 「按代理发出的请求计价、不信任上游回显」，接管场景下发出的请求模型是
+/// 映射后的 Y 而非客户端别名 X，按 X 计价会用错定价表行。
 #[allow(clippy::too_many_arguments)]
 async fn log_usage_internal(
     state: &ProxyState,
@@ -625,6 +674,7 @@ async fn log_usage_internal(
     app_type: &str,
     model: &str,
     request_model: &str,
+    outbound_model: &str,
     usage: TokenUsage,
     latency_ms: u64,
     first_token_ms: Option<u64>,
@@ -638,7 +688,7 @@ async fn log_usage_internal(
     let (multiplier, pricing_model_source) =
         logger.resolve_pricing_config(provider_id, app_type).await;
     let pricing_model = if pricing_model_source == PRICING_SOURCE_REQUEST {
-        request_model
+        outbound_model
     } else {
         model
     };
@@ -829,6 +879,40 @@ mod tests {
     use tokio::sync::RwLock;
 
     #[test]
+    fn decompress_body_deflate_handles_zlib_wrapped_per_rfc9110() {
+        // RFC 9110 规范的 deflate = zlib 包裹格式（合规上游发的就是这个）
+        let payload = br#"{"ok":true}"#;
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut encoder, payload).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        let decompressed = decompress_body("deflate", &compressed).unwrap().unwrap();
+        assert_eq!(decompressed, payload);
+    }
+
+    #[test]
+    fn decompress_body_deflate_falls_back_to_raw_stream() {
+        // 部分上游违规发 raw deflate 流，保持兼容
+        let payload = br#"{"ok":true}"#;
+        let mut encoder =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut encoder, payload).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        let decompressed = decompress_body("deflate", &compressed).unwrap().unwrap();
+        assert_eq!(decompressed, payload);
+    }
+
+    #[test]
+    fn decompress_body_unknown_encoding_returns_none_to_keep_headers() {
+        // 未知编码必须返回 None（而非伪装成"已解码"），否则 content-encoding
+        // 头被剥掉，下游诊断会把压缩字节误报成明文
+        let result = decompress_body("zstd", b"\x28\xb5\x2f\xfd").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
     fn test_strip_sse_field_accepts_optional_space() {
         assert_eq!(
             super::strip_sse_field("data: {\"ok\":true}", "data"),
@@ -1015,6 +1099,7 @@ mod tests {
             app_type,
             "resp-model",
             "req-model",
+            "req-model",
             usage,
             10,
             None,
@@ -1048,6 +1133,95 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_request_pricing_mode_anchors_to_outbound_model() -> Result<(), AppError> {
+        let db = Arc::new(Database::memory()?);
+        let app_type = "claude";
+
+        db.set_pricing_model_source(app_type, "request").await?;
+        seed_pricing(&db)?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT OR REPLACE INTO model_pricing (model_id, display_name, input_cost_per_million, output_cost_per_million)
+                 VALUES ('outbound-model', 'Outbound Model', '4.0', '0')",
+                [],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+
+        insert_provider(&db, "provider-3", app_type, ProviderMeta::default())?;
+
+        let state = build_state(db.clone());
+        let usage = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            model: None,
+            message_id: None,
+        };
+
+        // 路由接管场景：客户端请求 req-model（$2/M），代理实际发出 outbound-model
+        // （$4/M），上游回显 resp-model。「按请求计价」必须锚定实际发出的模型。
+        log_usage_internal(
+            &state,
+            "provider-3",
+            app_type,
+            "resp-model",
+            "req-model",
+            "outbound-model",
+            usage,
+            10,
+            None,
+            false,
+            200,
+            None,
+        )
+        .await;
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let (model, request_model, total_cost): (String, String, String) = conn
+            .query_row(
+                "SELECT model, request_model, total_cost_usd
+                 FROM proxy_request_logs WHERE provider_id = ?1",
+                ["provider-3"],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // model / request_model 列不受计价锚点影响
+        assert_eq!(model, "resp-model");
+        assert_eq!(request_model, "req-model");
+        // 按 outbound-model（$4/M）计价，而不是 req-model（$2/M）或 resp-model（$1/M）
+        assert_eq!(
+            Decimal::from_str(&total_cost).unwrap(),
+            Decimal::from_str("4").unwrap()
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_claude_desktop_inherits_claude_global_defaults() -> Result<(), AppError> {
+        use crate::proxy::usage::logger::UsageLogger;
+
+        let db = Arc::new(Database::memory()?);
+
+        // 全局计费配置只有 claude/codex/gemini 三行；claude-desktop 的
+        // 全局默认必须继承 claude，而不是静默落回工厂默认（1 / response）
+        db.set_default_cost_multiplier("claude", "1.5").await?;
+        db.set_pricing_model_source("claude", "request").await?;
+
+        let logger = UsageLogger::new(&db);
+        let (multiplier, source) = logger
+            .resolve_pricing_config("nonexistent-provider", "claude-desktop")
+            .await;
+
+        assert_eq!(multiplier, Decimal::from_str("1.5").unwrap());
+        assert_eq!(source, "request");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_log_usage_falls_back_to_global_defaults() -> Result<(), AppError> {
         let db = Arc::new(Database::memory()?);
         let app_type = "claude";
@@ -1074,6 +1248,7 @@ mod tests {
             "provider-2",
             app_type,
             "resp-model",
+            "req-model",
             "req-model",
             usage,
             10,
