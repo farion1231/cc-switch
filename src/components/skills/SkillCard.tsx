@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { ExternalLink, Download, Trash2, Loader2 } from "lucide-react";
 import { settingsApi } from "@/lib/api";
 import type { DiscoverableSkill } from "@/lib/api/skills";
+import { repoDisplayName } from "./repoUtils";
 
 type SkillCardSkill = DiscoverableSkill & { installed: boolean };
 
@@ -84,7 +85,14 @@ export function SkillCard({
                   variant="outline"
                   className="shrink-0 text-[10px] px-1.5 py-0 h-4 border-border-default"
                 >
-                  {skill.repoOwner}/{skill.repoName}
+                  {repoDisplayName({
+                    sourceType: skill.repoSourceType,
+                    sourceHost: skill.repoSourceHost,
+                    owner: skill.repoOwner,
+                    name: skill.repoName,
+                    branch: skill.repoBranch,
+                    enabled: true,
+                  })}
                 </Badge>
               )}
               {typeof installs === "number" && (

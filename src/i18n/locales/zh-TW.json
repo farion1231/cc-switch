@@ -2090,9 +2090,9 @@
     },
     "repo": {
       "title": "管理技能儲存庫",
-      "description": "新增或刪除 GitHub 技能儲存庫來源",
+      "description": "新增或刪除 GitHub / GitLab 技能儲存庫來源",
       "url": "儲存庫 URL",
-      "urlPlaceholder": "owner/name 或 https://github.com/owner/name",
+      "urlPlaceholder": "owner/name、https://github.com/owner/name 或 https://gitlab.com/group/project",
       "branch": "分支",
       "branchPlaceholder": "main",
       "path": "技能路徑",

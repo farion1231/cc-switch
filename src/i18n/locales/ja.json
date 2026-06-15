@@ -2118,9 +2118,9 @@
     },
     "repo": {
       "title": "スキルリポジトリを管理",
-      "description": "GitHub のスキルリポジトリソースを追加または削除します",
+      "description": "GitHub / GitLab のスキルリポジトリソースを追加または削除します",
       "url": "リポジトリ URL",
-      "urlPlaceholder": "owner/name または https://github.com/owner/name",
+      "urlPlaceholder": "owner/name、https://github.com/owner/name、または https://gitlab.com/group/project",
       "branch": "ブランチ",
       "branchPlaceholder": "main",
       "path": "スキルパス",

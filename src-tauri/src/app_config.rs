@@ -176,7 +176,13 @@ pub struct InstalledSkill {
     pub description: Option<String>,
     /// 安装目录名（在 SSOT 目录中的子目录名）
     pub directory: String,
-    /// 仓库所有者（GitHub 用户/组织）
+    /// 仓库来源类型（github / gitlab）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_source_type: Option<String>,
+    /// 仓库来源域名
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_source_host: Option<String>,
+    /// 仓库所有者（用户/组织）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo_owner: Option<String>,
     /// 仓库名称
