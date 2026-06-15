@@ -968,7 +968,10 @@ base_url = "http://localhost:8080"
         with_test_home(|state, _| {
             // Seed two OpenClaw live providers (minimax and deepseek), each with
             // a single model so the importer keeps them.
-            for (id, model_id) in [("minimax", "minimax/MiniMax-M3"), ("deepseek", "deepseek/deepseek-v4-flash")] {
+            for (id, model_id) in [
+                ("minimax", "minimax/MiniMax-M3"),
+                ("deepseek", "deepseek/deepseek-v4-flash"),
+            ] {
                 let mut p = openclaw_provider(id);
                 p.settings_config["models"] = json!([{ "id": model_id, "name": id }]);
                 crate::openclaw_config::set_provider(&p.id, p.settings_config.clone())
@@ -976,11 +979,13 @@ base_url = "http://localhost:8080"
             }
 
             // Live config declares minimax as the active default.
-            crate::openclaw_config::set_default_model(&crate::openclaw_config::OpenClawDefaultModel {
-                primary: "minimax/MiniMax-M3".to_string(),
-                fallbacks: Vec::new(),
-                extra: std::collections::HashMap::new(),
-            })
+            crate::openclaw_config::set_default_model(
+                &crate::openclaw_config::OpenClawDefaultModel {
+                    primary: "minimax/MiniMax-M3".to_string(),
+                    fallbacks: Vec::new(),
+                    extra: std::collections::HashMap::new(),
+                },
+            )
             .expect("seed openclaw default model");
 
             let imported = import_openclaw_providers_from_live(state)
@@ -997,7 +1002,6 @@ base_url = "http://localhost:8080"
                 "minimax should be marked current because it matches agents.defaults.model.primary"
             );
         });
-    }
     }
 
     #[test]
