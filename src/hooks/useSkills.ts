@@ -143,6 +143,15 @@ export function useUninstallSkill() {
           });
         },
       );
+
+      // 从 updates 缓存中移除已卸载的 skill
+      queryClient.setQueryData<SkillUpdateInfo[]>(
+        ["skills", "updates"],
+        (oldData) => {
+          if (!oldData) return oldData;
+          return oldData.filter((u) => u.id !== _vars.id);
+        },
+      );
     },
   });
 }
@@ -345,6 +354,14 @@ export function useBatchUninstallSkills() {
         (oldData) => {
           if (!oldData) return oldData;
           return oldData.filter((s) => !succeededIds.has(s.id));
+        },
+      );
+      // 从 updates 缓存中移除已删除的 skill
+      queryClient.setQueryData<SkillUpdateInfo[]>(
+        ["skills", "updates"],
+        (oldData) => {
+          if (!oldData) return oldData;
+          return oldData.filter((u) => !succeededIds.has(u.id));
         },
       );
       // 刷新 discoverable 缓存（已删除的 skill 应标记为未安装）
