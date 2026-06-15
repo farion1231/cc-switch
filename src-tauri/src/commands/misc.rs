@@ -2410,6 +2410,7 @@ pub async fn open_provider_terminal(
         .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
 
     if is_claude_official_provider(&app_type, provider) {
+        prepare_official_claude_terminal_launch(&app_type, provider)?;
         launch_official_claude_terminal(launch_cwd.as_deref())
             .map_err(|e| format!("启动终端失败: {e}"))?;
         return Ok(true);
@@ -2428,6 +2429,14 @@ pub async fn open_provider_terminal(
 
 fn is_claude_official_provider(app_type: &AppType, provider: &crate::provider::Provider) -> bool {
     *app_type == AppType::Claude && provider.category.as_deref() == Some("official")
+}
+
+fn prepare_official_claude_terminal_launch(
+    app_type: &AppType,
+    provider: &crate::provider::Provider,
+) -> Result<(), String> {
+    crate::services::provider::write_live_snapshot(app_type, provider)
+        .map_err(|e| format!("更新 Claude 官方配置失败: {e}"))
 }
 
 /// 从提供商配置中提取环境变量
@@ -3061,7 +3070,9 @@ fn launch_linux_terminal(
 
     // Clean up on failure
     let _ = std::fs::remove_file(&script_file);
-    let _ = std::fs::remove_file(config_file);
+    if let Some(config_file) = config_file {
+        let _ = std::fs::remove_file(config_file);
+    }
     Err(last_error)
 }
 
@@ -3414,7 +3425,39 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::Provider;
+    use serde_json::{json, Value};
+    use std::ffi::OsString;
     use std::path::{Path, PathBuf};
+
+    struct TempHome {
+        _dir: tempfile::TempDir,
+        original_test_home: Option<OsString>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = tempfile::TempDir::new().expect("create temp home");
+            let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            crate::settings::reload_settings().expect("reload settings");
+
+            Self {
+                _dir: dir,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            match &self.original_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            crate::settings::reload_settings().expect("reload settings");
+        }
+    }
 
     #[test]
     fn test_extract_version() {
@@ -4822,6 +4865,55 @@ mod tests {
 
         assert!(command.contains("claude --settings '/tmp/cc switch.json'"));
         assert!(!command.contains("unset ANTHROPIC_AUTH_TOKEN"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn official_claude_terminal_launch_prepares_clean_live_settings() {
+        let _home = TempHome::new();
+        let mut provider = Provider::with_id(
+            "claude-official".to_string(),
+            "Claude Official".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "stale-auth-token",
+                    "ANTHROPIC_API_KEY": "stale-api-key",
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+                },
+                "apiBaseUrl": "https://api.example.com",
+                "primaryModel": "stale-primary",
+                "smallFastModel": "stale-small",
+                "permissions": { "allow": ["Bash"] }
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+
+        prepare_official_claude_terminal_launch(&AppType::Claude, &provider)
+            .expect("prepare official Claude terminal launch");
+
+        let written: Value =
+            crate::config::read_json_file(&crate::config::get_claude_settings_path())
+                .expect("read live config");
+        let env = written.get("env").and_then(Value::as_object);
+        assert!(
+            env.is_none_or(|env| !env.keys().any(|key| key.starts_with("ANTHROPIC_"))),
+            "official Claude terminal launch must clear live ANTHROPIC_* env: {written}"
+        );
+        assert!(written.get("apiBaseUrl").is_none());
+        assert!(written.get("primaryModel").is_none());
+        assert!(written.get("smallFastModel").is_none());
+        assert_eq!(
+            written
+                .pointer("/env/CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC")
+                .and_then(Value::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            written.pointer("/permissions/allow/0"),
+            Some(&json!("Bash"))
+        );
     }
 
     #[cfg(target_os = "macos")]
