@@ -7,6 +7,7 @@ import {
 import {
   skillsApi,
   type SkillBackupEntry,
+  type BatchSkillResult,
   type DiscoverableSkill,
   type ImportSkillSelection,
   type InstalledSkill,
@@ -321,6 +322,57 @@ export function useUpdateSkill() {
           return oldData.filter((u) => u.id !== updatedSkill.id);
         },
       );
+    },
+  });
+}
+
+// ========== 批量操作 ==========
+
+/**
+ * 批量卸载 Skills
+ * 成功后直接更新缓存，移除已卸载的 skill
+ */
+export function useBatchUninstallSkills() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => skillsApi.batchUninstall(ids),
+    onSuccess: (results) => {
+      const succeededIds = new Set(
+        results.filter((r) => r.success).map((r) => r.id),
+      );
+      // 从 installed 缓存中移除成功删除的 skill
+      queryClient.setQueryData<InstalledSkill[]>(
+        ["skills", "installed"],
+        (oldData) => {
+          if (!oldData) return oldData;
+          return oldData.filter((s) => !succeededIds.has(s.id));
+        },
+      );
+      // 刷新 discoverable 缓存（已删除的 skill 应标记为未安装）
+      queryClient.invalidateQueries({ queryKey: ["skills", "discoverable"] });
+    },
+  });
+}
+
+/**
+ * 批量切换 Skills 的应用启用状态
+ * 成功后直接更新缓存
+ */
+export function useBatchToggleSkillApp() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      ids,
+      app,
+      enabled,
+    }: {
+      ids: string[];
+      app: AppId;
+      enabled: boolean;
+    }) => skillsApi.batchToggleApp(ids, app, enabled),
+    onSuccess: () => {
+      // 批量切换后刷新缓存
+      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
     },
   });
 }
