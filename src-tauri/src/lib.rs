@@ -356,6 +356,14 @@ pub fn run() {
                 )?;
             }
 
+            match crate::skill_env::apply_saved_to_current_process() {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Applied {count} saved Skill env variable(s) to current process");
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("✗ Failed to apply saved Skill env variables: {e}"),
+            }
+
             // 注入 AppHandle 给 usage_events，让无 AppHandle 持有的写日志路径
             // 也能向前端推送 `usage-log-recorded`。
             // 放在日志系统初始化之后，确保 init 的日志能正常输出。

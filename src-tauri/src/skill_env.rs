@@ -119,6 +119,13 @@ pub fn refresh_from_source() -> Result<SkillEnvSaveResult, AppError> {
     save_and_refresh(&state.content)
 }
 
+pub fn apply_saved_to_current_process() -> Result<usize, AppError> {
+    let state = read_state()?;
+    let env = parse_dotenv(&state.content)?;
+    apply_to_current_process(&env, std::iter::empty::<&String>());
+    Ok(env.len())
+}
+
 fn normalize_source_content(content: &str) -> Result<String, AppError> {
     parse_dotenv(content)?;
     let trimmed = content.trim_end();
@@ -176,7 +183,7 @@ fn parse_generated_env(content: &str) -> BTreeMap<String, String> {
             if let Some((key, value)) = rest.trim().split_once('=') {
                 let key = key.trim();
                 if is_valid_key(key) {
-                    env.insert(key.to_string(), unquote_value(value.trim()));
+                    env.insert(key.to_string(), unquote_powershell_value(value.trim()));
                 }
             }
         }
@@ -300,7 +307,7 @@ fn quote_shell(value: &str) -> String {
 
 #[cfg(target_os = "windows")]
 fn quote_powershell(value: &str) -> String {
-    format!("\"{}\"", value.replace('`', "``").replace('"', "`\""))
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 fn escape_double_quoted(value: &str) -> String {
@@ -311,6 +318,41 @@ fn escape_double_quoted(value: &str) -> String {
         .replace('`', "\\`")
 }
 
+fn unquote_powershell_value(value: &str) -> String {
+    if value.len() >= 2 {
+        let bytes = value.as_bytes();
+        if bytes[0] == b'\'' && bytes[value.len() - 1] == b'\'' {
+            return value[1..value.len() - 1].replace("''", "'");
+        }
+        if bytes[0] == b'"' && bytes[value.len() - 1] == b'"' {
+            return unescape_powershell_double_quoted(&value[1..value.len() - 1]);
+        }
+    }
+    value.to_string()
+}
+
+fn unescape_powershell_double_quoted(value: &str) -> String {
+    let mut output = String::new();
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '`' {
+            if let Some(next) = chars.next() {
+                output.push(match next {
+                    'n' => '\n',
+                    'r' => '\r',
+                    't' => '\t',
+                    other => other,
+                });
+            } else {
+                output.push(ch);
+            }
+        } else {
+            output.push(ch);
+        }
+    }
+    output
+}
+
 fn write_secure(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
@@ -319,13 +361,15 @@ fn write_secure(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
     #[cfg(unix)]
     {
         use std::fs::OpenOptions;
-        use std::os::unix::fs::OpenOptionsExt;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
         let mut file = OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
             .mode(0o600)
             .open(path)
+            .map_err(|e| AppError::io(path, e))?;
+        file.set_permissions(fs::Permissions::from_mode(0o600))
             .map_err(|e| AppError::io(path, e))?;
         file.write_all(bytes).map_err(|e| AppError::io(path, e))?;
         Ok(())
@@ -350,7 +394,7 @@ mod tests {
         assert_eq!(env.get("ENABLED").unwrap(), "true");
         let generated = render_generated_env(&env, Path::new("/tmp/source.env"));
         #[cfg(target_os = "windows")]
-        assert!(generated.contains("$env:TOKEN = \"a b$c\""));
+        assert!(generated.contains("$env:TOKEN = 'a b$c'"));
         #[cfg(not(target_os = "windows"))]
         assert!(generated.contains("export TOKEN=\"a b\\$c\""));
     }
@@ -360,5 +404,78 @@ mod tests {
         let env = parse_generated_env("export OT_BASE_DIR=\"/tmp/ot\"\n# comment\nBAD-LINE=x\n");
         assert_eq!(env.get("OT_BASE_DIR").unwrap(), "/tmp/ot");
         assert!(!env.contains_key("BAD-LINE"));
+    }
+
+    #[test]
+    fn parses_existing_powershell_exports_without_expanding_literals() {
+        let env = parse_generated_env(
+            "$env:TOKEN = 'abc$def'\n$env:QUOTE = 'it''s'\n$env:PATH = \"a`$b\"\n",
+        );
+        assert_eq!(env.get("TOKEN").unwrap(), "abc$def");
+        assert_eq!(env.get("QUOTE").unwrap(), "it's");
+        assert_eq!(env.get("PATH").unwrap(), "a$b");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn write_secure_tightens_existing_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("skill-env.env");
+        fs::write(&path, b"old").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_secure(&path, b"SECRET=value\n").unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "SECRET=value\n");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn applies_saved_source_env_on_startup_without_clearing_inherited_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_dir = dir.path().join(".cc-switch");
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::write(
+            source_dir.join(SOURCE_FILE_NAME),
+            "CC_SWITCH_SKILL_ENV_STARTUP_TEST=loaded\n",
+        )
+        .unwrap();
+
+        let previous_home = std::env::var("CC_SWITCH_TEST_HOME").ok();
+        let previous_loaded = std::env::var("CC_SWITCH_SKILL_ENV_STARTUP_TEST").ok();
+        let previous_inherited = std::env::var("CC_SWITCH_SKILL_ENV_INHERITED_TEST").ok();
+
+        std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+        std::env::remove_var("CC_SWITCH_SKILL_ENV_STARTUP_TEST");
+        std::env::set_var("CC_SWITCH_SKILL_ENV_INHERITED_TEST", "keep");
+
+        let applied = apply_saved_to_current_process().unwrap();
+
+        assert_eq!(applied, 1);
+        assert_eq!(
+            std::env::var("CC_SWITCH_SKILL_ENV_STARTUP_TEST").unwrap(),
+            "loaded"
+        );
+        assert_eq!(
+            std::env::var("CC_SWITCH_SKILL_ENV_INHERITED_TEST").unwrap(),
+            "keep"
+        );
+
+        match previous_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        match previous_loaded {
+            Some(value) => std::env::set_var("CC_SWITCH_SKILL_ENV_STARTUP_TEST", value),
+            None => std::env::remove_var("CC_SWITCH_SKILL_ENV_STARTUP_TEST"),
+        }
+        match previous_inherited {
+            Some(value) => std::env::set_var("CC_SWITCH_SKILL_ENV_INHERITED_TEST", value),
+            None => std::env::remove_var("CC_SWITCH_SKILL_ENV_INHERITED_TEST"),
+        }
     }
 }
