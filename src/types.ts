@@ -294,6 +294,7 @@ export type S3UrlStyle = "auto" | "virtualHosted" | "pathStyle";
 export interface S3SyncSettings {
   enabled?: boolean;
   autoSync?: boolean;
+  preset?: string;
   region?: string;
   bucket?: string;
   accessKeyId?: string;

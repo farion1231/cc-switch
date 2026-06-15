@@ -94,6 +94,9 @@ pub struct WebDavSyncStatus {
     pub last_remote_manifest_hash: Option<String>,
 }
 
+fn default_preset() -> String {
+    "aws-s3".to_string()
+}
 fn default_remote_root() -> String {
     "cc-switch-sync".to_string()
 }
@@ -200,6 +203,8 @@ pub struct S3SyncSettings {
     pub enabled: bool,
     #[serde(default)]
     pub auto_sync: bool,
+    #[serde(default = "default_preset")]
+    pub preset: String,
     #[serde(default)]
     pub region: String,
     #[serde(default)]
@@ -225,6 +230,7 @@ impl Default for S3SyncSettings {
         Self {
             enabled: false,
             auto_sync: false,
+            preset: default_preset(),
             region: String::new(),
             bucket: String::new(),
             access_key_id: String::new(),
@@ -272,12 +278,16 @@ impl S3SyncSettings {
     }
 
     pub fn normalize(&mut self) {
+        self.preset = self.preset.trim().to_string();
         self.region = self.region.trim().to_string();
         self.bucket = self.bucket.trim().to_string();
         self.access_key_id = self.access_key_id.trim().to_string();
         self.endpoint = self.endpoint.trim().to_string();
         self.remote_root = self.remote_root.trim().to_string();
         self.profile = self.profile.trim().to_string();
+        if self.preset.is_empty() {
+            self.preset = default_preset();
+        }
         if self.remote_root.is_empty() {
             self.remote_root = default_remote_root();
         }

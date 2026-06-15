@@ -274,7 +274,7 @@ export function WebdavSyncSection({
   }));
 
   // ─── S3 form state ─────────────────────────────────────────
-  const [s3Preset, setS3Preset] = useState("aws-s3");
+  const [s3Preset, setS3Preset] = useState(s3Config?.preset ?? "aws-s3");
   const [s3Region, setS3Region] = useState(s3Config?.region ?? "");
   const [s3Bucket, setS3Bucket] = useState(s3Config?.bucket ?? "");
   const [s3AccessKeyId, setS3AccessKeyId] = useState(
@@ -379,6 +379,7 @@ export function WebdavSyncSection({
   // Sync S3 form when s3Config is loaded/updated from backend
   useEffect(() => {
     if (!s3Config || s3Dirty) return;
+    setS3Preset(s3Config.preset ?? "aws-s3");
     setS3Region(s3Config.region ?? "");
     setS3Bucket(s3Config.bucket ?? "");
     setS3AccessKeyId(s3Config.accessKeyId ?? "");
@@ -677,6 +678,7 @@ export function WebdavSyncSection({
     return {
       enabled: s3Enabled,
       autoSync: s3AutoSync,
+      preset: s3Preset.trim() || "aws-s3",
       region: s3Region.trim(),
       bucket: s3Bucket.trim(),
       accessKeyId: s3AccessKeyId.trim(),
@@ -689,6 +691,7 @@ export function WebdavSyncSection({
   }, [
     s3Enabled,
     s3AutoSync,
+    s3Preset,
     s3Region,
     s3Bucket,
     s3AccessKeyId,
