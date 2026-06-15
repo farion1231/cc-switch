@@ -98,6 +98,7 @@
     "windowClose": "Закрыть окно"
   },
   "provider": {
+    "connectivityCheck": "Проверка доступности",
     "tabProvider": "Провайдер",
     "tabUniversal": "Универсальный",
     "noProviders": "Провайдеры ещё не добавлены",
@@ -2528,6 +2529,11 @@
     "maxRetries": "Максимум повторов",
     "degradedThreshold": "Порог замедления (мс)",
     "testPrompt": "Тестовый запрос",
+    "reachable": "{{providerName}} доступен ({{responseTimeMs}} мс)",
+    "reachableSlow": "{{providerName}} доступен, но отвечает медленно ({{responseTimeMs}} мс)",
+    "unreachable": "{{providerName}} недоступен: {{message}}",
+    "unreachableHint": "Не удалось установить соединение (DNS / подключение / TLS / тайм-аут). Проверьте base_url и сетевое подключение.",
+    "connectivityNote": "Проверка доступности определяет только, отвечает ли адрес провайдера; реальный запрос к модели не отправляется. Любой ответ считается признаком доступности, но это не гарантирует корректность авторизации или настроек модели.",
     "operational": "{{providerName}} работает нормально ({{responseTimeMs}} мс)",
     "degraded": "{{providerName}} работает медленно ({{responseTimeMs}} мс)",
     "failed": "{{providerName}}: проверка не удалась: {{message}}",
