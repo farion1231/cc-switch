@@ -436,6 +436,20 @@ fn parse_agents_lock() -> HashMap<String, LockRepoInfo> {
     parsed
 }
 
+/// 批量操作请求
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchSkillRequest {
+    pub id: String,
+}
+
+/// 批量操作结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchSkillResult {
+    pub id: String,
+    pub success: bool,
+    pub error: Option<String>,
+}
+
 // ========== SkillService ==========
 
 pub struct SkillService;
