@@ -1,4 +1,5 @@
 import {
+  Activity,
   BarChart3,
   Check,
   Copy,
@@ -8,7 +9,6 @@ import {
   Play,
   Plus,
   Terminal,
-  TestTube2,
   Trash2,
   Zap,
 } from "lucide-react";
@@ -373,13 +373,13 @@ export function ProviderActions({
                   {isTesting ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
-                    <TestTube2 className="h-4 w-4" />
+                    <Activity className="h-4 w-4" />
                   )}
                 </Button>
               </span>
             </TooltipTrigger>
             <TooltipContent side="bottom">
-              {t("modelTest.testProvider", "测试模型")}
+              {t("provider.connectivityCheck", "检测连通")}
             </TooltipContent>
           </Tooltip>
 

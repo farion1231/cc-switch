@@ -232,9 +232,6 @@ export function ProviderCard({
     provider.meta?.apiFormat,
     (provider.settingsConfig as Record<string, any>)?.config,
   ]);
-  const isClaudeThirdParty =
-    appId === "claude" && provider.category === "third_party";
-
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用（OpenCode/OpenClaw/Hermes）：使用 isInConfig 代替 isCurrent
   const shouldAutoQuery =
@@ -551,11 +548,12 @@ export function ProviderCard({
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}
               onTest={
-                onTest &&
-                !isOfficial &&
-                !isCopilot &&
-                !isCodexOauth &&
-                !isClaudeThirdParty
+                // 连通检测对第三方/自定义/Copilot/Codex-OAuth 供应商开放（这些正是旧的
+                // 真实请求探测会误报、而可达性探测能正确处理的对象）。官方供应商
+                // (category === "official") 一律隐藏：它们 base_url 故意留空、走客户端
+                // 默认/OAuth 端点，cc-switch 没有可靠的探测目标（尤其 Claude Desktop
+                // 官方是原生 1P 模式，根本不在请求路径上）。
+                onTest && provider.category !== "official"
                   ? () => onTest(provider)
                   : undefined
               }

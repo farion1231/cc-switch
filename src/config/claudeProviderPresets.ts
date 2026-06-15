@@ -128,9 +128,9 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "火山Agentplan",
     websiteUrl:
-      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
-      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://ark.cn-beijing.volces.com/api/coding",
@@ -372,10 +372,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.moonshot.cn/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "kimi-k2.6",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k2.6",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k2.6",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k2.6",
+        ANTHROPIC_MODEL: "kimi-k2.7-code",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k2.7-code",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k2.7-code",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k2.7-code",
       },
     },
     category: "cn_official",
@@ -513,7 +513,6 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
-    isPartner: true,
     partnerPromotionKey: "minimax_cn",
     theme: {
       backgroundColor: "#f64551",
@@ -539,7 +538,6 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cn_official",
-    isPartner: true,
     partnerPromotionKey: "minimax_en",
     theme: {
       backgroundColor: "#f64551",
@@ -743,8 +741,6 @@ export const providerPresets: ProviderPreset[] = [
     },
     endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
     icon: "sudocode",
   },
   {
@@ -1106,22 +1102,6 @@ export const providerPresets: ProviderPreset[] = [
     requiresOAuth: true,
     icon: "openai",
     iconColor: "#000000",
-  },
-  {
-    name: "LemonData",
-    websiteUrl: "https://lemondata.cc",
-    apiKeyUrl: "https://lemondata.cc/r/FFX1ZDUP",
-    apiKeyField: "ANTHROPIC_API_KEY",
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://api.lemondata.cc",
-        ANTHROPIC_API_KEY: "",
-      },
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "lemondata",
-    icon: "lemondata",
   },
   {
     name: "Nvidia",

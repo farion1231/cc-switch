@@ -1,19 +1,8 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { ClaudeIcon, CodexIcon, GeminiIcon } from "@/components/BrandIcons";
 import { ArrowUpAZ, Search, Zap, Star, Layers, Settings2 } from "lucide-react";
 import type { ProviderPreset } from "@/config/claudeProviderPresets";
@@ -63,19 +52,9 @@ export function getPresetDisplayName(
 
 export function getPresetSearchText(
   entry: PresetEntry,
-  presetCategoryLabels: Record<string, string>,
   t: PresetTranslator,
 ): string {
-  const presetCategory = entry.preset.category ?? "others";
-  const categoryLabel =
-    presetCategoryLabels[presetCategory] ?? String(t("providerPreset.other"));
-
-  return [
-    getPresetDisplayName(entry.preset, t),
-    entry.preset.name,
-    entry.preset.websiteUrl,
-    categoryLabel,
-  ]
+  return [getPresetDisplayName(entry.preset, t), entry.preset.name]
     .join(" ")
     .toLowerCase();
 }
@@ -83,7 +62,6 @@ export function getPresetSearchText(
 export function filterPresetEntries(
   entries: PresetEntry[],
   query: string,
-  presetCategoryLabels: Record<string, string>,
   t: PresetTranslator,
 ): PresetEntry[] {
   const normalizedQuery = query.trim().toLowerCase();
@@ -92,9 +70,7 @@ export function filterPresetEntries(
   }
 
   return entries.filter((entry) =>
-    getPresetSearchText(entry, presetCategoryLabels, t).includes(
-      normalizedQuery,
-    ),
+    getPresetSearchText(entry, t).includes(normalizedQuery),
   );
 }
 
@@ -117,7 +93,6 @@ export function sortPresetEntries(
 export interface PresetVisibilityOptions {
   query: string;
   sortMode: PresetSortMode;
-  presetCategoryLabels: Record<string, string>;
   t: PresetTranslator;
 }
 
@@ -125,13 +100,9 @@ export function getVisiblePresetEntries(
   entries: PresetEntry[],
   options: PresetVisibilityOptions,
 ): PresetEntry[] {
-  const { query, sortMode, presetCategoryLabels, t } = options;
+  const { query, sortMode, t } = options;
 
-  return sortPresetEntries(
-    filterPresetEntries(entries, query, presetCategoryLabels, t),
-    sortMode,
-    t,
-  );
+  return sortPresetEntries(filterPresetEntries(entries, query, t), sortMode, t);
 }
 
 interface ProviderPresetSelectorProps {
@@ -159,16 +130,34 @@ export function ProviderPresetSelector({
   const [sortMode, setSortMode] = useState<PresetSortMode>(
     PresetSortMode.Original,
   );
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+
+  // 点击搜索区域外时收起并清空,对齐旧 Popover 的「点击外部关闭」行为
+  useEffect(() => {
+    if (!searchOpen) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        searchContainerRef.current &&
+        !searchContainerRef.current.contains(event.target as Node)
+      ) {
+        setSearchOpen(false);
+        setSearchQuery("");
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [searchOpen]);
 
   const visiblePresetEntries = useMemo(
     () =>
       getVisiblePresetEntries(presetEntries, {
         query: searchQuery,
         sortMode,
-        presetCategoryLabels,
         t,
       }),
-    [presetEntries, presetCategoryLabels, searchQuery, sortMode, t],
+    [presetEntries, searchQuery, sortMode, t],
   );
 
   const getCategoryHint = (): ReactNode => {
@@ -214,26 +203,38 @@ export function ProviderPresetSelector({
   };
 
   const renderPresetIcon = (preset: AnyPreset) => {
-    const iconType = preset.theme?.icon;
-    if (!iconType) return null;
-
-    switch (iconType) {
-      case "claude":
-        return <ClaudeIcon size={14} />;
-      case "codex":
-        return <CodexIcon size={14} />;
-      case "gemini":
-        return <GeminiIcon size={14} />;
-      case "generic":
-        return <Zap size={14} />;
-      default:
-        return null;
+    if (preset.icon) {
+      return (
+        <ProviderIcon
+          icon={preset.icon}
+          name={preset.name}
+          color={preset.iconColor}
+          size={16}
+          className="flex-shrink-0"
+        />
+      );
     }
+
+    const iconType = preset.theme?.icon;
+    if (iconType) {
+      switch (iconType) {
+        case "claude":
+          return <ClaudeIcon size={14} />;
+        case "codex":
+          return <CodexIcon size={14} />;
+        case "gemini":
+          return <GeminiIcon size={14} />;
+        case "generic":
+          return <Zap size={14} />;
+      }
+    }
+
+    return <span className="inline-block w-4 h-4 flex-shrink-0" aria-hidden />;
   };
 
   const getPresetButtonClass = (isSelected: boolean, preset: AnyPreset) => {
     const baseClass =
-      "inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors";
+      "inline-flex items-center justify-start gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors w-full";
 
     if (isSelected) {
       if (preset.theme?.backgroundColor) {
@@ -260,101 +261,95 @@ export function ProviderPresetSelector({
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
         <FormLabel>{t("providerPreset.label")}</FormLabel>
-        <TooltipProvider delayDuration={300}>
-          <div className="flex items-center gap-1">
-            <Popover open={searchOpen} onOpenChange={setSearchOpen}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <PopoverTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      aria-label={t("providerPreset.searchAriaLabel", {
-                        defaultValue: "Search provider presets",
-                      })}
-                      className={
-                        searchQuery.trim()
-                          ? "size-8 bg-accent text-foreground"
-                          : "size-8"
-                      }
-                    >
-                      <Search className="size-4" />
-                    </Button>
-                  </PopoverTrigger>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {t("providerPreset.searchTooltip", {
-                    defaultValue: "Search presets",
-                  })}
-                </TooltipContent>
-              </Tooltip>
-              <PopoverContent
-                align="end"
-                className="w-72 p-2 border-border-default"
-              >
-                <Input
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  placeholder={t("providerPreset.searchPlaceholder", {
-                    defaultValue: "Search presets...",
-                  })}
-                  aria-label={t("providerPreset.searchAriaLabel", {
-                    defaultValue: "Search provider presets",
-                  })}
-                  autoFocus
-                />
-              </PopoverContent>
-            </Popover>
+        <div ref={searchContainerRef} className="flex items-center gap-2">
+          {searchOpen && (
+            <Input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setSearchQuery("");
+                  setSearchOpen(false);
+                }
+              }}
+              placeholder={t("providerPreset.searchPlaceholder", {
+                defaultValue: "Search presets...",
+              })}
+              aria-label={t("providerPreset.searchAriaLabel", {
+                defaultValue: "Search provider presets",
+              })}
+              className="w-48 h-8"
+              autoFocus
+            />
+          )}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={t("providerPreset.searchAriaLabel", {
+              defaultValue: "Search provider presets",
+            })}
+            aria-pressed={searchOpen}
+            onClick={() => {
+              setSearchOpen((v) => !v);
+              if (searchOpen) setSearchQuery("");
+            }}
+            title={t("providerPreset.searchTooltip", {
+              defaultValue: "Search presets",
+            })}
+            className={
+              searchOpen || searchQuery.trim()
+                ? "size-8 bg-accent text-foreground"
+                : "size-8"
+            }
+          >
+            <Search className="size-4" />
+          </Button>
 
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label={t("providerPreset.sortAriaLabel", {
-                    defaultValue: "Toggle preset sorting",
-                  })}
-                  aria-pressed={sortMode === PresetSortMode.NameAsc}
-                  onClick={toggleSortMode}
-                  className={
-                    sortMode === PresetSortMode.NameAsc
-                      ? "size-8 bg-accent text-foreground"
-                      : "size-8"
-                  }
-                >
-                  <ArrowUpAZ className="size-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {sortMode === PresetSortMode.NameAsc
-                  ? t("providerPreset.sortOriginalTooltip", {
-                      defaultValue: "Restore original order",
-                    })
-                  : t("providerPreset.sortNameAscTooltip", {
-                      defaultValue: "Sort A-Z",
-                    })}
-              </TooltipContent>
-            </Tooltip>
-          </div>
-        </TooltipProvider>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={t("providerPreset.sortAriaLabel", {
+              defaultValue: "Toggle preset sorting",
+            })}
+            aria-pressed={sortMode === PresetSortMode.NameAsc}
+            onClick={toggleSortMode}
+            title={
+              sortMode === PresetSortMode.NameAsc
+                ? t("providerPreset.sortOriginalTooltip", {
+                    defaultValue: "Restore original order",
+                  })
+                : t("providerPreset.sortNameAscTooltip", {
+                    defaultValue: "Sort A-Z",
+                  })
+            }
+            className={
+              sortMode === PresetSortMode.NameAsc
+                ? "size-8 bg-accent text-foreground"
+                : "size-8"
+            }
+          >
+            <ArrowUpAZ className="size-4" />
+          </Button>
+        </div>
       </div>
-      <div className="flex flex-wrap gap-2">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2">
         <button
           type="button"
           onClick={() => onPresetChange("custom")}
-          className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+          className={`inline-flex items-center justify-start gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors w-full ${
             selectedPresetId === "custom"
               ? "bg-blue-500 text-white dark:bg-blue-600"
               : "bg-accent text-muted-foreground hover:bg-accent/80"
           }`}
         >
-          {t("providerPreset.custom")}
+          <span className="inline-block w-4 h-4 flex-shrink-0" aria-hidden />
+          <span className="truncate">{t("providerPreset.custom")}</span>
         </button>
 
         {visiblePresetEntries.length === 0 && (
-          <div className="w-full rounded-md border border-dashed border-border-default px-3 py-2 text-xs text-muted-foreground">
+          <div className="col-span-full rounded-md border border-dashed border-border-default px-3 py-2 text-xs text-muted-foreground">
             {t("providerPreset.noSearchResults", {
               defaultValue: "No matching presets.",
             })}
@@ -378,7 +373,9 @@ export function ProviderPresetSelector({
               }
             >
               {renderPresetIcon(entry.preset)}
-              {getPresetDisplayName(entry.preset, t)}
+              <span className="truncate">
+                {getPresetDisplayName(entry.preset, t)}
+              </span>
               {isPartner && (
                 <span className="absolute -top-1 -right-1 flex items-center gap-0.5 rounded-full bg-gradient-to-r from-amber-500 to-yellow-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-md">
                   <Star className="h-2.5 w-2.5 fill-current" />
@@ -391,20 +388,25 @@ export function ProviderPresetSelector({
 
       {onUniversalPresetSelect && universalProviderPresets.length > 0 && (
         <>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2">
             {universalProviderPresets.map((preset) => (
               <button
                 key={`universal-${preset.providerType}`}
                 type="button"
                 onClick={() => onUniversalPresetSelect(preset)}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-accent text-muted-foreground hover:bg-accent/80 relative"
+                className="inline-flex items-center justify-start gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-accent text-muted-foreground hover:bg-accent/80 relative w-full"
                 title={t("universalProvider.hint", {
                   defaultValue:
                     "跨应用统一配置，自动同步到 Claude/Codex/Gemini",
                 })}
               >
-                <ProviderIcon icon={preset.icon} name={preset.name} size={14} />
-                {preset.name}
+                <ProviderIcon
+                  icon={preset.icon}
+                  name={preset.name}
+                  size={14}
+                  className="flex-shrink-0"
+                />
+                <span className="truncate">{preset.name}</span>
                 <span className="absolute -top-1 -right-1 flex items-center gap-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-md">
                   <Layers className="h-2.5 w-2.5" />
                 </span>
@@ -414,15 +416,17 @@ export function ProviderPresetSelector({
               <button
                 type="button"
                 onClick={onManageUniversalProviders}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-accent text-muted-foreground hover:bg-accent/80"
+                className="inline-flex items-center justify-start gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-accent text-muted-foreground hover:bg-accent/80 w-full"
                 title={t("universalProvider.manage", {
                   defaultValue: "管理统一供应商",
                 })}
               >
-                <Settings2 className="h-4 w-4" />
-                {t("universalProvider.manage", {
-                  defaultValue: "管理",
-                })}
+                <Settings2 className="h-4 w-4 flex-shrink-0" />
+                <span className="truncate">
+                  {t("universalProvider.manage", {
+                    defaultValue: "管理",
+                  })}
+                </span>
               </button>
             )}
           </div>

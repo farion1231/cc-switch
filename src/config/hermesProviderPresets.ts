@@ -151,9 +151,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "火山Agentplan",
     websiteUrl:
-      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
-      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     settingsConfig: {
       name: "ark_agentplan",
       base_url: "https://ark.cn-beijing.volces.com/api/coding",
@@ -521,13 +521,13 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       base_url: "https://api.moonshot.cn/v1",
       api_key: "",
       api_mode: "chat_completions",
-      models: [{ id: "kimi-k2.6", name: "Kimi K2.6" }],
+      models: [{ id: "kimi-k2.7-code", name: "Kimi K2.7 Code" }],
     },
     category: "cn_official",
     icon: "kimi",
     iconColor: "#6366F1",
     suggestedDefaults: {
-      model: { default: "kimi-k2.6", provider: "kimi" },
+      model: { default: "kimi-k2.7-code", provider: "kimi" },
     },
   },
   {
@@ -641,7 +641,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       models: [{ id: "MiniMax-M2.7", name: "MiniMax M2.7" }],
     },
     category: "cn_official",
-    isPartner: true,
     partnerPromotionKey: "minimax_cn",
     theme: { backgroundColor: "#f64551", textColor: "#FFFFFF" },
     icon: "minimax",
@@ -662,7 +661,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       models: [{ id: "MiniMax-M2.7", name: "MiniMax M2.7" }],
     },
     category: "cn_official",
-    isPartner: true,
     partnerPromotionKey: "minimax_en",
     theme: { backgroundColor: "#f64551", textColor: "#FFFFFF" },
     icon: "minimax",
@@ -916,8 +914,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
     icon: "sudocode",
     suggestedDefaults: {
       model: { default: "gpt-5.5", provider: "sudocode" },
@@ -1239,25 +1235,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#000000",
     suggestedDefaults: {
       model: { default: "claude-opus-4-8", provider: "eflowcode" },
-    },
-  },
-  {
-    name: "LemonData",
-    websiteUrl: "https://lemondata.cc",
-    apiKeyUrl: "https://lemondata.cc/r/FFX1ZDUP",
-    settingsConfig: {
-      name: "lemondata",
-      base_url: "https://api.lemondata.cc/v1",
-      api_key: "",
-      api_mode: "chat_completions",
-      models: [{ id: "gpt-5.5", name: "GPT-5.5" }],
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "lemondata",
-    icon: "lemondata",
-    suggestedDefaults: {
-      model: { default: "gpt-5.5", provider: "lemondata" },
     },
   },
   {
