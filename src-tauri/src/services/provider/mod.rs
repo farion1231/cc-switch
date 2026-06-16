@@ -1944,6 +1944,74 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn hot_switch_codex_preserves_history_when_live_key_is_reused() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        let home = PathBuf::from(std::env::var("CC_SWITCH_TEST_HOME").expect("test home"));
+
+        let mut rightcode_provider = codex_provider(
+            "codex-rightcode",
+            "RightCode",
+            "model_provider = \"rightcode\"\nmodel = \"gpt-5.4\"\n[model_providers.rightcode]\nname = \"RightCode\"\nbase_url = \"https://rightcode.example/v1\"\n",
+        );
+        rightcode_provider.settings_config["auth"]["OPENAI_API_KEY"] = json!("rightcode-key");
+        let mut aihubmix_provider = codex_provider(
+            "codex-aihubmix",
+            "AiHubMix",
+            "model_provider = \"aihubmix\"\nmodel = \"gpt-5.4\"\n[model_providers.aihubmix]\nname = \"AiHubMix\"\nbase_url = \"https://aihubmix.example/v1\"\n",
+        );
+        aihubmix_provider.settings_config["auth"]["OPENAI_API_KEY"] = json!("aihubmix-key");
+
+        db.save_provider(AppType::Codex.as_str(), &rightcode_provider)
+            .expect("save rightcode provider");
+        db.save_provider(AppType::Codex.as_str(), &aihubmix_provider)
+            .expect("save aihubmix provider");
+        db.set_current_provider(AppType::Codex.as_str(), "codex-rightcode")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some("codex-rightcode"))
+            .expect("set local current provider");
+        seed_codex_thread_rows(&home, &[("rightcode-thread", "rightcode")]);
+        crate::codex_config::write_codex_live_config_atomic(Some(
+            "model_provider = \"rightcode\"\nmodel = \"gpt-5.4\"\n[model_providers.rightcode]\nname = \"RightCode\"\nbase_url = \"https://rightcode.example/v1\"\n",
+        ))
+        .expect("seed live codex config");
+        db.save_live_backup("codex", "{}")
+            .await
+            .expect("seed codex takeover backup");
+        let mut proxy_config = crate::proxy::types::ProxyConfig::default();
+        proxy_config.listen_port = 0;
+        db.update_proxy_config(proxy_config)
+            .await
+            .expect("set test proxy config");
+        state
+            .proxy_service
+            .start()
+            .await
+            .expect("start proxy service");
+
+        ProviderService::switch(&state, AppType::Codex, "codex-aihubmix")
+            .expect("hot switch to aihubmix provider");
+
+        assert_eq!(
+            codex_thread_providers(&home),
+            vec![("rightcode".to_string(), 1)],
+            "takeover hot-switch should keep history under the live model_provider key"
+        );
+        assert_eq!(
+            codex_rollout_providers(&home),
+            vec![(
+                "rightcode-thread".to_string(),
+                Some("rightcode".to_string())
+            )],
+            "rollout metadata should stay aligned with the live model_provider key"
+        );
+    }
+
     #[test]
     #[serial]
     fn sync_current_claude_profile_env_preserves_external_override_without_active_provider() {
@@ -3195,6 +3263,83 @@ mod tests {
                 err.to_string()
                     .contains("simulated CLAUDE_CONFIG_DIR set failure"),
                 "expected simulated env failure, got {err:?}"
+            );
+
+            let stored = state
+                .db
+                .get_provider_by_id("claude-current", AppType::Claude.as_str())
+                .expect("query stored provider")
+                .expect("stored provider exists");
+            assert_eq!(
+                stored.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("legacy-token".to_string()),
+                "failed current-provider update must restore the previous DB settings"
+            );
+            assert!(
+                stored
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.claude_activation_mode.as_ref())
+                    .is_none(),
+                "failed current-provider update must restore the previous DB meta"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn update_current_claude_rollback_capture_failure_restores_previous_provider_row() {
+        with_test_home(|state, home| {
+            let profile_dir = home.join(".claude-profiles").join("official");
+            fs::create_dir_all(&profile_dir).expect("create profile dir");
+            write_json_file(
+                &profile_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "official-live-token",
+                        "ANTHROPIC_BASE_URL": "https://official-live.example"
+                    }
+                }),
+            )
+            .expect("seed profile settings");
+
+            let legacy_provider = claude_provider(
+                "claude-current",
+                "Claude Current",
+                "legacy-token",
+                "https://legacy.example",
+                None,
+            );
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &legacy_provider)
+                .expect("save legacy provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "claude-current")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("claude-current"))
+                .expect("set local current provider");
+
+            let updated_provider = claude_provider(
+                "claude-current",
+                "Claude Current",
+                "provider-token-should-not-save",
+                "https://provider-should-not-save.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(profile_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+
+            FAIL_CLAUDE_ROLLBACK_CAPTURE_FOR_TEST.store(true, std::sync::atomic::Ordering::SeqCst);
+            let err = ProviderService::update(state, AppType::Claude, None, updated_provider)
+                .expect_err("rollback capture failure should reject current provider update");
+            assert!(
+                err.to_string()
+                    .contains("simulated Claude rollback capture failure"),
+                "expected simulated rollback capture failure, got {err:?}"
             );
 
             let stored = state
@@ -6084,24 +6229,43 @@ impl ProviderService {
             return Ok("openai".to_string());
         }
 
+        Ok(Self::codex_desktop_provider_key_from_config(config))
+    }
+
+    fn codex_desktop_provider_key_from_config(config: &str) -> String {
         let custom_codex_base_url = crate::codex_config::extract_codex_base_url(config)
             .filter(|base_url| !Self::codex_base_url_is_openai_official(base_url));
         let provider_key = crate::codex_config::extract_codex_model_provider(config)
             .unwrap_or_else(|| "openai".to_string());
         if is_cc_switch_codex_model_provider_id(&provider_key) {
             if custom_codex_base_url.is_none() {
-                return Ok("openai".to_string());
+                return "openai".to_string();
             }
-            return Ok(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
+            return CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string();
         }
         if provider_key.eq_ignore_ascii_case("openai") && custom_codex_base_url.is_some() {
-            return Ok(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
+            return CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string();
         }
         if provider_key.eq_ignore_ascii_case("openai") {
-            return Ok("openai".to_string());
+            return "openai".to_string();
         }
 
-        Ok(provider_key)
+        provider_key
+    }
+
+    fn codex_desktop_live_provider_key() -> Result<Option<String>, AppError> {
+        let live_settings = match read_live_settings(AppType::Codex) {
+            Ok(settings) => settings,
+            Err(_) => return Ok(None),
+        };
+        let Some(config) = live_settings.get("config").and_then(Value::as_str) else {
+            return Ok(None);
+        };
+        if config.trim().is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(Self::codex_desktop_provider_key_from_config(config)))
     }
 
     fn codex_base_url_is_openai_official(base_url: &str) -> bool {
@@ -6331,6 +6495,14 @@ impl ProviderService {
         run_audit: bool,
     ) -> Result<usize, AppError> {
         let target_provider = Self::codex_desktop_provider_key(provider)?;
+        Self::sync_codex_desktop_threads_to_provider(&target_provider, source_provider, run_audit)
+    }
+
+    fn sync_codex_desktop_threads_to_provider(
+        target_provider: &str,
+        source_provider: Option<&str>,
+        run_audit: bool,
+    ) -> Result<usize, AppError> {
         let db_path = crate::codex_config::get_codex_config_dir().join("state_5.sqlite");
         if !db_path.exists() {
             return Ok(0);
@@ -6361,10 +6533,10 @@ impl ProviderService {
                     Self::codex_provider_switch_where_clause("model_provider")
                 );
                 let mut stmt = conn.prepare(&sql)?;
-                let rows = stmt.query_map(
-                    rusqlite::params![source_provider, target_provider.as_str()],
-                    |row| row.get(0),
-                )?;
+                let rows = stmt
+                    .query_map(rusqlite::params![source_provider, target_provider], |row| {
+                        row.get(0)
+                    })?;
                 let mut paths = rows.collect::<Result<Vec<String>, _>>()?;
 
                 let mut stmt = conn.prepare(
@@ -6379,7 +6551,7 @@ impl ProviderService {
                     if Self::codex_should_relabel_source_less_thread(
                         Path::new(&rollout_path),
                         source_provider,
-                        &target_provider,
+                        target_provider,
                     )? {
                         source_less_thread_ids.push(id);
                         paths.push(rollout_path);
@@ -6403,9 +6575,7 @@ impl ProviderService {
         let audit_rollout_paths = if run_audit && has_rollout_path {
             let mut stmt =
                 conn.prepare("SELECT rollout_path FROM threads WHERE model_provider = ?1")?;
-            let rows = stmt.query_map(rusqlite::params![target_provider.as_str()], |row| {
-                row.get(0)
-            })?;
+            let rows = stmt.query_map(rusqlite::params![target_provider], |row| row.get(0))?;
             rows.collect::<Result<Vec<String>, _>>()?
         } else {
             Vec::new()
@@ -6417,20 +6587,17 @@ impl ProviderService {
                  WHERE model_provider IS NOT NULL AND model_provider != '' AND {}",
                 Self::codex_provider_switch_where_clause("model_provider")
             );
-            conn.execute(
-                &sql,
-                rusqlite::params![source_provider, target_provider.as_str()],
-            )?
+            conn.execute(&sql, rusqlite::params![source_provider, target_provider])?
         } else {
             conn.execute(
                 "UPDATE threads SET model_provider = ?1 WHERE model_provider IS NULL OR model_provider = ''",
-                rusqlite::params![target_provider.as_str()],
+                rusqlite::params![target_provider],
             )?
         };
         for id in source_less_thread_ids {
             updated += conn.execute(
                 "UPDATE threads SET model_provider = ?1 WHERE id = ?2",
-                rusqlite::params![target_provider.as_str(), id],
+                rusqlite::params![target_provider, id],
             )?;
         }
 
@@ -6439,7 +6606,7 @@ impl ProviderService {
             match Self::sync_codex_rollout_session_meta(
                 Path::new(&rollout_path),
                 source_provider,
-                &target_provider,
+                target_provider,
                 false,
             ) {
                 Ok(true) => rollout_updated += 1,
@@ -6458,7 +6625,7 @@ impl ProviderService {
             match Self::sync_codex_rollout_session_meta(
                 Path::new(rollout_path),
                 None,
-                &target_provider,
+                target_provider,
                 true,
             ) {
                 Ok(true) => rollout_updated += 1,
@@ -6482,11 +6649,35 @@ impl ProviderService {
         source_provider: Option<&str>,
         result: &mut SwitchResult,
     ) {
-        match Self::sync_codex_desktop_threads(provider, source_provider, true) {
+        match Self::codex_desktop_provider_key(provider) {
+            Ok(target_provider) => Self::sync_codex_desktop_threads_after_switch_to_provider(
+                &target_provider,
+                source_provider,
+                result,
+            ),
+            Err(err) => {
+                log::warn!("Codex desktop thread model_provider sync failed: {err}");
+                result
+                    .warnings
+                    .push("codex_thread_provider_sync_failed".to_string());
+            }
+        }
+    }
+
+    fn sync_codex_desktop_threads_after_switch_to_provider(
+        target_provider: &str,
+        source_provider: Option<&str>,
+        result: &mut SwitchResult,
+    ) {
+        match Self::sync_codex_desktop_threads_to_provider(target_provider, source_provider, true) {
             Ok(mut updated) => {
                 if source_provider.is_some() {
                     std::thread::sleep(std::time::Duration::from_millis(100));
-                    match Self::sync_codex_desktop_threads(provider, source_provider, false) {
+                    match Self::sync_codex_desktop_threads_to_provider(
+                        target_provider,
+                        source_provider,
+                        false,
+                    ) {
                         Ok(settled) => updated += settled,
                         Err(err) => log::warn!(
                             "Codex desktop thread model_provider settle sync failed: {err}"
@@ -6838,10 +7029,21 @@ impl ProviderService {
             let claude_switch_plan =
                 matches!(app_type, AppType::Claude).then(|| Self::claude_switch_plan(&provider));
             let claude_rollback = if matches!(app_type, AppType::Claude) {
-                Some(Self::capture_claude_rollback_state(
-                    state,
-                    claude_switch_plan.as_ref(),
-                )?)
+                match Self::capture_claude_rollback_state(state, claude_switch_plan.as_ref()) {
+                    Ok(rollback) => Some(rollback),
+                    Err(err) => {
+                        if let Some(existing_provider) = existing_provider.as_ref() {
+                            if let Err(rollback_err) =
+                                state.db.save_provider(app_type.as_str(), existing_provider)
+                            {
+                                return Err(AppError::Message(format!(
+                                    "{err}; additionally failed to restore previous provider row: {rollback_err}"
+                                )));
+                            }
+                        }
+                        return Err(err);
+                    }
+                }
             } else {
                 None
             };
@@ -7195,11 +7397,24 @@ impl ProviderService {
             // The proxy server will route requests to the new provider via is_current
             let mut result = SwitchResult::default();
             if matches!(app_type, AppType::Codex) {
-                Self::sync_codex_desktop_threads_after_switch(
-                    _provider,
-                    codex_source_provider.as_deref(),
-                    &mut result,
-                );
+                match Self::codex_desktop_live_provider_key().and_then(|live_key| match live_key {
+                    Some(key) => Ok(key),
+                    None => Self::codex_desktop_provider_key(_provider),
+                }) {
+                    Ok(target_provider) => {
+                        Self::sync_codex_desktop_threads_after_switch_to_provider(
+                            &target_provider,
+                            codex_source_provider.as_deref(),
+                            &mut result,
+                        )
+                    }
+                    Err(err) => {
+                        log::warn!("Codex desktop thread model_provider sync failed: {err}");
+                        result
+                            .warnings
+                            .push("codex_thread_provider_sync_failed".to_string());
+                    }
+                }
             }
             return Ok(result);
         }
