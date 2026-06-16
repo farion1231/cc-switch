@@ -13,7 +13,9 @@ export type ClaudeModelEnvField =
   | "ANTHROPIC_DEFAULT_SONNET_MODEL"
   | "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"
   | "ANTHROPIC_DEFAULT_OPUS_MODEL"
-  | "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME";
+  | "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"
+  | "ANTHROPIC_DEFAULT_FABLE_MODEL"
+  | "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME";
 
 export const CLAUDE_ONE_M_MARKER = "[1M]";
 
@@ -74,6 +76,16 @@ function parseModelsFromConfig(settingsConfig: string) {
       typeof env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME === "string"
         ? env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME
         : stripClaudeOneMMarker(opus);
+    // 回填链镜像运行时映射链（fable → opus → default），保证 UI 展示
+    // 与代理实际转发的模型一致。
+    const fable =
+      typeof env.ANTHROPIC_DEFAULT_FABLE_MODEL === "string"
+        ? env.ANTHROPIC_DEFAULT_FABLE_MODEL
+        : opus;
+    const fableName =
+      typeof env.ANTHROPIC_DEFAULT_FABLE_MODEL_NAME === "string"
+        ? env.ANTHROPIC_DEFAULT_FABLE_MODEL_NAME
+        : stripClaudeOneMMarker(fable);
 
     return {
       model,
@@ -84,6 +96,8 @@ function parseModelsFromConfig(settingsConfig: string) {
       sonnetName,
       opus,
       opusName,
+      fable,
+      fableName,
     };
   } catch {
     return {
@@ -95,6 +109,8 @@ function parseModelsFromConfig(settingsConfig: string) {
       sonnetName: "",
       opus: "",
       opusName: "",
+      fable: "",
+      fableName: "",
     };
   }
 }
@@ -121,6 +137,10 @@ export function useModelState({
   const [defaultOpusModel, setDefaultOpusModel] = useState(initial.opus);
   const [defaultOpusModelName, setDefaultOpusModelName] = useState(
     initial.opusName,
+  );
+  const [defaultFableModel, setDefaultFableModel] = useState(initial.fable);
+  const [defaultFableModelName, setDefaultFableModelName] = useState(
+    initial.fableName,
   );
 
   const isUserEditingRef = useRef(false);
@@ -151,6 +171,8 @@ export function useModelState({
     setDefaultSonnetModelName(parsed.sonnetName);
     setDefaultOpusModel(parsed.opus);
     setDefaultOpusModelName(parsed.opusName);
+    setDefaultFableModel(parsed.fable);
+    setDefaultFableModelName(parsed.fableName);
   }, [settingsConfig]);
 
   const handleModelChange = useCallback(
@@ -170,6 +192,10 @@ export function useModelState({
       if (field === "ANTHROPIC_DEFAULT_OPUS_MODEL") setDefaultOpusModel(value);
       if (field === "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME")
         setDefaultOpusModelName(value);
+      if (field === "ANTHROPIC_DEFAULT_FABLE_MODEL")
+        setDefaultFableModel(value);
+      if (field === "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME")
+        setDefaultFableModelName(value);
 
       try {
         const currentConfig = latestConfigRef.current
@@ -216,6 +242,10 @@ export function useModelState({
     setDefaultOpusModel,
     defaultOpusModelName,
     setDefaultOpusModelName,
+    defaultFableModel,
+    setDefaultFableModel,
+    defaultFableModelName,
+    setDefaultFableModelName,
     handleModelChange,
   };
 }

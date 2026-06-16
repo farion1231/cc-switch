@@ -36,24 +36,11 @@ fn merge_settings_for_save(
         }
         _ => {}
     }
-    if incoming.local_migrations.is_none() {
-        incoming.local_migrations = existing.local_migrations.clone();
-    } else if let (Some(incoming_migrations), Some(existing_migrations)) =
-        (&mut incoming.local_migrations, &existing.local_migrations)
-    {
-        if incoming_migrations
-            .codex_third_party_history_provider_bucket_v1
-            .is_none()
-        {
-            incoming_migrations.codex_third_party_history_provider_bucket_v1 = existing_migrations
-                .codex_third_party_history_provider_bucket_v1
-                .clone();
-        }
-        if incoming_migrations.codex_provider_template_v1.is_none() {
-            incoming_migrations.codex_provider_template_v1 =
-                existing_migrations.codex_provider_template_v1.clone();
-        }
-    }
+    // local_migrations 是纯后端状态（迁移完成标记），前端没有合法的修改场景，
+    // 无条件取现有值。若按 incoming 透传：后端清掉 marker（如关闭统一会话
+    // 开关）后、前端 query 缓存刷新前的一次全量保存会把旧 marker 重放回来，
+    // 重新开启时被"复活"的标记挡住而漏迁。
+    incoming.local_migrations = existing.local_migrations.clone();
     incoming
 }
 
@@ -65,11 +52,115 @@ pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
 
 /// 保存设置
 #[tauri::command]
-pub async fn save_settings(settings: crate::settings::AppSettings) -> Result<bool, String> {
+pub async fn save_settings(
+    state: tauri::State<'_, crate::store::AppState>,
+    settings: crate::settings::AppSettings,
+) -> Result<bool, String> {
     let existing = crate::settings::get_settings();
     let merged = merge_settings_for_save(settings, &existing);
+    let unify_codex_changed =
+        merged.unify_codex_session_history != existing.unify_codex_session_history;
+    let unify_codex_enabled = merged.unify_codex_session_history;
     crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
+
+    // 统一会话开关变更时立即重写当前官方 Codex 供应商的 live 配置，
+    // 不必等下一次切换才生效。
+    if unify_codex_changed {
+        // live 重写失败时回滚设置并把保存整体报失败：若设置保持已切换状态，
+        // live 仍跑旧桶，后续的历史迁移/还原会让会话再次分裂（开启=历史
+        // 迁走而新会话仍写 openai 桶；关闭=会话还原而 live 仍写 custom）。
+        // 报错让前端 saved=false 短路还原；回滚是整次保存的事务语义
+        // （本开关的保存只携带开关相关字段）。
+        if let Err(err) =
+            crate::services::provider::reapply_current_codex_official_live(state.inner())
+        {
+            log::warn!("统一 Codex 会话历史开关变更后重写 live 配置失败，回滚设置: {err}");
+            if let Err(rollback_err) = crate::settings::update_settings(existing) {
+                log::error!("回滚统一会话开关设置失败: {rollback_err}");
+            }
+            return Err(format!(
+                "统一 Codex 会话历史开关未生效（live 配置重写失败）: {err}"
+            ));
+        }
+
+        if unify_codex_enabled {
+            // 后台执行存量迁移（openai 桶 → custom 桶；仅当用户勾选了迁入既有
+            // 会话，函数内部自门控）。大会话目录可能要读数秒，不能阻塞设置保存；
+            // 失败时不写完成标记，下次启动自动重试。
+            tauri::async_runtime::spawn_blocking(|| {
+                match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
+                    Ok(outcome) => {
+                        if let Some(reason) = outcome.skipped_reason {
+                            log::debug!("○ Codex official history unify migration skipped: {reason}");
+                        } else {
+                            log::info!(
+                                "✓ Codex official history unify migration completed: jsonl_files={}, state_rows={}",
+                                outcome.migrated_jsonl_files,
+                                outcome.migrated_state_rows
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("✗ Codex official history unify migration failed: {e}");
+                    }
+                }
+            });
+        } else {
+            // 清除标记与迁移意愿，让重新开启并再次勾选时能补迁
+            // 关闭期间落入 openai 桶的官方会话。
+            if let Err(err) = crate::settings::clear_codex_official_history_unify_migration() {
+                log::warn!("清除统一会话迁移标记失败: {err}");
+            }
+            if let Err(err) = crate::settings::clear_codex_unify_migrate_existing() {
+                log::warn!("清除统一会话迁移意愿失败: {err}");
+            }
+        }
+    }
     Ok(true)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexUnifyHistoryRestoreResult {
+    pub restored_jsonl_files: usize,
+    pub restored_state_rows: usize,
+    /// 还原被跳过的原因（如当前目录没有账本），前端据此提示而非报"成功 0 项"。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skipped_reason: Option<String>,
+}
+
+/// 是否存在统一会话开关的迁移备份（决定关闭弹窗里是否显示"恢复备份"勾选）。
+#[tauri::command]
+pub async fn has_codex_unify_history_backup() -> Result<bool, String> {
+    Ok(crate::codex_history_migration::has_codex_official_history_unify_backup())
+}
+
+/// 按迁移备份账本把当时迁入共享桶的官方会话还原回 "openai" 桶。
+/// 由关闭统一会话开关的确认弹窗触发；幂等，可安全重试。
+#[tauri::command]
+pub async fn restore_codex_unified_history() -> Result<CodexUnifyHistoryRestoreResult, String> {
+    let outcome = tauri::async_runtime::spawn_blocking(|| {
+        crate::codex_history_migration::restore_codex_official_history_from_backups()
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+
+    if let Some(reason) = &outcome.skipped_reason {
+        log::debug!("○ Codex official history restore skipped: {reason}");
+    } else {
+        log::info!(
+            "✓ Codex official history restored from backups: jsonl_files={}, state_rows={}",
+            outcome.restored_jsonl_files,
+            outcome.restored_state_rows
+        );
+    }
+
+    Ok(CodexUnifyHistoryRestoreResult {
+        restored_jsonl_files: outcome.restored_jsonl_files,
+        restored_state_rows: outcome.restored_state_rows,
+        skipped_reason: outcome.skipped_reason,
+    })
 }
 
 /// 重启应用程序（当 app_config_dir 变更后使用）
@@ -186,8 +277,9 @@ pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
 mod tests {
     use super::merge_settings_for_save;
     use crate::settings::{
-        AppSettings, CodexProviderTemplateMigration, CodexThirdPartyHistoryProviderBucketMigration,
-        LocalMigrations, S3SyncSettings, WebDavSyncSettings,
+        AppSettings, CodexOfficialHistoryUnifyMigration, CodexProviderTemplateMigration,
+        CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
+        WebDavSyncSettings,
     };
 
     #[test]
@@ -386,6 +478,13 @@ mod tests {
                     completed_at: "2026-05-20T00:01:00Z".to_string(),
                     migrated_provider_ids: vec!["legacy".to_string()],
                 }),
+                codex_official_history_unify_v1: Some(CodexOfficialHistoryUnifyMigration {
+                    completed_at: "2026-06-12T00:00:00Z".to_string(),
+                    target_provider_id: "custom".to_string(),
+                    migrated_jsonl_files: 5,
+                    migrated_state_rows: 7,
+                    codex_config_dir: None,
+                }),
             }),
             ..AppSettings::default()
         };
@@ -415,6 +514,70 @@ mod tests {
             template_migration.migrated_provider_ids,
             vec!["legacy".to_string()]
         );
+
+        let unify_migration = merged
+            .local_migrations
+            .as_ref()
+            .and_then(|migrations| migrations.codex_official_history_unify_v1.as_ref())
+            .expect("official unify migration marker should be preserved");
+        assert_eq!(unify_migration.migrated_jsonl_files, 5);
+        assert_eq!(unify_migration.migrated_state_rows, 7);
+    }
+
+    /// incoming 带有 local_migrations（哪怕是空的）也不能覆盖后端维护的标记。
+    #[test]
+    fn save_settings_should_keep_backend_migration_markers_over_incoming() {
+        let existing = AppSettings {
+            local_migrations: Some(LocalMigrations {
+                codex_third_party_history_provider_bucket_v1: None,
+                codex_provider_template_v1: None,
+                codex_official_history_unify_v1: Some(CodexOfficialHistoryUnifyMigration {
+                    completed_at: "2026-06-12T00:00:00Z".to_string(),
+                    target_provider_id: "custom".to_string(),
+                    migrated_jsonl_files: 1,
+                    migrated_state_rows: 2,
+                    codex_config_dir: None,
+                }),
+            }),
+            ..AppSettings::default()
+        };
+
+        let incoming = AppSettings {
+            local_migrations: Some(LocalMigrations::default()),
+            ..AppSettings::default()
+        };
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert!(merged
+            .local_migrations
+            .as_ref()
+            .and_then(|migrations| migrations.codex_official_history_unify_v1.as_ref())
+            .is_some());
+    }
+
+    /// 后端清掉 marker 后（如关闭统一会话开关）、前端缓存刷新前的全量保存
+    /// 会携带旧 marker；merge 必须忽略它，否则被"复活"的标记会让重新开启
+    /// 时误判已迁移而漏迁。
+    #[test]
+    fn save_settings_should_ignore_stale_incoming_migration_markers() {
+        let existing = AppSettings::default();
+
+        let incoming = AppSettings {
+            local_migrations: Some(LocalMigrations {
+                codex_official_history_unify_v1: Some(CodexOfficialHistoryUnifyMigration {
+                    completed_at: "2026-06-12T00:00:00Z".to_string(),
+                    target_provider_id: "custom".to_string(),
+                    migrated_jsonl_files: 1,
+                    migrated_state_rows: 2,
+                    codex_config_dir: None,
+                }),
+                ..LocalMigrations::default()
+            }),
+            ..AppSettings::default()
+        };
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert!(merged.local_migrations.is_none());
     }
 }
 

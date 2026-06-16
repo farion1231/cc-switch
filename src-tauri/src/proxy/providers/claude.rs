@@ -145,6 +145,77 @@ pub fn normalize_anthropic_tool_thinking_history_for_provider(
     normalize_anthropic_tool_thinking_history(body)
 }
 
+/// DeepSeek official Anthropic-compatible endpoint URL
+const DEEPSEEK_OFFICIAL_ANTHROPIC_URL: &str = "https://api.deepseek.com/anthropic";
+
+/// Check whether the provider is configured to use DeepSeek's official
+/// Anthropic-compatible endpoint.
+fn is_deepseek_official_anthropic_endpoint(provider: &Provider) -> bool {
+    let settings = &provider.settings_config;
+    let base_url = settings
+        .get("env")
+        .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+        .and_then(|v| v.as_str())
+        .or_else(|| settings.get("base_url").and_then(|v| v.as_str()))
+        .or_else(|| settings.get("baseURL").and_then(|v| v.as_str()))
+        .or_else(|| settings.get("apiEndpoint").and_then(|v| v.as_str()));
+
+    base_url.map(|u| u.trim_end_matches('/')) == Some(DEEPSEEK_OFFICIAL_ANTHROPIC_URL)
+}
+
+/// DeepSeek's official Anthropic-compatible endpoint treats
+/// `thinking: { type: "disabled" }` and effort parameters (`output_config.effort`
+/// or `reasoning_effort`) as mutually exclusive, returning HTTP 400:
+/// "thinking options type cannot be disabled when reasoning_effort is set".
+/// This breaks Claude Code 2.1.166+ Workflow/Dynamic Workflow features.
+///
+/// Rather than overriding Claude Code's intentional `thinking: disabled` for
+/// sub-agents, we respect that decision and remove the conflicting effort
+/// parameters instead. `thinking: disabled` means "don't output thinking
+/// blocks", which is the correct behavior for sub-agents that don't need
+/// to display reasoning to the user.
+///
+/// <https://github.com/deepseek-ai/DeepSeek-V3/issues/1397>
+pub fn normalize_deepseek_thinking_disabled_strip_effort(
+    body: &mut Value,
+    provider: &Provider,
+) -> bool {
+    if !is_deepseek_official_anthropic_endpoint(provider) {
+        return false;
+    }
+
+    let thinking_type = body
+        .get("thinking")
+        .and_then(|t| t.get("type"))
+        .and_then(|t| t.as_str());
+
+    if thinking_type != Some("disabled") {
+        return false;
+    }
+
+    let mut changed = false;
+
+    // Remove output_config.effort (Anthropic format)
+    if let Some(oc) = body
+        .get_mut("output_config")
+        .and_then(|v| v.as_object_mut())
+    {
+        changed |= oc.remove("effort").is_some();
+        // Clean up empty output_config
+        if oc.is_empty() {
+            body.as_object_mut().unwrap().remove("output_config");
+        }
+    }
+
+    // Remove reasoning_effort (OpenAI format, may be present in passthrough)
+    if body.get("reasoning_effort").is_some() {
+        body.as_object_mut().unwrap().remove("reasoning_effort");
+        changed = true;
+    }
+
+    changed
+}
+
 pub fn normalize_anthropic_messages_for_provider(
     body: &mut Value,
     provider: &Provider,
@@ -156,6 +227,7 @@ pub fn normalize_anthropic_messages_for_provider(
 
     let mut changed = normalize_anthropic_system_role_messages(body);
     changed |= normalize_anthropic_tool_thinking_history_for_provider(body, provider, api_format);
+    changed |= normalize_deepseek_thinking_disabled_strip_effort(body, provider);
     changed
 }
 
@@ -2299,5 +2371,246 @@ mod tests {
 
         assert!(!changed);
         assert_eq!(body, original);
+    }
+
+    // ==================== normalize_deepseek_thinking_disabled_strip_effort 测试 ====================
+
+    fn deepseek_official_provider() -> Provider {
+        create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }))
+    }
+
+    #[test]
+    fn test_deepseek_official_strips_output_config_effort() {
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "thinking": { "type": "disabled" },
+            "output_config": { "effort": "max" },
+            "max_tokens": 100000
+        });
+
+        let changed = normalize_deepseek_thinking_disabled_strip_effort(
+            &mut body,
+            &deepseek_official_provider(),
+        );
+
+        assert!(changed);
+        assert_eq!(body["thinking"]["type"], "disabled");
+        assert!(body.get("output_config").is_none());
+    }
+
+    #[test]
+    fn test_deepseek_official_strips_reasoning_effort() {
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "thinking": { "type": "disabled" },
+            "reasoning_effort": "high",
+            "max_tokens": 100000
+        });
+
+        let changed = normalize_deepseek_thinking_disabled_strip_effort(
+            &mut body,
+            &deepseek_official_provider(),
+        );
+
+        assert!(changed);
+        assert_eq!(body["thinking"]["type"], "disabled");
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn test_deepseek_official_strips_both_effort_fields() {
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "thinking": { "type": "disabled" },
+            "output_config": { "effort": "max" },
+            "reasoning_effort": "high",
+            "max_tokens": 100000
+        });
+
+        let changed = normalize_deepseek_thinking_disabled_strip_effort(
+            &mut body,
+            &deepseek_official_provider(),
+        );
+
+        assert!(changed);
+        assert_eq!(body["thinking"]["type"], "disabled");
+        assert!(body.get("output_config").is_none());
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn test_deepseek_official_no_effort_no_change() {
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "thinking": { "type": "disabled" },
+            "max_tokens": 100000
+        });
+        let original = body.clone();
+
+        let changed = normalize_deepseek_thinking_disabled_strip_effort(
+            &mut body,
+            &deepseek_official_provider(),
+        );
+
+        assert!(!changed);
+        assert_eq!(body, original);
+    }
+
+    #[test]
+    fn test_deepseek_official_preserves_output_config_other_fields() {
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "thinking": { "type": "disabled" },
+            "output_config": { "effort": "max", "temperature": 0.5 },
+            "max_tokens": 100000
+        });
+
+        let changed = normalize_deepseek_thinking_disabled_strip_effort(
+            &mut body,
+            &deepseek_official_provider(),
+        );
+
+        assert!(changed);
+        assert_eq!(body["output_config"]["temperature"], 0.5);
+        assert!(body["output_config"].get("effort").is_none());
+    }
+
+    #[test]
+    fn test_deepseek_official_non_disabled_not_modified() {
+        let cases = vec![
+            (
+                "enabled",
+                json!({ "type": "enabled", "budget_tokens": 16000 }),
+            ),
+            ("adaptive", json!({ "type": "adaptive" })),
+        ];
+
+        for (label, thinking_value) in cases {
+            let mut body = json!({
+                "model": "deepseek-v4-pro",
+                "thinking": thinking_value,
+                "output_config": { "effort": "max" },
+                "max_tokens": 100000
+            });
+            let original = body.clone();
+
+            let changed = normalize_deepseek_thinking_disabled_strip_effort(
+                &mut body,
+                &deepseek_official_provider(),
+            );
+
+            assert!(!changed, "should not modify thinking.type={label}");
+            assert_eq!(body, original);
+        }
+
+        // missing thinking field entirely
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "output_config": { "effort": "max" },
+            "max_tokens": 100000
+        });
+        let original = body.clone();
+        assert!(!normalize_deepseek_thinking_disabled_strip_effort(
+            &mut body,
+            &deepseek_official_provider()
+        ));
+        assert_eq!(body, original);
+    }
+
+    #[test]
+    fn test_deepseek_official_url_with_trailing_slash() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic/",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "thinking": { "type": "disabled" },
+            "output_config": { "effort": "max" },
+            "max_tokens": 100000
+        });
+
+        let changed = normalize_deepseek_thinking_disabled_strip_effort(&mut body, &provider);
+
+        assert!(changed);
+        assert!(body.get("output_config").is_none());
+    }
+
+    #[test]
+    fn test_deepseek_official_detected_via_base_url_fallback() {
+        let provider = create_provider(json!({
+            "base_url": "https://api.deepseek.com/anthropic",
+            "ANTHROPIC_API_KEY": "test-key"
+        }));
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "thinking": { "type": "disabled" },
+            "reasoning_effort": "high",
+            "max_tokens": 100000
+        });
+
+        let changed = normalize_deepseek_thinking_disabled_strip_effort(&mut body, &provider);
+
+        assert!(changed);
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn test_non_deepseek_endpoint_not_modified() {
+        let providers = vec![
+            create_provider(json!({
+                "env": { "ANTHROPIC_BASE_URL": "https://other-api.com/anthropic", "ANTHROPIC_API_KEY": "test-key" }
+            })),
+            create_provider(json!({
+                "env": { "ANTHROPIC_BASE_URL": "https://api.anthropic.com", "ANTHROPIC_API_KEY": "test-key" }
+            })),
+        ];
+
+        for provider in providers {
+            let mut body = json!({
+                "model": "deepseek-v4-pro",
+                "thinking": { "type": "disabled" },
+                "output_config": { "effort": "max" },
+                "max_tokens": 100000
+            });
+            let original = body.clone();
+
+            let changed = normalize_deepseek_thinking_disabled_strip_effort(&mut body, &provider);
+
+            assert!(
+                !changed,
+                "should not modify for {}",
+                provider.settings_config["env"]["ANTHROPIC_BASE_URL"]
+            );
+            assert_eq!(body, original);
+        }
+    }
+
+    #[test]
+    fn test_normalize_messages_pipeline_strips_effort_for_deepseek() {
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "thinking": { "type": "disabled" },
+            "output_config": { "effort": "max" },
+            "max_tokens": 100000,
+            "messages": [{ "role": "user", "content": "hello" }]
+        });
+
+        let changed = normalize_anthropic_messages_for_provider(
+            &mut body,
+            &deepseek_official_provider(),
+            "anthropic",
+        );
+
+        assert!(changed);
+        assert_eq!(body["thinking"]["type"], "disabled");
+        assert!(body.get("output_config").is_none());
     }
 }
