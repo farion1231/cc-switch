@@ -27,6 +27,7 @@ interface ProviderCompactRowProps {
   onSwitch: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onRemoveFromConfig?: () => void;
   onDuplicate: () => void;
   onConfigureUsage?: () => void;
   onOpenTerminal?: () => void;
@@ -57,6 +58,7 @@ export function ProviderCompactRow({
   onSwitch,
   onEdit,
   onDelete,
+  onRemoveFromConfig,
   onDuplicate,
   onConfigureUsage,
   onOpenTerminal,
@@ -176,6 +178,7 @@ export function ProviderCompactRow({
           onTest={onTest}
           onConfigureUsage={onConfigureUsage}
           onDelete={onDelete}
+          onRemoveFromConfig={onRemoveFromConfig}
           onOpenTerminal={onOpenTerminal}
           isAutoFailoverEnabled={isAutoFailoverEnabled}
           isInFailoverQueue={isInFailoverQueue}

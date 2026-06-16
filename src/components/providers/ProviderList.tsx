@@ -62,6 +62,7 @@ import {
   useCurrentOmoProviderId,
   useCurrentOmoSlimProviderId,
 } from "@/lib/query/omo";
+import { isTextEditableTarget } from "@/utils/domUtils";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -303,6 +304,7 @@ export function ProviderList({
 
       const key = event.key.toLowerCase();
       if ((event.metaKey || event.ctrlKey) && key === "f") {
+        if (isTextEditableTarget(document.activeElement)) return;
         event.preventDefault();
         searchInputRef.current?.focus();
         searchInputRef.current?.select();
@@ -595,19 +597,12 @@ export function ProviderList({
   }, [clearSelection, onSwitch, selectedProvidersToAddToConfig]);
 
   const handleBatchRemoveFromConfig = useCallback(() => {
-    if (!onRemoveFromConfig) return;
-    if (onBatchRemoveFromConfig) {
-      void onBatchRemoveFromConfig(selectedProvidersToRemoveFromConfig);
-    } else {
-      selectedProvidersToRemoveFromConfig.forEach((provider) =>
-        onRemoveFromConfig(provider),
-      );
-    }
+    if (!onBatchRemoveFromConfig) return;
+    void onBatchRemoveFromConfig(selectedProvidersToRemoveFromConfig);
     clearSelection();
   }, [
     clearSelection,
     onBatchRemoveFromConfig,
-    onRemoveFromConfig,
     selectedProvidersToRemoveFromConfig,
   ]);
 
@@ -630,14 +625,11 @@ export function ProviderList({
   ]);
 
   const handleConfirmBatchDelete = useCallback(() => {
-    if (onBatchDelete) {
-      void onBatchDelete(selectedProviders);
-    } else {
-      selectedProviders.forEach((provider) => onDelete(provider));
-    }
+    if (!onBatchDelete) return;
+    void onBatchDelete(selectedProviders);
     setShowBatchDeleteConfirm(false);
     clearSelection();
-  }, [clearSelection, onBatchDelete, onDelete, selectedProviders]);
+  }, [clearSelection, onBatchDelete, selectedProviders]);
 
   const handleApplyGroupCommonConfig = useCallback(
     (
@@ -875,6 +867,11 @@ export function ProviderList({
               onSwitch={() => onSwitch(provider)}
               onEdit={() => onEdit(provider)}
               onDelete={() => onDelete(provider)}
+              onRemoveFromConfig={
+                onRemoveFromConfig
+                  ? () => onRemoveFromConfig(provider)
+                  : undefined
+              }
               onDuplicate={() => onDuplicate(provider)}
               onConfigureUsage={
                 onConfigureUsage ? () => onConfigureUsage(provider) : undefined
@@ -942,7 +939,7 @@ export function ProviderList({
             : undefined
         }
         onBatchRemoveFromConfig={
-          selectedProvidersToRemoveFromConfig.length
+          onBatchRemoveFromConfig && selectedProvidersToRemoveFromConfig.length
             ? handleBatchRemoveFromConfig
             : undefined
         }
@@ -957,7 +954,7 @@ export function ProviderList({
             : undefined
         }
         onBatchDelete={
-          selectedProviders.length
+          onBatchDelete && selectedProviders.length
             ? () => setShowBatchDeleteConfirm(true)
             : undefined
         }

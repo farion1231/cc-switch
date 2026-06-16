@@ -193,8 +193,17 @@ const applyApiKey = (
   if (appId === "claude" || appId === "claude-desktop") {
     const env = ensureRecord(targetConfig, "env");
     const field =
-      "ANTHROPIC_API_KEY" in env ? "ANTHROPIC_API_KEY" : apiKey.field;
+      "ANTHROPIC_AUTH_TOKEN" in env
+        ? "ANTHROPIC_AUTH_TOKEN"
+        : "ANTHROPIC_API_KEY" in env
+          ? "ANTHROPIC_API_KEY"
+          : apiKey.field;
     env[field] = apiKey.value;
+    if (field === "ANTHROPIC_AUTH_TOKEN") {
+      delete env.ANTHROPIC_API_KEY;
+    } else {
+      delete env.ANTHROPIC_AUTH_TOKEN;
+    }
     return;
   }
   if (appId === "codex") {

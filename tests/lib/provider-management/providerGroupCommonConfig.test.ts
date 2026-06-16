@@ -45,6 +45,38 @@ describe("providerGroupCommonConfig", () => {
     expect(JSON.stringify(updated.meta)).not.toContain("sk-source-secret");
   });
 
+  it("updates an existing Claude auth token field instead of leaving it stale", () => {
+    const source: Provider = {
+      id: "source",
+      name: "Source",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_API_KEY: "sk-source-api-key",
+        },
+      },
+    };
+    const target: Provider = {
+      id: "target",
+      name: "Target",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_AUTH_TOKEN: "sk-stale-auth-token",
+        },
+      },
+    };
+
+    const updated = applyGroupCommonConfig(target, source, "claude", [
+      "apiKey",
+    ]);
+
+    expect((updated.settingsConfig.env as any).ANTHROPIC_AUTH_TOKEN).toBe(
+      "sk-source-api-key",
+    );
+    expect(
+      (updated.settingsConfig.env as any).ANTHROPIC_API_KEY,
+    ).toBeUndefined();
+  });
+
   it("applies Codex base URL and model without dropping existing auth", () => {
     const source: Provider = {
       id: "source",

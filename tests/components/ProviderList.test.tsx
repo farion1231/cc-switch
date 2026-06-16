@@ -463,6 +463,82 @@ describe("ProviderList Component", () => {
     expect(screen.queryByTestId("provider-card-alpha")).not.toBeInTheDocument();
   });
 
+  it("uses remove-from-config when compact row remove is clicked", async () => {
+    const providerAlpha = createProvider({ id: "alpha", name: "Alpha Labs" });
+    const handleRemoveFromConfig = vi.fn();
+    const handleDelete = vi.fn();
+
+    providerApiMocks.getOpenCodeLiveProviderIds.mockResolvedValue(["alpha"]);
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerAlpha],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ alpha: providerAlpha }}
+        currentProviderId=""
+        appId="opencode"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={handleDelete}
+        onRemoveFromConfig={handleRemoveFromConfig}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Compact/ }));
+
+    const removeButton = await screen.findByRole("button", {
+      name: /Remove|移除/,
+    });
+    fireEvent.click(removeButton);
+
+    expect(handleRemoveFromConfig).toHaveBeenCalledWith(providerAlpha);
+    expect(handleDelete).not.toHaveBeenCalled();
+  });
+
+  it("does not steal Ctrl+F from an already focused input", () => {
+    const providerAlpha = createProvider({ id: "alpha", name: "Alpha Labs" });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerAlpha],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <>
+        <input aria-label="Dialog search" />
+        <ProviderList
+          providers={{ alpha: providerAlpha }}
+          currentProviderId=""
+          appId="claude"
+          onSwitch={vi.fn()}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onDuplicate={vi.fn()}
+          onOpenWebsite={vi.fn()}
+        />
+      </>,
+    );
+
+    const dialogSearch = screen.getByRole("textbox", {
+      name: "Dialog search",
+    });
+    const providerSearch = screen.getByRole("textbox", {
+      name: "Search providers",
+    });
+    dialogSearch.focus();
+
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+
+    expect(dialogSearch).toHaveFocus();
+    expect(providerSearch).not.toHaveFocus();
+  });
+
   it("selects visible providers and shows the selected count", () => {
     const providerAlpha = createProvider({ id: "alpha", name: "Alpha Labs" });
     const providerBeta = createProvider({ id: "beta", name: "Beta Works" });
@@ -837,6 +913,37 @@ describe("ProviderList Component", () => {
     expect(handleDelete).not.toHaveBeenCalled();
   });
 
+  it("does not offer batch delete without a batch delete callback", () => {
+    const providerAlpha = createProvider({ id: "alpha", name: "Alpha Labs" });
+    const providerBeta = createProvider({ id: "beta", name: "Beta Works" });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerAlpha, providerBeta],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ alpha: providerAlpha, beta: providerBeta }}
+        currentProviderId=""
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("select-alpha"));
+    fireEvent.click(screen.getByTestId("select-beta"));
+
+    expect(
+      screen.queryByRole("button", { name: "Delete selected" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("adds selected providers to live config sequentially", async () => {
     const providerAlpha = createProvider({ id: "alpha", name: "Alpha Labs" });
     const providerBeta = createProvider({ id: "beta", name: "Beta Works" });
@@ -935,6 +1042,46 @@ describe("ProviderList Component", () => {
       providerBeta,
     ]);
     expect(handleRemoveFromConfig).not.toHaveBeenCalled();
+  });
+
+  it("does not offer batch remove-from-config without a batch callback", async () => {
+    const providerAlpha = createProvider({ id: "alpha", name: "Alpha Labs" });
+    const providerBeta = createProvider({ id: "beta", name: "Beta Works" });
+
+    providerApiMocks.getOpenCodeLiveProviderIds.mockResolvedValue([
+      "alpha",
+      "beta",
+    ]);
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerAlpha, providerBeta],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ alpha: providerAlpha, beta: providerBeta }}
+        currentProviderId=""
+        appId="opencode"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onRemoveFromConfig={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    await screen.findByRole("button", { name: "Cards" });
+    fireEvent.click(screen.getByTestId("select-alpha"));
+    fireEvent.click(screen.getByTestId("select-beta"));
+
+    await waitFor(() =>
+      expect(screen.getByText("2 selected")).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Remove selected" }),
+    ).not.toBeInTheDocument();
   });
 
   it("tests every selected provider directly", async () => {
