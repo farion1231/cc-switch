@@ -60,6 +60,37 @@ pub async fn set_proxy_takeover_for_app(
         .await
 }
 
+/// 预览或应用 Codex Desktop 历史可见性修复。
+#[tauri::command]
+pub async fn repair_codex_history_visibility(
+    state: tauri::State<'_, AppState>,
+    options: Option<crate::codex_history_migration::CodexHistoryVisibilityRepairOptions>,
+) -> Result<crate::codex_history_migration::CodexHistoryVisibilityRepairOutcome, String> {
+    crate::codex_history_migration::repair_codex_history_visibility(
+        &state.db,
+        options.unwrap_or_default(),
+    )
+    .map_err(|error| error.to_string())
+}
+
+/// 列出 active SQLite 中可供修复和查看的 Codex 历史会话。
+#[tauri::command]
+pub async fn list_codex_history_sessions(
+    options: Option<crate::codex_history_migration::CodexHistorySessionListOptions>,
+) -> Result<crate::codex_history_migration::CodexHistorySessionListOutcome, String> {
+    crate::codex_history_migration::list_codex_history_sessions(options.unwrap_or_default())
+        .map_err(|error| error.to_string())
+}
+
+/// 读取单条 Codex 历史会话的 JSONL 正文，用于修复前核对内容。
+#[tauri::command]
+pub async fn read_codex_history_session(
+    options: crate::codex_history_migration::CodexHistorySessionDetailOptions,
+) -> Result<crate::codex_history_migration::CodexHistorySessionDetailOutcome, String> {
+    crate::codex_history_migration::read_codex_history_session(options)
+        .map_err(|error| error.to_string())
+}
+
 /// 获取代理服务器状态
 #[tauri::command]
 pub async fn get_proxy_status(state: tauri::State<'_, AppState>) -> Result<ProxyStatus, String> {
