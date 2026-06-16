@@ -1390,30 +1390,9 @@ pub fn write_codex_live_for_provider(
     // other runtime-changed settings are always current.
     let _ = crate::settings::reload_settings();
 
-    // Normalize model_provider ID before writing, so that switching between
-    // providers with different IDs keeps chat history in a single bucket.
-    let force_id = crate::settings::force_codex_model_provider_id();
-    log::info!(
-        "write_codex_live_for_provider: category={:?}, force_id={:?}",
-        category, force_id
-    );
-    let (normalized_config, rewritten_ids) = match config_text {
-        Some(text) => {
-            let outcome = normalize_codex_model_provider_id_if_configured(text)?;
-            let rewritten = outcome.rewritten_ids;
-            (Some(outcome.config_text), rewritten)
-        }
-        None => (None, Vec::new()),
-    };
-    let config_text = normalized_config.as_deref();
-
-    // Note: We intentionally do NOT migrate existing session history files.
-    // The `force_codex_model_provider_id` setting only affects the live
-    // config.toml (new sessions land in the unified bucket).  Existing
-    // sessions stay in their original buckets so they remain visible under
-    // their original provider in CC Switch's Session Manager (which scans
-    // all buckets regardless of the active model_provider).
-
+    // Step 1: unified session bucket injection (must run BEFORE normalize,
+    // because inject_codex_unified_session_bucket skips when model_provider
+    // already exists — and normalize always sets model_provider).
     let unified_official_config =
         if category == Some("official") && crate::settings::unify_codex_session_history() {
             Some(inject_codex_unified_session_bucket(
@@ -1424,14 +1403,30 @@ pub fn write_codex_live_for_provider(
         };
     let config_text = unified_official_config.as_deref().or(config_text);
 
+    // Step 2: normalize model_provider ID (runs after unified injection
+    // so official providers already have model_provider="custom" with
+    // requires_openai_auth, and normalize is a no-op for them).
+    let force_id = crate::settings::force_codex_model_provider_id();
+    log::info!(
+        "write_codex_live_for_provider: category={:?}, force_id={:?}",
+        category, force_id
+    );
+    let config_text = match config_text {
+        Some(text) => {
+            let outcome = normalize_codex_model_provider_id_if_configured(text)?;
+            Some(outcome.config_text)
+        }
+        None => None,
+    };
+
     let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
         || (category != Some("official")
             && !crate::settings::preserve_codex_official_auth_on_switch());
 
     if should_write_auth {
-        write_codex_live_atomic(auth, config_text)
+        write_codex_live_atomic(auth, config_text.as_deref())
     } else {
-        let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
+        let live_config = prepare_codex_provider_live_config(auth, config_text.as_deref().unwrap_or(""))?;
         write_codex_live_config_atomic(Some(&live_config))
     }
 }
