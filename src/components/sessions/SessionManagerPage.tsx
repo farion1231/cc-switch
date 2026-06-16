@@ -912,7 +912,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                   className="flex items-center gap-1 hover:text-foreground transition-colors"
                                 >
                                   <FileText className="size-3 shrink-0" />
-                                  <span className="font-mono">
+                                  <span className="font-mono truncate max-w-[200px]">
                                     {getBaseName(selectedSession.sourcePath)}
                                   </span>
                                 </button>
