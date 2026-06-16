@@ -100,6 +100,12 @@ pub(crate) struct ClaudeSwitchPlan {
     override_dir: Option<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ClaudeTerminalLaunchConfig {
+    pub profile_dir: Option<String>,
+    pub config_dir: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 struct ClaudeRollbackState {
     previous_provider_override_dir: Option<String>,
@@ -113,6 +119,10 @@ struct ClaudeRollbackState {
 
 #[cfg(test)]
 static FAIL_CLAUDE_CONFIG_ENV_RESTORE_FOR_TEST: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(test)]
+static FAIL_CLAUDE_CONFIG_ENV_SET_FOR_TEST: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 /// Result of a provider switch operation, including any non-fatal warnings
@@ -3030,6 +3040,39 @@ mod tests {
 
     #[test]
     #[serial]
+    fn terminal_launch_returns_configured_legacy_claude_config_dir() {
+        with_test_home(|state, home| {
+            let configured_legacy_dir = home.join(".configured-claude");
+            fs::create_dir_all(&configured_legacy_dir).expect("create configured legacy dir");
+            let mut settings = crate::settings::get_settings();
+            settings.claude_config_dir = Some("~/.configured-claude".to_string());
+            crate::settings::update_settings(settings).expect("set configured legacy dir");
+
+            let legacy_provider = claude_provider(
+                "claude-legacy",
+                "Claude Legacy",
+                "legacy-token",
+                "https://legacy.example",
+                None,
+            );
+
+            let launch = ProviderService::prepare_claude_terminal_launch(state, &legacy_provider)
+                .expect("prepare legacy launch");
+
+            assert!(
+                launch.profile_dir.is_none(),
+                "legacy terminal launches should not be treated as profile-mode launches"
+            );
+            assert_eq!(
+                launch.config_dir.as_deref(),
+                Some(configured_legacy_dir.to_string_lossy().as_ref()),
+                "legacy terminal launches should keep the configured Claude dir"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn switch_claude_profile_only_preserves_profile_mcp_file() {
         let _env_guard = UserEnvVarGuard::new("CLAUDE_CONFIG_DIR");
         with_test_home(|state, home| {
@@ -3801,6 +3844,56 @@ wire_api = "responses"
                     .as_deref(),
                 Some(external_config_dir.as_str()),
                 "legacy activation without a configured cc-switch legacy dir should preserve external env"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn apply_claude_profile_env_failure_rolls_back_provider_override() {
+        let _env_guard = UserEnvVarGuard::new("CLAUDE_CONFIG_DIR");
+        with_test_home(|_state, home| {
+            let previous_profile_dir = home.join(".claude-profiles").join("previous");
+            let target_profile_dir = home.join(".claude-profiles").join("target");
+            fs::create_dir_all(&previous_profile_dir).expect("create previous profile dir");
+            fs::create_dir_all(&target_profile_dir).expect("create target profile dir");
+            crate::settings::set_claude_provider_override_dir(Some(
+                &previous_profile_dir.to_string_lossy(),
+            ))
+            .expect("seed previous profile override");
+            crate::services::env_manager::set_user_env_var(
+                "CLAUDE_CONFIG_DIR",
+                Some(&previous_profile_dir.to_string_lossy()),
+            )
+            .expect("seed previous profile env");
+
+            let profile_provider = claude_provider(
+                "claude-profile",
+                "Claude Profile",
+                "profile-token",
+                "https://profile.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(target_profile_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+
+            let plan = ProviderService::claude_switch_plan(&profile_provider);
+            FAIL_CLAUDE_CONFIG_ENV_SET_FOR_TEST.store(true, std::sync::atomic::Ordering::SeqCst);
+
+            let err = ProviderService::apply_claude_switch_plan(&plan)
+                .expect_err("env set failure should fail the switch plan");
+
+            assert!(
+                err.to_string()
+                    .contains("simulated CLAUDE_CONFIG_DIR set failure"),
+                "switch should report the CLAUDE_CONFIG_DIR write failure"
+            );
+            assert_eq!(
+                crate::settings::get_claude_override_dir().as_deref(),
+                Some(previous_profile_dir.as_path()),
+                "provider override should roll back when CLAUDE_CONFIG_DIR activation fails"
             );
         });
     }
@@ -5407,8 +5500,18 @@ impl ProviderService {
             }
         }
 
-        crate::services::env_manager::set_user_env_var("CLAUDE_CONFIG_DIR", next_config_env)
-            .map_err(AppError::Message)
+        if let Err(err) = Self::set_claude_config_env(next_config_env) {
+            if let Err(rollback_err) = crate::settings::set_claude_provider_override_dir(
+                previous_settings.claude_provider_config_dir.as_deref(),
+            ) {
+                log::warn!(
+                    "Failed to restore Claude provider override after CLAUDE_CONFIG_DIR update failed: {rollback_err}"
+                );
+            }
+            return Err(err);
+        }
+
+        Ok(())
     }
 
     fn current_claude_provider_is_profile_only(state: &AppState) -> Result<bool, AppError> {
@@ -5481,19 +5584,33 @@ impl ProviderService {
         state: &AppState,
         provider: &Provider,
     ) -> Result<Option<String>, AppError> {
+        Ok(Self::prepare_claude_terminal_launch(state, provider)?.profile_dir)
+    }
+
+    pub(crate) fn prepare_claude_terminal_launch(
+        state: &AppState,
+        provider: &Provider,
+    ) -> Result<ClaudeTerminalLaunchConfig, AppError> {
         Self::validate_claude_switch_plan(provider)?;
 
         let plan = Self::claude_switch_plan(provider);
         Self::validate_claude_runtime_switch_plan(&plan)?;
-        let normalized_profile_dir = match plan.activation_mode {
-            ClaudeActivationMode::Legacy => None,
-            ClaudeActivationMode::ProfileOnly | ClaudeActivationMode::ProfileAndConfig => {
-                plan.override_dir.clone()
+        let mut launch = ClaudeTerminalLaunchConfig::default();
+        match plan.activation_mode {
+            ClaudeActivationMode::Legacy => {
+                launch.config_dir = crate::settings::get_settings()
+                    .claude_config_dir
+                    .as_deref()
+                    .map(Self::resolve_claude_override_path)
+                    .map(|path| path.to_string_lossy().to_string());
             }
-        };
+            ClaudeActivationMode::ProfileOnly | ClaudeActivationMode::ProfileAndConfig => {
+                launch.profile_dir = plan.override_dir.clone();
+            }
+        }
 
         if !matches!(plan.activation_mode, ClaudeActivationMode::ProfileAndConfig) {
-            return Ok(normalized_profile_dir);
+            return Ok(launch);
         }
 
         let profile_dir = plan.override_dir.as_deref().ok_or_else(|| {
@@ -5506,7 +5623,19 @@ impl ProviderService {
             Path::new(profile_dir),
         )?;
 
-        Ok(Some(profile_dir.to_string()))
+        Ok(launch)
+    }
+
+    fn set_claude_config_env(value: Option<&str>) -> Result<(), AppError> {
+        #[cfg(test)]
+        if FAIL_CLAUDE_CONFIG_ENV_SET_FOR_TEST.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            return Err(AppError::Message(
+                "simulated CLAUDE_CONFIG_DIR set failure".to_string(),
+            ));
+        }
+
+        crate::services::env_manager::set_user_env_var("CLAUDE_CONFIG_DIR", value)
+            .map_err(AppError::Message)
     }
 
     fn restore_claude_config_env_for_rollback(value: Option<&str>) -> Result<(), AppError> {
