@@ -172,6 +172,11 @@ function buildPasswordPreservationKey(values: {
   });
 }
 
+/** Check if the endpoint is an AWS endpoint (matches backend is_aws_endpoint). */
+function isAwsEndpoint(endpoint: string): boolean {
+  return !endpoint || endpoint.includes("amazonaws.com");
+}
+
 // ─── Types ──────────────────────────────────────────────────
 
 type ActionState =
@@ -1402,8 +1407,8 @@ export function WebdavSyncSection({
               />
             </div>
 
-            {/* URL Style selector - hide for AWS S3 (always virtual-hosted) */}
-            {s3Preset !== "aws-s3" && (
+            {/* URL Style selector - show for custom endpoints (AWS always uses virtual-hosted) */}
+            {!isAwsEndpoint(s3Endpoint) && (
               <div className="flex items-center gap-4">
                 <label className="w-40 text-xs font-medium text-foreground shrink-0">
                   {t("settings.s3Sync.urlStyle")}

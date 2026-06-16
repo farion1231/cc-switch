@@ -625,7 +625,12 @@ mod tests {
 
     #[test]
     fn build_object_url_path_style_forced_on_custom() {
-        let creds = test_creds_with_url_style("minio.example.com:9000", "us-east-1", "mybucket", S3UrlStyle::PathStyle);
+        let creds = test_creds_with_url_style(
+            "minio.example.com:9000",
+            "us-east-1",
+            "mybucket",
+            S3UrlStyle::PathStyle,
+        );
         assert_eq!(
             build_object_url(&creds, "path/to/file.json"),
             "https://minio.example.com:9000/mybucket/path/to/file.json"
@@ -644,7 +649,12 @@ mod tests {
 
     #[test]
     fn build_bucket_url_path_style_forced_on_custom() {
-        let creds = test_creds_with_url_style("storage.example.com", "us-east-1", "data", S3UrlStyle::PathStyle);
+        let creds = test_creds_with_url_style(
+            "storage.example.com",
+            "us-east-1",
+            "data",
+            S3UrlStyle::PathStyle,
+        );
         assert_eq!(
             build_bucket_url(&creds),
             "https://storage.example.com/data/"
@@ -653,7 +663,12 @@ mod tests {
 
     #[test]
     fn build_object_url_virtual_hosted_forced_on_custom() {
-        let creds = test_creds_with_url_style("minio.example.com:9000", "us-east-1", "mybucket", S3UrlStyle::VirtualHosted);
+        let creds = test_creds_with_url_style(
+            "minio.example.com:9000",
+            "us-east-1",
+            "mybucket",
+            S3UrlStyle::VirtualHosted,
+        );
         assert_eq!(
             build_object_url(&creds, "path/to/file.json"),
             "https://mybucket.minio.example.com:9000/path/to/file.json"
@@ -662,7 +677,12 @@ mod tests {
 
     #[test]
     fn build_bucket_url_virtual_hosted_forced_on_custom() {
-        let creds = test_creds_with_url_style("storage.example.com", "us-east-1", "data", S3UrlStyle::VirtualHosted);
+        let creds = test_creds_with_url_style(
+            "storage.example.com",
+            "us-east-1",
+            "data",
+            S3UrlStyle::VirtualHosted,
+        );
         assert_eq!(
             build_bucket_url(&creds),
             "https://data.storage.example.com/"
@@ -946,7 +966,12 @@ mod tests {
         }
     }
 
-    fn test_creds_with_url_style(endpoint: &str, region: &str, bucket: &str, url_style: S3UrlStyle) -> S3Credentials {
+    fn test_creds_with_url_style(
+        endpoint: &str,
+        region: &str,
+        bucket: &str,
+        url_style: S3UrlStyle,
+    ) -> S3Credentials {
         S3Credentials {
             access_key_id: String::new(),
             secret_access_key: String::new(),
