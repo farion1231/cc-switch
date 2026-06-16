@@ -1388,6 +1388,11 @@ pub fn write_codex_live_for_provider(
 ) -> Result<(), AppError> {
     // Normalize model_provider ID before writing, so that switching between
     // providers with different IDs keeps chat history in a single bucket.
+    let force_id = crate::settings::force_codex_model_provider_id();
+    log::info!(
+        "write_codex_live_for_provider: category={:?}, force_id={:?}",
+        category, force_id
+    );
     let (normalized_config, rewritten_ids) = match config_text {
         Some(text) => {
             let outcome = normalize_codex_model_provider_id_if_configured(text)?;
@@ -1410,6 +1415,10 @@ pub fn write_codex_live_for_provider(
         }
 
         if !migrate_ids.is_empty() {
+            log::info!(
+                "Triggering force-provider-id migration: {:?} -> '{}'",
+                migrate_ids, target_id
+            );
             if let Err(e) = crate::codex_history_migration::migrate_codex_history_for_force_provider_id(
                 &migrate_ids,
                 &target_id,
