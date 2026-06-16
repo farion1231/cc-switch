@@ -3008,6 +3008,83 @@ mod tests {
 
     #[test]
     #[serial]
+    fn update_current_claude_profile_env_failure_restores_previous_provider_row() {
+        with_test_home(|state, home| {
+            let profile_dir = home.join(".claude-profiles").join("official");
+            fs::create_dir_all(&profile_dir).expect("create profile dir");
+            write_json_file(
+                &profile_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "official-live-token",
+                        "ANTHROPIC_BASE_URL": "https://official-live.example"
+                    }
+                }),
+            )
+            .expect("seed profile settings");
+
+            let legacy_provider = claude_provider(
+                "claude-current",
+                "Claude Current",
+                "legacy-token",
+                "https://legacy.example",
+                None,
+            );
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &legacy_provider)
+                .expect("save legacy provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "claude-current")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("claude-current"))
+                .expect("set local current provider");
+
+            let updated_provider = claude_provider(
+                "claude-current",
+                "Claude Current",
+                "provider-token-should-not-save",
+                "https://provider-should-not-save.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(profile_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+
+            FAIL_CLAUDE_CONFIG_ENV_SET_FOR_TEST.store(true, std::sync::atomic::Ordering::SeqCst);
+            let err = ProviderService::update(state, AppType::Claude, None, updated_provider)
+                .expect_err("env failure should reject current provider update");
+            assert!(
+                err.to_string()
+                    .contains("simulated CLAUDE_CONFIG_DIR set failure"),
+                "expected simulated env failure, got {err:?}"
+            );
+
+            let stored = state
+                .db
+                .get_provider_by_id("claude-current", AppType::Claude.as_str())
+                .expect("query stored provider")
+                .expect("stored provider exists");
+            assert_eq!(
+                stored.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("legacy-token".to_string()),
+                "failed current-provider update must restore the previous DB settings"
+            );
+            assert!(
+                stored
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.claude_activation_mode.as_ref())
+                    .is_none(),
+                "failed current-provider update must restore the previous DB meta"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn terminal_launch_profile_and_config_syncs_selected_provider_without_switching_current() {
         with_test_home(|state, home| {
             let api_dir = home.join(".claude-profiles").join("api");
@@ -6664,6 +6741,15 @@ impl ProviderService {
             })();
 
             if let Err(err) = update_result {
+                if let Some(existing_provider) = existing_provider.as_ref() {
+                    if let Err(rollback_err) =
+                        state.db.save_provider(app_type.as_str(), existing_provider)
+                    {
+                        return Err(AppError::Message(format!(
+                            "{err}; additionally failed to restore previous provider row: {rollback_err}"
+                        )));
+                    }
+                }
                 if let Some(rollback) = claude_rollback.as_ref() {
                     if let Err(rollback_err) = Self::rollback_claude_switch(state, rollback) {
                         return Err(AppError::Message(format!(
