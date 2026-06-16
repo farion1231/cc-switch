@@ -245,6 +245,8 @@ export function ProviderList({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+
       const activeElement = document.activeElement as HTMLElement | null;
       const isTyping =
         activeElement != null &&

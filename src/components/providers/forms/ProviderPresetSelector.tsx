@@ -306,7 +306,6 @@ export function ProviderPresetSelector({
                 defaultValue: "Search provider presets",
               })}
               className="w-60 h-8"
-              autoFocus
             />
           )}
           <Button
