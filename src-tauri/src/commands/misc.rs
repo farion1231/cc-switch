@@ -18,6 +18,12 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+const CLAUDE_API_AUTH_ENV_KEYS: [&str; 3] = [
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_BASE_URL",
+];
+
 /// 打开外部链接
 #[tauri::command]
 pub async fn open_external(app: AppHandle, url: String) -> Result<bool, String> {
@@ -2477,6 +2483,13 @@ pub async fn open_provider_terminal(
         .get(&providerId)
         .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
 
+    if is_claude_official_provider(&app_type, provider) {
+        prepare_official_claude_terminal_launch(state.inner(), &app_type, provider)?;
+        launch_official_claude_terminal(launch_cwd.as_deref())
+            .map_err(|e| format!("启动终端失败: {e}"))?;
+        return Ok(true);
+    }
+
     // 从提供商配置中提取环境变量
     let config = &provider.settings_config;
     let env_vars = extract_env_vars_from_config(config, &app_type);
@@ -2486,6 +2499,32 @@ pub async fn open_provider_terminal(
         .map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
+}
+
+fn is_claude_official_provider(app_type: &AppType, provider: &crate::provider::Provider) -> bool {
+    *app_type == AppType::Claude && provider.category.as_deref() == Some("official")
+}
+
+fn prepare_official_claude_terminal_launch(
+    state: &crate::store::AppState,
+    app_type: &AppType,
+    provider: &crate::provider::Provider,
+) -> Result<(), String> {
+    let _switch_guard =
+        futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
+    let has_live_backup = futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
+        .map_err(|e| format!("读取 Live 备份失败: {e}"))?
+        .is_some();
+    let live_taken_over = state
+        .proxy_service
+        .detect_takeover_in_live_config_for_app(app_type);
+
+    if has_live_backup || live_taken_over {
+        return Err("代理接管模式下不能打开 Claude 官方终端，请先关闭代理接管。".to_string());
+    }
+
+    crate::services::provider::write_live_snapshot(app_type, provider)
+        .map_err(|e| format!("更新 Claude 官方配置失败: {e}"))
 }
 
 /// 从提供商配置中提取环境变量
@@ -2594,19 +2633,43 @@ fn launch_terminal_with_env(
 
     #[cfg(target_os = "macos")]
     {
-        launch_macos_terminal(&config_file, cwd)?;
+        launch_macos_terminal(Some(&config_file), cwd)?;
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
     {
-        launch_linux_terminal(&config_file, cwd)?;
+        launch_linux_terminal(Some(&config_file), cwd)?;
         Ok(())
     }
 
     #[cfg(target_os = "windows")]
     {
-        launch_windows_terminal(&temp_dir, &config_file, cwd)?;
+        launch_windows_terminal(&temp_dir, Some(&config_file), cwd)?;
+        return Ok(());
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    Err("不支持的操作系统".to_string())
+}
+
+fn launch_official_claude_terminal(cwd: Option<&Path>) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        launch_macos_terminal(None, cwd)?;
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        launch_linux_terminal(None, cwd)?;
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let temp_dir = std::env::temp_dir();
+        launch_windows_terminal(&temp_dir, None, cwd)?;
         return Ok(());
     }
 
@@ -2634,9 +2697,79 @@ fn write_claude_config(
     std::fs::write(config_file, config_json).map_err(|e| format!("写入配置文件失败: {e}"))
 }
 
+#[cfg(not(target_os = "windows"))]
+fn build_claude_terminal_invocation(config_file: Option<&std::path::Path>) -> String {
+    if let Some(config_file) = config_file {
+        return format!(
+            "claude --settings {}",
+            shell_single_quote(&config_file.to_string_lossy())
+        );
+    }
+
+    format!("unset {}\nclaude", CLAUDE_API_AUTH_ENV_KEYS.join(" "))
+}
+
+#[cfg(target_os = "windows")]
+fn build_claude_terminal_invocation(config_file: Option<&std::path::Path>) -> String {
+    if let Some(config_file) = config_file {
+        return format!(
+            "claude --settings \"{}\"",
+            escape_windows_batch_value(&config_file.to_string_lossy())
+        );
+    }
+
+    let mut lines: Vec<String> = CLAUDE_API_AUTH_ENV_KEYS
+        .iter()
+        .map(|key| format!("set {key}="))
+        .collect();
+    lines.push("claude".to_string());
+    lines.join("\r\n")
+}
+
+#[cfg(not(target_os = "windows"))]
+fn build_claude_terminal_intro(config_file: Option<&std::path::Path>) -> String {
+    if let Some(config_file) = config_file {
+        return format!(
+            "printf '%s\\n' {}\nprintf '%s\\n' {}",
+            shell_single_quote("Using provider-specific claude config:"),
+            shell_single_quote(&config_file.to_string_lossy())
+        );
+    }
+
+    format!(
+        "printf '%s\\n' {}",
+        shell_single_quote("Using Claude official auth")
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn build_claude_terminal_intro(config_file: Option<&std::path::Path>) -> String {
+    if let Some(config_file) = config_file {
+        let config_path = escape_windows_batch_value(&config_file.to_string_lossy());
+        return format!("echo Using provider-specific claude config:\r\necho {config_path}");
+    }
+
+    "echo Using Claude official auth".to_string()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn build_claude_terminal_cleanup(
+    script_file: &std::path::Path,
+    config_file: Option<&std::path::Path>,
+) -> String {
+    let mut paths = vec![shell_single_quote(&script_file.to_string_lossy())];
+    if let Some(config_file) = config_file {
+        paths.push(shell_single_quote(&config_file.to_string_lossy()));
+    }
+    shell_single_quote(&format!("rm -f {}", paths.join(" ")))
+}
+
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
+fn launch_macos_terminal(
+    config_file: Option<&std::path::Path>,
+    cwd: Option<&Path>,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
     let preferred = crate::settings::get_preferred_terminal();
@@ -2644,22 +2777,18 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
 
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
+    let cleanup_trap = build_claude_terminal_cleanup(&script_file, config_file);
+    let intro = build_claude_terminal_intro(config_file);
+    let claude_command = build_claude_terminal_invocation(config_file);
 
     // Write the shell script to a temp file
     let script_content = format!(
-        r#"#!/bin/bash
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-{cd_command}
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-claude --settings "{config_path}"
-exec bash --norc --noprofile
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
+        "#!/bin/bash\ntrap {cleanup_trap} EXIT\n{cd_command}{intro}\n{claude_command}\nexec bash --norc --noprofile\n",
+        cleanup_trap = cleanup_trap,
         cd_command = cd_command,
+        intro = intro,
+        claude_command = claude_command,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -2940,7 +3069,10 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 
 /// Linux: 根据用户首选终端启动
 #[cfg(target_os = "linux")]
-fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
+fn launch_linux_terminal(
+    config_file: Option<&std::path::Path>,
+    cwd: Option<&Path>,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
@@ -2961,21 +3093,17 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     // Create temp script file
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
+    let cleanup_trap = build_claude_terminal_cleanup(&script_file, config_file);
+    let intro = build_claude_terminal_intro(config_file);
+    let claude_command = build_claude_terminal_invocation(config_file);
 
     let script_content = format!(
-        r#"#!/bin/bash
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-{cd_command}
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-claude --settings "{config_path}"
-exec bash --norc --noprofile
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
+        "#!/bin/bash\ntrap {cleanup_trap} EXIT\n{cd_command}{intro}\n{claude_command}\nexec bash --norc --noprofile\n",
+        cleanup_trap = cleanup_trap,
         cd_command = cd_command,
+        intro = intro,
+        claude_command = claude_command,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -3034,7 +3162,9 @@ exec bash --norc --noprofile
 
     // Clean up on failure
     let _ = std::fs::remove_file(&script_file);
-    let _ = std::fs::remove_file(config_file);
+    if let Some(config_file) = config_file {
+        let _ = std::fs::remove_file(config_file);
+    }
     Err(last_error)
 }
 
@@ -3053,29 +3183,31 @@ fn which_command(cmd: &str) -> bool {
 #[cfg(target_os = "windows")]
 fn launch_windows_terminal(
     temp_dir: &std::path::Path,
-    config_file: &std::path::Path,
+    config_file: Option<&std::path::Path>,
     cwd: Option<&Path>,
 ) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("cmd");
 
     let bat_file = temp_dir.join(format!("cc_switch_claude_{}.bat", std::process::id()));
-    let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
     let cwd_command = build_windows_cwd_command(cwd);
+    let intro = build_claude_terminal_intro(config_file);
+    let claude_command = build_claude_terminal_invocation(config_file);
+    let cleanup_config = config_file
+        .map(|path| {
+            format!(
+                "del \"{}\" >nul 2>&1\r\n",
+                escape_windows_batch_value(&path.to_string_lossy())
+            )
+        })
+        .unwrap_or_default();
 
     let content = format!(
-        "@echo off
-{cwd_command}
-echo Using provider-specific claude config:
-echo {}
-claude --settings \"{}\"
-del \"{}\" >nul 2>&1
-del \"%~f0\" >nul 2>&1
-",
-        config_path_for_batch,
-        config_path_for_batch,
-        config_path_for_batch,
+        "@echo off\r\n{cwd_command}{intro}\r\n{claude_command}\r\n{cleanup_config}del \"%~f0\" >nul 2>&1\r\n",
         cwd_command = cwd_command,
+        intro = intro,
+        claude_command = claude_command,
+        cleanup_config = cleanup_config,
     );
 
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
@@ -3385,7 +3517,40 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::Provider;
+    use serde_json::{json, Value};
+    use std::ffi::OsString;
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+
+    struct TempHome {
+        _dir: tempfile::TempDir,
+        original_test_home: Option<OsString>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = tempfile::TempDir::new().expect("create temp home");
+            let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            crate::settings::reload_settings().expect("reload settings");
+
+            Self {
+                _dir: dir,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            match &self.original_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            crate::settings::reload_settings().expect("reload settings");
+        }
+    }
 
     #[test]
     fn test_extract_version() {
@@ -4855,6 +5020,165 @@ mod tests {
         let command = build_shell_cd_command(Some(Path::new("/tmp/project O'Brien")));
 
         assert_eq!(command, "cd '/tmp/project O'\"'\"'Brien' || exit 1\n");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn official_claude_terminal_invocation_clears_api_env_and_uses_default_settings() {
+        let command = build_claude_terminal_invocation(None);
+
+        assert!(
+            command.contains("unset ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_BASE_URL"),
+            "official Claude launch must clear API auth env: {command}"
+        );
+        assert!(
+            command.lines().any(|line| line == "claude"),
+            "official Claude launch should run the default claude command: {command}"
+        );
+        assert!(
+            !command.contains("--settings"),
+            "official Claude launch must not inject provider-specific settings: {command}"
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn provider_claude_terminal_invocation_uses_provider_settings() {
+        let command = build_claude_terminal_invocation(Some(Path::new("/tmp/cc switch.json")));
+
+        assert!(command.contains("claude --settings '/tmp/cc switch.json'"));
+        assert!(!command.contains("unset ANTHROPIC_AUTH_TOKEN"));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn claude_terminal_script_fragments_quote_special_paths() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let config_path = temp_dir.path().join("cc switch O'Brien.json");
+        let script_path = temp_dir.path().join("cc switch launcher O'Brien.sh");
+        let command = build_claude_terminal_invocation(Some(&config_path));
+        let intro = build_claude_terminal_intro(Some(&config_path));
+        let cleanup_trap = build_claude_terminal_cleanup(&script_path, Some(&config_path));
+        let script = format!("#!/bin/bash\ntrap {cleanup_trap} EXIT\n{intro}\n{command}\n");
+
+        assert!(command.contains("cc switch O'\"'\"'Brien.json'"));
+        assert!(intro.contains("cc switch O'\"'\"'Brien.json'"));
+
+        let status = std::process::Command::new("bash")
+            .arg("-n")
+            .arg("-c")
+            .arg(&script)
+            .status()
+            .expect("bash should parse launcher fragment");
+        assert!(
+            status.success(),
+            "launcher fragment should parse:\n{script}"
+        );
+
+        std::fs::write(
+            &script_path,
+            format!("#!/bin/bash\ntrap {cleanup_trap} EXIT\n"),
+        )
+        .expect("write cleanup script");
+        std::fs::write(&config_path, "{}").expect("write cleanup config");
+        let status = std::process::Command::new("bash")
+            .arg(&script_path)
+            .status()
+            .expect("bash should run cleanup script");
+        assert!(status.success(), "cleanup script should exit successfully");
+        assert!(!script_path.exists(), "launcher script should be removed");
+        assert!(!config_path.exists(), "config file should be removed");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn official_claude_terminal_launch_prepares_clean_live_settings() {
+        let _home = TempHome::new();
+        let db = Arc::new(crate::database::Database::memory().expect("init db"));
+        let state = crate::store::AppState::new(db);
+        let mut provider = Provider::with_id(
+            "claude-official".to_string(),
+            "Claude Official".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "stale-auth-token",
+                    "ANTHROPIC_API_KEY": "stale-api-key",
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+                },
+                "apiBaseUrl": "https://api.example.com",
+                "primaryModel": "stale-primary",
+                "smallFastModel": "stale-small",
+                "permissions": { "allow": ["Bash"] }
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+
+        prepare_official_claude_terminal_launch(&state, &AppType::Claude, &provider)
+            .expect("prepare official Claude terminal launch");
+
+        let written: Value =
+            crate::config::read_json_file(&crate::config::get_claude_settings_path())
+                .expect("read live config");
+        let env = written.get("env").and_then(Value::as_object);
+        assert!(
+            env.is_none_or(|env| !env.keys().any(|key| key.starts_with("ANTHROPIC_"))),
+            "official Claude terminal launch must clear live ANTHROPIC_* env: {written}"
+        );
+        assert!(written.get("apiBaseUrl").is_none());
+        assert!(written.get("primaryModel").is_none());
+        assert!(written.get("smallFastModel").is_none());
+        assert_eq!(
+            written
+                .pointer("/env/CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC")
+                .and_then(Value::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            written.pointer("/permissions/allow/0"),
+            Some(&json!("Bash"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn official_claude_terminal_launch_rejects_proxy_takeover() {
+        let _home = TempHome::new();
+        let db = Arc::new(crate::database::Database::memory().expect("init db"));
+        let state = crate::store::AppState::new(db.clone());
+        let existing_live = json!({
+            "env": {
+                "ANTHROPIC_API_KEY": "PROXY_MANAGED",
+                "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721"
+            }
+        });
+        crate::config::write_json_file(&crate::config::get_claude_settings_path(), &existing_live)
+            .expect("write proxy live config");
+        futures::executor::block_on(db.save_live_backup("claude", "{\"env\":{}}"))
+            .expect("save live backup");
+
+        let mut provider = Provider::with_id(
+            "claude-official".to_string(),
+            "Claude Official".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "stale-auth-token",
+                    "ANTHROPIC_BASE_URL": "https://api.example.com"
+                }
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+
+        let err = prepare_official_claude_terminal_launch(&state, &AppType::Claude, &provider)
+            .expect_err("official launch should be blocked during proxy takeover");
+        assert!(err.contains("代理接管模式"));
+
+        let written: Value =
+            crate::config::read_json_file(&crate::config::get_claude_settings_path())
+                .expect("read live config");
+        assert_eq!(written, existing_live);
     }
 
     #[cfg(target_os = "macos")]
