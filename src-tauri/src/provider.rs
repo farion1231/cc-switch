@@ -88,15 +88,19 @@ impl Provider {
         }
 
         match app_type {
-            crate::app_config::AppType::Claude => self
-                .settings_config
-                .pointer("/env/ANTHROPIC_BASE_URL")
-                .is_none_or(|base_url| {
-                    value_is_null_or_blank_string(base_url)
-                        || base_url
-                            .as_str()
-                            .is_some_and(claude_base_url_is_official_equivalent)
-                }),
+            crate::app_config::AppType::Claude => {
+                self.is_codex_oauth()
+                    || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
+                    || self
+                        .settings_config
+                        .pointer("/env/ANTHROPIC_BASE_URL")
+                        .is_none_or(|base_url| {
+                            value_is_null_or_blank_string(base_url)
+                                || base_url
+                                    .as_str()
+                                    .is_some_and(claude_base_url_is_official_equivalent)
+                        })
+            }
             crate::app_config::AppType::Codex => {
                 let config_text = self.settings_config.get("config").and_then(Value::as_str);
                 let custom_base_url = config_text
@@ -1122,6 +1126,26 @@ mod tests {
             }),
             None,
         );
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Claude));
+    }
+
+    #[test]
+    fn claude_codex_oauth_is_official_equivalent() {
+        let mut provider = Provider::with_id(
+            "codex-oauth-claude".to_string(),
+            "Codex OAuth Claude".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            ..Default::default()
+        });
 
         assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Claude));
     }

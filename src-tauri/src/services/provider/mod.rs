@@ -909,6 +909,76 @@ mod tests {
 
     #[test]
     #[serial]
+    fn switch_codex_to_official_preserves_unrelated_custom_alias_history() {
+        with_test_home(|state, home| {
+            let source_provider = codex_provider(
+                "codex-azure",
+                "Azure",
+                "model_provider = \"azure\"\nmodel = \"gpt-5.4\"\n",
+            );
+            let official_provider = codex_provider("codex-official", "OpenAI Official", "");
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &source_provider)
+                .expect("save source provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &official_provider)
+                .expect("save official provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), "codex-azure")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some("codex-azure"))
+                .expect("set local current provider");
+            seed_codex_thread_rows_db_rollout(
+                home,
+                &[
+                    ("source-thread", "azure", "azure"),
+                    ("unrelated-custom-thread", "custom", "custom"),
+                    ("unrelated-ccswitch-thread", "ccswitch", "ccswitch"),
+                ],
+            );
+
+            ProviderService::switch(state, AppType::Codex, "codex-official")
+                .expect("switch to official provider");
+
+            assert_eq!(
+                codex_thread_provider_rows(home),
+                vec![
+                    ("source-thread".to_string(), Some("openai".to_string())),
+                    (
+                        "unrelated-ccswitch-thread".to_string(),
+                        Some("ccswitch".to_string()),
+                    ),
+                    (
+                        "unrelated-custom-thread".to_string(),
+                        Some("custom".to_string()),
+                    ),
+                ],
+                "switching from azure to official should not relabel unrelated custom aliases"
+            );
+            assert_eq!(
+                codex_rollout_providers(home),
+                vec![
+                    ("source-thread".to_string(), Some("openai".to_string())),
+                    (
+                        "unrelated-ccswitch-thread".to_string(),
+                        Some("ccswitch".to_string()),
+                    ),
+                    (
+                        "unrelated-custom-thread".to_string(),
+                        Some("custom".to_string()),
+                    ),
+                ],
+                "rollout metadata should preserve unrelated custom aliases"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn switch_codex_to_custom_from_third_party_preserves_openai_history() {
         with_test_home(|state, home| {
             let source_provider = codex_provider(
@@ -5826,9 +5896,10 @@ impl ProviderService {
 
     fn codex_provider_switch_where_clause(column: &str) -> String {
         format!(
-            "({} OR (?2 = 'openai' AND lower({column}) IN ('{}', 'ccswitch')) \
+            "({} OR (?2 = 'openai' AND (lower(?1) = 'openai' OR lower(?1) IN ('{}', 'ccswitch')) AND lower({column}) IN ('{}', 'ccswitch')) \
              OR (lower(?2) IN ('{}', 'ccswitch') AND lower({column}) IN ('ccswitch', '{}')))",
             Self::codex_provider_where_clause(column),
+            CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
             CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
             CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
             CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
@@ -5843,6 +5914,8 @@ impl ProviderService {
         current_provider == source_provider
             || (source_provider == "openai" && current_provider.eq_ignore_ascii_case("openai"))
             || (target_provider == "openai"
+                && (source_provider == "openai"
+                    || is_cc_switch_codex_model_provider_id(source_provider))
                 && is_cc_switch_codex_model_provider_id(current_provider))
             || (is_cc_switch_codex_model_provider_id(target_provider)
                 && is_cc_switch_codex_model_provider_id(current_provider))
