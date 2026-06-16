@@ -1059,7 +1059,7 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
 /// the original text is returned unchanged.
 pub fn normalize_codex_model_provider_id_if_configured(
     config_text: &str,
-) -> Result<String, AppError> {
+) -> Result<NormalizeCodexOutcome, AppError> {
     let target_id = crate::settings::force_codex_model_provider_id()
         .filter(|t| !t.trim().is_empty());
     normalize_codex_model_provider_id_to(config_text, target_id.as_deref())
@@ -1068,17 +1068,28 @@ pub fn normalize_codex_model_provider_id_if_configured(
 pub fn normalize_codex_model_provider_id_to(
     config_text: &str,
     target_id: Option<&str>,
-) -> Result<String, AppError> {
+) -> Result<NormalizeCodexOutcome, AppError> {
     let target_id = target_id.map(str::trim).filter(|t| !t.is_empty());
     normalize_codex_provider_id_to_impl(config_text, target_id)
+}
+
+/// Result of normalizing a Codex config: the rewritten TOML text and the
+/// set of old third-party provider IDs that were rewritten to the target.
+#[derive(Debug)]
+pub struct NormalizeCodexOutcome {
+    pub config_text: String,
+    pub rewritten_ids: Vec<String>,
 }
 
 fn normalize_codex_provider_id_to_impl(
     config_text: &str,
     target_id: Option<&str>,
-) -> Result<String, AppError> {
+) -> Result<NormalizeCodexOutcome, AppError> {
     let Some(target_id) = target_id else {
-        return Ok(config_text.to_string());
+        return Ok(NormalizeCodexOutcome {
+            config_text: config_text.to_string(),
+            rewritten_ids: Vec::new(),
+        });
     };
 
     let mut doc = config_text
@@ -1132,9 +1143,15 @@ fn normalize_codex_provider_id_to_impl(
     }
 
     if changed {
-        Ok(doc.to_string())
+        Ok(NormalizeCodexOutcome {
+            config_text: doc.to_string(),
+            rewritten_ids: third_party_ids.into_iter().collect(),
+        })
     } else {
-        Ok(config_text.to_string())
+        Ok(NormalizeCodexOutcome {
+            config_text: config_text.to_string(),
+            rewritten_ids: Vec::new(),
+        })
     }
 }
 
@@ -1371,19 +1388,41 @@ pub fn write_codex_live_for_provider(
 ) -> Result<(), AppError> {
     // Normalize model_provider ID before writing, so that switching between
     // providers with different IDs keeps chat history in a single bucket.
-    let config_text = config_text
-        .map(|text| normalize_codex_model_provider_id_if_configured(text))
-        .transpose()?;
+    let (normalized_config, rewritten_ids) = match config_text {
+        Some(text) => {
+            let outcome = normalize_codex_model_provider_id_if_configured(text)?;
+            let rewritten = outcome.rewritten_ids;
+            (Some(outcome.config_text), rewritten)
+        }
+        None => (None, Vec::new()),
+    };
+    let config_text = normalized_config.as_deref();
+
+    // When normalization rewrote provider IDs, migrate existing session
+    // history files so old sessions appear under the unified bucket.
+    if !rewritten_ids.is_empty() {
+        if let Some(target_id) = crate::settings::force_codex_model_provider_id() {
+            if let Err(e) = crate::codex_history_migration::migrate_codex_history_for_force_provider_id(
+                &rewritten_ids,
+                &target_id,
+            ) {
+                log::warn!(
+                    "Failed to migrate Codex session history after normalizing provider IDs {:?} -> '{}': {e}",
+                    rewritten_ids, target_id
+                );
+            }
+        }
+    }
 
     let unified_official_config =
         if category == Some("official") && crate::settings::unify_codex_session_history() {
             Some(inject_codex_unified_session_bucket(
-                config_text.as_deref().unwrap_or(""),
+                config_text.unwrap_or(""),
             )?)
         } else {
             None
         };
-    let config_text = unified_official_config.as_deref().or(config_text.as_deref());
+    let config_text = unified_official_config.as_deref().or(config_text);
 
     let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
         || (category != Some("official")
@@ -2627,7 +2666,7 @@ name = "My Provider"
 base_url = "https://example.com/v1"
 wire_api = "responses"
 "#;
-        let result = normalize_codex_model_provider_id_to(input, None).unwrap();
+        let result = normalize_codex_model_provider_id_to(input, None).unwrap().config_text;
         assert_eq!(result, input, "None target should return input unchanged");
     }
 
@@ -2636,7 +2675,7 @@ wire_api = "responses"
         let input = r#"model_provider = "my_provider"
 model = "gpt-5.5"
 "#;
-        let result = normalize_codex_model_provider_id_to(input, Some("   ")).unwrap();
+        let result = normalize_codex_model_provider_id_to(input, Some("   ")).unwrap().config_text;
         assert_eq!(
             result, input,
             "whitespace-only target should return input unchanged"
@@ -2651,7 +2690,7 @@ model = "gpt-5.5"
 [model_providers.openai]
 name = "OpenAI"
 "#;
-        let result = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap();
+        let result = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap().config_text;
         assert_eq!(
             result, input,
             "reserved provider ID should not be rewritten"
@@ -2668,7 +2707,7 @@ name = "Vendor Alpha"
 base_url = "https://alpha.example/v1"
 wire_api = "responses"
 "#;
-        let result = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap();
+        let result = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap().config_text;
         let parsed: toml::Value = toml::from_str(&result).unwrap();
 
         assert_eq!(
@@ -2711,7 +2750,7 @@ model = "gpt-5.5"
 model_provider = "aihubmix"
 model = "gpt-4"
 "#;
-        let result = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap();
+        let result = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap().config_text;
         let parsed: toml::Value = toml::from_str(&result).unwrap();
 
         assert_eq!(
@@ -2743,7 +2782,7 @@ name = "My Provider"
 model_provider = "openai"
 model = "gpt-5.5"
 "#;
-        let result = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap();
+        let result = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap().config_text;
         let parsed: toml::Value = toml::from_str(&result).unwrap();
         let profiles = parsed.get("profiles").expect("profiles should exist");
         let profile = profiles.get("work").expect("profile should exist");
@@ -2773,7 +2812,7 @@ base_url = "https://aihubmix.com/v1"
 model_provider = "aihubmix"
 model = "gpt-5.5"
 "#;
-        let result = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap();
+        let result = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap().config_text;
         let parsed: toml::Value = toml::from_str(&result).unwrap();
 
         // Top-level should stay "custom"

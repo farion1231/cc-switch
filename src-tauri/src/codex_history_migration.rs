@@ -166,6 +166,197 @@ pub fn maybe_migrate_codex_third_party_history_provider_bucket(
     })
 }
 
+/// Migrate Codex session history (JSONL files and state DBs) from a set of
+/// old third-party provider IDs to a new target ID.  Called after
+/// `force_codex_model_provider_id` normalizes the live config, so any
+/// existing sessions created under the old IDs become visible under the
+/// unified bucket.
+///
+/// Backups are written under `~/.cc-switch/backups/codex-force-provider-id-v1/`.
+/// The migration is idempotent — already-migrated sessions are skipped.
+pub fn migrate_codex_history_for_force_provider_id(
+    source_provider_ids: &[String],
+    target_provider_id: &str,
+) -> Result<(), AppError> {
+    if source_provider_ids.is_empty() {
+        return Ok(());
+    }
+
+    let source_set: BTreeSet<String> = source_provider_ids.iter().cloned().collect();
+    let codex_dir = get_codex_config_dir();
+    let migration_name = "codex-force-provider-id-v1";
+    let backup_root = backup_root_for_migration(migration_name);
+
+    let _migrated_jsonl =
+        migrate_codex_jsonl_files_for_target(&codex_dir, &source_set, target_provider_id, &backup_root)?;
+    let _migrated_state =
+        migrate_codex_state_dbs_for_target(&codex_dir, &source_set, target_provider_id, &backup_root)?;
+
+    log::info!(
+        "Migrated Codex session history for force provider ID: {:?} -> '{}'",
+        source_provider_ids,
+        target_provider_id
+    );
+
+    Ok(())
+}
+
+fn backup_root_for_migration(migration_name: &str) -> PathBuf {
+    get_app_config_dir()
+        .join("backups")
+        .join(migration_name)
+        .join(Local::now().format("%Y%m%d_%H%M%S").to_string())
+}
+
+/// Like `migrate_codex_jsonl_files` but accepts a custom target provider ID.
+fn migrate_codex_jsonl_files_for_target(
+    codex_dir: &Path,
+    source_provider_ids: &BTreeSet<String>,
+    target_provider_id: &str,
+    backup_root: &Path,
+) -> Result<usize, AppError> {
+    let mut files = Vec::new();
+    collect_jsonl_files(&codex_dir.join("sessions"), &mut files, 0, 8);
+    collect_jsonl_files(&codex_dir.join("archived_sessions"), &mut files, 0, 4);
+
+    let source_provider_ids: HashSet<String> = source_provider_ids.iter().cloned().collect();
+    let target_provider_id = target_provider_id.to_string();
+    let mut migrated = 0;
+    for file_path in files {
+        if rewrite_codex_session_file_for_target(
+            &file_path,
+            codex_dir,
+            &source_provider_ids,
+            &target_provider_id,
+            backup_root,
+        )? {
+            migrated += 1;
+        }
+    }
+    Ok(migrated)
+}
+
+fn rewrite_codex_session_file_for_target(
+    path: &Path,
+    codex_dir: &Path,
+    source_provider_ids: &HashSet<String>,
+    target_provider_id: &str,
+    backup_root: &Path,
+) -> Result<bool, AppError> {
+    rewrite_codex_session_file_lines(path, codex_dir, backup_root, |line| {
+        rewrite_codex_session_meta_line_to_target(line, source_provider_ids, target_provider_id)
+    })
+}
+
+fn rewrite_codex_session_meta_line_to_target(
+    line: &str,
+    source_provider_ids: &HashSet<String>,
+    target_provider_id: &str,
+) -> Option<String> {
+    if !line.contains("\"session_meta\"") || !line.contains("\"model_provider\"") {
+        return None;
+    }
+
+    let mut value: Value = serde_json::from_str(line).ok()?;
+    if value.get("type").and_then(Value::as_str) != Some("session_meta") {
+        return None;
+    }
+
+    let payload = value.get_mut("payload")?.as_object_mut()?;
+    let current_provider = payload.get("model_provider")?.as_str()?;
+    if !source_provider_ids.contains(current_provider) {
+        return None;
+    }
+
+    payload.insert(
+        "model_provider".to_string(),
+        Value::String(target_provider_id.to_string()),
+    );
+    serde_json::to_string(&value).ok()
+}
+
+/// Like `migrate_codex_state_dbs` but accepts a custom target provider ID.
+fn migrate_codex_state_dbs_for_target(
+    codex_dir: &Path,
+    source_provider_ids: &BTreeSet<String>,
+    target_provider_id: &str,
+    backup_root: &Path,
+) -> Result<usize, AppError> {
+    let config_text = read_codex_config_text().unwrap_or_default();
+    let mut migrated = 0;
+    for db_path in codex_state_db_paths(codex_dir, &config_text) {
+        migrated += migrate_codex_state_db_for_target(
+            &db_path,
+            codex_dir,
+            source_provider_ids,
+            target_provider_id,
+            backup_root,
+        )?;
+    }
+    Ok(migrated)
+}
+
+fn migrate_codex_state_db_for_target(
+    db_path: &Path,
+    codex_dir: &Path,
+    source_provider_ids: &BTreeSet<String>,
+    target_provider_id: &str,
+    backup_root: &Path,
+) -> Result<usize, AppError> {
+    if !db_path.exists() {
+        return Ok(0);
+    }
+
+    backup_codex_state_db_simple(db_path, codex_dir, backup_root)?;
+
+    let conn = Connection::open(db_path)
+        .map_err(|e| AppError::Message(format!("Cannot open {}: {e}", db_path.display())))?;
+
+    let mut count = 0usize;
+    for source_id in source_provider_ids {
+        let params = rusqlite::params![target_provider_id, source_id];
+        let updated = conn
+            .execute(
+                "UPDATE threads SET model_provider = ?1 WHERE model_provider = ?2",
+                params,
+            )
+            .map_err(|e| {
+                AppError::Message(format!(
+                    "Failed to update Codex state DB {}: {e}",
+                    db_path.display()
+                ))
+            })?;
+        count += updated;
+    }
+
+    Ok(count)
+}
+
+fn backup_codex_state_db_simple(
+    db_path: &Path,
+    codex_dir: &Path,
+    backup_root: &Path,
+) -> Result<(), AppError> {
+    std::fs::create_dir_all(backup_root).map_err(|e| AppError::io(backup_root, e))?;
+
+    let rel = db_path
+        .strip_prefix(codex_dir)
+        .unwrap_or(db_path);
+    let backup_path = backup_root.join(rel);
+
+    if let Some(parent) = backup_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+    }
+
+    std::fs::copy(db_path, &backup_path).map_err(|e| AppError::io(db_path, e))?;
+    log::debug!(
+        "Backed up Codex state DB {} -> {}",
+        db_path.display(),
+        backup_path.display()
+    );
+    Ok(())
+}
+
 pub fn maybe_migrate_codex_provider_template_bucket(
     db: &Database,
 ) -> Result<CodexProviderTemplateBucketMigrationOutcome, AppError> {
