@@ -1732,22 +1732,19 @@ impl Database {
                     OR cache_read_tokens > 0 OR cache_creation_tokens > 0)";
 
         let mut logs = {
-            match only_model_id {
-                Some(model) => {
-                    let sql = format!(
-                        "{BASE_SQL} AND (model = ?1 OR request_model = ?1 OR pricing_model = ?1)"
-                    );
-                    let mut stmt = conn.prepare(&sql)?;
-                    let rows = stmt.query_map([model], row_to_request_log_detail)?;
-                    rows.collect::<Result<Vec<_>, _>>()?
-                }
-                None => {
-                    let mut stmt = conn.prepare(BASE_SQL)?;
-                    let rows = stmt.query_map([], row_to_request_log_detail)?;
-                    rows.collect::<Result<Vec<_>, _>>()?
-                }
-            }
+            let mut stmt = conn.prepare(BASE_SQL)?;
+            let rows = stmt.query_map([], row_to_request_log_detail)?;
+            rows.collect::<Result<Vec<_>, _>>()?
         };
+
+        // 精准回填的行筛选必须与查价层共用 candidates 归一化：SQL 精确匹配会漏掉
+        // 以原始别名落库的行（如 openrouter/anthropic/claude-sonnet-4.5:free），
+        // 这些行查价时能归一化命中新定价，却在筛选层被挡掉，导致导入定价后
+        // 历史成本要等下次全量回填才更新。误纳无害——查不到价的行会被跳过。
+        if let Some(model_id) = only_model_id {
+            let target = model_pricing_candidates(model_id);
+            logs.retain(|log| log_pricing_scope_matches(log, &target));
+        }
 
         if logs.is_empty() {
             return Ok(0);
@@ -1964,6 +1961,30 @@ pub(crate) fn find_model_pricing_row(
     }
 
     Ok(None)
+}
+
+/// 精准回填的行筛选：log 的任一模型字段归一化后与目标模型的 candidates 相交，
+/// 或可按查价层的前缀规则命中目标，即视为相关。镜像 find_model_pricing_row 的
+/// 匹配语义，宁可误纳（后续查价会兜底）不可漏筛。
+fn log_pricing_scope_matches(log: &RequestLogDetail, target_candidates: &[String]) -> bool {
+    [
+        Some(log.model.as_str()),
+        log.request_model.as_deref(),
+        log.pricing_model.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|field| {
+        model_pricing_candidates(field).iter().any(|candidate| {
+            target_candidates.iter().any(|target| {
+                target == candidate
+                    || (should_try_pricing_prefix_match(candidate)
+                        && target
+                            .strip_prefix(candidate.as_str())
+                            .is_some_and(|rest| rest.starts_with('-')))
+            })
+        })
+    })
 }
 
 pub(crate) fn is_placeholder_pricing_model(model_id: &str) -> bool {
@@ -2644,6 +2665,61 @@ mod tests {
         let total_cost: String = conn.query_row(
             "SELECT total_cost_usd
              FROM proxy_request_logs WHERE request_id = 'persisted-pricing-model'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(total_cost, "0.600000");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_scoped_backfill_matches_raw_alias_rows() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            // 代理日志按上游原文落库：带路由前缀和 :free 后缀的别名形式。
+            // 精准回填的筛选必须归一化后匹配，否则这类行要等全量回填才更新。
+            insert_usage_log(
+                &conn,
+                "openrouter-alias-zero-cost",
+                "claude",
+                "provider-1",
+                "openrouter/moonshot/kimi-k2-novel:free",
+                "proxy",
+                1000,
+                1_000_000,
+                0,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+        }
+
+        // 定价缺失时不应回填
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO model_pricing (model_id, display_name, input_cost_per_million, output_cost_per_million)
+                 VALUES ('kimi-k2-novel', 'Kimi K2 Novel', '0.6', '2.5')",
+                [],
+            )?;
+        }
+
+        // 按归一化 ID 精准回填，应命中以原始别名落库的行
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("kimi-k2-novel")?,
+            1
+        );
+
+        let conn = lock_conn!(db.conn);
+        let total_cost: String = conn.query_row(
+            "SELECT total_cost_usd
+             FROM proxy_request_logs WHERE request_id = 'openrouter-alias-zero-cost'",
             [],
             |row| row.get(0),
         )?;
