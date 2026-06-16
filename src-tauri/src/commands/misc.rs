@@ -2,12 +2,14 @@
 
 use crate::app_config::AppType;
 use crate::init_status::{InitErrorPayload, SkillsMigrationPayload};
+use crate::provider::Provider;
 use crate::services::ProviderService;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::AppHandle;
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;
@@ -17,6 +19,8 @@ use std::os::windows::process::CommandExt;
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+static NEXT_PROVIDER_TERMINAL_LAUNCH_ID: AtomicU64 = AtomicU64::new(1);
 
 /// 打开外部链接
 #[tauri::command]
@@ -2467,6 +2471,10 @@ pub async fn open_provider_terminal(
     cwd: Option<String>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    if app_type != AppType::Claude {
+        return Err("Provider terminal currently supports Claude Code only".to_string());
+    }
+
     let launch_cwd = resolve_launch_cwd(cwd)?;
 
     // 获取提供商配置
@@ -2477,9 +2485,7 @@ pub async fn open_provider_terminal(
         .get(&providerId)
         .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
 
-    // 从提供商配置中提取环境变量
-    let config = &provider.settings_config;
-    let env_vars = extract_env_vars_from_config(config, &app_type);
+    let env_vars = extract_claude_terminal_env_vars(provider);
 
     // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
     launch_terminal_with_env(env_vars, &providerId, launch_cwd.as_deref())
@@ -2488,54 +2494,89 @@ pub async fn open_provider_terminal(
     Ok(true)
 }
 
-/// 从提供商配置中提取环境变量
-fn extract_env_vars_from_config(
-    config: &serde_json::Value,
-    app_type: &AppType,
-) -> Vec<(String, String)> {
+const CLAUDE_CODE_AUTH_ENV_KEYS: &[&str] = &["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"];
+const CLAUDE_TERMINAL_CLEAR_ENV_KEYS: &[&str] = &[
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_API_BASE_URL",
+];
+const CLAUDE_USAGE_AUTH_ENV_KEYS: &[&str] = &[
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "OPENROUTER_API_KEY",
+    "GOOGLE_API_KEY",
+];
+
+/// Build a Claude Code-only env map for the provider-scoped terminal.
+fn extract_claude_terminal_env_vars(provider: &Provider) -> Vec<(String, String)> {
     let mut env_vars = Vec::new();
+    let config = &provider.settings_config;
 
     let Some(obj) = config.as_object() else {
         return env_vars;
     };
 
-    // 处理 env 字段（Claude/Gemini 通用）
+    let mut original_env_keys: Vec<String> = Vec::new();
     if let Some(env) = obj.get("env").and_then(|v| v.as_object()) {
         for (key, value) in env {
             if let Some(str_val) = value.as_str() {
-                env_vars.push((key.clone(), str_val.to_string()));
-            }
-        }
-
-        // 处理 base_url: 根据应用类型添加对应的环境变量
-        let base_url_key = match app_type {
-            AppType::Claude | AppType::ClaudeDesktop => Some("ANTHROPIC_BASE_URL"),
-            AppType::Gemini => Some("GOOGLE_GEMINI_BASE_URL"),
-            _ => None,
-        };
-
-        if let Some(key) = base_url_key {
-            if let Some(url_str) = env.get(key).and_then(|v| v.as_str()) {
-                env_vars.push((key.to_string(), url_str.to_string()));
+                original_env_keys.push(key.clone());
+                push_env_var(&mut env_vars, key, str_val);
             }
         }
     }
 
-    // Codex 使用 auth 字段转换为 OPENAI_API_KEY
-    if *app_type == AppType::Codex {
-        if let Some(auth) = obj.get("auth").and_then(|v| v.as_str()) {
-            env_vars.push(("OPENAI_API_KEY".to_string(), auth.to_string()));
-        }
-    }
+    let (base_url, api_key) = provider.resolve_usage_credentials(&AppType::Claude);
+    push_env_var(&mut env_vars, "ANTHROPIC_BASE_URL", &base_url);
 
-    // Gemini 使用 api_key 字段转换为 GEMINI_API_KEY
-    if *app_type == AppType::Gemini {
-        if let Some(api_key) = obj.get("api_key").and_then(|v| v.as_str()) {
-            env_vars.push(("GEMINI_API_KEY".to_string(), api_key.to_string()));
-        }
+    let has_claude_auth_env = CLAUDE_CODE_AUTH_ENV_KEYS.iter().any(|key| {
+        env_vars
+            .iter()
+            .any(|(existing, value)| existing == key && !value.trim().is_empty())
+    });
+
+    if !has_claude_auth_env {
+        let key = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.api_key_field.as_deref())
+            .filter(|key| CLAUDE_CODE_AUTH_ENV_KEYS.contains(key))
+            .map(str::to_string)
+            .or_else(|| {
+                original_env_keys
+                    .iter()
+                    .find(|key| CLAUDE_CODE_AUTH_ENV_KEYS.contains(&key.as_str()))
+                    .cloned()
+            })
+            .or_else(|| {
+                original_env_keys
+                    .iter()
+                    .find(|key| CLAUDE_USAGE_AUTH_ENV_KEYS.contains(&key.as_str()))
+                    .map(|_| "ANTHROPIC_AUTH_TOKEN".to_string())
+            })
+            .unwrap_or_else(|| "ANTHROPIC_AUTH_TOKEN".to_string());
+        push_env_var(&mut env_vars, &key, &api_key);
     }
 
     env_vars
+}
+
+fn push_env_var(env_vars: &mut Vec<(String, String)>, key: &str, value: &str) {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        env_vars.retain(|(existing, _)| existing != key);
+        return;
+    }
+
+    if let Some((_, existing_value)) = env_vars
+        .iter_mut()
+        .find(|(existing_key, _)| existing_key == key)
+    {
+        *existing_value = trimmed.to_string();
+    } else {
+        env_vars.push((key.to_string(), trimmed.to_string()));
+    }
 }
 
 fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
@@ -2583,35 +2624,40 @@ fn launch_terminal_with_env(
     cwd: Option<&Path>,
 ) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
-    let config_file = temp_dir.join(format!(
-        "claude_{}_{}.json",
-        provider_id,
-        std::process::id()
-    ));
+    let safe_provider_id = sanitize_temp_file_component(provider_id);
+    let launch_suffix = next_provider_terminal_launch_suffix();
+    let config_file = temp_dir.join(format!("claude_{safe_provider_id}_{launch_suffix}.json"));
 
     // 创建并写入配置文件
     write_claude_config(&config_file, &env_vars)?;
 
-    #[cfg(target_os = "macos")]
-    {
-        launch_macos_terminal(&config_file, cwd)?;
-        Ok(())
+    let launch_result = {
+        #[cfg(target_os = "macos")]
+        {
+            launch_macos_terminal(&config_file, &env_vars, &launch_suffix, cwd)
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            launch_linux_terminal(&config_file, &env_vars, &launch_suffix, cwd)
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            launch_windows_terminal(&temp_dir, &config_file, &env_vars, &launch_suffix, cwd)
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+        {
+            Err("不支持的操作系统".to_string())
+        }
+    };
+
+    if launch_result.is_err() {
+        let _ = std::fs::remove_file(&config_file);
     }
 
-    #[cfg(target_os = "linux")]
-    {
-        launch_linux_terminal(&config_file, cwd)?;
-        Ok(())
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        launch_windows_terminal(&temp_dir, &config_file, cwd)?;
-        return Ok(());
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    Err("不支持的操作系统".to_string())
+    launch_result
 }
 
 /// 写入 claude 配置文件
@@ -2634,39 +2680,81 @@ fn write_claude_config(
     std::fs::write(config_file, config_json).map_err(|e| format!("写入配置文件失败: {e}"))
 }
 
+fn sanitize_temp_file_component(value: &str) -> String {
+    let sanitized: String = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+
+    if sanitized.is_empty() {
+        "provider".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn next_provider_terminal_launch_suffix() -> String {
+    let sequence = NEXT_PROVIDER_TERMINAL_LAUNCH_ID.fetch_add(1, Ordering::Relaxed);
+    let now_millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    format!("{}_{}_{}", std::process::id(), now_millis, sequence)
+}
+
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
+fn launch_macos_terminal(
+    config_file: &std::path::Path,
+    env_vars: &[(String, String)],
+    launch_suffix: &str,
+    cwd: Option<&Path>,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("terminal");
 
     let temp_dir = std::env::temp_dir();
-    let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
+    let script_file = temp_dir.join(format!("cc_switch_launcher_{launch_suffix}.sh"));
     let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
+    let env_export_commands = build_shell_env_exports(env_vars);
 
     // Write the shell script to a temp file
     let script_content = format!(
         r#"#!/bin/bash
 trap 'rm -f "{config_path}" "{script_file}"' EXIT
 {cd_command}
+{env_export_commands}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
 claude --settings "{config_path}"
+rm -f "{config_path}" "{script_file}"
 exec bash --norc --noprofile
 "#,
         config_path = config_path,
         script_file = script_file.display(),
         cd_command = cd_command,
+        env_export_commands = env_export_commands,
     );
 
-    std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
+    if let Err(e) = std::fs::write(&script_file, &script_content) {
+        let _ = std::fs::remove_file(&script_file);
+        return Err(format!("写入启动脚本失败: {e}"));
+    }
 
     // Make script executable
-    std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("设置脚本权限失败: {e}"))?;
+    if let Err(e) = std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755)) {
+        let _ = std::fs::remove_file(&script_file);
+        return Err(format!("设置脚本权限失败: {e}"));
+    }
 
     // Try the preferred terminal first, fall back to Terminal.app if it fails
     // Note: Kitty doesn't need the -e flag, others do
@@ -2682,16 +2770,23 @@ exec bash --norc --noprofile
     };
 
     // If preferred terminal fails and it's not the default, try Terminal.app as fallback
-    if result.is_err() && terminal != "terminal" {
+    let final_result = if result.is_err() && terminal != "terminal" {
         log::warn!(
             "首选终端 {} 启动失败，回退到 Terminal.app: {:?}",
             terminal,
             result.as_ref().err()
         );
-        return launch_macos_terminal_app(&script_file);
+        launch_macos_terminal_app(&script_file)
+    } else {
+        result
+    };
+
+    if final_result.is_err() {
+        let _ = std::fs::remove_file(&script_file);
+        let _ = std::fs::remove_file(config_file);
     }
 
-    result
+    final_result
 }
 
 /// Escape a value as an AppleScript string literal.
@@ -2940,7 +3035,12 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 
 /// Linux: 根据用户首选终端启动
 #[cfg(target_os = "linux")]
-fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
+fn launch_linux_terminal(
+    config_file: &std::path::Path,
+    env_vars: &[(String, String)],
+    launch_suffix: &str,
+    cwd: Option<&Path>,
+) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
@@ -2960,28 +3060,37 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
 
     // Create temp script file
     let temp_dir = std::env::temp_dir();
-    let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
+    let script_file = temp_dir.join(format!("cc_switch_launcher_{launch_suffix}.sh"));
     let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
+    let env_export_commands = build_shell_env_exports(env_vars);
 
     let script_content = format!(
         r#"#!/bin/bash
 trap 'rm -f "{config_path}" "{script_file}"' EXIT
 {cd_command}
+{env_export_commands}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
 claude --settings "{config_path}"
+rm -f "{config_path}" "{script_file}"
 exec bash --norc --noprofile
 "#,
         config_path = config_path,
         script_file = script_file.display(),
         cd_command = cd_command,
+        env_export_commands = env_export_commands,
     );
 
-    std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
+    if let Err(e) = std::fs::write(&script_file, &script_content) {
+        let _ = std::fs::remove_file(&script_file);
+        return Err(format!("写入启动脚本失败: {e}"));
+    }
 
-    std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("设置脚本权限失败: {e}"))?;
+    if let Err(e) = std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755)) {
+        let _ = std::fs::remove_file(&script_file);
+        return Err(format!("设置脚本权限失败: {e}"));
+    }
 
     // Build terminal list: preferred terminal first (if specified), then defaults
     let terminals_to_try: Vec<(&str, Vec<&str>)> = if let Some(ref pref) = preferred {
@@ -3054,18 +3163,23 @@ fn which_command(cmd: &str) -> bool {
 fn launch_windows_terminal(
     temp_dir: &std::path::Path,
     config_file: &std::path::Path,
+    env_vars: &[(String, String)],
+    launch_suffix: &str,
     cwd: Option<&Path>,
 ) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("cmd");
 
-    let bat_file = temp_dir.join(format!("cc_switch_claude_{}.bat", std::process::id()));
+    let bat_file = temp_dir.join(format!("cc_switch_claude_{launch_suffix}.bat"));
+    let ps1_file = temp_dir.join(format!("cc_switch_claude_{launch_suffix}.ps1"));
     let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
     let cwd_command = build_windows_cwd_command(cwd);
+    let env_commands = build_windows_env_commands(env_vars);
 
     let content = format!(
         "@echo off
 {cwd_command}
+{env_commands}
 echo Using provider-specific claude config:
 echo {}
 claude --settings \"{}\"
@@ -3076,36 +3190,77 @@ del \"%~f0\" >nul 2>&1
         config_path_for_batch,
         config_path_for_batch,
         cwd_command = cwd_command,
+        env_commands = env_commands,
     );
 
-    std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
+    if let Err(e) = std::fs::write(&bat_file, &content) {
+        let _ = std::fs::remove_file(&bat_file);
+        return Err(format!("写入批处理文件失败: {e}"));
+    }
 
     let bat_path = bat_file.to_string_lossy();
-    let ps_cmd = format!("& '{}'", bat_path);
 
     // Try the preferred terminal first
     let result = match terminal {
-        "powershell" => run_windows_start_command(
-            &["powershell", "-NoExit", "-Command", &ps_cmd],
-            "PowerShell",
-        ),
+        "powershell" => {
+            let powershell_script = build_windows_powershell_script(
+                &config_file.to_string_lossy(),
+                env_vars,
+                cwd,
+                &ps1_file.to_string_lossy(),
+            );
+            if let Err(e) = std::fs::write(&ps1_file, powershell_script) {
+                let _ = std::fs::remove_file(&bat_file);
+                let _ = std::fs::remove_file(&ps1_file);
+                return Err(format!("写入 PowerShell 启动脚本失败: {e}"));
+            }
+            run_windows_start_command(
+                &[
+                    "powershell",
+                    "-NoExit",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    &ps1_file.to_string_lossy(),
+                ],
+                "PowerShell",
+            )
+        }
         "wt" => run_windows_start_command(&["wt", "cmd", "/K", &bat_path], "Windows Terminal"),
         _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"), // "cmd" or default
     };
 
+    let powershell_script_launched = terminal == "powershell" && result.is_ok();
+
     // If preferred terminal fails and it's not the default, try cmd as fallback
-    if result.is_err() && terminal != "cmd" {
+    let final_result = if result.is_err() && terminal != "cmd" {
         log::warn!(
             "首选终端 {} 启动失败，回退到 cmd: {:?}",
             terminal,
             result.as_ref().err()
         );
-        return run_windows_start_command(&["cmd", "/K", &bat_path], "cmd");
+        if terminal == "powershell" {
+            let _ = std::fs::remove_file(&ps1_file);
+        }
+        run_windows_start_command(&["cmd", "/K", &bat_path], "cmd")
+    } else {
+        result
+    };
+
+    if powershell_script_launched {
+        let _ = std::fs::remove_file(&bat_file);
     }
 
-    result
+    if final_result.is_err() {
+        let _ = std::fs::remove_file(&bat_file);
+        let _ = std::fs::remove_file(&ps1_file);
+        let _ = std::fs::remove_file(config_file);
+    }
+
+    final_result
 }
 
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn build_shell_cd_command(cwd: Option<&Path>) -> String {
     cwd.map(|dir| {
         format!(
@@ -3118,6 +3273,144 @@ fn build_shell_cd_command(cwd: Option<&Path>) -> String {
 
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+#[cfg_attr(target_os = "windows", allow(dead_code))]
+fn build_shell_env_exports(env_vars: &[(String, String)]) -> String {
+    let mut exports = build_shell_env_clear_commands();
+    for (key, value) in env_vars {
+        if is_safe_env_key(key) && is_safe_env_value_for_script(value) {
+            exports.push_str("export ");
+            exports.push_str(key);
+            exports.push('=');
+            exports.push_str(&shell_single_quote(value));
+            exports.push('\n');
+        }
+    }
+    exports
+}
+
+#[cfg_attr(target_os = "windows", allow(dead_code))]
+fn build_shell_env_clear_commands() -> String {
+    let mut commands = String::new();
+    for key in CLAUDE_TERMINAL_CLEAR_ENV_KEYS {
+        commands.push_str("unset ");
+        commands.push_str(key);
+        commands.push('\n');
+    }
+    commands
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn build_windows_env_commands(env_vars: &[(String, String)]) -> String {
+    let mut commands = build_windows_env_clear_commands();
+    for (key, value) in env_vars {
+        if is_safe_env_key(key) && is_safe_env_value_for_script(value) {
+            commands.push_str("set \"");
+            commands.push_str(key);
+            commands.push('=');
+            commands.push_str(&escape_windows_batch_value(value));
+            commands.push_str("\"\r\n");
+        }
+    }
+    commands
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn build_windows_env_clear_commands() -> String {
+    let mut commands = String::new();
+    for key in CLAUDE_TERMINAL_CLEAR_ENV_KEYS {
+        commands.push_str("set \"");
+        commands.push_str(key);
+        commands.push_str("=\"\r\n");
+    }
+    commands
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn build_windows_powershell_script(
+    config_path: &str,
+    env_vars: &[(String, String)],
+    cwd: Option<&Path>,
+    script_path: &str,
+) -> String {
+    let cwd_command = build_powershell_cwd_command(cwd);
+    let env_commands = build_powershell_env_commands(env_vars);
+    let config_path = powershell_single_quote(config_path);
+    let script_path = powershell_single_quote(script_path);
+
+    format!(
+        r#"$ErrorActionPreference = 'Continue'
+try {{
+{cwd_command}{env_commands}Write-Host "Using provider-specific claude config:"
+Write-Host {config_path}
+claude --settings {config_path}
+}} finally {{
+Remove-Item -LiteralPath {config_path} -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath {script_path} -Force -ErrorAction SilentlyContinue
+}}
+"#,
+        cwd_command = cwd_command,
+        env_commands = env_commands,
+        config_path = config_path,
+        script_path = script_path,
+    )
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn build_powershell_cwd_command(cwd: Option<&Path>) -> String {
+    cwd.map(|dir| {
+        format!(
+            "Set-Location -LiteralPath {}\n",
+            powershell_single_quote(&dir.to_string_lossy())
+        )
+    })
+    .unwrap_or_default()
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn build_powershell_env_commands(env_vars: &[(String, String)]) -> String {
+    let mut commands = build_powershell_env_clear_commands();
+    for (key, value) in env_vars {
+        if is_safe_env_key(key) && is_safe_env_value_for_script(value) {
+            commands.push_str("$env:");
+            commands.push_str(key);
+            commands.push_str(" = ");
+            commands.push_str(&powershell_single_quote(value));
+            commands.push('\n');
+        }
+    }
+    commands
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn build_powershell_env_clear_commands() -> String {
+    let mut commands = String::new();
+    for key in CLAUDE_TERMINAL_CLEAR_ENV_KEYS {
+        commands.push_str("Remove-Item Env:");
+        commands.push_str(key);
+        commands.push_str(" -ErrorAction SilentlyContinue\n");
+    }
+    commands
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn powershell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn is_safe_env_key(key: &str) -> bool {
+    let mut chars = key.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+
+    (first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
+fn is_safe_env_value_for_script(value: &str) -> bool {
+    !value.contains(['\0', '\r', '\n'])
 }
 
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
@@ -3147,6 +3440,7 @@ fn build_windows_cwd_command(cwd: Option<&Path>) -> String {
 fn escape_windows_batch_value(value: &str) -> String {
     value
         .replace('^', "^^")
+        .replace('"', "^\"")
         .replace('%', "%%")
         .replace('&', "^&")
         .replace('|', "^|")
@@ -3385,7 +3679,33 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::ProviderMeta;
     use std::path::{Path, PathBuf};
+
+    fn provider_with_settings(settings_config: serde_json::Value) -> Provider {
+        Provider::with_id(
+            "test-provider".to_string(),
+            "Test Provider".to_string(),
+            settings_config,
+            None,
+        )
+    }
+
+    fn provider_with_settings_and_meta(
+        settings_config: serde_json::Value,
+        meta: ProviderMeta,
+    ) -> Provider {
+        let mut provider = provider_with_settings(settings_config);
+        provider.meta = Some(meta);
+        provider
+    }
+
+    fn env_value<'a>(env_vars: &'a [(String, String)], key: &str) -> Option<&'a str> {
+        env_vars
+            .iter()
+            .find(|(existing_key, _)| existing_key == key)
+            .map(|(_, value)| value.as_str())
+    }
 
     #[test]
     fn test_extract_version() {
@@ -3473,6 +3793,241 @@ mod tests {
             pick_latest_version(map, &["beta"], Some("0.200.0")),
             Some("0.135.0".to_string())
         );
+    }
+
+    #[test]
+    fn extract_claude_terminal_env_vars_skips_empty_auth_and_normalizes_base_url() {
+        use serde_json::json;
+
+        let provider = provider_with_settings(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.example.com/",
+                "ANTHROPIC_AUTH_TOKEN": "",
+                "ANTHROPIC_API_KEY": "sk-real",
+                "ANTHROPIC_MODEL": "claude-sonnet"
+            }
+        }));
+
+        let env_vars = extract_claude_terminal_env_vars(&provider);
+
+        assert_eq!(
+            env_value(&env_vars, "ANTHROPIC_BASE_URL"),
+            Some("https://api.example.com")
+        );
+        assert_eq!(env_value(&env_vars, "ANTHROPIC_API_KEY"), Some("sk-real"));
+        assert_eq!(env_value(&env_vars, "ANTHROPIC_AUTH_TOKEN"), None);
+        assert_eq!(
+            env_value(&env_vars, "ANTHROPIC_MODEL"),
+            Some("claude-sonnet")
+        );
+    }
+
+    #[test]
+    fn extract_claude_terminal_env_vars_keeps_auth_token() {
+        use serde_json::json;
+
+        let provider = provider_with_settings(json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "sk-token",
+                "ANTHROPIC_API_KEY": "",
+                "OPENROUTER_API_KEY": ""
+            }
+        }));
+
+        let env_vars = extract_claude_terminal_env_vars(&provider);
+
+        assert_eq!(
+            env_value(&env_vars, "ANTHROPIC_AUTH_TOKEN"),
+            Some("sk-token")
+        );
+        assert_eq!(env_value(&env_vars, "ANTHROPIC_API_KEY"), None);
+        assert_eq!(env_value(&env_vars, "OPENROUTER_API_KEY"), None);
+    }
+
+    #[test]
+    fn extract_claude_terminal_env_vars_maps_fallback_key_for_claude_code() {
+        use serde_json::json;
+
+        let provider = provider_with_settings(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api/v1",
+                "ANTHROPIC_AUTH_TOKEN": "",
+                "OPENROUTER_API_KEY": "sk-or"
+            }
+        }));
+
+        let env_vars = extract_claude_terminal_env_vars(&provider);
+
+        assert_eq!(env_value(&env_vars, "ANTHROPIC_AUTH_TOKEN"), Some("sk-or"));
+        assert_eq!(env_value(&env_vars, "OPENROUTER_API_KEY"), Some("sk-or"));
+    }
+
+    #[test]
+    fn extract_claude_terminal_env_vars_uses_api_key_field_without_auth_token() {
+        use serde_json::json;
+
+        let provider = provider_with_settings_and_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.pateway.ai",
+                    "ANTHROPIC_API_KEY": "sk-pateway"
+                }
+            }),
+            ProviderMeta {
+                api_key_field: Some("ANTHROPIC_API_KEY".to_string()),
+                ..ProviderMeta::default()
+            },
+        );
+
+        let env_vars = extract_claude_terminal_env_vars(&provider);
+
+        assert_eq!(
+            env_value(&env_vars, "ANTHROPIC_API_KEY"),
+            Some("sk-pateway")
+        );
+        assert_eq!(env_value(&env_vars, "ANTHROPIC_AUTH_TOKEN"), None);
+    }
+
+    #[test]
+    fn write_claude_config_writes_env_object() {
+        let temp = tempfile::NamedTempFile::new().expect("temp file should be created");
+        let env_vars = vec![
+            (
+                "ANTHROPIC_BASE_URL".to_string(),
+                "https://api.example.com".to_string(),
+            ),
+            ("ANTHROPIC_AUTH_TOKEN".to_string(), "sk-token".to_string()),
+        ];
+
+        write_claude_config(temp.path(), &env_vars).expect("config should be written");
+
+        let config: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(temp.path()).unwrap()).unwrap();
+        assert_eq!(
+            config["env"]["ANTHROPIC_BASE_URL"],
+            "https://api.example.com"
+        );
+        assert_eq!(config["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-token");
+    }
+
+    #[test]
+    fn sanitize_temp_file_component_replaces_path_chars() {
+        assert_eq!(
+            sanitize_temp_file_component("../Claude Provider\\demo:1"),
+            "___Claude_Provider_demo_1"
+        );
+        assert_eq!(sanitize_temp_file_component(""), "provider");
+    }
+
+    #[test]
+    fn next_provider_terminal_launch_suffix_changes_between_launches() {
+        let first = next_provider_terminal_launch_suffix();
+        let second = next_provider_terminal_launch_suffix();
+
+        assert_ne!(first, second);
+        assert!(first.starts_with(&format!("{}_", std::process::id())));
+        assert!(second.starts_with(&format!("{}_", std::process::id())));
+    }
+
+    #[test]
+    fn build_shell_env_exports_quotes_values_and_skips_unsafe_keys() {
+        let env_vars = vec![
+            (
+                "ANTHROPIC_BASE_URL".to_string(),
+                "https://api.example.com".to_string(),
+            ),
+            ("ANTHROPIC_AUTH_TOKEN".to_string(), "sk'quoted".to_string()),
+            ("BAD-KEY".to_string(), "bad".to_string()),
+            ("MULTILINE".to_string(), "line1\nline2".to_string()),
+        ];
+
+        let exports = build_shell_env_exports(&env_vars);
+
+        assert!(exports.starts_with("unset ANTHROPIC_AUTH_TOKEN\n"));
+        assert!(exports.contains("unset ANTHROPIC_API_KEY\n"));
+        assert!(exports.contains("unset ANTHROPIC_BASE_URL\n"));
+        assert!(exports.contains("unset ANTHROPIC_API_BASE_URL\n"));
+        assert!(exports.contains("export ANTHROPIC_BASE_URL='https://api.example.com'\n"));
+        assert!(exports.contains("export ANTHROPIC_AUTH_TOKEN='sk'\"'\"'quoted'\n"));
+        assert!(
+            exports.find("unset ANTHROPIC_AUTH_TOKEN")
+                < exports.find("export ANTHROPIC_AUTH_TOKEN")
+        );
+        assert!(!exports.contains("BAD-KEY"));
+        assert!(!exports.contains("MULTILINE"));
+    }
+
+    #[test]
+    fn build_windows_env_commands_escapes_values_and_skips_unsafe_keys() {
+        let env_vars = vec![
+            (
+                "ANTHROPIC_AUTH_TOKEN".to_string(),
+                "sk&^%\"token".to_string(),
+            ),
+            ("BAD-KEY".to_string(), "bad".to_string()),
+            ("MULTILINE".to_string(), "line1\r\nline2".to_string()),
+        ];
+
+        let commands = build_windows_env_commands(&env_vars);
+
+        assert!(commands.starts_with("set \"ANTHROPIC_AUTH_TOKEN=\"\r\n"));
+        assert!(commands.contains("set \"ANTHROPIC_API_KEY=\"\r\n"));
+        assert!(commands.contains("set \"ANTHROPIC_BASE_URL=\"\r\n"));
+        assert!(commands.contains("set \"ANTHROPIC_API_BASE_URL=\"\r\n"));
+        assert!(commands.contains("set \"ANTHROPIC_AUTH_TOKEN=sk^&^^%%^\"token\"\r\n"));
+        assert!(
+            commands.find("set \"ANTHROPIC_AUTH_TOKEN=\"")
+                < commands.find("set \"ANTHROPIC_AUTH_TOKEN=sk")
+        );
+        assert!(!commands.contains("BAD-KEY"));
+        assert!(!commands.contains("MULTILINE"));
+    }
+
+    #[test]
+    fn build_powershell_env_commands_quotes_values_and_skips_unsafe_keys() {
+        let env_vars = vec![
+            ("ANTHROPIC_AUTH_TOKEN".to_string(), "sk'quoted".to_string()),
+            ("BAD-KEY".to_string(), "bad".to_string()),
+            ("MULTILINE".to_string(), "line1\nline2".to_string()),
+        ];
+
+        let commands = build_powershell_env_commands(&env_vars);
+
+        assert!(commands
+            .starts_with("Remove-Item Env:ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue\n"));
+        assert!(
+            commands.contains("Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue\n")
+        );
+        assert!(
+            commands.contains("Remove-Item Env:ANTHROPIC_BASE_URL -ErrorAction SilentlyContinue\n")
+        );
+        assert!(commands
+            .contains("Remove-Item Env:ANTHROPIC_API_BASE_URL -ErrorAction SilentlyContinue\n"));
+        assert!(commands.contains("$env:ANTHROPIC_AUTH_TOKEN = 'sk''quoted'\n"));
+        assert!(
+            commands.find("Remove-Item Env:ANTHROPIC_AUTH_TOKEN")
+                < commands.find("$env:ANTHROPIC_AUTH_TOKEN")
+        );
+        assert!(!commands.contains("BAD-KEY"));
+        assert!(!commands.contains("MULTILINE"));
+    }
+
+    #[test]
+    fn build_windows_powershell_script_sets_env_and_cleans_temp_files() {
+        let env_vars = vec![("ANTHROPIC_AUTH_TOKEN".to_string(), "sk-token".to_string())];
+
+        let script = build_windows_powershell_script(
+            "C:\\Temp\\claude_provider.json",
+            &env_vars,
+            Some(Path::new("C:\\Projects\\demo")),
+            "C:\\Temp\\cc_switch_claude.ps1",
+        );
+
+        assert!(script.contains("Set-Location -LiteralPath 'C:\\Projects\\demo'\n"));
+        assert!(script.contains("$env:ANTHROPIC_AUTH_TOKEN = 'sk-token'\n"));
+        assert!(script.contains("claude --settings 'C:\\Temp\\claude_provider.json'"));
+        assert!(script.contains("Remove-Item -LiteralPath 'C:\\Temp\\claude_provider.json' -Force"));
+        assert!(script.contains("Remove-Item -LiteralPath 'C:\\Temp\\cc_switch_claude.ps1'"));
     }
 
     /// `parent_dir` 是锚定层"由 bin 路径推导同目录绝对路径"的基石,跨平台共用——
