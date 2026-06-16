@@ -951,7 +951,91 @@
     "messageCopied": "Message copied",
     "conversationHistory": "Conversation History",
     "expandContent": "Expand full content",
-    "collapseContent": "Collapse"
+    "collapseContent": "Collapse",
+    "historyRepair": "History Repair",
+    "sessionBrowser": "Session Browser"
+  },
+  "codexHistoryRepair": {
+    "title": "Codex History Repair",
+    "desktopHistory": "Desktop history",
+    "loadHistory": "Load history",
+    "previewRepair": "Preview repair",
+    "applyRepair": "Apply repair",
+    "sessionBrowser": "Session browser",
+    "loadedSelected": "Loaded / selected",
+    "writeStatus": "Write status",
+    "previewLocked": "Preview is locked; ready to apply",
+    "paramsChanged": "Settings changed; preview again",
+    "waitingPreview": "Waiting for preview",
+    "repairScopeSelected": "Targeted repair for {{count}} sessions",
+    "repairScopeBalanced": "Balanced recent window repair",
+    "sqliteHistory": "SQLite history",
+    "selectedCount": "{{count}} selected",
+    "searchPlaceholder": "Search title, path, provider, or session id",
+    "selectAllPage": "Select page",
+    "clearSelection": "Clear selection",
+    "loadFailed": "Load failed: {{error}}",
+    "noMatches": "No matching history records.",
+    "loadingSqlite": "Loading active SQLite...",
+    "loadThenSelect": "Load active SQLite, then select sessions to repair.",
+    "pathsAndScope": "Paths and repair scope",
+    "codexHome": "Codex home",
+    "codexHomePlaceholder": "Default ~/.codex",
+    "codexHomeHint": "Automatically resolves to the current user's .codex directory",
+    "activeDbPlaceholder": "Default ~/.codex/sqlite/state_5.sqlite",
+    "activeDbHint": "Prefers sqlite/state_5.sqlite",
+    "projectPath": "Project path",
+    "projectPathPlaceholder": "Optional; empty means all projects",
+    "projectPathHint": "Balanced recent-window repair rotates across projects",
+    "targetProvider": "Repair into provider bucket",
+    "autoTarget": "Auto: live config or custom",
+    "sourceLabel": "Session source threads.source",
+    "includeArchived": "Include archived",
+    "includeSubagents": "Include subagent thread_source",
+    "loadPending": "Shown after loading",
+    "previewRequired": "Preview with the current path, provider, source, and session selection first.",
+    "confirmApplyIntro": "This will write Codex Desktop local history indexes and create a backup before writing.",
+    "confirmApplyActiveDb": "active DB: {{db}}",
+    "confirmApplyTarget": "Target provider: {{provider}}",
+    "confirmApplyCodexHome": "Codex home: {{path}}",
+    "confirmApplySelected": "Selected sessions: {{count}}",
+    "confirmApplyContinue": "Continue writing?",
+    "copyFailed": "Copy failed",
+    "selectSessionAria": "Select {{title}}",
+    "noCwd": "no cwd",
+    "sessionContent": "Session content",
+    "noSessionSelected": "No session selected",
+    "rolloutPathCopied": "Rollout path copied",
+    "path": "Path",
+    "loadingSession": "Loading session content...",
+    "readFailed": "Read failed: {{error}}",
+    "messageCopied": "Message copied",
+    "selectSessionToView": "Select a session on the left to view local JSONL content.",
+    "resultTitle": "Repair result",
+    "preview": "Preview",
+    "applied": "Applied",
+    "backupPending": "Shown after applying",
+    "previewFirst": "Run preview first, then confirm writing.",
+    "sourceCounts": "Source counts",
+    "providerCounts": "Provider bucket counts",
+    "sourceOptions": {
+      "vscode": {
+        "detail": "Current successful baseline for sessions written by the Codex plugin"
+      },
+      "interactive": {
+        "detail": "Regular interactive Codex sessions"
+      },
+      "cli": {
+        "detail": "Command-line Codex sessions"
+      },
+      "exec": {
+        "detail": "Automated or task-style sources"
+      },
+      "all": {
+        "label": "All sources",
+        "detail": "Includes subagent and non-interactive records"
+      }
+    }
   },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",

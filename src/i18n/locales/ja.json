@@ -951,7 +951,91 @@
     "messageCopied": "メッセージがコピーされました",
     "conversationHistory": "会話履歴",
     "expandContent": "全文を表示",
-    "collapseContent": "折りたたむ"
+    "collapseContent": "折りたたむ",
+    "historyRepair": "履歴修復",
+    "sessionBrowser": "セッション表示"
+  },
+  "codexHistoryRepair": {
+    "title": "Codex 履歴修復",
+    "desktopHistory": "デスクトップ履歴",
+    "loadHistory": "履歴を読み込む",
+    "previewRepair": "修復をプレビュー",
+    "applyRepair": "書き込みを確定",
+    "sessionBrowser": "セッション表示",
+    "loadedSelected": "読み込み済み / 選択中",
+    "writeStatus": "書き込み状態",
+    "previewLocked": "プレビュー済み。書き込み可能です",
+    "paramsChanged": "設定が変更されました。再度プレビューしてください",
+    "waitingPreview": "プレビュー待ち",
+    "repairScopeSelected": "{{count}} 件の session を個別修復",
+    "repairScopeBalanced": "recent window を均衡修復",
+    "sqliteHistory": "SQLite 履歴",
+    "selectedCount": "{{count}} 件選択中",
+    "searchPlaceholder": "タイトル、パス、provider、session id を検索",
+    "selectAllPage": "このページを全選択",
+    "clearSelection": "選択をクリア",
+    "loadFailed": "読み込みに失敗しました: {{error}}",
+    "noMatches": "一致する履歴がありません。",
+    "loadingSqlite": "active SQLite を読み込み中...",
+    "loadThenSelect": "active SQLite を読み込んでから、修復する session を選択してください。",
+    "pathsAndScope": "パスと修復範囲",
+    "codexHome": "Codex ディレクトリ",
+    "codexHomePlaceholder": "既定 ~/.codex",
+    "codexHomeHint": "現在のユーザーの .codex ディレクトリを自動解決します",
+    "activeDbPlaceholder": "既定 ~/.codex/sqlite/state_5.sqlite",
+    "activeDbHint": "sqlite/state_5.sqlite を優先して読み込みます",
+    "projectPath": "プロジェクトパス",
+    "projectPathPlaceholder": "任意。空なら全プロジェクト",
+    "projectPathHint": "balanced recent-window はプロジェクト間でローテーションします",
+    "targetProvider": "修復先 provider バケット",
+    "autoTarget": "自動: live config または custom",
+    "sourceLabel": "セッションソース threads.source",
+    "includeArchived": "archived を含める",
+    "includeSubagents": "subagent thread_source を含める",
+    "loadPending": "読み込み後に表示",
+    "previewRequired": "現在のパス、provider、source、session 選択で先にプレビューしてください。",
+    "confirmApplyIntro": "Codex Desktop のローカル履歴インデックスに書き込み、書き込み前にバックアップを作成します。",
+    "confirmApplyActiveDb": "active DB: {{db}}",
+    "confirmApplyTarget": "対象 provider: {{provider}}",
+    "confirmApplyCodexHome": "Codex ディレクトリ: {{path}}",
+    "confirmApplySelected": "選択済み session: {{count}}",
+    "confirmApplyContinue": "書き込みを続行しますか？",
+    "copyFailed": "コピーに失敗しました",
+    "selectSessionAria": "{{title}} を選択",
+    "noCwd": "cwd なし",
+    "sessionContent": "Session 内容",
+    "noSessionSelected": "session が選択されていません",
+    "rolloutPathCopied": "rollout パスをコピーしました",
+    "path": "パス",
+    "loadingSession": "セッション内容を読み込み中...",
+    "readFailed": "読み取りに失敗しました: {{error}}",
+    "messageCopied": "メッセージをコピーしました",
+    "selectSessionToView": "左側の session を選択するとローカル JSONL 内容を表示します。",
+    "resultTitle": "修復結果",
+    "preview": "プレビュー",
+    "applied": "書き込み済み",
+    "backupPending": "書き込み後に表示",
+    "previewFirst": "先にプレビューを実行してから、書き込みを確定してください。",
+    "sourceCounts": "source 分布",
+    "providerCounts": "provider バケット分布",
+    "sourceOptions": {
+      "vscode": {
+        "detail": "Codex プラグインが書き込んだセッション向けの現在の成功基準"
+      },
+      "interactive": {
+        "detail": "通常の対話型 Codex セッション"
+      },
+      "cli": {
+        "detail": "コマンドライン Codex セッション"
+      },
+      "exec": {
+        "detail": "自動実行またはタスク型のソース"
+      },
+      "all": {
+        "label": "すべてのソース",
+        "detail": "subagent と非対話型レコードを含めます"
+      }
+    }
   },
   "console": {
     "providerSwitchReceived": "プロバイダー切り替えイベントを受信:",

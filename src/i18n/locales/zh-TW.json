@@ -922,7 +922,91 @@
     "messageCopied": "已複製訊息內容",
     "conversationHistory": "對話紀錄",
     "expandContent": "展開完整內容",
-    "collapseContent": "收起"
+    "collapseContent": "收起",
+    "historyRepair": "歷史修復",
+    "sessionBrowser": "工作階段瀏覽"
+  },
+  "codexHistoryRepair": {
+    "title": "Codex 歷史修復",
+    "desktopHistory": "桌面歷史",
+    "loadHistory": "載入歷史",
+    "previewRepair": "預覽修復",
+    "applyRepair": "確認寫入",
+    "sessionBrowser": "工作階段瀏覽",
+    "loadedSelected": "已載入 / 已選取",
+    "writeStatus": "寫入狀態",
+    "previewLocked": "預覽已鎖定，可確認寫入",
+    "paramsChanged": "參數已變更，請重新預覽",
+    "waitingPreview": "等待預覽",
+    "repairScopeSelected": "定向修復 {{count}} 個 session",
+    "repairScopeBalanced": "均衡修復 recent window",
+    "sqliteHistory": "SQLite 歷史",
+    "selectedCount": "已選 {{count}}",
+    "searchPlaceholder": "搜尋標題、路徑、provider 或 session id",
+    "selectAllPage": "全選本頁",
+    "clearSelection": "清空選取",
+    "loadFailed": "載入失敗：{{error}}",
+    "noMatches": "沒有符合的歷史紀錄。",
+    "loadingSqlite": "正在載入 active SQLite...",
+    "loadThenSelect": "載入 active SQLite 後選擇需要修復的 session。",
+    "pathsAndScope": "路徑和修復範圍",
+    "codexHome": "Codex 目錄",
+    "codexHomePlaceholder": "預設 ~/.codex",
+    "codexHomeHint": "將自動解析為目前使用者的 .codex 目錄",
+    "activeDbPlaceholder": "預設 ~/.codex/sqlite/state_5.sqlite",
+    "activeDbHint": "優先讀取 sqlite/state_5.sqlite",
+    "projectPath": "專案路徑",
+    "projectPathPlaceholder": "可空；為空時不限制專案",
+    "projectPathHint": "balanced recent-window 會跨專案輪詢",
+    "targetProvider": "修復到 provider 桶",
+    "autoTarget": "自動：live config 或 custom",
+    "sourceLabel": "工作階段來源 threads.source",
+    "includeArchived": "包含 archived",
+    "includeSubagents": "包含 subagent thread_source",
+    "loadPending": "載入後顯示",
+    "previewRequired": "請先用目前路徑、provider、source 和 session 選取執行預覽。",
+    "confirmApplyIntro": "將寫入 Codex Desktop 本機歷史索引，並在寫入前建立備份。",
+    "confirmApplyActiveDb": "active DB: {{db}}",
+    "confirmApplyTarget": "目標 provider: {{provider}}",
+    "confirmApplyCodexHome": "Codex 目錄: {{path}}",
+    "confirmApplySelected": "已選 session: {{count}}",
+    "confirmApplyContinue": "繼續寫入嗎？",
+    "copyFailed": "複製失敗",
+    "selectSessionAria": "選擇 {{title}}",
+    "noCwd": "no cwd",
+    "sessionContent": "Session 內容",
+    "noSessionSelected": "未選擇 session",
+    "rolloutPathCopied": "已複製 rollout 路徑",
+    "path": "路徑",
+    "loadingSession": "載入工作階段內容中...",
+    "readFailed": "讀取失敗：{{error}}",
+    "messageCopied": "已複製訊息內容",
+    "selectSessionToView": "選擇左側 session 後檢視本機 JSONL 內容。",
+    "resultTitle": "修復結果",
+    "preview": "預覽",
+    "applied": "已寫入",
+    "backupPending": "寫入後顯示",
+    "previewFirst": "先執行預覽，再確認寫入。",
+    "sourceCounts": "source 分布",
+    "providerCounts": "provider 桶分布",
+    "sourceOptions": {
+      "vscode": {
+        "detail": "目前成功基線，修復 Codex 外掛寫入的工作階段"
+      },
+      "interactive": {
+        "detail": "Codex 常規互動來源"
+      },
+      "cli": {
+        "detail": "命令列 Codex 工作階段"
+      },
+      "exec": {
+        "detail": "自動執行或任務型來源"
+      },
+      "all": {
+        "label": "全部來源",
+        "detail": "包含 subagent 和非互動紀錄"
+      }
+    }
   },
   "console": {
     "providerSwitchReceived": "收到供應商切換事件：",

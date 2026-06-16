@@ -1,3 +1,5 @@
+import type { SessionMessage } from "@/types";
+
 export interface ProxyConfig {
   listen_address: string;
   listen_port: number;
@@ -137,4 +139,127 @@ export interface AppProxyConfig {
   circuitTimeoutSeconds: number;
   circuitErrorRateThreshold: number;
   circuitMinRequests: number;
+}
+
+export interface CodexHistoryVisibilityRepairOptions {
+  dryRun: boolean;
+  codexHome?: string | null;
+  stateDbPath?: string | null;
+  projectPath?: string | null;
+  sessionIds?: string[] | null;
+  targetProvider?: string | null;
+  count?: number | null;
+  windowLimit?: number | null;
+  balanceRecentWindow?: boolean | null;
+  maxPerProject?: number | null;
+  maxTotal?: number | null;
+  sourceFilter?: string | null;
+  includeArchived?: boolean | null;
+  includeSubagents?: boolean | null;
+  skipProviderBucketSync?: boolean | null;
+}
+
+export interface CodexHistoryVisibilityRepairOutcome {
+  dryRun: boolean;
+  codexHome: string;
+  stateDbPath: string | null;
+  activeDbKind: string | null;
+  liveConfigModelProvider: string | null;
+  targetProvider: string;
+  sourceProviderIds: string[];
+  sqliteThreads: number;
+  providerRowsToUpdate: number;
+  providerRowsUpdated: number;
+  rolloutFirstLinesToUpdate: number;
+  rolloutFirstLinesUpdated: number;
+  userEventRowsToUpdate: number;
+  userEventRowsUpdated: number;
+  visibleCandidateRows: number;
+  sessionIndexMissingToAppend: number;
+  sessionIndexAppended: number;
+  projectRows: number;
+  focusSelectedCount: number;
+  balancedRecentWindowEnabled: boolean;
+  balancedRecentWindowRows: number;
+  balancedRecentWindowProjects: number;
+  maxPerProject: number;
+  maxTotal: number;
+  sourceFilter: string | null;
+  sqliteFocusRowsToUpdate: number;
+  sqliteFocusRowsUpdated: number;
+  sessionIndexTitlesToUpdate: number;
+  sessionIndexTitlesUpdated: number;
+  sessionIndexRowsToMove: number;
+  sessionIndexRowsMoved: number;
+  workspaceHintsToFix: number;
+  workspaceHintsFixed: number;
+  projectlessIdsToRemove: number;
+  projectlessIdsRemoved: number;
+  savedWorkspaceRootsToAdd: number;
+  savedWorkspaceRootsAdded: number;
+  rolloutMtimesToTouch: number;
+  rolloutMtimesTouched: number;
+  visibleProjectRowsInWindowBefore: number;
+  backupDir: string | null;
+  skippedReason: string | null;
+}
+
+export interface CodexHistorySessionListOptions {
+  codexHome?: string | null;
+  stateDbPath?: string | null;
+  projectPath?: string | null;
+  provider?: string | null;
+  sourceFilter?: string | null;
+  query?: string | null;
+  limit?: number | null;
+  includeArchived?: boolean | null;
+  includeSubagents?: boolean | null;
+}
+
+export interface CodexHistoryValueCount {
+  value: string | null;
+  count: number;
+}
+
+export interface CodexHistorySessionSummary {
+  id: string;
+  title: string;
+  cwd: string | null;
+  modelProvider: string | null;
+  source: string | null;
+  threadSource: string | null;
+  archived: boolean;
+  hasUserEvent: boolean;
+  updatedAtMs: number;
+  updatedAt: string | null;
+  rolloutPath: string | null;
+}
+
+export interface CodexHistorySessionListOutcome {
+  codexHome: string;
+  stateDbPath: string | null;
+  activeDbKind: string | null;
+  liveConfigModelProvider: string | null;
+  targetProviderCandidates: string[];
+  sourceCounts: CodexHistoryValueCount[];
+  providerCounts: CodexHistoryValueCount[];
+  totalMatched: number;
+  items: CodexHistorySessionSummary[];
+  skippedReason: string | null;
+}
+
+export interface CodexHistorySessionDetailOptions {
+  codexHome?: string | null;
+  stateDbPath?: string | null;
+  sessionId: string;
+}
+
+export interface CodexHistorySessionDetailOutcome {
+  codexHome: string;
+  stateDbPath: string | null;
+  activeDbKind: string | null;
+  session: CodexHistorySessionSummary | null;
+  messages: SessionMessage[];
+  rolloutPath: string | null;
+  skippedReason: string | null;
 }

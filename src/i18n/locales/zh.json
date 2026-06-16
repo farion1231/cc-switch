@@ -951,7 +951,91 @@
     "messageCopied": "已复制消息内容",
     "conversationHistory": "对话记录",
     "expandContent": "展开完整内容",
-    "collapseContent": "收起"
+    "collapseContent": "收起",
+    "historyRepair": "历史修复",
+    "sessionBrowser": "会话浏览"
+  },
+  "codexHistoryRepair": {
+    "title": "Codex 历史修复",
+    "desktopHistory": "桌面历史",
+    "loadHistory": "加载历史",
+    "previewRepair": "预览修复",
+    "applyRepair": "确认写入",
+    "sessionBrowser": "会话浏览",
+    "loadedSelected": "已加载 / 已选",
+    "writeStatus": "写入状态",
+    "previewLocked": "预览已锁定，可确认写入",
+    "paramsChanged": "参数已变化，请重新预览",
+    "waitingPreview": "等待预览",
+    "repairScopeSelected": "定向修复 {{count}} 个 session",
+    "repairScopeBalanced": "均衡修复 recent window",
+    "sqliteHistory": "SQLite 历史",
+    "selectedCount": "已选 {{count}}",
+    "searchPlaceholder": "搜索标题、路径、provider 或 session id",
+    "selectAllPage": "全选本页",
+    "clearSelection": "清空选择",
+    "loadFailed": "加载失败：{{error}}",
+    "noMatches": "没有匹配的历史记录。",
+    "loadingSqlite": "正在加载 active SQLite...",
+    "loadThenSelect": "加载 active SQLite 后选择需要修复的 session。",
+    "pathsAndScope": "路径和修复范围",
+    "codexHome": "Codex 目录",
+    "codexHomePlaceholder": "默认 ~/.codex",
+    "codexHomeHint": "将自动解析为当前用户的 .codex 目录",
+    "activeDbPlaceholder": "默认 ~/.codex/sqlite/state_5.sqlite",
+    "activeDbHint": "优先读取 sqlite/state_5.sqlite",
+    "projectPath": "项目路径",
+    "projectPathPlaceholder": "可空；为空时不限制项目",
+    "projectPathHint": "balanced recent-window 会跨项目轮询",
+    "targetProvider": "修复到 provider 桶",
+    "autoTarget": "自动：live config 或 custom",
+    "sourceLabel": "会话来源 threads.source",
+    "includeArchived": "包含 archived",
+    "includeSubagents": "包含 subagent thread_source",
+    "loadPending": "加载后显示",
+    "previewRequired": "请先用当前路径、provider、source 和 session 选择执行预览。",
+    "confirmApplyIntro": "将写入 Codex Desktop 本地历史索引，并在写入前创建备份。",
+    "confirmApplyActiveDb": "active DB: {{db}}",
+    "confirmApplyTarget": "目标 provider: {{provider}}",
+    "confirmApplyCodexHome": "Codex 目录: {{path}}",
+    "confirmApplySelected": "已选 session: {{count}}",
+    "confirmApplyContinue": "继续写入吗？",
+    "copyFailed": "复制失败",
+    "selectSessionAria": "选择 {{title}}",
+    "noCwd": "no cwd",
+    "sessionContent": "Session 内容",
+    "noSessionSelected": "未选择 session",
+    "rolloutPathCopied": "已复制 rollout 路径",
+    "path": "路径",
+    "loadingSession": "加载会话内容中...",
+    "readFailed": "读取失败：{{error}}",
+    "messageCopied": "已复制消息内容",
+    "selectSessionToView": "选择左侧 session 后查看本地 JSONL 内容。",
+    "resultTitle": "修复结果",
+    "preview": "预览",
+    "applied": "已写入",
+    "backupPending": "写入后显示",
+    "previewFirst": "先执行预览，再确认写入。",
+    "sourceCounts": "source 分布",
+    "providerCounts": "provider 桶分布",
+    "sourceOptions": {
+      "vscode": {
+        "detail": "当前成功基线，修复 Codex 插件写入的会话"
+      },
+      "interactive": {
+        "detail": "Codex 常规交互来源"
+      },
+      "cli": {
+        "detail": "命令行 Codex 会话"
+      },
+      "exec": {
+        "detail": "自动执行或任务型来源"
+      },
+      "all": {
+        "label": "全部来源",
+        "detail": "包含 subagent 和非交互记录"
+      }
+    }
   },
   "console": {
     "providerSwitchReceived": "收到供应商切换事件:",
