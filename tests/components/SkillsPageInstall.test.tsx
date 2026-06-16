@@ -15,6 +15,8 @@ import type {
 } from "@/lib/api/skills";
 
 const installMutateAsyncMock = vi.fn();
+let discoverableSkillsMock: DiscoverableSkill[] = [];
+const refetchDiscoverableMock = vi.fn();
 
 // Stable cache so repeated renders see referentially-equal data.
 // SkillsPage has `useEffect([skillsShResult, ...])` that calls setState — a
@@ -57,10 +59,10 @@ vi.mock("sonner", () => ({
 
 vi.mock("@/hooks/useSkills", () => ({
   useDiscoverableSkills: () => ({
-    data: [] as DiscoverableSkill[],
+    data: discoverableSkillsMock,
     isLoading: false,
     isFetching: false,
-    refetch: vi.fn(),
+    refetch: refetchDiscoverableMock,
   }),
   useInstalledSkills: () => ({
     data: [],
@@ -100,10 +102,26 @@ const makeSkillsShSkill = (
   ...overrides,
 });
 
+const makeDiscoverableSkill = (
+  overrides: Partial<DiscoverableSkill> = {},
+): DiscoverableSkill => ({
+  key: "repo-skill:owner-a:repo-a",
+  name: "Repo Skill",
+  description: "Skill from a configured repository",
+  directory: "repo-skill",
+  readmeUrl: "https://example.com/repo-skill",
+  repoOwner: "owner-a",
+  repoName: "repo-a",
+  repoBranch: "main",
+  ...overrides,
+});
+
 describe("SkillsPage - skills.sh install (regression)", () => {
   beforeEach(() => {
     installMutateAsyncMock.mockReset();
     installMutateAsyncMock.mockResolvedValue({});
+    discoverableSkillsMock = [];
+    refetchDiscoverableMock.mockReset();
     searchCache.clear();
   });
 
@@ -256,6 +274,32 @@ describe("SkillsPage - skills.sh install (regression)", () => {
     await waitFor(() => {
       expect(onSourceChange).toHaveBeenCalledWith("skillssh");
     });
+  });
+
+  it("can switch back to repository results after discoverable skills refresh", async () => {
+    const onSourceChange = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <SkillsPage initialApp="claude" onSourceChange={onSourceChange} />,
+    );
+
+    await waitFor(() => {
+      expect(onSourceChange).toHaveBeenCalledWith("skillssh");
+    });
+
+    await user.click(screen.getByRole("button", { name: /skills\.sh/i }));
+
+    discoverableSkillsMock = [makeDiscoverableSkill()];
+    rerender(
+      <SkillsPage initialApp="claude" onSourceChange={onSourceChange} />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "skills.searchSource.repos" }),
+    );
+
+    expect(screen.getByText("Repo Skill")).toBeInTheDocument();
+    expect(onSourceChange).toHaveBeenCalledWith("repos");
   });
 
   it("exposes repository-only header actions for the parent chrome", () => {
