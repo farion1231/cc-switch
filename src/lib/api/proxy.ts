@@ -6,6 +6,12 @@ import type {
   ProxyTakeoverStatus,
   GlobalProxyConfig,
   AppProxyConfig,
+  CodexHistorySessionDetailOptions,
+  CodexHistorySessionDetailOutcome,
+  CodexHistorySessionListOptions,
+  CodexHistorySessionListOutcome,
+  CodexHistoryVisibilityRepairOptions,
+  CodexHistoryVisibilityRepairOutcome,
 } from "@/types/proxy";
 
 export const proxyApi = {
@@ -57,6 +63,24 @@ export const proxyApi = {
     enabled: boolean,
   ): Promise<void> {
     return invoke("set_proxy_takeover_for_app", { appType, enabled });
+  },
+
+  async repairCodexHistoryVisibility(
+    options: CodexHistoryVisibilityRepairOptions,
+  ): Promise<CodexHistoryVisibilityRepairOutcome> {
+    return invoke("repair_codex_history_visibility", { options });
+  },
+
+  async listCodexHistorySessions(
+    options: CodexHistorySessionListOptions,
+  ): Promise<CodexHistorySessionListOutcome> {
+    return invoke("list_codex_history_sessions", { options });
+  },
+
+  async readCodexHistorySession(
+    options: CodexHistorySessionDetailOptions,
+  ): Promise<CodexHistorySessionDetailOutcome> {
+    return invoke("read_codex_history_session", { options });
   },
 
   // ========== Legacy 代理配置 API (兼容) ==========
