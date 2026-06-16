@@ -492,7 +492,29 @@ fn convert_message_to_openai(
 
 /// 清理 JSON schema（移除不支持的 format）
 pub fn clean_schema(mut schema: Value) -> Value {
+    // 上游可能传入 null schema（input_schema 为 JSON null 而非缺失），
+    // 返回合法的空 object schema，避免下游严格校验器（DeepSeek/SGLang 等）400。
+    if schema.is_null() {
+        return json!({"type": "object", "required": []});
+    }
+
     if let Some(obj) = schema.as_object_mut() {
+        // 确保 type 字段存在且非 null —— 某些上游生成的 schema
+        // 可能省略 type 或将其设为 null，而 DeepSeek/SGLang 对此严格校验。
+        let type_val = obj.get("type");
+        if type_val.is_none() || type_val == Some(&Value::Null) {
+            obj.insert("type".to_string(), json!("object"));
+        }
+
+        // 对于 object 类型 schema，确保 required 数组存在。
+        // Zod z.object({}).toJSONSchema() 不生成 required 字段，
+        // 但 SGLang/DeepSeek 的 Pydantic 校验器要求 object schema 必须有。
+        if obj.get("type").and_then(|v| v.as_str()) == Some("object")
+            && !obj.contains_key("required")
+        {
+            obj.insert("required".to_string(), json!([]));
+        }
+
         // 移除 "format": "uri"
         if obj.get("format").and_then(|v| v.as_str()) == Some("uri") {
             obj.remove("format");
@@ -1725,5 +1747,78 @@ mod tests {
             run_tool_choice(json!({"type": "tool", "name": "search"})),
             json!({"type": "function", "function": {"name": "search"}}),
         );
+    }
+
+    // ── clean_schema defensive hardening ──
+    // 确保通过 cc-switch 转换后的 tool parameters schema 通过
+    // DeepSeek/SGLang 等严格校验后端（拒绝 type 缺失/null、缺少 required 数组）。
+
+    #[test]
+    fn clean_schema_null_input_returns_empty_object_schema() {
+        let result = clean_schema(Value::Null);
+        assert_eq!(result["type"], "object");
+        assert_eq!(result["required"], json!([]));
+    }
+
+    #[test]
+    fn clean_schema_missing_type_defaults_to_object() {
+        let input = json!({"properties": {"q": {"type": "string"}}});
+        let result = clean_schema(input);
+        assert_eq!(result["type"], "object");
+    }
+
+    #[test]
+    fn clean_schema_null_type_defaults_to_object() {
+        let input = json!({"type": null, "properties": {"q": {"type": "string"}}});
+        let result = clean_schema(input);
+        assert_eq!(result["type"], "object");
+    }
+
+    #[test]
+    fn clean_schema_adds_required_array_for_object_type() {
+        let input = json!({"type": "object", "properties": {"q": {"type": "string"}}});
+        let result = clean_schema(input);
+        assert_eq!(result["required"], json!([]));
+    }
+
+    #[test]
+    fn clean_schema_preserves_existing_required_array() {
+        let input = json!({"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]});
+        let result = clean_schema(input);
+        assert_eq!(result["required"], json!(["q"]));
+    }
+
+    #[test]
+    fn clean_schema_recursively_fixes_nested_properties() {
+        let input = json!({
+            "type": "object",
+            "properties": {
+                "nested": null
+            }
+        });
+        let result = clean_schema(input);
+        let nested = &result["properties"]["nested"];
+        assert_eq!(nested["type"], "object");
+        assert_eq!(nested["required"], json!([]));
+    }
+
+    #[test]
+    fn clean_schema_recursively_fixes_nested_items() {
+        let input = json!({
+            "type": "array",
+            "items": null
+        });
+        let result = clean_schema(input);
+        assert_eq!(result["type"], "array");
+        let items = &result["items"];
+        assert_eq!(items["type"], "object");
+        assert_eq!(items["required"], json!([]));
+    }
+
+    #[test]
+    fn clean_schema_strips_uri_format() {
+        let input = json!({"type": "object", "format": "uri", "properties": {}});
+        let result = clean_schema(input);
+        assert!(result.get("format").is_none());
     }
 }
