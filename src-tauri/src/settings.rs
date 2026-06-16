@@ -382,7 +382,7 @@ pub struct AppSettings {
     /// Set to Some("custom") (or any other ID) to unify all non-reserved provider IDs
     /// into one bucket so chat history survives provider switches.
     /// See: https://github.com/farion1231/cc-switch/issues/3967
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub force_codex_model_provider_id: Option<String>,
     /// Run official Codex providers under the shared "custom" model_provider id
     /// so official sessions share one resume-history bucket with third-party
