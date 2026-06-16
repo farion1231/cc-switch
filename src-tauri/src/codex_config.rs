@@ -1407,33 +1407,12 @@ pub fn write_codex_live_for_provider(
     };
     let config_text = normalized_config.as_deref();
 
-    // When normalization rewrote provider IDs, migrate existing session
-    // history files so old sessions appear under the unified bucket.
-    if let Some(target_id) = crate::settings::force_codex_model_provider_id() {
-        let mut migrate_ids: Vec<String> = rewritten_ids.clone();
-
-        // Also migrate official "openai" sessions when the target differs,
-        // so switching from official to third-party keeps all history visible.
-        if target_id != "openai" && !migrate_ids.contains(&"openai".to_string()) {
-            migrate_ids.push("openai".to_string());
-        }
-
-        if !migrate_ids.is_empty() {
-            log::info!(
-                "Triggering force-provider-id migration: {:?} -> '{}'",
-                migrate_ids, target_id
-            );
-            if let Err(e) = crate::codex_history_migration::migrate_codex_history_for_force_provider_id(
-                &migrate_ids,
-                &target_id,
-            ) {
-                log::warn!(
-                    "Failed to migrate Codex session history after normalizing provider IDs {:?} -> '{}': {e}",
-                    migrate_ids, target_id
-                );
-            }
-        }
-    }
+    // Note: We intentionally do NOT migrate existing session history files.
+    // The `force_codex_model_provider_id` setting only affects the live
+    // config.toml (new sessions land in the unified bucket).  Existing
+    // sessions stay in their original buckets so they remain visible under
+    // their original provider in CC Switch's Session Manager (which scans
+    // all buckets regardless of the active model_provider).
 
     let unified_official_config =
         if category == Some("official") && crate::settings::unify_codex_session_history() {
