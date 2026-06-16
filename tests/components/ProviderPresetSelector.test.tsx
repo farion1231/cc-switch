@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { TFunction } from "i18next";
@@ -450,6 +450,24 @@ describe("ProviderPresetSelector", () => {
     expect(onPresetChange).toHaveBeenCalledWith("beta");
     // 搜索框仍展开、关键词保留
     expect(getSearchInput()).toBeInTheDocument();
+    expect(getSearchInput()).toHaveValue("gateway");
+  });
+
+  it("搜索已打开、焦点在别处时再次 Ctrl+F 把焦点移回搜索框且保留关键词", async () => {
+    const user = userEvent.setup();
+    renderSelector();
+
+    await user.click(getSearchButton());
+    await user.type(getSearchInput(), "gateway");
+
+    // 选中 preset 后焦点离开搜索框（搜索框仍展开、关键词保留）
+    await user.click(screen.getByRole("button", { name: "Beta Gateway" }));
+    expect(getSearchInput()).not.toHaveFocus();
+
+    // 再次 Ctrl+F：setSearchOpen(true) 同值不重渲染、autoFocus 不重触发，
+    // 需靠快捷键命中时的命令式聚焦把焦点移回搜索框，且不清空关键词
+    await user.keyboard("{Control>}f{/Control}");
+    await waitFor(() => expect(getSearchInput()).toHaveFocus());
     expect(getSearchInput()).toHaveValue("gateway");
   });
 

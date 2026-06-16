@@ -151,30 +151,24 @@ export function ProviderPresetSelector({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [searchOpen]);
 
-  // 键盘快捷键: Ctrl/Cmd+F 打开搜索并聚焦输入框
+  // 键盘快捷键: Ctrl/Cmd+F 打开搜索并聚焦输入框。
   // 使用捕获阶段并阻止冒泡，避免背后 ProviderList 的同名快捷键被意外触发。
+  // 首次打开靠 Input 的 autoFocus 聚焦；若搜索已打开（例如点击 preset 后焦点
+  // 停在按钮上），setSearchOpen(true) 同值不会重渲染、autoFocus 不重触发，
+  // 这里用 rAF 命令式地把焦点移回搜索框（不 select，避免吞掉随后输入的首字符）。
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
         event.preventDefault();
         event.stopPropagation();
         setSearchOpen(true);
+        requestAnimationFrame(() => searchInputRef.current?.focus());
       }
     };
 
     globalThis.addEventListener("keydown", handleKeyDown, true);
     return () => globalThis.removeEventListener("keydown", handleKeyDown, true);
   }, []);
-
-  useEffect(() => {
-    if (searchOpen) {
-      const frame = requestAnimationFrame(() => {
-        searchInputRef.current?.focus();
-        searchInputRef.current?.select();
-      });
-      return () => cancelAnimationFrame(frame);
-    }
-  }, [searchOpen]);
 
   const visiblePresetEntries = useMemo(
     () =>
@@ -306,6 +300,7 @@ export function ProviderPresetSelector({
                 defaultValue: "Search provider presets",
               })}
               className="w-60 h-8"
+              autoFocus
             />
           )}
           <Button
