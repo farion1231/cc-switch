@@ -125,6 +125,10 @@ static FAIL_CLAUDE_CONFIG_ENV_RESTORE_FOR_TEST: std::sync::atomic::AtomicBool =
 static FAIL_CLAUDE_CONFIG_ENV_SET_FOR_TEST: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+#[cfg(test)]
+static FAIL_CLAUDE_CONFIG_ENV_SET_AFTER_WRITE_FOR_TEST: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// Result of a provider switch operation, including any non-fatal warnings
 #[derive(Debug, serde::Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -3900,6 +3904,64 @@ wire_api = "responses"
 
     #[test]
     #[serial]
+    fn apply_claude_profile_post_write_env_failure_restores_previous_env() {
+        let _env_guard = UserEnvVarGuard::new("CLAUDE_CONFIG_DIR");
+        with_test_home(|_state, home| {
+            let previous_profile_dir = home.join(".claude-profiles").join("previous");
+            let target_profile_dir = home.join(".claude-profiles").join("target");
+            fs::create_dir_all(&previous_profile_dir).expect("create previous profile dir");
+            fs::create_dir_all(&target_profile_dir).expect("create target profile dir");
+            crate::settings::set_claude_provider_override_dir(Some(
+                &previous_profile_dir.to_string_lossy(),
+            ))
+            .expect("seed previous profile override");
+            crate::services::env_manager::set_user_env_var(
+                "CLAUDE_CONFIG_DIR",
+                Some(&previous_profile_dir.to_string_lossy()),
+            )
+            .expect("seed previous profile env");
+
+            let profile_provider = claude_provider(
+                "claude-profile",
+                "Claude Profile",
+                "profile-token",
+                "https://profile.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(target_profile_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+
+            let plan = ProviderService::claude_switch_plan(&profile_provider);
+            FAIL_CLAUDE_CONFIG_ENV_SET_AFTER_WRITE_FOR_TEST
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+
+            let err = ProviderService::apply_claude_switch_plan(&plan)
+                .expect_err("post-write env failure should fail the switch plan");
+
+            assert!(
+                err.to_string()
+                    .contains("simulated CLAUDE_CONFIG_DIR post-write failure"),
+                "switch should report the post-write CLAUDE_CONFIG_DIR failure"
+            );
+            assert_eq!(
+                crate::settings::get_claude_override_dir().as_deref(),
+                Some(previous_profile_dir.as_path()),
+                "provider override should roll back after a partial CLAUDE_CONFIG_DIR write"
+            );
+            assert_eq!(
+                crate::services::env_manager::get_user_env_var("CLAUDE_CONFIG_DIR")
+                    .expect("read claude config env")
+                    .as_deref(),
+                Some(previous_profile_dir.to_string_lossy().as_ref()),
+                "CLAUDE_CONFIG_DIR should roll back after a partial env write"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn apply_claude_legacy_preserves_configured_dir_env() {
         let _env_guard = UserEnvVarGuard::new("CLAUDE_CONFIG_DIR");
         with_test_home(|_state, home| {
@@ -5467,6 +5529,9 @@ impl ProviderService {
             .as_deref()
             .map(Self::resolve_claude_override_path)
             .map(|path| path.to_string_lossy().to_string());
+        let previous_config_env =
+            crate::services::env_manager::get_user_env_var("CLAUDE_CONFIG_DIR")
+                .map_err(AppError::Message)?;
         crate::settings::set_claude_provider_override_dir(plan.override_dir.as_deref())?;
         let settings = crate::settings::get_settings();
         let legacy_config_dir = settings
@@ -5506,6 +5571,11 @@ impl ProviderService {
             ) {
                 log::warn!(
                     "Failed to restore Claude provider override after CLAUDE_CONFIG_DIR update failed: {rollback_err}"
+                );
+            }
+            if let Err(rollback_err) = Self::set_claude_config_env(previous_config_env.as_deref()) {
+                log::warn!(
+                    "Failed to restore CLAUDE_CONFIG_DIR after Claude env activation failed: {rollback_err}"
                 );
             }
             return Err(err);
@@ -5634,8 +5704,20 @@ impl ProviderService {
             ));
         }
 
-        crate::services::env_manager::set_user_env_var("CLAUDE_CONFIG_DIR", value)
-            .map_err(AppError::Message)
+        let result = crate::services::env_manager::set_user_env_var("CLAUDE_CONFIG_DIR", value)
+            .map_err(AppError::Message);
+
+        #[cfg(test)]
+        if FAIL_CLAUDE_CONFIG_ENV_SET_AFTER_WRITE_FOR_TEST
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            result?;
+            return Err(AppError::Message(
+                "simulated CLAUDE_CONFIG_DIR post-write failure".to_string(),
+            ));
+        }
+
+        result
     }
 
     fn restore_claude_config_env_for_rollback(value: Option<&str>) -> Result<(), AppError> {
