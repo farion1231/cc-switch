@@ -1112,30 +1112,66 @@ fn get_user_shell() -> String {
         .unwrap_or_else(|| fallback_user_shell().to_string())
 }
 
-/// 构建 exec 行：引号保护 shell 路径，用户 shell 按默认交互式规则加载 rc 配置
-fn build_exec_line(shell: &str) -> String {
+/// 构建 exec 行：引号保护 shell 路径，交还用户 shell 让其按默认规则加载 rc 配置。
+fn build_exec_line(shell: &str, cwd: Option<&Path>) -> String {
+    let quoted_shell = shell_single_quote(shell);
+
     match shell.rsplit('/').next().unwrap_or(shell) {
-        "bash" | "zsh" | "fish" => format!("exec {} -l", shell_single_quote(shell)),
-        _ => format!("exec {}", shell_single_quote(shell)),
+        "zsh" => cwd
+            .map(|dir| {
+                let command = format!(
+                    "cd {} || exit 1; exec {} -i",
+                    shell_single_quote(&dir.to_string_lossy()),
+                    quoted_shell
+                );
+                format!("exec {} -lc {}", quoted_shell, shell_single_quote(&command))
+            })
+            .unwrap_or_else(|| format!("exec {quoted_shell} -l")),
+        _ => format!("exec {quoted_shell}"),
     }
 }
 
-/// 构建 provider 命令行：通过用户 shell 的登录/交互模式执行，确保 GUI 启动的终端也加载用户 PATH。
-fn build_provider_command_line(shell: &str, config_path: &str) -> String {
+/// 构建 provider 命令行：通过用户 shell 的交互模式执行，确保 GUI 启动的终端也加载用户 PATH。
+fn build_provider_command_line(shell: &str, config_path: &str, cwd: Option<&Path>) -> String {
     let claude_command = format!("claude --settings {}", shell_single_quote(config_path));
+    let command = cwd
+        .map(|dir| {
+            format!(
+                "cd {} && {}",
+                shell_single_quote(&dir.to_string_lossy()),
+                claude_command
+            )
+        })
+        .unwrap_or(claude_command);
+
     format!(
         "{} {} {}",
         shell_single_quote(shell),
         provider_command_flag_for_shell(shell),
-        shell_single_quote(&claude_command)
+        shell_single_quote(&command)
     )
 }
 
 fn provider_command_flag_for_shell(shell: &str) -> &'static str {
     match shell.rsplit('/').next().unwrap_or(shell) {
         "dash" | "sh" => "-c",
-        _ => "-lc",
+        "zsh" => "-lic",
+        _ => "-ic",
     }
+}
+
+fn build_final_shell_cd_command(shell: &str, cwd: Option<&Path>) -> String {
+    if matches!(shell.rsplit('/').next().unwrap_or(shell), "zsh") {
+        return String::new();
+    }
+
+    cwd.map(|dir| {
+        format!(
+            "cd {} || exit 1\n",
+            shell_single_quote(&dir.to_string_lossy())
+        )
+    })
+    .unwrap_or_default()
 }
 
 #[cfg(target_os = "windows")]
@@ -2638,29 +2674,29 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let terminal = preferred.as_deref().unwrap_or("terminal");
 
     let shell = get_user_shell();
-    let exec_line = build_exec_line(&shell);
+    let exec_line = build_exec_line(&shell, cwd);
+    let final_cd_command = build_final_shell_cd_command(&shell, cwd);
 
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
-    let cd_command = build_shell_cd_command(cwd);
-    let provider_command = build_provider_command_line(&shell, &config_path);
+    let provider_command = build_provider_command_line(&shell, &config_path, cwd);
 
     // Write the shell script to a temp file
     // 脚本使用 POSIX sh 语法确保可移植性，exec 行切换到用户交互式 shell
     let script_content = format!(
         r#"#!/usr/bin/env sh
 trap 'rm -f "{config_path}" "{script_file}"' EXIT
-{cd_command}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
 {provider_command}
+{final_cd_command}
 {exec_line}
 "#,
         config_path = config_path,
         script_file = script_file.display(),
-        cd_command = cd_command,
         provider_command = provider_command,
+        final_cd_command = final_cd_command,
         exec_line = exec_line,
     );
 
@@ -2711,6 +2747,15 @@ fn applescript_launcher_command(script_file: &std::path::Path) -> String {
     ))
 }
 
+/// Build a launcher command that replaces the terminal-created shell session.
+#[cfg(target_os = "macos")]
+fn applescript_exec_launcher_command(script_file: &std::path::Path) -> String {
+    applescript_string_literal(&format!(
+        "exec sh {}",
+        shell_single_quote(&script_file.to_string_lossy())
+    ))
+}
+
 /// macOS: Terminal.app AppleScript.
 /// A cold `activate` creates a default empty window before `do script` opens the command session.
 /// Use `launch` for cold starts so `do script` can create the only new session without reusing restored windows.
@@ -2729,7 +2774,7 @@ tell application "Terminal"
         activate
     end if
 end tell"#,
-        launcher = applescript_launcher_command(script_file)
+        launcher = applescript_exec_launcher_command(script_file)
     )
 }
 
@@ -2797,7 +2842,7 @@ tell application "iTerm"
         write text launcher_script
     end tell
 end tell"#,
-        launcher = applescript_launcher_command(script_file)
+        launcher = applescript_exec_launcher_command(script_file)
     )
 }
 
@@ -2949,7 +2994,8 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let preferred = crate::settings::get_preferred_terminal();
 
     let shell = get_user_shell();
-    let exec_line = build_exec_line(&shell);
+    let exec_line = build_exec_line(&shell, cwd);
+    let final_cd_command = build_final_shell_cd_command(&shell, cwd);
 
     // Default terminal list with their arguments
     let default_terminals = [
@@ -2967,22 +3013,21 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
-    let cd_command = build_shell_cd_command(cwd);
-    let provider_command = build_provider_command_line(&shell, &config_path);
+    let provider_command = build_provider_command_line(&shell, &config_path, cwd);
 
     let script_content = format!(
         r#"#!/usr/bin/env sh
 trap 'rm -f "{config_path}" "{script_file}"' EXIT
-{cd_command}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
 {provider_command}
+{final_cd_command}
 {exec_line}
 "#,
         config_path = config_path,
         script_file = script_file.display(),
-        cd_command = cd_command,
         provider_command = provider_command,
+        final_cd_command = final_cd_command,
         exec_line = exec_line,
     );
 
@@ -3112,16 +3157,6 @@ del \"%~f0\" >nul 2>&1
     }
 
     result
-}
-
-fn build_shell_cd_command(cwd: Option<&Path>) -> String {
-    cwd.map(|dir| {
-        format!(
-            "cd {} || exit 1\n",
-            shell_single_quote(&dir.to_string_lossy())
-        )
-    })
-    .unwrap_or_default()
 }
 
 fn shell_single_quote(value: &str) -> String {
@@ -3406,28 +3441,57 @@ mod tests {
 
     #[test]
     fn test_build_exec_line() {
-        assert_eq!(build_exec_line("/bin/zsh"), "exec '/bin/zsh' -l");
-        assert_eq!(build_exec_line("/bin/bash"), "exec '/bin/bash' -l");
+        assert_eq!(build_exec_line("/bin/zsh", None), "exec '/bin/zsh' -l");
+        assert_eq!(build_exec_line("/bin/bash", None), "exec '/bin/bash'");
         assert_eq!(
-            build_exec_line("/opt/homebrew dir/bin/fish"),
-            "exec '/opt/homebrew dir/bin/fish' -l"
+            build_exec_line("/opt/homebrew dir/bin/fish", None),
+            "exec '/opt/homebrew dir/bin/fish'"
         );
-        assert_eq!(build_exec_line("/bin/sh"), "exec '/bin/sh'");
+        assert_eq!(build_exec_line("/bin/sh", None), "exec '/bin/sh'");
         assert_eq!(
-            build_exec_line("/tmp/shell'quote/zsh"),
+            build_exec_line("/tmp/shell'quote/zsh", None),
             "exec '/tmp/shell'\"'\"'quote/zsh' -l"
+        );
+        assert_eq!(
+            build_exec_line("/bin/zsh", Some(Path::new("/tmp/project"))),
+            r#"exec '/bin/zsh' -lc 'cd '"'"'/tmp/project'"'"' || exit 1; exec '"'"'/bin/zsh'"'"' -i'"#
         );
     }
 
     #[test]
     fn test_build_provider_command_line_uses_user_shell_environment() {
         assert_eq!(
-            build_provider_command_line("/bin/zsh", "/tmp/claude config.json"),
-            "'/bin/zsh' -lc 'claude --settings '\"'\"'/tmp/claude config.json'\"'\"''"
+            build_provider_command_line("/bin/zsh", "/tmp/claude config.json", None),
+            "'/bin/zsh' -lic 'claude --settings '\"'\"'/tmp/claude config.json'\"'\"''"
         );
         assert_eq!(
-            build_provider_command_line("/bin/sh", "/tmp/claude config.json"),
-            "'/bin/sh' -c 'claude --settings '\"'\"'/tmp/claude config.json'\"'\"''"
+            build_provider_command_line(
+                "/bin/bash",
+                "/tmp/claude config.json",
+                Some(Path::new("/tmp/project"))
+            ),
+            r#"'/bin/bash' -ic 'cd '"'"'/tmp/project'"'"' && claude --settings '"'"'/tmp/claude config.json'"'"''"#
+        );
+        assert_eq!(
+            build_provider_command_line(
+                "/bin/sh",
+                "/tmp/claude config.json",
+                Some(Path::new("/tmp/project O'Brien"))
+            ),
+            r#"'/bin/sh' -c 'cd '"'"'/tmp/project O'"'"'"'"'"'"'"'"'Brien'"'"' && claude --settings '"'"'/tmp/claude config.json'"'"''"#
+        );
+    }
+
+    #[test]
+    fn test_build_final_shell_cd_command() {
+        assert_eq!(build_final_shell_cd_command("/bin/zsh", None), "");
+        assert_eq!(
+            build_final_shell_cd_command("/bin/zsh", Some(Path::new("/tmp/project"))),
+            ""
+        );
+        assert_eq!(
+            build_final_shell_cd_command("/bin/bash", Some(Path::new("/tmp/project O'Brien"))),
+            "cd '/tmp/project O'\"'\"'Brien' || exit 1\n"
         );
     }
 
@@ -4859,13 +4923,6 @@ mod tests {
         assert!(error.contains("目录不存在"));
     }
 
-    #[test]
-    fn build_shell_cd_command_quotes_spaces_and_single_quotes() {
-        let command = build_shell_cd_command(Some(Path::new("/tmp/project O'Brien")));
-
-        assert_eq!(command, "cd '/tmp/project O'\"'\"'Brien' || exit 1\n");
-    }
-
     #[cfg(target_os = "macos")]
     #[test]
     fn iterm2_applescript_cold_start_avoids_current_window_before_one_exists() {
@@ -4926,6 +4983,10 @@ mod tests {
                 "if was_running then\n        activate\n        do script launcher_script\n"
             ),
             "already-running branch should use bare do script:\n{script}"
+        );
+        assert!(
+            script.contains(r#"set launcher_script to "exec sh '/tmp/cc_switch_launcher.sh'""#),
+            "Terminal should replace the auto-created shell:\n{script}"
         );
     }
 
@@ -5007,17 +5068,23 @@ mod tests {
         let expected = r#""sh '/Users/me/it'\"'\"'s dir/x.sh'""#;
         let p = Path::new("/Users/me/it's dir/x.sh");
         assert_eq!(applescript_launcher_command(p), expected);
+        assert_eq!(
+            applescript_exec_launcher_command(p),
+            r#""exec sh '/Users/me/it'\"'\"'s dir/x.sh'""#
+        );
         assert!(
-            build_macos_terminal_applescript(p).contains(expected),
+            build_macos_terminal_applescript(p)
+                .contains(r#""exec sh '/Users/me/it'\"'\"'s dir/x.sh'""#),
             "Terminal did not quote safely"
         );
         assert!(
-            build_macos_iterm2_applescript(p).contains(expected),
+            build_macos_iterm2_applescript(p)
+                .contains(r#""exec sh '/Users/me/it'\"'\"'s dir/x.sh'""#),
             "iTerm2 did not quote safely"
         );
         assert!(
             build_macos_ghostty_applescript(p).contains(expected),
-            "Ghostty did not quote safely"
+            "Ghostty did not keep the non-exec launcher"
         );
     }
 
