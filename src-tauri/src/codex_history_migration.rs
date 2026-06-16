@@ -1025,6 +1025,7 @@ fn rewrite_codex_session_file_lines(
     rewrite_line: impl Fn(&str) -> Option<String>,
 ) -> Result<bool, AppError> {
     let metadata_before = fs::metadata(path).map_err(|e| AppError::io(path, e))?;
+    let accessed_before = metadata_before.accessed().ok();
     let modified_before = metadata_before.modified().ok();
     let len_before = metadata_before.len();
     let content = fs::read_to_string(path).map_err(|e| AppError::io(path, e))?;
@@ -1053,7 +1054,25 @@ fn rewrite_codex_session_file_lines(
     backup_codex_jsonl_file(path, codex_dir, backup_root)?;
     ensure_codex_session_file_unchanged(path, modified_before, len_before)?;
     atomic_write(path, rewritten.as_bytes())?;
+    restore_codex_session_file_times(path, accessed_before, modified_before)?;
     Ok(true)
+}
+
+fn restore_codex_session_file_times(
+    path: &Path,
+    accessed_before: Option<SystemTime>,
+    modified_before: Option<SystemTime>,
+) -> Result<(), AppError> {
+    let Some(modified) = modified_before else {
+        return Ok(());
+    };
+    let accessed = accessed_before.unwrap_or(modified);
+    filetime::set_file_times(
+        path,
+        filetime::FileTime::from_system_time(accessed),
+        filetime::FileTime::from_system_time(modified),
+    )
+    .map_err(|e| AppError::io(path, e))
 }
 
 fn ensure_codex_session_file_unchanged(
@@ -1116,14 +1135,22 @@ fn migrate_codex_state_dbs(
 }
 
 fn codex_state_db_paths(codex_dir: &Path, config_text: &str) -> Vec<PathBuf> {
-    let mut paths = vec![codex_dir.join(CODEX_STATE_DB_FILENAME)];
+    let mut paths = Vec::new();
+    push_unique_path(&mut paths, codex_dir.join(CODEX_STATE_DB_FILENAME));
+    push_unique_path(
+        &mut paths,
+        codex_dir.join("sqlite").join(CODEX_STATE_DB_FILENAME),
+    );
     if let Some(sqlite_home) = sqlite_home_from_codex_config(config_text) {
-        let db_path = sqlite_home.join(CODEX_STATE_DB_FILENAME);
-        if !paths.contains(&db_path) {
-            paths.push(db_path);
-        }
+        push_unique_path(&mut paths, sqlite_home.join(CODEX_STATE_DB_FILENAME));
     }
     paths
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
+    }
 }
 
 fn sqlite_home_from_codex_config(config_text: &str) -> Option<PathBuf> {
@@ -1967,6 +1994,9 @@ base_url = "https://proxy.example/v1"
             ),
         )
         .expect("write session");
+        let original_mtime = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        filetime::set_file_mtime(&path, filetime::FileTime::from_system_time(original_mtime))
+            .expect("set original mtime");
 
         let changed = rewrite_codex_session_file_for_provider_bucket(
             &path,
@@ -1982,6 +2012,20 @@ base_url = "https://proxy.example/v1"
         assert!(backup_root
             .join("jsonl/sessions/2026/05/20/rollout-test.jsonl")
             .exists());
+        let restored_mtime = fs::metadata(&path)
+            .expect("metadata")
+            .modified()
+            .expect("mtime");
+        assert_eq!(
+            restored_mtime
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .expect("mtime after epoch")
+                .as_secs(),
+            original_mtime
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .expect("mtime after epoch")
+                .as_secs()
+        );
     }
 
     #[test]
@@ -2114,6 +2158,21 @@ base_url = "https://proxy.example/v1"
             )
             .expect("count backed up source providers");
         assert_eq!(backed_up_source_count, 2);
+    }
+
+    #[test]
+    fn discovers_codex_sqlite_subdir_state_db_without_sqlite_home() {
+        let dir = tempdir().expect("tempdir");
+        let codex_dir = dir.path().join(".codex");
+        let paths = codex_state_db_paths(&codex_dir, "");
+
+        assert_eq!(
+            paths,
+            vec![
+                codex_dir.join(CODEX_STATE_DB_FILENAME),
+                codex_dir.join("sqlite").join(CODEX_STATE_DB_FILENAME),
+            ]
+        );
     }
 
     #[test]

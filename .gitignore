@@ -30,3 +30,9 @@ copilot-api
 CODEBUDDY.md
 .github
 mainWindow.js
+/scripts/codex-history-tool/.venv/
+/scripts/codex-history-tool/build/
+/scripts/codex-history-tool/dist/
+/scripts/codex-history-tool/release/
+/scripts/codex-history-tool/__pycache__/
+/scripts/codex-history-tool/*.spec
