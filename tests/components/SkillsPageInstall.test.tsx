@@ -5,6 +5,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import {
   SkillsPage,
+  getSkillsPageHeaderActions,
   type SkillsPageHandle,
 } from "@/components/skills/SkillsPage";
 import type {
@@ -20,18 +21,29 @@ const installMutateAsyncMock = vi.fn();
 // fresh object every render would loop forever.
 const searchCache = new Map<
   string,
-  { data: SkillsShSearchResult | undefined; isLoading: boolean; isFetching: boolean }
+  {
+    data: SkillsShSearchResult | undefined;
+    isLoading: boolean;
+    isFetching: boolean;
+    isPlaceholderData?: boolean;
+  }
 >();
 
 const setSearchResult = (
   query: string,
   offset: number,
   result: SkillsShSearchResult | undefined,
+  state: Partial<{
+    isLoading: boolean;
+    isFetching: boolean;
+    isPlaceholderData: boolean;
+  }> = {},
 ) => {
   searchCache.set(`${query}:${offset}`, {
     data: result,
     isLoading: false,
     isFetching: false,
+    ...state,
   });
 };
 
@@ -155,5 +167,101 @@ describe("SkillsPage - skills.sh install (regression)", () => {
     expect(callArgs.skill.repoOwner).toBe("owner-b");
     expect(callArgs.skill.repoName).toBe("repo-b");
     expect(callArgs.skill.name).toBe("Agent Browser B");
+  });
+
+  it("keeps skills.sh results when submitting the same query again", async () => {
+    const figmaSkill = makeSkillsShSkill({
+      key: "figma-use:figma:mcp-server-guide",
+      name: "figma-use",
+      directory: "figma-use",
+      repoOwner: "figma",
+      repoName: "mcp-server-guide",
+    });
+
+    setSearchResult("figma", 0, {
+      skills: [figmaSkill],
+      totalCount: 1,
+      query: "figma",
+    });
+
+    render(<SkillsPage initialApp="claude" />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: /skills\.sh/i }));
+    const input = screen.getByPlaceholderText(
+      "skills.skillssh.searchPlaceholder",
+    );
+    await user.type(input, "figma");
+
+    const searchButton = screen.getByRole("button", {
+      name: "skills.search",
+    });
+    await user.click(searchButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("figma-use")).toBeInTheDocument();
+    });
+
+    await user.click(searchButton);
+
+    expect(screen.getByText("figma-use")).toBeInTheDocument();
+  });
+
+  it("shows the skills.sh loading state while a new query is fetching", async () => {
+    const figmaSkill = makeSkillsShSkill({
+      key: "figma-use:figma:mcp-server-guide",
+      name: "figma-use",
+      directory: "figma-use",
+      repoOwner: "figma",
+      repoName: "mcp-server-guide",
+    });
+
+    setSearchResult("figma", 0, {
+      skills: [figmaSkill],
+      totalCount: 1,
+      query: "figma",
+    });
+    setSearchResult("react", 0, undefined, { isFetching: true });
+
+    render(<SkillsPage initialApp="claude" />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: /skills\.sh/i }));
+    const input = screen.getByPlaceholderText(
+      "skills.skillssh.searchPlaceholder",
+    );
+    await user.type(input, "figma");
+
+    const searchButton = screen.getByRole("button", {
+      name: "skills.search",
+    });
+    await user.click(searchButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("figma-use")).toBeInTheDocument();
+    });
+
+    await user.clear(input);
+    await user.type(input, "react");
+    await user.click(searchButton);
+
+    expect(screen.getByText("skills.skillssh.loading")).toBeInTheDocument();
+  });
+
+  it("reports the effective skills.sh source to parent chrome", async () => {
+    const onSourceChange = vi.fn();
+
+    render(<SkillsPage initialApp="claude" onSourceChange={onSourceChange} />);
+
+    await waitFor(() => {
+      expect(onSourceChange).toHaveBeenCalledWith("skillssh");
+    });
+  });
+
+  it("exposes repository-only header actions for the parent chrome", () => {
+    expect(
+      getSkillsPageHeaderActions("repos").map((action) => action.key),
+    ).toEqual(["refresh-repos", "manage-repos"]);
+    expect(getSkillsPageHeaderActions("skillssh")).toEqual([]);
   });
 });
