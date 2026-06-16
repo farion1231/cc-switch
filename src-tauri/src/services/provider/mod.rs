@@ -129,6 +129,10 @@ static FAIL_CLAUDE_CONFIG_ENV_SET_FOR_TEST: std::sync::atomic::AtomicBool =
 static FAIL_CLAUDE_CONFIG_ENV_SET_AFTER_WRITE_FOR_TEST: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+#[cfg(test)]
+static FAIL_CLAUDE_ROLLBACK_CAPTURE_FOR_TEST: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// Result of a provider switch operation, including any non-fatal warnings
 #[derive(Debug, serde::Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -698,6 +702,29 @@ mod tests {
             provider_key, "openai",
             "an explicit built-in OpenAI table without a custom endpoint should remain under openai"
         );
+    }
+
+    #[test]
+    #[serial]
+    fn codex_desktop_provider_key_uses_unified_bucket_for_official_empty_config() {
+        with_test_home(|_state, _home| {
+            let mut settings = crate::settings::get_settings();
+            settings.unify_codex_session_history = true;
+            crate::settings::update_settings(settings).expect("enable unified Codex history");
+
+            let mut provider = codex_provider("codex-official", "OpenAI Official", "");
+            provider.category = Some("official".to_string());
+
+            let provider_key =
+                ProviderService::codex_desktop_provider_key(&provider).expect("provider key");
+            crate::settings::update_settings(crate::settings::AppSettings::default())
+                .expect("reset settings");
+
+            assert_eq!(
+                provider_key, CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+                "official live writes inject the unified custom route, so history should follow the same key"
+            );
+        });
     }
 
     #[test]
@@ -2683,6 +2710,60 @@ mod tests {
                     .expect("query provider")
                     .is_none(),
                 "failed first add must remove the provider row saved before activation"
+            );
+            assert!(
+                crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)
+                    .expect("effective current provider")
+                    .is_none(),
+                "failed first add must not set current provider"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn add_first_claude_rollback_capture_failure_removes_saved_provider() {
+        with_test_home(|state, home| {
+            let profile_dir = home.join(".claude-profiles").join("official");
+            fs::create_dir_all(&profile_dir).expect("create profile dir");
+            write_json_file(
+                &profile_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "official-live-token",
+                        "ANTHROPIC_BASE_URL": "https://official-live.example"
+                    }
+                }),
+            )
+            .expect("seed profile settings");
+
+            let provider = claude_provider(
+                "claude-official",
+                "Claude Official",
+                "provider-token-should-not-save",
+                "https://provider-should-not-save.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(profile_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+
+            FAIL_CLAUDE_ROLLBACK_CAPTURE_FOR_TEST.store(true, std::sync::atomic::Ordering::SeqCst);
+            let err = ProviderService::add(state, AppType::Claude, provider, true)
+                .expect_err("rollback capture failure should reject first add");
+            assert!(
+                err.to_string()
+                    .contains("simulated Claude rollback capture failure"),
+                "expected simulated rollback capture failure, got {err:?}"
+            );
+            assert!(
+                state
+                    .db
+                    .get_provider_by_id("claude-official", AppType::Claude.as_str())
+                    .expect("query provider")
+                    .is_none(),
+                "failed first add must remove the provider row saved before rollback capture"
             );
             assert!(
                 crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)
@@ -5701,6 +5782,13 @@ impl ProviderService {
         state: &AppState,
         plan: Option<&ClaudeSwitchPlan>,
     ) -> Result<ClaudeRollbackState, AppError> {
+        #[cfg(test)]
+        if FAIL_CLAUDE_ROLLBACK_CAPTURE_FOR_TEST.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            return Err(AppError::Message(
+                "simulated Claude rollback capture failure".to_string(),
+            ));
+        }
+
         let settings = crate::settings::get_settings();
         let previous_live_settings = read_live_settings(AppType::Claude).ok();
         let target_live_path = plan.and_then(Self::claude_live_settings_path_for_plan);
@@ -5985,6 +6073,12 @@ impl ProviderService {
             .and_then(Value::as_str)
             .unwrap_or("")
             .trim();
+
+        if provider.category.as_deref() == Some("official")
+            && crate::settings::unify_codex_session_history()
+        {
+            return Ok(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
+        }
 
         if config.is_empty() {
             return Ok("openai".to_string());
@@ -6521,7 +6615,20 @@ impl ProviderService {
         if current.is_none() {
             if matches!(app_type, AppType::Claude) {
                 let plan = Self::claude_switch_plan(&provider);
-                let rollback = Self::capture_claude_rollback_state(state, Some(&plan))?;
+                let rollback = match Self::capture_claude_rollback_state(state, Some(&plan)) {
+                    Ok(rollback) => rollback,
+                    Err(err) => {
+                        if let Err(delete_err) = state
+                            .db
+                            .delete_provider(app_type.as_str(), provider.id.as_str())
+                        {
+                            return Err(AppError::Message(format!(
+                                "{err}; additionally failed to remove failed provider row: {delete_err}"
+                            )));
+                        }
+                        return Err(err);
+                    }
+                };
 
                 let activate_result = (|| -> Result<(), AppError> {
                     Self::validate_claude_runtime_switch_plan(&plan)?;
