@@ -2641,6 +2641,60 @@ mod tests {
 
     #[test]
     #[serial]
+    fn add_first_claude_profile_env_failure_removes_saved_provider() {
+        with_test_home(|state, home| {
+            let profile_dir = home.join(".claude-profiles").join("official");
+            fs::create_dir_all(&profile_dir).expect("create profile dir");
+            write_json_file(
+                &profile_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "official-live-token",
+                        "ANTHROPIC_BASE_URL": "https://official-live.example"
+                    }
+                }),
+            )
+            .expect("seed profile settings");
+
+            let provider = claude_provider(
+                "claude-official",
+                "Claude Official",
+                "provider-token-should-not-save",
+                "https://provider-should-not-save.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(profile_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+                    ..Default::default()
+                }),
+            );
+
+            FAIL_CLAUDE_CONFIG_ENV_SET_FOR_TEST.store(true, std::sync::atomic::Ordering::SeqCst);
+            let err = ProviderService::add(state, AppType::Claude, provider, true)
+                .expect_err("env failure should reject first add");
+            assert!(
+                err.to_string()
+                    .contains("simulated CLAUDE_CONFIG_DIR set failure"),
+                "expected simulated env failure, got {err:?}"
+            );
+            assert!(
+                state
+                    .db
+                    .get_provider_by_id("claude-official", AppType::Claude.as_str())
+                    .expect("query provider")
+                    .is_none(),
+                "failed first add must remove the provider row saved before activation"
+            );
+            assert!(
+                crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)
+                    .expect("effective current provider")
+                    .is_none(),
+                "failed first add must not set current provider"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn add_first_claude_profile_and_config_writes_to_target_profile() {
         with_test_home(|state, home| {
             let default_dir = home.join(".claude");
@@ -6485,6 +6539,14 @@ impl ProviderService {
                 })();
 
                 if let Err(err) = activate_result {
+                    if let Err(delete_err) = state
+                        .db
+                        .delete_provider(app_type.as_str(), provider.id.as_str())
+                    {
+                        return Err(AppError::Message(format!(
+                            "{err}; additionally failed to remove failed provider row: {delete_err}"
+                        )));
+                    }
                     if let Err(rollback_err) = Self::rollback_claude_switch(state, &rollback) {
                         return Err(AppError::Message(format!(
                             "{err}; additionally failed to roll back Claude switch state: {rollback_err}"
