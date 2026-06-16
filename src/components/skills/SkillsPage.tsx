@@ -72,7 +72,7 @@ const SKILLS_PAGE_HEADER_ACTIONS: readonly SkillsPageHeaderAction[] = [
   },
   {
     key: "manage-repos",
-    sources: ["repos"],
+    sources: ["repos", "skillssh"],
     labelKey: "skills.repoManager",
     Icon: Settings,
     execute: (page) => page?.openRepoManager(),

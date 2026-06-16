@@ -262,6 +262,8 @@ describe("SkillsPage - skills.sh install (regression)", () => {
     expect(
       getSkillsPageHeaderActions("repos").map((action) => action.key),
     ).toEqual(["refresh-repos", "manage-repos"]);
-    expect(getSkillsPageHeaderActions("skillssh")).toEqual([]);
+    expect(
+      getSkillsPageHeaderActions("skillssh").map((action) => action.key),
+    ).toEqual(["manage-repos"]);
   });
 });
