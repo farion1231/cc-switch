@@ -101,7 +101,10 @@ pub fn set_global_proxy_settings(
     state: tauri::State<'_, AppState>,
     settings: GlobalProxySettingsPayload,
 ) -> Result<(), String> {
-    let url_opt = settings.url.as_deref().filter(|value| !value.trim().is_empty());
+    let url_opt = settings
+        .url
+        .as_deref()
+        .filter(|value| !value.trim().is_empty());
 
     http_client::validate_proxy(url_opt, settings.follow_system_proxy)?;
 
@@ -129,9 +132,7 @@ pub fn set_global_proxy_settings(
 
 /// 获取是否跟随系统代理
 #[tauri::command]
-pub fn get_global_proxy_follow_system(
-    state: tauri::State<'_, AppState>,
-) -> Result<bool, String> {
+pub fn get_global_proxy_follow_system(state: tauri::State<'_, AppState>) -> Result<bool, String> {
     state
         .db
         .get_global_proxy_follow_system()
