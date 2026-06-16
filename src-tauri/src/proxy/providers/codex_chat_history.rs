@@ -475,6 +475,8 @@ fn enrich_call_item_from_cache(item: &mut Value, cached: &Value) -> bool {
         "input",
         "status",
         "execution",
+        "reasoning_content",
+        "reasoning",
     ] {
         if item.get(key).is_some_and(|value| !is_empty_value(value)) {
             continue;
@@ -484,18 +486,6 @@ fn enrich_call_item_from_cache(item: &mut Value, cached: &Value) -> bool {
         };
         if let Some(object) = item.as_object_mut() {
             object.insert(key.to_string(), value.clone());
-            changed = true;
-        }
-    }
-    for key in ["reasoning_content", "reasoning"] {
-        if item.get(key).is_some_and(|value| !is_empty_value(value)) {
-            continue;
-        }
-        let Some(reasoning) = cached.get(key).filter(|value| !is_empty_value(value)) else {
-            continue;
-        };
-        if let Some(object) = item.as_object_mut() {
-            object.insert(key.to_string(), reasoning.clone());
             changed = true;
         }
     }
