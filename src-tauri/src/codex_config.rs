@@ -1386,6 +1386,10 @@ pub fn write_codex_live_for_provider(
     auth: &Value,
     config_text: Option<&str>,
 ) -> Result<(), AppError> {
+    // Reload settings from disk so force_codex_model_provider_id and
+    // other runtime-changed settings are always current.
+    let _ = crate::settings::reload_settings();
+
     // Normalize model_provider ID before writing, so that switching between
     // providers with different IDs keeps chat history in a single bucket.
     let force_id = crate::settings::force_codex_model_provider_id();
