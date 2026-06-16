@@ -11,7 +11,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
 import { sessionsApi } from "@/lib/api/sessions";
 import type { SessionMessage, SessionMeta } from "@/types";
-import { setSessionFixtures } from "../msw/state";
+import {
+  setCodexSessionUsageSummaries,
+  setSessionFixtures,
+} from "../msw/state";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
@@ -87,8 +90,8 @@ const openSearch = () => {
 };
 
 const closeSearch = () => {
-  const closeButton = Array.from(screen.getAllByRole("button")).find(
-    (button) => button.querySelector(".lucide-x"),
+  const closeButton = Array.from(screen.getAllByRole("button")).find((button) =>
+    button.querySelector(".lucide-x"),
   );
 
   if (!closeButton) {
@@ -166,6 +169,37 @@ describe("SessionManagerPage", () => {
     expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument();
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
+  });
+
+  it("shows token usage for the selected Codex session", async () => {
+    setCodexSessionUsageSummaries([
+      {
+        sessionId: "codex-session-1",
+        requestCount: 2,
+        totalInputTokens: 120,
+        totalOutputTokens: 30,
+        totalCacheCreationTokens: 0,
+        totalCacheReadTokens: 40,
+        realTotalTokens: 190,
+        totalCost: "0.003000",
+        lastUsedAt: 20,
+      },
+    ]);
+
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Alpha Session" }),
+      ).toBeInTheDocument(),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText("Session usage")).toBeInTheDocument(),
+    );
+    expect(screen.getByText("2 requests")).toBeInTheDocument();
+    expect(screen.getByText("190 tokens")).toBeInTheDocument();
+    expect(screen.getByText("$0.003000")).toBeInTheDocument();
   });
 
   it("removes a deleted session from filtered search results", async () => {

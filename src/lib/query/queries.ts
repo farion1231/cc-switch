@@ -18,6 +18,7 @@ import type {
   SessionMeta,
   SessionMessage,
 } from "@/types";
+import type { CodexSessionUsageSummary } from "@/types/usage";
 import { usageKeys } from "@/lib/query/usage";
 
 const sortProviders = (
@@ -274,6 +275,15 @@ export const useSessionMessagesQuery = (
     queryKey: ["sessionMessages", providerId, sourcePath],
     queryFn: async () => sessionsApi.getMessages(providerId!, sourcePath!),
     enabled: Boolean(providerId && sourcePath),
+    staleTime: 30 * 1000,
+  });
+};
+
+export const useCodexSessionUsageSummariesQuery = (enabled: boolean = true) => {
+  return useQuery<CodexSessionUsageSummary[]>({
+    queryKey: ["codexSessionUsageSummaries"],
+    queryFn: async () => usageApi.getCodexSessionUsageSummaries(),
+    enabled,
     staleTime: 30 * 1000,
   });
 };
