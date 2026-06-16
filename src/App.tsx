@@ -679,8 +679,21 @@ function App() {
   };
 
   const handleDuplicateProvider = async (provider: Provider) => {
-    const newSortIndex =
-      provider.sortIndex !== undefined ? provider.sortIndex + 1 : undefined;
+    // Fix #4234: Always assign sortIndex to duplicate, even if original lacks it
+    let newSortIndex: number;
+    if (provider.sortIndex !== undefined) {
+      // Original has sortIndex → insert right below it
+      newSortIndex = provider.sortIndex + 1;
+    } else {
+      // Original lacks sortIndex → assign next available index
+      const maxSortIndex = Math.max(
+        0,
+        ...Object.values(providers)
+          .filter((p) => p.sortIndex !== undefined)
+          .map((p) => p.sortIndex!),
+      );
+      newSortIndex = maxSortIndex + 1;
+    }
 
     const duplicatedProvider: Omit<Provider, "id" | "createdAt"> & {
       providerKey?: string;
@@ -690,7 +703,7 @@ function App() {
       settingsConfig: deepClone(provider.settingsConfig),
       websiteUrl: provider.websiteUrl,
       category: provider.category,
-      sortIndex: newSortIndex, // 复制原 sortIndex + 1
+      sortIndex: newSortIndex, // Always has a value now
       meta: provider.meta ? deepClone(provider.meta) : undefined,
       icon: provider.icon,
       iconColor: provider.iconColor,
@@ -741,12 +754,13 @@ function App() {
       duplicatedProvider.addToLive = false;
     }
 
+    // Update subsequent providers' sortIndex (only if original had sortIndex and inserted in-between)
     if (provider.sortIndex !== undefined) {
       const updates = Object.values(providers)
         .filter(
           (p) =>
             p.sortIndex !== undefined &&
-            p.sortIndex >= newSortIndex! &&
+            p.sortIndex >= newSortIndex &&
             p.id !== provider.id,
         )
         .map((p) => ({
