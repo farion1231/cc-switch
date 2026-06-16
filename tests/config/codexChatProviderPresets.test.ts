@@ -44,14 +44,14 @@ const expectedChatPresets = new Map<
   [
     "Zhipu GLM",
     {
-      baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+      baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
       contextWindows: { "glm-5.1": 200000 },
     },
   ],
   [
     "Zhipu GLM en",
     {
-      baseUrl: "https://api.z.ai/api/paas/v4",
+      baseUrl: "https://api.z.ai/api/coding/paas/v4",
       contextWindows: { "glm-5.1": 200000 },
     },
   ],
@@ -76,7 +76,7 @@ const expectedChatPresets = new Map<
     "Kimi",
     {
       baseUrl: "https://api.moonshot.cn/v1",
-      contextWindows: { "kimi-k2.6": 262144 },
+      contextWindows: { "kimi-k2.7-code": 262144 },
     },
   ],
   [

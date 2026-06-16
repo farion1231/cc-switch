@@ -12,6 +12,7 @@ export const TEMPLATE_TYPES = {
   GITHUB_COPILOT: "github_copilot",
   TOKEN_PLAN: "token_plan",
   BALANCE: "balance",
+  OFFICIAL_SUBSCRIPTION: "official_subscription",
 } as const;
 
 export type TemplateType = (typeof TEMPLATE_TYPES)[keyof typeof TEMPLATE_TYPES];

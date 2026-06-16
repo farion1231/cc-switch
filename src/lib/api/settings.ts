@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Settings, WebDavSyncSettings, RemoteSnapshotInfo } from "@/types";
+import type {
+  Settings,
+  WebDavSyncSettings,
+  S3SyncSettings,
+  RemoteSnapshotInfo,
+} from "@/types";
 import type { AppId } from "./types";
 
 export interface ConfigTransferResult {
@@ -12,6 +17,13 @@ export interface ConfigTransferResult {
 export interface WebDavTestResult {
   success: boolean;
   message?: string;
+}
+
+export interface CodexUnifyHistoryRestoreResult {
+  restoredJsonlFiles: number;
+  restoredStateRows: number;
+  /** 还原被跳过的原因（如当前目录没有账本）；存在时不应报成功 */
+  skippedReason?: string;
 }
 
 export interface WebDavSyncResult {
@@ -27,8 +39,22 @@ export const settingsApi = {
     return await invoke("save_settings", { settings });
   },
 
+  /** 是否存在统一 Codex 会话历史的迁移备份（关闭弹窗据此显示"恢复备份"勾选） */
+  async hasCodexUnifyHistoryBackup(): Promise<boolean> {
+    return await invoke("has_codex_unify_history_backup");
+  },
+
+  /** 按迁移备份账本把当时迁入共享桶的官方会话还原回 openai 桶（幂等） */
+  async restoreCodexUnifiedHistory(): Promise<CodexUnifyHistoryRestoreResult> {
+    return await invoke("restore_codex_unified_history");
+  },
+
   async restart(): Promise<boolean> {
     return await invoke("restart_app");
+  },
+
+  async installUpdateAndRestart(): Promise<boolean> {
+    return await invoke("install_update_and_restart");
   },
 
   async checkUpdates(): Promise<void> {
@@ -140,6 +166,40 @@ export const settingsApi = {
     RemoteSnapshotInfo | { empty: true }
   > {
     return await invoke("webdav_sync_fetch_remote_info");
+  },
+
+  // ===== S3 Sync API =====
+
+  async s3TestConnection(
+    settings: S3SyncSettings,
+    preserveEmptyPassword = true,
+  ): Promise<WebDavTestResult> {
+    return await invoke("s3_test_connection", {
+      settings,
+      preserveEmptyPassword,
+    });
+  },
+
+  async s3SyncUpload(): Promise<WebDavSyncResult> {
+    return await invoke("s3_sync_upload");
+  },
+
+  async s3SyncDownload(): Promise<WebDavSyncResult> {
+    return await invoke("s3_sync_download");
+  },
+
+  async s3SyncSaveSettings(
+    settings: S3SyncSettings,
+    passwordTouched: boolean,
+  ): Promise<{ success: boolean }> {
+    return await invoke("s3_sync_save_settings", {
+      settings,
+      passwordTouched,
+    });
+  },
+
+  async s3SyncFetchRemoteInfo(): Promise<RemoteSnapshotInfo | { empty: true }> {
+    return await invoke("s3_sync_fetch_remote_info");
   },
 
   async syncCurrentProvidersLive(): Promise<void> {
@@ -265,6 +325,8 @@ export interface RectifierConfig {
   enabled: boolean;
   requestThinkingSignature: boolean;
   requestThinkingBudget: boolean;
+  requestMediaFallback: boolean;
+  requestMediaHeuristic: boolean;
 }
 
 export interface OptimizerConfig {

@@ -111,6 +111,28 @@ export function RequestDetailPanel({
                   {t("usage.model", "模型")}
                 </dt>
                 <dd className="font-mono">{request.model}</dd>
+                {request.requestModel &&
+                  request.requestModel !== request.model && (
+                    <>
+                      <dt className="mt-1 text-muted-foreground">
+                        {t("usage.requestModel", "请求模型")}
+                      </dt>
+                      <dd className="font-mono text-xs">
+                        {request.requestModel}
+                      </dd>
+                    </>
+                  )}
+                {request.pricingModel &&
+                  request.pricingModel !== request.model && (
+                    <>
+                      <dt className="mt-1 text-muted-foreground">
+                        {t("usage.pricingModel", "计价模型")}
+                      </dt>
+                      <dd className="font-mono text-xs">
+                        {request.pricingModel}
+                      </dd>
+                    </>
+                  )}
               </div>
               <div>
                 <dt className="text-muted-foreground">

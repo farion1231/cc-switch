@@ -208,7 +208,10 @@ pub fn extract_codex_api_key(auth: Option<&Value>, config_text: Option<&str>) ->
 /// Extract the upstream base URL from a Codex `config.toml` string.
 ///
 /// Prefers the active `[model_providers.<model_provider>].base_url`, falling
-/// back to a top-level `base_url` when no model provider is selected.
+/// back to a top-level `base_url`. Deliberately never reads a non-active
+/// `[model_providers.*]` section — the frontend `extractCodexBaseUrl`
+/// (`getRecoverableBaseUrlAssignments`) excludes those too, and a leftover
+/// section unrelated to the active provider must not leak into `{{baseUrl}}`.
 pub fn extract_codex_base_url(config_text: &str) -> Option<String> {
     let doc = config_text.parse::<toml::Value>().ok()?;
 
@@ -682,20 +685,18 @@ fn set_codex_model_catalog_json_field(
     let mut doc = config_text
         .parse::<DocumentMut>()
         .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
-    let generated_path = get_codex_model_catalog_path();
 
     match catalog_path {
-        Some(path) => {
-            doc["model_catalog_json"] = toml_edit::value(path.to_string_lossy().as_ref());
+        Some(_) => {
+            doc["model_catalog_json"] = toml_edit::value(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
         }
         None => {
             let should_remove = doc
                 .get("model_catalog_json")
                 .and_then(|item| item.as_str())
                 .map(|path| {
-                    path == generated_path.to_string_lossy().as_ref()
-                        || Path::new(path).file_name().and_then(|name| name.to_str())
-                            == Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+                    Path::new(path).file_name().and_then(|name| name.to_str())
+                        == Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
                 })
                 .unwrap_or(false);
             if should_remove {
@@ -768,7 +769,10 @@ pub fn read_codex_model_catalog_simplified_from_live() -> Result<Option<Value>, 
 /// Given `config.toml` text, resolve the on-disk path of the cc-switch–owned
 /// catalog file (returns `None` if `model_catalog_json` is absent or points at
 /// a file we don't own). Relative paths fall back to `generated_path`.
-fn resolve_cc_switch_catalog_path(config_text: &str, generated_path: &Path) -> Option<PathBuf> {
+pub(crate) fn resolve_cc_switch_catalog_path(
+    config_text: &str,
+    generated_path: &Path,
+) -> Option<PathBuf> {
     if config_text.trim().is_empty() {
         return None;
     }
@@ -780,9 +784,8 @@ fn resolve_cc_switch_catalog_path(config_text: &str, generated_path: &Path) -> O
         .filter(|s| !s.is_empty())?;
 
     let referenced_path = Path::new(catalog_path_str);
-    let is_cc_switch_owned = catalog_path_str == generated_path.to_string_lossy().as_ref()
-        || referenced_path.file_name().and_then(|name| name.to_str())
-            == Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+    let is_cc_switch_owned = referenced_path.file_name().and_then(|name| name.to_str())
+        == Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
     if !is_cc_switch_owned {
         return None;
     }
@@ -846,18 +849,39 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
     Some(json!({ "models": entries }))
 }
 
-/// Unified helper: write Codex live config with model catalog preparation.
-/// Replaces scattered `prepare_codex_config_text_with_model_catalog` calls.
-pub fn write_codex_live_with_catalog(
+/// Decide the `config.toml` text to write during a takeover-off restore,
+/// projecting the model catalog **only when `settings` carries an inline
+/// `modelCatalog`**.
+///
+/// Restore feeds back a stored backup, and Codex backups come in two shapes that
+/// need opposite handling:
+///
+/// - **Snapshot backup** (`read_codex_live_settings`): `{ auth, config }` with no
+///   inline `modelCatalog`. Its `config.toml` text already carries whatever
+///   `model_catalog_json` pointer existed at backup time, and the generated
+///   catalog file on disk is untouched. Here we must keep the config **raw** —
+///   running catalog projection would see "no specs" and strip the live pointer.
+/// - **Provider-rebuilt backup** (`update_live_backup_from_provider`): the DB
+///   provider's settings, i.e. `{ auth, config (no pointer), modelCatalog
+///   (inline DB SSOT) }`. Here the pointer/catalog file must be (re)generated
+///   from the inline `modelCatalog`, or the mapping is lost on restore.
+///
+/// Gating on the presence of the inline `modelCatalog` key routes each shape
+/// correctly; an empty inline catalog still projects (and so correctly drops a
+/// now-stale pointer), while an absent key leaves the text untouched. This is
+/// **orthogonal to auth** — a provider-rebuilt backup can pair an inline
+/// `modelCatalog` with empty `auth.json` (the API key living in the config's
+/// `experimental_bearer_token`), so the caller must decide config projection
+/// independently of whether it writes or deletes `auth.json`.
+pub fn prepare_codex_live_config_text_with_optional_catalog(
     settings: &Value,
-    auth: &Value,
-    config_text: Option<&str>,
-) -> Result<(), AppError> {
-    let prepared_config = config_text
-        .map(|text| prepare_codex_config_text_with_model_catalog(settings, text))
-        .transpose()?;
-
-    write_codex_live_atomic(auth, prepared_config.as_deref())
+    config_text: &str,
+) -> Result<String, AppError> {
+    if settings.get("modelCatalog").is_some() {
+        prepare_codex_config_text_with_model_catalog(settings, config_text)
+    } else {
+        Ok(config_text.to_string())
+    }
 }
 
 pub fn write_codex_provider_live_with_catalog(
@@ -1019,16 +1043,197 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
     Ok(json!({ "auth": auth, "config": cfg_text }))
 }
 
+/// `[model_providers.custom]` entry that makes an official (ChatGPT OAuth)
+/// provider behave like Codex's built-in `openai` entry while running under
+/// the shared custom id: `requires_openai_auth` routes auth to the ChatGPT
+/// login in `auth.json` (base_url then defaults to the official Codex
+/// backend), `name = "OpenAI"` keeps Codex's `is_openai()` feature gates
+/// (web search, remote compaction), and `supports_websockets` restores the
+/// built-in default that custom entries otherwise lose.
+fn codex_unified_official_provider_table() -> toml_edit::Table {
+    let mut table = toml_edit::Table::new();
+    table["name"] = toml_edit::value("OpenAI");
+    table["requires_openai_auth"] = toml_edit::value(true);
+    table["supports_websockets"] = toml_edit::value(true);
+    table["wire_api"] = toml_edit::value("responses");
+    table
+}
+
+fn table_matches_codex_unified_official_provider(table: &toml_edit::Table) -> bool {
+    table.len() == 4
+        && table.get("name").and_then(|item| item.as_str()) == Some("OpenAI")
+        && table
+            .get("requires_openai_auth")
+            .and_then(|item| item.as_bool())
+            == Some(true)
+        && table
+            .get("supports_websockets")
+            .and_then(|item| item.as_bool())
+            == Some(true)
+        && table.get("wire_api").and_then(|item| item.as_str()) == Some("responses")
+}
+
+/// 统一 Codex 会话历史：把官方供应商的 live 配置改写为以共享的
+/// `custom` model_provider 标识运行（认证仍走 `auth.json` 的 ChatGPT 登录），
+/// 使开关开启后创建的官方会话与第三方会话共用同一个 resume 历史桶。
+///
+/// 两种情况拒绝注入、原样返回：
+/// - 配置已有显式 `model_provider`：用户手工指定的路由不被覆盖；
+/// - 配置已有形态不同的 `[model_providers.custom]` 表：设置 `model_provider`
+///   会激活这张我们不认识的表（可能带第三方 base_url/token，会把 ChatGPT
+///   OAuth 流量路由到错误后端），宁可让开关对该配置不生效。
+pub fn inject_codex_unified_session_bucket(config_text: &str) -> Result<String, AppError> {
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+
+    if doc.get("model_provider").is_some() {
+        return Ok(config_text.to_string());
+    }
+
+    let existing_custom_conflicts = doc
+        .get("model_providers")
+        .and_then(|item| item.as_table())
+        .and_then(|providers| providers.get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID))
+        .and_then(|item| item.as_table())
+        .is_some_and(|table| !table_matches_codex_unified_official_provider(table));
+    if existing_custom_conflicts {
+        log::warn!(
+            "官方 Codex 配置已存在自定义 [model_providers.custom]，跳过统一会话路由注入以避免激活未知路由"
+        );
+        return Ok(config_text.to_string());
+    }
+
+    doc["model_provider"] = toml_edit::value(CC_SWITCH_CODEX_MODEL_PROVIDER_ID);
+
+    if doc.get("model_providers").is_none() {
+        let mut parent = toml_edit::Table::new();
+        parent.set_implicit(true);
+        doc["model_providers"] = toml_edit::Item::Table(parent);
+    }
+    if let Some(providers) = doc["model_providers"].as_table_mut() {
+        if !providers.contains_key(CC_SWITCH_CODEX_MODEL_PROVIDER_ID) {
+            providers.insert(
+                CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+                toml_edit::Item::Table(codex_unified_official_provider_table()),
+            );
+        }
+    }
+    Ok(doc.to_string())
+}
+
+/// `inject_codex_unified_session_bucket` 的反向操作：从配置文本里剥掉注入的
+/// 统一会话路由，保证切换回填不会把它带进数据库的存储配置（关闭开关后
+/// 切换即可完全还原）。仅当形态与注入产物完全一致时才剥离；第三方模板和
+/// 用户自定义的 `custom` 条目（带 base_url 等差异字段）原样保留。
+pub fn strip_codex_unified_session_bucket(config_text: &str) -> Result<String, AppError> {
+    if !config_text.contains("model_provider") {
+        return Ok(config_text.to_string());
+    }
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+
+    if doc.get("model_provider").and_then(|item| item.as_str())
+        != Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+    {
+        return Ok(config_text.to_string());
+    }
+    let matches_injected = doc
+        .get("model_providers")
+        .and_then(|item| item.as_table())
+        .and_then(|providers| providers.get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID))
+        .and_then(|item| item.as_table())
+        .is_some_and(table_matches_codex_unified_official_provider);
+    if !matches_injected {
+        return Ok(config_text.to_string());
+    }
+
+    doc.as_table_mut().remove("model_provider");
+    let providers_empty = doc["model_providers"]
+        .as_table_mut()
+        .map(|providers| {
+            providers.remove(CC_SWITCH_CODEX_MODEL_PROVIDER_ID);
+            providers.is_empty()
+        })
+        .unwrap_or(false);
+    if providers_empty {
+        doc.as_table_mut().remove("model_providers");
+    }
+    Ok(doc.to_string())
+}
+
+/// 统一会话开关开启时，把官方供应商 `{ auth, config }` 设置对象中的
+/// config 文本注入共享 custom 路由；开关关闭或非官方供应商时不做改动。
+///
+/// 普通 live 写入（`write_codex_live_for_provider`）与代理接管备份
+/// （`update_live_backup_from_provider`）两条落盘路径共用：接管期间
+/// live 归代理所有，注入必须进备份，接管释放恢复的 live 才带统一路由。
+pub fn apply_codex_unified_session_bucket_to_settings(
+    category: Option<&str>,
+    settings: &mut Value,
+) -> Result<(), AppError> {
+    if category != Some("official") || !crate::settings::unify_codex_session_history() {
+        return Ok(());
+    }
+    let config_text = settings
+        .get("config")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .to_string();
+    let injected = inject_codex_unified_session_bucket(&config_text)?;
+    if injected != config_text {
+        if let Some(obj) = settings.as_object_mut() {
+            obj.insert("config".to_string(), Value::String(injected));
+        }
+    }
+    Ok(())
+}
+
+/// Backfill helper: strip the unified-session injection from a live
+/// `{ auth, config }` settings object before it is stored back to the DB.
+pub fn strip_codex_unified_session_bucket_from_settings(
+    settings: &mut Value,
+) -> Result<(), AppError> {
+    let Some(config_text) = settings
+        .get("config")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+    else {
+        return Ok(());
+    };
+    let stripped = strip_codex_unified_session_bucket(&config_text)?;
+    if stripped != config_text {
+        if let Some(obj) = settings.as_object_mut() {
+            obj.insert("config".to_string(), Value::String(stripped));
+        }
+    }
+    Ok(())
+}
+
 /// Route a Codex live write between full auth+config or config-only.
 ///
 /// Official providers with usable login material own `auth.json`. Third-party
 /// providers only touch `config.toml` when the compatibility setting is enabled
 /// so the user's ChatGPT login cache survives provider switches.
+///
+/// 统一会话开关开启时，官方配置在落盘前注入共享的 `custom` 路由
+/// （见 `inject_codex_unified_session_bucket`）。
 pub fn write_codex_live_for_provider(
     category: Option<&str>,
     auth: &Value,
     config_text: Option<&str>,
 ) -> Result<(), AppError> {
+    let unified_official_config =
+        if category == Some("official") && crate::settings::unify_codex_session_history() {
+            Some(inject_codex_unified_session_bucket(
+                config_text.unwrap_or(""),
+            )?)
+        } else {
+            None
+        };
+    let config_text = unified_official_config.as_deref().or(config_text);
+
     let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
         || (category != Some("official")
             && !crate::settings::preserve_codex_official_auth_on_switch());
@@ -1232,6 +1437,153 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn unified_session_bucket_injects_for_empty_official_config() {
+        let injected = inject_codex_unified_session_bucket("").expect("inject");
+        let doc: toml::Table = toml::from_str(&injected).expect("parse injected config");
+
+        assert_eq!(
+            doc.get("model_provider").and_then(|v| v.as_str()),
+            Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+        );
+        let custom = doc["model_providers"][CC_SWITCH_CODEX_MODEL_PROVIDER_ID]
+            .as_table()
+            .expect("custom provider table");
+        assert_eq!(custom.get("name").and_then(|v| v.as_str()), Some("OpenAI"));
+        assert_eq!(
+            custom.get("requires_openai_auth").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            custom.get("supports_websockets").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            custom.get("wire_api").and_then(|v| v.as_str()),
+            Some("responses")
+        );
+    }
+
+    #[test]
+    fn unified_session_bucket_preserves_other_keys_and_explicit_routing() {
+        let with_catalog = "model_catalog_json = \"cc-switch-model-catalog.json\"\n";
+        let injected = inject_codex_unified_session_bucket(with_catalog).expect("inject");
+        assert!(injected.contains("model_catalog_json"));
+        assert!(injected.contains("model_provider = \"custom\""));
+
+        // 用户显式指定过 model_provider 的官方配置不被覆盖
+        let explicit = "model_provider = \"openai_https\"\n";
+        let unchanged = inject_codex_unified_session_bucket(explicit).expect("inject");
+        assert_eq!(unchanged, explicit);
+    }
+
+    #[test]
+    fn unified_session_bucket_skips_conflicting_custom_table() {
+        // 残留的非注入形态 custom 表：设置 model_provider 会把官方流量
+        // 路由到表里的第三方端点，必须整体拒绝注入。
+        let stale = r#"[model_providers.custom]
+name = "Relay"
+base_url = "https://relay.example/v1"
+"#;
+        let unchanged = inject_codex_unified_session_bucket(stale).expect("inject");
+        assert_eq!(unchanged, stale);
+
+        // 已是注入形态的 custom 表（如重复注入）则照常补上 model_provider
+        let injected_once = inject_codex_unified_session_bucket("").expect("inject");
+        let reinjected = inject_codex_unified_session_bucket(&injected_once).expect("re-inject");
+        assert_eq!(reinjected, injected_once);
+    }
+
+    #[test]
+    fn unified_session_bucket_strip_round_trips_injection() {
+        let injected = inject_codex_unified_session_bucket("").expect("inject");
+        let stripped = strip_codex_unified_session_bucket(&injected).expect("strip");
+        assert_eq!(stripped.trim(), "");
+
+        let with_catalog = "model_catalog_json = \"cc-switch-model-catalog.json\"\n";
+        let injected = inject_codex_unified_session_bucket(with_catalog).expect("inject");
+        let stripped = strip_codex_unified_session_bucket(&injected).expect("strip");
+        assert_eq!(stripped, with_catalog);
+    }
+
+    #[test]
+    fn unified_session_bucket_strip_keeps_third_party_custom_entry() {
+        // 第三方模板同样用 custom 路由，但条目带 base_url 等差异字段，
+        // 形态不等于注入产物，必须原样保留。
+        let third_party = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Relay"
+base_url = "https://relay.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+        let untouched = strip_codex_unified_session_bucket(third_party).expect("strip");
+        assert_eq!(untouched, third_party);
+    }
+
+    #[test]
+    fn unified_session_bucket_strip_from_settings_only_touches_config() {
+        let injected = inject_codex_unified_session_bucket("").expect("inject");
+        let mut settings = json!({
+            "auth": { "tokens": { "access_token": "secret" } },
+            "config": injected,
+        });
+        strip_codex_unified_session_bucket_from_settings(&mut settings).expect("strip settings");
+        assert_eq!(
+            settings
+                .get("config")
+                .and_then(|v| v.as_str())
+                .map(str::trim),
+            Some("")
+        );
+        assert!(settings.pointer("/auth/tokens/access_token").is_some());
+    }
+
+    #[test]
+    fn extract_base_url_prefers_active_provider_section() {
+        let input = r#"model_provider = "azure"
+
+[model_providers.azure]
+base_url = "https://azure.example.com/v1"
+
+[model_providers.other]
+base_url = "https://other.example.com/v1"
+"#;
+
+        assert_eq!(
+            extract_codex_base_url(input).as_deref(),
+            Some("https://azure.example.com/v1")
+        );
+    }
+
+    #[test]
+    fn extract_base_url_falls_back_to_top_level_only() {
+        let top_level = r#"base_url = "https://top-level.example.com/v1""#;
+        assert_eq!(
+            extract_codex_base_url(top_level).as_deref(),
+            Some("https://top-level.example.com/v1")
+        );
+    }
+
+    // Mirrors the frontend extractCodexBaseUrl: a non-active provider section
+    // is never a credential source, whether the active provider points
+    // elsewhere (e.g. the built-in "openai") or none is selected at all.
+    #[test]
+    fn extract_base_url_ignores_non_active_provider_sections() {
+        let mismatched = r#"model_provider = "openai"
+
+[model_providers.custom]
+base_url = "https://leftover.example.com/v1"
+"#;
+        assert_eq!(extract_codex_base_url(mismatched), None);
+
+        let no_active = r#"[model_providers.any]
+base_url = "https://single.example.com/v1"
+"#;
+        assert_eq!(extract_codex_base_url(no_active), None);
+    }
 
     #[test]
     fn prepare_provider_live_config_rejects_key_without_config() {
@@ -1770,7 +2122,7 @@ base_url = "https://production.api/v1"
     }
 
     #[test]
-    fn model_catalog_json_field_operates_on_top_level() {
+    fn model_catalog_json_field_writes_relative_filename() {
         let input = r#"model_provider = "any"
 
 [model_providers.any]
@@ -1784,7 +2136,7 @@ name = "any"
             parsed
                 .get("model_catalog_json")
                 .and_then(|value| value.as_str()),
-            Some("/tmp/cc-switch-model-catalog.json")
+            Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
         );
         assert!(
             parsed
@@ -2004,5 +2356,111 @@ name = "any"
                 "static template must contain key '{key}'"
             );
         }
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn set_catalog_json_field_writes_filename_ignoring_unc_path() {
+        let input = r#"model_provider = "custom"
+model = "glm-5"
+"#;
+        // Simulate a WSL UNC path as cc-switch would see it on Windows;
+        // the function now writes just the relative filename.
+        let unc_path =
+            Path::new(r"\\wsl.localhost\Ubuntu\home\user\.codex\cc-switch-model-catalog.json");
+
+        let result = set_codex_model_catalog_json_field(input, Some(unc_path)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        let written_path = parsed
+            .get("model_catalog_json")
+            .and_then(|v| v.as_str())
+            .expect("model_catalog_json should be set");
+        assert_eq!(
+            written_path, CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME,
+            "should write only the relative filename, not the UNC path"
+        );
+    }
+
+    #[test]
+    fn set_catalog_json_field_writes_filename_for_any_path() {
+        let input = r#"model_provider = "custom"
+model = "glm-5"
+"#;
+        let regular_path = Path::new("/home/user/.codex/cc-switch-model-catalog.json");
+
+        let result = set_codex_model_catalog_json_field(input, Some(regular_path)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
+            Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME),
+            "should write only the relative filename, not the full path"
+        );
+    }
+
+    #[test]
+    fn set_catalog_json_none_removes_cc_switch_owned_by_filename() {
+        // After the WSL fix, TOML may contain a Linux-style path.
+        // The None arm must still remove it (file_name match catches any format).
+        let input = r#"model_catalog_json = "/home/user/.codex/cc-switch-model-catalog.json"
+"#;
+        let result = set_codex_model_catalog_json_field(input, None).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert!(
+            parsed.get("model_catalog_json").is_none(),
+            "None arm should remove cc-switch-owned field regardless of path format"
+        );
+    }
+
+    #[test]
+    fn set_catalog_json_none_preserves_user_owned_catalog() {
+        let input = r#"model_catalog_json = "/Users/me/.codex/my-custom-catalog.json"
+"#;
+        let result = set_codex_model_catalog_json_field(input, None).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert_eq!(
+            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
+            Some("/Users/me/.codex/my-custom-catalog.json"),
+            "None arm should NOT remove user-owned catalog"
+        );
+    }
+
+    #[test]
+    fn resolve_catalog_finds_relative_filename() {
+        let config_text = r#"model_provider = "custom"
+model_catalog_json = "cc-switch-model-catalog.json"
+"#;
+        let generated_path = PathBuf::from("/home/user/.codex/cc-switch-model-catalog.json");
+        let result = resolve_cc_switch_catalog_path(config_text, &generated_path);
+        assert_eq!(
+            result,
+            Some(generated_path),
+            "relative filename should resolve to generated_path for file I/O"
+        );
+    }
+
+    #[test]
+    fn resolve_catalog_ignores_user_owned_relative() {
+        let config_text = r#"model_catalog_json = "my-custom-catalog.json"
+"#;
+        let generated_path = PathBuf::from("/home/user/.codex/cc-switch-model-catalog.json");
+        let result = resolve_cc_switch_catalog_path(config_text, &generated_path);
+        assert_eq!(
+            result, None,
+            "user-owned catalog should not be claimed by cc-switch"
+        );
+    }
+
+    #[test]
+    fn set_catalog_json_none_removes_relative_path() {
+        let input = r#"model_catalog_json = "cc-switch-model-catalog.json"
+"#;
+        let result = set_codex_model_catalog_json_field(input, None).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert!(
+            parsed.get("model_catalog_json").is_none(),
+            "None arm should remove relative cc-switch-owned field"
+        );
     }
 }

@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Clock,
   FolderOpen,
+  FileText,
   X,
   CheckSquare,
 } from "lucide-react";
@@ -48,12 +49,15 @@ import { SessionItem } from "./SessionItem";
 import { SessionMessageItem } from "./SessionMessageItem";
 import { SessionTocDialog, SessionTocSidebar } from "./SessionToc";
 import {
+  extractCodexPromptPreview,
+  formatSessionMessagePreview,
   formatSessionTitle,
   formatTimestamp,
   getBaseName,
   getProviderIconName,
   getProviderLabel,
   getSessionKey,
+  shouldHideCodexMessageFromToc,
 } from "./utils";
 
 type ProviderFilter =
@@ -167,18 +171,28 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     });
   }, [sessions]);
 
+  const isCodexSession = selectedSession?.providerId === "codex";
+
   // 提取用户消息用于目录
   const userMessagesToc = useMemo(() => {
     return messages
       .map((msg, index) => ({ msg, index }))
-      .filter(({ msg }) => msg.role.toLowerCase() === "user")
-      .map(({ msg, index }) => ({
-        index,
-        preview:
-          msg.content.slice(0, 50) + (msg.content.length > 50 ? "..." : ""),
-        ts: msg.ts,
-      }));
-  }, [messages]);
+      .filter(({ msg }) => {
+        if (msg.role.toLowerCase() !== "user") return false;
+        return !(isCodexSession && shouldHideCodexMessageFromToc(msg.content));
+      })
+      .map(({ msg, index }) => {
+        const previewContent = isCodexSession
+          ? extractCodexPromptPreview(msg.content)
+          : msg.content;
+
+        return {
+          index,
+          preview: formatSessionMessagePreview(previewContent),
+          ts: msg.ts,
+        };
+      });
+  }, [isCodexSession, messages]);
 
   const scrollToMessage = (index: number) => {
     virtualizer.scrollToIndex(index, { align: "center", behavior: "smooth" });
@@ -877,6 +891,38 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                               >
                                 <p className="font-mono text-xs break-all">
                                   {selectedSession.projectDir}
+                                </p>
+                                <p className="text-muted-foreground mt-1">
+                                  {t("sessionManager.clickToCopyPath")}
+                                </p>
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
+                          {selectedSession.sourcePath && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void handleCopy(
+                                      selectedSession.sourcePath!,
+                                      t("sessionManager.sourcePathCopied"),
+                                    )
+                                  }
+                                  className="flex items-center gap-1 hover:text-foreground transition-colors"
+                                >
+                                  <FileText className="size-3 shrink-0" />
+                                  <span className="font-mono truncate max-w-[200px]">
+                                    {getBaseName(selectedSession.sourcePath)}
+                                  </span>
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent
+                                side="bottom"
+                                className="max-w-xs"
+                              >
+                                <p className="font-mono text-xs break-all">
+                                  {selectedSession.sourcePath}
                                 </p>
                                 <p className="text-muted-foreground mt-1">
                                   {t("sessionManager.clickToCopyPath")}
