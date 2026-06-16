@@ -5,6 +5,7 @@ import type {
   DailyStats,
   ProviderStats,
   ModelStats,
+  CodexSessionUsageSummary,
   RequestLog,
   LogFilters,
   ModelPricing,
@@ -123,6 +124,16 @@ export const usageApi = {
       appType,
       providerName,
       model,
+    });
+  },
+
+  getCodexSessionUsageSummaries: async (
+    startDate?: number,
+    endDate?: number,
+  ): Promise<CodexSessionUsageSummary[]> => {
+    return invoke("get_codex_session_usage_summaries", {
+      startDate,
+      endDate,
     });
   },
 

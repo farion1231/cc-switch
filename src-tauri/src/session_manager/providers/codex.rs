@@ -144,6 +144,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     let (head, tail) = read_head_tail_lines(path, 10, 30).ok()?;
 
     let mut session_id: Option<String> = None;
+    let mut model_provider: Option<String> = None;
     let mut project_dir: Option<String> = None;
     let mut created_at: Option<i64> = None;
     let mut first_user_message: Option<String> = None;
@@ -165,6 +166,12 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
                 if session_id.is_none() {
                     session_id = payload
                         .get("id")
+                        .and_then(Value::as_str)
+                        .map(|s| s.to_string());
+                }
+                if model_provider.is_none() {
+                    model_provider = payload
+                        .get("model_provider")
                         .and_then(Value::as_str)
                         .map(|s| s.to_string());
                 }
@@ -247,6 +254,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
         session_id: session_id.clone(),
+        model_provider,
         title,
         summary,
         project_dir,
@@ -441,6 +449,23 @@ mod tests {
 
         let meta = parse_session(&path).unwrap();
         assert_eq!(meta.title.as_deref(), Some("How do I deploy?"));
+    }
+
+    #[test]
+    fn parse_session_extracts_model_provider() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2026-06-13T08:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"session-1\",\"cwd\":\"/tmp/project\",\"model_provider\":\"custom\"}}\n",
+                "{\"timestamp\":\"2026-06-13T08:00:01Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"hello\"}}\n"
+            ),
+        )
+        .expect("write session");
+
+        let meta = parse_session(&path).expect("parse session");
+        assert_eq!(meta.model_provider.as_deref(), Some("custom"));
     }
 
     #[test]

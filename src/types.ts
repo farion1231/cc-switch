@@ -175,6 +175,11 @@ export interface ProviderMeta {
   custom_endpoints?: Record<string, CustomEndpoint>;
   // 是否在切换/同步到 live 时应用通用配置片段
   commonConfigEnabled?: boolean;
+  // Provider management grouping metadata. This only organizes existing
+  // Provider records in the UI; it does not create a runtime provider layer.
+  providerGroup?: string;
+  providerVariantLabel?: string;
+  groupCommonConfigEnabled?: Record<string, boolean>;
   // Claude Desktop 3P 配置写入模式
   claudeDesktopMode?: "direct" | "proxy";
   // Claude Desktop 本地路由模式：Claude-safe route -> upstream model
@@ -430,6 +435,7 @@ export interface Settings {
 export interface SessionMeta {
   providerId: string;
   sessionId: string;
+  modelProvider?: string;
   title?: string;
   summary?: string;
   projectDir?: string | null;
@@ -443,6 +449,32 @@ export interface SessionMessage {
   role: string;
   content: string;
   ts?: number;
+}
+
+export interface ProviderCodexSession {
+  session: SessionMeta;
+  linkedProviderIds: string[];
+  visibleToCurrentProvider: boolean;
+}
+
+export interface SetCodexSessionProvidersRequest {
+  sessionId: string;
+  sourcePath: string;
+  providerIds: string[];
+  linkMode?: "manual" | "all" | "native";
+  syncToCodex: boolean;
+}
+
+export interface CodexVisibilitySyncResult {
+  changedJsonlFiles: number;
+  changedStateRows: number;
+  skipped: string[];
+  warnings: string[];
+}
+
+export interface CodexSessionProviderUpdateResult {
+  providerIds: string[];
+  sync?: CodexVisibilitySyncResult;
 }
 
 // MCP 服务器连接参数（宽松：允许扩展字段）

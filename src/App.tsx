@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
@@ -624,6 +624,53 @@ function App() {
     setEditingProvider(null);
   };
 
+  const invalidateLiveConfigQueries = useCallback(
+    async (app: AppId) => {
+      if (app === "opencode") {
+        await queryClient.invalidateQueries({
+          queryKey: ["opencodeLiveProviderIds"],
+        });
+      } else if (app === "openclaw") {
+        await queryClient.invalidateQueries({
+          queryKey: openclawKeys.liveProviderIds,
+        });
+        await queryClient.invalidateQueries({
+          queryKey: openclawKeys.health,
+        });
+      } else if (app === "hermes") {
+        await queryClient.invalidateQueries({
+          queryKey: hermesKeys.liveProviderIds,
+        });
+      }
+    },
+    [queryClient],
+  );
+
+  const handleBatchDeleteProviders = useCallback(
+    async (providersToDelete: Provider[]) => {
+      for (const provider of providersToDelete) {
+        await deleteProvider(provider.id);
+      }
+    },
+    [deleteProvider],
+  );
+
+  const handleBatchRemoveFromConfig = useCallback(
+    async (providersToRemove: Provider[]) => {
+      for (const provider of providersToRemove) {
+        await providersApi.removeFromLiveConfig(provider.id, activeApp);
+      }
+      await invalidateLiveConfigQueries(activeApp);
+      toast.success(
+        t("notifications.removeFromConfigSuccess", {
+          defaultValue: "已从配置移除",
+        }),
+        { closeButton: true },
+      );
+    },
+    [activeApp, invalidateLiveConfigQueries, t],
+  );
+
   const handleConfirmAction = async () => {
     if (!confirmAction) return;
     const { provider, action } = confirmAction;
@@ -632,23 +679,7 @@ function App() {
       // Remove from live config only (for additive mode apps like OpenCode/OpenClaw)
       // Does NOT delete from database - provider remains in the list
       await providersApi.removeFromLiveConfig(provider.id, activeApp);
-      // Invalidate queries to refresh the isInConfig state
-      if (activeApp === "opencode") {
-        await queryClient.invalidateQueries({
-          queryKey: ["opencodeLiveProviderIds"],
-        });
-      } else if (activeApp === "openclaw") {
-        await queryClient.invalidateQueries({
-          queryKey: openclawKeys.liveProviderIds,
-        });
-        await queryClient.invalidateQueries({
-          queryKey: openclawKeys.health,
-        });
-      } else if (activeApp === "hermes") {
-        await queryClient.invalidateQueries({
-          queryKey: hermesKeys.liveProviderIds,
-        });
-      }
+      await invalidateLiveConfigQueries(activeApp);
       toast.success(
         t("notifications.removeFromConfigSuccess", {
           defaultValue: "已从配置移除",
@@ -962,12 +993,20 @@ function App() {
                       onDelete={(provider) =>
                         setConfirmAction({ provider, action: "delete" })
                       }
+                      onBatchDelete={handleBatchDeleteProviders}
                       onRemoveFromConfig={
                         activeApp === "opencode" ||
                         activeApp === "openclaw" ||
                         activeApp === "hermes"
                           ? (provider) =>
                               setConfirmAction({ provider, action: "remove" })
+                          : undefined
+                      }
+                      onBatchRemoveFromConfig={
+                        activeApp === "opencode" ||
+                        activeApp === "openclaw" ||
+                        activeApp === "hermes"
+                          ? handleBatchRemoveFromConfig
                           : undefined
                       }
                       onDisableOmo={

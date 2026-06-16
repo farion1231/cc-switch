@@ -83,3 +83,41 @@ pub async fn delete_sessions(
         .await
         .map_err(|e| format!("Failed to delete sessions: {e}"))
 }
+
+#[tauri::command]
+pub async fn set_codex_session_provider_links(
+    state: tauri::State<'_, crate::store::AppState>,
+    request: crate::services::codex_session_sharing::SetCodexSessionProvidersRequest,
+) -> Result<
+    crate::services::codex_session_sharing::CodexSessionProviderUpdateResult,
+    crate::error::AppError,
+> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::services::codex_session_sharing::set_codex_session_provider_links(
+            db.as_ref(),
+            request,
+        )
+    })
+    .await
+    .map_err(|e| {
+        crate::error::AppError::Message(format!("Failed to update Codex session links: {e}"))
+    })?
+}
+
+#[tauri::command]
+pub async fn list_provider_codex_sessions(
+    state: tauri::State<'_, crate::store::AppState>,
+    provider_id: String,
+) -> Result<Vec<crate::services::codex_session_sharing::ProviderCodexSession>, crate::error::AppError>
+{
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::services::codex_session_sharing::list_provider_codex_sessions(
+            db.as_ref(),
+            &provider_id,
+        )
+    })
+    .await
+    .map_err(|e| crate::error::AppError::Message(format!("Failed to list Codex sessions: {e}")))?
+}

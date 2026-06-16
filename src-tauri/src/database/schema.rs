@@ -295,6 +295,8 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        Self::create_codex_session_provider_links_table(conn)?;
+
         // 尝试添加 live_takeover_active 列到 proxy_config 表
         let _ = conn.execute(
             "ALTER TABLE proxy_config ADD COLUMN live_takeover_active INTEGER NOT NULL DEFAULT 0",
@@ -443,6 +445,13 @@ impl Database {
                         log::info!("迁移数据库从 v10 到 v11（usage_daily_rollups 保留 request_model 维度）");
                         Self::migrate_v10_to_v11(conn)?;
                         Self::set_user_version(conn, 11)?;
+                    }
+                    11 => {
+                        log::info!(
+                            "Migrating database from v11 to v12 (codex session provider links)"
+                        );
+                        Self::migrate_v11_to_v12(conn)?;
+                        Self::set_user_version(conn, 12)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1267,6 +1276,45 @@ impl Database {
         log::info!(
             "v10 -> v11 迁移完成：usage_daily_rollups 已保留 request_model/pricing_model 维度"
         );
+        Ok(())
+    }
+
+    fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
+        Self::create_codex_session_provider_links_table(conn)?;
+        log::info!("v11 -> v12 migration complete: codex_session_provider_links table added");
+        Ok(())
+    }
+
+    fn create_codex_session_provider_links_table(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_session_provider_links (
+                session_id TEXT NOT NULL,
+                source_path TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                link_mode TEXT NOT NULL DEFAULT 'manual',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (session_id, source_path, provider_id)
+            )",
+            [],
+        )
+        .map_err(|e| {
+            AppError::Database(format!(
+                "create codex_session_provider_links table failed: {e}"
+            ))
+        })?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_codex_session_provider_links_provider
+             ON codex_session_provider_links(provider_id, updated_at DESC)",
+            [],
+        )
+        .map_err(|e| {
+            AppError::Database(format!(
+                "create codex_session_provider_links provider index failed: {e}"
+            ))
+        })?;
+
         Ok(())
     }
 
