@@ -245,6 +245,15 @@ export function ProviderList({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      const activeElement = document.activeElement as HTMLElement | null;
+      const isTyping =
+        activeElement != null &&
+        (activeElement.tagName === "INPUT" ||
+          activeElement.tagName === "TEXTAREA" ||
+          activeElement.tagName === "SELECT" ||
+          activeElement.isContentEditable);
+      if (isTyping) return;
+
       const key = event.key.toLowerCase();
       if ((event.metaKey || event.ctrlKey) && key === "f") {
         event.preventDefault();
@@ -257,8 +266,8 @@ export function ProviderList({
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    globalThis.addEventListener("keydown", handleKeyDown);
+    return () => globalThis.removeEventListener("keydown", handleKeyDown);
   }, []);
 
   useEffect(() => {

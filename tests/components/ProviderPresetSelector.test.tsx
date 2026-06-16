@@ -421,18 +421,62 @@ describe("ProviderPresetSelector", () => {
     ).toBeInTheDocument();
   });
 
-  it("点击搜索区域外自动收起并清空", async () => {
+  it("按 Ctrl+F 快捷键打开搜索输入框", async () => {
     const user = userEvent.setup();
     renderSelector();
+
+    // 初始没有搜索输入框
+    expect(
+      screen.queryByRole("textbox", {
+        name: /providerPreset\.(searchInput|searchPlaceholder)|搜索预设|search/i,
+      }),
+    ).not.toBeInTheDocument();
+
+    // 按 Ctrl+F 展开输入框
+    await user.keyboard("{Control>}f{/Control}");
+    expect(getSearchInput()).toBeInTheDocument();
+  });
+
+  it("搜索后点击预设按钮可选中预设且不清空搜索关键词", async () => {
+    const user = userEvent.setup();
+    const onPresetChange = vi.fn();
+    renderSelector({ onPresetChange });
+
+    await user.click(getSearchButton());
+    await user.type(getSearchInput(), "gateway");
+
+    await user.click(screen.getByRole("button", { name: "Beta Gateway" }));
+
+    expect(onPresetChange).toHaveBeenCalledWith("beta");
+    // 搜索框仍展开、关键词保留
+    expect(getSearchInput()).toBeInTheDocument();
+    expect(getSearchInput()).toHaveValue("gateway");
+  });
+
+  it("点击组件外区域自动收起并清空", async () => {
+    const user = userEvent.setup();
+    const Wrapper = () => {
+      const form = useForm();
+      return (
+        <Form {...form}>
+          <ProviderPresetSelector
+            selectedPresetId="custom"
+            presetEntries={presetEntries}
+            presetCategoryLabels={presetCategoryLabels}
+            onPresetChange={vi.fn()}
+          />
+          <div data-testid="outside">Outside</div>
+        </Form>
+      );
+    };
+    render(<Wrapper />);
 
     await user.click(getSearchButton());
     await user.type(getSearchInput(), "gateway");
     expect(getSearchInput()).toBeInTheDocument();
 
-    // 点击搜索区域外的元素(custom 按钮)应收起搜索框
-    await user.click(
-      screen.getByRole("button", { name: "providerPreset.custom" }),
-    );
+    // 点击组件外的元素应收起搜索框
+    await user.click(screen.getByTestId("outside"));
 
     expect(
       screen.queryByRole("textbox", {
