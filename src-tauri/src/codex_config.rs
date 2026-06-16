@@ -1400,15 +1400,23 @@ pub fn write_codex_live_for_provider(
 
     // When normalization rewrote provider IDs, migrate existing session
     // history files so old sessions appear under the unified bucket.
-    if !rewritten_ids.is_empty() {
-        if let Some(target_id) = crate::settings::force_codex_model_provider_id() {
+    if let Some(target_id) = crate::settings::force_codex_model_provider_id() {
+        let mut migrate_ids: Vec<String> = rewritten_ids.clone();
+
+        // Also migrate official "openai" sessions when the target differs,
+        // so switching from official to third-party keeps all history visible.
+        if target_id != "openai" && !migrate_ids.contains(&"openai".to_string()) {
+            migrate_ids.push("openai".to_string());
+        }
+
+        if !migrate_ids.is_empty() {
             if let Err(e) = crate::codex_history_migration::migrate_codex_history_for_force_provider_id(
-                &rewritten_ids,
+                &migrate_ids,
                 &target_id,
             ) {
                 log::warn!(
                     "Failed to migrate Codex session history after normalizing provider IDs {:?} -> '{}': {e}",
-                    rewritten_ids, target_id
+                    migrate_ids, target_id
                 );
             }
         }
