@@ -9,9 +9,10 @@
 use crate::app_config::{InstalledSkill, SkillApps};
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use crate::services::skill::SkillRepo;
+use crate::services::skill::{ManualSkillGroup, SkillRepo};
 use indexmap::IndexMap;
 use rusqlite::params;
+use std::collections::BTreeSet;
 
 impl Database {
     // ========== InstalledSkill CRUD ==========
@@ -179,6 +180,194 @@ impl Database {
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(affected > 0)
+    }
+
+    // ========== Manual Skill Group CRUD ==========
+
+    pub fn get_manual_skill_groups(&self) -> Result<Vec<ManualSkillGroup>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, created_at, updated_at
+                 FROM skill_groups ORDER BY name ASC",
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(ManualSkillGroup {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    created_at: row.get(2)?,
+                    updated_at: row.get(3)?,
+                    skill_ids: Vec::new(),
+                })
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let mut groups = Vec::new();
+        for row in rows {
+            let mut group = row.map_err(|e| AppError::Database(e.to_string()))?;
+            group.skill_ids = Self::get_manual_skill_group_members_locked(&conn, &group.id)?;
+            groups.push(group);
+        }
+        Ok(groups)
+    }
+
+    pub fn create_manual_skill_group(
+        &self,
+        id: &str,
+        name: &str,
+        skill_ids: &[String],
+    ) -> Result<ManualSkillGroup, AppError> {
+        let now = chrono::Utc::now().timestamp();
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.execute(
+            "INSERT INTO skill_groups (id, name, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![id, name, now, now],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        let stored_skill_ids = Self::set_manual_skill_group_members_locked(&tx, id, skill_ids)?;
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(ManualSkillGroup {
+            id: id.to_string(),
+            name: name.to_string(),
+            created_at: now,
+            updated_at: now,
+            skill_ids: stored_skill_ids,
+        })
+    }
+
+    pub fn rename_manual_skill_group(&self, id: &str, name: &str) -> Result<bool, AppError> {
+        let now = chrono::Utc::now().timestamp();
+        let conn = lock_conn!(self.conn);
+        let affected = conn
+            .execute(
+                "UPDATE skill_groups SET name = ?1, updated_at = ?2 WHERE id = ?3",
+                params![name, now, id],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(affected > 0)
+    }
+
+    pub fn delete_manual_skill_group(&self, id: &str) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        let affected = conn
+            .execute("DELETE FROM skill_groups WHERE id = ?1", params![id])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(affected > 0)
+    }
+
+    pub fn set_manual_skill_group_members(
+        &self,
+        id: &str,
+        skill_ids: &[String],
+    ) -> Result<bool, AppError> {
+        let now = chrono::Utc::now().timestamp();
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let group_exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM skill_groups WHERE id = ?1)",
+                params![id],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if !group_exists {
+            return Ok(false);
+        }
+        Self::set_manual_skill_group_members_locked(&tx, id, skill_ids)?;
+        tx.execute(
+            "UPDATE skill_groups SET updated_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(true)
+    }
+
+    pub fn get_manual_skill_group_members(
+        &self,
+        id: &str,
+    ) -> Result<Option<Vec<String>>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let group_exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM skill_groups WHERE id = ?1)",
+                params![id],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if !group_exists {
+            return Ok(None);
+        }
+        Self::get_manual_skill_group_members_locked(&conn, id).map(Some)
+    }
+
+    fn get_manual_skill_group_members_locked(
+        conn: &rusqlite::Connection,
+        id: &str,
+    ) -> Result<Vec<String>, AppError> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT skill_id FROM skill_group_members
+                 WHERE group_id = ?1 ORDER BY skill_id ASC",
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![id], |row| row.get::<_, String>(0))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let mut skill_ids = Vec::new();
+        for row in rows {
+            skill_ids.push(row.map_err(|e| AppError::Database(e.to_string()))?);
+        }
+        Ok(skill_ids)
+    }
+
+    fn set_manual_skill_group_members_locked(
+        conn: &rusqlite::Connection,
+        id: &str,
+        skill_ids: &[String],
+    ) -> Result<Vec<String>, AppError> {
+        let mut unique_ids = BTreeSet::new();
+        for skill_id in skill_ids {
+            if !unique_ids.insert(skill_id.as_str()) {
+                continue;
+            }
+            let exists: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM skills WHERE id = ?1)",
+                    params![skill_id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            if !exists {
+                return Err(AppError::InvalidInput(format!(
+                    "Skill not found: {skill_id}"
+                )));
+            }
+        }
+
+        conn.execute(
+            "DELETE FROM skill_group_members WHERE group_id = ?1",
+            params![id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        for skill_id in &unique_ids {
+            conn.execute(
+                "INSERT INTO skill_group_members (group_id, skill_id) VALUES (?1, ?2)",
+                params![id, skill_id],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+        Ok(unique_ids.into_iter().map(ToOwned::to_owned).collect())
     }
 
     // ========== SkillRepo CRUD（保持原有） ==========

@@ -20,9 +20,7 @@ pub fn init_app_config_dir(dir: PathBuf) {
 
 /// 获取默认应用配置目录（不会 panic）
 fn default_app_config_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".cc-switch")
+    crate::config::get_default_app_config_dir()
 }
 
 /// 获取应用配置目录（优先使用初始化时写入的值；不会 panic）
