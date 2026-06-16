@@ -3728,6 +3728,7 @@ wire_api = "responses"
     #[test]
     #[serial]
     fn apply_claude_legacy_clears_stale_provider_profile_override() {
+        let _env_guard = UserEnvVarGuard::new("CLAUDE_CONFIG_DIR");
         with_test_home(|_state, home| {
             let stale_profile_dir = home.join(".claude-profiles").join("stale");
             fs::create_dir_all(&stale_profile_dir).expect("create stale profile dir");
@@ -3735,6 +3736,11 @@ wire_api = "responses"
                 &stale_profile_dir.to_string_lossy(),
             ))
             .expect("seed stale profile override");
+            crate::services::env_manager::set_user_env_var(
+                "CLAUDE_CONFIG_DIR",
+                Some(&stale_profile_dir.to_string_lossy()),
+            )
+            .expect("seed stale profile env");
 
             let legacy_provider = claude_provider(
                 "claude-legacy",
@@ -3754,6 +3760,47 @@ wire_api = "responses"
             assert!(
                 crate::settings::get_claude_override_dir().is_none(),
                 "legacy activation should clear any stale provider profile override"
+            );
+            assert!(
+                crate::services::env_manager::get_user_env_var("CLAUDE_CONFIG_DIR")
+                    .expect("read claude config env")
+                    .is_none(),
+                "legacy activation should clear a stale cc-switch-managed profile env"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn apply_claude_legacy_preserves_external_config_env_when_unconfigured() {
+        let _env_guard = UserEnvVarGuard::new("CLAUDE_CONFIG_DIR");
+        with_test_home(|_state, home| {
+            let external_config_dir = home.join(".external-claude");
+            fs::create_dir_all(&external_config_dir).expect("create external config dir");
+            let external_config_dir = external_config_dir.to_string_lossy().to_string();
+            crate::services::env_manager::set_user_env_var(
+                "CLAUDE_CONFIG_DIR",
+                Some(external_config_dir.as_str()),
+            )
+            .expect("seed external config env");
+
+            let legacy_provider = claude_provider(
+                "claude-legacy",
+                "Claude Legacy",
+                "legacy-token",
+                "https://legacy.example",
+                None,
+            );
+
+            let plan = ProviderService::claude_switch_plan(&legacy_provider);
+            ProviderService::apply_claude_switch_plan(&plan).expect("apply legacy plan");
+
+            assert_eq!(
+                crate::services::env_manager::get_user_env_var("CLAUDE_CONFIG_DIR")
+                    .expect("read claude config env")
+                    .as_deref(),
+                Some(external_config_dir.as_str()),
+                "legacy activation without a configured cc-switch legacy dir should preserve external env"
             );
         });
     }
@@ -5321,6 +5368,12 @@ impl ProviderService {
     }
 
     pub(crate) fn apply_claude_switch_plan(plan: &ClaudeSwitchPlan) -> Result<(), AppError> {
+        let previous_settings = crate::settings::get_settings();
+        let previous_provider_override_dir = previous_settings
+            .claude_provider_config_dir
+            .as_deref()
+            .map(Self::resolve_claude_override_path)
+            .map(|path| path.to_string_lossy().to_string());
         crate::settings::set_claude_provider_override_dir(plan.override_dir.as_deref())?;
         let settings = crate::settings::get_settings();
         let legacy_config_dir = settings
@@ -5328,16 +5381,34 @@ impl ProviderService {
             .as_deref()
             .map(Self::resolve_claude_override_path)
             .map(|path| path.to_string_lossy().to_string());
-        crate::services::env_manager::set_user_env_var(
-            "CLAUDE_CONFIG_DIR",
-            match plan.activation_mode {
-                ClaudeActivationMode::Legacy => legacy_config_dir.as_deref(),
-                ClaudeActivationMode::ProfileOnly | ClaudeActivationMode::ProfileAndConfig => {
-                    plan.override_dir.as_deref()
-                }
-            },
-        )
-        .map_err(AppError::Message)
+        let next_config_env = match plan.activation_mode {
+            ClaudeActivationMode::Legacy => legacy_config_dir.as_deref(),
+            ClaudeActivationMode::ProfileOnly | ClaudeActivationMode::ProfileAndConfig => {
+                plan.override_dir.as_deref()
+            }
+        };
+
+        if matches!(plan.activation_mode, ClaudeActivationMode::Legacy)
+            && legacy_config_dir.is_none()
+        {
+            let current_config_env =
+                crate::services::env_manager::get_user_env_var("CLAUDE_CONFIG_DIR")
+                    .map_err(AppError::Message)?;
+            let current_matches_previous_provider_override = match (
+                current_config_env.as_deref(),
+                previous_provider_override_dir.as_deref(),
+            ) {
+                (Some(current), Some(previous)) => current == previous,
+                _ => false,
+            };
+
+            if !current_matches_previous_provider_override {
+                return Ok(());
+            }
+        }
+
+        crate::services::env_manager::set_user_env_var("CLAUDE_CONFIG_DIR", next_config_env)
+            .map_err(AppError::Message)
     }
 
     fn current_claude_provider_is_profile_only(state: &AppState) -> Result<bool, AppError> {
