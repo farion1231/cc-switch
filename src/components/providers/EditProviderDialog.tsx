@@ -104,8 +104,11 @@ export function EditProviderDialog({
             const live = (await vscodeApi.getLiveProviderSettings(
               appId,
             )) as Record<string, unknown>;
-            if (!cancelled && live && typeof live === "object") {
-              setLiveSettings(live);
+            // live 可能为 null 或非对象（例如 settings 文件内容是合法的 JSON null）。
+            // 这种情况下回退到数据库 SSOT，但仍必须置位 hasLoadedLive——否则表单会
+            // 永远卡在加载态，无法编辑/保存该供应商。
+            if (!cancelled) {
+              setLiveSettings(live && typeof live === "object" ? live : null);
               setHasLoadedLive(true);
             }
           } catch {

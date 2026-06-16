@@ -257,4 +257,39 @@ describe("EditProviderDialog", () => {
       JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
     ).toEqual(liveSettings);
   });
+
+  it("当前供应商 live 配置为 null 时回退到数据库配置并挂载表单，不会卡在加载态 (#4277 review)", async () => {
+    const provider: Provider = {
+      id: "deepseek",
+      name: "Deepseek",
+      category: "aggregator",
+      settingsConfig: {
+        env: { ANTHROPIC_AUTH_TOKEN: "db-key" },
+      },
+    };
+
+    apiMocks.getCurrent.mockResolvedValue(provider.id);
+    // live 读取成功但返回非对象（settings 文件是 JSON null）
+    apiMocks.getLiveProviderSettings.mockResolvedValue(
+      null as unknown as Record<string, unknown>,
+    );
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        appId="claude"
+      />,
+    );
+
+    // 表单仍会挂载（hasLoadedLive 置位），且使用数据库配置回退
+    await waitFor(() =>
+      expect(screen.getByTestId("settings-config")).toBeTruthy(),
+    );
+    expect(
+      JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+    ).toEqual(provider.settingsConfig);
+  });
 });
