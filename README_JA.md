@@ -24,11 +24,9 @@
 <details open>
 <summary>クリックで折りたたむ</summary>
 
-[![MiniMax](assets/partners/banners/minimax-en.jpeg)](https://platform.minimax.io/subscribe/coding-plan?code=ClLhgxr2je&source=link)
+[![Kimi K2.6](https://kimi-file.moonshot.cn/prod-chat-kimi/kfs/4/2/2026-06-08/1d8j61pt3v89kkekm5mbg)](https://platform.moonshot.cn/console?aff=cc-switch)
 
-MiniMax-M2.7 は、自律的進化と実世界の生産性向上のために設計された次世代大規模言語モデルです。従来のモデルとは異なり、M2.7 はエージェントチーム、動的ツール使用、強化学習ループを通じて自身の改善に積極的に参加します。ソフトウェアエンジニアリングにおいて優れた性能を発揮し（SWE-Pro で 56.22%、VIBE-Pro で 55.6%、Terminal Bench 2 で 57.0%）、複雑なオフィスワークフローにも秀でており、GDPval-AA で 1495 ELO のリーディングスコアを達成しています。Word・Excel・PowerPoint の高忠実度編集と、40 以上の複雑なスキルにわたる 97% の遵守率により、M2.7 は AI ネイティブなワークフローと組織構築の新基準を打ち立てます。
-
-[こちら](https://platform.minimax.io/subscribe/coding-plan?code=ClLhgxr2je&source=link)から MiniMax Token Plan の限定 12% オフを入手！
+Kimi K2.6 は Moonshot AI によるオープンソースのネイティブマルチモーダル・エージェントモデルで、長期的なコーディング、コード駆動設計、スウォーム（群）型タスクオーケストレーションのために構築されています。フロントエンド、DevOps、パフォーマンス最適化、フルスタックワークフローにわたる複雑なエンドツーエンドのエンジニアリング作業に対応できるよう設計されており、多数の専門エージェントを協調させて、実際のコーディングタスクの計画・実装・テスト・反復を行います。
 
 ---
 

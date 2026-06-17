@@ -24,11 +24,9 @@
 <details open>
 <summary>点击折叠</summary>
 
-[![MiniMax](assets/partners/banners/minimax-zh.jpeg)](https://platform.minimaxi.com/subscribe/coding-plan?code=7kYF2VoaCn&source=link)
+[![Kimi K2.6](https://kimi-file.moonshot.cn/prod-chat-kimi/kfs/4/2/2026-06-08/1d8j61pt3v89kkekm5mbg)](https://platform.moonshot.cn/console?aff=cc-switch)
 
-MiniMax M2.7 是 MiniMax 首个深度参与自我迭代的模型，可自主构建复杂 Agent Harness，并基于 Agent Teams、复杂 Skills、Tool Search Tool 等能力完成高复杂度生产力任务；其在软件工程、端到端项目交付及办公场景中表现优异，多项评测接近行业领先水平，同时具备稳定的复杂任务执行、环境交互能力以及良好的情商与身份保持能力。
-
-[点击此处](https://platform.minimaxi.com/subscribe/coding-plan?code=7kYF2VoaCn&source=link)享 MiniMax Token Plan 专属 88 折优惠！
+Kimi K2.6 是 Moonshot AI 开源的原生多模态智能体模型，面向长程编码、代码驱动设计和智能体集群任务编排而构建。它适合处理复杂的端到端工程任务，覆盖前端开发、DevOps、性能优化和全栈工作流，并能够协调大规模专业智能体，对真实编码任务进行规划、实现、测试和迭代。
 
 ---
 
