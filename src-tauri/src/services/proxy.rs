@@ -2479,6 +2479,10 @@ impl ProxyService {
             })
             .transpose()
             .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
+        let prepared_cfg = prepared_cfg
+            .map(|cfg| crate::codex_config::merge_codex_provider_config_with_live(&cfg))
+            .transpose()
+            .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
 
         match (auth, prepared_cfg.as_deref()) {
             (Some(auth), Some(cfg)) => {
@@ -5869,6 +5873,77 @@ requires_openai_auth = true
         assert!(
             !crate::codex_config::get_codex_auth_path().exists(),
             "empty-auth restore must delete auth.json rather than write an empty one"
+        );
+    }
+
+    /// 回归：Codex Desktop 会把编辑器和通知偏好写进用户自有 TOML 表。
+    ///
+    /// 恢复旧接管备份时只能替换 provider 字段，不能回滚 live 文件里较新的
+    /// `[desktop]` 设置。
+    #[tokio::test]
+    #[serial]
+    async fn codex_restore_from_backup_preserves_live_desktop_settings() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let codex_dir = crate::codex_config::get_codex_config_dir();
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        std::fs::write(
+            crate::codex_config::get_codex_config_path(),
+            r#"model_provider = "codex_model_router_v2"
+model_catalog_json = "cc-switch-model-catalog.json"
+experimental_bearer_token = "PROXY_MANAGED"
+
+[model_providers.codex_model_router_v2]
+name = "OpenAI Multi-Model Router"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+
+[desktop]
+notifications-turn-mode = "always"
+reviewDelivery = "detached"
+"#,
+        )
+        .expect("seed taken-over live config with desktop settings");
+
+        let backup_json = serde_json::to_string(&json!({
+            "auth": { "OPENAI_API_KEY": "real-token" },
+            "config": "model = \"gpt-5.5\"\nmodel_provider = \"openai\"\n"
+        }))
+        .expect("serialize backup");
+        db.save_live_backup("codex", &backup_json)
+            .await
+            .expect("seed old live backup");
+
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Codex)
+            .await
+            .expect("restore codex live from backup");
+
+        let restored = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read restored config.toml");
+        assert!(
+            restored.contains("[desktop]"),
+            "restore must keep current live desktop table, got:\n{restored}"
+        );
+        assert!(
+            restored.contains("notifications-turn-mode = \"always\""),
+            "restore must keep Codex Desktop notification preference, got:\n{restored}"
+        );
+        assert!(
+            restored.contains("reviewDelivery = \"detached\""),
+            "restore must keep Codex Desktop review delivery preference, got:\n{restored}"
+        );
+        assert!(
+            restored.contains("model_provider = \"openai\""),
+            "restore must still apply the backup/provider route, got:\n{restored}"
+        );
+        assert!(
+            !restored.contains("http://127.0.0.1:15721"),
+            "restore must remove the takeover proxy endpoint, got:\n{restored}"
         );
     }
 

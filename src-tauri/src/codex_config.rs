@@ -9,7 +9,7 @@ use crate::error::AppError;
 use serde_json::{json, Value};
 use std::fs;
 use std::process::Command;
-use toml_edit::DocumentMut;
+use toml_edit::{DocumentMut, Item, TableLike};
 
 pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
@@ -882,6 +882,210 @@ pub fn prepare_codex_live_config_text_with_optional_catalog(
     } else {
         Ok(config_text.to_string())
     }
+}
+
+/// 判断 TOML 节点是否是用户自有的表结构。
+///
+/// Codex 的 provider 快照通常只应该接管顶层路由字段和当前 provider 表；
+/// `[desktop]`、`[features]`、`[memories]`、`[projects]`、`[mcp_servers]`
+/// 等表由 Codex Desktop 或用户维护，恢复旧备份时不能整表回滚。
+fn codex_toml_item_is_table_like(item: &Item) -> bool {
+    item.as_table().is_some() || item.as_array_of_tables().is_some()
+}
+
+/// 将 provider 需要的配置叠加到 live 表里，冲突时保留 provider。
+///
+/// 这个方向只用于真正由 provider 管理的字段；用户自有表结构通过
+/// `merge_missing_codex_toml_item` 只补缺失值，避免旧备份覆盖新设置。
+fn merge_codex_toml_item_prefer_provider(target: &mut Item, source: &Item) {
+    if let Some(source_table) = source.as_table_like() {
+        if let Some(target_table) = target.as_table_like_mut() {
+            merge_codex_toml_table_like_prefer_provider(target_table, source_table);
+            return;
+        }
+    }
+
+    *target = source.clone();
+}
+
+/// 递归合并 TOML 表，provider 侧同名键优先。
+fn merge_codex_toml_table_like_prefer_provider(target: &mut dyn TableLike, source: &dyn TableLike) {
+    for (key, source_item) in source.iter() {
+        match target.get_mut(key) {
+            Some(target_item) => merge_codex_toml_item_prefer_provider(target_item, source_item),
+            None => {
+                target.insert(key, source_item.clone());
+            }
+        }
+    }
+}
+
+/// 将 provider 表结构里 live 缺失的子项补进 live 配置，已有项一律保留 live。
+///
+/// 这用于兼容 common config 或新版本 Codex 写入的用户表；如果 live 已有同名项，
+/// 历史备份不能覆盖用户当前值。
+fn merge_missing_codex_toml_item(target: &mut Item, source: &Item) {
+    if let Some(source_table) = source.as_table_like() {
+        if let Some(target_table) = target.as_table_like_mut() {
+            merge_missing_codex_toml_table_like(target_table, source_table);
+            return;
+        }
+    }
+
+    if target.is_none() {
+        *target = source.clone();
+    }
+}
+
+/// 递归补齐 TOML 表中缺失的键，冲突时保留 target。
+fn merge_missing_codex_toml_table_like(target: &mut dyn TableLike, source: &dyn TableLike) {
+    for (key, source_item) in source.iter() {
+        match target.get_mut(key) {
+            Some(target_item) => merge_missing_codex_toml_item(target_item, source_item),
+            None => {
+                target.insert(key, source_item.clone());
+            }
+        }
+    }
+}
+
+/// 退出接管或恢复旧备份时清掉 live 当前的自定义 provider 表。
+///
+/// 这些表通常保存本地代理地址；如果备份已经切回官方 provider，继续保留它们会
+/// 让 Codex 后续仍可能读到旧的本地代理配置。
+fn remove_active_custom_codex_model_provider_section(doc: &mut DocumentMut) {
+    let Some(provider_id) = active_codex_model_provider_id(doc) else {
+        return;
+    };
+    if !is_custom_codex_model_provider_id(&provider_id) {
+        return;
+    }
+
+    let should_remove_container = doc
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_like_mut())
+        .map(|table| {
+            table.remove(&provider_id);
+            table.is_empty()
+        })
+        .unwrap_or(false);
+
+    if should_remove_container {
+        doc.as_table_mut().remove("model_providers");
+    }
+}
+
+/// 清理 live 中那些 provider 已不再声明的旧路由字段。
+///
+/// 先清理再叠加备份/provider，可以防止 `PROXY_MANAGED` token、旧 catalog 指针
+/// 或本地 router 表从接管态泄漏到恢复后的官方配置里。
+fn remove_codex_provider_owned_fields_missing_from_provider(
+    live_doc: &mut DocumentMut,
+    provider_doc: &DocumentMut,
+) {
+    if provider_doc
+        .get("model_provider")
+        .and_then(|item| item.as_str())
+        .map(is_custom_codex_model_provider_id)
+        != Some(true)
+    {
+        remove_active_custom_codex_model_provider_section(live_doc);
+    }
+
+    for key in ["model", "model_provider", "model_context_window"] {
+        if provider_doc.get(key).is_none() {
+            live_doc.as_table_mut().remove(key);
+        }
+    }
+
+    if provider_doc.get("openai_base_url").is_none() {
+        live_doc.as_table_mut().remove("openai_base_url");
+    }
+    if provider_doc.get("model_catalog_json").is_none() {
+        live_doc.as_table_mut().remove("model_catalog_json");
+    }
+    if provider_doc.get("experimental_bearer_token").is_none() {
+        live_doc.as_table_mut().remove("experimental_bearer_token");
+    }
+}
+
+/// 将待恢复的 provider 配置叠加到当前 live `config.toml`。
+///
+/// 重启或关闭接管时，备份里的 `config.toml` 可能比当前 live 文件旧。如果直接
+/// 原样写回，会回滚 Codex Desktop 后来写入的桌面偏好、记忆、项目和 MCP 配置。
+/// 因此这里以当前 live 为底，只让备份/provider 拥有路由相关字段和当前
+/// `[model_providers.<id>]`，其它表结构只补缺失值。
+pub(crate) fn merge_codex_provider_config_texts(
+    live_config_text: &str,
+    provider_config_text: &str,
+) -> Result<String, AppError> {
+    if provider_config_text.trim().is_empty() || live_config_text.trim().is_empty() {
+        return Ok(provider_config_text.to_string());
+    }
+
+    let mut live_doc = live_config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid live Codex config.toml: {e}")))?;
+    let provider_doc = provider_config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid provider Codex config.toml: {e}")))?;
+
+    remove_codex_provider_owned_fields_missing_from_provider(&mut live_doc, &provider_doc);
+
+    for (key, item) in provider_doc.as_table().iter() {
+        if key == "model_providers" || codex_toml_item_is_table_like(item) {
+            continue;
+        }
+        live_doc[key] = item.clone();
+    }
+
+    for (key, item) in provider_doc.as_table().iter() {
+        if key == "model_providers" || !codex_toml_item_is_table_like(item) {
+            continue;
+        }
+
+        match live_doc.as_table_mut().get_mut(key) {
+            Some(live_item) => merge_missing_codex_toml_item(live_item, item),
+            None => {
+                live_doc.as_table_mut().insert(key, item.clone());
+            }
+        }
+    }
+
+    let provider_id = active_codex_model_provider_id(&provider_doc);
+    if let Some(provider_id) = provider_id.as_deref() {
+        if let Some(provider_item) = provider_doc
+            .get("model_providers")
+            .and_then(|item| item.as_table())
+            .and_then(|table| table.get(provider_id))
+            .cloned()
+        {
+            if live_doc.get("model_providers").is_none() {
+                live_doc["model_providers"] = toml_edit::table();
+            }
+            if let Some(live_providers) = live_doc
+                .get_mut("model_providers")
+                .and_then(|item| item.as_table_mut())
+            {
+                match live_providers.get_mut(provider_id) {
+                    Some(live_item) => {
+                        merge_codex_toml_item_prefer_provider(live_item, &provider_item)
+                    }
+                    None => {
+                        live_providers.insert(provider_id, provider_item);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(live_doc.to_string())
+}
+
+/// 读取当前 live 配置，并把 provider/backup 配置叠加进去。
+pub(crate) fn merge_codex_provider_config_with_live(config_text: &str) -> Result<String, AppError> {
+    let live_config = read_codex_config_text()?;
+    merge_codex_provider_config_texts(&live_config, config_text)
 }
 
 pub fn write_codex_provider_live_with_catalog(
