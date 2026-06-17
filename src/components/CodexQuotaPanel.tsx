@@ -101,9 +101,10 @@ export function CodexQuotaPanel() {
   const settingsQuery = useSettingsQuery();
   const refreshIntervalMs =
     (settingsQuery.data?.codexQuotaRefreshInterval ?? 300) * 1000;
+  const autoRefresh = settingsQuery.data?.usageAutoRefresh !== false;
   const quotasQuery = useCodexAllQuotas({
-    enabled: true,
-    autoQuery: true,
+    enabled: autoRefresh,
+    autoQuery: autoRefresh,
     intervalMs: refreshIntervalMs,
   });
 

@@ -392,9 +392,9 @@ pub fn rollback_last_switch() -> Result<CodexAccountSwitchResult, AppError> {
 
     let auth_path = get_codex_auth_path();
     let backup_path = if auth_path.exists() {
-        backup_current_auth(registry.active_account_key.as_deref())?
-            .to_string_lossy()
-            .to_string()
+        let backup_path = backup_current_auth(registry.active_account_key.as_deref())?;
+        persist_current_auth_to_active_snapshot(&registry)?;
+        backup_path.to_string_lossy().to_string()
     } else {
         String::new()
     };
@@ -1250,10 +1250,23 @@ mod tests {
         let previous_snapshot_path = paths.snapshots_dir.join("previous.json");
         write_json_file(&previous_snapshot_path, &previous_auth)?;
 
+        let target_payload = URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&json!({
+                "email": "target@example.com",
+                "https://api.openai.com/auth": {
+                    "chatgpt_user_id": "user-target",
+                    "organizations": [{ "id": "org-target", "is_default": true }]
+                }
+            }))
+            .unwrap(),
+        );
         let target_auth = AuthSnapshot {
-            auth_mode: Some("apikey".to_string()),
-            tokens: None,
-            openai_api_key: Some(json!("sk-target")),
+            auth_mode: Some("chatgpt".to_string()),
+            tokens: Some(json!({
+                "id_token": format!("header.{target_payload}.sig"),
+                "workspace_id": "workspace-target"
+            })),
+            openai_api_key: None,
         };
         let target_key = account_key_from_auth(&target_auth);
         let snapshot_path = paths.snapshots_dir.join("target.json");
@@ -1286,7 +1299,7 @@ mod tests {
                     workspace_name: String::new(),
                     profile_name: "Target".to_string(),
                     plan: String::new(),
-                    auth_mode: "apikey".to_string(),
+                    auth_mode: "chatgpt".to_string(),
                     last_used_at: None,
                     extra: Map::new(),
                 },
@@ -1308,7 +1321,28 @@ mod tests {
         assert!(result.restart_recommended);
 
         let restored: AuthSnapshot = read_json_file(&auth_path)?;
-        assert_eq!(restored.openai_api_key, Some(json!("sk-target")));
+        assert_eq!(account_key_from_auth(&restored), target_key);
+
+        let refreshed_target_payload = URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&json!({
+                "email": "target-refreshed@example.com",
+                "https://api.openai.com/auth": {
+                    "chatgpt_user_id": "user-target",
+                    "organizations": [{ "id": "org-target", "is_default": true }]
+                }
+            }))
+            .unwrap(),
+        );
+        let refreshed_target_auth = AuthSnapshot {
+            auth_mode: Some("chatgpt".to_string()),
+            tokens: Some(json!({
+                "id_token": format!("header.{refreshed_target_payload}.sig"),
+                "workspace_id": "workspace-target"
+            })),
+            openai_api_key: None,
+        };
+        assert_eq!(account_key_from_auth(&refreshed_target_auth), target_key);
+        write_json_file(&auth_path, &refreshed_target_auth)?;
 
         let rollback = rollback_last_switch()?;
         assert_eq!(
@@ -1320,6 +1354,8 @@ mod tests {
 
         let rolled_back: AuthSnapshot = read_json_file(&auth_path)?;
         assert_eq!(rolled_back.openai_api_key, Some(json!("sk-previous")));
+        let updated_target_snapshot: AuthSnapshot = read_json_file(&snapshot_path)?;
+        assert_eq!(updated_target_snapshot.tokens, refreshed_target_auth.tokens);
         Ok(())
     }
 
