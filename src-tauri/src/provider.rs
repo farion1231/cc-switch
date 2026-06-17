@@ -69,6 +69,7 @@ impl Provider {
 
     pub fn is_codex_oauth(&self) -> bool {
         self.provider_type() == Some("codex_oauth")
+            || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
     }
 
     pub fn is_github_copilot(&self) -> bool {
@@ -77,9 +78,7 @@ impl Provider {
     }
 
     pub fn uses_managed_account_auth(&self) -> bool {
-        self.is_github_copilot()
-            || self.is_codex_oauth()
-            || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
+        self.is_github_copilot() || self.is_codex_oauth()
     }
 
     pub fn is_official_equivalent_for_app(&self, app_type: &crate::app_config::AppType) -> bool {
@@ -90,7 +89,6 @@ impl Provider {
         match app_type {
             crate::app_config::AppType::Claude => {
                 self.is_codex_oauth()
-                    || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
                     || self
                         .settings_config
                         .pointer("/env/ANTHROPIC_BASE_URL")
@@ -1104,6 +1102,7 @@ mod tests {
             }),
             None,
         );
+        assert!(codex_endpoint.is_codex_oauth());
         assert!(codex_endpoint.uses_managed_account_auth());
 
         copilot.meta = Some(ProviderMeta {

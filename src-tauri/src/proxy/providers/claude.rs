@@ -30,10 +30,8 @@ const REASONING_VENDOR_HINTS: &[&str] = &["moonshot", "kimi", "deepseek", "mimo"
 /// 优先级：meta.apiFormat > settings_config.api_format > openrouter_compat_mode > 默认 "anthropic"
 pub fn get_claude_api_format(provider: &Provider) -> &'static str {
     // 0) Codex OAuth 强制使用 openai_responses（不可被覆盖）
-    if let Some(meta) = provider.meta.as_ref() {
-        if meta.provider_type.as_deref() == Some("codex_oauth") {
-            return "openai_responses";
-        }
+    if provider.is_codex_oauth() {
+        return "openai_responses";
     }
 
     // 1) Preferred: meta.apiFormat (SSOT, never written to Claude Code config)
@@ -549,12 +547,7 @@ impl ClaudeAdapter {
 
     /// 检测是否为 Codex OAuth 供应商（ChatGPT Plus/Pro 反代）
     fn is_codex_oauth(&self, provider: &Provider) -> bool {
-        if let Some(meta) = provider.meta.as_ref() {
-            if meta.provider_type.as_deref() == Some("codex_oauth") {
-                return true;
-            }
-        }
-        false
+        provider.is_codex_oauth()
     }
 
     /// 检测是否为 GitHub Copilot 供应商
@@ -1246,6 +1239,23 @@ mod tests {
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.api_key, "sk-proxy-key");
         assert_eq!(auth.strategy, AuthStrategy::ClaudeAuth);
+    }
+
+    #[test]
+    fn test_base_url_codex_oauth_uses_oauth_adapter_path() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+            }
+        }));
+
+        assert_eq!(get_claude_api_format(&provider), "openai_responses");
+        assert_eq!(adapter.provider_type(&provider), ProviderType::CodexOAuth);
+        assert!(adapter.needs_transform(&provider));
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.strategy, AuthStrategy::CodexOAuth);
     }
 
     /// Regression: a Gemini OAuth credential JSON that carries only a

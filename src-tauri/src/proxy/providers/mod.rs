@@ -124,12 +124,12 @@ impl ProviderType {
                 }
 
                 // 检测是否为 GitHub Copilot
+                if provider.is_codex_oauth() {
+                    return ProviderType::CodexOAuth;
+                }
                 if let Some(meta) = provider.meta.as_ref() {
                     if meta.provider_type.as_deref() == Some("github_copilot") {
                         return ProviderType::GitHubCopilot;
-                    }
-                    if meta.provider_type.as_deref() == Some("codex_oauth") {
-                        return ProviderType::CodexOAuth;
                     }
                 }
 
@@ -427,6 +427,18 @@ mod tests {
 
         let provider_type = ProviderType::from_app_type_and_config(&AppType::Claude, &provider);
         assert_eq!(provider_type, ProviderType::OpenRouter);
+    }
+
+    #[test]
+    fn test_from_app_type_claude_codex_oauth_base_url() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+            }
+        }));
+
+        let provider_type = ProviderType::from_app_type_and_config(&AppType::Claude, &provider);
+        assert_eq!(provider_type, ProviderType::CodexOAuth);
     }
 
     #[test]
