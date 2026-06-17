@@ -679,20 +679,41 @@ function App() {
   };
 
   const handleDuplicateProvider = async (provider: Provider) => {
-    // Fix #4234: Always assign sortIndex to duplicate, even if original lacks it
+    // Fix #4234: Ensure duplicate appears next to original, even if original lacks sortIndex
     let newSortIndex: number;
+    let needUpdateOriginal = false;
+    // When the whole list lacks sortIndex, normalize all providers to contiguous
+    // indices so the duplicate (otherwise the only indexed item) isn't shoved to the top.
+    let needNormalizeAll = false;
+    let originalIdx = -1;
+
     if (provider.sortIndex !== undefined) {
       // Original has sortIndex → insert right below it
       newSortIndex = provider.sortIndex + 1;
     } else {
-      // Original lacks sortIndex → assign next available index
-      const maxSortIndex = Math.max(
-        0,
-        ...Object.values(providers)
-          .filter((p) => p.sortIndex !== undefined)
-          .map((p) => p.sortIndex!),
+      // Original lacks sortIndex → assign sortIndex to both original and duplicate
+      // to ensure they appear adjacent (not scattered across the list)
+      const allProviders = Object.values(providers); // already sorted by sortProviders
+      const indexedProviders = allProviders.filter(
+        (p) => p.sortIndex !== undefined,
       );
-      newSortIndex = maxSortIndex + 1;
+
+      if (indexedProviders.length === 0) {
+        // Whole list lacks sortIndex: assigning max+1/max+2 would make original+duplicate
+        // the only indexed items and shove them to the top. Normalize the entire list by
+        // display order, then slot the duplicate right below the original.
+        needNormalizeAll = true;
+        originalIdx = allProviders.findIndex((p) => p.id === provider.id);
+        newSortIndex = originalIdx + 1;
+      } else {
+        const maxSortIndex = indexedProviders.reduce(
+          (max, p) => Math.max(max, p.sortIndex!),
+          0,
+        );
+        // Original will get maxSortIndex + 1, duplicate gets maxSortIndex + 2
+        newSortIndex = maxSortIndex + 2;
+        needUpdateOriginal = true;
+      }
     }
 
     const duplicatedProvider: Omit<Provider, "id" | "createdAt"> & {
@@ -703,7 +724,7 @@ function App() {
       settingsConfig: deepClone(provider.settingsConfig),
       websiteUrl: provider.websiteUrl,
       category: provider.category,
-      sortIndex: newSortIndex, // Always has a value now
+      sortIndex: newSortIndex,
       meta: provider.meta ? deepClone(provider.meta) : undefined,
       icon: provider.icon,
       iconColor: provider.iconColor,
@@ -754,32 +775,57 @@ function App() {
       duplicatedProvider.addToLive = false;
     }
 
-    // Update subsequent providers' sortIndex (only if original had sortIndex and inserted in-between)
-    if (provider.sortIndex !== undefined) {
-      const updates = Object.values(providers)
+    // Update sortIndex for affected providers
+    const updates: Array<{ id: string; sortIndex: number }> = [];
+
+    if (needNormalizeAll) {
+      // Normalize the whole list to contiguous indices (0..N) by display order,
+      // reserving `newSortIndex` (= originalIdx + 1) for the duplicate.
+      Object.values(providers).forEach((p, idx) => {
+        updates.push({
+          id: p.id,
+          sortIndex: idx <= originalIdx ? idx : idx + 1,
+        });
+      });
+    } else {
+      // If original lacked sortIndex, assign it one now (so it stays adjacent to duplicate)
+      if (needUpdateOriginal) {
+        updates.push({
+          id: provider.id,
+          sortIndex: newSortIndex - 1, // Original gets newSortIndex - 1, duplicate gets newSortIndex
+        });
+      }
+
+      // Update subsequent providers' sortIndex (shift them down by 1 or 2)
+      const shiftAmount = needUpdateOriginal ? 2 : 1;
+      const threshold = needUpdateOriginal ? newSortIndex - 1 : newSortIndex;
+
+      Object.values(providers)
         .filter(
           (p) =>
             p.sortIndex !== undefined &&
-            p.sortIndex >= newSortIndex &&
+            p.sortIndex >= threshold &&
             p.id !== provider.id,
         )
-        .map((p) => ({
-          id: p.id,
-          sortIndex: p.sortIndex! + 1,
-        }));
+        .forEach((p) => {
+          updates.push({
+            id: p.id,
+            sortIndex: p.sortIndex! + shiftAmount,
+          });
+        });
+    }
 
-      if (updates.length > 0) {
-        try {
-          await providersApi.updateSortOrder(updates, activeApp);
-        } catch (error) {
-          console.error("[App] Failed to update sort order", error);
-          toast.error(
-            t("provider.sortUpdateFailed", {
-              defaultValue: "排序更新失败",
-            }),
-          );
-          return; // 如果排序更新失败，不继续添加
-        }
+    if (updates.length > 0) {
+      try {
+        await providersApi.updateSortOrder(updates, activeApp);
+      } catch (error) {
+        console.error("[App] Failed to update sort order", error);
+        toast.error(
+          t("provider.sortUpdateFailed", {
+            defaultValue: "排序更新失败",
+          }),
+        );
+        return; // 如果排序更新失败，不继续添加
       }
     }
 
