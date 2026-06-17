@@ -370,27 +370,24 @@ pub fn rollback_last_switch() -> Result<CodexAccountSwitchResult, AppError> {
     let latest: LatestSwitch = read_json_file(&paths.latest_switch_path)?;
 
     let mut registry = read_registry_with_snapshot_scan()?;
-    let restore_path = if latest.backup_path.trim().is_empty() {
-        let previous_key = latest.previous_account_key.as_deref().ok_or_else(|| {
-            AppError::Config("No rollback backup or previous Codex account snapshot.".to_string())
-        })?;
-        let previous_item = registry
-            .items
-            .iter()
-            .find(|item| item.account_key == previous_key)
-            .ok_or_else(|| {
-                AppError::Config(format!(
-                    "Previous Codex account snapshot not found: {previous_key}"
-                ))
-            })?;
-        let snapshot_path = PathBuf::from(&previous_item.snapshot_path);
-        validate_auth_file(&snapshot_path)?;
-        ensure_snapshot_matches_account(previous_item)?;
-        snapshot_path
-    } else {
+    let previous_item = latest
+        .previous_account_key
+        .as_deref()
+        .and_then(|key| registry.items.iter().find(|item| item.account_key == key));
+    let restore_path = if !latest.backup_path.trim().is_empty() {
         let backup_path = PathBuf::from(&latest.backup_path);
         validate_auth_file(&backup_path)?;
-        backup_path
+        let backup_auth: AuthSnapshot = read_json_file(&backup_path)?;
+        if previous_item
+            .map(|item| can_persist_auth_to_account(&backup_auth, item))
+            .unwrap_or(true)
+        {
+            backup_path
+        } else {
+            previous_snapshot_path_for_rollback(previous_item)?
+        }
+    } else {
+        previous_snapshot_path_for_rollback(previous_item)?
     };
 
     let auth_path = get_codex_auth_path();
@@ -413,6 +410,18 @@ pub fn rollback_last_switch() -> Result<CodexAccountSwitchResult, AppError> {
         backup_path,
         restart_recommended: true,
     })
+}
+
+fn previous_snapshot_path_for_rollback(
+    previous_item: Option<&RegistryItem>,
+) -> Result<PathBuf, AppError> {
+    let previous_item = previous_item.ok_or_else(|| {
+        AppError::Config("No rollback backup or previous Codex account snapshot.".to_string())
+    })?;
+    let snapshot_path = PathBuf::from(&previous_item.snapshot_path);
+    validate_auth_file(&snapshot_path)?;
+    ensure_snapshot_matches_account(previous_item)?;
+    Ok(snapshot_path)
 }
 
 pub fn restart_codex_app() -> Result<CodexAppRestartResult, AppError> {
@@ -1311,6 +1320,104 @@ mod tests {
 
         let rolled_back: AuthSnapshot = read_json_file(&auth_path)?;
         assert_eq!(rolled_back.openai_api_key, Some(json!("sk-previous")));
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn rollback_prefers_previous_snapshot_when_backup_is_proxy_auth() -> Result<(), AppError> {
+        let _home = TestHomeGuard::new();
+        let paths = account_paths();
+        std::fs::create_dir_all(&paths.snapshots_dir)
+            .map_err(|e| AppError::io(&paths.snapshots_dir, e))?;
+
+        let previous_payload = URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&json!({
+                "email": "previous@example.com",
+                "https://api.openai.com/auth": {
+                    "chatgpt_user_id": "user-previous",
+                    "organizations": [{ "id": "org-previous", "is_default": true }]
+                }
+            }))
+            .unwrap(),
+        );
+        let previous_auth = AuthSnapshot {
+            auth_mode: Some("chatgpt".to_string()),
+            tokens: Some(json!({
+                "id_token": format!("header.{previous_payload}.sig"),
+                "workspace_id": "workspace-previous"
+            })),
+            openai_api_key: None,
+        };
+        let previous_key = account_key_from_auth(&previous_auth);
+        let previous_snapshot_path = paths.snapshots_dir.join("previous-chatgpt.json");
+        write_json_file(&previous_snapshot_path, &previous_auth)?;
+
+        let target_auth = AuthSnapshot {
+            auth_mode: Some("apikey".to_string()),
+            tokens: None,
+            openai_api_key: Some(json!("sk-target")),
+        };
+        let target_key = account_key_from_auth(&target_auth);
+        let target_snapshot_path = paths.snapshots_dir.join("target.json");
+        write_json_file(&target_snapshot_path, &target_auth)?;
+
+        let registry = Registry {
+            schema_version: 1,
+            updated_at: 1,
+            active_account_key: Some(previous_key.clone()),
+            items: vec![
+                RegistryItem {
+                    account_key: previous_key.clone(),
+                    snapshot_path: previous_snapshot_path.to_string_lossy().to_string(),
+                    email: "previous@example.com".to_string(),
+                    alias: String::new(),
+                    account_name: String::new(),
+                    workspace_name: String::new(),
+                    profile_name: "Previous".to_string(),
+                    plan: String::new(),
+                    auth_mode: "chatgpt".to_string(),
+                    last_used_at: None,
+                    extra: Map::new(),
+                },
+                RegistryItem {
+                    account_key: target_key.clone(),
+                    snapshot_path: target_snapshot_path.to_string_lossy().to_string(),
+                    email: String::new(),
+                    alias: String::new(),
+                    account_name: String::new(),
+                    workspace_name: String::new(),
+                    profile_name: "Target".to_string(),
+                    plan: String::new(),
+                    auth_mode: "apikey".to_string(),
+                    last_used_at: None,
+                    extra: Map::new(),
+                },
+            ],
+            extra: Map::new(),
+        };
+        write_registry(&registry)?;
+
+        let proxy_auth = AuthSnapshot {
+            auth_mode: Some("apikey".to_string()),
+            tokens: None,
+            openai_api_key: Some(json!("proxy-placeholder-key")),
+        };
+        write_json_file(&get_codex_auth_path(), &proxy_auth)?;
+
+        let result = switch_account(target_key.clone())?;
+        assert_eq!(result.active_account_key, target_key);
+        assert!(!result.backup_path.is_empty());
+
+        let rollback = rollback_last_switch()?;
+        assert_eq!(rollback.active_account_key, previous_key);
+
+        let rolled_back: AuthSnapshot = read_json_file(&get_codex_auth_path())?;
+        assert_eq!(rolled_back.auth_mode.as_deref(), Some("chatgpt"));
+        assert_eq!(
+            account_key_from_auth(&rolled_back),
+            rollback.active_account_key
+        );
         Ok(())
     }
 }

@@ -17,7 +17,7 @@ interface UsageSettingsProps {
 
 export function UsageSettings({ settings, onChange }: UsageSettingsProps) {
   const { t } = useTranslation();
-  const refreshInterval = String(settings.usageRefreshIntervalSecs ?? 60);
+  const refreshInterval = String(settings.codexQuotaRefreshInterval ?? 300);
 
   return (
     <section className="space-y-4">
@@ -57,7 +57,7 @@ export function UsageSettings({ settings, onChange }: UsageSettingsProps) {
           <Select
             value={refreshInterval}
             onValueChange={(value) =>
-              onChange({ usageRefreshIntervalSecs: Number(value) })
+              onChange({ codexQuotaRefreshInterval: Number(value) })
             }
           >
             <SelectTrigger className="h-9 w-[120px]">

@@ -37,7 +37,7 @@ export const settingsSchema = z.object({
   skillStorageLocation: z.enum(["cc_switch", "unified"]).optional(),
 
   // Codex 用量刷新间隔（秒，默认 300）
-  codexQuotaRefreshInterval: z.number().min(60).optional(),
+  codexQuotaRefreshInterval: z.number().min(30).optional(),
 
   // 用量查询设置
   usageRefreshIntervalSecs: z.number().min(30).optional(),

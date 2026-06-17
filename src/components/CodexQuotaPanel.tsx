@@ -12,6 +12,7 @@ import {
 import { CodexAccountsManager } from "@/components/codex/CodexAccountsPanel";
 import { codexAccountsApi } from "@/lib/api";
 import type { CodexAccountSummary } from "@/lib/api/codexAccounts";
+import { useSettingsQuery } from "@/lib/query";
 import { useCodexAllQuotas } from "@/lib/query/subscription";
 import { cn } from "@/lib/utils";
 import type { QuotaTier } from "@/types/subscription";
@@ -97,7 +98,14 @@ export function CodexQuotaPanel() {
     queryKey: CODEX_ACCOUNTS_QUERY_KEY,
     queryFn: () => codexAccountsApi.list(),
   });
-  const quotasQuery = useCodexAllQuotas({ enabled: true, autoQuery: true });
+  const settingsQuery = useSettingsQuery();
+  const refreshIntervalMs =
+    (settingsQuery.data?.codexQuotaRefreshInterval ?? 300) * 1000;
+  const quotasQuery = useCodexAllQuotas({
+    enabled: true,
+    autoQuery: true,
+    intervalMs: refreshIntervalMs,
+  });
 
   const accounts = useMemo(
     () => accountsQuery.data ?? [],
