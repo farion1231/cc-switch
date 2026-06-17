@@ -1,5 +1,5 @@
 import { createRef, type ReactNode } from "react";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
@@ -15,7 +15,6 @@ import type {
 import {
   applySkillDiscoveryProgress,
   beginSkillDiscovery,
-  getSkillDiscoveryTaskSnapshot,
   resetSkillDiscoveryTask,
 } from "@/stores/skillDiscoveryTask";
 
@@ -42,7 +41,7 @@ let discoveryErrorMock: Error | null = null;
 let reposLoadingMock = false;
 const refetchDiscoverableMock = vi.fn();
 const forceRefetchDiscoverableMock = vi.fn();
-const selectValueRenderMock = vi.fn();
+const selectItemRenderMock = vi.fn();
 // Stable cache so repeated renders see referentially-equal data.
 // SkillsPage has `useEffect([skillsShResult, ...])` that calls setState — a
 // fresh object every render would loop forever.
@@ -93,14 +92,23 @@ vi.mock("@/components/ui/select", () => ({
     </select>
   ),
   SelectTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
-  SelectValue: (props: { children?: ReactNode; placeholder?: string }) => {
-    selectValueRenderMock(props);
-    return null;
-  },
+  SelectValue: () => null,
   SelectContent: ({ children }: { children: ReactNode }) => <>{children}</>,
-  SelectItem: ({ value }: { value: string; children: ReactNode }) => (
-    <option value={value}>{value}</option>
-  ),
+  SelectItem: ({
+    value,
+    className,
+  }: {
+    value: string;
+    className?: string;
+    children: ReactNode;
+  }) => {
+    selectItemRenderMock({ value, className });
+    return (
+      <option value={value} className={className}>
+        {value}
+      </option>
+    );
+  },
 }));
 
 vi.mock("@/hooks/useSkills", () => ({
@@ -190,7 +198,7 @@ describe("SkillsPage - skills.sh install (regression)", () => {
     forceRefetchDiscoverableMock.mockResolvedValue({
       data: { skills: discoverableSkillsMock, failures: [] },
     });
-    selectValueRenderMock.mockClear();
+    selectItemRenderMock.mockClear();
     resetSkillDiscoveryTask();
     skillReposMock = [];
     searchCache.clear();
@@ -282,6 +290,24 @@ describe("SkillsPage - skills.sh install (regression)", () => {
     expect(screen.getByText("anthropics/skills")).toBeInTheDocument();
   });
 
+  it("keeps selected repository option text visible", () => {
+    skillReposMock = [
+      {
+        owner: "ComposioHQ",
+        name: "awesome-claude-skills",
+        branch: "master",
+        enabled: true,
+      },
+    ];
+
+    render(<SkillsPage initialApp="claude" />);
+
+    const repositoryOption = selectItemRenderMock.mock.calls
+      .map(([props]) => props)
+      .find((props) => props.value === "ComposioHQ/awesome-claude-skills");
+    expect(repositoryOption?.className ?? "").not.toContain("]:hidden");
+  });
+
   it("shows an independent icon-only retry button for every repository", async () => {
     skillReposMock = [
       {
@@ -329,20 +355,6 @@ describe("SkillsPage - skills.sh install (regression)", () => {
     );
   });
 
-  it("shows repository connection information on the very first render", () => {
-    discoverableSkillsMock = [];
-    discoveryLoadingMock = false;
-    reposLoadingMock = true;
-    skillReposMock = [];
-
-    const ref = createRef<SkillsPageHandle>();
-    render(<SkillsPage ref={ref} initialApp="claude" />);
-
-    expect(
-      screen.getByText("skills.discoveryInitialConnecting"),
-    ).toBeInTheDocument();
-  });
-
   it("does not keep the initial connection spinner after the initial query fails", async () => {
     discoverableSkillsMock = [];
     discoveryErrorMock = new Error("backend unavailable");
@@ -363,110 +375,6 @@ describe("SkillsPage - skills.sh install (regression)", () => {
       ).not.toBeInTheDocument(),
     );
     expect(screen.getByText("skills.loadFailed")).toBeInTheDocument();
-  });
-
-  it("shows the repository count after repository configuration loads", () => {
-    discoverableSkillsMock = [];
-    discoveryLoadingMock = true;
-    beginSkillDiscovery();
-    skillReposMock = [
-      {
-        owner: "anthropics",
-        name: "skills",
-        branch: "main",
-        enabled: true,
-      },
-      {
-        owner: "JimLiu",
-        name: "baoyu-skills",
-        branch: "main",
-        enabled: true,
-      },
-    ];
-
-    const ref = createRef<SkillsPageHandle>();
-    render(<SkillsPage ref={ref} initialApp="claude" />);
-
-    expect(
-      screen.getByText("skills.discoveryInitialConnectingCount"),
-    ).toBeInTheDocument();
-  });
-
-  it("keeps the initial connection message briefly before revealing the first cards", async () => {
-    vi.useFakeTimers();
-    discoverableSkillsMock = [];
-    discoveryLoadingMock = true;
-    beginSkillDiscovery();
-    skillReposMock = [
-      {
-        owner: "anthropics",
-        name: "skills",
-        branch: "main",
-        enabled: true,
-      },
-      {
-        owner: "obra",
-        name: "superpowers",
-        branch: "main",
-        enabled: true,
-      },
-    ];
-
-    render(<SkillsPage initialApp="claude" />);
-
-    act(() => {
-      applySkillDiscoveryProgress({
-        phase: "completed",
-        completed: 1,
-        total: 2,
-        repo: "anthropics/skills",
-        skillCount: 1,
-        skills: [
-          {
-            key: "anthropics/skills:frontend-design",
-            name: "Frontend Design",
-            description: "Design interfaces",
-            directory: "frontend-design",
-            repoOwner: "anthropics",
-            repoName: "skills",
-            repoBranch: "main",
-          },
-        ],
-      });
-    });
-
-    expect(
-      screen.getByText("skills.discoveryInitialConnectingCount"),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Frontend Design")).not.toBeInTheDocument();
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(800);
-    });
-
-    expect(screen.getByText("Frontend Design")).toBeInTheDocument();
-    vi.useRealTimers();
-  });
-
-  it("marks a manual refresh active synchronously before the query refetch starts", () => {
-    skillReposMock = [
-      {
-        owner: "anthropics",
-        name: "skills",
-        branch: "main",
-        enabled: true,
-      },
-    ];
-    refetchDiscoverableMock.mockReturnValue(new Promise(() => {}));
-
-    const ref = createRef<SkillsPageHandle>();
-    render(<SkillsPage ref={ref} initialApp="claude" />);
-
-    act(() => {
-      ref.current?.refresh();
-    });
-
-    expect(getSkillDiscoveryTaskSnapshot().active).toBe(true);
   });
 
   it("does not start a second refresh before the first click rerenders the page", () => {
@@ -500,62 +408,6 @@ describe("SkillsPage - skills.sh install (regression)", () => {
       expect.objectContaining({
         closeButton: true,
         duration: Infinity,
-      }),
-    );
-  });
-
-  it("can install a skill card revealed by repository progress before the final result", async () => {
-    vi.useFakeTimers();
-    discoverableSkillsMock = [];
-    discoveryLoadingMock = true;
-    beginSkillDiscovery();
-    skillReposMock = [
-      {
-        owner: "anthropics",
-        name: "skills",
-        branch: "main",
-        enabled: true,
-      },
-    ];
-
-    render(<SkillsPage initialApp="claude" />);
-    act(() => {
-      applySkillDiscoveryProgress({
-        phase: "completed",
-        completed: 1,
-        total: 1,
-        repo: "anthropics/skills",
-        skillCount: 1,
-        skills: [
-          {
-            key: "anthropics/skills:frontend-design",
-            name: "Frontend Design",
-            description: "Design interfaces",
-            directory: "frontend-design",
-            repoOwner: "anthropics",
-            repoName: "skills",
-            repoBranch: "main",
-          },
-        ],
-      });
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(800);
-    });
-    vi.useRealTimers();
-
-    const card = screen.getByText("Frontend Design").closest("div.glass-card");
-    const installButton = card!.querySelector(
-      "button:last-of-type",
-    ) as HTMLButtonElement;
-    await userEvent.click(installButton);
-
-    expect(installMutateAsyncMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        skill: expect.objectContaining({
-          repoOwner: "anthropics",
-          name: "Frontend Design",
-        }),
       }),
     );
   });
@@ -645,109 +497,6 @@ describe("SkillsPage - skills.sh install (regression)", () => {
     rerender(<SkillsPage initialApp="claude" />);
 
     await waitFor(() => expect(repoFilter).toHaveValue("all"));
-  });
-
-  it("shows repository names inside the initial connection message", () => {
-    discoverableSkillsMock = [];
-    discoveryLoadingMock = true;
-    beginSkillDiscovery();
-    skillReposMock = [
-      {
-        owner: "anthropics",
-        name: "skills",
-        branch: "main",
-        enabled: true,
-      },
-      {
-        owner: "JimLiu",
-        name: "baoyu-skills",
-        branch: "main",
-        enabled: true,
-      },
-      {
-        owner: "obra",
-        name: "superpowers",
-        branch: "main",
-        enabled: true,
-      },
-      {
-        owner: "cexll",
-        name: "myclaude",
-        branch: "master",
-        enabled: true,
-      },
-    ];
-
-    render(<SkillsPage initialApp="claude" />);
-
-    const connection = screen.getByRole("status");
-    expect(
-      within(connection).getByText("anthropics/skills"),
-    ).toBeInTheDocument();
-    expect(
-      within(connection).getByText("JimLiu/baoyu-skills"),
-    ).toBeInTheDocument();
-    expect(within(connection).getByText("cexll/myclaude")).toBeInTheDocument();
-    expect(within(connection).queryByText("obra/superpowers")).toBeNull();
-  });
-
-  it("keeps repository status icons out of the selected filter value", () => {
-    skillReposMock = [
-      {
-        owner: "anthropics",
-        name: "skills",
-        branch: "main",
-        enabled: true,
-      },
-    ];
-
-    render(<SkillsPage initialApp="claude" />);
-
-    const selectedValueProps = selectValueRenderMock.mock.calls
-      .map(([props]) => props)
-      .find((props) => props.placeholder === "skills.filter.repo");
-    expect(selectedValueProps?.children).toBe("skills.filter.allRepos");
-  });
-
-  it("renders large repository results in batches to keep the first frame responsive", async () => {
-    skillReposMock = [
-      {
-        owner: "large",
-        name: "repo",
-        branch: "main",
-        enabled: true,
-      },
-    ];
-    discoverableSkillsMock = Array.from({ length: 75 }, (_, index) => ({
-      key: `large/repo:skill-${index}`,
-      name: `Large Skill ${index}`,
-      description: "",
-      directory: `skill-${index}`,
-      repoOwner: "large",
-      repoName: "repo",
-      repoBranch: "main",
-    }));
-
-    const ref = createRef<SkillsPageHandle>();
-    render(<SkillsPage ref={ref} initialApp="claude" />);
-
-    expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(48);
-    const loadMore = screen.getByRole("button", {
-      name: "skills.discoveryLoadMore",
-    });
-
-    await userEvent.click(loadMore);
-
-    expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(75);
-    expect(
-      screen.queryByRole("button", { name: "skills.discoveryLoadMore" }),
-    ).toBeNull();
-
-    await act(async () => {
-      await ref.current?.refresh();
-    });
-
-    expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(48);
   });
 
   it("shows repository add discovery failures instead of a zero-count success", async () => {

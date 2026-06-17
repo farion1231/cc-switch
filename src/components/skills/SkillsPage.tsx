@@ -636,17 +636,14 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                         </SelectValue>
                       </SelectTrigger>
                       <SelectContent className="bg-card text-foreground shadow-lg max-h-64 min-w-[var(--radix-select-trigger-width)]">
-                        <SelectItem
-                          value="all"
-                          className="text-left pr-3 [&[data-state=checked]>span:first-child]:hidden"
-                        >
+                        <SelectItem value="all" className="text-left pr-3">
                           {t("skills.filter.allRepos")}
                         </SelectItem>
                         {repoOptions.map((repo) => (
                           <SelectItem
                             key={repo}
                             value={repo}
-                            className="text-left pr-3 [&[data-state=checked]>span:first-child]:hidden"
+                            className="text-left pr-3"
                             title={repo}
                           >
                             <span className="flex w-full items-center justify-between gap-3">
@@ -683,21 +680,18 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                         />
                       </SelectTrigger>
                       <SelectContent className="bg-card text-foreground shadow-lg">
-                        <SelectItem
-                          value="all"
-                          className="text-left pr-3 [&[data-state=checked]>span:first-child]:hidden"
-                        >
+                        <SelectItem value="all" className="text-left pr-3">
                           {t("skills.filter.all")}
                         </SelectItem>
                         <SelectItem
                           value="installed"
-                          className="text-left pr-3 [&[data-state=checked]>span:first-child]:hidden"
+                          className="text-left pr-3"
                         >
                           {t("skills.filter.installed")}
                         </SelectItem>
                         <SelectItem
                           value="uninstalled"
-                          className="text-left pr-3 [&[data-state=checked]>span:first-child]:hidden"
+                          className="text-left pr-3"
                         >
                           {t("skills.filter.uninstalled")}
                         </SelectItem>

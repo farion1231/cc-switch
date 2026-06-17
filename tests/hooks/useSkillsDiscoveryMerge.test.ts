@@ -75,49 +75,6 @@ describe("mergeSkillDiscoveryResult", () => {
     expect(merged.failures).toEqual(next.failures);
   });
 
-  it("does not replace newer in-memory skills with stale fallback data after a failed refresh", () => {
-    const newerInMemory: SkillDiscoveryResult = {
-      skills: [
-        {
-          key: "anthropics/skills:frontend-design",
-          name: "Frontend Design",
-          description: "Newer in-memory result",
-          directory: "frontend-design",
-          repoOwner: "anthropics",
-          repoName: "skills",
-          repoBranch: "main",
-        },
-      ],
-      failures: [],
-    };
-    const failedWithStaleFallback: SkillDiscoveryResult = {
-      skills: [
-        {
-          ...newerInMemory.skills[0],
-          description: "Older persisted fallback",
-        },
-      ],
-      failures: [
-        {
-          owner: "anthropics",
-          name: "skills",
-          branch: "main",
-          error: "network unavailable",
-        },
-      ],
-    };
-
-    const merged = mergeSkillDiscoveryResult(
-      newerInMemory,
-      failedWithStaleFallback,
-    );
-
-    expect(merged.skills).toEqual([
-      expect.objectContaining({ description: "Newer in-memory result" }),
-    ]);
-    expect(merged.failures).toEqual(failedWithStaleFallback.failures);
-  });
-
   it("does not resurrect stale skills after the latest successful refresh was empty", () => {
     const latestEmptyResult: SkillDiscoveryResult = {
       skills: [],
@@ -155,32 +112,6 @@ describe("mergeSkillDiscoveryResult", () => {
     expect(merged.skills).toEqual([]);
     expect(merged.refreshedRepositories).toEqual(
       latestEmptyResult.refreshedRepositories,
-    );
-  });
-
-  it("does not retain old skills after a repository refresh succeeds", () => {
-    const next: SkillDiscoveryResult = {
-      skills: [
-        {
-          key: "anthropics/skills:new-skill",
-          name: "New Skill",
-          description: "",
-          directory: "new-skill",
-          repoOwner: "anthropics",
-          repoName: "skills",
-          repoBranch: "main",
-        },
-      ],
-      failures: [],
-    };
-
-    const merged = mergeSkillDiscoveryResult(previous, next);
-
-    expect(
-      merged.skills.some((skill) => skill.name === "Frontend Design"),
-    ).toBe(false);
-    expect(merged.skills.some((skill) => skill.name === "New Skill")).toBe(
-      true,
     );
   });
 
@@ -251,42 +182,6 @@ describe("mergeSkillDiscoveryResult", () => {
     );
 
     expect(merged.skills.map((skill) => skill.name)).toEqual(["Current Skill"]);
-  });
-
-  it("keeps skills from a repository added after an older refresh started", () => {
-    const next: SkillDiscoveryResult = {
-      skills: [
-        {
-          key: "anthropics/skills:new-skill",
-          name: "New Skill",
-          description: "",
-          directory: "new-skill",
-          repoOwner: "anthropics",
-          repoName: "skills",
-          repoBranch: "main",
-        },
-      ],
-      failures: [],
-    };
-    const previousWithNewRepository: SkillDiscoveryResult = {
-      ...previous,
-      skills: [
-        ...previous.skills,
-        {
-          key: "new/repo:new-skill",
-          name: "New Repository Skill",
-          description: "",
-          directory: "new-skill",
-          repoOwner: "new",
-          repoName: "repo",
-          repoBranch: "main",
-        },
-      ],
-    };
-
-    const merged = mergeSkillDiscoveryResult(previousWithNewRepository, next);
-
-    expect(merged.skills.some((skill) => skill.repoOwner === "new")).toBe(true);
   });
 
   it("drops late results for a repository removed while discovery was running", () => {

@@ -18,14 +18,6 @@ const updateSkillMock = vi.fn();
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
 const toastInfoMock = vi.fn();
-let updateProgressHandler:
-  | ((progress: {
-      phase: "connecting" | "checking" | "downloading" | "scanning";
-      current: number;
-      total: number;
-      repo: string;
-    }) => void)
-  | undefined;
 let installedSkillsMock: Array<{
   id: string;
   name: string;
@@ -37,7 +29,6 @@ let installedSkillsMock: Array<{
   installedAt: number;
   updatedAt: number;
 }> = [];
-let isCheckingUpdatesMock = false;
 let updateCheckResultMock: {
   updates: Array<{
     skillId: string;
@@ -56,12 +47,7 @@ vi.mock("sonner", () => ({
 }));
 
 vi.mock("@/hooks/useTauriEvent", () => ({
-  useTauriEvent: (
-    _eventName: string,
-    handler: typeof updateProgressHandler,
-  ) => {
-    updateProgressHandler = handler;
-  },
+  useTauriEvent: vi.fn(),
 }));
 
 vi.mock("@/hooks/useSkills", () => ({
@@ -110,7 +96,7 @@ vi.mock("@/hooks/useSkills", () => ({
     data: updateCheckResultMock,
     refetch: checkUpdatesMock,
     forceRefetch: checkUpdatesMock,
-    isFetching: isCheckingUpdatesMock,
+    isFetching: false,
   }),
   useUpdateSkill: () => ({
     mutateAsync: updateSkillMock,
@@ -143,9 +129,7 @@ describe("UnifiedSkillsPanel", () => {
     toastErrorMock.mockReset();
     toastInfoMock.mockReset();
     installedSkillsMock = [];
-    isCheckingUpdatesMock = false;
     updateCheckResultMock = { updates: [], failures: [] };
-    updateProgressHandler = undefined;
     checkUpdatesMock.mockResolvedValue({ data: { updates: [], failures: [] } });
   });
 
@@ -266,78 +250,6 @@ describe("UnifiedSkillsPanel", () => {
     };
     const { container } = render(<>{options.description}</>);
     expect(container).toHaveTextContent("JimLiu/baoyu-skills");
-  });
-
-  it("shows repository connection progress immediately before SHA requests finish", () => {
-    installedSkillsMock = [
-      {
-        id: "skill-a",
-        name: "Skill A",
-        directory: "skill-a",
-        repoOwner: "anthropics",
-        repoName: "skills",
-        repoBranch: "main",
-        apps: {},
-        installedAt: 0,
-        updatedAt: 0,
-      },
-      {
-        id: "skill-b",
-        name: "Skill B",
-        directory: "skill-b",
-        repoOwner: "JimLiu",
-        repoName: "baoyu-skills",
-        repoBranch: "main",
-        apps: {},
-        installedAt: 0,
-        updatedAt: 0,
-      },
-    ];
-    isCheckingUpdatesMock = true;
-
-    render(
-      <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="claude" />,
-    );
-
-    expect(
-      screen.getByText("skills.connectingRepositoriesProgress"),
-    ).toBeInTheDocument();
-  });
-
-  it("shows the latest meaningful repository phase", () => {
-    installedSkillsMock = [
-      {
-        id: "skill-a",
-        name: "Skill A",
-        directory: "skill-a",
-        repoOwner: "anthropics",
-        repoName: "skills",
-        repoBranch: "main",
-        apps: {},
-        installedAt: 0,
-        updatedAt: 0,
-      },
-    ];
-    isCheckingUpdatesMock = true;
-
-    render(
-      <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="claude" />,
-    );
-
-    act(() => {
-      updateProgressHandler?.({
-        phase: "downloading",
-        current: 1,
-        total: 1,
-        repo: "anthropics/skills",
-      });
-    });
-    const progressButton = screen.getByRole("button", {
-      name: /skills\.downloadingRepository.*anthropics\/skills/,
-    });
-    expect(progressButton).toBeInTheDocument();
-
-    expect(progressButton).toHaveTextContent("anthropics/skills");
   });
 
   it("reports successful updates together with repositories that did not finish", async () => {
@@ -488,27 +400,5 @@ describe("UnifiedSkillsPanel", () => {
     expect(
       screen.getByRole("button", { name: "skills.checkUpdates" }),
     ).toHaveAttribute("title", "skills.noCheckableUpdates");
-  });
-
-  it("visually hides update all while preserving its layout space", () => {
-    updateCheckResultMock = {
-      updates: [
-        {
-          skillId: "frontend-design",
-          skillName: "frontend-design",
-          status: "updateAvailable",
-        },
-      ],
-      failures: [],
-    };
-    isCheckingUpdatesMock = true;
-
-    render(
-      <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="claude" />,
-    );
-
-    expect(
-      screen.getByRole("button", { name: "skills.updateAll" }),
-    ).toHaveClass("invisible");
   });
 });

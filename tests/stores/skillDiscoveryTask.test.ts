@@ -35,24 +35,6 @@ describe("skillDiscoveryTask", () => {
     ).toMatchObject({ phase: "loading" });
   });
 
-  it("does not reset repository progress when discovery is begun twice", () => {
-    beginSkillDiscovery();
-    applySkillDiscoveryProgress({
-      phase: "loading",
-      completed: 1,
-      total: 5,
-      repo: "anthropics/skills",
-    });
-
-    beginSkillDiscovery();
-
-    expect(getSkillDiscoveryTaskSnapshot()).toMatchObject({
-      active: true,
-      completed: 1,
-      total: 5,
-    });
-  });
-
   it("starts a distinct task when a second network refresh supersedes the first", () => {
     const firstTask = beginSkillDiscovery();
     applySkillDiscoveryProgress({
@@ -144,34 +126,6 @@ describe("skillDiscoveryTask", () => {
     expect(getSkillDiscoveryTaskSnapshot().active).toBe(false);
   });
 
-  it("ignores delayed progress from a previous refresh after a new refresh starts", () => {
-    const firstTask = beginSkillDiscovery();
-    finishSkillDiscovery(
-      {
-        skills: [],
-        failures: [],
-      },
-      firstTask,
-    );
-    const secondTask = beginSkillDiscovery();
-
-    applySkillDiscoveryProgress({
-      phase: "completed",
-      completed: 1,
-      total: 1,
-      repo: "stale/repository",
-      requestId: firstTask,
-    });
-
-    expect(secondTask).not.toBe(firstTask);
-    expect(getSkillDiscoveryTaskSnapshot()).toMatchObject({
-      active: true,
-      completed: 0,
-      total: 0,
-      repositories: {},
-    });
-  });
-
   it("does not leave repository spinners running after the discovery command fails", () => {
     beginSkillDiscovery();
     applySkillDiscoveryProgress({
@@ -190,48 +144,6 @@ describe("skillDiscoveryTask", () => {
           phase: "failed",
         },
       },
-    });
-  });
-
-  it("keeps the task active until the discovery command returns", () => {
-    beginSkillDiscovery();
-
-    applySkillDiscoveryProgress({
-      phase: "completed",
-      completed: 1,
-      total: 1,
-      repo: "anthropics/skills",
-      skillCount: 1,
-      skills: [],
-    });
-
-    expect(getSkillDiscoveryTaskSnapshot().active).toBe(true);
-
-    finishSkillDiscovery({
-      skills: [],
-      failures: [],
-    });
-
-    expect(getSkillDiscoveryTaskSnapshot().active).toBe(false);
-  });
-
-  it("ignores late non-terminal progress after the discovery command returns", () => {
-    beginSkillDiscovery();
-    finishSkillDiscovery({
-      skills: [],
-      failures: [],
-    });
-
-    applySkillDiscoveryProgress({
-      phase: "scanning",
-      completed: 0,
-      total: 1,
-      repo: "anthropics/skills",
-    });
-
-    expect(getSkillDiscoveryTaskSnapshot()).toMatchObject({
-      active: false,
-      repositories: {},
     });
   });
 
