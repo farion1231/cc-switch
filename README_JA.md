@@ -142,7 +142,7 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.ccsub.net/register?ref=Y6Z8DXEA"><img src="assets/partners/logos/ccsub.jpg" alt="CCSub" width="150"></a></td>
+<td width="180"><a href="https://www.ccsub.net/register?ref=Y6Z8DXEA"><img src="assets/partners/logos/ccsub.svg" alt="CCSub" width="150"></a></td>
 <td>CCSub のご支援に感謝します！CCSub は安定した低価格の AI API リレープラットフォームで、Claude Code 公式サブスクリプションの強力な代替です。1 つの API キーで Claude Opus 4.8、Sonnet 4.6、Haiku 4.5、GPT-5、Gemini、DeepSeek の全モデルを公式直接利用の約 1/3 のコストでご利用いただけます。VPN 不要で世界中から直接接続可能。Claude Code、Codex、Cursor、Cline、Continue、Windsurf など主要な AI コーディングツールすべてに対応しています。<a href="https://www.ccsub.net/register?ref=Y6Z8DXEA">こちらのリンク</a>から登録すると $5 の無料クレジットがもらえます。</td>
 </tr>
 

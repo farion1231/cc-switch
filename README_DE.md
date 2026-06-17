@@ -142,7 +142,7 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.ccsub.net/register?ref=Y6Z8DXEA"><img src="assets/partners/logos/ccsub.jpg" alt="CCSub" width="150"></a></td>
+<td width="180"><a href="https://www.ccsub.net/register?ref=Y6Z8DXEA"><img src="assets/partners/logos/ccsub.svg" alt="CCSub" width="150"></a></td>
 <td>Danke an CCSub für die Unterstützung dieses Projekts! CCSub ist eine zuverlässige und kostengünstige AI-API-Relay-Plattform — Ihr direkter Ersatz für ein Claude.ai-Abonnement. Mit einem einzigen API-Schlüssel erhalten Sie Zugriff auf Claude Opus 4.8, Sonnet, Haiku, GPT-5, Gemini und DeepSeek zu etwa 30 % der Kosten der direkten API-Nutzung — ohne VPN, weltweit nutzbar. Kompatibel mit Claude Code, Codex, Cursor, Cline, Continue, Windsurf und allen gängigen AI-Coding-Tools. Registrieren Sie sich über <a href="https://www.ccsub.net/register?ref=Y6Z8DXEA">diesen Link</a> und erhalten Sie $5 Startguthaben bei der Anmeldung.</td>
 </tr>
 
