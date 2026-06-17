@@ -2344,8 +2344,15 @@ impl ProxyService {
         }
 
         if let Some(auth) = live_config.get_mut("auth").and_then(|v| v.as_object_mut()) {
+            let has_oauth_login_material = crate::codex_config::codex_auth_has_oauth_login_material(
+                &Value::Object(auth.clone()),
+            );
             auth.insert("OPENAI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
-            auth.insert("auth_mode".to_string(), json!("apikey"));
+            if has_oauth_login_material {
+                auth.insert("auth_mode".to_string(), json!("chatgpt"));
+            } else {
+                auth.insert("auth_mode".to_string(), json!("apikey"));
+            }
         }
 
         let config_str = live_config
@@ -4045,6 +4052,50 @@ experimental_bearer_token = "PROXY_MANAGED"
         assert!(
             !live_config.contains("http://127.0.0.1:15721"),
             "cleanup should remove local proxy base_url"
+        );
+    }
+
+    #[test]
+    fn codex_takeover_fields_keep_oauth_auth_mode_when_injecting_placeholder() {
+        let mut live_config = json!({
+            "auth": {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "id_token": "oauth-id",
+                    "access_token": "oauth-access"
+                }
+            },
+            "config": r#"model_provider = "deepseek"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "https://api.deepseek.com/v1"
+wire_api = "responses"
+"#
+        });
+
+        ProxyService::apply_codex_takeover_fields(
+            &mut live_config,
+            "http://127.0.0.1:15721/v1",
+            None,
+        );
+
+        let auth = live_config
+            .get("auth")
+            .and_then(|value| value.as_object())
+            .expect("auth object");
+        assert_eq!(
+            auth.get("OPENAI_API_KEY").and_then(|value| value.as_str()),
+            Some(PROXY_TOKEN_PLACEHOLDER)
+        );
+        assert_eq!(
+            auth.get("auth_mode").and_then(|value| value.as_str()),
+            Some("chatgpt"),
+            "takeover placeholder injection must not demote preserved OAuth auth to apikey mode"
+        );
+        assert!(
+            auth.get("tokens").is_some(),
+            "OAuth tokens should remain in the takeover config auth object"
         );
     }
 
