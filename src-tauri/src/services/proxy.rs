@@ -4373,6 +4373,57 @@ wire_api = "chat"
     }
 
     #[test]
+    fn apply_codex_proxy_toml_config_rewrites_selected_profile_provider() {
+        let input = r#"
+model_provider = "openai"
+profile = "work"
+model = "gpt-5.1-codex"
+
+[profiles.work]
+model_provider = "local"
+
+[model_providers.openai]
+name = "OpenAI"
+wire_api = "responses"
+
+[model_providers.local]
+name = "Local"
+base_url = "http://127.0.0.1:11434/v1"
+wire_api = "chat"
+"#;
+
+        let proxy_url = "http://127.0.0.1:5000/v1";
+        let output =
+            ProxyService::apply_codex_proxy_toml_config_for_provider(input, proxy_url, None);
+        let parsed: toml::Value =
+            toml::from_str(&output).expect("updated config should be valid TOML");
+
+        let local_provider = parsed
+            .get("model_providers")
+            .and_then(|v| v.get("local"))
+            .expect("model_providers.local should exist");
+        assert_eq!(
+            local_provider.get("base_url").and_then(|v| v.as_str()),
+            Some(proxy_url),
+            "takeover should route the selected profile provider through the proxy"
+        );
+        assert_eq!(
+            local_provider.get("wire_api").and_then(|v| v.as_str()),
+            Some("responses"),
+            "local Codex should keep using Responses API against the proxy"
+        );
+
+        let openai_provider = parsed
+            .get("model_providers")
+            .and_then(|v| v.get("openai"))
+            .expect("model_providers.openai should exist");
+        assert!(
+            openai_provider.get("base_url").is_none(),
+            "takeover must not rewrite the inactive top-level provider"
+        );
+    }
+
+    #[test]
     fn apply_codex_proxy_toml_config_keeps_upstream_model_for_chat_provider() {
         let input = r#"
 model_provider = "deepseek"

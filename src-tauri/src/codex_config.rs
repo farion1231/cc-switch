@@ -1726,10 +1726,10 @@ pub fn restore_codex_settings_for_backfill(
 /// Update a field in Codex config.toml using toml_edit (syntax-preserving).
 ///
 /// Supported fields:
-/// - `"base_url"`: writes to `[model_providers.<current>].base_url` if `model_provider` exists,
-///   otherwise falls back to top-level `base_url`.
-/// - `"wire_api"`: writes to `[model_providers.<current>].wire_api` if `model_provider` exists,
-///   otherwise falls back to top-level `wire_api`.
+/// - `"base_url"`: writes to `[model_providers.<active>].base_url` if a selected
+///   profile or top-level `model_provider` exists, otherwise falls back to top-level `base_url`.
+/// - `"wire_api"`: writes to `[model_providers.<active>].wire_api` if a selected
+///   profile or top-level `model_provider` exists, otherwise falls back to top-level `wire_api`.
 /// - `"model"` / `"model_catalog_json"`: writes to top-level field.
 ///
 /// Empty value removes the field.
@@ -1742,10 +1742,7 @@ pub fn update_codex_toml_field(toml_str: &str, field: &str, value: &str) -> Resu
 
     match field {
         "base_url" | "wire_api" => {
-            let model_provider = doc
-                .get("model_provider")
-                .and_then(|item| item.as_str())
-                .map(str::to_string);
+            let model_provider = active_codex_model_provider_id(&doc);
 
             if let Some(provider_key) = model_provider {
                 // Ensure [model_providers] table exists
