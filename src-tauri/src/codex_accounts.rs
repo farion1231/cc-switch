@@ -317,7 +317,9 @@ pub fn switch_account(account_key: String) -> Result<CodexAccountSwitchResult, A
     validate_auth_file(Path::new(&target.snapshot_path))?;
     ensure_snapshot_matches_account(&target)?;
 
-    if registry.active_account_key.as_deref() == Some(target.account_key.as_str()) {
+    if registry.active_account_key.as_deref() == Some(target.account_key.as_str())
+        && live_auth_matches_account(&target)
+    {
         return Ok(CodexAccountSwitchResult {
             previous_account_key: registry.active_account_key,
             active_account_key: target.account_key,
@@ -660,6 +662,16 @@ fn persist_current_auth_to_active_snapshot(registry: &Registry) -> Result<(), Ap
 fn can_persist_auth_to_account(auth: &AuthSnapshot, active_item: &RegistryItem) -> bool {
     auth.auth_mode.as_deref().unwrap_or_default() == active_item.auth_mode
         && account_key_from_auth(auth) == active_item.account_key
+}
+
+fn live_auth_matches_account(item: &RegistryItem) -> bool {
+    let auth_path = get_codex_auth_path();
+    if validate_auth_file(&auth_path).is_err() {
+        return false;
+    }
+    read_json_file::<AuthSnapshot>(&auth_path)
+        .map(|auth| can_persist_auth_to_account(&auth, item))
+        .unwrap_or(false)
 }
 
 fn backup_current_auth(previous_account_key: Option<&str>) -> Result<PathBuf, AppError> {
@@ -1384,6 +1396,75 @@ mod tests {
         assert_eq!(rolled_back.openai_api_key, Some(json!("sk-previous")));
         let updated_target_snapshot: AuthSnapshot = read_json_file(&snapshot_path)?;
         assert_eq!(updated_target_snapshot.tokens, refreshed_target_auth.tokens);
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn switch_restores_active_snapshot_when_live_auth_drifted() -> Result<(), AppError> {
+        let _home = TestHomeGuard::new();
+        let paths = account_paths();
+        std::fs::create_dir_all(&paths.snapshots_dir)
+            .map_err(|e| AppError::io(&paths.snapshots_dir, e))?;
+
+        let target_auth = AuthSnapshot {
+            auth_mode: Some("apikey".to_string()),
+            tokens: None,
+            openai_api_key: Some(json!("sk-target")),
+        };
+        let target_key = account_key_from_auth(&target_auth);
+        let snapshot_path = paths.snapshots_dir.join("target.json");
+        write_json_file(&snapshot_path, &target_auth)?;
+
+        let mut registry = Registry {
+            schema_version: 2,
+            updated_at: now_seconds(),
+            active_account_key: Some(target_key.clone()),
+            items: vec![RegistryItem {
+                account_key: target_key.clone(),
+                snapshot_path: snapshot_path.to_string_lossy().to_string(),
+                email: String::new(),
+                alias: String::new(),
+                account_name: String::new(),
+                workspace_name: String::new(),
+                profile_name: "Target".to_string(),
+                plan: String::new(),
+                auth_mode: "apikey".to_string(),
+                last_used_at: None,
+                extra: Map::new(),
+            }],
+            extra: Map::new(),
+        };
+        write_registry(&registry)?;
+
+        let auth_path = get_codex_auth_path();
+        if let Some(parent) = auth_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+        }
+        write_json_file(
+            &auth_path,
+            &AuthSnapshot {
+                auth_mode: Some("apikey".to_string()),
+                tokens: None,
+                openai_api_key: Some(json!("sk-drifted")),
+            },
+        )?;
+
+        let result = switch_account(target_key.clone())?;
+        assert_eq!(result.active_account_key, target_key);
+        assert!(result.restart_recommended);
+        assert!(
+            !result.backup_path.is_empty(),
+            "drifted live auth should be backed up before restore"
+        );
+        let restored: AuthSnapshot = read_json_file(&auth_path)?;
+        assert_eq!(restored.openai_api_key, Some(json!("sk-target")));
+
+        registry = read_registry()?;
+        assert_eq!(
+            registry.active_account_key.as_deref(),
+            Some(target_key.as_str())
+        );
         Ok(())
     }
 
