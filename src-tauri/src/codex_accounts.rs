@@ -13,6 +13,8 @@ use crate::config::{atomic_write, get_app_config_dir, read_json_file, write_json
 use crate::error::AppError;
 use crate::services::subscription::{query_codex_quota, SubscriptionQuota};
 
+const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodexAccountSummary {
@@ -531,14 +533,15 @@ fn validate_auth_file(path: &Path) -> Result<(), AppError> {
             }
         }
         "apikey" => {
-            if auth
-                .openai_api_key
-                .as_ref()
-                .and_then(Value::as_str)
-                .is_none()
-            {
+            let Some(api_key) = auth.openai_api_key.as_ref().and_then(Value::as_str) else {
                 return Err(AppError::Config(format!(
                     "API key snapshot is missing OPENAI_API_KEY: {}",
+                    path.display()
+                )));
+            };
+            if api_key == PROXY_TOKEN_PLACEHOLDER {
+                return Err(AppError::Config(format!(
+                    "API key snapshot contains proxy placeholder: {}",
                     path.display()
                 )));
             }
@@ -1231,6 +1234,31 @@ mod tests {
 
         assert!(can_persist_auth_to_account(&chatgpt_auth, &active_item));
         assert!(!can_persist_auth_to_account(&proxy_auth, &active_item));
+    }
+
+    #[test]
+    #[serial]
+    fn capture_current_rejects_proxy_placeholder_account() -> Result<(), AppError> {
+        let _home = TestHomeGuard::new();
+        let auth_path = get_codex_auth_path();
+        if let Some(parent) = auth_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+        }
+        write_json_file(
+            &auth_path,
+            &json!({
+                "auth_mode": "apikey",
+                "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER
+            }),
+        )?;
+
+        let err = capture_current(Some("Proxy placeholder".to_string()))
+            .expect_err("proxy placeholder auth must not be captured as a saved account");
+        assert!(
+            err.to_string().contains("proxy placeholder"),
+            "unexpected error: {err}"
+        );
+        Ok(())
     }
 
     #[test]

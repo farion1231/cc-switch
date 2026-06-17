@@ -2305,25 +2305,23 @@ impl ProxyService {
         mut live_config: Value,
         proxy_url: &str,
     ) -> Result<(Value, Option<Provider>), String> {
-        let codex_provider = self.get_current_provider_for_app(&AppType::Codex)?;
-        if let Some(provider) = codex_provider.as_ref() {
-            let mut effective_settings = build_effective_settings_with_common_config(
-                self.db.as_ref(),
-                &AppType::Codex,
-                provider,
-            )
-            .map_err(|e| format!("构建 Codex 有效配置失败: {e}"))?;
+        let codex_provider = self.require_current_provider_for_app(&AppType::Codex)?;
+        let mut effective_settings = build_effective_settings_with_common_config(
+            self.db.as_ref(),
+            &AppType::Codex,
+            &codex_provider,
+        )
+        .map_err(|e| format!("构建 Codex 有效配置失败: {e}"))?;
 
-            Self::preserve_codex_mcp_servers_from_existing_config(
-                &mut effective_settings,
-                &live_config,
-            )?;
-            Self::preserve_codex_oauth_auth_for_takeover(&mut effective_settings, &live_config);
-            live_config = effective_settings;
-        }
+        Self::preserve_codex_mcp_servers_from_existing_config(
+            &mut effective_settings,
+            &live_config,
+        )?;
+        Self::preserve_codex_oauth_auth_for_takeover(&mut effective_settings, &live_config);
+        live_config = effective_settings;
 
-        Self::apply_codex_takeover_fields(&mut live_config, proxy_url, codex_provider.as_ref());
-        Ok((live_config, codex_provider))
+        Self::apply_codex_takeover_fields(&mut live_config, proxy_url, Some(&codex_provider));
+        Ok((live_config, Some(codex_provider)))
     }
 
     fn apply_codex_takeover_fields(
@@ -3371,6 +3369,42 @@ wire_api = "responses"
 
         crate::settings::update_settings(crate::settings::AppSettings::default())
             .expect("reset settings");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_takeover_requires_current_provider_before_writing_live() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        crate::settings::set_current_provider(&AppType::Codex, None)
+            .expect("clear current Codex provider");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db);
+        let auth = json!({
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": "real-codex-key"
+        });
+        let config_text = r#"model_provider = "openai"
+model = "gpt-5-codex"
+"#;
+        crate::codex_config::write_codex_live_atomic(&auth, Some(config_text))
+            .expect("seed live Codex config");
+
+        let err = service
+            .takeover_live_config_strict(&AppType::Codex)
+            .await
+            .expect_err("Codex takeover must fail before writing live without a provider");
+        assert!(err.contains("当前供应商不存在"), "unexpected error: {err}");
+
+        let live_auth: Value =
+            crate::config::read_json_file(&crate::codex_config::get_codex_auth_path())
+                .expect("read live auth");
+        assert_eq!(live_auth, auth);
+        let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read live config");
+        assert!(!live_config.contains(PROXY_TOKEN_PLACEHOLDER));
+        assert!(!live_config.contains("127.0.0.1"));
     }
 
     #[tokio::test]
