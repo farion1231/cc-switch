@@ -729,6 +729,56 @@ mod tests {
 
     #[test]
     #[serial]
+    fn codex_desktop_provider_key_follows_profile_provider_after_unified_injection() {
+        with_test_home(|_state, _home| {
+            let mut settings = crate::settings::get_settings();
+            settings.unify_codex_session_history = true;
+            crate::settings::update_settings(settings).expect("enable unified Codex history");
+
+            let mut provider = codex_provider(
+                "codex-official-profile",
+                "OpenAI Official Profile",
+                "profile = \"work\"\nmodel = \"gpt-5.4\"\n[profiles.work]\nmodel_provider = \"vendor_alpha\"\n[model_providers.vendor_alpha]\nname = \"Vendor Alpha\"\nbase_url = \"https://vendor-alpha.example/v1\"\n",
+            );
+            provider.category = Some("official".to_string());
+
+            let provider_key =
+                ProviderService::codex_desktop_provider_key(&provider).expect("provider key");
+
+            assert_eq!(
+                provider_key, "vendor_alpha",
+                "history target must match the selected profile provider that Codex will record after live write"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn codex_desktop_provider_key_follows_explicit_provider_after_unified_injection() {
+        with_test_home(|_state, _home| {
+            let mut settings = crate::settings::get_settings();
+            settings.unify_codex_session_history = true;
+            crate::settings::update_settings(settings).expect("enable unified Codex history");
+
+            let mut provider = codex_provider(
+                "codex-official-explicit",
+                "OpenAI Official Explicit",
+                "model_provider = \"vendor_alpha\"\nmodel = \"gpt-5.4\"\n[model_providers.vendor_alpha]\nname = \"Vendor Alpha\"\nbase_url = \"https://vendor-alpha.example/v1\"\n",
+            );
+            provider.category = Some("official".to_string());
+
+            let provider_key =
+                ProviderService::codex_desktop_provider_key(&provider).expect("provider key");
+
+            assert_eq!(
+                provider_key, "vendor_alpha",
+                "history target must match the explicit provider that Codex will record after live write"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn switch_codex_to_official_relabels_dangling_ccswitch_history_to_openai() {
         with_test_home(|state, home| {
             let api_provider = codex_provider(
@@ -6220,11 +6270,15 @@ impl ProviderService {
             .unwrap_or("")
             .trim();
 
-        if provider.category.as_deref() == Some("official")
+        let injected_config;
+        let config = if provider.category.as_deref() == Some("official")
             && crate::settings::unify_codex_session_history()
         {
-            return Ok(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
-        }
+            injected_config = crate::codex_config::inject_codex_unified_session_bucket(config)?;
+            injected_config.trim()
+        } else {
+            config
+        };
 
         if config.is_empty() {
             return Ok("openai".to_string());
@@ -6239,6 +6293,9 @@ impl ProviderService {
         let provider_key = crate::codex_config::extract_codex_model_provider(config)
             .unwrap_or_else(|| "openai".to_string());
         if is_cc_switch_codex_model_provider_id(&provider_key) {
+            if crate::codex_config::config_uses_codex_unified_official_provider(config) {
+                return CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string();
+            }
             if custom_codex_base_url.is_none() {
                 return "openai".to_string();
             }

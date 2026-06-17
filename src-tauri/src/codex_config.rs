@@ -1459,6 +1459,24 @@ fn table_matches_codex_unified_official_provider(table: &toml_edit::Table) -> bo
         && table.get("wire_api").and_then(|item| item.as_str()) == Some("responses")
 }
 
+pub(crate) fn config_uses_codex_unified_official_provider(config_text: &str) -> bool {
+    let Ok(doc) = config_text.parse::<DocumentMut>() else {
+        return false;
+    };
+    let Some(provider_id) = active_codex_model_provider_id(&doc) else {
+        return false;
+    };
+    if !is_cc_switch_codex_model_provider_id(&provider_id) {
+        return false;
+    }
+
+    doc.get("model_providers")
+        .and_then(|item| item.as_table())
+        .and_then(|providers| providers.get(provider_id.as_str()))
+        .and_then(|item| item.as_table())
+        .is_some_and(table_matches_codex_unified_official_provider)
+}
+
 /// 统一 Codex 会话历史：把官方供应商的 live 配置改写为以共享的
 /// `custom` model_provider 标识运行（认证仍走 `auth.json` 的 ChatGPT 登录），
 /// 使开关开启后创建的官方会话与第三方会话共用同一个 resume 历史桶。
