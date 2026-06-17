@@ -3,7 +3,9 @@
 //! 提供代理服务器的启动、停止和配置管理
 
 use crate::app_config::AppType;
-use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
+use crate::config::{
+    get_claude_configured_settings_path, get_claude_settings_path, read_json_file, write_json_file,
+};
 use crate::database::Database;
 use crate::provider::{ClaudeActivationMode, Provider};
 use crate::proxy::server::ProxyServer;
@@ -413,6 +415,22 @@ impl ProxyService {
     fn require_current_provider_for_app(&self, app_type: &AppType) -> Result<Provider, String> {
         self.get_current_provider_for_app(app_type)?
             .ok_or_else(|| format!("{app_type:?} 当前供应商不存在，无法接管 Live 配置"))
+    }
+
+    fn current_claude_provider_is_profile_only(&self) -> bool {
+        self.get_current_provider_for_app(&AppType::Claude)
+            .ok()
+            .flatten()
+            .and_then(|provider| provider.meta)
+            .and_then(|meta| meta.claude_activation_mode)
+            .is_some_and(|mode| matches!(mode, ClaudeActivationMode::ProfileOnly))
+    }
+
+    fn claude_live_path_for_proxy_io(&self) -> std::path::PathBuf {
+        if self.current_claude_provider_is_profile_only() {
+            return get_claude_configured_settings_path();
+        }
+        get_claude_settings_path()
     }
 
     /// 设置 AppHandle（在应用初始化时调用）
@@ -2488,7 +2506,7 @@ impl ProxyService {
     }
 
     fn read_claude_live(&self) -> Result<Value, String> {
-        let path = get_claude_settings_path();
+        let path = self.claude_live_path_for_proxy_io();
         if !path.exists() {
             return Err("Claude 配置文件不存在".to_string());
         }
@@ -2519,7 +2537,7 @@ impl ProxyService {
     }
 
     fn write_claude_live(&self, config: &Value) -> Result<(), String> {
-        let path = get_claude_settings_path();
+        let path = self.claude_live_path_for_proxy_io();
         let settings = crate::services::provider::sanitize_claude_settings_for_live(config);
         write_json_file(&path, &settings).map_err(|e| format!("写入 Claude 配置失败: {e}"))
     }
@@ -3190,7 +3208,7 @@ mod tests {
     #[test]
     fn managed_account_claude_takeover_codex_by_base_url_keeps_auth_token() {
         // 无 provider_type meta、仅凭 base_url 识别为受管 codex 的供应商，
-        // 也必须保留 AUTH_TOKEN 占位符（与策略选择共用同一判定族）。
+        // 也必须保留 AUTH_TOKEN 占位符（与策略选择共用同一 Codex OAuth 判定）。
         let provider = Provider::with_id(
             "codex-url-only".to_string(),
             "Codex (URL only)".to_string(),
@@ -3202,7 +3220,7 @@ mod tests {
             None,
         );
         assert!(provider.uses_managed_account_auth());
-        assert!(!provider.is_codex_oauth());
+        assert!(provider.is_codex_oauth());
 
         let mut live_config = provider.settings_config.clone();
         ProxyService::apply_claude_takeover_fields_for_provider(
@@ -3347,6 +3365,186 @@ mod tests {
             .stop_with_restore()
             .await
             .expect("stop proxy and restore live config");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn takeover_skips_profile_only_claude_profile_file() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let mut proxy_config = db.get_proxy_config().await.expect("get proxy config");
+        proxy_config.listen_port = 15721;
+        db.update_proxy_config(proxy_config)
+            .await
+            .expect("set fixed proxy port");
+        let service = ProxyService::new(db.clone());
+
+        let profile_dir = home.dir.path().join("profile-only");
+        std::fs::create_dir_all(&profile_dir).expect("create profile dir");
+        let default_dir = home.dir.path().join(".claude");
+        std::fs::create_dir_all(&default_dir).expect("create default claude dir");
+
+        let default_settings_path = default_dir.join("settings.json");
+        let profile_settings_path = profile_dir.join("settings.json");
+        let default_live = json!({
+            "env": {
+                "ANTHROPIC_API_KEY": "default-key",
+                "ANTHROPIC_BASE_URL": "https://api.default.example"
+            }
+        });
+        let profile_live = json!({
+            "env": {
+                "ANTHROPIC_API_KEY": "profile-key",
+                "ANTHROPIC_BASE_URL": "https://api.profile.example"
+            }
+        });
+        write_json_file(&default_settings_path, &default_live).expect("seed default settings");
+        write_json_file(&profile_settings_path, &profile_live).expect("seed profile settings");
+
+        let mut provider = Provider::with_id(
+            "profile-only".to_string(),
+            "Profile Only".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "stored-key",
+                    "ANTHROPIC_BASE_URL": "https://api.stored.example"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            claude_profile_dir: Some(profile_dir.to_string_lossy().into_owned()),
+            claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+            ..Default::default()
+        });
+        db.save_provider("claude", &provider)
+            .expect("save profile-only provider");
+        db.set_current_provider("claude", "profile-only")
+            .expect("set db current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("profile-only"))
+            .expect("set local current provider");
+        crate::settings::set_claude_provider_override_dir(Some(
+            profile_dir.to_string_lossy().as_ref(),
+        ))
+        .expect("set profile override");
+
+        service
+            .takeover_live_configs()
+            .await
+            .expect("take over live configs");
+
+        let profile_after: Value =
+            read_json_file(&profile_settings_path).expect("read profile settings");
+        assert_eq!(
+            profile_after, profile_live,
+            "profile-only takeover must not mutate the external profile settings"
+        );
+
+        let default_after: Value =
+            read_json_file(&default_settings_path).expect("read default settings");
+        assert_eq!(
+            default_after
+                .get("env")
+                .and_then(|env| env.get("ANTHROPIC_API_KEY"))
+                .and_then(|value| value.as_str()),
+            Some(PROXY_TOKEN_PLACEHOLDER),
+            "takeover should target the configured/default Claude dir instead"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn restore_skips_profile_only_claude_profile_file() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let profile_dir = home.dir.path().join("profile-only");
+        std::fs::create_dir_all(&profile_dir).expect("create profile dir");
+        let default_dir = home.dir.path().join(".claude");
+        std::fs::create_dir_all(&default_dir).expect("create default claude dir");
+
+        let default_settings_path = default_dir.join("settings.json");
+        let profile_settings_path = profile_dir.join("settings.json");
+        let profile_live = json!({
+            "env": {
+                "ANTHROPIC_API_KEY": "profile-key",
+                "ANTHROPIC_BASE_URL": "https://api.profile.example"
+            }
+        });
+        let backup_live = json!({
+            "env": {
+                "ANTHROPIC_API_KEY": "backup-key",
+                "ANTHROPIC_BASE_URL": "https://api.default.example"
+            }
+        });
+        write_json_file(
+            &default_settings_path,
+            &json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": PROXY_TOKEN_PLACEHOLDER,
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721"
+                }
+            }),
+        )
+        .expect("seed default proxy settings");
+        write_json_file(&profile_settings_path, &profile_live).expect("seed profile settings");
+
+        let mut provider = Provider::with_id(
+            "profile-only".to_string(),
+            "Profile Only".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "stored-key",
+                    "ANTHROPIC_BASE_URL": "https://api.stored.example"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            claude_profile_dir: Some(profile_dir.to_string_lossy().into_owned()),
+            claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+            ..Default::default()
+        });
+        db.save_provider("claude", &provider)
+            .expect("save profile-only provider");
+        db.set_current_provider("claude", "profile-only")
+            .expect("set db current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("profile-only"))
+            .expect("set local current provider");
+        crate::settings::set_claude_provider_override_dir(Some(
+            profile_dir.to_string_lossy().as_ref(),
+        ))
+        .expect("set profile override");
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&backup_live).expect("serialize backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Claude)
+            .await
+            .expect("restore live config");
+
+        let profile_after: Value =
+            read_json_file(&profile_settings_path).expect("read profile settings");
+        assert_eq!(
+            profile_after, profile_live,
+            "profile-only restore must not mutate the external profile settings"
+        );
+
+        let default_after: Value =
+            read_json_file(&default_settings_path).expect("read default settings");
+        assert_eq!(
+            default_after, backup_live,
+            "restore should write the backup to the configured/default Claude dir"
+        );
     }
 
     #[test]
