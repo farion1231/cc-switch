@@ -181,15 +181,22 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
 pub async fn pick_directory(
     app: AppHandle,
     #[allow(non_snake_case)] defaultPath: Option<String>,
+    title: Option<String>,
 ) -> Result<Option<String>, String> {
     let initial = defaultPath
         .map(|p| p.trim().to_string())
         .filter(|p| !p.is_empty());
+    let dialog_title = title
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
 
     let result = tauri::async_runtime::spawn_blocking(move || {
         let mut builder = app.dialog().file();
         if let Some(path) = initial {
             builder = builder.set_directory(path);
+        }
+        if let Some(title) = dialog_title {
+            builder = builder.set_title(title);
         }
         builder.blocking_pick_folder()
     })
