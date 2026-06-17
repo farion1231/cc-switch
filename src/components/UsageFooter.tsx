@@ -176,7 +176,12 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
                   </span>
                 )}
                 {tiers.map((tier, index) => (
-                  <TierBadge key={index} tier={tier} t={t} />
+                  <TierBadge
+                    key={index}
+                    tier={tier}
+                    t={t}
+                    displayOrder={displayOrder}
+                  />
                 ))}
               </>
             );

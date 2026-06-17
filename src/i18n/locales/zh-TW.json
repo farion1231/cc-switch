@@ -2838,6 +2838,8 @@
     "expired": "工作階段已過期",
     "expiredHint": "請執行 {{tool}} 命令重新整理登入",
     "queryFailed": "查詢失敗",
-    "refresh": "重新整理"
+    "refresh": "重新整理",
+    "usedShort": "已用",
+    "remainingShort": "剩餘"
   }
 }

@@ -931,6 +931,22 @@ pub fn unify_codex_session_history() -> bool {
         .unify_codex_session_history
 }
 
+/// 用量是否采用“剩余优先”显示。
+///
+/// 设备级 UI 偏好：`None` / `"remaining-first"` 视为剩余优先（默认），
+/// `"used-first"` 为已用优先。与前端 `usageDisplayOrder` 默认值保持一致。
+pub fn usage_display_remaining_first() -> bool {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .usage_display_order
+        .as_deref()
+        != Some("used-first")
+}
+
 // ===== 当前供应商管理函数 =====
 
 /// 获取指定应用类型的当前供应商 ID（从本地 settings 读取）

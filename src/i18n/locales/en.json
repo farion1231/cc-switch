@@ -2866,6 +2866,8 @@
     "expired": "Session expired",
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
-    "refresh": "Refresh"
+    "refresh": "Refresh",
+    "usedShort": "Used",
+    "remainingShort": "Left"
   }
 }

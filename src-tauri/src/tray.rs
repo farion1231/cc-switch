@@ -46,6 +46,10 @@ pub struct TrayTexts {
     pub lightweight_mode: &'static str,
     pub quit: &'static str,
     pub _auto_label: &'static str,
+    /// 用量后缀里的“已用”标签
+    pub usage_used_label: &'static str,
+    /// 用量后缀里的“剩余”标签
+    pub usage_remaining_label: &'static str,
 }
 
 impl TrayTexts {
@@ -58,6 +62,8 @@ impl TrayTexts {
                 lightweight_mode: "Lightweight Mode",
                 quit: "Quit",
                 _auto_label: "Auto (Failover)",
+                usage_used_label: "Used",
+                usage_remaining_label: "Left",
             },
             "ja" => Self {
                 show_main: "メインウィンドウを開く",
@@ -66,6 +72,8 @@ impl TrayTexts {
                 lightweight_mode: "軽量モード",
                 quit: "終了",
                 _auto_label: "自動 (フェイルオーバー)",
+                usage_used_label: "使用",
+                usage_remaining_label: "残り",
             },
             "zh-TW" => Self {
                 show_main: "開啟主介面",
@@ -74,6 +82,8 @@ impl TrayTexts {
                 lightweight_mode: "輕量模式",
                 quit: "退出",
                 _auto_label: "自動 (故障轉移)",
+                usage_used_label: "已用",
+                usage_remaining_label: "剩餘",
             },
             _ => Self {
                 show_main: "打开主界面",
@@ -82,7 +92,46 @@ impl TrayTexts {
                 lightweight_mode: "轻量模式",
                 quit: "退出",
                 _auto_label: "自动 (故障转移)",
+                usage_used_label: "已用",
+                usage_remaining_label: "剩余",
             },
+        }
+    }
+}
+
+/// 用量后缀的展示参数：控制显示“已用%”还是“剩余%”及其标签。
+#[derive(Clone, Copy)]
+struct UsageLabelOpts {
+    remaining_first: bool,
+    used_label: &'static str,
+    remaining_label: &'static str,
+}
+
+impl UsageLabelOpts {
+    fn from_texts(texts: &TrayTexts, remaining_first: bool) -> Self {
+        Self {
+            remaining_first,
+            used_label: texts.usage_used_label,
+            remaining_label: texts.usage_remaining_label,
+        }
+    }
+
+    /// 根据利用率算出要显示的百分数（已用或剩余），并 clamp 到 0..=100。
+    fn display_pct(&self, utilization: f64) -> i64 {
+        let value = if self.remaining_first {
+            100.0 - utilization
+        } else {
+            utilization
+        };
+        value.clamp(0.0, 100.0).round() as i64
+    }
+
+    /// 当前模式的标签词（已用 / 剩余）。
+    fn label(&self) -> &'static str {
+        if self.remaining_first {
+            self.remaining_label
+        } else {
+            self.used_label
         }
     }
 }
@@ -140,6 +189,7 @@ fn emoji_for_utilization(pct: f64) -> &'static str {
 
 fn format_subscription_summary(
     quota: &crate::services::subscription::SubscriptionQuota,
+    opts: UsageLabelOpts,
 ) -> Option<String> {
     if !quota.success {
         return None;
@@ -157,6 +207,7 @@ fn format_subscription_summary(
     }
 
     // 色标取所有已选 tier 里最高的利用率——用户更关心"离上限多近"。
+    // 注意：emoji 始终按利用率计算，不受剩余/已用展示偏好影响。
     let worst = parts
         .iter()
         .map(|(_, u)| *u)
@@ -168,10 +219,10 @@ fn format_subscription_summary(
     let emoji = emoji_for_utilization(worst);
     let body = parts
         .iter()
-        .map(|(label, u)| format!("{label}{}%", u.round() as i64))
+        .map(|(label, u)| format!("{label}{}%", opts.display_pct(*u)))
         .collect::<Vec<_>>()
         .join(" ");
-    Some(format!("{emoji} {body}"))
+    Some(format!("{emoji} {} {body}", opts.label()))
 }
 
 fn labeled_tier_parts(entries: &[(&str, f64)]) -> Vec<(&'static str, f64)> {
@@ -197,7 +248,10 @@ fn tier_pct(data: &crate::provider::UsageData) -> Option<f64> {
     }
 }
 
-fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String> {
+fn format_script_summary(
+    result: &crate::provider::UsageResult,
+    opts: UsageLabelOpts,
+) -> Option<String> {
     if !result.success {
         return None;
     }
@@ -210,6 +264,7 @@ fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String
     // SubscriptionQuota 的每个 tier 扁平化为一条 UsageData（plan_name 承载
     // tier 名），所以这里按 plan_name 恢复托盘短标签。其余 usage 结果
     //（Copilot / balance / 自定义脚本）走 fallback。
+    // 注意：emoji 始终按利用率计算，展示值由 opts 决定（已用 / 剩余）。
     let entries: Vec<(&str, f64)> = data
         .iter()
         .filter_map(|d| Some((d.plan_name.as_deref()?, tier_pct(d)?)))
@@ -223,21 +278,22 @@ fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String
         let emoji = emoji_for_utilization(worst);
         let body = parts
             .iter()
-            .map(|(label, u)| format!("{label}{}%", u.round() as i64))
+            .map(|(label, u)| format!("{label}{}%", opts.display_pct(*u)))
             .collect::<Vec<_>>()
             .join(" ");
-        return Some(format!("{emoji} {body}"));
+        return Some(format!("{emoji} {} {body}", opts.label()));
     }
 
     let first = data.first()?;
     let pct = tier_pct(first)?;
     let emoji = emoji_for_utilization(pct);
     let plan = first.plan_name.as_deref().unwrap_or("");
-    let rounded = pct.round() as i64;
+    let shown = opts.display_pct(pct);
+    let word = opts.label();
     if plan.is_empty() {
-        Some(format!("{} {}%", emoji, rounded))
+        Some(format!("{emoji} {word} {shown}%"))
     } else {
-        Some(format!("{} {} {}%", emoji, plan, rounded))
+        Some(format!("{emoji} {plan} {word} {shown}%"))
     }
 }
 
@@ -258,6 +314,7 @@ fn format_usage_suffix(
     app_type: &AppType,
     provider: &crate::provider::Provider,
     provider_id: &str,
+    opts: UsageLabelOpts,
 ) -> Option<String> {
     // 当前脚本是否启用：禁用/删除时不再沿用旧 UsageCache 结果，
     // 并顺手 invalidate，防止后续重建继续命中过期数据。
@@ -266,17 +323,16 @@ fn format_usage_suffix(
         && (!is_official_provider || provider_uses_official_subscription(provider));
     if can_use_script {
         // 脚本缓存优先（覆盖 Copilot/coding_plan/balance/自定义脚本），借用访问避免克隆整条 UsageResult。
-        if let Some(Some(s)) =
-            app_state
-                .usage_cache
-                .with_script(app_type, provider_id, format_script_summary)
+        if let Some(Some(s)) = app_state
+            .usage_cache
+            .with_script(app_type, provider_id, |r| format_script_summary(r, opts))
         {
             return Some(format!(" · {s}"));
         }
         if provider_uses_official_subscription(provider) {
             if let Some(Some(s)) = app_state
                 .usage_cache
-                .with_subscription(app_type, format_subscription_summary)
+                .with_subscription(app_type, |q| format_subscription_summary(q, opts))
             {
                 return Some(format!(" · {s}"));
             }
@@ -491,6 +547,10 @@ pub fn create_tray_menu(
 ) -> Result<Menu<tauri::Wry>, AppError> {
     let app_settings = crate::settings::get_settings();
     let tray_texts = TrayTexts::from_language(app_settings.language.as_deref().unwrap_or("zh"));
+    let usage_opts = UsageLabelOpts::from_texts(
+        &tray_texts,
+        crate::settings::usage_display_remaining_first(),
+    );
 
     // Get visible apps setting, default to all visible
     let visible_apps = app_settings.visible_apps.unwrap_or_default();
@@ -544,8 +604,14 @@ pub fn create_tray_menu(
             let current_provider = providers.get(&current_id);
             let submenu_label = match current_provider {
                 Some(p) => {
-                    let suffix = format_usage_suffix(app_state, &section.app_type, p, &current_id)
-                        .unwrap_or_default();
+                    let suffix = format_usage_suffix(
+                        app_state,
+                        &section.app_type,
+                        p,
+                        &current_id,
+                        usage_opts,
+                    )
+                    .unwrap_or_default();
                     format!("{} · {}{}", section.header_label, p.name, suffix)
                 }
                 None => section.header_label.to_string(),
@@ -633,6 +699,12 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
     let Some(app_state) = app.try_state::<AppState>() else {
         return;
     };
+    let app_settings = crate::settings::get_settings();
+    let tray_texts = TrayTexts::from_language(app_settings.language.as_deref().unwrap_or("zh"));
+    let usage_opts = UsageLabelOpts::from_texts(
+        &tray_texts,
+        crate::settings::usage_display_remaining_first(),
+    );
     let handles = match TRAY_SECTION_SUBMENUS.lock() {
         Ok(g) => g,
         Err(poisoned) => poisoned.into_inner(),
@@ -653,8 +725,14 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
         let Some(provider) = providers.get(&current_id) else {
             continue;
         };
-        let suffix = format_usage_suffix(&app_state, &section.app_type, provider, &current_id)
-            .unwrap_or_default();
+        let suffix = format_usage_suffix(
+            &app_state,
+            &section.app_type,
+            provider,
+            &current_id,
+            usage_opts,
+        )
+        .unwrap_or_default();
         let new_label = format!("{} · {}{}", section.header_label, provider.name, suffix);
         if let Err(e) = submenu.set_text(&new_label) {
             log::debug!("[Tray] 更新{}子菜单标题失败: {e}", section.log_name);
@@ -874,7 +952,7 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_script_summary, format_subscription_summary, TRAY_ID};
+    use super::{format_script_summary, format_subscription_summary, UsageLabelOpts, TRAY_ID};
     use crate::provider::{UsageData, UsageResult};
     use crate::services::subscription::{
         CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_GEMINI_FLASH,
@@ -886,6 +964,22 @@ mod tests {
     fn tray_id_is_unique_to_app() {
         assert_eq!(TRAY_ID, "cc-switch");
         assert_ne!(TRAY_ID, "main");
+    }
+
+    fn used_opts() -> UsageLabelOpts {
+        UsageLabelOpts {
+            remaining_first: false,
+            used_label: "U",
+            remaining_label: "L",
+        }
+    }
+
+    fn remaining_opts() -> UsageLabelOpts {
+        UsageLabelOpts {
+            remaining_first: true,
+            used_label: "U",
+            remaining_label: "L",
+        }
     }
 
     fn make_quota(tool: &str, success: bool, tiers: Vec<QuotaTier>) -> SubscriptionQuota {
@@ -918,7 +1012,7 @@ mod tests {
             true,
             vec![tier("five_hour", 9.0), tier("seven_day", 27.0)],
         );
-        let s = format_subscription_summary(&quota).expect("should format");
+        let s = format_subscription_summary(&quota, used_opts()).expect("should format");
         assert!(s.contains("h9%"), "expected h9% in {s}");
         assert!(s.contains("w27%"), "expected w27% in {s}");
     }
@@ -930,7 +1024,7 @@ mod tests {
             true,
             vec![tier("gemini_pro", 15.0), tier("gemini_flash", 42.0)],
         );
-        let s = format_subscription_summary(&quota).expect("should format");
+        let s = format_subscription_summary(&quota, used_opts()).expect("should format");
         assert!(s.contains("p15%"), "expected p15% in {s}");
         assert!(s.contains("f42%"), "expected f42% in {s}");
     }
@@ -946,7 +1040,7 @@ mod tests {
                 tier("gemini_flash_lite", 80.0),
             ],
         );
-        let s = format_subscription_summary(&quota).expect("should format");
+        let s = format_subscription_summary(&quota, used_opts()).expect("should format");
         assert!(s.contains("p5%"), "expected p5% in {s}");
         assert!(s.contains("f42%"), "expected f42% in {s}");
         assert!(s.contains("l80%"), "expected l80% in {s}");
@@ -957,7 +1051,7 @@ mod tests {
         // flash_lite 如果是 API 返回的唯一 tier，仍应显示（避免前端 footer 能看到、
         // 托盘空白的不对称）。
         let quota = make_quota("gemini", true, vec![tier("gemini_flash_lite", 80.0)]);
-        let s = format_subscription_summary(&quota).expect("should format");
+        let s = format_subscription_summary(&quota, used_opts()).expect("should format");
         assert!(s.contains("l80%"), "expected l80% in {s}");
     }
 
@@ -973,7 +1067,7 @@ mod tests {
                 tier("gemini_flash_lite", 95.0),
             ],
         );
-        let s = format_subscription_summary(&quota).unwrap();
+        let s = format_subscription_summary(&quota, used_opts()).unwrap();
         assert!(
             s.starts_with("\u{1F534}"),
             "expected red emoji (lite worst) in {s}"
@@ -988,7 +1082,7 @@ mod tests {
             true,
             vec![tier("five_hour", 10.0), tier("seven_day", 95.0)],
         );
-        let s = format_subscription_summary(&quota).unwrap();
+        let s = format_subscription_summary(&quota, used_opts()).unwrap();
         assert!(s.starts_with("\u{1F534}"), "expected red emoji in {s}");
     }
 
@@ -1003,7 +1097,7 @@ mod tests {
                 tier(TIER_SEVEN_DAY_SONNET, 95.0),
             ],
         );
-        let s = format_subscription_summary(&quota).unwrap();
+        let s = format_subscription_summary(&quota, used_opts()).unwrap();
         assert!(s.contains("w95%"), "expected w95% in {s}");
         assert!(s.starts_with("\u{1F534}"), "expected red emoji in {s}");
     }
@@ -1011,20 +1105,20 @@ mod tests {
     #[test]
     fn failure_quota_returns_none() {
         let quota = make_quota("claude", false, vec![tier("five_hour", 50.0)]);
-        assert!(format_subscription_summary(&quota).is_none());
+        assert!(format_subscription_summary(&quota, used_opts()).is_none());
     }
 
     #[test]
     fn unknown_tiers_return_none() {
         let quota = make_quota("claude", true, vec![tier("one_hour", 80.0)]);
-        assert!(format_subscription_summary(&quota).is_none());
+        assert!(format_subscription_summary(&quota, used_opts()).is_none());
     }
 
     #[test]
     fn gemini_without_any_known_tiers_returns_none() {
         // 完全没有 pro/flash/flash_lite 三种 tier 的退化响应 → None。
         let quota = make_quota("gemini", true, vec![tier("some_future_tier", 80.0)]);
-        assert!(format_subscription_summary(&quota).is_none());
+        assert!(format_subscription_summary(&quota, used_opts()).is_none());
     }
 
     fn usage_data(plan_name: Option<&str>, utilization: f64) -> UsageData {
@@ -1057,7 +1151,7 @@ mod tests {
                 usage_data(Some(TIER_WEEKLY_LIMIT), 80.0),
             ],
         );
-        let s = format_script_summary(&r).expect("should format");
+        let s = format_script_summary(&r, used_opts()).expect("should format");
         assert!(s.contains("h12%"), "expected h12% in {s}");
         assert!(s.contains("w80%"), "expected w80% in {s}");
         assert!(s.starts_with("\u{1F7E0}"), "expected orange emoji in {s}");
@@ -1072,14 +1166,14 @@ mod tests {
                 usage_data(Some(TIER_WEEKLY_LIMIT), 95.0),
             ],
         );
-        let s = format_script_summary(&r).unwrap();
+        let s = format_script_summary(&r, used_opts()).unwrap();
         assert!(s.starts_with("\u{1F534}"), "expected red emoji in {s}");
     }
 
     #[test]
     fn script_summary_token_plan_five_hour_only() {
         let r = usage_result(true, vec![usage_data(Some(TIER_FIVE_HOUR), 8.0)]);
-        let s = format_script_summary(&r).expect("should format");
+        let s = format_script_summary(&r, used_opts()).expect("should format");
         assert!(s.contains("h8%"), "expected h8% in {s}");
         assert!(
             !s.contains("plan_name"),
@@ -1090,7 +1184,7 @@ mod tests {
     #[test]
     fn script_summary_token_plan_weekly_only() {
         let r = usage_result(true, vec![usage_data(Some(TIER_WEEKLY_LIMIT), 50.0)]);
-        let s = format_script_summary(&r).expect("should format");
+        let s = format_script_summary(&r, used_opts()).expect("should format");
         assert!(s.contains("w50%"), "expected w50% in {s}");
     }
 
@@ -1103,7 +1197,7 @@ mod tests {
                 usage_data(Some(TIER_SEVEN_DAY), 80.0),
             ],
         );
-        let s = format_script_summary(&r).expect("should format");
+        let s = format_script_summary(&r, used_opts()).expect("should format");
         assert!(s.contains("h12%"), "expected h12% in {s}");
         assert!(s.contains("w80%"), "expected w80% in {s}");
         assert!(
@@ -1122,7 +1216,7 @@ mod tests {
                 usage_data(Some(TIER_SEVEN_DAY_SONNET), 95.0),
             ],
         );
-        let s = format_script_summary(&r).unwrap();
+        let s = format_script_summary(&r, used_opts()).unwrap();
         assert!(s.contains("w95%"), "expected w95% in {s}");
         assert!(s.starts_with("\u{1F534}"), "expected red emoji in {s}");
     }
@@ -1137,7 +1231,7 @@ mod tests {
                 usage_data(Some(TIER_GEMINI_FLASH_LITE), 80.0),
             ],
         );
-        let s = format_script_summary(&r).expect("should format");
+        let s = format_script_summary(&r, used_opts()).expect("should format");
         assert!(s.contains("p15%"), "expected p15% in {s}");
         assert!(s.contains("f42%"), "expected f42% in {s}");
         assert!(s.contains("l80%"), "expected l80% in {s}");
@@ -1150,7 +1244,7 @@ mod tests {
     #[test]
     fn script_summary_single_bucket_fallback_with_plan_name() {
         let r = usage_result(true, vec![usage_data(Some("Copilot Pro"), 40.0)]);
-        let s = format_script_summary(&r).expect("should format");
+        let s = format_script_summary(&r, used_opts()).expect("should format");
         assert!(s.contains("Copilot Pro"), "expected plan name in {s}");
         assert!(s.contains("40%"), "expected 40% in {s}");
         assert!(
@@ -1162,19 +1256,64 @@ mod tests {
     #[test]
     fn script_summary_single_bucket_fallback_without_plan_name() {
         let r = usage_result(true, vec![usage_data(None, 15.0)]);
-        let s = format_script_summary(&r).expect("should format");
-        assert_eq!(s, "\u{1F7E2} 15%", "expected emoji + pct only, got {s}");
+        let s = format_script_summary(&r, used_opts()).expect("should format");
+        assert_eq!(
+            s, "\u{1F7E2} U 15%",
+            "expected emoji + used label + pct, got {s}"
+        );
     }
 
     #[test]
     fn script_summary_failure_returns_none() {
         let r = usage_result(false, vec![usage_data(Some(TIER_FIVE_HOUR), 12.0)]);
-        assert!(format_script_summary(&r).is_none());
+        assert!(format_script_summary(&r, used_opts()).is_none());
     }
 
     #[test]
     fn script_summary_empty_data_returns_none() {
         let r = usage_result(true, vec![]);
-        assert!(format_script_summary(&r).is_none());
+        assert!(format_script_summary(&r, used_opts()).is_none());
+    }
+
+    // ===== remaining-first 展示模式 =====
+
+    #[test]
+    fn subscription_summary_remaining_first_shows_complement() {
+        // 剩余优先：展示值 = 100 - 利用率，带“剩余”标签。
+        let quota = make_quota(
+            "claude",
+            true,
+            vec![tier("five_hour", 9.0), tier("seven_day", 27.0)],
+        );
+        let s = format_subscription_summary(&quota, remaining_opts()).expect("should format");
+        assert!(s.contains("h91%"), "expected remaining h91% in {s}");
+        assert!(s.contains("w73%"), "expected remaining w73% in {s}");
+        assert!(s.contains("L"), "expected remaining label in {s}");
+    }
+
+    #[test]
+    fn subscription_summary_remaining_first_keeps_utilization_emoji() {
+        // 即使显示剩余，色标仍按利用率（95%）→ 红色。
+        let quota = make_quota(
+            "claude",
+            true,
+            vec![tier("five_hour", 10.0), tier("seven_day", 95.0)],
+        );
+        let s = format_subscription_summary(&quota, remaining_opts()).unwrap();
+        assert!(
+            s.starts_with("\u{1F534}"),
+            "emoji must reflect utilization, not remaining: {s}"
+        );
+        assert!(s.contains("w5%"), "expected remaining w5% in {s}");
+    }
+
+    #[test]
+    fn script_summary_remaining_first_fallback_without_plan_name() {
+        let r = usage_result(true, vec![usage_data(None, 15.0)]);
+        let s = format_script_summary(&r, remaining_opts()).expect("should format");
+        assert_eq!(
+            s, "\u{1F7E2} L 85%",
+            "remaining-first should show complement with remaining label, got {s}"
+        );
     }
 }

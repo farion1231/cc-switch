@@ -2866,6 +2866,8 @@
     "expired": "セッション期限切れ",
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
     "queryFailed": "クエリに失敗しました",
-    "refresh": "更新"
+    "refresh": "更新",
+    "usedShort": "使用",
+    "remainingShort": "残り"
   }
 }

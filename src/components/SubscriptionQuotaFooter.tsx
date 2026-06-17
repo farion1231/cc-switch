@@ -3,7 +3,16 @@ import { RefreshCw, AlertCircle, Clock } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
 import { useSubscriptionQuota } from "@/lib/query/subscription";
+import { useSettingsQuery } from "@/lib/query/queries";
 import type { QuotaTier, SubscriptionQuota } from "@/types/subscription";
+
+type UsageDisplayOrder = "remaining-first" | "used-first";
+
+/** 根据展示偏好返回要显示的百分数（已用或剩余），clamp 到 0..=100。 */
+function displayPct(utilization: number, order: UsageDisplayOrder): number {
+  const value = order === "used-first" ? utilization : 100 - utilization;
+  return Math.round(Math.min(100, Math.max(0, value)));
+}
 
 interface SubscriptionQuotaFooterProps {
   appId: AppId;
@@ -105,6 +114,9 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
   inline = false,
 }) => {
   const { t } = useTranslation();
+  const { data: settings } = useSettingsQuery();
+  const displayOrder: UsageDisplayOrder =
+    settings?.usageDisplayOrder ?? "remaining-first";
 
   // 定期更新相对时间显示
   const [now, setNow] = React.useState(Date.now());
@@ -241,7 +253,12 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
           {tiers
             .filter((tier) => !HIDDEN_INLINE_TIERS.has(tier.name))
             .map((tier) => (
-              <TierBadge key={tier.name} tier={tier} t={t} />
+              <TierBadge
+                key={tier.name}
+                tier={tier}
+                t={t}
+                displayOrder={displayOrder}
+              />
             ))}
         </div>
       </div>
@@ -275,7 +292,12 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
 
       <div className="flex flex-col gap-2">
         {tiers.map((tier) => (
-          <TierBar key={tier.name} tier={tier} t={t} />
+          <TierBar
+            key={tier.name}
+            tier={tier}
+            t={t}
+            displayOrder={displayOrder}
+          />
         ))}
       </div>
 
@@ -304,21 +326,30 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
 export const TierBadge: React.FC<{
   tier: QuotaTier;
   t: (key: string, options?: Record<string, unknown>) => string;
-}> = ({ tier, t }) => {
+  displayOrder?: UsageDisplayOrder;
+}> = ({ tier, t, displayOrder = "remaining-first" }) => {
   const label = TIER_I18N_KEYS[tier.name]
     ? t(TIER_I18N_KEYS[tier.name])
     : tier.name;
   const countdown = countdownStr(tier.resetsAt);
 
   const hasUsd = tier.usedValueUsd != null && tier.maxValueUsd != null;
+  // 数字跟随偏好（已用/剩余），但颜色始终按利用率（离上限多近）。
+  const word =
+    displayOrder === "used-first"
+      ? t("subscription.usedShort")
+      : t("subscription.remainingShort");
 
   return (
     <div className="flex items-center gap-0.5">
       <span className="text-gray-500 dark:text-gray-400">{label}:</span>
+      <span className="text-gray-500 dark:text-gray-400">{word}</span>
       <span
         className={`font-semibold tabular-nums ${utilizationColor(tier.utilization)}`}
       >
-        {t("subscription.utilization", { value: Math.round(tier.utilization) })}
+        {t("subscription.utilization", {
+          value: displayPct(tier.utilization, displayOrder),
+        })}
       </span>
       {hasUsd && (
         <span className="text-muted-foreground/60">
@@ -339,11 +370,17 @@ export const TierBadge: React.FC<{
 const TierBar: React.FC<{
   tier: QuotaTier;
   t: (key: string, options?: Record<string, unknown>) => string;
-}> = ({ tier, t }) => {
+  displayOrder?: UsageDisplayOrder;
+}> = ({ tier, t, displayOrder = "remaining-first" }) => {
   const label = TIER_I18N_KEYS[tier.name]
     ? t(TIER_I18N_KEYS[tier.name])
     : tier.name;
   const resetText = formatResetTime(tier.resetsAt, t);
+  // 进度条始终表示已用占比；右侧数字跟随展示偏好。
+  const word =
+    displayOrder === "used-first"
+      ? t("subscription.usedShort")
+      : t("subscription.remainingShort");
 
   return (
     <div className="flex items-center gap-3 text-xs">
@@ -375,7 +412,7 @@ const TierBar: React.FC<{
         <span
           className={`font-semibold tabular-nums ${utilizationColor(tier.utilization)}`}
         >
-          {Math.round(tier.utilization)}%
+          {word} {displayPct(tier.utilization, displayOrder)}%
         </span>
         {resetText && (
           <span
