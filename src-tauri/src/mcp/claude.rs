@@ -2,6 +2,7 @@
 
 use serde_json::Value;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use crate::app_config::{McpApps, McpConfig, McpServer, MultiAppConfig};
 use crate::error::AppError;
@@ -13,7 +14,21 @@ fn should_sync_claude_mcp() -> bool {
     // 按用户偏好：此时跳过写入/删除，不创建任何文件或目录。
     let configured_dir = crate::settings::get_claude_configured_override_dir()
         .unwrap_or_else(|| crate::config::get_home_dir().join(".claude"));
-    configured_dir.exists() || crate::config::get_claude_configured_mcp_path().exists()
+    should_sync_claude_mcp_at(
+        &configured_dir,
+        &crate::config::get_claude_configured_mcp_path(),
+    )
+}
+
+fn should_sync_claude_mcp_at(config_dir: &Path, mcp_path: &Path) -> bool {
+    config_dir.exists() || mcp_path.exists()
+}
+
+fn active_claude_mcp_target() -> (PathBuf, PathBuf) {
+    (
+        crate::config::get_claude_config_dir(),
+        crate::config::get_claude_mcp_path(),
+    )
 }
 
 /// 返回已启用的 MCP 服务器（过滤 enabled==true）
@@ -46,6 +61,15 @@ pub fn sync_enabled_to_claude(config: &MultiAppConfig) -> Result<(), AppError> {
     }
     let enabled = collect_enabled_servers(&config.mcp.claude);
     crate::claude_mcp::set_mcp_servers_map(&enabled)
+}
+
+pub fn sync_enabled_to_active_claude(config: &MultiAppConfig) -> Result<(), AppError> {
+    let (config_dir, mcp_path) = active_claude_mcp_target();
+    if !should_sync_claude_mcp_at(&config_dir, &mcp_path) {
+        return Ok(());
+    }
+    let enabled = collect_enabled_servers(&config.mcp.claude);
+    crate::claude_mcp::set_mcp_servers_map_at_path(&mcp_path, &enabled)
 }
 
 /// 从 ~/.claude.json 导入 mcpServers 到统一结构（v3.7.0+）
@@ -134,6 +158,23 @@ pub fn sync_single_server_to_claude(
     crate::claude_mcp::set_mcp_servers_map(&updated)
 }
 
+pub fn sync_single_server_to_active_claude(
+    _config: &MultiAppConfig,
+    id: &str,
+    server_spec: &Value,
+) -> Result<(), AppError> {
+    let (config_dir, mcp_path) = active_claude_mcp_target();
+    if !should_sync_claude_mcp_at(&config_dir, &mcp_path) {
+        return Ok(());
+    }
+    let current = crate::claude_mcp::read_mcp_servers_map_from_path(&mcp_path)?;
+
+    let mut updated = current;
+    updated.insert(id.to_string(), server_spec.clone());
+
+    crate::claude_mcp::set_mcp_servers_map_at_path(&mcp_path, &updated)
+}
+
 /// 从 Claude live 配置中移除单个 MCP 服务器
 pub fn remove_server_from_claude(id: &str) -> Result<(), AppError> {
     if !should_sync_claude_mcp() {
@@ -147,6 +188,17 @@ pub fn remove_server_from_claude(id: &str) -> Result<(), AppError> {
 
     // 写回
     crate::claude_mcp::set_mcp_servers_map(&current)
+}
+
+pub fn remove_server_from_active_claude(id: &str) -> Result<(), AppError> {
+    let (config_dir, mcp_path) = active_claude_mcp_target();
+    if !should_sync_claude_mcp_at(&config_dir, &mcp_path) {
+        return Ok(());
+    }
+    let mut current = crate::claude_mcp::read_mcp_servers_map_from_path(&mcp_path)?;
+    current.remove(id);
+
+    crate::claude_mcp::set_mcp_servers_map_at_path(&mcp_path, &current)
 }
 
 #[cfg(test)]

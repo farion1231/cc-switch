@@ -368,11 +368,17 @@ pub fn validate_command_in_path(cmd: &str) -> Result<bool, AppError> {
 /// 读取 ~/.claude.json 中的 mcpServers 映射
 pub fn read_mcp_servers_map() -> Result<std::collections::HashMap<String, Value>, AppError> {
     let path = user_config_path();
+    read_mcp_servers_map_from_path(&path)
+}
+
+pub(crate) fn read_mcp_servers_map_from_path(
+    path: &Path,
+) -> Result<std::collections::HashMap<String, Value>, AppError> {
     if !path.exists() {
         return Ok(std::collections::HashMap::new());
     }
 
-    let root = read_json_value(&path)?;
+    let root = read_json_value(path)?;
     let servers = root
         .get("mcpServers")
         .and_then(|v| v.as_object())
@@ -388,15 +394,22 @@ pub fn set_mcp_servers_map(
     servers: &std::collections::HashMap<String, Value>,
 ) -> Result<(), AppError> {
     let path = user_config_path();
+    set_mcp_servers_map_at_path(&path, servers)
+}
+
+pub(crate) fn set_mcp_servers_map_at_path(
+    path: &Path,
+    servers: &std::collections::HashMap<String, Value>,
+) -> Result<(), AppError> {
     let mut root = if path.exists() {
-        read_json_value(&path)?
+        read_json_value(path)?
     } else {
         serde_json::json!({})
     };
 
     // 构建 mcpServers 对象：移除 UI 辅助字段（enabled/source），仅保留实际 MCP 规范
     // 检测目标路径是否为 WSL，若是则跳过 cmd /c 包装
-    let is_wsl_target = is_wsl_path(&path);
+    let is_wsl_target = is_wsl_path(path);
     if is_wsl_target {
         log::info!("检测到 WSL 路径，跳过 cmd /c 包装: {}", path.display());
     }
@@ -441,7 +454,7 @@ pub fn set_mcp_servers_map(
         obj.insert("mcpServers".into(), Value::Object(out));
     }
 
-    write_json_value(&path, &root)?;
+    write_json_value(path, &root)?;
     Ok(())
 }
 

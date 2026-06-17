@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use crate::app_config::{AppType, McpServer};
 use crate::error::AppError;
 use crate::mcp;
+use crate::provider::ClaudeActivationMode;
 use crate::store::AppState;
 
 /// MCP 相关业务逻辑（v3.7.0 统一结构）
@@ -90,9 +91,9 @@ impl McpService {
     }
 
     /// 将 MCP 服务器同步到所有启用的应用
-    fn sync_server_to_apps(_state: &AppState, server: &McpServer) -> Result<(), AppError> {
+    fn sync_server_to_apps(state: &AppState, server: &McpServer) -> Result<(), AppError> {
         for app in server.apps.enabled_apps() {
-            Self::sync_server_to_app_no_config(server, &app)?;
+            Self::sync_server_to_app(state, server, &app)?;
         }
 
         Ok(())
@@ -100,17 +101,25 @@ impl McpService {
 
     /// 将 MCP 服务器同步到指定应用
     fn sync_server_to_app(
-        _state: &AppState,
+        state: &AppState,
         server: &McpServer,
         app: &AppType,
     ) -> Result<(), AppError> {
-        Self::sync_server_to_app_no_config(server, app)
-    }
-
-    fn sync_server_to_app_no_config(server: &McpServer, app: &AppType) -> Result<(), AppError> {
         match app {
             AppType::Claude => {
-                mcp::sync_single_server_to_claude(&Default::default(), &server.id, &server.server)?;
+                if Self::current_claude_provider_is_profile_and_config(state)? {
+                    mcp::sync_single_server_to_active_claude(
+                        &Default::default(),
+                        &server.id,
+                        &server.server,
+                    )?;
+                } else {
+                    mcp::sync_single_server_to_claude(
+                        &Default::default(),
+                        &server.id,
+                        &server.server,
+                    )?;
+                }
             }
             AppType::ClaudeDesktop => {
                 log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
@@ -154,9 +163,15 @@ impl McpService {
         Ok(())
     }
 
-    fn remove_server_from_app(_state: &AppState, id: &str, app: &AppType) -> Result<(), AppError> {
+    fn remove_server_from_app(state: &AppState, id: &str, app: &AppType) -> Result<(), AppError> {
         match app {
-            AppType::Claude => mcp::remove_server_from_claude(id)?,
+            AppType::Claude => {
+                if Self::current_claude_provider_is_profile_and_config(state)? {
+                    mcp::remove_server_from_active_claude(id)?;
+                } else {
+                    mcp::remove_server_from_claude(id)?;
+                }
+            }
             AppType::ClaudeDesktop => {
                 log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
             }
@@ -176,9 +191,45 @@ impl McpService {
         Ok(())
     }
 
+    fn current_claude_provider_is_profile_and_config(state: &AppState) -> Result<bool, AppError> {
+        let Some(current_id) =
+            crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)?
+        else {
+            return Ok(false);
+        };
+
+        let providers = state.db.get_all_providers(AppType::Claude.as_str())?;
+        Ok(providers.get(&current_id).is_some_and(|provider| {
+            matches!(
+                provider
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.claude_activation_mode.as_ref()),
+                Some(ClaudeActivationMode::ProfileAndConfig)
+            )
+        }))
+    }
+
     /// 手动同步所有启用的 MCP 服务器到对应的应用
     pub fn sync_all_enabled(state: &AppState) -> Result<(), AppError> {
         Self::sync_all_enabled_filtered(state, |_| true)
+    }
+
+    pub fn sync_all_enabled_to_active_claude(state: &AppState) -> Result<(), AppError> {
+        let servers = Self::get_all_servers(state)?;
+        let mut claude_config = crate::app_config::MultiAppConfig::default();
+        for server in servers.values() {
+            if server.apps.claude {
+                claude_config.mcp.claude.servers.insert(
+                    server.id.clone(),
+                    serde_json::json!({
+                        "enabled": true,
+                        "server": server.server.clone()
+                    }),
+                );
+            }
+        }
+        mcp::sync_enabled_to_active_claude(&claude_config)
     }
 
     pub fn sync_all_enabled_without_claude(state: &AppState) -> Result<(), AppError> {

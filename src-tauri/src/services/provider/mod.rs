@@ -2598,6 +2598,97 @@ mod tests {
 
     #[test]
     #[serial]
+    fn switch_claude_profile_and_config_syncs_mcp_to_target_profile() {
+        let _env_guard = UserEnvVarGuard::new("CLAUDE_CONFIG_DIR");
+        with_test_home(|state, home| {
+            let default_dir = home.join(".claude");
+            fs::create_dir_all(&default_dir).expect("create default claude dir");
+            write_json_file(
+                &default_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "default-live-token",
+                        "ANTHROPIC_BASE_URL": "https://default-live.example"
+                    }
+                }),
+            )
+            .expect("seed default live settings");
+
+            let api_dir = home.join(".claude-profiles").join("api");
+            let default_provider = claude_provider(
+                "default",
+                "Default",
+                "default-provider-token",
+                "https://default-provider.example",
+                None,
+            );
+            let api_provider = claude_provider(
+                "claude-api",
+                "Claude API",
+                "api-provider-token",
+                "https://api-provider.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(api_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileAndConfig),
+                    ..Default::default()
+                }),
+            );
+
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &default_provider)
+                .expect("save default provider");
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "default")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("default"))
+                .expect("set local current provider");
+            state
+                .db
+                .save_mcp_server(&McpServer {
+                    id: "managed-mcp".to_string(),
+                    name: "Managed MCP".to_string(),
+                    server: json!({
+                        "type": "stdio",
+                        "command": "python",
+                        "args": ["-m", "managed_mcp"]
+                    }),
+                    apps: McpApps {
+                        claude: true,
+                        ..Default::default()
+                    },
+                    description: None,
+                    homepage: None,
+                    docs: None,
+                    tags: Vec::new(),
+                })
+                .expect("save managed mcp server");
+
+            ProviderService::switch(state, AppType::Claude, "claude-api")
+                .expect("switch to api profile");
+
+            let profile_mcp_path = api_dir.with_extension("json");
+            let profile_mcp: Value =
+                read_json_file(&profile_mcp_path).expect("read api profile mcp file");
+            assert_eq!(
+                profile_mcp["mcpServers"]["managed-mcp"]["args"],
+                json!(["-m", "managed_mcp"]),
+                "profile-and-config switch should sync enabled MCP servers into the selected profile"
+            );
+            assert!(
+                !crate::config::get_default_claude_mcp_path().exists(),
+                "profile-and-config switch should not write the default MCP file when the target profile is active"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn sync_current_claude_profile_and_config_applies_profile_before_live_write() {
         with_test_home(|state, home| {
             let default_dir = home.join(".claude");
@@ -6069,6 +6160,23 @@ impl ProviderService {
     }
 
     fn current_claude_provider_is_profile_only(state: &AppState) -> Result<bool, AppError> {
+        Self::current_claude_provider_matches_activation_mode(
+            state,
+            ClaudeActivationMode::ProfileOnly,
+        )
+    }
+
+    fn current_claude_provider_is_profile_and_config(state: &AppState) -> Result<bool, AppError> {
+        Self::current_claude_provider_matches_activation_mode(
+            state,
+            ClaudeActivationMode::ProfileAndConfig,
+        )
+    }
+
+    fn current_claude_provider_matches_activation_mode(
+        state: &AppState,
+        activation_mode: ClaudeActivationMode,
+    ) -> Result<bool, AppError> {
         let Some(provider_id) =
             crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)?
         else {
@@ -6086,7 +6194,7 @@ impl ProviderService {
                 .meta
                 .as_ref()
                 .and_then(|meta| meta.claude_activation_mode.as_ref()),
-            Some(ClaudeActivationMode::ProfileOnly)
+            Some(mode) if mode == &activation_mode
         ))
     }
 
@@ -6098,6 +6206,10 @@ impl ProviderService {
             && Self::current_claude_provider_is_profile_only(state)?
         {
             McpService::sync_all_enabled_without_claude(state)
+        } else if matches!(app_type, AppType::Claude)
+            && Self::current_claude_provider_is_profile_and_config(state)?
+        {
+            McpService::sync_all_enabled_to_active_claude(state)
         } else {
             McpService::sync_all_enabled(state)
         }
