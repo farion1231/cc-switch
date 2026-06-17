@@ -60,6 +60,7 @@ pub fn extract_codex_model_provider(config_text: &str) -> Option<String> {
         .and_then(|doc| active_codex_model_provider_id(&doc))
 }
 
+#[allow(dead_code)]
 pub fn extract_codex_model(config_text: &str) -> Option<String> {
     let trimmed = config_text.trim();
     if trimmed.is_empty() {

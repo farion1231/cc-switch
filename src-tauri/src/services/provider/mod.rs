@@ -6084,6 +6084,7 @@ impl ProviderService {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn prepare_claude_profile_terminal_launch(
         state: &AppState,
         provider: &Provider,
@@ -6487,15 +6488,6 @@ impl ProviderService {
                 )),
             None => Ok(false),
         }
-    }
-
-    fn sync_codex_desktop_threads(
-        provider: &Provider,
-        source_provider: Option<&str>,
-        run_audit: bool,
-    ) -> Result<usize, AppError> {
-        let target_provider = Self::codex_desktop_provider_key(provider)?;
-        Self::sync_codex_desktop_threads_to_provider(&target_provider, source_provider, run_audit)
     }
 
     fn sync_codex_desktop_threads_to_provider(
