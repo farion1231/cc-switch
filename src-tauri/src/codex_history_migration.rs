@@ -187,10 +187,18 @@ pub fn migrate_codex_history_for_force_provider_id(
     let migration_name = "codex-force-provider-id-v1";
     let backup_root = backup_root_for_migration(migration_name);
 
-    let _migrated_jsonl =
-        migrate_codex_jsonl_files_for_target(&codex_dir, &source_set, target_provider_id, &backup_root)?;
-    let _migrated_state =
-        migrate_codex_state_dbs_for_target(&codex_dir, &source_set, target_provider_id, &backup_root)?;
+    let _migrated_jsonl = migrate_codex_jsonl_files_for_target(
+        &codex_dir,
+        &source_set,
+        target_provider_id,
+        &backup_root,
+    )?;
+    let _migrated_state = migrate_codex_state_dbs_for_target(
+        &codex_dir,
+        &source_set,
+        target_provider_id,
+        &backup_root,
+    )?;
 
     log::info!(
         "Migrated Codex session history for force provider ID: {:?} -> '{}'",
@@ -339,9 +347,7 @@ fn backup_codex_state_db_simple(
 ) -> Result<(), AppError> {
     std::fs::create_dir_all(backup_root).map_err(|e| AppError::io(backup_root, e))?;
 
-    let rel = db_path
-        .strip_prefix(codex_dir)
-        .unwrap_or(db_path);
+    let rel = db_path.strip_prefix(codex_dir).unwrap_or(db_path);
     let backup_path = backup_root.join(rel);
 
     if let Some(parent) = backup_path.parent() {

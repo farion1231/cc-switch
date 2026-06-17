@@ -1060,8 +1060,8 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
 pub fn normalize_codex_model_provider_id_if_configured(
     config_text: &str,
 ) -> Result<NormalizeCodexOutcome, AppError> {
-    let target_id = crate::settings::force_codex_model_provider_id()
-        .filter(|t| !t.trim().is_empty());
+    let target_id =
+        crate::settings::force_codex_model_provider_id().filter(|t| !t.trim().is_empty());
     normalize_codex_model_provider_id_to(config_text, target_id.as_deref())
 }
 
@@ -1101,21 +1101,22 @@ fn normalize_codex_provider_id_to_impl(
     // rewritten even when the top-level model_provider is already the
     // target or is a reserved ID.
     let third_party_ids = collect_non_reserved_provider_ids(&doc, target_id);
+    let active_provider_id = active_codex_model_provider_id(&doc);
 
     let mut changed = false;
 
     for old_id in &third_party_ids {
-        // Rename [model_providers.<old>] → [model_providers.<target>]
-        // Always remove the old table; only insert into target slot
-        // when target doesn't exist yet, so the active provider's
-        // live config is never overwritten by stale profile data.
+        // Rename [model_providers.<old>] into [model_providers.<target>].
+        // If old_id is the active provider, its table must win even when the
+        // target slot already exists from stale profile data.
         if let Some(model_providers) = doc
             .get_mut("model_providers")
             .and_then(|item| item.as_table_mut())
         {
-            let target_exists = model_providers.contains_key(target_id);
             if let Some(provider_table) = model_providers.remove(old_id.as_str()) {
-                if !target_exists {
+                let should_insert = active_provider_id.as_deref() == Some(old_id.as_str())
+                    || !model_providers.contains_key(target_id);
+                if should_insert {
                     model_providers[target_id] = provider_table;
                 }
             }
@@ -1406,14 +1407,19 @@ pub fn write_codex_live_for_provider(
     // Step 2: normalize model_provider ID (runs after unified injection
     // so official providers already have model_provider="custom" with
     // requires_openai_auth, and normalize is a no-op for them).
-    let force_id = crate::settings::force_codex_model_provider_id();
+    let force_id = crate::settings::force_codex_model_provider_id()
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty());
     log::info!(
         "write_codex_live_for_provider: category={:?}, force_id={:?}",
-        category, force_id
+        category,
+        force_id
     );
+    let mut rewritten_ids = Vec::new();
     let config_text = match config_text {
         Some(text) => {
             let outcome = normalize_codex_model_provider_id_if_configured(text)?;
+            rewritten_ids = outcome.rewritten_ids;
             Some(outcome.config_text)
         }
         None => None,
@@ -1426,9 +1432,19 @@ pub fn write_codex_live_for_provider(
     if should_write_auth {
         write_codex_live_atomic(auth, config_text.as_deref())
     } else {
-        let live_config = prepare_codex_provider_live_config(auth, config_text.as_deref().unwrap_or(""))?;
+        let live_config =
+            prepare_codex_provider_live_config(auth, config_text.as_deref().unwrap_or(""))?;
         write_codex_live_config_atomic(Some(&live_config))
+    }?;
+
+    if let Some(target_id) = force_id.as_deref() {
+        crate::codex_history_migration::migrate_codex_history_for_force_provider_id(
+            &rewritten_ids,
+            target_id,
+        )?;
     }
+
+    Ok(())
 }
 
 /// Build the live Codex config for provider switching.
@@ -2661,7 +2677,9 @@ name = "My Provider"
 base_url = "https://example.com/v1"
 wire_api = "responses"
 "#;
-        let result = normalize_codex_model_provider_id_to(input, None).unwrap().config_text;
+        let result = normalize_codex_model_provider_id_to(input, None)
+            .unwrap()
+            .config_text;
         assert_eq!(result, input, "None target should return input unchanged");
     }
 
@@ -2670,7 +2688,9 @@ wire_api = "responses"
         let input = r#"model_provider = "my_provider"
 model = "gpt-5.5"
 "#;
-        let result = normalize_codex_model_provider_id_to(input, Some("   ")).unwrap().config_text;
+        let result = normalize_codex_model_provider_id_to(input, Some("   "))
+            .unwrap()
+            .config_text;
         assert_eq!(
             result, input,
             "whitespace-only target should return input unchanged"
@@ -2685,7 +2705,9 @@ model = "gpt-5.5"
 [model_providers.openai]
 name = "OpenAI"
 "#;
-        let result = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap().config_text;
+        let result = normalize_codex_model_provider_id_to(input, Some("custom"))
+            .unwrap()
+            .config_text;
         assert_eq!(
             result, input,
             "reserved provider ID should not be rewritten"
@@ -2702,7 +2724,9 @@ name = "Vendor Alpha"
 base_url = "https://alpha.example/v1"
 wire_api = "responses"
 "#;
-        let result = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap().config_text;
+        let result = normalize_codex_model_provider_id_to(input, Some("custom"))
+            .unwrap()
+            .config_text;
         let parsed: toml::Value = toml::from_str(&result).unwrap();
 
         assert_eq!(
@@ -2729,6 +2753,43 @@ wire_api = "responses"
     }
 
     #[test]
+    fn normalize_codex_active_provider_overwrites_existing_target_table() {
+        let input = r#"model_provider = "vendor_b"
+model = "gpt-5.5"
+
+[model_providers.custom]
+name = "Stale Custom"
+base_url = "https://stale.example/v1"
+
+[model_providers.vendor_b]
+name = "Vendor B"
+base_url = "https://vendor-b.example/v1"
+wire_api = "responses"
+"#;
+        let outcome = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap();
+        let parsed: toml::Value = toml::from_str(&outcome.config_text).unwrap();
+
+        assert_eq!(outcome.rewritten_ids, vec!["vendor_b".to_string()]);
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("custom")
+        );
+        assert!(parsed
+            .get("model_providers")
+            .and_then(|v| v.get("vendor_b"))
+            .is_none());
+        let custom = parsed
+            .get("model_providers")
+            .and_then(|v| v.get("custom"))
+            .expect("custom provider table should exist");
+        assert_eq!(
+            custom.get("base_url").and_then(|v| v.as_str()),
+            Some("https://vendor-b.example/v1"),
+            "active provider table should replace stale target table"
+        );
+    }
+
+    #[test]
     fn normalize_codex_rewrites_profile_references() {
         let input = r#"model_provider = "aihubmix"
 model = "gpt-5.5"
@@ -2745,7 +2806,9 @@ model = "gpt-5.5"
 model_provider = "aihubmix"
 model = "gpt-4"
 "#;
-        let result = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap().config_text;
+        let result = normalize_codex_model_provider_id_to(input, Some("custom"))
+            .unwrap()
+            .config_text;
         let parsed: toml::Value = toml::from_str(&result).unwrap();
 
         assert_eq!(
@@ -2777,7 +2840,9 @@ name = "My Provider"
 model_provider = "openai"
 model = "gpt-5.5"
 "#;
-        let result = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap().config_text;
+        let result = normalize_codex_model_provider_id_to(input, Some("custom"))
+            .unwrap()
+            .config_text;
         let parsed: toml::Value = toml::from_str(&result).unwrap();
         let profiles = parsed.get("profiles").expect("profiles should exist");
         let profile = profiles.get("work").expect("profile should exist");
@@ -2807,7 +2872,9 @@ base_url = "https://aihubmix.com/v1"
 model_provider = "aihubmix"
 model = "gpt-5.5"
 "#;
-        let result = normalize_codex_model_provider_id_to(input, Some("custom")).unwrap().config_text;
+        let result = normalize_codex_model_provider_id_to(input, Some("custom"))
+            .unwrap()
+            .config_text;
         let parsed: toml::Value = toml::from_str(&result).unwrap();
 
         // Top-level should stay "custom"
