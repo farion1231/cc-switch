@@ -45,6 +45,10 @@ const CLAUDE_TAKEOVER_OPUS_MODEL: &str = "claude-opus-4-8";
 // 写给 Claude Code 时沿用文档示例的大写形式；解析侧大小写不敏感。
 const CLAUDE_ONE_M_MARKER_FOR_CLIENT: &str = "[1M]";
 
+#[cfg(test)]
+static FAIL_CODEX_TAKEOVER_LIVE_WRITE_FOR_TEST: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClaudeTakeoverAuthPolicy {
     PreserveExistingOrAuthToken,
@@ -2086,6 +2090,25 @@ impl ProxyService {
         Ok(())
     }
 
+    async fn restore_live_backup_snapshot(
+        &self,
+        app_type: &str,
+        backup: Option<&LiveBackup>,
+    ) -> Result<(), String> {
+        match backup {
+            Some(backup) => self
+                .db
+                .save_live_backup(app_type, &backup.original_config)
+                .await
+                .map_err(|e| format!("恢复 {app_type} 备份失败: {e}")),
+            None => self
+                .db
+                .delete_live_backup(app_type)
+                .await
+                .map_err(|e| format!("清理 {app_type} 备份失败: {e}")),
+        }
+    }
+
     pub async fn hot_switch_provider(
         &self,
         app_type: &str,
@@ -2207,12 +2230,12 @@ impl ProxyService {
                 .as_deref()
                 != Some(provider_id);
 
-        let has_backup = self
+        let previous_backup = self
             .db
             .get_live_backup(app_type_enum.as_str())
             .await
-            .map_err(|e| format!("读取 {app_type} 备份失败: {e}"))?
-            .is_some();
+            .map_err(|e| format!("读取 {app_type} 备份失败: {e}"))?;
+        let has_backup = previous_backup.is_some();
         let live_taken_over = self.detect_takeover_in_live_config_for_app(&app_type_enum);
         let should_sync_backup = has_backup || live_taken_over;
 
@@ -2235,13 +2258,29 @@ impl ProxyService {
             self.update_live_backup_from_provider_inner(app_type, &provider)
                 .await?;
 
-            if matches!(app_type_enum, AppType::Claude) {
+            let sync_result = if matches!(app_type_enum, AppType::Claude) {
                 self.sync_claude_live_from_provider_while_proxy_active(&provider)
-                    .await?;
+                    .await
             } else if matches!(app_type_enum, AppType::Codex) {
-                self.sync_codex_live_from_provider_while_proxy_active(&provider)
-                    .await?;
-                refreshed_codex_takeover_live = true;
+                let result = self
+                    .sync_codex_live_from_provider_while_proxy_active(&provider)
+                    .await;
+                if result.is_ok() {
+                    refreshed_codex_takeover_live = true;
+                }
+                result
+            } else {
+                Ok(())
+            };
+
+            if let Err(err) = sync_result {
+                if let Err(restore_err) = self
+                    .restore_live_backup_snapshot(app_type_enum.as_str(), previous_backup.as_ref())
+                    .await
+                {
+                    return Err(format!("{err}; {restore_err}"));
+                }
+                return Err(err);
             }
         }
 
@@ -2547,6 +2586,12 @@ impl ProxyService {
         config: &Value,
         _provider: Option<&Provider>,
     ) -> Result<(), String> {
+        #[cfg(test)]
+        if FAIL_CODEX_TAKEOVER_LIVE_WRITE_FOR_TEST.swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err("simulated Codex takeover live write failure".to_string());
+        }
+
         if crate::settings::preserve_codex_official_auth_on_switch() {
             if let Some(auth) = config
                 .get("auth")
@@ -4650,6 +4695,70 @@ model = "gpt-5.1-codex"
             .expect("backup exists");
         let expected = serde_json::to_string(&provider_b.settings_config).expect("serialize");
         assert_eq!(backup.original_config, expected);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn failed_codex_hot_switch_restores_previous_live_backup() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "a-key"
+                },
+                "config": "model_provider = \"rightcode\"\nmodel = \"gpt-5.4\"\n[model_providers.rightcode]\nname = \"RightCode\"\nbase_url = \"https://rightcode.example/v1\"\n"
+            }),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "b".to_string(),
+            "B".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "b-key"
+                },
+                "config": "model_provider = \"aihubmix\"\nmodel = \"gpt-5.4\"\n[model_providers.aihubmix]\nname = \"AiHubMix\"\nbase_url = \"https://aihubmix.example/v1\"\n"
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider_a)
+            .expect("save provider a");
+        db.save_provider("codex", &provider_b)
+            .expect("save provider b");
+        db.set_current_provider("codex", "a")
+            .expect("set current provider");
+        let original_backup =
+            serde_json::to_string(&provider_a.settings_config).expect("serialize");
+        db.save_live_backup("codex", &original_backup)
+            .await
+            .expect("seed live backup");
+
+        FAIL_CODEX_TAKEOVER_LIVE_WRITE_FOR_TEST.store(true, std::sync::atomic::Ordering::SeqCst);
+        let err = service
+            .hot_switch_provider_inner("codex", "b")
+            .await
+            .expect_err("simulated live write failure should reject hot switch");
+        assert!(
+            err.contains("simulated Codex takeover live write failure"),
+            "expected simulated live write failure, got {err:?}"
+        );
+
+        let backup = db
+            .get_live_backup("codex")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        assert_eq!(
+            backup.original_config, original_backup,
+            "failed hot-switch must restore the backup that takeover stop will later restore"
+        );
     }
 
     #[tokio::test]
