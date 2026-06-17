@@ -16,6 +16,8 @@ import {
   updateProvider,
   updateSortOrder,
   getSettings,
+  setLastOpenProviderTerminalRequest,
+  setLastPickDirectoryRequest,
   setSettings,
   getAppConfigDirOverride,
   setAppConfigDirOverrideState,
@@ -270,12 +272,26 @@ export const handlers = [
   ),
 
   http.post(`${TAURI_ENDPOINT}/pick_directory`, async ({ request }) => {
-    const { defaultPath, default_path } = await withJson<{
+    const payload = await withJson<{
       defaultPath?: string;
       default_path?: string;
+      title?: string;
     }>(request);
+    setLastPickDirectoryRequest(payload);
+    const { defaultPath, default_path } = payload;
     const initial = defaultPath ?? default_path;
     return success(initial ? `${initial}/picked` : "/mock/selected-dir");
+  }),
+
+  http.post(`${TAURI_ENDPOINT}/open_provider_terminal`, async ({ request }) => {
+    const payload = await withJson<{
+      providerId?: string;
+      provider_id?: string;
+      app?: AppId;
+      cwd?: string;
+    }>(request);
+    setLastOpenProviderTerminalRequest(payload);
+    return success(true);
   }),
 
   http.post(`${TAURI_ENDPOINT}/open_file_dialog`, () =>
