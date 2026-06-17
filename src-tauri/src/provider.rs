@@ -89,6 +89,7 @@ impl Provider {
         match app_type {
             crate::app_config::AppType::Claude => {
                 self.is_codex_oauth()
+                    || self.claude_converted_base_url_is_official_equivalent()
                     || self
                         .settings_config
                         .pointer("/env/ANTHROPIC_BASE_URL")
@@ -118,6 +119,51 @@ impl Provider {
                 })
             }
             _ => false,
+        }
+    }
+
+    fn claude_converted_base_url_is_official_equivalent(&self) -> bool {
+        let Some(base_url) = self
+            .settings_config
+            .pointer("/env/ANTHROPIC_BASE_URL")
+            .and_then(Value::as_str)
+        else {
+            return false;
+        };
+
+        match self.claude_api_format() {
+            "openai_chat" | "openai_responses" => codex_base_url_is_official_equivalent(base_url),
+            "gemini_native" => gemini_base_url_is_official_equivalent(base_url),
+            _ => false,
+        }
+    }
+
+    fn claude_api_format(&self) -> &'static str {
+        if self.is_codex_oauth() {
+            return "openai_responses";
+        }
+
+        if let Some(api_format) = self
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.api_format.as_deref())
+        {
+            return normalize_claude_api_format(api_format);
+        }
+
+        if let Some(api_format) = self
+            .settings_config
+            .get("api_format")
+            .and_then(Value::as_str)
+        {
+            return normalize_claude_api_format(api_format);
+        }
+
+        if claude_openrouter_compat_mode_enabled(self.settings_config.get("openrouter_compat_mode"))
+        {
+            "openai_chat"
+        } else {
+            "anthropic"
         }
     }
 
@@ -249,6 +295,27 @@ impl Provider {
 
 fn value_is_null_or_blank_string(value: &Value) -> bool {
     value.is_null() || value.as_str().is_some_and(|value| value.trim().is_empty())
+}
+
+fn normalize_claude_api_format(api_format: &str) -> &'static str {
+    match api_format {
+        "openai_chat" => "openai_chat",
+        "openai_responses" => "openai_responses",
+        "gemini_native" => "gemini_native",
+        _ => "anthropic",
+    }
+}
+
+fn claude_openrouter_compat_mode_enabled(value: Option<&Value>) -> bool {
+    match value {
+        Some(Value::Bool(enabled)) => *enabled,
+        Some(Value::Number(number)) => number.as_i64().unwrap_or(0) != 0,
+        Some(Value::String(value)) => {
+            let normalized = value.trim().to_ascii_lowercase();
+            normalized == "true" || normalized == "1"
+        }
+        _ => false,
+    }
 }
 
 fn claude_base_url_is_official_equivalent(base_url: &str) -> bool {
@@ -1147,6 +1214,97 @@ mod tests {
         });
 
         assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Claude));
+    }
+
+    #[test]
+    fn claude_openai_responses_official_base_url_is_official_equivalent() {
+        let mut provider = Provider::with_id(
+            "openai-responses-claude".to_string(),
+            "OpenAI Responses Claude".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.openai.com/v1"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            api_format: Some("openai_responses".to_string()),
+            ..Default::default()
+        });
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Claude));
+    }
+
+    #[test]
+    fn claude_openai_chat_official_base_url_is_official_equivalent() {
+        let mut provider = Provider::with_id(
+            "openai-chat-claude".to_string(),
+            "OpenAI Chat Claude".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.openai.com/v1"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            api_format: Some("openai_chat".to_string()),
+            ..Default::default()
+        });
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Claude));
+    }
+
+    #[test]
+    fn claude_gemini_native_official_base_url_is_official_equivalent() {
+        let mut provider = Provider::with_id(
+            "gemini-native-claude".to_string(),
+            "Gemini Native Claude".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            api_format: Some("gemini_native".to_string()),
+            ..Default::default()
+        });
+
+        assert!(provider.is_official_equivalent_for_app(&crate::app_config::AppType::Claude));
+    }
+
+    #[test]
+    fn claude_conversion_official_hosts_require_matching_api_format() {
+        let openai_provider = Provider::with_id(
+            "plain-openai-claude".to_string(),
+            "Plain OpenAI Claude".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.openai.com/v1"
+                }
+            }),
+            None,
+        );
+        let gemini_provider = Provider::with_id(
+            "plain-gemini-claude".to_string(),
+            "Plain Gemini Claude".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://generativelanguage.googleapis.com"
+                }
+            }),
+            None,
+        );
+
+        assert!(
+            !openai_provider.is_official_equivalent_for_app(&crate::app_config::AppType::Claude)
+        );
+        assert!(
+            !gemini_provider.is_official_equivalent_for_app(&crate::app_config::AppType::Claude)
+        );
     }
 
     #[test]
