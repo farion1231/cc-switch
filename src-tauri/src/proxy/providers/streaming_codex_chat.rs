@@ -257,15 +257,22 @@ impl ChatToResponsesState {
             return events;
         }
         // Try stripping incomplete <think> tag
-        let stripped = strip_leading_think_open_tag(delta).unwrap_or_else(|| delta.to_string());
-        if stripped.trim().is_empty() {
-            // Only whitespace inside an incomplete think block — drop it
-            self.finalize_reasoning()
-        } else {
-            // strip 成功说明有  thinking 开始标签但没闭合标签，
-            // 推理内容还在后面 chunk 里，先 buffer 起来
-            self.pending_think_content = Some(delta.to_string());
-            Vec::new()
+        match strip_leading_think_open_tag(delta) {
+            None => {
+                // No think tag at all — emit as plain text immediately
+                let mut events = self.finalize_reasoning();
+                events.extend(self.push_text_delta(delta));
+                events
+            }
+            Some(stripped) => {
+                // Has a leading think open tag — buffer the remaining content
+                if stripped.trim().is_empty() {
+                    self.finalize_reasoning()
+                } else {
+                    self.pending_think_content = Some(delta.to_string());
+                    Vec::new()
+                }
+            }
         }
     }
 
