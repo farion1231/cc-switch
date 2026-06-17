@@ -1101,6 +1101,10 @@ impl SkillService {
     }
 
     fn sanitize_repo_cache_segment(value: &str) -> String {
+        if matches!(value, "." | "..") {
+            return value.replace('.', "%2E");
+        }
+
         let mut encoded = String::with_capacity(value.len());
         for byte in value.as_bytes() {
             if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.') {
@@ -5000,6 +5004,25 @@ mod tests {
             SkillService::sanitize_repo_cache_segment("owner/name"),
             SkillService::sanitize_repo_cache_segment("owner?name")
         );
+    }
+
+    #[test]
+    fn repository_cache_segments_encode_dot_only_paths() {
+        assert_eq!(SkillService::sanitize_repo_cache_segment("."), "%2E");
+        assert_eq!(SkillService::sanitize_repo_cache_segment(".."), "%2E%2E");
+
+        let base = tempdir().expect("tempdir");
+        let cache_base = base.path().join("skill-repo-cache");
+        let sibling = base.path().join("backups");
+        let malformed_cache = SkillService::repo_cache_path_from(&cache_base, "..", "backups");
+        fs::create_dir_all(&sibling).expect("sibling app config dir");
+        fs::create_dir_all(&malformed_cache).expect("malformed cache dir");
+
+        SkillService::remove_repo_cache_from(&cache_base, "..", "backups")
+            .expect("remove encoded malformed cache");
+
+        assert!(sibling.exists(), "escaped sibling directory must be kept");
+        assert!(!malformed_cache.exists());
     }
 
     #[test]
