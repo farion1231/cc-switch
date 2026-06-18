@@ -136,12 +136,16 @@ fn should_normalize_anthropic_tool_thinking_history(
     .any(is_reasoning_vendor_identifier)
 }
 
-/// DeepSeek's Anthropic-compatible endpoint requires thinking history to be
-/// replayed on every assistant turn that contains tool_use. Some Anthropic SDK
-/// clients keep the tool history but drop or redact the thinking block, which
-/// makes DeepSeek reject the next request with `content[].thinking ... must be
-/// passed back`. Normalize only the narrow tool-call history shape for
-/// providers known to require plain `thinking` blocks.
+/// Some Anthropic-compatible reasoning providers historically required
+/// thinking history to be replayed on assistant turns that contain `tool_use`.
+/// Some clients keep the tool history but drop or redact the thinking block,
+/// which made those providers reject the next request with errors such as
+/// `content[].thinking ... must be passed back`.
+///
+/// Keep the legacy placeholder behavior configurable and scoped to the narrow
+/// tool-call history shape. Providers that no longer need synthetic replay can
+/// use `preserve_only` to keep real thinking blocks and safe cleanup without
+/// inserting `"tool call"` placeholders.
 pub fn normalize_anthropic_tool_thinking_history_for_provider(
     body: &mut Value,
     provider: &Provider,
