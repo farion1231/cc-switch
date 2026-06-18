@@ -578,10 +578,18 @@ export interface OpenCodeModel {
   [key: string]: unknown;
 }
 
+// OpenCode 供应商认证元数据
+export interface OpenCodeProviderAuth {
+  source?: string; // "opencode_auth_json" — 标识来源
+  type: "api" | "oauth" | "wellknown";
+  key?: string; // API key for type "api"
+  [key: string]: unknown; // OAuth extension fields (refresh, access, expires, accountId, etc.)
+}
+
 // OpenCode 供应商选项
 export interface OpenCodeProviderOptions {
   baseURL?: string;
-  apiKey?: string;
+  apiKey?: string; // Legacy — kept for backward compat read; new writes go to auth
   headers?: Record<string, string>;
   // 支持额外选项（timeout, setCacheKey 等）
   [key: string]: unknown;
@@ -593,6 +601,7 @@ export interface OpenCodeProviderConfig {
   name?: string; // 供应商显示名称
   options: OpenCodeProviderOptions;
   models: Record<string, OpenCodeModel>;
+  auth?: OpenCodeProviderAuth; // Credential metadata — backend writes to auth.json
 }
 
 // OpenCode MCP 服务器配置（与统一格式不同）

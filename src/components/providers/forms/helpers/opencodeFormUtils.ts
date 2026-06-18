@@ -37,7 +37,6 @@ export const OPENCODE_DEFAULT_CONFIG = JSON.stringify(
     npm: OPENCODE_DEFAULT_NPM,
     options: {
       baseURL: "",
-      apiKey: "",
       setCacheKey: true,
     },
     models: {},
@@ -45,11 +44,8 @@ export const OPENCODE_DEFAULT_CONFIG = JSON.stringify(
   null,
   2,
 );
-export const OPENCODE_KNOWN_OPTION_KEYS = [
-  "baseURL",
-  "apiKey",
-  "headers",
-] as const;
+export const OPENCODE_KNOWN_OPTION_KEYS = ["baseURL", "headers"] as const;
+export const OPENCODE_MANAGED_SECRET_OPTION_KEYS = ["apiKey"] as const;
 
 export const OPENCLAW_DEFAULT_CONFIG = JSON.stringify(
   {
@@ -70,6 +66,12 @@ export function isKnownOpencodeOptionKey(key: string): boolean {
   );
 }
 
+export function isManagedOpencodeSecretOptionKey(key: string): boolean {
+  return OPENCODE_MANAGED_SECRET_OPTION_KEYS.includes(
+    key as (typeof OPENCODE_MANAGED_SECRET_OPTION_KEYS)[number],
+  );
+}
+
 export function parseOpencodeConfig(
   settingsConfig?: Record<string, unknown>,
 ): OpenCodeProviderConfig {
@@ -85,6 +87,7 @@ export function parseOpencodeConfig(
       parsed.models && typeof parsed.models === "object"
         ? (parsed.models as Record<string, OpenCodeModel>)
         : {},
+    ...(parsed.auth ? { auth: parsed.auth } : {}),
   });
 
   try {
@@ -117,6 +120,7 @@ export function parseOpencodeConfigStrict(
       parsed.models && typeof parsed.models === "object"
         ? (parsed.models as Record<string, OpenCodeModel>)
         : {},
+    ...(parsed.auth ? { auth: parsed.auth } : {}),
   };
 }
 
@@ -145,7 +149,7 @@ export function toOpencodeExtraOptions(
 ): Record<string, string> {
   const extra: Record<string, string> = {};
   for (const [k, v] of Object.entries(options || {})) {
-    if (!isKnownOpencodeOptionKey(k)) {
+    if (!isKnownOpencodeOptionKey(k) && !isManagedOpencodeSecretOptionKey(k)) {
       extra[k] = typeof v === "string" ? v : JSON.stringify(v);
     }
   }
