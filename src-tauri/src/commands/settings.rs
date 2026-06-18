@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tauri_plugin_updater::UpdaterExt;
 
 fn merge_settings_for_save(
@@ -189,23 +189,43 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
 /// 这里把退出清理、安装和重启串在同一个后端流程中，避免依赖旧前端继续执行。
 #[tauri::command]
 pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> {
+    use std::time::Duration;
+
     let updater = app
         .updater_builder()
+        // 不在 builder 上设置 timeout：tauri-plugin-updater 曾有 check() timeout 泄漏到
+        // download() 的 bug（#2372），即使已修复也不确定当前版本是否包含。改用
+        // tokio::time::timeout 分别为 check 和 download 设置不同的超时。
         .build()
         .map_err(|e| format!("初始化更新器失败: {e}"))?;
 
-    let Some(update) = updater
-        .check()
+    let Some(update) = tokio::time::timeout(Duration::from_secs(35), updater.check())
         .await
+        .map_err(|_| "检查更新超时，请检查网络连接后重试".to_string())?
         .map_err(|e| format!("检查更新失败: {e}"))?
     else {
         return Ok(false);
     };
 
     log::info!("开始下载应用更新: {}", update.version);
-    let bytes = update
-        .download(|_, _| {}, || {})
+
+    let app_handle = app.clone();
+    let download_future = update.download(
+        move |chunk_length, content_length| {
+            let _ = app_handle.emit(
+                "update-download-progress",
+                serde_json::json!({
+                    "chunkLength": chunk_length,
+                    "contentLength": content_length,
+                }),
+            );
+        },
+        || {},
+    );
+
+    let bytes = tokio::time::timeout(Duration::from_secs(300), download_future)
         .await
+        .map_err(|_| "下载更新超时（5分钟），请检查网络连接后重试".to_string())?
         .map_err(|e| format!("下载更新失败: {e}"))?;
 
     log::info!("开始安装应用更新: {}", update.version);
@@ -236,11 +256,17 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
             .install(bytes)
             .map_err(|e| format!("安装更新失败: {e}"))?;
 
-        crate::save_window_state_before_exit(&app);
-        crate::cleanup_before_exit(&app).await;
-
         log::info!("应用更新安装完成，正在重启应用");
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // 绝不能在此调用 save_window_state_before_exit / cleanup_before_exit：
+        // 当前函数作为 #[tauri::command] 运行在 tokio worker 线程，
+        // save_window_state 会持有 window-state 插件锁并向主线程查询窗口几何；
+        // 而 restart_process 触发 ExitRequested(RESTART_EXIT_CODE) 后，主线程
+        // 在 RunEvent::Exit 钩子中等待同一把锁——双方互等造成进程永久卡死（#3998 / #4206）。
+        //
+        // 正确做法与 lib.rs 中 DeferToTauriRestart 路径一致：
+        //   - 窗口状态：Tauri 的 Exit 钩子在主线程保存（同线程读取几何，无死锁）
+        //   - 代理/Live 配置：重启后新实例立即接管并恢复代理状态，无需手动清理
         crate::restart_process(&app);
     }
 }

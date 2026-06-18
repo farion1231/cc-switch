@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Download,
   Copy,
@@ -216,6 +216,8 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     () => appVersionCache === null,
   );
   const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
+  const downloadBytesRef = useRef(0);
   const [toolVersions, setToolVersions] = useState<ToolVersion[]>(
     () => toolVersionsCache?.data ?? [],
   );
@@ -381,6 +383,40 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     await refreshToolVersions([toolName], { [toolName]: nextPref });
   };
 
+  // 监听后端下载进度事件，实时更新百分比
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    import("@tauri-apps/api/event").then(({ listen }) => {
+      if (disposed) return;
+      listen<{ chunkLength: number; contentLength: number | null }>(
+        "update-download-progress",
+        (event) => {
+          downloadBytesRef.current += event.payload.chunkLength;
+          const total = event.payload.contentLength;
+          if (total && total > 0) {
+            setDownloadProgress(
+              Math.min(
+                99,
+                Math.round((downloadBytesRef.current / total) * 100),
+              ),
+            );
+          }
+        },
+      ).then((fn) => {
+        if (disposed) {
+          fn();
+        } else {
+          unlisten = fn;
+        }
+      });
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   useEffect(() => {
     let active = true;
 
@@ -457,6 +493,8 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       }
 
       setIsDownloading(true);
+      setDownloadProgress(null);
+      downloadBytesRef.current = 0;
       try {
         resetDismiss();
         const installed = await settingsApi.installUpdateAndRestart();
@@ -479,6 +517,8 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         }
       } finally {
         setIsDownloading(false);
+        setDownloadProgress(null);
+        downloadBytesRef.current = 0;
       }
       return;
     }
@@ -907,7 +947,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
               {isDownloading ? (
                 <>
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  {t("settings.updating")}
+                  {downloadProgress !== null
+                    ? `${t("settings.updating")} ${downloadProgress}%`
+                    : t("settings.updating")}
                 </>
               ) : hasUpdate ? (
                 <>
