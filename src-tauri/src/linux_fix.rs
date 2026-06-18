@@ -81,16 +81,17 @@ fn queue_webview_repaint(window: &WebviewWindow) {
     }
 }
 
-fn is_effective_wayland_backend(gdk_backend: Option<&str>, has_wayland_display: bool) -> bool {
-    let requested_backend = gdk_backend
-        .and_then(|value| value.split(',').find(|part| !part.trim().is_empty()))
-        .map(|value| value.trim().to_ascii_lowercase());
+fn active_gdk_backend_is_wayland() -> Option<bool> {
+    use gtk::gdk::prelude::DisplayExtManual;
 
-    match requested_backend.as_deref() {
-        Some("x11") => false,
-        Some("wayland") => true,
-        _ => has_wayland_display,
-    }
+    gtk::gdk::Display::default().map(|display| display.backend().is_wayland())
+}
+
+fn should_skip_pseudo_resize_for_backend(
+    active_gdk_is_wayland: Option<bool>,
+    has_wayland_display: bool,
+) -> bool {
+    active_gdk_is_wayland.unwrap_or(has_wayland_display)
 }
 
 /// 对主窗口执行 Linux 专用的「focus + surface 重激活」序列。
@@ -110,8 +111,8 @@ pub(crate) fn nudge_main_window(window: WebviewWindow) {
         let _ = window.set_focus();
         queue_webview_repaint(&window);
 
-        let is_wayland = is_effective_wayland_backend(
-            std::env::var("GDK_BACKEND").ok().as_deref(),
+        let is_wayland = should_skip_pseudo_resize_for_backend(
+            active_gdk_backend_is_wayland(),
             std::env::var_os("WAYLAND_DISPLAY").is_some(),
         );
         let skip_pseudo_resize = is_wayland
@@ -215,28 +216,21 @@ pub(crate) fn repaint_main_window_after_resize(window: WebviewWindow) {
 
 #[cfg(test)]
 mod tests {
-    use super::is_effective_wayland_backend;
+    use super::should_skip_pseudo_resize_for_backend;
 
     #[test]
-    fn gdk_backend_x11_overrides_wayland_session() {
-        assert!(!is_effective_wayland_backend(Some("x11"), true));
+    fn active_gdk_x11_keeps_pseudo_resize_even_in_wayland_session() {
+        assert!(!should_skip_pseudo_resize_for_backend(Some(false), true));
     }
 
     #[test]
-    fn gdk_backend_first_entry_controls_backend() {
-        assert!(!is_effective_wayland_backend(Some("x11,wayland"), true));
-        assert!(is_effective_wayland_backend(Some("wayland,x11"), false));
+    fn active_gdk_wayland_skips_pseudo_resize() {
+        assert!(should_skip_pseudo_resize_for_backend(Some(true), false));
     }
 
     #[test]
-    fn wayland_display_is_used_when_backend_is_unset() {
-        assert!(is_effective_wayland_backend(None, true));
-        assert!(!is_effective_wayland_backend(None, false));
-    }
-
-    #[test]
-    fn unknown_backend_falls_back_to_session_probe() {
-        assert!(is_effective_wayland_backend(Some("broadway"), true));
-        assert!(!is_effective_wayland_backend(Some("broadway"), false));
+    fn wayland_display_is_used_when_gdk_display_is_unavailable() {
+        assert!(should_skip_pseudo_resize_for_backend(None, true));
+        assert!(!should_skip_pseudo_resize_for_backend(None, false));
     }
 }
