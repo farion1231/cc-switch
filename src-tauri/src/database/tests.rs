@@ -346,6 +346,87 @@ fn schema_migration_v4_adds_pricing_model_columns() {
 }
 
 #[test]
+fn migration_v10_to_v11_rebuilds_rollups_with_request_model_dimension() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+
+    // 模拟 v10 形状的 rollup 表（主键不含 request_model）+ 一行历史聚合数据，
+    // 以及 v10 形状的明细表（无 pricing_model 列）
+    conn.execute_batch(
+        r#"
+        CREATE TABLE proxy_request_logs (
+            request_id TEXT PRIMARY KEY,
+            model TEXT NOT NULL,
+            request_model TEXT
+        );
+        CREATE TABLE usage_daily_rollups (
+            date TEXT NOT NULL,
+            app_type TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            model TEXT NOT NULL,
+            request_count INTEGER NOT NULL DEFAULT 0,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+            total_cost_usd TEXT NOT NULL DEFAULT '0',
+            avg_latency_ms INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (date, app_type, provider_id, model)
+        );
+        INSERT INTO usage_daily_rollups
+            (date, app_type, provider_id, model, request_count, success_count,
+             input_tokens, output_tokens, total_cost_usd, avg_latency_ms)
+        VALUES ('2026-05-01', 'claude', 'p1', 'kimi-k2', 7, 7, 1000, 500, '0.07', 120);
+        "#,
+    )
+    .expect("seed v10 rollup table");
+
+    Database::set_user_version(&conn, 10).expect("set user_version=10");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    // 新列存在且 NOT NULL DEFAULT ''
+    let request_model = get_column_info(&conn, "usage_daily_rollups", "request_model");
+    assert_eq!(request_model.r#type, "TEXT");
+    assert_eq!(request_model.notnull, 1);
+    let rollup_pricing_model = get_column_info(&conn, "usage_daily_rollups", "pricing_model");
+    assert_eq!(rollup_pricing_model.r#type, "TEXT");
+    assert_eq!(rollup_pricing_model.notnull, 1);
+
+    // 明细表补上 pricing_model 列（可空，历史行 NULL）
+    let pricing_model = get_column_info(&conn, "proxy_request_logs", "pricing_model");
+    assert_eq!(pricing_model.r#type, "TEXT");
+    assert_eq!(pricing_model.notnull, 0);
+
+    // 历史行保留，request_model 填 ''（未知）
+    let (rm, count, input, cost): (String, i64, i64, String) = conn
+        .query_row(
+            "SELECT request_model, request_count, input_tokens, total_cost_usd
+             FROM usage_daily_rollups WHERE model = 'kimi-k2'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("migrated row");
+    assert_eq!(rm, "");
+    assert_eq!(count, 7);
+    assert_eq!(input, 1000);
+    assert_eq!(cost, "0.07");
+
+    // 主键包含 request_model：同 model 不同别名可共存
+    conn.execute(
+        "INSERT INTO usage_daily_rollups
+            (date, app_type, provider_id, model, request_model, request_count)
+         VALUES ('2026-05-01', 'claude', 'p1', 'kimi-k2', 'claude-sonnet-4-6', 1)",
+        [],
+    )
+    .expect("insert row with same model but different request_model");
+
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after migration"),
+        SCHEMA_VERSION
+    );
+}
+
+#[test]
 fn schema_create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
     let conn = Connection::open_in_memory().expect("open memory db");
 

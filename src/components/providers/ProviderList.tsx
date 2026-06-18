@@ -48,8 +48,10 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi } from "@/lib/api/settings";
 import { useSetProxyTakeoverForApp } from "@/lib/query/proxy";
+import { useSettingsQuery } from "@/lib/query/queries";
 import { getProxyRequirement } from "@/utils/providerRouting";
 import { decideSwitchAction } from "@/utils/switchDecision";
+import { isTextEditableTarget } from "@/utils/domUtils";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -198,22 +200,19 @@ export function ProviderList({
   const [searchTerm, setSearchTerm] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const [showStreamCheckConfirm, setShowStreamCheckConfirm] = useState(false);
-  const [pendingTestProvider, setPendingTestProvider] =
-    useState<Provider | null>(null);
-
   // 路由自动开关 guard 状态
   const [showRoutingConfirm, setShowRoutingConfirm] = useState<
     "enable" | "disable" | null
   >(null);
   const [pendingSwitchProvider, setPendingSwitchProvider] =
     useState<Provider | null>(null);
-  const [rememberRouting, setRememberRouting] = useState(false);
   // 覆盖整个 toggleTakeoverThenSwitch 流程的「进行中」标记。不能只看
   // setProxyTakeover.isPending——「先切后开」时切换在途、接管 mutation 还没开始的
   // 窗口里它仍为 false，会被重复触发。
   const [routingSwitchInFlight, setRoutingSwitchInFlight] = useState(false);
   const setProxyTakeover = useSetProxyTakeoverForApp();
+  // 路由 guard 需读取 autoEnable/autoDisable 偏好，并在「记住选择」时写回。
+  const { data: settings } = useSettingsQuery();
   const { data: claudeDesktopStatus } = useQuery({
     queryKey: ["claudeDesktopStatus"],
     queryFn: () => providersApi.getClaudeDesktopStatus(),
@@ -221,40 +220,13 @@ export function ProviderList({
     refetchInterval: appId === "claude-desktop" ? 5000 : false,
   });
 
-  // Query settings for streamCheckConfirmed flag
-  const { data: settings } = useQuery({
-    queryKey: ["settings"],
-    queryFn: () => settingsApi.get(),
-  });
-
+  // 连通性检查不发真实请求、无封号/计费风险，直接执行（无需确认弹窗）。
   const handleTest = useCallback(
     (provider: Provider) => {
-      if (!settings?.streamCheckConfirmed) {
-        setPendingTestProvider(provider);
-        setShowStreamCheckConfirm(true);
-      } else {
-        checkProvider(provider.id, provider.name);
-      }
+      checkProvider(provider.id, provider.name);
     },
-    [checkProvider, settings?.streamCheckConfirmed],
+    [checkProvider],
   );
-
-  const handleStreamCheckConfirm = async () => {
-    setShowStreamCheckConfirm(false);
-    try {
-      if (settings) {
-        const { webdavSync: _, ...rest } = settings;
-        await settingsApi.save({ ...rest, streamCheckConfirmed: true });
-        await queryClient.invalidateQueries({ queryKey: ["settings"] });
-      }
-    } catch (error) {
-      console.error("Failed to save stream check confirmed:", error);
-    }
-    if (pendingTestProvider) {
-      checkProvider(pendingTestProvider.id, pendingTestProvider.name);
-      setPendingTestProvider(null);
-    }
-  };
 
   // 写入「记住选择」到对应设置位（点确认即写，独立于后续 takeover 成败）。
   const persistRoutingPreference = async (direction: "enable" | "disable") => {
@@ -386,12 +358,10 @@ export function ProviderList({
     switch (action) {
       case "confirmEnable":
         setPendingSwitchProvider(provider);
-        setRememberRouting(false);
         setShowRoutingConfirm("enable");
         return;
       case "confirmDisable":
         setPendingSwitchProvider(provider);
-        setRememberRouting(false);
         setShowRoutingConfirm("disable");
         return;
       case "directEnable":
@@ -405,15 +375,14 @@ export function ProviderList({
     }
   };
 
-  const handleRoutingConfirm = async () => {
+  // ConfirmDialog 通过 onConfirm 回传 checkbox 勾选值（rememberRouting）；不再
+  // 维护单独的本地受控状态——避免 dialog 与父级各持一份导致漂移。
+  const handleRoutingConfirm = async (rememberRouting: boolean) => {
     const direction = showRoutingConfirm;
     const provider = pendingSwitchProvider;
     setShowRoutingConfirm(null);
     setPendingSwitchProvider(null);
-    if (!direction || !provider) {
-      setRememberRouting(false);
-      return;
-    }
+    if (!direction || !provider) return;
 
     if (rememberRouting) {
       try {
@@ -422,7 +391,6 @@ export function ProviderList({
         console.error("Failed to persist routing preference:", error);
       }
     }
-    setRememberRouting(false);
 
     await toggleTakeoverThenSwitch(provider, direction === "enable");
   };
@@ -430,7 +398,6 @@ export function ProviderList({
   const handleRoutingCancel = () => {
     setShowRoutingConfirm(null);
     setPendingSwitchProvider(null);
-    setRememberRouting(false);
   };
 
   // Import current live config as default provider
@@ -473,8 +440,13 @@ export function ProviderList({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+
       const key = event.key.toLowerCase();
       if ((event.metaKey || event.ctrlKey) && key === "f") {
+        // 正在输入框/可编辑区域中时不抢占 Ctrl+F（例如添加供应商表单里
+        // ProviderPresetSelector 的搜索框），避免与其同名快捷键冲突。
+        if (isTextEditableTarget(document.activeElement)) return;
         event.preventDefault();
         setIsSearchOpen(true);
         return;
@@ -485,8 +457,8 @@ export function ProviderList({
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    globalThis.addEventListener("keydown", handleKeyDown);
+    return () => globalThis.removeEventListener("keydown", handleKeyDown);
   }, []);
 
   useEffect(() => {
@@ -759,19 +731,6 @@ export function ProviderList({
       )}
 
       <ConfirmDialog
-        isOpen={showStreamCheckConfirm}
-        variant="info"
-        title={t("confirm.streamCheck.title")}
-        message={t("confirm.streamCheck.message")}
-        confirmText={t("confirm.streamCheck.confirm")}
-        onConfirm={() => void handleStreamCheckConfirm()}
-        onCancel={() => {
-          setShowStreamCheckConfirm(false);
-          setPendingTestProvider(null);
-        }}
-      />
-
-      <ConfirmDialog
         isOpen={showRoutingConfirm !== null}
         variant={showRoutingConfirm === "disable" ? "destructive" : "info"}
         title={
@@ -803,19 +762,16 @@ export function ProviderList({
                 defaultValue: "开启路由并启用",
               })
         }
-        checkbox={{
-          label:
-            showRoutingConfirm === "disable"
-              ? t("confirm.routing.rememberDisable", {
-                  defaultValue: "以后都自动关闭本地路由，不再询问",
-                })
-              : t("confirm.routing.rememberEnable", {
-                  defaultValue: "以后都自动开启本地路由，不再询问",
-                }),
-          checked: rememberRouting,
-          onChange: setRememberRouting,
-        }}
-        onConfirm={() => void handleRoutingConfirm()}
+        checkboxLabel={
+          showRoutingConfirm === "disable"
+            ? t("confirm.routing.rememberDisable", {
+                defaultValue: "以后都自动关闭本地路由，不再询问",
+              })
+            : t("confirm.routing.rememberEnable", {
+                defaultValue: "以后都自动开启本地路由，不再询问",
+              })
+        }
+        onConfirm={(remember) => void handleRoutingConfirm(remember)}
         onCancel={handleRoutingCancel}
       />
     </div>

@@ -1069,6 +1069,111 @@ fn default_flag_for_shell(shell: &str) -> &'static str {
     }
 }
 
+fn fallback_user_shell() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "/bin/zsh"
+    } else {
+        "/bin/bash"
+    }
+}
+
+fn valid_user_shell_path(shell: &str) -> bool {
+    if shell.is_empty()
+        || !shell.starts_with('/')
+        || !is_valid_shell(shell)
+        || shell.chars().any(char::is_control)
+    {
+        return false;
+    }
+
+    let path = std::path::Path::new(shell);
+    path.is_file() && is_executable_file(path)
+}
+
+#[cfg(unix)]
+fn is_executable_file(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    path.metadata()
+        .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(path: &std::path::Path) -> bool {
+    path.is_file()
+}
+
+/// 获取用户默认 shell 的完整路径；异常或被污染的 SHELL 回退到平台默认值。
+fn get_user_shell() -> String {
+    std::env::var("SHELL")
+        .ok()
+        .filter(|shell| valid_user_shell_path(shell))
+        .unwrap_or_else(|| fallback_user_shell().to_string())
+}
+
+/// 构建 exec 行：引号保护 shell 路径，交还用户 shell 让其按默认规则加载 rc 配置。
+fn build_exec_line(shell: &str, cwd: Option<&Path>) -> String {
+    let quoted_shell = shell_single_quote(shell);
+
+    match shell.rsplit('/').next().unwrap_or(shell) {
+        "zsh" => cwd
+            .map(|dir| {
+                let command = format!(
+                    "cd {} || exit 1; exec {} -i",
+                    shell_single_quote(&dir.to_string_lossy()),
+                    quoted_shell
+                );
+                format!("exec {} -lc {}", quoted_shell, shell_single_quote(&command))
+            })
+            .unwrap_or_else(|| format!("exec {quoted_shell} -l")),
+        _ => format!("exec {quoted_shell}"),
+    }
+}
+
+/// 构建 provider 命令行：通过用户 shell 的交互模式执行，确保 GUI 启动的终端也加载用户 PATH。
+fn build_provider_command_line(shell: &str, config_path: &str, cwd: Option<&Path>) -> String {
+    let claude_command = format!("claude --settings {}", shell_single_quote(config_path));
+    let command = cwd
+        .map(|dir| {
+            format!(
+                "cd {} && {}",
+                shell_single_quote(&dir.to_string_lossy()),
+                claude_command
+            )
+        })
+        .unwrap_or(claude_command);
+
+    format!(
+        "{} {} {}",
+        shell_single_quote(shell),
+        provider_command_flag_for_shell(shell),
+        shell_single_quote(&command)
+    )
+}
+
+fn provider_command_flag_for_shell(shell: &str) -> &'static str {
+    match shell.rsplit('/').next().unwrap_or(shell) {
+        "dash" | "sh" => "-c",
+        "zsh" => "-lic",
+        _ => "-ic",
+    }
+}
+
+fn build_final_shell_cd_command(shell: &str, cwd: Option<&Path>) -> String {
+    if matches!(shell.rsplit('/').next().unwrap_or(shell), "zsh") {
+        return String::new();
+    }
+
+    cwd.map(|dir| {
+        format!(
+            "cd {} || exit 1\n",
+            shell_single_quote(&dir.to_string_lossy())
+        )
+    })
+    .unwrap_or_default()
+}
+
 #[cfg(target_os = "windows")]
 fn try_get_version_wsl(
     tool: &str,
@@ -1985,10 +2090,19 @@ fn anchored_official_update_command(tool: &str, bin_path: &str) -> Option<String
     official_update_args(tool).map(|args| format!("{} {args}", win_quote_path_for_batch(bin_path)))
 }
 
+/// 哪些工具的"官方 self-update"优先于包管理器升级（生成 `<tool> update || <pkg-mgr>`）。
+///
+/// **codex 刻意不在此列**：`codex update` 在 npm 安装上只是裸 `npm install -g
+/// @openai/codex`（无 `@latest` / `--include=optional` / 不先卸载），却只检查 exit code、
+/// 无条件打印 “Update ran successfully”。当 npm 把平台二进制 optional 依赖
+/// `@openai/codex-<triple>` 漏装时它仍 **exit 0 假成功**，使外层 `||` 兜底被短路、损坏被
+/// 成功 toast 掩盖（用户报告的 “Missing optional dependency” 即源于此）。因此 codex 一律走
+/// npm 锚定升级；真正损坏（`runnable=false`）时由 `installs_anchored_command` 的门控改用
+/// `codex_repair_command` 的 uninstall+install 自愈，而非交给 codex 自身的 self-update。
 fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
     match shell {
         LifecycleCommandShell::Posix => {
-            matches!(tool, "claude" | "codex" | "opencode" | "openclaw")
+            matches!(tool, "claude" | "opencode" | "openclaw")
         }
         LifecycleCommandShell::WindowsBatch => {
             matches!(
@@ -1997,10 +2111,64 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
                 // 安装方式探测失败弹交互 prompt（spawn npm.cmd 没传 shell:true）；静默
                 // lifecycle 没有 stdin 会挂死，Windows 先锚到包管理器路径，等上游修了
                 // 再把 opencode 加回这里。
-                "claude" | "codex" | "openclaw"
+                "claude" | "openclaw"
             )
         }
     }
+}
+
+/// Codex 平台分发包损坏的自愈命令。Codex 的 npm 包是「主包 `@openai/codex`（纯 JS
+/// launcher）+ 平台二进制 optional 依赖 `@openai/codex-<triple>`」的分发模式（同 esbuild/swc）。
+/// 当平台二进制缺失时 codex 跑不起来——`enumerate_tool_installations` 跑 `--version` 会拿到
+/// “Missing optional dependency” 的非 0 退出，标记 `runnable=false`。此状态下普通
+/// `npm i -g @pkg@latest` 是 **no-op**：npm 视 optional 依赖缺失为非致命，reify 又认为主包已是
+/// 最新（外加半损坏留下的空 nested `node_modules` 残骸强化「tree 已满足」判断），不会补回平台
+/// 二进制。唯一实测可靠的修复是先 `uninstall` 清掉残骸、再 `install` 装回完整的主包 + 平台二进制
+/// （实测输出 `added 2 packages`）。
+///
+/// 锚定到与 codex 入口同目录的 npm（与升级路径一致，不依赖 GUI 非登录进程的 PATH）。`|| true`
+/// 让 uninstall 失败（如 nvm 上对半损坏包静默返回非 0）不触发外层 `set -e` 中止，但随后的
+/// install 若失败仍会被 `set -e` 捕获并上报给前端 toast。
+///
+/// **仅对会锚定到 sibling npm 的 node 管理器来源（nvm/fnm/mise/homebrew npm）生效**：
+/// `runnable=false` 是宽信号（权限 / node 版本 / 任意 `--version` 失败皆可触发），非 npm
+/// 全局安装各有自己的二进制分发与修复方式，无脑套 npm uninstall+install 会出错——Homebrew
+/// formula（real 在 `Cellar/`）本应 `brew upgrade codex`，npm 够不到它反而旁路装第二份 npm
+/// 全局 codex；Volta/Bun 本应 `volta install`/`bun add`，且 `~/.bun/bin` 下没有 npm、
+/// `sibling_bin` 会拼出不存在的路径；system/未知来源无可靠 sibling npm。这些来源一律返回
+/// None，让上游继续走 source-specific 的 `anchored_command_from_paths`。白名单与
+/// `package_manager_anchored_command_from_paths` 的 sibling-npm 分支对齐。
+/// 刻意**不**额外用 `inst.error` 文本确认「确系缺二进制」：enumerate 只保留 stderr 末尾 4 行，
+/// 而 codex.js 抛错的 "Missing optional dependency" 行会被尾部 node stack `at ...` 行挤出窗口
+/// （实测用户原始错误即如此），强加该条件反而漏修真实缺包；对 npm 全局安装，uninstall+install
+/// 对各类损坏都是合理且不会更糟的修复。
+#[cfg(not(target_os = "windows"))]
+fn codex_repair_command(bin_path: &str, real: &str) -> Option<String> {
+    // brew formula（real 在 Cellar）→ 不归 npm 管，交回 anchored 走 brew upgrade。
+    if brew_formula_from_path(real).is_some() {
+        return None;
+    }
+    // 只认会落到 sibling npm 的 node 管理器来源；volta/bun/system/未知交回 anchored。
+    if !matches!(
+        infer_install_source(Path::new(bin_path)),
+        "nvm" | "fnm" | "mise" | "homebrew"
+    ) {
+        return None;
+    }
+    let npm = sibling_bin(bin_path, "npm")?;
+    let npm = quote_path_if_spaced(&npm);
+    let pkg = "@openai/codex";
+    Some(format!(
+        "{npm} uninstall -g {pkg} || true; {npm} i -g {pkg}@latest"
+    ))
+}
+
+/// Windows 暂不做平台分发自愈：Windows 上 codex 的破坏模式不同（EPERM 文件锁 / 版本 bump
+/// 残留，见 openai/codex#21872、#19824），且 `.bat` 链的错误处理与 POSIX `set -e` 语义不同，
+/// 需要单独设计；先在本问题实际发生的 POSIX 平台落地。返回 None → 上游走正常锚定命令。
+#[cfg(target_os = "windows")]
+fn codex_repair_command(_bin_path: &str, _real: &str) -> Option<String> {
+    None
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -2190,6 +2358,17 @@ fn default_install(installs: &[ToolInstallation]) -> Option<&ToolInstallation> {
 fn installs_anchored_command(tool: &str, installs: &[ToolInstallation]) -> Option<String> {
     let inst = default_install(installs)?;
     let real = inst.real.to_string_lossy();
+    // Codex 平台分发包损坏自愈：主包在但平台二进制缺失时 codex 跑不起来
+    // （runnable=false），此时正常锚定的 `npm i -g @latest` 是 no-op 修不好——改用
+    // uninstall+install 重装补回平台二进制。**但仅限会锚定到 sibling npm 的 node 管理器
+    // 来源**（codex_repair_command 内按 source/real 收窄，brew/volta/bun/system 交回下方
+    // source-specific 锚定，避免误用 npm 重装）。runnable=true 的正常升级也走下方普通锚定
+    // 路径（且因 codex 不在 prefers_official_update，不会再跑会假成功掩盖损坏的 `codex update`）。
+    if tool == "codex" && !inst.runnable {
+        if let Some(cmd) = codex_repair_command(&inst.path, &real) {
+            return Some(cmd);
+        }
+    }
     anchored_command_from_paths(tool, &inst.path, &real)
 }
 
@@ -2568,24 +2747,31 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("terminal");
 
+    let shell = get_user_shell();
+    let exec_line = build_exec_line(&shell, cwd);
+    let final_cd_command = build_final_shell_cd_command(&shell, cwd);
+
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
-    let cd_command = build_shell_cd_command(cwd);
+    let provider_command = build_provider_command_line(&shell, &config_path, cwd);
 
     // Write the shell script to a temp file
+    // 脚本使用 POSIX sh 语法确保可移植性，exec 行切换到用户交互式 shell
     let script_content = format!(
-        r#"#!/bin/bash
+        r#"#!/usr/bin/env sh
 trap 'rm -f "{config_path}" "{script_file}"' EXIT
-{cd_command}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
-claude --settings "{config_path}"
-exec bash --norc --noprofile
+{provider_command}
+{final_cd_command}
+{exec_line}
 "#,
         config_path = config_path,
         script_file = script_file.display(),
-        cd_command = cd_command,
+        provider_command = provider_command,
+        final_cd_command = final_cd_command,
+        exec_line = exec_line,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -2604,7 +2790,7 @@ exec bash --norc --noprofile
         "ghostty" => launch_macos_ghostty(&script_file),
         "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
         "kaku" => launch_macos_open_app("Kaku", &script_file, true),
-        _ => launch_macos_terminal_app(&script_file), // "terminal" or default
+        _ => launch_macos_terminal_app(&script_file),
     };
 
     // If preferred terminal fails and it's not the default, try Terminal.app as fallback
@@ -2620,29 +2806,67 @@ exec bash --norc --noprofile
     result
 }
 
-/// macOS: Terminal.app
+/// Escape a value as an AppleScript string literal.
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal_app(script_file: &std::path::Path) -> Result<(), String> {
-    use std::process::Command;
+fn applescript_string_literal(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
 
-    let applescript = format!(
-        r#"tell application "Terminal"
-    activate
-    do script "bash '{}'"
+/// Build the launcher command literal used by AppleScript.
+#[cfg(target_os = "macos")]
+fn applescript_launcher_command(script_file: &std::path::Path) -> String {
+    applescript_string_literal(&format!(
+        "sh {}",
+        shell_single_quote(&script_file.to_string_lossy())
+    ))
+}
+
+/// Build a launcher command that replaces the terminal-created shell session.
+#[cfg(target_os = "macos")]
+fn applescript_exec_launcher_command(script_file: &std::path::Path) -> String {
+    applescript_string_literal(&format!(
+        "exec sh {}",
+        shell_single_quote(&script_file.to_string_lossy())
+    ))
+}
+
+/// macOS: Terminal.app AppleScript.
+/// A cold `activate` creates a default empty window before `do script` opens the command session.
+/// Use `launch` for cold starts so `do script` can create the only new session without reusing restored windows.
+#[cfg(target_os = "macos")]
+fn build_macos_terminal_applescript(script_file: &std::path::Path) -> String {
+    format!(
+        r#"set launcher_script to {launcher}
+set was_running to application "Terminal" is running
+tell application "Terminal"
+    if was_running then
+        activate
+        do script launcher_script
+    else
+        launch
+        do script launcher_script
+        activate
+    end if
 end tell"#,
-        script_file.display()
-    );
+        launcher = applescript_exec_launcher_command(script_file)
+    )
+}
+
+/// Run AppleScript through `osascript -e` with shared error handling.
+#[cfg(target_os = "macos")]
+fn run_terminal_osascript(applescript: &str, terminal_label: &str) -> Result<(), String> {
+    use std::process::Command;
 
     let output = Command::new("osascript")
         .arg("-e")
-        .arg(&applescript)
+        .arg(applescript)
         .output()
         .map_err(|e| format!("执行 osascript 失败: {e}"))?;
 
     if !output.status.success() {
         let stderr = decode_command_output(&output.stderr);
         return Err(format!(
-            "Terminal.app 执行失败 (exit code: {:?}): {}",
+            "{terminal_label} 执行失败 (exit code: {:?}): {}",
             output.status.code(),
             stderr
         ));
@@ -2651,11 +2875,20 @@ end tell"#,
     Ok(())
 }
 
+/// macOS: Terminal.app
+#[cfg(target_os = "macos")]
+fn launch_macos_terminal_app(script_file: &std::path::Path) -> Result<(), String> {
+    run_terminal_osascript(
+        &build_macos_terminal_applescript(script_file),
+        "Terminal.app",
+    )
+}
+
 /// macOS: iTerm2
 #[cfg(target_os = "macos")]
 fn build_macos_iterm2_applescript(script_file: &std::path::Path) -> String {
     format!(
-        r#"set launcher_script to "bash '{}'"
+        r#"set launcher_script to {launcher}
 set was_running to application "iTerm" is running
 tell application "iTerm"
     if was_running then
@@ -2683,63 +2916,59 @@ tell application "iTerm"
         write text launcher_script
     end tell
 end tell"#,
-        script_file.display()
+        launcher = applescript_exec_launcher_command(script_file)
     )
 }
 
 /// macOS: iTerm2
 #[cfg(target_os = "macos")]
 fn launch_macos_iterm2(script_file: &std::path::Path) -> Result<(), String> {
-    use std::process::Command;
-
-    let applescript = build_macos_iterm2_applescript(script_file);
-
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(&applescript)
-        .output()
-        .map_err(|e| format!("执行 osascript 失败: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = decode_command_output(&output.stderr);
-        return Err(format!(
-            "iTerm2 执行失败 (exit code: {:?}): {}",
-            output.status.code(),
-            stderr
-        ));
-    }
-
-    Ok(())
+    run_terminal_osascript(&build_macos_iterm2_applescript(script_file), "iTerm2")
 }
 
-/// macOS: Ghostty — use --quit-after-last-window-closed to avoid cloning existing tabs
+/// Keep the launcher path inside a `sh -c` string.
+/// A bare `.sh` passed through `open --args` may also be opened as a document.
+#[cfg(target_os = "macos")]
+fn build_macos_dash_c_command(script_file: &std::path::Path) -> String {
+    format!(
+        "exec sh {}",
+        shell_single_quote(&script_file.to_string_lossy())
+    )
+}
+
+/// macOS: Ghostty.
+/// Warm starts use AppleScript to create one command window.
+/// Cold starts use `initial-command` so the first default surface runs the launcher.
+/// Do not use `initial-window=false` plus `new window`: cold launch can still create the default window first.
+#[cfg(target_os = "macos")]
+fn build_macos_ghostty_applescript(script_file: &std::path::Path) -> String {
+    format!(
+        r#"set launcher_command to {launcher}
+set was_running to application "Ghostty" is running
+if was_running then
+    tell application "Ghostty"
+        new window with configuration {{command:launcher_command}}
+    end tell
+else
+    do shell script "open -na Ghostty --args --quit-after-last-window-closed=true " & quoted form of ("--initial-command=" & launcher_command)
+end if
+"#,
+        launcher = applescript_launcher_command(script_file)
+    )
+}
+
+/// macOS: Ghostty
 #[cfg(target_os = "macos")]
 fn launch_macos_ghostty(script_file: &std::path::Path) -> Result<(), String> {
-    use std::process::Command;
-
-    let output = Command::new("open")
-        .args([
-            "-na",
-            "Ghostty",
-            "--args",
-            "--quit-after-last-window-closed=true",
-            "-e",
-            "bash",
-        ])
-        .arg(script_file)
-        .output()
-        .map_err(|e| format!("启动 Ghostty 失败: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = decode_command_output(&output.stderr);
-        return Err(format!(
-            "Ghostty 启动失败 (exit code: {:?}): {}",
-            output.status.code(),
-            stderr
-        ));
+    match run_terminal_osascript(&build_macos_ghostty_applescript(script_file), "Ghostty") {
+        Ok(()) => Ok(()),
+        Err(applescript_error) => {
+            log::warn!(
+                "Ghostty AppleScript launch failed, falling back to open -na: {applescript_error}"
+            );
+            launch_macos_open_app("Ghostty", script_file, true)
+        }
     }
-
-    Ok(())
 }
 
 /// macOS: 使用 open -na 启动支持 --args 参数的终端（Alacritty/Kitty/WezTerm/Kaku）
@@ -2757,7 +2986,10 @@ fn launch_macos_open_app(
     if use_e_flag {
         cmd.arg("-e");
     }
-    cmd.arg("bash").arg(script_file);
+    // Keep the script path inside `sh -c`; a trailing bare `.sh` can be opened as a document.
+    cmd.arg("sh")
+        .arg("-c")
+        .arg(build_macos_dash_c_command(script_file));
 
     let output = cmd
         .output()
@@ -2801,9 +3033,9 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 
         rm -- "$0"
 
-        exec bash {}
+        exec sh {quoted_script}
         "#,
-        script_file.display(),
+        quoted_script = shell_single_quote(&script_file.to_string_lossy()),
     )
     .map_err(|e| format!("Failed to write to temporary script file for Warp: {e}"))?;
 
@@ -2835,6 +3067,10 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
 
     let preferred = crate::settings::get_preferred_terminal();
 
+    let shell = get_user_shell();
+    let exec_line = build_exec_line(&shell, cwd);
+    let final_cd_command = build_final_shell_cd_command(&shell, cwd);
+
     // Default terminal list with their arguments
     let default_terminals = [
         ("gnome-terminal", vec!["--"]),
@@ -2851,20 +3087,22 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
-    let cd_command = build_shell_cd_command(cwd);
+    let provider_command = build_provider_command_line(&shell, &config_path, cwd);
 
     let script_content = format!(
-        r#"#!/bin/bash
+        r#"#!/usr/bin/env sh
 trap 'rm -f "{config_path}" "{script_file}"' EXIT
-{cd_command}
 echo "Using provider-specific claude config:"
 echo "{config_path}"
-claude --settings "{config_path}"
-exec bash --norc --noprofile
+{provider_command}
+{final_cd_command}
+{exec_line}
 "#,
         config_path = config_path,
         script_file = script_file.display(),
-        cd_command = cd_command,
+        provider_command = provider_command,
+        final_cd_command = final_cd_command,
+        exec_line = exec_line,
     );
 
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
@@ -2908,7 +3146,7 @@ exec bash --norc --noprofile
         if terminal_exists {
             let result = Command::new(terminal)
                 .args(&args)
-                .arg("bash")
+                .arg("sh")
                 .arg(script_file.to_string_lossy().as_ref())
                 .spawn();
 
@@ -2995,16 +3233,6 @@ del \"%~f0\" >nul 2>&1
     result
 }
 
-fn build_shell_cd_command(cwd: Option<&Path>) -> String {
-    cwd.map(|dir| {
-        format!(
-            "cd {} || exit 1\n",
-            shell_single_quote(&dir.to_string_lossy())
-        )
-    })
-    .unwrap_or_default()
-}
-
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
@@ -3071,7 +3299,7 @@ fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), S
     Ok(())
 }
 
-/// 打开用户首选终端并在其中执行一段可信命令脚本。脚本尾部 `read -n 1` / `pause`
+/// 打开用户首选终端并在其中执行一段可信命令脚本。脚本尾部 `read -r` / `pause`
 /// 是刻意设计的——让命令退出后窗口不要瞬间关闭，用户才看得到 `command
 /// not found` / `ModuleNotFoundError` 这类诊断信息。
 ///
@@ -3085,14 +3313,14 @@ pub(crate) fn launch_terminal_running(command_line: &str, label: &str) -> Result
     let (script_file, script_content) = {
         let file = temp_dir.join(format!("cc_switch_{}_{}.sh", label, pid));
         let content = format!(
-            r#"#!/bin/bash
+            r#"#!/usr/bin/env sh
 trap 'rm -f "{script_path}"' EXIT
 echo "[cc-switch] Starting: {label}"
 echo ""
 {cmd}
 echo ""
-echo "[cc-switch] Command exited. Press any key to close."
-read -n 1 -s
+echo "[cc-switch] Command exited. Press Enter to close."
+read -r _
 "#,
             script_path = file.display(),
             label = label,
@@ -3188,7 +3416,7 @@ read -n 1 -s
             if terminal_exists {
                 let spawn_result = Command::new(terminal)
                     .args(&args)
-                    .arg("bash")
+                    .arg("sh")
                     .arg(script_file.to_string_lossy().as_ref())
                     .spawn();
                 match spawn_result {
@@ -3275,6 +3503,126 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    #[cfg(unix)]
+    fn set_test_executable(path: &Path, executable: bool) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mode = if executable { 0o755 } else { 0o644 };
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+            .expect("fixture permissions should be set");
+    }
+
+    #[test]
+    fn test_build_exec_line() {
+        assert_eq!(build_exec_line("/bin/zsh", None), "exec '/bin/zsh' -l");
+        assert_eq!(build_exec_line("/bin/bash", None), "exec '/bin/bash'");
+        assert_eq!(
+            build_exec_line("/opt/homebrew dir/bin/fish", None),
+            "exec '/opt/homebrew dir/bin/fish'"
+        );
+        assert_eq!(build_exec_line("/bin/sh", None), "exec '/bin/sh'");
+        assert_eq!(
+            build_exec_line("/tmp/shell'quote/zsh", None),
+            "exec '/tmp/shell'\"'\"'quote/zsh' -l"
+        );
+        assert_eq!(
+            build_exec_line("/bin/zsh", Some(Path::new("/tmp/project"))),
+            r#"exec '/bin/zsh' -lc 'cd '"'"'/tmp/project'"'"' || exit 1; exec '"'"'/bin/zsh'"'"' -i'"#
+        );
+    }
+
+    #[test]
+    fn test_build_provider_command_line_uses_user_shell_environment() {
+        assert_eq!(
+            build_provider_command_line("/bin/zsh", "/tmp/claude config.json", None),
+            "'/bin/zsh' -lic 'claude --settings '\"'\"'/tmp/claude config.json'\"'\"''"
+        );
+        assert_eq!(
+            build_provider_command_line(
+                "/bin/bash",
+                "/tmp/claude config.json",
+                Some(Path::new("/tmp/project"))
+            ),
+            r#"'/bin/bash' -ic 'cd '"'"'/tmp/project'"'"' && claude --settings '"'"'/tmp/claude config.json'"'"''"#
+        );
+        assert_eq!(
+            build_provider_command_line(
+                "/bin/sh",
+                "/tmp/claude config.json",
+                Some(Path::new("/tmp/project O'Brien"))
+            ),
+            r#"'/bin/sh' -c 'cd '"'"'/tmp/project O'"'"'"'"'"'"'"'"'Brien'"'"' && claude --settings '"'"'/tmp/claude config.json'"'"''"#
+        );
+    }
+
+    #[test]
+    fn test_build_final_shell_cd_command() {
+        assert_eq!(build_final_shell_cd_command("/bin/zsh", None), "");
+        assert_eq!(
+            build_final_shell_cd_command("/bin/zsh", Some(Path::new("/tmp/project"))),
+            ""
+        );
+        assert_eq!(
+            build_final_shell_cd_command("/bin/bash", Some(Path::new("/tmp/project O'Brien"))),
+            "cd '/tmp/project O'\"'\"'Brien' || exit 1\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_get_user_shell_fallback() {
+        // $SHELL 未设置时应按平台 fallback
+        // 此测试验证 fallback 逻辑，但不验证环境变量值（取决于运行环境）
+        let shell = get_user_shell();
+        // 至少应返回一个合法的绝对路径
+        assert!(valid_user_shell_path(&shell));
+        // basename 应为合法 shell 名
+        let basename = shell.rsplit('/').next().unwrap_or("sh");
+        assert!(["sh", "bash", "zsh", "fish", "dash"].contains(&basename));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_valid_user_shell_path() {
+        let temp = tempfile::tempdir().expect("temp dir should be created");
+        let executable_zsh = temp.path().join("zsh");
+        std::fs::write(&executable_zsh, "#!/usr/bin/env sh\n")
+            .expect("shell fixture should be written");
+        set_test_executable(&executable_zsh, true);
+
+        let executable_fish_dir = temp.path().join("homebrew dir/bin");
+        std::fs::create_dir_all(&executable_fish_dir)
+            .expect("shell fixture directory should be created");
+        let executable_fish = executable_fish_dir.join("fish");
+        std::fs::write(&executable_fish, "#!/usr/bin/env sh\n")
+            .expect("shell fixture should be written");
+        set_test_executable(&executable_fish, true);
+
+        let non_executable_bash = temp.path().join("bash");
+        std::fs::write(&non_executable_bash, "#!/usr/bin/env sh\n")
+            .expect("shell fixture should be written");
+        set_test_executable(&non_executable_bash, false);
+
+        assert!(valid_user_shell_path(&executable_zsh.to_string_lossy()));
+        assert!(valid_user_shell_path(&executable_fish.to_string_lossy()));
+        assert!(!valid_user_shell_path(""));
+        assert!(!valid_user_shell_path("zsh"));
+        assert!(!valid_user_shell_path(
+            &temp.path().join("missing/zsh").to_string_lossy()
+        ));
+        assert!(!valid_user_shell_path(
+            &non_executable_bash.to_string_lossy()
+        ));
+        assert!(!valid_user_shell_path(
+            &temp.path().join("zsh; rm -rf /").to_string_lossy()
+        ));
+        assert!(!valid_user_shell_path(&format!(
+            "{}\n/bin/bash",
+            executable_zsh.to_string_lossy()
+        )));
+        assert!(!valid_user_shell_path("/usr/bin/powershell"));
+    }
 
     #[test]
     fn test_extract_version() {
@@ -4009,8 +4357,9 @@ mod tests {
 
         #[test]
         fn codex_nvm_anchors_to_that_npm() {
-            // Codex 官方 self-update 只在支持的 release 上生效;失败时仍写回同一个
-            // node 的 npm，而非 PATH 第一个 npm。
+            // Codex 不走 self-update（`codex update` 在 npm 安装上只是裸 `npm install -g`，
+            // 却会假成功掩盖平台二进制漏装）——直接锚定到同一个 node 的 npm，而非 PATH
+            // 第一个 npm。损坏时的 uninstall+install 自愈见 codex_missing_platform_binary_*。
             let cmd = anchored_command_from_paths(
                 "codex",
                 "/Users/me/.nvm/versions/node/v22.14.0/bin/codex",
@@ -4018,7 +4367,7 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some("/Users/me/.nvm/versions/node/v22.14.0/bin/codex update || /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+                Some("/Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
             );
         }
 
@@ -4038,9 +4387,25 @@ mod tests {
         }
 
         #[test]
-        fn volta_uses_volta_install() {
+        fn volta_self_update_chain_anchors_to_volta() {
             // `~/.volta/bin` 通常不在 GUI 非登录 `bash -c` 的 PATH 里,且用户可能
             // PATH 上还有另一份 volta → 必须绝对路径锚定到命令行命中的这一份。
+            // 用 openclaw（仍在 prefers_official_update）覆盖 volta 分支的 self-update 链;
+            // codex 已改为不 self-update（见 codex_volta_anchors_to_volta_install）。
+            let cmd = anchored_command_from_paths(
+                "openclaw",
+                "/Users/me/.volta/bin/openclaw",
+                "/Users/me/.volta/tools/image/packages/openclaw/lib/node_modules/openclaw",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("/Users/me/.volta/bin/openclaw update --yes || /Users/me/.volta/bin/volta install openclaw")
+            );
+        }
+
+        #[test]
+        fn codex_volta_anchors_to_volta_install() {
+            // codex 锚定到命令行命中的那份 volta，但不 self-update：纯 `volta install`。
             let cmd = anchored_command_from_paths(
                 "codex",
                 "/Users/me/.volta/bin/codex",
@@ -4048,7 +4413,7 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some("/Users/me/.volta/bin/codex update || /Users/me/.volta/bin/volta install @openai/codex")
+                Some("/Users/me/.volta/bin/volta install @openai/codex")
             );
         }
 
@@ -4076,7 +4441,7 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some("'/Users/my name/.volta/bin/codex' update || '/Users/my name/.volta/bin/volta' install @openai/codex")
+                Some("'/Users/my name/.volta/bin/volta' install @openai/codex")
             );
         }
 
@@ -4144,7 +4509,7 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some(
-                    "/Users/me/.local/share/fnm_multishells/12345_abc/bin/codex update || /Users/me/.local/share/fnm_multishells/12345_abc/bin/npm i -g @openai/codex@latest"
+                    "/Users/me/.local/share/fnm_multishells/12345_abc/bin/npm i -g @openai/codex@latest"
                 )
             );
         }
@@ -4158,7 +4523,7 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some("'/Users/my name/.nvm/versions/node/v22/bin/codex' update || '/Users/my name/.nvm/versions/node/v22/bin/npm' i -g @openai/codex@latest")
+                Some("'/Users/my name/.nvm/versions/node/v22/bin/npm' i -g @openai/codex@latest")
             );
         }
 
@@ -4253,6 +4618,78 @@ mod tests {
                 inst("/Users/me/.nvm/versions/node/v22/bin/openclaw", false),
             ];
             assert!(default_install(&installs).is_none());
+        }
+
+        #[test]
+        fn codex_missing_platform_binary_self_heals_via_uninstall_install() {
+            // 平台二进制缺失 → `codex --version` 报 "Missing optional dependency" 退出非 0
+            // → enumerate 标记 runnable=false。此状态下普通 `npm i -g @latest` 是 no-op 修不好,
+            // 升级路径改用 uninstall+install 重装补回平台二进制（`|| true` 让 uninstall 在
+            // set -e 下对半损坏包返回非 0 时仍继续 install）。
+            let mut broken = inst("/Users/me/.nvm/versions/node/v22.14.0/bin/codex", true);
+            broken.runnable = false;
+            assert_eq!(
+                installs_anchored_command("codex", &[broken]).as_deref(),
+                Some("/Users/me/.nvm/versions/node/v22.14.0/bin/npm uninstall -g @openai/codex || true; /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+            );
+        }
+
+        #[test]
+        fn codex_runnable_uses_plain_npm_not_self_heal() {
+            // 正常（runnable=true）的 codex 升级：锚定 npm，既不重装、也不跑会假成功
+            // 掩盖损坏的 `codex update`。
+            let healthy = inst("/Users/me/.nvm/versions/node/v22.14.0/bin/codex", true);
+            let cmd = installs_anchored_command("codex", &[healthy]);
+            assert_eq!(
+                cmd.as_deref(),
+                Some("/Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+            );
+            assert!(!cmd.unwrap().contains("uninstall"));
+        }
+
+        #[test]
+        fn codex_broken_homebrew_formula_uses_brew_not_npm_repair() {
+            // brew formula 装的坏 codex（real 在 Cellar）：自愈门控必须收窄放行，回落到
+            // `brew upgrade codex`——若误走 npm 重装，npm 够不到 Cellar 那份、反而旁路
+            // 装第二份 npm 全局 codex 制造双安装。
+            let broken = ToolInstallation {
+                path: "/opt/homebrew/bin/codex".to_string(),
+                version: None,
+                runnable: false,
+                error: None,
+                source: "homebrew".to_string(),
+                is_path_default: true,
+                real: std::path::PathBuf::from("/opt/homebrew/Cellar/codex/1.2.3/bin/codex"),
+            };
+            assert_eq!(
+                installs_anchored_command("codex", &[broken]).as_deref(),
+                Some("/opt/homebrew/bin/brew upgrade codex")
+            );
+        }
+
+        #[test]
+        fn codex_broken_volta_uses_volta_install_not_npm_repair() {
+            // volta 装的坏 codex：回落到 `volta install`，不走 npm 重装。
+            let mut broken = inst("/Users/me/.volta/bin/codex", true);
+            broken.runnable = false;
+            assert_eq!(
+                installs_anchored_command("codex", &[broken]).as_deref(),
+                Some("/Users/me/.volta/bin/volta install @openai/codex")
+            );
+        }
+
+        #[test]
+        fn codex_broken_bun_uses_bun_add_not_phantom_npm() {
+            // bun 装的坏 codex：回落到 `bun add`，且**绝不**拼出 `~/.bun/bin/npm`
+            // （bun 目录下没有 npm，那条路径不存在、执行会直接失败）。
+            let mut broken = inst("/Users/me/.bun/bin/codex", true);
+            broken.runnable = false;
+            let cmd = installs_anchored_command("codex", &[broken]);
+            assert_eq!(
+                cmd.as_deref(),
+                Some("/Users/me/.bun/bin/bun add -g @openai/codex@latest")
+            );
+            assert!(!cmd.unwrap().contains("npm"));
         }
 
         #[test]
@@ -4382,8 +4819,9 @@ mod tests {
             );
             assert_eq!(
                 static_fallback_command("codex"),
-                "codex update || npm i -g @openai/codex@latest"
+                "npm i -g @openai/codex@latest"
             );
+            assert!(!static_fallback_command("codex").contains("codex update"));
             assert_eq!(
                 static_fallback_command("gemini"),
                 "npm i -g @google/gemini-cli@latest"
@@ -4649,13 +5087,6 @@ mod tests {
         assert!(error.contains("目录不存在"));
     }
 
-    #[test]
-    fn build_shell_cd_command_quotes_spaces_and_single_quotes() {
-        let command = build_shell_cd_command(Some(Path::new("/tmp/project O'Brien")));
-
-        assert_eq!(command, "cd '/tmp/project O'\"'\"'Brien' || exit 1\n");
-    }
-
     #[cfg(target_os = "macos")]
     #[test]
     fn iterm2_applescript_cold_start_avoids_current_window_before_one_exists() {
@@ -4691,6 +5122,134 @@ mod tests {
         assert!(running_branch.contains("if (count of windows) = 0 then"));
         assert!(running_branch.contains("create window with default profile"));
         assert!(running_branch.contains("create tab with default profile"));
+    }
+
+    /// Terminal `activate` creates a default empty window on cold start; `launch` does not.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn terminal_applescript_cold_start_uses_launch_before_do_script() {
+        let script = build_macos_terminal_applescript(Path::new("/tmp/cc_switch_launcher.sh"));
+
+        assert!(
+            script.contains(r#"set was_running to application "Terminal" is running"#),
+            "missing was_running detection:\n{script}"
+        );
+        // Cold launches avoid `activate` until after `do script`, so no default empty window is created first.
+        assert!(
+            script.contains(
+                "else\n        launch\n        do script launcher_script\n        activate"
+            ),
+            "cold start should launch before activating:\n{script}"
+        );
+        // Already-running launches should create a fresh session.
+        assert!(
+            script.contains(
+                "if was_running then\n        activate\n        do script launcher_script\n"
+            ),
+            "already-running branch should use bare do script:\n{script}"
+        );
+        assert!(
+            script.contains(r#"set launcher_script to "exec sh '/tmp/cc_switch_launcher.sh'""#),
+            "Terminal should replace the auto-created shell:\n{script}"
+        );
+    }
+
+    /// Restored windows should not receive the launcher command.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn terminal_applescript_does_not_hijack_restored_windows() {
+        let script = build_macos_terminal_applescript(Path::new("/tmp/cc_switch_launcher.sh"));
+        assert!(
+            !script.contains(" in window 1"),
+            "should not inject into an existing/restored Terminal window:\n{script}"
+        );
+        assert!(
+            !script.contains("count of windows"),
+            "should not infer restored-window safety from window count:\n{script}"
+        );
+    }
+
+    /// Ghostty cold starts use `initial-command`; warm starts use the scripting dictionary.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn ghostty_applescript_cold_start_uses_initial_command() {
+        let script = build_macos_ghostty_applescript(Path::new("/tmp/cc_switch_launcher.sh"));
+
+        // Warm launches execute through the AppleScript command property, not `open -na ... -e`.
+        assert!(
+            script.contains(r#"set launcher_command to "sh '/tmp/cc_switch_launcher.sh'""#),
+            "missing launcher_command:\n{script}"
+        );
+        assert!(script.contains("if was_running then"));
+        assert!(script.contains("new window with configuration {command:launcher_command}"));
+        assert!(
+            !script.contains(" --args -e"),
+            "should not execute through open -na -e:\n{script}"
+        );
+        // Cold launches make Ghostty's first default surface execute the launcher.
+        assert!(script.contains(r#"set was_running to application "Ghostty" is running"#));
+        assert!(
+            script.contains(
+                r#"do shell script "open -na Ghostty --args --quit-after-last-window-closed=true " & quoted form of ("--initial-command=" & launcher_command)"#
+            ),
+            "cold start should use initial-command:\n{script}"
+        );
+        assert!(
+            !script.contains("--initial-window=false"),
+            "should not rely on initial-window=false:\n{script}"
+        );
+        assert!(
+            !script.contains("delay 0.5"),
+            "should not rely on a fixed delay:\n{script}"
+        );
+        assert!(
+            !script.contains("old_ids"),
+            "should not track default windows for closing:\n{script}"
+        );
+        assert!(
+            !script.contains("close window"),
+            "should not close a default window:\n{script}"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn dash_c_command_wraps_script_path_inside_quoted_arg() {
+        // The script path must stay inside the `-c` string, not as a bare argv.
+        let s = build_macos_dash_c_command(Path::new("/tmp/cc_switch_launcher_1.sh"));
+        assert_eq!(s, "exec sh '/tmp/cc_switch_launcher_1.sh'");
+
+        // Spaces and single quotes must stay shell-safe too.
+        let s2 = build_macos_dash_c_command(Path::new("/Users/me/it's dir/x.sh"));
+        assert_eq!(s2, r#"exec sh '/Users/me/it'"'"'s dir/x.sh'"#);
+    }
+
+    /// AppleScript launchers need both shell-path quoting and AppleScript string quoting.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn applescript_builders_safely_quote_special_paths() {
+        // First shell-quote the path, then wrap the whole command as an AppleScript string.
+        let expected = r#""sh '/Users/me/it'\"'\"'s dir/x.sh'""#;
+        let p = Path::new("/Users/me/it's dir/x.sh");
+        assert_eq!(applescript_launcher_command(p), expected);
+        assert_eq!(
+            applescript_exec_launcher_command(p),
+            r#""exec sh '/Users/me/it'\"'\"'s dir/x.sh'""#
+        );
+        assert!(
+            build_macos_terminal_applescript(p)
+                .contains(r#""exec sh '/Users/me/it'\"'\"'s dir/x.sh'""#),
+            "Terminal did not quote safely"
+        );
+        assert!(
+            build_macos_iterm2_applescript(p)
+                .contains(r#""exec sh '/Users/me/it'\"'\"'s dir/x.sh'""#),
+            "iTerm2 did not quote safely"
+        );
+        assert!(
+            build_macos_ghostty_applescript(p).contains(expected),
+            "Ghostty did not keep the non-exec launcher"
+        );
     }
 
     #[test]

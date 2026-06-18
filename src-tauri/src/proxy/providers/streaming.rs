@@ -100,9 +100,14 @@ struct ToolBlockState {
 const INFINITE_WHITESPACE_THRESHOLD: usize = 500;
 
 fn build_anthropic_usage_json(usage: &Usage) -> Value {
-    // OpenAI prompt_tokens 含缓存，Anthropic input_tokens 不含，需减去
+    // OpenAI prompt_tokens 含缓存，Anthropic input_tokens 不含，需减去 cache_read 与 cache_creation
+    // （三桶互斥，恒等 input + cache_read + cache_creation == prompt_tokens）。
     let cached = extract_cache_read_tokens(usage).unwrap_or(0);
-    let input_tokens = usage.prompt_tokens.saturating_sub(cached);
+    let cache_creation = usage.cache_creation_input_tokens.unwrap_or(0);
+    let input_tokens = usage
+        .prompt_tokens
+        .saturating_sub(cached)
+        .saturating_sub(cache_creation);
     let mut usage_json = json!({
         "input_tokens": input_tokens,
         "output_tokens": usage.completion_tokens
@@ -110,8 +115,8 @@ fn build_anthropic_usage_json(usage: &Usage) -> Value {
     if cached > 0 {
         usage_json["cache_read_input_tokens"] = json!(cached);
     }
-    if let Some(created) = usage.cache_creation_input_tokens {
-        usage_json["cache_creation_input_tokens"] = json!(created);
+    if cache_creation > 0 {
+        usage_json["cache_creation_input_tokens"] = json!(cache_creation);
     }
     usage_json
 }
@@ -227,13 +232,19 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                             });
                                             if let Some(u) = &chunk.usage {
                                                 let cached = extract_cache_read_tokens(u).unwrap_or(0);
-                                                let input = u.prompt_tokens.saturating_sub(cached);
+                                                let cache_creation =
+                                                    u.cache_creation_input_tokens.unwrap_or(0);
+                                                let input = u
+                                                    .prompt_tokens
+                                                    .saturating_sub(cached)
+                                                    .saturating_sub(cache_creation);
                                                 start_usage["input_tokens"] = json!(input);
                                                 if cached > 0 {
                                                     start_usage["cache_read_input_tokens"] = json!(cached);
                                                 }
-                                                if let Some(created) = u.cache_creation_input_tokens {
-                                                    start_usage["cache_creation_input_tokens"] = json!(created);
+                                                if cache_creation > 0 {
+                                                    start_usage["cache_creation_input_tokens"] =
+                                                        json!(cache_creation);
                                                 }
                                             }
 
@@ -1040,6 +1051,81 @@ mod tests {
                 .pointer("/usage/cache_read_input_tokens")
                 .and_then(|v| v.as_u64()),
             Some(100)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_usage_chunk_subtracts_cache_read_and_creation_from_input() {
+        // prompt_tokens(1000) 含 cache_read(600) 与 cache_creation(300)；转 Anthropic 后
+        // input 应为 fresh，守恒：input(100) + cache_read(600) + cache_creation(300) == prompt(1000)。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_cc\",\"model\":\"glm-5.1\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"tool-1\",\"type\":\"function\",\"function\":{\"name\":\"Bash\",\"arguments\":\"{\\\"command\\\":\\\"pwd\\\"}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_cc\",\"model\":\"glm-5.1\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1000,\"completion_tokens\":50,\"prompt_tokens_details\":{\"cached_tokens\":600},\"cache_creation_input_tokens\":300}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+        let message_delta = events
+            .iter()
+            .find(|event| event_type(event) == Some("message_delta"))
+            .expect("should emit message_delta with usage");
+
+        // fresh input = 1000 - 600 - 300 = 100
+        assert_eq!(
+            message_delta
+                .pointer("/usage/input_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(100)
+        );
+        assert_eq!(
+            message_delta
+                .pointer("/usage/cache_read_input_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(600)
+        );
+        assert_eq!(
+            message_delta
+                .pointer("/usage/cache_creation_input_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(300)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_usage_chunk_clamps_input_to_zero_when_cache_exceeds_prompt() {
+        // prompt(100) < cache_read(80)+cache_creation(50)=130：saturating 钳到 0，防下溢。
+        // 钉桩：阻止未来把 saturating_sub 误改成普通减法(debug panic / release wrap)。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_uf\",\"model\":\"glm-5.1\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"tool-1\",\"type\":\"function\",\"function\":{\"name\":\"Bash\",\"arguments\":\"{\\\"command\\\":\\\"pwd\\\"}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_uf\",\"model\":\"glm-5.1\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":50,\"prompt_tokens_details\":{\"cached_tokens\":80},\"cache_creation_input_tokens\":50}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+        let message_delta = events
+            .iter()
+            .find(|event| event_type(event) == Some("message_delta"))
+            .expect("should emit message_delta with usage");
+
+        assert_eq!(
+            message_delta
+                .pointer("/usage/input_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(0)
+        );
+        assert_eq!(
+            message_delta
+                .pointer("/usage/cache_read_input_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(80)
+        );
+        assert_eq!(
+            message_delta
+                .pointer("/usage/cache_creation_input_tokens")
+                .and_then(|v| v.as_u64()),
+            Some(50)
         );
     }
 
