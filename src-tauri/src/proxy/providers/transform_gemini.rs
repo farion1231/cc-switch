@@ -39,6 +39,11 @@ pub(crate) fn is_synthesized_tool_call_id(id: &str) -> bool {
     id.starts_with(SYNTHESIZED_ID_PREFIX)
 }
 
+/// Anthropic 请求 → Gemini 原生请求。
+///
+/// 转换工具库 API：当前无生产调用方（连通性检查不再发真实请求，曾是其唯一 crate 内
+/// 消费者），但保留其转换逻辑与下方测试套件，供代理转换路径复用 / 未来接线。
+#[allow(dead_code)]
 pub fn anthropic_to_gemini(body: Value) -> Result<Value, ProxyError> {
     anthropic_to_gemini_with_shadow(body, None, None, None)
 }

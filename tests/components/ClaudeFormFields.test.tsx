@@ -83,6 +83,8 @@ const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
     defaultSonnetModelName: "Claude Sonnet",
     defaultOpusModel: "",
     defaultOpusModelName: "",
+    defaultFableModel: "",
+    defaultFableModelName: "",
     onModelChange: vi.fn(),
     speedTestEndpoints: [],
     apiFormat: "anthropic",

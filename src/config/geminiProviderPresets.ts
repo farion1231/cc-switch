@@ -23,6 +23,7 @@ export interface GeminiProviderPreset {
   description?: string;
   category?: ProviderCategory;
   isPartner?: boolean;
+  primePartner?: boolean; // 置顶合作伙伴（顶级）：徽章显示为心形
   partnerPromotionKey?: string;
   endpointCandidates?: string[];
   theme?: GeminiPresetTheme;
@@ -164,8 +165,6 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     model: "gemini-3.1-flash-lite",
     description: "SudoCode",
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
     endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
     icon: "sudocode",
   },
@@ -335,25 +334,6 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     endpointCandidates: ["https://e-flowcode.cc"],
     icon: "eflowcode",
     iconColor: "#000000",
-  },
-  {
-    name: "LemonData",
-    websiteUrl: "https://lemondata.cc",
-    apiKeyUrl: "https://lemondata.cc/r/FFX1ZDUP",
-    settingsConfig: {
-      env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.lemondata.cc",
-        GEMINI_MODEL: "gemini-3.5-flash",
-      },
-    },
-    baseURL: "https://api.lemondata.cc",
-    model: "gemini-3.5-flash",
-    description: "LemonData",
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "lemondata",
-    endpointCandidates: ["https://api.lemondata.cc"],
-    icon: "lemondata",
   },
   {
     name: "CherryIN",

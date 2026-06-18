@@ -24,11 +24,9 @@
 <details open>
 <summary>クリックで折りたたむ</summary>
 
-[![MiniMax](assets/partners/banners/minimax-en.jpeg)](https://platform.minimax.io/subscribe/coding-plan?code=ClLhgxr2je&source=link)
+[![Kimi K2.6](https://kimi-file.moonshot.cn/prod-chat-kimi/kfs/4/2/2026-06-08/1d8j61pt3v89kkekm5mbg)](https://platform.moonshot.cn/console?aff=cc-switch)
 
-MiniMax-M2.7 は、自律的進化と実世界の生産性向上のために設計された次世代大規模言語モデルです。従来のモデルとは異なり、M2.7 はエージェントチーム、動的ツール使用、強化学習ループを通じて自身の改善に積極的に参加します。ソフトウェアエンジニアリングにおいて優れた性能を発揮し（SWE-Pro で 56.22%、VIBE-Pro で 55.6%、Terminal Bench 2 で 57.0%）、複雑なオフィスワークフローにも秀でており、GDPval-AA で 1495 ELO のリーディングスコアを達成しています。Word・Excel・PowerPoint の高忠実度編集と、40 以上の複雑なスキルにわたる 97% の遵守率により、M2.7 は AI ネイティブなワークフローと組織構築の新基準を打ち立てます。
-
-[こちら](https://platform.minimax.io/subscribe/coding-plan?code=ClLhgxr2je&source=link)から MiniMax Token Plan の限定 12% オフを入手！
+Kimi K2.6 は Moonshot AI によるオープンソースのネイティブマルチモーダル・エージェントモデルで、長期的なコーディング、コード駆動設計、スウォーム（群）型タスクオーケストレーションのために構築されています。フロントエンド、DevOps、パフォーマンス最適化、フルスタックワークフローにわたる複雑なエンドツーエンドのエンジニアリング作業に対応できるよう設計されており、多数の専門エージェントを協調させて、実際のコーディングタスクの計画・実装・テスト・反復を行います。
 
 ---
 
@@ -63,7 +61,7 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 
 <tr>
 <td width="180"><a href="https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch"><img src="assets/partners/logos/byteplus.png" alt="BytePlus" width="150"></a></td>
-<td>Dola seed のご支援に感謝します！Dola Seed 2.0 は ByteDance がグローバル市場向けに独自開発したフルモーダル汎用大規模モデルです。統一されたマルチモーダルアーキテクチャを基盤に、テキスト・画像・音声・動画の統合的な理解と生成をサポートします。エージェント連携をネイティブに実現し、強力な推論、長時間タスクの実行、ツール統合、コーディング能力を備えています。スマートコックピット、パーソナルアシスタント、教育、カスタマーサポート、マーケティング、リテールなど幅広いシナリオに適用可能で、マルチモーダル認識、エンドツーエンドの複雑なタスク遂行、安定したインタラクション、データセキュリティに優れ、ModelArk プラットフォームを通じて手軽に利用・デプロイできます。<a href="https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch">このリンク</a>からご登録いただくと、モデルごとに 500,000 トークンの無料推論クォータを進呈します。</td>
+<td>Dola seed のご支援に感謝します！Dola Seed 2.0 は ByteDance がグローバル市場向けに独自開発したフルモーダル汎用大規模モデルです。統一されたマルチモーダルアーキテクチャを基盤に、テキスト・画像・音声・動画の統合的な理解と生成をサポートします。エージェント連携をネイティブに実現し、強力な推論、長時間タスクの実行、ツール統合、コーディング能力を備えています。スマートコックピット、パーソナルアシスタント、教育、カスタマーサポート、マーケティング、リテールなど幅広いシナリオに適用可能で、マルチモーダル認識、エンドツーエンドの複雑なタスク遂行、安定したインタラクション、データセキュリティに優れ、ModelArk プラットフォームを通じて手軽に利用・デプロイできます。<a href="https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch">このリンク</a>からご登録いただくと、モデルごとに 500,000 トークンの無料推論クォータを進呈します。<a href="https://www.volcengine.com/activity/ai618?utm_campaign=hw&utm_content=hw&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch"> >>中国大陆地区的开发者请点击这里</a></td>
 </tr>
 
 <tr>
@@ -105,10 +103,6 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 <td width="180"><a href="https://www.micuapi.ai/register?aff=aOYQ"><img src="assets/partners/logos/mikubanner.svg" alt="Micu" width="150"></a></td>
 <td>Micu API のご支援に感謝します！Micu API は、最高のコストパフォーマンスと高い安定性を追求するグローバル大規模言語モデル中継サービスプロバイダーです。法人企業がバックアップしており、サービス停止のリスクを排除、迅速な正規請求書発行に対応！「試行コストゼロ」をモットーに、最低 1 元からチャージ可能で手数料無料、いつでも返金可能！CC Switch ユーザー向けの限定特典：<a href="https://www.micuapi.ai/register?aff=aOYQ">こちらのリンク</a>から登録し、チャージ時にプロモコード「ccswitch」を入力すると <strong>10% 割引</strong> が適用されます！</td>
 </tr>
-<tr>
-<td width="180"><a href="https://lemondata.cc/r/FFX1ZDUP"><img src="assets/partners/logos/lemondata.png" alt="LemonData" width="150"></a></td>
-<td>LemonData のご支援に感謝します！LemonData は高性能 AI API アグリゲーションプラットフォームで、GPT、Claude、Gemini、DeepSeek など 300 以上のモデルに 1 つの API キーでアクセス可能。全モデルが公式価格の 30〜70% オフで自動フェイルオーバー、スマートルーティング、無制限同時接続に対応。新規ユーザーは登録だけで即座に $1 の無料クレジットを獲得 — <a href="https://lemondata.cc/r/FFX1ZDUP">こちらのリンク</a>から登録してボーナスを獲得し、すぐに開発を始めましょう！</td>
-</tr>
 
 <tr>
 <td width="180"><a href="https://ctok.ai"><img src="assets/partners/logos/ctok.png" alt="CTok" width="150"></a></td>
@@ -146,7 +140,7 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.ccsub.net/register?ref=Y6Z8DXEA"><img src="assets/partners/logos/ccsub.jpg" alt="CCSub" width="150"></a></td>
+<td width="180"><a href="https://www.ccsub.net/register?ref=Y6Z8DXEA"><img src="assets/partners/logos/ccsub.svg" alt="CCSub" width="150"></a></td>
 <td>CCSub のご支援に感謝します！CCSub は安定した低価格の AI API リレープラットフォームで、Claude Code 公式サブスクリプションの強力な代替です。1 つの API キーで Claude Opus 4.8、Sonnet 4.6、Haiku 4.5、GPT-5、Gemini、DeepSeek の全モデルを公式直接利用の約 1/3 のコストでご利用いただけます。VPN 不要で世界中から直接接続可能。Claude Code、Codex、Cursor、Cline、Continue、Windsurf など主要な AI コーディングツールすべてに対応しています。<a href="https://www.ccsub.net/register?ref=Y6Z8DXEA">こちらのリンク</a>から登録すると $5 の無料クレジットがもらえます。</td>
 </tr>
 
