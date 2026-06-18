@@ -63,7 +63,9 @@ export function ClaudeDesktopSettings() {
   });
 
   const supported = status?.supported !== false;
-  const disabled = isLoading || mutation.isPending || !status || !supported;
+  const configured = status?.configured === true;
+  const disabled =
+    isLoading || mutation.isPending || !status || !supported || !configured;
   const description = supported
     ? t("settings.disableClaudeDesktopAutoUpdatesDescription", {
         defaultValue:
