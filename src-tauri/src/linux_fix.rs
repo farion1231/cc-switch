@@ -81,10 +81,29 @@ fn queue_webview_repaint(window: &WebviewWindow) {
     }
 }
 
-fn active_gdk_backend_is_wayland() -> Option<bool> {
+fn active_gdk_backend_is_wayland_on_current_thread() -> Option<bool> {
     use gtk::gdk::prelude::DisplayExtManual;
 
     gtk::gdk::Display::default().map(|display| display.backend().is_wayland())
+}
+
+async fn active_gdk_backend_is_wayland(window: &WebviewWindow) -> Option<bool> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+
+    if let Err(err) = window.run_on_main_thread(move || {
+        let _ = sender.send(active_gdk_backend_is_wayland_on_current_thread());
+    }) {
+        log::debug!("Linux nudge: 无法在主线程查询 GDK backend: {err}");
+        return None;
+    }
+
+    match receiver.await {
+        Ok(value) => value,
+        Err(err) => {
+            log::debug!("Linux nudge: 主线程 GDK backend 查询被取消: {err}");
+            None
+        }
+    }
 }
 
 fn should_skip_pseudo_resize_for_backend(
@@ -112,7 +131,7 @@ pub(crate) fn nudge_main_window(window: WebviewWindow) {
         queue_webview_repaint(&window);
 
         let is_wayland = should_skip_pseudo_resize_for_backend(
-            active_gdk_backend_is_wayland(),
+            active_gdk_backend_is_wayland(&window).await,
             std::env::var_os("WAYLAND_DISPLAY").is_some(),
         );
         let skip_pseudo_resize = is_wayland
