@@ -465,7 +465,9 @@ impl Database {
                         Self::set_user_version(conn, 10)?;
                     }
                     10 => {
-                        log::info!("迁移数据库从 v10 到 v11（usage rollup 维度 + Skill 手动分组支持）");
+                        log::info!(
+                            "迁移数据库从 v10 到 v11（usage rollup 维度 + Skill 手动分组支持）"
+                        );
                         Self::migrate_v10_to_v11(conn)?;
                         Self::set_user_version(conn, 11)?;
                     }
@@ -1254,7 +1256,7 @@ impl Database {
 
         if Self::table_exists(conn, "usage_daily_rollups")? {
             conn.execute_batch(
-            "ALTER TABLE usage_daily_rollups RENAME TO usage_daily_rollups_v10;
+                "ALTER TABLE usage_daily_rollups RENAME TO usage_daily_rollups_v10;
              CREATE TABLE usage_daily_rollups (
                  date TEXT NOT NULL,
                  app_type TEXT NOT NULL,

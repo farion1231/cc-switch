@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
-use std::sync::{OnceLock, RwLock};
 #[cfg(unix)]
 use std::io::Write;
+use std::path::PathBuf;
+use std::sync::{OnceLock, RwLock};
 
 use crate::app_config::AppType;
 use crate::error::AppError;

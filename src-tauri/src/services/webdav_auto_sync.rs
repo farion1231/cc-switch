@@ -50,6 +50,8 @@ pub fn should_trigger_for_table(table: &str) -> bool {
             | "prompts"
             | "skills"
             | "skill_repos"
+            | "skill_groups"
+            | "skill_group_members"
             | "settings"
             | "proxy_config"
     )
@@ -208,6 +210,8 @@ mod tests {
     fn should_trigger_sync_for_config_tables_only() {
         assert!(should_trigger_for_table("providers"));
         assert!(should_trigger_for_table("settings"));
+        assert!(should_trigger_for_table("skill_groups"));
+        assert!(should_trigger_for_table("skill_group_members"));
         assert!(!should_trigger_for_table("proxy_request_logs"));
         assert!(!should_trigger_for_table("provider_health"));
     }

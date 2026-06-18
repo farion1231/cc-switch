@@ -399,7 +399,10 @@ mod tests {
 
     #[test]
     fn app_paths_store_file_name_for_variant_isolated_per_variant() {
-        assert_eq!(app_paths_store_file_name_for_variant(None), "app_paths.json");
+        assert_eq!(
+            app_paths_store_file_name_for_variant(None),
+            "app_paths.json"
+        );
         assert_eq!(
             app_paths_store_file_name_for_variant(Some("debug")),
             "app_paths-debug.json"
