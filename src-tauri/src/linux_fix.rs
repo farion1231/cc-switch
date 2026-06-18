@@ -81,6 +81,18 @@ fn queue_webview_repaint(window: &WebviewWindow) {
     }
 }
 
+fn is_effective_wayland_backend(gdk_backend: Option<&str>, has_wayland_display: bool) -> bool {
+    let requested_backend = gdk_backend
+        .and_then(|value| value.split(',').find(|part| !part.trim().is_empty()))
+        .map(|value| value.trim().to_ascii_lowercase());
+
+    match requested_backend.as_deref() {
+        Some("x11") => false,
+        Some("wayland") => true,
+        _ => has_wayland_display,
+    }
+}
+
 /// 对主窗口执行 Linux 专用的「focus + surface 重激活」序列。
 ///
 /// 调用是 fire-and-forget：内部 spawn 一个异步任务在 ~250ms 后完成。
@@ -98,7 +110,10 @@ pub(crate) fn nudge_main_window(window: WebviewWindow) {
         let _ = window.set_focus();
         queue_webview_repaint(&window);
 
-        let is_wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+        let is_wayland = is_effective_wayland_backend(
+            std::env::var("GDK_BACKEND").ok().as_deref(),
+            std::env::var_os("WAYLAND_DISPLAY").is_some(),
+        );
         let skip_pseudo_resize = is_wayland
             || matches!(window.is_maximized(), Ok(true))
             || matches!(window.is_fullscreen(), Ok(true));
@@ -196,4 +211,32 @@ pub(crate) fn repaint_main_window_after_resize(window: WebviewWindow) {
         queue_webview_repaint(&window);
         log::debug!("Linux: 已请求 resize 后 WebView 重绘");
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_effective_wayland_backend;
+
+    #[test]
+    fn gdk_backend_x11_overrides_wayland_session() {
+        assert!(!is_effective_wayland_backend(Some("x11"), true));
+    }
+
+    #[test]
+    fn gdk_backend_first_entry_controls_backend() {
+        assert!(!is_effective_wayland_backend(Some("x11,wayland"), true));
+        assert!(is_effective_wayland_backend(Some("wayland,x11"), false));
+    }
+
+    #[test]
+    fn wayland_display_is_used_when_backend_is_unset() {
+        assert!(is_effective_wayland_backend(None, true));
+        assert!(!is_effective_wayland_backend(None, false));
+    }
+
+    #[test]
+    fn unknown_backend_falls_back_to_session_probe() {
+        assert!(is_effective_wayland_backend(Some("broadway"), true));
+        assert!(!is_effective_wayland_backend(Some("broadway"), false));
+    }
 }
