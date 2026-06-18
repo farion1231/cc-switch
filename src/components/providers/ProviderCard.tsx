@@ -214,7 +214,6 @@ export function ProviderCard({
   // so the badge can never disagree with what the switch flow enforces.
   const needsRouting = getProxyRequirement(provider, appId).required;
 
-
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用（OpenCode/OpenClaw/Hermes）：使用 isInConfig 代替 isCurrent
   const shouldAutoQuery =
