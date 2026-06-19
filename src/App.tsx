@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import {
   Plus,
   Settings,
@@ -90,6 +90,10 @@ import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
+import type { PromptPanelHandle } from "@/components/prompts/PromptPanel";
+import type { UnifiedMcpPanelHandle } from "@/components/mcp/UnifiedMcpPanel";
+import type { SkillsPageHandle } from "@/components/skills/SkillsPage";
+import type { UnifiedSkillsPanelHandle } from "@/components/skills/UnifiedSkillsPanel";
 
 type View =
   | "providers"
@@ -111,6 +115,64 @@ interface SyncStatusUpdatedPayload {
   source?: string;
   status?: string;
   error?: string;
+}
+
+function useProviderSwitchListener(
+  activeApp: AppId,
+  onRefetch: () => Promise<unknown>,
+) {
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+    let active = true;
+
+    const setupListener = async () => {
+      try {
+        const off = await providersApi.onSwitched(
+          async (event: ProviderSwitchEvent) => {
+            if (event.appType === activeApp) {
+              await onRefetch();
+            }
+          },
+        );
+        if (!active) {
+          off();
+          return;
+        }
+        unsubscribe = off;
+      } catch (error) {
+        console.error("[App] Failed to subscribe provider switch event", error);
+      }
+    };
+
+    void setupListener();
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [activeApp, onRefetch]);
+}
+
+function useAutoSyncErrorToast(
+  eventName: string,
+  queryClient: QueryClient,
+  t: (key: any, options?: any) => string,
+  toastI18nKey: string,
+) {
+  useTauriEvent<SyncStatusUpdatedPayload | null | undefined>(
+    eventName,
+    async (payload) => {
+      const statusPayload = payload ?? {};
+      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      if (statusPayload.source !== "auto" || statusPayload.status !== "error") {
+        return;
+      }
+      toast.error(
+        t(toastI18nKey, {
+          error: statusPayload.error || t("common.unknown"),
+        }),
+      );
+    },
+  );
 }
 
 const DEFAULT_DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px
@@ -241,10 +303,10 @@ function App() {
 
   useUsageCacheBridge();
 
-  const promptPanelRef = useRef<any>(null);
-  const mcpPanelRef = useRef<any>(null);
-  const skillsPageRef = useRef<any>(null);
-  const unifiedSkillsPanelRef = useRef<any>(null);
+  const promptPanelRef = useRef<PromptPanelHandle | null>(null);
+  const mcpPanelRef = useRef<UnifiedMcpPanelHandle | null>(null);
+  const skillsPageRef = useRef<SkillsPageHandle | null>(null);
+  const unifiedSkillsPanelRef = useRef<UnifiedSkillsPanelHandle | null>(null);
   const addActionButtonClass =
     "bg-orange-500 hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 dark:shadow-orange-500/40 rounded-full w-8 h-8";
 
@@ -298,6 +360,8 @@ function App() {
     isProxyRunning && isCurrentAppTakeoverActive,
   );
 
+  useProviderSwitchListener(activeApp, refetch);
+
   const disableOmoMutation = useDisableCurrentOmo();
   const handleDisableOmo = () => {
     disableOmoMutation.mutate(undefined, {
@@ -332,36 +396,6 @@ function App() {
     });
   };
 
-  useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
-    let active = true;
-
-    const setupListener = async () => {
-      try {
-        const off = await providersApi.onSwitched(
-          async (event: ProviderSwitchEvent) => {
-            if (event.appType === activeApp) {
-              await refetch();
-            }
-          },
-        );
-        if (!active) {
-          off();
-          return;
-        }
-        unsubscribe = off;
-      } catch (error) {
-        console.error("[App] Failed to subscribe provider switch event", error);
-      }
-    };
-
-    void setupListener();
-    return () => {
-      active = false;
-      unsubscribe?.();
-    };
-  }, [activeApp, refetch]);
-
   useTauriEvent("universal-provider-synced", async () => {
     await queryClient.invalidateQueries({ queryKey: ["providers"] });
     try {
@@ -371,36 +405,17 @@ function App() {
     }
   });
 
-  useTauriEvent<SyncStatusUpdatedPayload | null | undefined>(
+  useAutoSyncErrorToast(
     "webdav-sync-status-updated",
-    async (payload) => {
-      const statusPayload = payload ?? {};
-      await queryClient.invalidateQueries({ queryKey: ["settings"] });
-      if (statusPayload.source !== "auto" || statusPayload.status !== "error") {
-        return;
-      }
-      toast.error(
-        t("settings.webdavSync.autoSyncFailedToast", {
-          error: statusPayload.error || t("common.unknown"),
-        }),
-      );
-    },
+    queryClient,
+    t,
+    "settings.webdavSync.autoSyncFailedToast",
   );
-
-  useTauriEvent<SyncStatusUpdatedPayload | null | undefined>(
+  useAutoSyncErrorToast(
     "s3-sync-status-updated",
-    async (payload) => {
-      const statusPayload = payload ?? {};
-      await queryClient.invalidateQueries({ queryKey: ["settings"] });
-      if (statusPayload.source !== "auto" || statusPayload.status !== "error") {
-        return;
-      }
-      toast.error(
-        t("settings.s3Sync.autoSyncFailedToast", {
-          error: statusPayload.error || t("common.unknown"),
-        }),
-      );
-    },
+    queryClient,
+    t,
+    "settings.s3Sync.autoSyncFailedToast",
   );
 
   useTauriEvent<{ appType: string; providerName: string }>(
@@ -1245,7 +1260,7 @@ function App() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => promptPanelRef.current?.openAdd()}
+                    onClick={() => promptPanelRef.current?.openAdd?.()}
                     className="hover:bg-black/5 dark:hover:bg-white/5"
                   >
                     <Plus className="w-4 h-4 mr-2" />
@@ -1257,7 +1272,7 @@ function App() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => mcpPanelRef.current?.openImport()}
+                      onClick={() => mcpPanelRef.current?.openImport?.()}
                       className="hover:bg-black/5 dark:hover:bg-white/5"
                     >
                       <Download className="w-4 h-4 mr-2" />
@@ -1266,7 +1281,7 @@ function App() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => mcpPanelRef.current?.openAdd()}
+                      onClick={() => mcpPanelRef.current?.openAdd?.()}
                       className="hover:bg-black/5 dark:hover:bg-white/5"
                     >
                       <Plus className="w-4 h-4 mr-2" />
@@ -1280,7 +1295,7 @@ function App() {
                       variant="ghost"
                       size="sm"
                       onClick={() =>
-                        unifiedSkillsPanelRef.current?.openRestoreFromBackup()
+                        unifiedSkillsPanelRef.current?.openRestoreFromBackup?.()
                       }
                       className="hover:bg-black/5 dark:hover:bg-white/5"
                     >
@@ -1291,7 +1306,7 @@ function App() {
                       variant="ghost"
                       size="sm"
                       onClick={() =>
-                        unifiedSkillsPanelRef.current?.openInstallFromZip()
+                        unifiedSkillsPanelRef.current?.openInstallFromZip?.()
                       }
                       className="hover:bg-black/5 dark:hover:bg-white/5"
                     >
@@ -1302,7 +1317,7 @@ function App() {
                       variant="ghost"
                       size="sm"
                       onClick={() =>
-                        unifiedSkillsPanelRef.current?.openImport()
+                        unifiedSkillsPanelRef.current?.openImport?.()
                       }
                       className="hover:bg-black/5 dark:hover:bg-white/5"
                     >
@@ -1325,7 +1340,7 @@ function App() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => skillsPageRef.current?.refresh()}
+                      onClick={() => skillsPageRef.current?.refresh?.()}
                       className="hover:bg-black/5 dark:hover:bg-white/5"
                     >
                       <RefreshCw className="w-4 h-4 mr-2" />
@@ -1334,7 +1349,7 @@ function App() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => skillsPageRef.current?.openRepoManager()}
+                      onClick={() => skillsPageRef.current?.openRepoManager?.()}
                       className="hover:bg-black/5 dark:hover:bg-white/5"
                     >
                       <Settings className="w-4 h-4 mr-2" />

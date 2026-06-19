@@ -2,3 +2,5 @@ packages: []
 
 onlyBuiltDependencies:
   - '@tailwindcss/oxide'
+  - esbuild
+  - msw
