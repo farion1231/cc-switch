@@ -105,8 +105,8 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
-<td width="180"><a href="https://ctok.ai"><img src="assets/partners/logos/ctok.png" alt="CTok" width="150"></a></td>
-<td>Danke an CTok.ai für die Unterstützung dieses Projekts! CTok.ai widmet sich dem Aufbau einer Komplettlösung für KI-Programmierwerkzeuge. Wir bieten professionelle Claude-Code-Pakete und Dienste einer technischen Community, mit Unterstützung für Google Gemini und OpenAI Codex. Durch sorgfältig gestaltete Pläne und eine professionelle Tech-Community geben wir Entwicklern verlässliche Servicegarantien und kontinuierlichen technischen Support an die Hand und machen KI-gestützte Programmierung zu einem echten Produktivitätswerkzeug. Klicken Sie <a href="https://ctok.ai">hier</a>, um sich zu registrieren!</td>
+<td width="180"><a href="https://etok.ai"><img src="assets/partners/logos/etok.png" alt="ETok" width="150"></a></td>
+<td>Danke an ETok.ai für die Unterstützung dieses Projekts! ETok.ai widmet sich dem Aufbau einer Komplettlösung für KI-Programmierwerkzeuge. Wir bieten professionelle Claude-Code-Pakete und Dienste einer technischen Community, mit Unterstützung für Google Gemini und OpenAI Codex. Durch sorgfältig gestaltete Pläne und eine professionelle Tech-Community geben wir Entwicklern verlässliche Servicegarantien und kontinuierlichen technischen Support an die Hand und machen KI-gestützte Programmierung zu einem echten Produktivitätswerkzeug. Klicken Sie <a href="https://etok.ai">hier</a>, um sich zu registrieren!</td>
 </tr>
 
 <tr>
