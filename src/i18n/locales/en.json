@@ -1362,7 +1362,8 @@
     "sortAriaLabel": "Toggle preset sorting",
     "sortNameAscTooltip": "Sort by name A-Z",
     "sortOriginalTooltip": "Restore original order",
-    "noSearchResults": "No provider presets match your search."
+    "noSearchResults": "No provider presets match your search.",
+    "selectPlaceholder": "Select a provider…"
   },
   "usage": {
     "title": "Usage Statistics",
@@ -2689,7 +2690,8 @@
     "savedAndSynced": "Saved and synced to all apps",
     "saveAndSyncError": "Failed to save and sync",
     "configJsonPreview": "Config JSON Preview",
-    "configJsonPreviewHint": "The following configurations will be synced to each app (only the displayed fields will be overwritten, other custom settings will be preserved)"
+    "configJsonPreviewHint": "The following configurations will be synced to each app (only the displayed fields will be overwritten, other custom settings will be preserved)",
+    "groupHeading": "Unified providers"
   },
   "omo": {
     "editProfile": "Edit OMO Config",

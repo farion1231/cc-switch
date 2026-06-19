@@ -1329,7 +1329,8 @@
     "sortAriaLabel": "切換預設排序",
     "sortNameAscTooltip": "按名稱 A-Z 排序",
     "sortOriginalTooltip": "恢復原始順序",
-    "noSearchResults": "沒有相符的預設供應商。"
+    "noSearchResults": "沒有相符的預設供應商。",
+    "selectPlaceholder": "選擇供應商…"
   },
   "usage": {
     "title": "使用統計",
@@ -2652,7 +2653,8 @@
     "savedAndSynced": "已儲存並同步至所有應用程式",
     "saveAndSyncError": "儲存並同步失敗",
     "configJsonPreview": "設定 JSON 預覽",
-    "configJsonPreviewHint": "以下是將要同步至各應用程式的設定內容（僅覆寫顯示的欄位，保留其他自訂設定）"
+    "configJsonPreviewHint": "以下是將要同步至各應用程式的設定內容（僅覆寫顯示的欄位，保留其他自訂設定）",
+    "groupHeading": "統一供應商"
   },
   "omo": {
     "editProfile": "編輯 OMO 設定",

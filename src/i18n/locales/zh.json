@@ -1357,7 +1357,8 @@
     "sortAriaLabel": "切换预设排序",
     "sortNameAscTooltip": "按名称 A-Z 排序",
     "sortOriginalTooltip": "恢复原始顺序",
-    "noSearchResults": "没有匹配的预设供应商。"
+    "noSearchResults": "没有匹配的预设供应商。",
+    "selectPlaceholder": "选择供应商…"
   },
   "usage": {
     "title": "使用统计",
@@ -2680,7 +2681,8 @@
     "savedAndSynced": "已保存并同步到所有应用",
     "saveAndSyncError": "保存并同步失败",
     "configJsonPreview": "配置 JSON 预览",
-    "configJsonPreviewHint": "以下是将要同步到各应用的配置内容（仅覆盖显示的字段，保留其他自定义配置）"
+    "configJsonPreviewHint": "以下是将要同步到各应用的配置内容（仅覆盖显示的字段，保留其他自定义配置）",
+    "groupHeading": "统一供应商"
   },
   "omo": {
     "editProfile": "编辑 OMO 配置",

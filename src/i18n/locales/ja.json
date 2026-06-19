@@ -1357,7 +1357,8 @@
     "sortAriaLabel": "プリセットの並び順を切り替え",
     "sortNameAscTooltip": "名前順 A-Z で並び替え",
     "sortOriginalTooltip": "元の順序に戻す",
-    "noSearchResults": "一致するプロバイダープリセットがありません。"
+    "noSearchResults": "一致するプロバイダープリセットがありません。",
+    "selectPlaceholder": "プロバイダーを選択…"
   },
   "usage": {
     "title": "利用統計",
@@ -2680,7 +2681,8 @@
     "savedAndSynced": "すべてのアプリに保存・同期されました",
     "saveAndSyncError": "保存と同期に失敗しました",
     "configJsonPreview": "設定 JSON プレビュー",
-    "configJsonPreviewHint": "以下は各アプリに同期される設定内容です（表示されているフィールドのみ上書きされ、他のカスタム設定は保持されます）"
+    "configJsonPreviewHint": "以下は各アプリに同期される設定内容です（表示されているフィールドのみ上書きされ、他のカスタム設定は保持されます）",
+    "groupHeading": "統合プロバイダー"
   },
   "omo": {
     "editProfile": "OMO 設定を編集",
