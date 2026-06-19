@@ -1,10 +1,15 @@
 pub mod providers;
 pub mod terminal;
 
+use crate::database::Database;
+use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use providers::{claude, codex, gemini, hermes, openclaw, opencode};
+use providers::{
+    claude, codex, gemini, hermes, openclaw, opencode, truncate_summary, TITLE_MAX_CHARS,
+};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,6 +60,15 @@ pub struct DeleteSessionOutcome {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct SessionTitleOverride {
+    provider_id: String,
+    session_id: String,
+    source_path: String,
+    title: String,
+}
+
 pub fn scan_sessions() -> Vec<SessionMeta> {
     let (r1, r2, r3, r4, r5, r6) = std::thread::scope(|s| {
         let h1 = s.spawn(codex::scan_sessions);
@@ -90,6 +104,10 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     sessions
 }
 
+pub fn scan_sessions_with_title_overrides(db: &Database) -> Result<Vec<SessionMeta>, String> {
+    apply_title_overrides(db, scan_sessions())
+}
+
 pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<SessionMessage>, String> {
     // SQLite sessions use a "sqlite:" prefixed source_path
     if provider_id == "opencode" && source_path.starts_with("sqlite:") {
@@ -109,6 +127,38 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "hermes" => hermes::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
+}
+
+pub fn rename_session(
+    db: &Database,
+    provider_id: &str,
+    session_id: &str,
+    source_path: &str,
+    title: &str,
+) -> Result<SessionMeta, String> {
+    if source_path.trim().is_empty() {
+        return Err("Session source path is required".to_string());
+    }
+
+    let title = truncate_summary(title, TITLE_MAX_CHARS);
+    if title.is_empty() {
+        return Err("Session title cannot be empty".to_string());
+    }
+    let target = scan_sessions()
+        .into_iter()
+        .find(|session| {
+            session.provider_id == provider_id
+                && session.session_id == session_id
+                && session.source_path.as_deref() == Some(source_path)
+        })
+        .ok_or_else(|| "Session not found".to_string())?;
+
+    upsert_title_override(db, provider_id, session_id, source_path, &title)?;
+
+    Ok(SessionMeta {
+        title: Some(title),
+        ..target
+    })
 }
 
 pub fn delete_session(
@@ -136,6 +186,142 @@ pub fn delete_sessions(requests: &[DeleteSessionRequest]) -> Vec<DeleteSessionOu
             &request.source_path,
         )
     })
+}
+
+fn apply_title_overrides(
+    db: &Database,
+    mut sessions: Vec<SessionMeta>,
+) -> Result<Vec<SessionMeta>, String> {
+    let overrides = load_title_overrides(db)?;
+    if overrides.is_empty() {
+        return Ok(sessions);
+    }
+
+    let session_keys: HashSet<(String, String, String)> = sessions
+        .iter()
+        .filter_map(|session| {
+            session.source_path.as_ref().map(|source_path| {
+                (
+                    session.provider_id.clone(),
+                    session.session_id.clone(),
+                    source_path.clone(),
+                )
+            })
+        })
+        .collect();
+    let mut by_key: HashMap<(String, String, String), String> = HashMap::new();
+    let mut active_overrides = Vec::new();
+    let mut pruned_stale = false;
+
+    for entry in overrides {
+        let key = (
+            entry.provider_id.clone(),
+            entry.session_id.clone(),
+            entry.source_path.clone(),
+        );
+        if session_keys.contains(&key) {
+            by_key.insert(key, entry.title.clone());
+            active_overrides.push(entry);
+        } else {
+            pruned_stale = true;
+        }
+    }
+
+    for session in &mut sessions {
+        if let Some(source_path) = session.source_path.as_ref() {
+            let key = (
+                session.provider_id.clone(),
+                session.session_id.clone(),
+                source_path.clone(),
+            );
+            if let Some(title) = by_key.get(&key) {
+                session.title = Some(title.clone());
+            }
+        }
+    }
+
+    if pruned_stale {
+        save_title_overrides(db, &active_overrides)?;
+    }
+
+    Ok(sessions)
+}
+
+fn load_title_overrides(db: &Database) -> Result<Vec<SessionTitleOverride>, String> {
+    let raw = db
+        .get_setting("session_title_overrides")
+        .map_err(|e| e.to_string())?;
+
+    Ok(parse_title_overrides(raw))
+}
+
+fn parse_title_overrides(raw: Option<String>) -> Vec<SessionTitleOverride> {
+    match raw {
+        Some(value) if !value.trim().is_empty() => match serde_json::from_str(&value) {
+            Ok(overrides) => overrides,
+            Err(error) => {
+                log::warn!("Ignoring invalid session title overrides from settings: {error}");
+                Vec::new()
+            }
+        },
+        _ => Vec::new(),
+    }
+}
+
+fn save_title_overrides(db: &Database, overrides: &[SessionTitleOverride]) -> Result<(), String> {
+    let json = serde_json::to_string(overrides)
+        .map_err(|e| format!("Failed to serialize session title overrides: {e}"))?;
+    db.set_setting("session_title_overrides", &json)
+        .map_err(|e| e.to_string())
+}
+
+fn upsert_title_override(
+    db: &Database,
+    provider_id: &str,
+    session_id: &str,
+    source_path: &str,
+    title: &str,
+) -> Result<(), String> {
+    let mut conn = db
+        .conn
+        .lock()
+        .map_err(|e| format!("Mutex lock failed: {e}"))?;
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
+    let raw = tx
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params!["session_title_overrides"],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let mut overrides = parse_title_overrides(raw);
+
+    if let Some(existing) = overrides.iter_mut().find(|entry| {
+        entry.provider_id == provider_id
+            && entry.session_id == session_id
+            && entry.source_path == source_path
+    }) {
+        existing.title = title.to_string();
+    } else {
+        overrides.push(SessionTitleOverride {
+            provider_id: provider_id.to_string(),
+            session_id: session_id.to_string(),
+            source_path: source_path.to_string(),
+            title: title.to_string(),
+        });
+    }
+
+    let json = serde_json::to_string(&overrides)
+        .map_err(|e| format!("Failed to serialize session title overrides: {e}"))?;
+    tx.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+        params!["session_title_overrides", json],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())
 }
 
 fn delete_session_with_roots(
@@ -248,6 +434,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::Database;
     use tempfile::tempdir;
 
     fn write_codex_session(path: &Path, session_id: &str) {
@@ -347,5 +534,92 @@ mod tests {
             outcomes[2].error.as_deref(),
             Some("Session was not deleted")
         );
+    }
+
+    #[test]
+    fn applies_title_overrides_and_prunes_stale_entries() {
+        let db = Database::memory().expect("memory db");
+        save_title_overrides(
+            &db,
+            &[
+                SessionTitleOverride {
+                    provider_id: "codex".to_string(),
+                    session_id: "s1".to_string(),
+                    source_path: "/tmp/s1.jsonl".to_string(),
+                    title: "Renamed session".to_string(),
+                },
+                SessionTitleOverride {
+                    provider_id: "codex".to_string(),
+                    session_id: "deleted".to_string(),
+                    source_path: "/tmp/deleted.jsonl".to_string(),
+                    title: "Deleted session".to_string(),
+                },
+            ],
+        )
+        .expect("save overrides");
+
+        let sessions = vec![SessionMeta {
+            provider_id: "codex".to_string(),
+            session_id: "s1".to_string(),
+            title: Some("Original title".to_string()),
+            summary: None,
+            project_dir: None,
+            created_at: None,
+            last_active_at: None,
+            source_path: Some("/tmp/s1.jsonl".to_string()),
+            resume_command: None,
+        }];
+
+        let applied = apply_title_overrides(&db, sessions).expect("apply overrides");
+
+        assert_eq!(applied[0].title.as_deref(), Some("Renamed session"));
+        let saved = load_title_overrides(&db).expect("load overrides");
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].session_id, "s1");
+    }
+
+    #[test]
+    fn upsert_title_override_updates_existing_entry() {
+        let db = Database::memory().expect("memory db");
+
+        upsert_title_override(&db, "codex", "s1", "/tmp/s1.jsonl", "First title")
+            .expect("insert override");
+        upsert_title_override(&db, "codex", "s1", "/tmp/s1.jsonl", "Second title")
+            .expect("update override");
+
+        let saved = load_title_overrides(&db).expect("load overrides");
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].title, "Second title");
+    }
+
+    #[test]
+    fn upsert_title_override_preserves_other_entries() {
+        let db = Database::memory().expect("memory db");
+
+        upsert_title_override(&db, "codex", "s1", "/tmp/s1.jsonl", "First title")
+            .expect("insert first override");
+        upsert_title_override(&db, "claude", "s2", "/tmp/s2.jsonl", "Second title")
+            .expect("insert second override");
+
+        let saved = load_title_overrides(&db).expect("load overrides");
+
+        assert_eq!(saved.len(), 2);
+        assert!(saved
+            .iter()
+            .any(|entry| entry.session_id == "s1" && entry.title == "First title"));
+        assert!(saved
+            .iter()
+            .any(|entry| entry.session_id == "s2" && entry.title == "Second title"));
+    }
+
+    #[test]
+    fn load_title_overrides_ignores_invalid_json() {
+        let db = Database::memory().expect("memory db");
+        db.set_setting("session_title_overrides", "{not-json")
+            .expect("seed invalid overrides");
+
+        let saved = load_title_overrides(&db).expect("load overrides");
+
+        assert!(saved.is_empty());
     }
 }

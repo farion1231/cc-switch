@@ -11,6 +11,7 @@ import {
   getProviders,
   listProviders,
   listSessions,
+  renameSession,
   resetProviderState,
   setCurrentProviderId,
   updateProvider,
@@ -165,6 +166,24 @@ export const handlers = [
         ),
       })),
     );
+  }),
+
+  http.post(`${TAURI_ENDPOINT}/rename_session`, async ({ request }) => {
+    const { providerId, sessionId, sourcePath, title } = await withJson<{
+      providerId: string;
+      sessionId: string;
+      sourcePath: string;
+      title: string;
+    }>(request);
+
+    try {
+      return success(renameSession(providerId, sessionId, sourcePath, title));
+    } catch (error) {
+      return HttpResponse.json(
+        error instanceof Error ? error.message : "Rename failed",
+        { status: 404 },
+      );
+    }
   }),
 
   // MCP APIs

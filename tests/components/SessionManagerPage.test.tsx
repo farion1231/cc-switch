@@ -87,8 +87,8 @@ const openSearch = () => {
 };
 
 const closeSearch = () => {
-  const closeButton = Array.from(screen.getAllByRole("button")).find(
-    (button) => button.querySelector(".lucide-x"),
+  const closeButton = Array.from(screen.getAllByRole("button")).find((button) =>
+    button.querySelector(".lucide-x"),
   );
 
   if (!closeButton) {
@@ -138,6 +138,86 @@ describe("SessionManagerPage", () => {
     };
 
     setSessionFixtures(sessions, messages);
+  });
+
+  it("renames the selected session and updates search results", async () => {
+    const renameSpy = vi.spyOn(sessionsApi, "rename").mockResolvedValueOnce({
+      providerId: "codex",
+      sessionId: "codex-session-1",
+      title: "Renamed Alpha Session",
+      summary: "Alpha summary",
+      projectDir: "/mock/codex",
+      createdAt: 2,
+      lastActiveAt: 20,
+      sourcePath: "/mock/codex/session-1.jsonl",
+      resumeCommand: "codex resume codex-session-1",
+    });
+
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Alpha Session" }),
+      ).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /重命名会话/i }));
+
+    const input = screen.getByDisplayValue("Alpha Session");
+    fireEvent.change(input, {
+      target: { value: "  Renamed Alpha Session  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /保存标题/i }));
+
+    await waitFor(() =>
+      expect(renameSpy).toHaveBeenCalledWith({
+        providerId: "codex",
+        sessionId: "codex-session-1",
+        sourcePath: "/mock/codex/session-1.jsonl",
+        title: "Renamed Alpha Session",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Renamed Alpha Session" }),
+      ).toBeInTheDocument(),
+    );
+
+    expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument();
+    expect(toastSuccessMock).toHaveBeenCalledWith("会话已重命名");
+
+    openSearch();
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "Renamed" },
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Renamed Alpha Session" }),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("Beta Session")).not.toBeInTheDocument();
+
+    renameSpy.mockRestore();
+  });
+
+  it("does not submit an empty session title", async () => {
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Alpha Session" }),
+      ).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /重命名会话/i }));
+
+    const input = screen.getByDisplayValue("Alpha Session");
+    fireEvent.change(input, { target: { value: "   " } });
+
+    expect(screen.getByRole("button", { name: /保存标题/i })).toBeDisabled();
+    expect(toastSuccessMock).not.toHaveBeenCalled();
   });
 
   it("deletes the selected session and selects the next visible session", async () => {
