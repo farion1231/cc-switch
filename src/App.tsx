@@ -773,12 +773,19 @@ function App() {
   };
 
   const handleOpenTerminal = async (provider: Provider) => {
+    let openingToastId: string | number | undefined;
+
     try {
       const selectedDir = await settingsApi.pickDirectory();
       if (!selectedDir) {
         return;
       }
 
+      openingToastId = toast.info(
+        t("provider.terminalOpening", {
+          defaultValue: "正在打开终端...",
+        }),
+      );
       await providersApi.openTerminal(provider.id, activeApp, {
         cwd: selectedDir,
       });
@@ -786,9 +793,13 @@ function App() {
         t("provider.terminalOpened", {
           defaultValue: "终端已打开",
         }),
+        { id: openingToastId },
       );
     } catch (error) {
       console.error("[App] Failed to open terminal", error);
+      if (openingToastId !== undefined) {
+        toast.dismiss(openingToastId);
+      }
       const errorMessage = extractErrorMessage(error);
       toast.error(
         t("provider.terminalOpenFailed", {

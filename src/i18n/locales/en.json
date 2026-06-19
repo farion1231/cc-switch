@@ -146,6 +146,7 @@
     "managedByHermes": "Hermes Managed",
     "managedByHermesHint": "Defined in Hermes' providers: dict. Edit or remove it via Hermes Web UI.",
     "openTerminal": "Open Terminal",
+    "terminalOpening": "Opening terminal...",
     "terminalOpened": "Terminal opened",
     "terminalOpenFailed": "Failed to open terminal",
     "name": "Provider Name",
