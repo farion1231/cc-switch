@@ -65,6 +65,7 @@ export interface UsageScript {
   codingPlanProvider?: string; // Coding Plan 供应商标识（如 "kimi", "zhipu", "minimax"）
   autoQueryInterval?: number; // 自动查询间隔（单位：分钟，0 表示禁用）
   autoIntervalMinutes?: number; // 自动查询间隔（分钟）- 别名字段
+  includeResetCredits?: boolean; // Codex 官方订阅：查询并显示重置机会
   request?: {
     // 请求配置
     url?: string; // 请求 URL
@@ -80,6 +81,7 @@ const DEFAULT_USAGE_SCRIPT: UsageScript = {
   code: "",
   timeout: 10,
   autoQueryInterval: 5,
+  includeResetCredits: false,
 };
 
 export function createUsageScript(

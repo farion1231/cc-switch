@@ -81,6 +81,7 @@ fn make_error(msg: String) -> SubscriptionQuota {
         success: false,
         tiers: vec![],
         extra_usage: None,
+        reset_credits: None,
         error: Some(msg),
         queried_at: Some(now_millis()),
     }
@@ -113,6 +114,7 @@ async fn query_kimi(api_key: &str) -> SubscriptionQuota {
             success: false,
             tiers: vec![],
             extra_usage: None,
+            reset_credits: None,
             error: Some(format!("Authentication failed (HTTP {status})")),
             queried_at: Some(now_millis()),
         };
@@ -183,6 +185,7 @@ async fn query_kimi(api_key: &str) -> SubscriptionQuota {
         success: true,
         tiers,
         extra_usage: None,
+        reset_credits: None,
         error: None,
         queried_at: Some(now_millis()),
     }
@@ -326,6 +329,7 @@ async fn query_zhipu(base_url: &str, api_key: &str) -> SubscriptionQuota {
             success: false,
             tiers: vec![],
             extra_usage: None,
+            reset_credits: None,
             error: Some(format!("Authentication failed (HTTP {status})")),
             queried_at: Some(now_millis()),
         };
@@ -370,6 +374,7 @@ async fn query_zhipu(base_url: &str, api_key: &str) -> SubscriptionQuota {
         success: true,
         tiers,
         extra_usage: None,
+        reset_credits: None,
         error: None,
         queried_at: Some(now_millis()),
     }
@@ -409,6 +414,7 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> SubscriptionQuota {
             success: false,
             tiers: vec![],
             extra_usage: None,
+            reset_credits: None,
             error: Some(format!("Authentication failed (HTTP {status})")),
             queried_at: Some(now_millis()),
         };
@@ -449,6 +455,7 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> SubscriptionQuota {
         success: true,
         tiers,
         extra_usage: None,
+        reset_credits: None,
         error: None,
         queried_at: Some(now_millis()),
     }
@@ -481,6 +488,7 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> SubscriptionQuota {
             success: false,
             tiers: vec![],
             extra_usage: None,
+            reset_credits: None,
             error: Some(format!("Authentication failed (HTTP {status})")),
             queried_at: Some(now_millis()),
         };
@@ -581,6 +589,7 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> SubscriptionQuota {
         success: true,
         tiers,
         extra_usage: None,
+        reset_credits: None,
         error: None,
         queried_at: Some(now_millis()),
     }
@@ -666,6 +675,7 @@ pub async fn get_coding_plan_quota(
             success: false,
             tiers: vec![],
             extra_usage: None,
+            reset_credits: None,
             // 与 balance::get_balance 一致：给出明确错误，避免 footer 显示无信息的失败
             error: Some("API key is empty".to_string()),
             queried_at: None,
@@ -682,6 +692,7 @@ pub async fn get_coding_plan_quota(
                 success: false,
                 tiers: vec![],
                 extra_usage: None,
+                reset_credits: None,
                 // 域名未命中已知套餐供应商（如第三方中转站）：给出明确错误而非静默失败
                 error: Some("Unknown coding plan provider".to_string()),
                 queried_at: None,

@@ -251,6 +251,10 @@ pub struct UsageScript {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "codingPlanProvider")]
     pub coding_plan_provider: Option<String>,
+    /// Codex 官方订阅是否额外查询重置机会
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "includeResetCredits")]
+    pub include_reset_credits: Option<bool>,
 }
 
 /// 用量数据

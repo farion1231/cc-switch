@@ -54,6 +54,7 @@ pub async fn get_codex_oauth_quota(
         Some(&id),
         "codex_oauth",
         "Codex OAuth access token expired or rejected. Please re-login via cc-switch.",
+        false,
     )
     .await)
 }

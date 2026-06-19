@@ -11,7 +11,9 @@ import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import UsageFooter from "@/components/UsageFooter";
-import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
+import SubscriptionQuotaFooter, {
+  OfficialSubscriptionDetails,
+} from "@/components/SubscriptionQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
 import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
@@ -199,6 +201,9 @@ export function ProviderCard({
     TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
   const officialSubscriptionEnabled =
     supportsOfficialSubscription && usageEnabled && isOfficialSubscriptionUsage;
+  const includeResetCredits =
+    appId === "codex" &&
+    provider.meta?.usage_script?.includeResetCredits === true;
   // 官方判定只认显式 category === "official"（SSOT），不回退 isOfficial 的空字段启发式。
   // 理由（此判定曾在「纯 category ↔ category+isOfficial 回退」间反复，结论钉死于此）：
   //  1) 封号保护是高代价决策，不该建立在「base_url/key 缺失」这种脆弱信号上——它无法区分
@@ -250,15 +255,19 @@ export function ProviderCard({
   const isTokenPlan =
     provider.meta?.usage_script?.templateType === "token_plan";
   const hasMultiplePlans =
-    usage?.success && usage.data && usage.data.length > 1 && !isTokenPlan;
+    !isOfficialSubscriptionUsage &&
+    usage?.success &&
+    usage.data &&
+    usage.data.length > 1 &&
+    !isTokenPlan;
 
   const [isExpanded, setIsExpanded] = useState(false);
 
   useEffect(() => {
-    if (hasMultiplePlans) {
+    if (hasMultiplePlans || (officialSubscriptionEnabled && isCurrent)) {
       setIsExpanded(true);
     }
-  }, [hasMultiplePlans]);
+  }, [hasMultiplePlans, officialSubscriptionEnabled, isCurrent]);
 
   const handleOpenWebsite = () => {
     if (!isClickableUrl) {
@@ -489,6 +498,7 @@ export function ProviderCard({
                     autoQueryInterval={
                       provider.meta?.usage_script?.autoQueryInterval ?? 0
                     }
+                    includeResetCredits={includeResetCredits}
                   />
                 ) : null
               ) : hasMultiplePlans ? (
@@ -511,7 +521,8 @@ export function ProviderCard({
                   inline={true}
                 />
               )}
-              {hasMultiplePlans && (
+              {(hasMultiplePlans ||
+                (officialSubscriptionEnabled && isCurrent)) && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -597,6 +608,16 @@ export function ProviderCard({
             inline={false}
           />
         </div>
+      )}
+      {isExpanded && officialSubscriptionEnabled && isCurrent && (
+        <OfficialSubscriptionDetails
+          appId={appId}
+          isCurrent={isCurrent}
+          autoQueryInterval={
+            provider.meta?.usage_script?.autoQueryInterval ?? 0
+          }
+          includeResetCredits={includeResetCredits}
+        />
       )}
     </div>
   );

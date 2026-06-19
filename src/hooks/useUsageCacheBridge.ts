@@ -16,6 +16,7 @@ type UsageCacheUpdatedPayload =
   | {
       kind: "subscription";
       appType: AppId;
+      includeResetCredits: boolean;
       data: SubscriptionQuota;
     };
 
@@ -35,7 +36,10 @@ export function useUsageCacheBridge() {
       );
     } else if (payload.kind === "subscription") {
       queryClient.setQueryData<SubscriptionQuota>(
-        subscriptionKeys.quota(payload.appType),
+        subscriptionKeys.quota(
+          payload.appType,
+          payload.includeResetCredits ?? false,
+        ),
         payload.data,
       );
     }

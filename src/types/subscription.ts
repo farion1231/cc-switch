@@ -21,6 +21,16 @@ export interface ExtraUsage {
   currency: string | null;
 }
 
+export interface ResetCredit {
+  grantedAt: string | null;
+  expiresAt: string | null;
+}
+
+export interface ResetCredits {
+  availableCount: number;
+  credits: ResetCredit[];
+}
+
 export interface SubscriptionQuota {
   tool: string;
   credentialStatus: CredentialStatus;
@@ -28,6 +38,7 @@ export interface SubscriptionQuota {
   success: boolean;
   tiers: QuotaTier[];
   extraUsage: ExtraUsage | null;
+  resetCredits?: ResetCredits | null;
   error: string | null;
   queriedAt: number | null;
 }
