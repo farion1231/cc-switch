@@ -417,8 +417,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     name: "Bailian Token Plan",
     websiteUrl: "https://bailian.console.aliyun.com",
     category: "cn_official",
-    baseUrl:
-      "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+    baseUrl: "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
