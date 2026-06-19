@@ -421,6 +421,10 @@
           "debug": "SSE ストリームとリクエスト/レスポンスを含む詳細情報",
           "trace": "すべてのログ、最も詳細"
         }
+      },
+      "modelRouting": {
+        "title": "モデルルーティング（Claude Code）",
+        "description": "ローカルプロキシ経由で、Claude のモデルごとに異なるプロバイダーへ振り分けます。"
       }
     },
     "language": "言語",
@@ -2527,7 +2531,29 @@
       "startFailed": "ルーティングサービスの開始に失敗しました: {{detail}}"
     },
     "stoppedWithRestore": "ルーティングサービスが停止し、すべてのルーティング設定が復元されました",
-    "stopWithRestoreFailed": "停止に失敗しました: {{detail}}"
+    "stopWithRestoreFailed": "停止に失敗しました: {{detail}}",
+    "modelRouting": {
+      "info": "Claude の各モデルファミリーを特定のプロバイダーへ送信します。ローカルプロキシがリクエストのモデルに応じて振り分けます。「デフォルト」のままのファミリーは現在／フェイルオーバーのプロバイダーを使用します。",
+      "useDefault": "デフォルト（現在 / フェイルオーバー）",
+      "saved": "モデルルーティングを更新しました",
+      "saveFailed": "モデルルーティングの更新に失敗しました: {{detail}}",
+      "noProviders": "プロバイダーが未設定です。先にホーム画面でプロバイダーを追加してください。",
+      "proxyRequired": "モデルルーティングを有効にするには、プロキシサービスを開始し Claude の引き継ぎを有効にしてください。今すぐ設定することもできます。",
+      "class": {
+        "opus": {
+          "label": "Opus",
+          "hint": "最も高性能なモデル（例: claude-opus-4）"
+        },
+        "sonnet": {
+          "label": "Sonnet",
+          "hint": "バランス型モデル（例: claude-sonnet-4）"
+        },
+        "haiku": {
+          "label": "Haiku",
+          "hint": "高速・軽量モデル（例: claude-haiku）"
+        }
+      }
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} は接続可能 ({{responseTimeMs}}ms)",

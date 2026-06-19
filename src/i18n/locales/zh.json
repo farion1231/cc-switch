@@ -421,6 +421,10 @@
           "debug": "详细信息，包含 SSE 流和请求/响应详情",
           "trace": "全部日志，最详细"
         }
+      },
+      "modelRouting": {
+        "title": "模型路由（Claude Code）",
+        "description": "通过本地代理将不同的 Claude 模型路由到不同的供应商。"
       }
     },
     "language": "界面语言",
@@ -2527,7 +2531,29 @@
       "startFailed": "启动路由服务失败: {{detail}}"
     },
     "stoppedWithRestore": "路由服务已关闭，已恢复所有路由配置",
-    "stopWithRestoreFailed": "停止失败: {{detail}}"
+    "stopWithRestoreFailed": "停止失败: {{detail}}",
+    "modelRouting": {
+      "info": "将每个 Claude 模型系列发送到指定供应商。本地代理会根据请求的模型进行路由。保持「默认」的系列将使用当前／故障转移供应商。",
+      "useDefault": "默认（当前 / 故障转移）",
+      "saved": "已更新模型路由",
+      "saveFailed": "更新模型路由失败：{{detail}}",
+      "noProviders": "尚未配置供应商。请先在主界面添加供应商。",
+      "proxyRequired": "需启动代理服务并启用 Claude 接管，模型路由才会生效。你现在仍可进行配置。",
+      "class": {
+        "opus": {
+          "label": "Opus",
+          "hint": "能力最强的模型（如 claude-opus-4）"
+        },
+        "sonnet": {
+          "label": "Sonnet",
+          "hint": "均衡型模型（如 claude-sonnet-4）"
+        },
+        "haiku": {
+          "label": "Haiku",
+          "hint": "快速轻量模型（如 claude-haiku）"
+        }
+      }
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} 连通正常 ({{responseTimeMs}}ms)",

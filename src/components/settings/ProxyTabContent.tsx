@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Server, Activity, Zap, Globe, ShieldAlert } from "lucide-react";
+import { Server, Activity, Zap, Globe, ShieldAlert, Split } from "lucide-react";
 import { motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import {
@@ -11,6 +11,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { ProxyPanel } from "@/components/proxy";
+import { ModelRoutingManager } from "@/components/proxy/ModelRoutingManager";
 import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPanel";
 import { FailoverQueueManager } from "@/components/proxy/FailoverQueueManager";
 import { RectifierConfigPanel } from "@/components/settings/RectifierConfigPanel";
@@ -210,6 +211,46 @@ export function ProxyTabContent({
                   );
                 })}
               </Tabs>
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* Per-model provider routing (Claude Code) */}
+        <AccordionItem
+          value="modelRouting"
+          className="rounded-xl glass-card overflow-hidden"
+        >
+          <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+            <div className="flex items-center gap-3">
+              <Split className="h-5 w-5 text-blue-500" />
+              <div className="text-left">
+                <h3 className="text-base font-semibold">
+                  {t("settings.advanced.modelRouting.title", {
+                    defaultValue: "Model Routing (Claude Code)",
+                  })}
+                </h3>
+                <p className="text-sm text-muted-foreground font-normal">
+                  {t("settings.advanced.modelRouting.description", {
+                    defaultValue:
+                      "Route different Claude models to different providers via the local proxy.",
+                  })}
+                </p>
+              </div>
+            </div>
+          </AccordionTrigger>
+          <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+            <div className="space-y-4">
+              {!isRunning && (
+                <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
+                  <p className="text-sm text-yellow-600 dark:text-yellow-400">
+                    {t("proxy.modelRouting.proxyRequired", {
+                      defaultValue:
+                        "Start the proxy service and enable Claude takeover for model routing to take effect. You can still configure it now.",
+                    })}
+                  </p>
+                </div>
+              )}
+              <ModelRoutingManager appType="claude" />
             </div>
           </AccordionContent>
         </AccordionItem>

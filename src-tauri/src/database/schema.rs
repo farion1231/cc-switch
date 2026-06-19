@@ -360,6 +360,22 @@ impl Database {
             [],
         );
 
+        // Per-model provider routing: maps a model class (opus/sonnet/haiku)
+        // to a specific provider for a given app. Used by the local proxy to
+        // send different models to different providers within the same app.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS model_provider_routes (
+                app_type TEXT NOT NULL,
+                model_class TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (app_type, model_class),
+                FOREIGN KEY (provider_id, app_type) REFERENCES providers(id, app_type) ON DELETE CASCADE
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         Ok(())
     }
 
@@ -443,6 +459,13 @@ impl Database {
                         log::info!("迁移数据库从 v10 到 v11（usage_daily_rollups 保留 request_model 维度）");
                         Self::migrate_v10_to_v11(conn)?;
                         Self::set_user_version(conn, 11)?;
+                    }
+                    11 => {
+                        log::info!(
+                            "迁移数据库从 v11 到 v12（添加 model_provider_routes 按模型路由表）"
+                        );
+                        Self::migrate_v11_to_v12(conn)?;
+                        Self::set_user_version(conn, 12)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1267,6 +1290,25 @@ impl Database {
         log::info!(
             "v10 -> v11 迁移完成：usage_daily_rollups 已保留 request_model/pricing_model 维度"
         );
+        Ok(())
+    }
+
+    /// v11 -> v12 迁移：新增 model_provider_routes 表（按模型类别路由到不同供应商）
+    fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS model_provider_routes (
+                app_type TEXT NOT NULL,
+                model_class TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (app_type, model_class),
+                FOREIGN KEY (provider_id, app_type) REFERENCES providers(id, app_type) ON DELETE CASCADE
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("v11 -> v12 创建 model_provider_routes 失败: {e}")))?;
+
+        log::info!("v11 -> v12 迁移完成：已创建 model_provider_routes 表");
         Ok(())
     }
 

@@ -6,6 +6,24 @@ use crate::claude_desktop_config::ONE_M_CONTEXT_MARKER;
 use crate::provider::Provider;
 use serde_json::Value;
 
+/// Classify an inbound model name into a routing class.
+///
+/// Returns one of `"opus"`, `"sonnet"`, `"haiku"` for Claude models, or `None`
+/// when the model does not belong to a known class. `fable` models are grouped
+/// under `opus`, matching the model-mapping downgrade direction.
+pub fn classify_model_class(model: &str) -> Option<&'static str> {
+    let m = model.to_lowercase();
+    if m.contains("haiku") {
+        Some("haiku")
+    } else if m.contains("opus") || m.contains("fable") {
+        Some("opus")
+    } else if m.contains("sonnet") {
+        Some("sonnet")
+    } else {
+        None
+    }
+}
+
 /// 模型映射配置
 pub struct ModelMapping {
     pub haiku_model: Option<String>,
@@ -161,6 +179,23 @@ pub fn strip_one_m_suffix_for_upstream_from_body(mut body: Value) -> Value {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn test_classify_model_class() {
+        assert_eq!(
+            classify_model_class("claude-3-5-haiku-20241022"),
+            Some("haiku")
+        );
+        assert_eq!(classify_model_class("claude-opus-4-20250101"), Some("opus"));
+        assert_eq!(classify_model_class("claude-fable-5"), Some("opus"));
+        assert_eq!(
+            classify_model_class("claude-3-5-sonnet-20241022"),
+            Some("sonnet")
+        );
+        assert_eq!(classify_model_class("CLAUDE-OPUS-4"), Some("opus"));
+        assert_eq!(classify_model_class("gpt-4o"), None);
+        assert_eq!(classify_model_class("gemini-2.0-flash"), None);
+    }
 
     fn create_provider_with_mapping() -> Provider {
         Provider {
