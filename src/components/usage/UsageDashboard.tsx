@@ -108,7 +108,15 @@ export function UsageDashboard() {
       return getUsageRangePresetLabel(range.preset, t);
     }
 
-    return `${new Date(resolvedRange.startDate * 1000).toLocaleString(locale)} - ${new Date(
+    const startStr = new Date(
+      resolvedRange.startDate * 1000,
+    ).toLocaleString(locale);
+
+    if (range.liveEndTime) {
+      return `${startStr} → ${t("usage.liveEndTimeNow", "现在")}`;
+    }
+
+    return `${startStr} - ${new Date(
       resolvedRange.endDate * 1000,
     ).toLocaleString(locale)}`;
   }, [locale, range, resolvedRange.endDate, resolvedRange.startDate, t]);
