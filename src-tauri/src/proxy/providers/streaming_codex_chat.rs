@@ -727,9 +727,6 @@ impl ChatToResponsesState {
                 if state.call_id.is_empty() {
                     state.call_id = format!("call_{key}");
                 }
-                if state.name.is_empty() {
-                    state.name = "unknown_tool".to_string();
-                }
                 state.output_index = Some(assigned);
                 state.item_id = response_tool_call_item_id_from_chat_name(
                     &state.call_id,
