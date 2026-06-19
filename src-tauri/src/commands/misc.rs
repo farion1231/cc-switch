@@ -2790,6 +2790,7 @@ echo "{config_path}"
         "ghostty" => launch_macos_ghostty(&script_file),
         "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
         "kaku" => launch_macos_open_app("Kaku", &script_file, true),
+        "rio" => launch_macos_rio(&script_file),
         _ => launch_macos_terminal_app(&script_file),
     };
 
@@ -3051,6 +3052,30 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
         let stderr = decode_command_output(&output.stderr);
         return Err(format!(
             "Warp 启动失败 (exit code: {:?}): {}",
+            output.status.code(),
+            stderr
+        ));
+    }
+
+    Ok(())
+}
+
+/// macOS: Rio.  Rio's `-e` consumes all remaining args as the command, so we
+/// pass the script file directly without a `sh -c` wrapper.
+#[cfg(target_os = "macos")]
+fn launch_macos_rio(script_file: &std::path::Path) -> Result<(), String> {
+    use std::process::Command;
+
+    let output = Command::new("open")
+        .args(["-na", "Rio", "--args", "-e"])
+        .arg(script_file)
+        .output()
+        .map_err(|e| format!("启动 Rio 失败: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = decode_command_output(&output.stderr);
+        return Err(format!(
+            "Rio 启动失败 (exit code: {:?}): {}",
             output.status.code(),
             stderr
         ));
@@ -3349,6 +3374,7 @@ read -r _
             "ghostty" => launch_macos_ghostty(&script_file),
             "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
             "kaku" => launch_macos_open_app("Kaku", &script_file, true),
+            "rio" => launch_macos_rio(&script_file),
             _ => launch_macos_terminal_app(&script_file),
         };
 
