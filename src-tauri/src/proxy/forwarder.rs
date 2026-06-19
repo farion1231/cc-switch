@@ -24,6 +24,7 @@ use super::{
 use crate::commands::{CodexOAuthState, CopilotAuthState};
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
+use crate::proxy::providers::gemini_oauth::GeminiOAuthState;
 use crate::{app_config::AppType, provider::Provider};
 use futures::StreamExt;
 use http::Extensions;
@@ -1515,6 +1516,28 @@ impl RequestForwarder {
                     return Err(ProxyError::AuthError(
                         "Codex OAuth 认证不可用（无 AppHandle）".to_string(),
                     ));
+                }
+            }
+
+            // Gemini Google OAuth：用长期 refresh_token 换取新的 access_token。
+            // 适用于 Claude Code / Claude Desktop（gemini_native 后端）与 Gemini
+            // 应用本身——三者在 OAuth 凭证下都产生 GoogleOAuth 策略，原始凭证存于
+            // auth.api_key（可能是 ya29. token 或 oauth_creds.json）。
+            if auth.strategy == AuthStrategy::GoogleOAuth {
+                if let Some(creds) =
+                    super::providers::gemini_oauth::parse_credentials(&auth.api_key)
+                {
+                    if let Some(app_handle) = &self.app_handle {
+                        let gemini_state = app_handle.state::<GeminiOAuthState>();
+                        match gemini_state.0.get_valid_access_token(&creds).await {
+                            Ok(token) => {
+                                auth = AuthInfo::with_access_token(auth.api_key.clone(), token);
+                            }
+                            Err(e) => {
+                                log::warn!("[GeminiOAuth] token 刷新失败，回退到已配置的凭证: {e}");
+                            }
+                        }
+                    }
                 }
             }
 

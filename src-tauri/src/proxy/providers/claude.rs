@@ -739,11 +739,11 @@ impl ProviderAdapter for ClaudeAdapter {
                 // for expired credentials. In both cases we would otherwise
                 // send `Authorization: Bearer ` to upstream and get a 401.
                 //
-                // CC Switch does not currently exchange the refresh_token for
-                // a fresh access_token. Until that path exists, degrade to
-                // plain GoogleOAuth strategy (which still sends the raw key
-                // as a fallback) and log loudly so users know to refresh
-                // their `~/.gemini/oauth_creds.json`.
+                // When the access_token is missing/expired we degrade to the
+                // plain GoogleOAuth strategy carrying the raw key; the forwarder
+                // then exchanges the embedded refresh_token for a fresh
+                // access_token (see proxy::providers::gemini_oauth) before the
+                // request goes upstream.
                 match super::gemini::GeminiAdapter::new().parse_oauth_credentials(&key) {
                     Some(creds) if !creds.access_token.is_empty() => {
                         Some(AuthInfo::with_access_token(key, creds.access_token))

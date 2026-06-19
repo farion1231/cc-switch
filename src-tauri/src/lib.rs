@@ -950,6 +950,14 @@ pub fn run() {
                 log::info!("✓ CodexOAuthManager initialized");
             }
 
+            // 初始化 GeminiOAuthManager (Gemini CLI Google OAuth token 刷新缓存)
+            {
+                use crate::proxy::providers::gemini_oauth::{GeminiOAuthManager, GeminiOAuthState};
+
+                app.manage(GeminiOAuthState(Arc::new(GeminiOAuthManager::new())));
+                log::info!("✓ GeminiOAuthManager initialized");
+            }
+
             // 初始化全局出站代理 HTTP 客户端
             {
                 let db = &app.state::<AppState>().db;
