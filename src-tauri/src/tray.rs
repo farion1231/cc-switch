@@ -67,6 +67,14 @@ impl TrayTexts {
                 quit: "終了",
                 _auto_label: "自動 (フェイルオーバー)",
             },
+            "ru" => Self {
+                show_main: "Открыть главное окно",
+                open_website: "Открыть официальный сайт",
+                no_providers_label: "(нет провайдеров)",
+                lightweight_mode: "Облегченный режим",
+                quit: "Выход",
+                _auto_label: "Авто (аварийное переключение)",
+            },
             "zh-TW" => Self {
                 show_main: "開啟主介面",
                 open_website: "開啟官方網站",
