@@ -893,33 +893,6 @@ fn codex_toml_item_is_table_like(item: &Item) -> bool {
     item.as_table().is_some() || item.as_array_of_tables().is_some()
 }
 
-/// 将 provider 需要的配置叠加到 live 表里，冲突时保留 provider。
-///
-/// 这个方向只用于真正由 provider 管理的字段；用户自有表结构通过
-/// `merge_missing_codex_toml_item` 只补缺失值，避免旧备份覆盖新设置。
-fn merge_codex_toml_item_prefer_provider(target: &mut Item, source: &Item) {
-    if let Some(source_table) = source.as_table_like() {
-        if let Some(target_table) = target.as_table_like_mut() {
-            merge_codex_toml_table_like_prefer_provider(target_table, source_table);
-            return;
-        }
-    }
-
-    *target = source.clone();
-}
-
-/// 递归合并 TOML 表，provider 侧同名键优先。
-fn merge_codex_toml_table_like_prefer_provider(target: &mut dyn TableLike, source: &dyn TableLike) {
-    for (key, source_item) in source.iter() {
-        match target.get_mut(key) {
-            Some(target_item) => merge_codex_toml_item_prefer_provider(target_item, source_item),
-            None => {
-                target.insert(key, source_item.clone());
-            }
-        }
-    }
-}
-
 /// 将 provider 表结构里 live 缺失的子项补进 live 配置，已有项一律保留 live。
 ///
 /// 这用于兼容 common config 或新版本 Codex 写入的用户表；如果 live 已有同名项，
@@ -1067,14 +1040,10 @@ pub(crate) fn merge_codex_provider_config_texts(
                 .get_mut("model_providers")
                 .and_then(|item| item.as_table_mut())
             {
-                match live_providers.get_mut(provider_id) {
-                    Some(live_item) => {
-                        merge_codex_toml_item_prefer_provider(live_item, &provider_item)
-                    }
-                    None => {
-                        live_providers.insert(provider_id, provider_item);
-                    }
-                }
+                // 当前 active provider 表是路由归属字段，恢复时必须以备份/provider 为准整表替换。
+                // 如果只递归覆盖已有键，同名自定义 provider 在接管态写入的本地 base_url
+                // 或 PROXY_MANAGED token 会因为备份里缺少这些键而残留。
+                live_providers.insert(provider_id, provider_item);
             }
         }
     }
@@ -1743,6 +1712,58 @@ requires_openai_auth = true
             Some("")
         );
         assert!(settings.pointer("/auth/tokens/access_token").is_some());
+    }
+
+    #[test]
+    fn merge_provider_config_replaces_same_custom_provider_table() {
+        // 同名自定义 provider 恢复时，live 表可能来自接管态并带本地代理字段；
+        // 备份/provider 表缺少这些字段时，必须整表替换而不是只覆盖已有键。
+        let live_config = r#"model_provider = "custom"
+model = "gpt-5"
+
+[model_providers.custom]
+name = "OpenAI Router"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+experimental_bearer_token = "PROXY_MANAGED"
+
+[desktop]
+notifications-turn-mode = "always"
+"#;
+        let provider_config = r#"model_provider = "custom"
+model = "gpt-5"
+
+[model_providers.custom]
+name = "OpenAI"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+
+        let merged =
+            merge_codex_provider_config_texts(live_config, provider_config).expect("merge config");
+        let parsed: toml::Value = toml::from_str(&merged).expect("parse merged config");
+        let custom = parsed
+            .get("model_providers")
+            .and_then(|v| v.get("custom"))
+            .expect("custom provider table");
+
+        assert_eq!(custom.get("name").and_then(|v| v.as_str()), Some("OpenAI"));
+        assert!(
+            custom.get("base_url").is_none(),
+            "restored provider table must drop takeover proxy base_url"
+        );
+        assert!(
+            custom.get("experimental_bearer_token").is_none(),
+            "restored provider table must drop takeover proxy token"
+        );
+        assert_eq!(
+            parsed
+                .get("desktop")
+                .and_then(|v| v.get("notifications-turn-mode"))
+                .and_then(|v| v.as_str()),
+            Some("always"),
+            "user-owned desktop settings should still be preserved"
+        );
     }
 
     #[test]
