@@ -91,6 +91,24 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#D4915D",
   },
   {
+    name: "腾讯云",
+    websiteUrl: "https://console.cloud.tencent.com/tokenhub/models",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/apikey",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://tokenhub.tencentmaas.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "deepseek-v4-pro-202606",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash-202605",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-pro-202606",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-pro-202606",
+      },
+    },
+    category: "cn_official",
+    icon: "tencent",
+    iconColor: "#006EFF",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
