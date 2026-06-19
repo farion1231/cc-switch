@@ -692,6 +692,11 @@ fn parse_codex_reset_credits(body: &serde_json::Value) -> Option<ResetCredits> {
         .into_iter()
         .flatten()
         .filter_map(serde_json::Value::as_object)
+        .filter(|item| match item.get("status") {
+            Some(serde_json::Value::String(status)) => status.eq_ignore_ascii_case("available"),
+            Some(_) => false,
+            None => true,
+        })
         .filter_map(|item| {
             let granted_at = first_string(
                 item,
@@ -1520,6 +1525,39 @@ mod tests {
         assert_eq!(
             parsed.credits[1].expires_at.as_deref(),
             Some("2026-07-01T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn excludes_unavailable_codex_reset_credit_history() {
+        let body = serde_json::json!({
+            "available_count": 1,
+            "credits": [
+                {
+                    "status": "available",
+                    "granted_at": "2026-06-01T00:00:00Z",
+                    "expires_at": "2026-06-30T00:00:00Z"
+                },
+                {
+                    "status": "redeemed",
+                    "granted_at": "2026-05-01T00:00:00Z",
+                    "expires_at": "2026-05-31T00:00:00Z"
+                },
+                {
+                    "status": "expired",
+                    "granted_at": "2026-04-01T00:00:00Z",
+                    "expires_at": "2026-04-30T00:00:00Z"
+                }
+            ]
+        });
+
+        let parsed = parse_codex_reset_credits(&body).expect("reset credits should parse");
+
+        assert_eq!(parsed.available_count, 1);
+        assert_eq!(parsed.credits.len(), 1);
+        assert_eq!(
+            parsed.credits[0].granted_at.as_deref(),
+            Some("2026-06-01T00:00:00Z")
         );
     }
 
