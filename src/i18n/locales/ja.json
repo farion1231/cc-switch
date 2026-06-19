@@ -115,6 +115,7 @@
     "editProviderHint": "保存すると現在のプロバイダーにすぐ反映されます。",
     "deleteProvider": "プロバイダーを削除",
     "addNewProvider": "新しいプロバイダーを追加",
+    "addFooterHint": "💡 プリセットを選んだら、下のフィールド（API Key など）を入力してください",
     "addClaudeProvider": "Claude Code プロバイダーを追加",
     "addCodexProvider": "Codex プロバイダーを追加",
     "addGeminiProvider": "Gemini プロバイダーを追加",

@@ -115,6 +115,7 @@
     "editProviderHint": "更新配置后将立即应用到当前供应商。",
     "deleteProvider": "删除供应商",
     "addNewProvider": "添加新供应商",
+    "addFooterHint": "💡 选择预设后，请在下方填写 API Key 等字段",
     "addClaudeProvider": "添加 Claude Code 供应商",
     "addCodexProvider": "添加 Codex 供应商",
     "addGeminiProvider": "添加 Gemini 供应商",

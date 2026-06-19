@@ -115,6 +115,7 @@
     "editProviderHint": "Configuration will be applied to the current provider immediately after update.",
     "deleteProvider": "Delete Provider",
     "addNewProvider": "Add New Provider",
+    "addFooterHint": "💡 After choosing a preset, fill in the fields below (e.g. API Key)",
     "addClaudeProvider": "Add Claude Code Provider",
     "addCodexProvider": "Add Codex Provider",
     "addGeminiProvider": "Add Gemini Provider",
