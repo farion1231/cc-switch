@@ -589,6 +589,45 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "Bailian Token Plan",
+    websiteUrl: "https://bailian.console.aliyun.com",
+    apiKeyUrl: "https://bailian.console.aliyun.com/#/api-key",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Bailian Token Plan",
+      options: {
+        baseURL:
+          "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "qwen3.7-max": { name: "Qwen3.7 Max" },
+        "deepseek-v4-pro": { name: "DeepSeek V4 Pro" },
+        "kimi-k2.7-code": { name: "Kimi K2.7 Code" },
+        "glm-5.2": { name: "GLM-5.2" },
+      },
+    },
+    category: "cn_official",
+    icon: "bailian",
+    iconColor: "#624AFF",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder:
+          "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+        defaultValue:
+          "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "Kimi K2.7 Code",
     primePartner: true,
     websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",

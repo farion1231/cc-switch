@@ -515,6 +515,29 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "Bailian Token Plan",
+    websiteUrl: "https://bailian.console.aliyun.com",
+    settingsConfig: {
+      name: "bailian_token_plan",
+      base_url:
+        "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "qwen3.7-max", name: "Qwen3.7 Max" },
+        { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
+        { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
+        { id: "glm-5.2", name: "GLM-5.2" },
+      ],
+    },
+    category: "cn_official",
+    icon: "bailian",
+    iconColor: "#624AFF",
+    suggestedDefaults: {
+      model: { default: "qwen3.7-max", provider: "bailian_token_plan" },
+    },
+  },
+  {
     name: "Kimi",
     primePartner: true,
     websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",

@@ -491,6 +491,61 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "Bailian Token Plan",
+    websiteUrl: "https://bailian.console.aliyun.com",
+    apiKeyUrl: "https://bailian.console.aliyun.com/#/api-key",
+    settingsConfig: {
+      baseUrl:
+        "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "qwen3.7-max",
+          name: "Qwen3.7 Max",
+          contextWindow: 262144,
+        },
+        {
+          id: "deepseek-v4-pro",
+          name: "DeepSeek V4 Pro",
+          contextWindow: 1000000,
+        },
+        {
+          id: "kimi-k2.7-code",
+          name: "Kimi K2.7 Code",
+          contextWindow: 262144,
+        },
+        {
+          id: "glm-5.2",
+          name: "GLM-5.2",
+          contextWindow: 128000,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "bailian",
+    iconColor: "#624AFF",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder:
+          "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+        defaultValue:
+          "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "qwen/qwen3.7-max" },
+      modelCatalog: { "qwen/qwen3.7-max": { alias: "Qwen" } },
+    },
+  },
+  {
     name: "Kimi K2.7 Code",
     primePartner: true,
     websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",

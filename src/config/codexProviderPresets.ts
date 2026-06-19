@@ -420,6 +420,53 @@ requires_openai_auth = true`,
     iconColor: "#624AFF",
   },
   {
+    name: "Bailian Token Plan",
+    websiteUrl: "https://bailian.console.aliyun.com",
+    apiKeyUrl: "https://bailian.console.aliyun.com/#/api-key",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "bailian-token-plan",
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "qwen3.7-max",
+    ),
+    endpointCandidates: [
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    ],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      {
+        model: "qwen3.7-max",
+        displayName: "Qwen3.7 Max",
+        contextWindow: 262144,
+      },
+      {
+        model: "deepseek-v4-pro",
+        displayName: "DeepSeek V4 Pro",
+        contextWindow: 1000000,
+      },
+      {
+        model: "kimi-k2.7-code",
+        displayName: "Kimi K2.7 Code",
+        contextWindow: 262144,
+      },
+      {
+        model: "glm-5.2",
+        displayName: "GLM-5.2",
+        contextWindow: 128000,
+      },
+    ]),
+    codexChatReasoning: {
+      supportsThinking: true,
+      supportsEffort: false,
+      thinkingParam: "enable_thinking",
+      effortParam: "none",
+      outputFormat: "reasoning_content",
+    },
+    category: "cn_official",
+    icon: "bailian",
+    iconColor: "#624AFF",
+  },
+  {
     name: "Kimi",
     primePartner: true,
     websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",

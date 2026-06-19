@@ -367,6 +367,20 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#624AFF",
   },
   {
+    name: "Bailian Token Plan",
+    websiteUrl: "https://bailian.console.aliyun.com",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "cn_official",
+    icon: "bailian",
+    iconColor: "#624AFF",
+  },
+  {
     name: "Kimi",
     primePartner: true,
     websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
