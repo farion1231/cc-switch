@@ -305,7 +305,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     displayName: "Kimi",
     category: "ai-provider",
     keywords: ["moonshot"],
-    defaultColor: "#6366F1",
+    defaultColor: "#1783FF",
   },
   meta: {
     name: "meta",
