@@ -589,13 +589,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "Kimi K2.7 Code",
+    name: "Kimi",
     primePartner: true,
     websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
     apiKeyUrl: "https://platform.moonshot.cn/console/api-keys?aff=cc-switch",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "Kimi K2.7 Code",
+      name: "Kimi",
       options: {
         baseURL: "https://api.moonshot.cn/v1",
         apiKey: "",
