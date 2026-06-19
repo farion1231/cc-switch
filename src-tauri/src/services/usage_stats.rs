@@ -40,6 +40,20 @@ pub struct UsageSummaryByApp {
     pub summary: UsageSummary,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexSessionUsageSummary {
+    pub session_id: String,
+    pub request_count: u64,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_cache_creation_tokens: u64,
+    pub total_cache_read_tokens: u64,
+    pub real_total_tokens: u64,
+    pub total_cost: String,
+    pub last_used_at: i64,
+}
+
 /// Helper: compute (real_total, hit_rate) from the four token counters.
 /// All inputs must already be cache-normalized (i.e. input excludes cache).
 fn derive_real_total_and_hit_rate(
@@ -658,10 +672,92 @@ impl Database {
         Ok(result)
     }
 
-    /// 按 app_type 维度拆分的使用量汇总，用于 Dashboard 的分应用展示条。
-    /// 返回所有有数据的 app_type，按 real_total_tokens 降序。
+    /// Per-session Codex usage from detail logs.
     ///
-    /// Single SQL with `GROUP BY app_type` — avoids the N+1 round-trip that
+    /// Rollups do not preserve `session_id`, so this intentionally reads only
+    /// from `proxy_request_logs`.
+    pub fn get_codex_session_usage_summaries(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+    ) -> Result<Vec<CodexSessionUsageSummary>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let mut conditions = vec![
+            effective_usage_log_filter("l"),
+            "l.app_type = 'codex'".to_string(),
+            "l.session_id IS NOT NULL".to_string(),
+            "TRIM(l.session_id) <> ''".to_string(),
+        ];
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(start) = start_date {
+            conditions.push("l.created_at >= ?".to_string());
+            params_vec.push(Box::new(start));
+        }
+        if let Some(end) = end_date {
+            conditions.push("l.created_at <= ?".to_string());
+            params_vec.push(Box::new(end));
+        }
+
+        let fresh_input = fresh_input_sql("l");
+        let where_clause = format!("WHERE {}", conditions.join(" AND "));
+        let sql = format!(
+            "SELECT
+                l.session_id,
+                COUNT(*) AS request_count,
+                COALESCE(SUM({fresh_input}), 0) AS total_input_tokens,
+                COALESCE(SUM(l.output_tokens), 0) AS total_output_tokens,
+                COALESCE(SUM(l.cache_creation_tokens), 0) AS total_cache_creation_tokens,
+                COALESCE(SUM(l.cache_read_tokens), 0) AS total_cache_read_tokens,
+                COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) AS total_cost,
+                MAX(l.created_at) AS last_used_at
+             FROM proxy_request_logs l
+             {where_clause}
+             GROUP BY l.session_id
+             ORDER BY last_used_at DESC"
+        );
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            let session_id: String = row.get(0)?;
+            let request_count: i64 = row.get(1)?;
+            let total_input_tokens: i64 = row.get(2)?;
+            let total_output_tokens: i64 = row.get(3)?;
+            let total_cache_creation_tokens: i64 = row.get(4)?;
+            let total_cache_read_tokens: i64 = row.get(5)?;
+            let total_cost: f64 = row.get(6)?;
+            let last_used_at: i64 = row.get(7)?;
+            let (real_total_tokens, _) = derive_real_total_and_hit_rate(
+                total_input_tokens as u64,
+                total_output_tokens as u64,
+                total_cache_creation_tokens as u64,
+                total_cache_read_tokens as u64,
+            );
+
+            Ok(CodexSessionUsageSummary {
+                session_id,
+                request_count: request_count as u64,
+                total_input_tokens: total_input_tokens as u64,
+                total_output_tokens: total_output_tokens as u64,
+                total_cache_creation_tokens: total_cache_creation_tokens as u64,
+                total_cache_read_tokens: total_cache_read_tokens as u64,
+                real_total_tokens,
+                total_cost: format!("{total_cost:.6}"),
+                last_used_at,
+            })
+        })?;
+
+        let mut summaries = Vec::new();
+        for row in rows {
+            summaries.push(row?);
+        }
+
+        Ok(summaries)
+    }
+
+    /// Usage summary grouped by `app_type` for the dashboard breakdown rail.
+    ///
+    /// Single SQL with `GROUP BY app_type` avoids the N+1 round-trip that
     /// would result from invoking `get_usage_summary` once per app_type.
     pub fn get_usage_summary_by_app(
         &self,
@@ -2293,6 +2389,138 @@ mod tests {
                 data_source
             ],
         )?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_session_usage_log(
+        conn: &Connection,
+        request_id: &str,
+        app_type: &str,
+        provider_id: &str,
+        session_id: Option<&str>,
+        created_at: i64,
+        input_tokens: i64,
+        output_tokens: i64,
+        cache_read_tokens: i64,
+        cache_creation_tokens: i64,
+        total_cost_usd: &str,
+    ) -> Result<(), AppError> {
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
+                total_cost_usd, latency_ms, status_code, created_at, data_source, session_id
+            ) VALUES (?, ?, ?, 'gpt-5', 'gpt-5', ?, ?, ?, ?, '0', '0', '0', '0', ?, 100, 200, ?, 'codex_session', ?)",
+            params![
+                request_id,
+                provider_id,
+                app_type,
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_creation_tokens,
+                total_cost_usd,
+                created_at,
+                session_id
+            ],
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_codex_session_usage_summaries_groups_by_session_id() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let ts1 = local_ts(2026, 6, 10, 12, 0, 0);
+        let ts2 = local_ts(2026, 6, 10, 12, 5, 0);
+        let ts3 = local_ts(2026, 6, 10, 12, 10, 0);
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_session_usage_log(
+                &conn,
+                "codex-a-1",
+                "codex",
+                "provider-a",
+                Some("session-a"),
+                ts1,
+                100,
+                20,
+                30,
+                0,
+                "0.001000",
+            )?;
+            insert_session_usage_log(
+                &conn,
+                "codex-a-2",
+                "codex",
+                "provider-b",
+                Some("session-a"),
+                ts3,
+                60,
+                10,
+                10,
+                0,
+                "0.002000",
+            )?;
+            insert_session_usage_log(
+                &conn,
+                "codex-b-1",
+                "codex",
+                "provider-a",
+                Some("session-b"),
+                ts2,
+                40,
+                5,
+                0,
+                0,
+                "0.000500",
+            )?;
+            insert_session_usage_log(
+                &conn,
+                "claude-a-1",
+                "claude",
+                "provider-a",
+                Some("session-a"),
+                ts3,
+                999,
+                999,
+                0,
+                0,
+                "9.000000",
+            )?;
+            insert_session_usage_log(
+                &conn,
+                "codex-empty-session",
+                "codex",
+                "provider-a",
+                None,
+                ts3,
+                999,
+                999,
+                0,
+                0,
+                "9.000000",
+            )?;
+        }
+
+        let summaries = db.get_codex_session_usage_summaries(None, None)?;
+
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries[0].session_id, "session-a");
+        assert_eq!(summaries[0].request_count, 2);
+        assert_eq!(summaries[0].total_input_tokens, 120);
+        assert_eq!(summaries[0].total_output_tokens, 30);
+        assert_eq!(summaries[0].total_cache_read_tokens, 40);
+        assert_eq!(summaries[0].real_total_tokens, 190);
+        assert_eq!(summaries[0].total_cost, "0.003000");
+        assert_eq!(summaries[0].last_used_at, ts3);
+
+        assert_eq!(summaries[1].session_id, "session-b");
+        assert_eq!(summaries[1].request_count, 1);
+        assert_eq!(summaries[1].real_total_tokens, 45);
+
         Ok(())
     }
 

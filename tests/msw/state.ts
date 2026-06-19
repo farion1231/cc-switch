@@ -6,6 +6,7 @@ import type {
   SessionMeta,
   Settings,
 } from "@/types";
+import type { CodexSessionUsageSummary } from "@/types/usage";
 import { deepClone } from "@/utils/deepClone";
 
 type ProvidersByApp = Record<AppId, Record<string, Provider>>;
@@ -150,6 +151,7 @@ const createDefaultSessionMessages = (): Record<string, SessionMessage[]> => ({
 
 let sessionsState = createDefaultSessions();
 let sessionMessagesState = createDefaultSessionMessages();
+let codexSessionUsageSummariesState: CodexSessionUsageSummary[] = [];
 let mcpConfigs: McpConfigState = {
   claude: {
     sample: {
@@ -209,6 +211,7 @@ export const resetProviderState = () => {
   };
   sessionsState = createDefaultSessions();
   sessionMessagesState = createDefaultSessionMessages();
+  codexSessionUsageSummariesState = [];
   settingsState = {
     showInTray: true,
     minimizeToTrayOnClose: true,
@@ -430,4 +433,15 @@ export const setSessionFixtures = (
     string,
     SessionMessage[]
   >;
+};
+
+export const listCodexSessionUsageSummaries = () =>
+  deepClone(codexSessionUsageSummariesState) as CodexSessionUsageSummary[];
+
+export const setCodexSessionUsageSummaries = (
+  summaries: CodexSessionUsageSummary[],
+) => {
+  codexSessionUsageSummariesState = deepClone(
+    summaries,
+  ) as CodexSessionUsageSummary[];
 };

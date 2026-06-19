@@ -84,6 +84,18 @@ export interface UsageSummaryByApp {
   summary: UsageSummary;
 }
 
+export interface CodexSessionUsageSummary {
+  sessionId: string;
+  requestCount: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheCreationTokens: number;
+  totalCacheReadTokens: number;
+  realTotalTokens: number;
+  totalCost: string;
+  lastUsedAt: number;
+}
+
 export interface DailyStats {
   date: string;
   requestCount: number;

@@ -7,6 +7,7 @@ import {
   deleteSession,
   getCurrentProviderId,
   getLiveProviderIds,
+  listCodexSessionUsageSummaries,
   getSessionMessages,
   getProviders,
   listProviders,
@@ -166,6 +167,10 @@ export const handlers = [
       })),
     );
   }),
+
+  http.post(`${TAURI_ENDPOINT}/get_codex_session_usage_summaries`, () =>
+    success(listCodexSessionUsageSummaries()),
+  ),
 
   // MCP APIs
   http.post(`${TAURI_ENDPOINT}/get_mcp_config`, async ({ request }) => {

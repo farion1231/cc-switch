@@ -18,6 +18,7 @@ import {
   CheckSquare,
 } from "lucide-react";
 import {
+  useCodexSessionUsageSummariesQuery,
   useDeleteSessionMutation,
   useSessionMessagesQuery,
   useSessionsQuery,
@@ -172,6 +173,14 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   }, [sessions]);
 
   const isCodexSession = selectedSession?.providerId === "codex";
+  const { data: codexSessionUsageSummaries = [] } =
+    useCodexSessionUsageSummariesQuery(Boolean(isCodexSession));
+  const selectedCodexSessionUsage = useMemo(() => {
+    if (!selectedSession) return undefined;
+    return codexSessionUsageSummaries.find(
+      (summary) => summary.sessionId === selectedSession.sessionId,
+    );
+  }, [codexSessionUsageSummaries, selectedSession]);
 
   // 提取用户消息用于目录
   const userMessagesToc = useMemo(() => {
@@ -931,6 +940,31 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                             </Tooltip>
                           )}
                         </div>
+                        {selectedCodexSessionUsage && (
+                          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                            <span className="font-medium text-foreground">
+                              {t("sessionManager.codexUsageTitle", {
+                                defaultValue: "Session usage",
+                              })}
+                            </span>
+                            <Badge variant="secondary" className="rounded-md">
+                              {t("sessionManager.codexUsageRequests", {
+                                count: selectedCodexSessionUsage.requestCount,
+                                defaultValue: `${selectedCodexSessionUsage.requestCount} requests`,
+                              })}
+                            </Badge>
+                            <Badge variant="outline" className="rounded-md">
+                              {t("sessionManager.codexUsageTokens", {
+                                count:
+                                  selectedCodexSessionUsage.realTotalTokens,
+                                defaultValue: `${selectedCodexSessionUsage.realTotalTokens.toLocaleString()} tokens`,
+                              })}
+                            </Badge>
+                            <Badge variant="outline" className="rounded-md">
+                              ${selectedCodexSessionUsage.totalCost}
+                            </Badge>
+                          </div>
+                        )}
                       </div>
 
                       {/* 右侧：操作按钮组 */}

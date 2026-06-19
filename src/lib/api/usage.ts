@@ -12,6 +12,7 @@ import type {
   PaginatedLogs,
   SessionSyncResult,
   DataSourceSummary,
+  CodexSessionUsageSummary,
 } from "@/types/usage";
 import type { UsageResult } from "@/types";
 import type { AppId } from "./types";
@@ -75,6 +76,16 @@ export const usageApi = {
       endDate,
       providerName,
       model,
+    });
+  },
+
+  getCodexSessionUsageSummaries: async (
+    startDate?: number,
+    endDate?: number,
+  ): Promise<CodexSessionUsageSummary[]> => {
+    return invoke("get_codex_session_usage_summaries", {
+      startDate,
+      endDate,
     });
   },
 
