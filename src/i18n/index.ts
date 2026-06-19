@@ -3,10 +3,11 @@ import { initReactI18next } from "react-i18next";
 
 import en from "./locales/en.json";
 import ja from "./locales/ja.json";
+import ru from "./locales/ru.json";
 import zh from "./locales/zh.json";
 import zhTW from "./locales/zh-TW.json";
 
-type Language = "zh" | "zh-TW" | "en" | "ja";
+type Language = "zh" | "zh-TW" | "en" | "ja" | "ru";
 
 const DEFAULT_LANGUAGE: Language = "zh";
 
@@ -18,7 +19,8 @@ const getInitialLanguage = (): Language => {
         stored === "zh" ||
         stored === "zh-TW" ||
         stored === "en" ||
-        stored === "ja"
+        stored === "ja" ||
+        stored === "ru"
       ) {
         return stored;
       }
@@ -54,6 +56,10 @@ const getInitialLanguage = (): Language => {
     return "ja";
   }
 
+  if (navigatorLang?.startsWith("ru")) {
+    return "ru";
+  }
+
   if (navigatorLang?.startsWith("en")) {
     return "en";
   }
@@ -67,6 +73,9 @@ const resources = {
   },
   ja: {
     translation: ja,
+  },
+  ru: {
+    translation: ru,
   },
   zh: {
     translation: zh,
