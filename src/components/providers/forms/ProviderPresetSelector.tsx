@@ -1,17 +1,27 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { ClaudeIcon, CodexIcon, GeminiIcon } from "@/components/BrandIcons";
 import {
-  ArrowUpAZ,
-  Search,
   Zap,
   Star,
   Heart,
   Layers,
   Settings2,
+  Check,
+  ChevronsUpDown,
 } from "lucide-react";
 import type { ProviderPreset } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
@@ -26,6 +36,7 @@ import {
   type UniversalProviderPreset,
 } from "@/config/universalProviderPresets";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import { cn } from "@/lib/utils";
 
 type PresetTranslator = (key: string) => unknown;
 
@@ -120,8 +131,11 @@ interface ProviderPresetSelectorProps {
   onPresetChange: (value: string) => void;
   onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
   onManageUniversalProviders?: () => void;
-  category?: ProviderCategory; // 当前选中的分类
+  category?: ProviderCategory; // currently selected category
 }
+
+const UNIVERSAL_VALUE_PREFIX = "universal-";
+const MANAGE_VALUE = "__manage_universal__";
 
 export function ProviderPresetSelector({
   selectedPresetId,
@@ -133,59 +147,27 @@ export function ProviderPresetSelector({
   category,
 }: Readonly<ProviderPresetSelectorProps>) {
   const { t } = useTranslation();
-  const [searchOpen, setSearchOpen] = useState(false);
+  const [open, setOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortMode, setSortMode] = useState<PresetSortMode>(
-    PresetSortMode.Original,
-  );
-  const searchContainerRef = useRef<HTMLDivElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // 点击搜索区域外时收起并清空,对齐旧 Popover 的「点击外部关闭」行为
-  useEffect(() => {
-    if (!searchOpen) return;
-
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        searchContainerRef.current &&
-        !searchContainerRef.current.contains(event.target as Node)
-      ) {
-        setSearchOpen(false);
-        setSearchQuery("");
-      }
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [searchOpen]);
-
-  // 键盘快捷键: Ctrl/Cmd+F 打开搜索并聚焦输入框。
-  // 使用捕获阶段并阻止冒泡，避免背后 ProviderList 的同名快捷键被意外触发。
-  // 首次打开靠 Input 的 autoFocus 聚焦；若搜索已打开（例如点击 preset 后焦点
-  // 停在按钮上），setSearchOpen(true) 同值不会重渲染、autoFocus 不重触发，
-  // 这里用 rAF 命令式地把焦点移回搜索框（不 select，避免吞掉随后输入的首字符）。
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
-        event.preventDefault();
-        event.stopPropagation();
-        setSearchOpen(true);
-        requestAnimationFrame(() => searchInputRef.current?.focus());
-      }
-    };
-
-    globalThis.addEventListener("keydown", handleKeyDown, true);
-    return () => globalThis.removeEventListener("keydown", handleKeyDown, true);
-  }, []);
-
+  // Always present the preset list alphabetically; filtering is handled here
+  // (Command runs with shouldFilter disabled) to keep ordering deterministic.
   const visiblePresetEntries = useMemo(
     () =>
       getVisiblePresetEntries(presetEntries, {
         query: searchQuery,
-        sortMode,
+        sortMode: PresetSortMode.NameAsc,
         t,
       }),
-    [presetEntries, searchQuery, sortMode, t],
+    [presetEntries, searchQuery, t],
+  );
+
+  const showUniversal =
+    !!onUniversalPresetSelect && universalProviderPresets.length > 0;
+
+  const selectedEntry = useMemo(
+    () => presetEntries.find((entry) => entry.id === selectedPresetId) ?? null,
+    [presetEntries, selectedPresetId],
   );
 
   const getCategoryHint = (): ReactNode => {
@@ -222,14 +204,6 @@ export function ProviderPresetSelector({
     }
   };
 
-  const toggleSortMode = () => {
-    setSortMode((current) =>
-      current === PresetSortMode.Original
-        ? PresetSortMode.NameAsc
-        : PresetSortMode.Original,
-    );
-  };
-
   const renderPresetIcon = (preset: AnyPreset) => {
     if (preset.icon) {
       return (
@@ -260,213 +234,208 @@ export function ProviderPresetSelector({
     return <span className="inline-block w-4 h-4 flex-shrink-0" aria-hidden />;
   };
 
-  const getPresetButtonClass = (isSelected: boolean, preset: AnyPreset) => {
-    const baseClass =
-      "inline-flex items-center justify-start gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors w-full";
+  const customLabel = t("providerPreset.custom");
+  const placeholder = t("providerPreset.selectPlaceholder", {
+    defaultValue: "Select a provider…",
+  });
 
-    if (isSelected) {
-      if (preset.theme?.backgroundColor) {
-        return `${baseClass} text-white`;
-      }
-      return `${baseClass} bg-blue-500 text-white dark:bg-blue-600`;
+  const renderTriggerContent = () => {
+    if (selectedEntry) {
+      return (
+        <span className="flex items-center gap-2 truncate">
+          {renderPresetIcon(selectedEntry.preset)}
+          <span className="truncate">
+            {getPresetDisplayName(selectedEntry.preset, t)}
+          </span>
+        </span>
+      );
     }
 
-    return `${baseClass} bg-accent text-muted-foreground hover:bg-accent/80`;
+    if (selectedPresetId === "custom") {
+      return (
+        <span className="flex items-center gap-2 truncate">
+          <span className="inline-block w-4 h-4 flex-shrink-0" aria-hidden />
+          <span className="truncate">{customLabel}</span>
+        </span>
+      );
+    }
+
+    return (
+      <span className="truncate text-muted-foreground">{placeholder}</span>
+    );
   };
 
-  const getPresetButtonStyle = (isSelected: boolean, preset: AnyPreset) => {
-    if (!isSelected || !preset.theme?.backgroundColor) {
-      return undefined;
-    }
-
-    return {
-      backgroundColor: preset.theme.backgroundColor,
-      color: preset.theme.textColor || "#FFFFFF",
-    };
+  const handleSelectPreset = (value: string) => {
+    onPresetChange(value);
+    setOpen(false);
   };
 
   return (
-    <div ref={searchContainerRef} className="space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <FormLabel>{t("providerPreset.label")}</FormLabel>
-        <div className="flex items-center gap-2">
-          {searchOpen && (
-            <Input
-              ref={searchInputRef}
+    <div className="space-y-3">
+      <FormLabel>{t("providerPreset.label")}</FormLabel>
+      <Popover modal open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            role="combobox"
+            aria-expanded={open}
+            aria-label={t("providerPreset.label")}
+            className="flex w-full h-9 items-center justify-between gap-2 rounded-lg border border-border-default bg-background px-3 py-2 text-sm font-medium shadow-sm ring-offset-background focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {renderTriggerContent()}
+            <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          side="bottom"
+          align="start"
+          sideOffset={6}
+          avoidCollisions
+          collisionPadding={8}
+          className="z-[1000] w-[var(--radix-popover-trigger-width)] p-0 border-border-default"
+        >
+          <Command shouldFilter={false}>
+            <CommandInput
               value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  setSearchQuery("");
-                  setSearchOpen(false);
-                }
-              }}
+              onValueChange={setSearchQuery}
               placeholder={t("providerPreset.searchPlaceholder", {
                 defaultValue: "Search presets...",
               })}
               aria-label={t("providerPreset.searchAriaLabel", {
                 defaultValue: "Search provider presets",
               })}
-              className="w-60 h-8"
-              autoFocus
             />
-          )}
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label={t("providerPreset.searchAriaLabel", {
-              defaultValue: "Search provider presets",
-            })}
-            aria-pressed={searchOpen}
-            onClick={() => {
-              setSearchOpen((v) => !v);
-              if (searchOpen) setSearchQuery("");
-            }}
-            title={t("providerPreset.searchTooltip", {
-              defaultValue: "Search presets",
-            })}
-            className={
-              searchOpen || searchQuery.trim()
-                ? "size-8 bg-accent text-foreground"
-                : "size-8"
-            }
-          >
-            <Search className="size-4" />
-          </Button>
+            <CommandList>
+              <CommandGroup>
+                <CommandItem
+                  value="custom"
+                  onSelect={() => handleSelectPreset("custom")}
+                >
+                  <Check
+                    className={cn(
+                      "mr-2 h-4 w-4 shrink-0",
+                      selectedPresetId === "custom"
+                        ? "opacity-100"
+                        : "opacity-0",
+                    )}
+                  />
+                  <span
+                    className="inline-block w-4 h-4 flex-shrink-0"
+                    aria-hidden
+                  />
+                  <span className="truncate">{customLabel}</span>
+                </CommandItem>
+              </CommandGroup>
 
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label={t("providerPreset.sortAriaLabel", {
-              defaultValue: "Toggle preset sorting",
-            })}
-            aria-pressed={sortMode === PresetSortMode.NameAsc}
-            onClick={toggleSortMode}
-            title={
-              sortMode === PresetSortMode.NameAsc
-                ? t("providerPreset.sortOriginalTooltip", {
-                    defaultValue: "Restore original order",
-                  })
-                : t("providerPreset.sortNameAscTooltip", {
-                    defaultValue: "Sort A-Z",
-                  })
-            }
-            className={
-              sortMode === PresetSortMode.NameAsc
-                ? "size-8 bg-accent text-foreground"
-                : "size-8"
-            }
-          >
-            <ArrowUpAZ className="size-4" />
-          </Button>
-        </div>
-      </div>
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2">
-        <button
-          type="button"
-          onClick={() => onPresetChange("custom")}
-          className={`inline-flex items-center justify-start gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors w-full ${
-            selectedPresetId === "custom"
-              ? "bg-blue-500 text-white dark:bg-blue-600"
-              : "bg-accent text-muted-foreground hover:bg-accent/80"
-          }`}
-        >
-          <span className="inline-block w-4 h-4 flex-shrink-0" aria-hidden />
-          <span className="truncate">{t("providerPreset.custom")}</span>
-        </button>
-
-        {visiblePresetEntries.length === 0 && (
-          <div className="col-span-full rounded-md border border-dashed border-border-default px-3 py-2 text-xs text-muted-foreground">
-            {t("providerPreset.noSearchResults", {
-              defaultValue: "No matching presets.",
-            })}
-          </div>
-        )}
-
-        {visiblePresetEntries.map((entry) => {
-          const isSelected = selectedPresetId === entry.id;
-          const isPartner = entry.preset.isPartner;
-          const isPrimePartner = entry.preset.primePartner;
-          const presetCategory = entry.preset.category ?? "others";
-          return (
-            <button
-              key={entry.id}
-              type="button"
-              onClick={() => onPresetChange(entry.id)}
-              className={`${getPresetButtonClass(isSelected, entry.preset)} relative`}
-              style={getPresetButtonStyle(isSelected, entry.preset)}
-              title={
-                presetCategoryLabels[presetCategory] ??
-                t("providerPreset.other")
-              }
-            >
-              {renderPresetIcon(entry.preset)}
-              <span className="truncate">
-                {getPresetDisplayName(entry.preset, t)}
-              </span>
-              {isPrimePartner ? (
-                <Heart
-                  className="absolute -top-1 -right-1 h-5 w-5 fill-amber-500 text-amber-500 drop-shadow-sm"
-                  strokeWidth={0}
-                  aria-hidden
-                />
-              ) : (
-                isPartner && (
-                  <span className="absolute -top-1 -right-1 flex items-center gap-0.5 rounded-full bg-gradient-to-r from-amber-500 to-yellow-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-md">
-                    <Star className="h-2.5 w-2.5 fill-current" />
-                  </span>
-                )
+              {searchQuery.trim() && visiblePresetEntries.length === 0 && (
+                <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+                  {t("providerPreset.noSearchResults", {
+                    defaultValue: "No matching presets.",
+                  })}
+                </div>
               )}
-            </button>
-          );
-        })}
-      </div>
 
-      {onUniversalPresetSelect && universalProviderPresets.length > 0 && (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2">
-          {universalProviderPresets.map((preset) => (
-            <button
-              key={`universal-${preset.providerType}`}
-              type="button"
-              onClick={() => onUniversalPresetSelect(preset)}
-              className="inline-flex items-center justify-start gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-accent text-muted-foreground hover:bg-accent/80 relative w-full"
-              title={t("universalProvider.hint", {
-                defaultValue: "跨应用统一配置，自动同步到 Claude/Codex/Gemini",
-              })}
-            >
-              <ProviderIcon
-                icon={preset.icon}
-                name={preset.name}
-                size={14}
-                className="flex-shrink-0"
-              />
-              <span className="truncate">{preset.name}</span>
-              <span className="absolute -top-1 -right-1 flex items-center gap-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-md">
-                <Layers className="h-2.5 w-2.5" />
-              </span>
-            </button>
-          ))}
-          {onManageUniversalProviders && (
-            <button
-              type="button"
-              onClick={onManageUniversalProviders}
-              className="inline-flex items-center justify-start gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-accent text-muted-foreground hover:bg-accent/80 w-full"
-              title={t("universalProvider.manage", {
-                defaultValue: "管理统一供应商",
-              })}
-            >
-              <Settings2 className="h-4 w-4 flex-shrink-0" />
-              <span className="truncate">
-                {t("universalProvider.manage", {
-                  defaultValue: "管理",
-                })}
-              </span>
-            </button>
-          )}
-        </div>
-      )}
+              {visiblePresetEntries.length > 0 && (
+                <CommandGroup>
+                  {visiblePresetEntries.map((entry) => {
+                    const isSelected = selectedPresetId === entry.id;
+                    const isPartner = entry.preset.isPartner;
+                    const isPrimePartner = entry.preset.primePartner;
+                    const presetCategory = entry.preset.category ?? "others";
+                    return (
+                      <CommandItem
+                        key={entry.id}
+                        value={entry.id}
+                        keywords={[getPresetDisplayName(entry.preset, t)]}
+                        onSelect={() => handleSelectPreset(entry.id)}
+                        title={
+                          presetCategoryLabels[presetCategory] ??
+                          t("providerPreset.other")
+                        }
+                      >
+                        <Check
+                          className={cn(
+                            "mr-2 h-4 w-4 shrink-0",
+                            isSelected ? "opacity-100" : "opacity-0",
+                          )}
+                        />
+                        {renderPresetIcon(entry.preset)}
+                        <span className="truncate">
+                          {getPresetDisplayName(entry.preset, t)}
+                        </span>
+                        {isPrimePartner ? (
+                          <Heart
+                            className="ml-auto h-4 w-4 fill-amber-500 text-amber-500"
+                            strokeWidth={0}
+                            aria-hidden
+                          />
+                        ) : (
+                          isPartner && (
+                            <Star className="ml-auto h-3.5 w-3.5 fill-amber-500 text-amber-500" />
+                          )
+                        )}
+                      </CommandItem>
+                    );
+                  })}
+                </CommandGroup>
+              )}
+
+              {showUniversal && (
+                <CommandGroup
+                  heading={t("universalProvider.groupHeading", {
+                    defaultValue: "Unified providers",
+                  })}
+                >
+                  {universalProviderPresets.map((preset) => (
+                    <CommandItem
+                      key={`${UNIVERSAL_VALUE_PREFIX}${preset.providerType}`}
+                      value={`${UNIVERSAL_VALUE_PREFIX}${preset.providerType}`}
+                      keywords={[preset.name]}
+                      onSelect={() => {
+                        onUniversalPresetSelect?.(preset);
+                        setOpen(false);
+                      }}
+                      title={t("universalProvider.hint", {
+                        defaultValue:
+                          "跨应用统一配置，自动同步到 Claude/Codex/Gemini",
+                      })}
+                    >
+                      <span
+                        className="mr-2 inline-block w-4 h-4 shrink-0"
+                        aria-hidden
+                      />
+                      <ProviderIcon
+                        icon={preset.icon}
+                        name={preset.name}
+                        size={14}
+                        className="flex-shrink-0"
+                      />
+                      <span className="truncate">{preset.name}</span>
+                      <Layers className="ml-auto h-3.5 w-3.5 text-indigo-500" />
+                    </CommandItem>
+                  ))}
+                  {onManageUniversalProviders && (
+                    <CommandItem
+                      value={MANAGE_VALUE}
+                      onSelect={() => {
+                        onManageUniversalProviders();
+                        setOpen(false);
+                      }}
+                    >
+                      <Settings2 className="mr-2 h-4 w-4 shrink-0" />
+                      <span className="truncate">
+                        {t("universalProvider.manage", {
+                          defaultValue: "管理统一供应商",
+                        })}
+                      </span>
+                    </CommandItem>
+                  )}
+                </CommandGroup>
+              )}
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
 
       <p className="text-xs text-muted-foreground">{getCategoryHint()}</p>
     </div>

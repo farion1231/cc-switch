@@ -24,6 +24,7 @@ use super::{
 use crate::commands::{CodexOAuthState, CopilotAuthState};
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
+use crate::proxy::providers::gemini_oauth::GeminiOAuthState;
 use crate::{app_config::AppType, provider::Provider};
 use futures::StreamExt;
 use http::Extensions;
@@ -124,6 +125,11 @@ pub struct RequestForwarder {
     /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
     /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
     max_attempts: usize,
+    /// 命中按模型路由且指定了目标模型时的 `(pinned provider id, 目标上游模型名)`。
+    ///
+    /// 仅当本次转发的供应商等于该 pinned 供应商时才改写出站模型名，避免故障转移到
+    /// 其它供应商时套用错误的模型。`None` 表示沿用供应商的模型映射/默认模型。
+    route_model_override: Option<(String, String)>,
 }
 
 impl RequestForwarder {
@@ -191,6 +197,7 @@ impl RequestForwarder {
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
         max_retries: u32,
+        route_model_override: Option<(String, String)>,
     ) -> Self {
         // max_retries 是「失败后重试次数」语义，attempt 上限 = retries + 1。
         // saturating_add 防止 u32::MAX + 1 溢出。
@@ -214,6 +221,7 @@ impl RequestForwarder {
                 streaming_first_byte_timeout,
             ),
             max_attempts,
+            route_model_override: route_model_override.filter(|(_, m)| !m.is_empty()),
         }
     }
 
@@ -1133,6 +1141,26 @@ impl RequestForwarder {
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
 
+        // 按模型路由的目标模型覆盖：用户为该路由显式指定了上游模型名时，直接改写
+        // 出站模型名，优先于供应商自身的模型映射/默认模型。仅当本次转发的供应商
+        // 正是该路由 pinned 的供应商时才生效，故障转移到其它供应商时不套用。
+        if let Some((_, target_model)) = self
+            .route_model_override
+            .as_ref()
+            .filter(|(pinned_id, _)| *pinned_id == provider.id)
+        {
+            log::info!(
+                "[{}] 按模型路由覆盖出站模型: {} -> {}",
+                provider.id,
+                mapped_body
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
+                target_model
+            );
+            mapped_body["model"] = Value::String(target_model.to_string());
+        }
+
         if is_copilot {
             mapped_body =
                 super::providers::copilot_model_map::apply_copilot_model_normalization(mapped_body);
@@ -1515,6 +1543,28 @@ impl RequestForwarder {
                     return Err(ProxyError::AuthError(
                         "Codex OAuth 认证不可用（无 AppHandle）".to_string(),
                     ));
+                }
+            }
+
+            // Gemini Google OAuth：用长期 refresh_token 换取新的 access_token。
+            // 适用于 Claude Code / Claude Desktop（gemini_native 后端）与 Gemini
+            // 应用本身——三者在 OAuth 凭证下都产生 GoogleOAuth 策略，原始凭证存于
+            // auth.api_key（可能是 ya29. token 或 oauth_creds.json）。
+            if auth.strategy == AuthStrategy::GoogleOAuth {
+                if let Some(creds) =
+                    super::providers::gemini_oauth::parse_credentials(&auth.api_key)
+                {
+                    if let Some(app_handle) = &self.app_handle {
+                        let gemini_state = app_handle.state::<GeminiOAuthState>();
+                        match gemini_state.0.get_valid_access_token(&creds).await {
+                            Ok(token) => {
+                                auth = AuthInfo::with_access_token(auth.api_key.clone(), token);
+                            }
+                            Err(e) => {
+                                log::warn!("[GeminiOAuth] token 刷新失败，回退到已配置的凭证: {e}");
+                            }
+                        }
+                    }
                 }
             }
 
@@ -2658,6 +2708,7 @@ mod tests {
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,
+            route_model_override: None,
         }
     }
 

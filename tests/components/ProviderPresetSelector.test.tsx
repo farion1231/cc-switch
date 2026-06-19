@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { TFunction } from "i18next";
@@ -14,6 +14,23 @@ import {
   sortPresetEntries,
   type PresetSortMode,
 } from "@/components/providers/forms/ProviderPresetSelector";
+
+// Render the Popover inline so the combobox list is always visible in jsdom,
+// avoiding Radix portal/pointer-capture quirks.
+vi.mock("@/components/ui/popover", () => ({
+  Popover: ({ children }: { children: React.ReactNode }) => (
+    <div data-testid="popover">{children}</div>
+  ),
+  PopoverTrigger: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
+  ),
+  PopoverContent: ({ children }: { children: React.ReactNode }) => (
+    <div data-testid="popover-content">{children}</div>
+  ),
+  PopoverAnchor: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
+  ),
+}));
 
 // Mock ProviderIcon 以避免依赖图标库的实际内容
 vi.mock("@/components/ProviderIcon", () => ({
@@ -60,6 +77,8 @@ type TestPresetEntry = {
     websiteUrl: string;
     settingsConfig: Record<string, never>;
     category: ProviderCategory;
+    icon?: string;
+    iconColor?: string;
   };
 };
 
@@ -110,9 +129,11 @@ function getIds(entries: ReadonlyArray<{ id: string }>) {
 
 function renderSelector({
   entries = presetEntries,
+  selectedPresetId = "custom",
   onPresetChange = vi.fn(),
 }: {
   entries?: TestPresetEntry[];
+  selectedPresetId?: string | null;
   onPresetChange?: (value: string) => void;
 } = {}) {
   const Wrapper = () => {
@@ -121,7 +142,7 @@ function renderSelector({
     return (
       <Form {...form}>
         <ProviderPresetSelector
-          selectedPresetId="custom"
+          selectedPresetId={selectedPresetId}
           presetEntries={entries}
           presetCategoryLabels={presetCategoryLabels}
           onPresetChange={onPresetChange}
@@ -133,37 +154,19 @@ function renderSelector({
   return render(<Wrapper />);
 }
 
-function getPresetButtonTexts() {
-  const knownNames = new Set([
-    "providerPreset.custom",
-    ...presetEntries.flatMap((entry) => [
-      entry.preset.name,
-      entry.preset.nameKey ?? entry.preset.name,
-    ]),
-  ]);
-
+// In the rendered component the real react-i18next `t` is used (missing keys
+// fall back to the key itself), so preset display names resolve to:
+//   gamma -> "preset.gamma", alpha -> "preset.alpha",
+//   beta  -> "Beta Gateway",  delta -> "Delta Mirror".
+// Alphabetical order is therefore: Beta, Delta, preset.alpha, preset.gamma.
+function getOptionTexts() {
   return screen
-    .getAllByRole("button")
-    .map((button) => button.textContent?.trim() ?? "")
-    .filter((text) => knownNames.has(text));
-}
-
-function getSearchButton() {
-  return screen.getByRole("button", {
-    name: /providerPreset\.(search|searchAriaLabel|openSearch)|搜索|search/i,
-  });
-}
-
-function getSortButton() {
-  return screen.getByRole("button", {
-    name: /providerPreset\.(sort|sortByName|restoreOriginalOrder)|按名称排序|恢复原顺序|sort/i,
-  });
+    .getAllByRole("option")
+    .map((option) => option.textContent?.trim() ?? "");
 }
 
 function getSearchInput() {
-  return screen.getByRole("textbox", {
-    name: /providerPreset\.(searchInput|searchPlaceholder)|搜索预设|search/i,
-  });
+  return screen.getByPlaceholderText(/search presets/i);
 }
 
 describe("ProviderPresetSelector pure helpers", () => {
@@ -228,118 +231,80 @@ describe("ProviderPresetSelector pure helpers", () => {
   });
 });
 
-describe("ProviderPresetSelector", () => {
-  it("默认按传入的预设数组顺序渲染，不按分类或名称重新排序", () => {
+describe("ProviderPresetSelector dropdown", () => {
+  it("renders a combobox trigger for the preset list", () => {
+    renderSelector();
+    expect(
+      screen.getByRole("combobox", { name: "providerPreset.label" }),
+    ).toBeInTheDocument();
+  });
+
+  it("lists Custom first, then presets in alphabetical order", () => {
     renderSelector();
 
-    expect(getPresetButtonTexts()).toEqual([
+    expect(getOptionTexts()).toEqual([
       "providerPreset.custom",
-      "preset.gamma",
-      "preset.alpha",
       "Beta Gateway",
       "Delta Mirror",
+      "preset.alpha",
+      "preset.gamma",
     ]);
   });
 
-  it("点击排序按钮后普通 preset A-Z，再点恢复原顺序", async () => {
+  it("filters presets by the search box while keeping Custom", async () => {
     const user = userEvent.setup();
     renderSelector();
 
-    await user.click(getSortButton());
-
-    expect(getPresetButtonTexts()).toEqual([
-      "providerPreset.custom",
-      "Beta Gateway",
-      "Delta Mirror",
-      "preset.alpha",
-      "preset.gamma",
-    ]);
-
-    await user.click(getSortButton());
-
-    expect(getPresetButtonTexts()).toEqual([
-      "providerPreset.custom",
-      "preset.gamma",
-      "preset.alpha",
-      "Beta Gateway",
-      "Delta Mirror",
-    ]);
-  });
-
-  it("搜索只过滤普通 preset，自定义配置始终保留", async () => {
-    const user = userEvent.setup();
-    renderSelector();
-
-    await user.click(getSearchButton());
     await user.type(getSearchInput(), "gateway");
 
-    expect(
-      screen.getByRole("button", { name: "providerPreset.custom" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Beta Gateway" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "preset.gamma" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "preset.alpha" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Delta Mirror" }),
-    ).not.toBeInTheDocument();
+    expect(getOptionTexts()).toEqual(["providerPreset.custom", "Beta Gateway"]);
   });
 
-  it("搜索无普通 preset 结果时保留自定义配置并显示空状态", async () => {
+  it("shows an empty hint when no preset matches, Custom still present", async () => {
     const user = userEvent.setup();
     renderSelector();
 
-    await user.click(getSearchButton());
-    await user.type(getSearchInput(), "not-found");
+    await user.type(getSearchInput(), "zzz-no-match");
 
-    expect(
-      screen.getByRole("button", { name: "providerPreset.custom" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "preset.gamma" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "preset.alpha" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Beta Gateway" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Delta Mirror" }),
-    ).not.toBeInTheDocument();
+    expect(getOptionTexts()).toEqual(["providerPreset.custom"]);
     expect(
       screen.getByText(
-        /providerPreset\.(empty|noResults)|没有匹配|无结果|no matching presets/i,
+        /providerPreset\.noSearchResults|no matching presets|没有匹配|無結果/i,
       ),
     ).toBeInTheDocument();
   });
 
-  it("所有预设按钮填满网格列宽(w-full)实现等宽对齐", () => {
-    renderSelector();
+  it("selecting a preset calls onPresetChange with its id", async () => {
+    const user = userEvent.setup();
+    const onPresetChange = vi.fn();
+    renderSelector({ onPresetChange });
 
-    const presetButtons = screen.getAllByRole("button");
-    const fullWidthButtons = presetButtons.filter((btn) =>
-      btn.className.includes("w-full"),
-    );
+    await user.click(screen.getByRole("option", { name: /beta gateway/i }));
 
-    // 至少包含 custom + 4 个预设 = 5 个等宽按钮(搜索/排序按钮为 size-8 不计入)
-    expect(fullWidthButtons.length).toBeGreaterThanOrEqual(5);
+    expect(onPresetChange).toHaveBeenCalledWith("beta");
   });
 
-  it("preset.icon 存在时按钮内渲染图标元素(img/svg)", () => {
-    const entriesWithIcon = [
+  it("selecting Custom calls onPresetChange with 'custom'", async () => {
+    const user = userEvent.setup();
+    const onPresetChange = vi.fn();
+    renderSelector({ onPresetChange });
+
+    await user.click(
+      screen.getByRole("option", { name: /providerPreset\.custom/i }),
+    );
+
+    expect(onPresetChange).toHaveBeenCalledWith("custom");
+  });
+
+  it("renders the preset icon inside its option when provided", () => {
+    const entriesWithIcon: TestPresetEntry[] = [
       {
         id: "with-icon",
         preset: {
           name: "With Icon",
           websiteUrl: "https://icon.example.com",
           settingsConfig: {},
-          category: "official" as ProviderCategory,
+          category: "official",
           icon: "claude-api",
           iconColor: "#D4915D",
         },
@@ -348,162 +313,10 @@ describe("ProviderPresetSelector", () => {
 
     renderSelector({ entries: entriesWithIcon });
 
-    const button = screen.getByRole("button", { name: /with icon/i });
-    const icon = button.querySelector('[data-testid="provider-icon"]');
+    const option = screen.getByRole("option", { name: /with icon/i });
+    const icon = option.querySelector('[data-testid="provider-icon"]');
     expect(icon).not.toBeNull();
     expect(icon?.getAttribute("data-icon")).toBe("claude-api");
     expect(icon?.getAttribute("data-color")).toBe("#D4915D");
-  });
-
-  it("preset 无 icon 且无 theme.icon 时,按钮内仍渲染占位元素保持文字对齐", () => {
-    const entriesWithoutIcon = [
-      {
-        id: "no-icon",
-        preset: {
-          name: "No Icon",
-          websiteUrl: "https://noicon.example.com",
-          settingsConfig: {},
-          category: "official" as ProviderCategory,
-        },
-      },
-    ];
-
-    renderSelector({ entries: entriesWithoutIcon });
-
-    const button = screen.getByRole("button", { name: /no icon/i });
-    // 占位 span(16x16)应该存在,保证文字位置与有图标的按钮对齐
-    const placeholder = button.querySelector("span[aria-hidden]");
-    expect(placeholder).not.toBeNull();
-  });
-
-  it("custom 按钮同样渲染占位元素,文字与带图标的预设按钮对齐", () => {
-    renderSelector();
-
-    const customButton = screen.getByRole("button", {
-      name: "providerPreset.custom",
-    });
-    const placeholder = customButton.querySelector("span[aria-hidden]");
-    expect(placeholder).not.toBeNull();
-  });
-
-  it("点击放大镜 inline 切换搜索输入框可见性,ESC 收起并清空", async () => {
-    const user = userEvent.setup();
-    renderSelector();
-
-    // 初始没有搜索输入框
-    expect(
-      screen.queryByRole("textbox", {
-        name: /providerPreset\.(searchInput|searchPlaceholder)|搜索预设|search/i,
-      }),
-    ).not.toBeInTheDocument();
-
-    // 点击放大镜展开输入框
-    await user.click(getSearchButton());
-    const input = getSearchInput();
-    expect(input).toBeInTheDocument();
-
-    // 输入关键字过滤
-    await user.type(input, "gateway");
-    expect(
-      screen.getByRole("button", { name: "Beta Gateway" }),
-    ).toBeInTheDocument();
-
-    // ESC 收起输入框并清空
-    await user.keyboard("{Escape}");
-    expect(
-      screen.queryByRole("textbox", {
-        name: /providerPreset\.(searchInput|searchPlaceholder)|搜索预设|search/i,
-      }),
-    ).not.toBeInTheDocument();
-    // 收起后所有预设恢复显示
-    expect(
-      screen.getByRole("button", { name: "preset.gamma" }),
-    ).toBeInTheDocument();
-  });
-
-  it("按 Ctrl+F 快捷键打开搜索输入框", async () => {
-    const user = userEvent.setup();
-    renderSelector();
-
-    // 初始没有搜索输入框
-    expect(
-      screen.queryByRole("textbox", {
-        name: /providerPreset\.(searchInput|searchPlaceholder)|搜索预设|search/i,
-      }),
-    ).not.toBeInTheDocument();
-
-    // 按 Ctrl+F 展开输入框
-    await user.keyboard("{Control>}f{/Control}");
-    expect(getSearchInput()).toBeInTheDocument();
-  });
-
-  it("搜索后点击预设按钮可选中预设且不清空搜索关键词", async () => {
-    const user = userEvent.setup();
-    const onPresetChange = vi.fn();
-    renderSelector({ onPresetChange });
-
-    await user.click(getSearchButton());
-    await user.type(getSearchInput(), "gateway");
-
-    await user.click(screen.getByRole("button", { name: "Beta Gateway" }));
-
-    expect(onPresetChange).toHaveBeenCalledWith("beta");
-    // 搜索框仍展开、关键词保留
-    expect(getSearchInput()).toBeInTheDocument();
-    expect(getSearchInput()).toHaveValue("gateway");
-  });
-
-  it("搜索已打开、焦点在别处时再次 Ctrl+F 把焦点移回搜索框且保留关键词", async () => {
-    const user = userEvent.setup();
-    renderSelector();
-
-    await user.click(getSearchButton());
-    await user.type(getSearchInput(), "gateway");
-
-    // 选中 preset 后焦点离开搜索框（搜索框仍展开、关键词保留）
-    await user.click(screen.getByRole("button", { name: "Beta Gateway" }));
-    expect(getSearchInput()).not.toHaveFocus();
-
-    // 再次 Ctrl+F：setSearchOpen(true) 同值不重渲染、autoFocus 不重触发，
-    // 需靠快捷键命中时的命令式聚焦把焦点移回搜索框，且不清空关键词
-    await user.keyboard("{Control>}f{/Control}");
-    await waitFor(() => expect(getSearchInput()).toHaveFocus());
-    expect(getSearchInput()).toHaveValue("gateway");
-  });
-
-  it("点击组件外区域自动收起并清空", async () => {
-    const user = userEvent.setup();
-    const Wrapper = () => {
-      const form = useForm();
-      return (
-        <Form {...form}>
-          <ProviderPresetSelector
-            selectedPresetId="custom"
-            presetEntries={presetEntries}
-            presetCategoryLabels={presetCategoryLabels}
-            onPresetChange={vi.fn()}
-          />
-          <div data-testid="outside">Outside</div>
-        </Form>
-      );
-    };
-    render(<Wrapper />);
-
-    await user.click(getSearchButton());
-    await user.type(getSearchInput(), "gateway");
-    expect(getSearchInput()).toBeInTheDocument();
-
-    // 点击组件外的元素应收起搜索框
-    await user.click(screen.getByTestId("outside"));
-
-    expect(
-      screen.queryByRole("textbox", {
-        name: /providerPreset\.(searchInput|searchPlaceholder)|搜索预设|search/i,
-      }),
-    ).not.toBeInTheDocument();
-    // 收起后清空 query,所有预设恢复显示
-    expect(
-      screen.getByRole("button", { name: "preset.gamma" }),
-    ).toBeInTheDocument();
   });
 });

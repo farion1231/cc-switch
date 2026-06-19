@@ -421,6 +421,10 @@
           "debug": "詳細資訊，包含 SSE 串流與請求/回應詳情",
           "trace": "全部日誌，最詳細"
         }
+      },
+      "modelRouting": {
+        "title": "模型路由（Claude Code）",
+        "description": "透過本機代理將不同的 Claude 模型路由到不同的供應商。"
       }
     },
     "language": "介面語言",
@@ -1325,7 +1329,8 @@
     "sortAriaLabel": "切換預設排序",
     "sortNameAscTooltip": "按名稱 A-Z 排序",
     "sortOriginalTooltip": "恢復原始順序",
-    "noSearchResults": "沒有相符的預設供應商。"
+    "noSearchResults": "沒有相符的預設供應商。",
+    "selectPlaceholder": "選擇供應商…"
   },
   "usage": {
     "title": "使用統計",
@@ -2499,7 +2504,31 @@
       "startFailed": "啟動路由服務失敗：{{detail}}"
     },
     "stoppedWithRestore": "路由服務已關閉，已還原所有路由設定",
-    "stopWithRestoreFailed": "停止失敗：{{detail}}"
+    "stopWithRestoreFailed": "停止失敗：{{detail}}",
+    "modelRouting": {
+      "info": "將每個 Claude 模型系列傳送到指定供應商，並可選擇該供應商上要使用的具體模型。本機代理會根據請求的模型進行路由。保持「預設」的系列將使用目前／故障轉移供應商；模型留空則使用供應商自身的預設模型。",
+      "useDefault": "預設（目前 / 故障轉移）",
+      "modelLabel": "目標模型",
+      "modelPlaceholder": "供應商預設",
+      "saved": "已更新模型路由",
+      "saveFailed": "更新模型路由失敗：{{detail}}",
+      "noProviders": "尚未設定供應商。請先在主畫面新增供應商。",
+      "proxyRequired": "需啟動代理服務並啟用 Claude 接管，模型路由才會生效。你現在仍可進行設定。",
+      "class": {
+        "opus": {
+          "label": "Opus",
+          "hint": "能力最強的模型（如 claude-opus-4）"
+        },
+        "sonnet": {
+          "label": "Sonnet",
+          "hint": "均衡型模型（如 claude-sonnet-4）"
+        },
+        "haiku": {
+          "label": "Haiku",
+          "hint": "快速輕量模型（如 claude-haiku）"
+        }
+      }
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} 連通正常 ({{responseTimeMs}}ms)",
@@ -2626,7 +2655,8 @@
     "savedAndSynced": "已儲存並同步至所有應用程式",
     "saveAndSyncError": "儲存並同步失敗",
     "configJsonPreview": "設定 JSON 預覽",
-    "configJsonPreviewHint": "以下是將要同步至各應用程式的設定內容（僅覆寫顯示的欄位，保留其他自訂設定）"
+    "configJsonPreviewHint": "以下是將要同步至各應用程式的設定內容（僅覆寫顯示的欄位，保留其他自訂設定）",
+    "groupHeading": "統一供應商"
   },
   "omo": {
     "editProfile": "編輯 OMO 設定",

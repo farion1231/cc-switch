@@ -172,7 +172,8 @@
         "oauthHint": "Google official uses OAuth personal authentication, no need to fill in API Key. The browser will automatically open for login on first use.",
         "apiKeyPlaceholder": "Enter Gemini API Key"
       }
-    }
+    },
+    "duplicateLiveIdsLoadFailed": "Failed to read provider IDs from the live config. Please fix the config and try again."
   },
   "claudeCode": {
     "needsRouting": "Needs Routing",
@@ -219,7 +220,8 @@
       "tooltip": {
         "active": "Claude Desktop local routing is running - {{address}}:{{port}}",
         "inactive": "Turn on Claude Desktop local routing for providers that need model mapping or format conversion. Configured address: {{address}}:{{port}}"
-      }
+      },
+      "stopBlockedByTakeover": "This route is being used by another app's takeover. Disable takeover for that app before stopping the local route."
     }
   },
   "notifications": {
@@ -264,7 +266,8 @@
     "backfillWarning": "Switched successfully, but failed to save changes back to the previous provider",
     "windowControlFailed": "Window control failed: {{error}}",
     "officialBlockedByProxy": "Cannot switch to official provider while local routing is active. Using routing with official APIs may cause account bans.",
-    "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing."
+    "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing.",
+    "proxyReasonClaudeDesktop": "Claude Desktop is using local proxy routing mode."
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
@@ -421,6 +424,10 @@
           "debug": "Detailed info including SSE stream and request/response",
           "trace": "All logs, most verbose"
         }
+      },
+      "modelRouting": {
+        "title": "Model Routing (Claude Code)",
+        "description": "Route different Claude models to different providers via the local proxy."
       }
     },
     "language": "Language",
@@ -1123,7 +1130,8 @@
     "fetchModelsAuthFailed": "API Key is invalid or lacks permission",
     "fetchModelsNotSupported": "This provider does not support fetching model list",
     "fetchModelsEndpointNotFound": "No reachable models endpoint found. Please check the Base URL or confirm whether the provider exposes this API.",
-    "fetchModelsTimeout": "Request timed out, please check network connection"
+    "fetchModelsTimeout": "Request timed out, please check network connection",
+    "providerKeyStatusLoading": "Loading provider key status. Please try again shortly."
   },
   "copilot": {
     "authSection": "GitHub Copilot Authentication",
@@ -1283,7 +1291,8 @@
     "reasoningEffortHint": "Enable when the upstream supports thinking-depth control such as low/high/max. Enabling this also turns on thinking mode and converts Codex's reasoning.effort into the upstream Chat parameter.",
     "reasoningGroupTitle": "Reasoning Capability",
     "reasoningSectionHint": "Preset providers are configured automatically; custom providers are inferred from name/URL. Override manually only when auto-detection is wrong.",
-    "advancedSectionHint": "Includes local routing, model mapping, reasoning overrides and custom User-Agent. Enable local routing here when your provider uses the Chat Completions protocol or non-GPT models."
+    "advancedSectionHint": "Includes local routing, model mapping, reasoning overrides and custom User-Agent. Enable local routing here when your provider uses the Chat Completions protocol or non-GPT models.",
+    "noCommonConfigToApply": "The shared config snippet is empty or has no content to apply."
   },
   "geminiConfig": {
     "envFile": "Environment Variables (.env)",
@@ -1353,7 +1362,8 @@
     "sortAriaLabel": "Toggle preset sorting",
     "sortNameAscTooltip": "Sort by name A-Z",
     "sortOriginalTooltip": "Restore original order",
-    "noSearchResults": "No provider presets match your search."
+    "noSearchResults": "No provider presets match your search.",
+    "selectPlaceholder": "Select a provider…"
   },
   "usage": {
     "title": "Usage Statistics",
@@ -1524,7 +1534,8 @@
     "modelsDevTruncated": "Showing first {{shown}} of {{total}} results — refine your search",
     "modelsDevDefaultHint": "Showing the {{shown}} most recently released models (of {{total}}) — type to search all",
     "cacheReadCostPerMillion": "Cache Read Cost (per million tokens, USD)",
-    "cacheCreationCostPerMillion": "Cache Write Cost (per million tokens, USD)"
+    "cacheCreationCostPerMillion": "Cache Write Cost (per million tokens, USD)",
+    "unpriced": "Unpriced"
   },
   "usageScript": {
     "title": "Configure Usage Query",
@@ -2346,7 +2357,8 @@
     },
     "tooltip": {
       "enabled": "{{app}} failover enabled\nRequests follow queue priority (P1→P2→...)",
-      "disabled": "Enable {{app}} failover\nSwitches to queue P1 immediately, then falls back on failures"
+      "disabled": "Enable {{app}} failover\nSwitches to queue P1 immediately, then falls back on failures",
+      "takeoverRequired": "Take over {{app}} first to enable automatic failover."
     }
   },
   "proxy": {
@@ -2524,10 +2536,36 @@
     },
     "server": {
       "started": "Routing service started - {{address}}:{{port}}",
-      "startFailed": "Failed to start routing service: {{detail}}"
+      "startFailed": "Failed to start routing service: {{detail}}",
+      "stopped": "Proxy server stopped.",
+      "stopFailed": "Failed to stop proxy server: {{detail}}"
     },
     "stoppedWithRestore": "Routing service stopped, all routing configs restored",
-    "stopWithRestoreFailed": "Stop failed: {{detail}}"
+    "stopWithRestoreFailed": "Stop failed: {{detail}}",
+    "modelRouting": {
+      "info": "Send each Claude model family to a specific provider, and optionally to a specific model on that provider. The local proxy routes requests by the requested model. Families left on “Default” use the current/failover provider; an empty model uses the provider’s own default.",
+      "useDefault": "Default (current / failover)",
+      "modelLabel": "Target model",
+      "modelPlaceholder": "Provider default",
+      "saved": "Model routing updated",
+      "saveFailed": "Failed to update model routing: {{detail}}",
+      "noProviders": "No providers configured. Add providers on the home screen first.",
+      "proxyRequired": "Start the proxy service and enable Claude takeover for model routing to take effect. You can still configure it now.",
+      "class": {
+        "opus": {
+          "label": "Opus",
+          "hint": "Most capable models (e.g. claude-opus-4)"
+        },
+        "sonnet": {
+          "label": "Sonnet",
+          "hint": "Balanced models (e.g. claude-sonnet-4)"
+        },
+        "haiku": {
+          "label": "Haiku",
+          "hint": "Fast, lightweight models (e.g. claude-haiku)"
+        }
+      }
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} is reachable ({{responseTimeMs}}ms)",
@@ -2654,7 +2692,8 @@
     "savedAndSynced": "Saved and synced to all apps",
     "saveAndSyncError": "Failed to save and sync",
     "configJsonPreview": "Config JSON Preview",
-    "configJsonPreviewHint": "The following configurations will be synced to each app (only the displayed fields will be overwritten, other custom settings will be preserved)"
+    "configJsonPreviewHint": "The following configurations will be synced to each app (only the displayed fields will be overwritten, other custom settings will be preserved)",
+    "groupHeading": "Unified providers"
   },
   "omo": {
     "editProfile": "Edit OMO Config",
