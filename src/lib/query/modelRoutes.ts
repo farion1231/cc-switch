@@ -14,7 +14,7 @@ export function useModelRoutes(appType: AppId) {
 }
 
 /**
- * Set (or clear) the provider route for a single model class.
+ * Set (or clear) the route for a single model class.
  */
 export function useSetModelRoute() {
   const queryClient = useQueryClient();
@@ -24,11 +24,19 @@ export function useSetModelRoute() {
       appType,
       modelClass,
       providerId,
+      targetModel,
     }: {
       appType: AppId;
       modelClass: ModelClass;
       providerId: string | null;
-    }) => modelRoutesApi.setModelRoute(appType, modelClass, providerId),
+      targetModel: string | null;
+    }) =>
+      modelRoutesApi.setModelRoute(
+        appType,
+        modelClass,
+        providerId,
+        targetModel,
+      ),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({
         queryKey: ["modelRoutes", variables.appType],

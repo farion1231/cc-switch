@@ -368,6 +368,7 @@ impl Database {
                 app_type TEXT NOT NULL,
                 model_class TEXT NOT NULL,
                 provider_id TEXT NOT NULL,
+                target_model TEXT,
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (app_type, model_class),
                 FOREIGN KEY (provider_id, app_type) REFERENCES providers(id, app_type) ON DELETE CASCADE
@@ -466,6 +467,13 @@ impl Database {
                         );
                         Self::migrate_v11_to_v12(conn)?;
                         Self::set_user_version(conn, 12)?;
+                    }
+                    12 => {
+                        log::info!(
+                            "迁移数据库从 v12 到 v13（model_provider_routes 增加 target_model 列）"
+                        );
+                        Self::migrate_v12_to_v13(conn)?;
+                        Self::set_user_version(conn, 13)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1309,6 +1317,16 @@ impl Database {
         .map_err(|e| AppError::Database(format!("v11 -> v12 创建 model_provider_routes 失败: {e}")))?;
 
         log::info!("v11 -> v12 迁移完成：已创建 model_provider_routes 表");
+        Ok(())
+    }
+
+    /// v12 -> v13 迁移：model_provider_routes 增加 target_model 列
+    ///
+    /// 允许为每个 Claude 模型类别（opus/sonnet/haiku）指定目标供应商上要使用的
+    /// 具体模型名。NULL/空表示沿用供应商自身的模型映射/默认模型。
+    fn migrate_v12_to_v13(conn: &Connection) -> Result<(), AppError> {
+        Self::add_column_if_missing(conn, "model_provider_routes", "target_model", "TEXT")?;
+        log::info!("v12 -> v13 迁移完成：model_provider_routes 已增加 target_model 列");
         Ok(())
     }
 

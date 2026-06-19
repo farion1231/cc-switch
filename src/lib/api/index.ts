@@ -10,7 +10,7 @@ export { subscriptionApi } from "./subscription";
 export { vscodeApi } from "./vscode";
 export { proxyApi } from "./proxy";
 export { modelRoutesApi } from "./modelRoutes";
-export type { ModelClass, ModelRoutes } from "./modelRoutes";
+export type { ModelClass, ModelRoute, ModelRoutes } from "./modelRoutes";
 export { openclawApi } from "./openclaw";
 export { sessionsApi } from "./sessions";
 export { workspaceApi } from "./workspace";

@@ -2543,8 +2543,10 @@
     "stoppedWithRestore": "Routing service stopped, all routing configs restored",
     "stopWithRestoreFailed": "Stop failed: {{detail}}",
     "modelRouting": {
-      "info": "Send each Claude model family to a specific provider. The local proxy routes requests by the requested model. Families left on “Default” use the current/failover provider.",
+      "info": "Send each Claude model family to a specific provider, and optionally to a specific model on that provider. The local proxy routes requests by the requested model. Families left on “Default” use the current/failover provider; an empty model uses the provider’s own default.",
       "useDefault": "Default (current / failover)",
+      "modelLabel": "Target model",
+      "modelPlaceholder": "Provider default",
       "saved": "Model routing updated",
       "saveFailed": "Failed to update model routing: {{detail}}",
       "noProviders": "No providers configured. Add providers on the home screen first.",

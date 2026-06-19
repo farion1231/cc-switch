@@ -2506,8 +2506,10 @@
     "stoppedWithRestore": "路由服務已關閉，已還原所有路由設定",
     "stopWithRestoreFailed": "停止失敗：{{detail}}",
     "modelRouting": {
-      "info": "將每個 Claude 模型系列傳送到指定供應商。本機代理會根據請求的模型進行路由。保持「預設」的系列將使用目前／故障轉移供應商。",
+      "info": "將每個 Claude 模型系列傳送到指定供應商，並可選擇該供應商上要使用的具體模型。本機代理會根據請求的模型進行路由。保持「預設」的系列將使用目前／故障轉移供應商；模型留空則使用供應商自身的預設模型。",
       "useDefault": "預設（目前 / 故障轉移）",
+      "modelLabel": "目標模型",
+      "modelPlaceholder": "供應商預設",
       "saved": "已更新模型路由",
       "saveFailed": "更新模型路由失敗：{{detail}}",
       "noProviders": "尚未設定供應商。請先在主畫面新增供應商。",

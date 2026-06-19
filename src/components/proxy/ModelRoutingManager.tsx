@@ -2,15 +2,20 @@
  * Per-model provider routing manager (Claude Code).
  *
  * Lets the user map each Claude model family (Opus / Sonnet / Haiku) to a
- * specific provider. When the local proxy receives a request, it inspects the
- * requested model and forwards it to the mapped provider. Model families
- * without a mapping fall back to the app's normal current/failover provider.
+ * specific provider and, optionally, to a specific model on that provider.
+ * When the local proxy receives a request, it inspects the requested model and
+ * forwards it to the mapped provider, rewriting the outbound model name when a
+ * target model is set. Families without a mapping fall back to the app's normal
+ * current/failover provider; an empty model field uses the provider's own
+ * model mapping / default model.
  */
 
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Info, Loader2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -48,10 +53,38 @@ export function ModelRoutingManager({
   const providers = providersData ? Object.values(providersData.providers) : [];
   const hasProviders = providers.length > 0;
 
-  const handleChange = async (modelClass: ModelClass, value: string) => {
-    const providerId = value === DEFAULT_VALUE ? null : value;
+  // Local draft of the target-model text inputs, seeded from the saved routes.
+  // Committed to the backend on blur / Enter (the provider dropdown saves
+  // immediately on change).
+  const [modelInputs, setModelInputs] = useState<
+    Partial<Record<ModelClass, string>>
+  >({});
+
+  useEffect(() => {
+    if (!routes) return;
+    setModelInputs(
+      MODEL_CLASSES.reduce<Partial<Record<ModelClass, string>>>(
+        (acc, modelClass) => {
+          acc[modelClass] = routes[modelClass]?.model ?? "";
+          return acc;
+        },
+        {},
+      ),
+    );
+  }, [routes]);
+
+  const save = async (
+    modelClass: ModelClass,
+    providerId: string | null,
+    targetModel: string | null,
+  ) => {
     try {
-      await setModelRoute.mutateAsync({ appType, modelClass, providerId });
+      await setModelRoute.mutateAsync({
+        appType,
+        modelClass,
+        providerId,
+        targetModel,
+      });
       toast.success(
         t("proxy.modelRouting.saved", {
           defaultValue: "Model routing updated",
@@ -71,6 +104,31 @@ export function ModelRoutingManager({
     }
   };
 
+  const handleProviderChange = async (
+    modelClass: ModelClass,
+    value: string,
+  ) => {
+    const providerId = value === DEFAULT_VALUE ? null : value;
+    if (!providerId) {
+      // Clearing the provider also clears the target model.
+      setModelInputs((prev) => ({ ...prev, [modelClass]: "" }));
+      await save(modelClass, null, null);
+      return;
+    }
+    const targetModel = (modelInputs[modelClass] ?? "").trim() || null;
+    await save(modelClass, providerId, targetModel);
+  };
+
+  const handleModelCommit = async (modelClass: ModelClass) => {
+    const providerId = routes?.[modelClass]?.providerId ?? null;
+    // Without a provider there is nothing to attach the model to.
+    if (!providerId) return;
+    const targetModel = (modelInputs[modelClass] ?? "").trim() || null;
+    const savedModel = routes?.[modelClass]?.model ?? null;
+    if (targetModel === savedModel) return;
+    await save(modelClass, providerId, targetModel);
+  };
+
   if (isProvidersLoading || isRoutesLoading) {
     return (
       <div className="flex items-center justify-center p-8">
@@ -86,7 +144,7 @@ export function ModelRoutingManager({
         <AlertDescription className="text-sm">
           {t("proxy.modelRouting.info", {
             defaultValue:
-              "Send each Claude model family to a specific provider. The local proxy routes requests by the requested model. Families left on \u201cDefault\u201d use the current/failover provider.",
+              "Send each Claude model family to a specific provider, and optionally to a specific model on that provider. The local proxy routes requests by the requested model. Families left on \u201cDefault\u201d use the current/failover provider; an empty model uses the provider\u2019s own default.",
           })}
         </AlertDescription>
       </Alert>
@@ -103,12 +161,14 @@ export function ModelRoutingManager({
       ) : (
         <div className="space-y-3">
           {MODEL_CLASSES.map((modelClass) => {
-            const selected = routes?.[modelClass] ?? DEFAULT_VALUE;
+            const route = routes?.[modelClass];
+            const selected = route?.providerId ?? DEFAULT_VALUE;
             // If a mapped provider was deleted, fall back to default in the UI.
             const selectedExists =
               selected === DEFAULT_VALUE ||
               providers.some((p) => p.id === selected);
             const value = selectedExists ? selected : DEFAULT_VALUE;
+            const hasProvider = value !== DEFAULT_VALUE;
 
             return (
               <div
@@ -129,9 +189,33 @@ export function ModelRoutingManager({
                     })}
                   </p>
                 </div>
+                <Input
+                  className="w-[200px]"
+                  value={modelInputs[modelClass] ?? ""}
+                  placeholder={t("proxy.modelRouting.modelPlaceholder", {
+                    defaultValue: "Provider default",
+                  })}
+                  disabled={disabled || setModelRoute.isPending || !hasProvider}
+                  aria-label={t("proxy.modelRouting.modelLabel", {
+                    defaultValue: "Target model",
+                  })}
+                  onChange={(e) =>
+                    setModelInputs((prev) => ({
+                      ...prev,
+                      [modelClass]: e.target.value,
+                    }))
+                  }
+                  onBlur={() => void handleModelCommit(modelClass)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      e.currentTarget.blur();
+                    }
+                  }}
+                />
                 <Select
                   value={value}
-                  onValueChange={(v) => handleChange(modelClass, v)}
+                  onValueChange={(v) => handleProviderChange(modelClass, v)}
                   disabled={disabled || setModelRoute.isPending}
                 >
                   <SelectTrigger className="w-[220px]">

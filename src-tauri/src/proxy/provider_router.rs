@@ -12,6 +12,17 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// A pinned per-model route resolved for the current request.
+///
+/// `provider_id` is the provider the requested model class is routed to;
+/// `target_model` (when present) is the exact model to request upstream on that
+/// provider, overriding the provider's own model mapping for this request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelRoutePin {
+    pub provider_id: String,
+    pub target_model: Option<String>,
+}
+
 /// 供应商路由器
 pub struct ProviderRouter {
     /// 数据库连接
@@ -113,14 +124,15 @@ impl ProviderRouter {
     /// 如果为该模型类别（opus/sonnet/haiku）配置了专属供应商，则把它放到候选
     /// 列表首位，使本次请求优先发往该供应商。
     ///
-    /// 返回 `(providers, pinned_provider_id)`：当 `pinned_provider_id` 为
-    /// `Some` 时，调用方应把它当作本次请求的“当前供应商”，从而避免按模型路由
-    /// 触发全局供应商切换（仅在故障转移降级到其他供应商时才切换）。
+    /// 返回 `(providers, pin)`：当 `pin` 为 `Some` 时，调用方应把
+    /// `pin.provider_id` 当作本次请求的“当前供应商”，从而避免按模型路由触发
+    /// 全局供应商切换（仅在故障转移降级到其他供应商时才切换）；`pin.target_model`
+    /// 若存在，则是该路由要在目标供应商上请求的具体模型名。
     pub async fn select_providers_for_model(
         &self,
         app_type: &str,
         model: &str,
-    ) -> Result<(Vec<Provider>, Option<String>), AppError> {
+    ) -> Result<(Vec<Provider>, Option<ModelRoutePin>), AppError> {
         let mut providers = self.select_providers(app_type).await?;
 
         // 仅当模型可被归类时才考虑按模型路由
@@ -129,13 +141,18 @@ impl ProviderRouter {
         };
 
         // 查询该类别是否配置了专属供应商
-        let route_provider_id = match self.db.get_model_route(app_type, model_class) {
-            Ok(Some(id)) => id,
+        let route = match self.db.get_model_route(app_type, model_class) {
+            Ok(Some(route)) => route,
             Ok(None) => return Ok((providers, None)),
             Err(e) => {
                 log::warn!("[{app_type}] 读取模型路由失败: {e}，忽略按模型路由");
                 return Ok((providers, None));
             }
+        };
+        let route_provider_id = route.provider_id;
+        let make_pin = || ModelRoutePin {
+            provider_id: route_provider_id.clone(),
+            target_model: route.target_model.clone(),
         };
 
         // 如果目标供应商已在候选列表中，移动到首位
@@ -147,7 +164,7 @@ impl ProviderRouter {
             log::info!(
                 "[{app_type}] 模型 '{model}'（类别 {model_class}）路由到供应商 {route_provider_id}"
             );
-            return Ok((providers, Some(route_provider_id)));
+            return Ok((providers, Some(make_pin())));
         }
 
         // 目标供应商不在候选列表中：取出并校验熔断器状态后前置
@@ -160,7 +177,7 @@ impl ProviderRouter {
                     log::info!(
                         "[{app_type}] 模型 '{model}'（类别 {model_class}）路由到供应商 {route_provider_id}（已前置）"
                     );
-                    Ok((providers, Some(route_provider_id)))
+                    Ok((providers, Some(make_pin())))
                 } else {
                     log::warn!(
                         "[{app_type}] 模型路由目标 {route_provider_id} 已熔断，忽略按模型路由"
@@ -551,7 +568,8 @@ mod tests {
         db.set_current_provider("claude", "a").unwrap();
 
         // Route Opus to provider B; current provider stays A.
-        db.set_model_route("claude", "opus", Some("b")).unwrap();
+        db.set_model_route("claude", "opus", Some("b"), None)
+            .unwrap();
 
         let router = ProviderRouter::new(db.clone());
 
@@ -561,7 +579,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(providers[0].id, "b");
-        assert_eq!(pin.as_deref(), Some("b"));
+        assert_eq!(
+            pin,
+            Some(ModelRoutePin {
+                provider_id: "b".to_string(),
+                target_model: None,
+            })
+        );
 
         // Sonnet has no route -> falls back to current provider A, no pin.
         let (providers, pin) = router
@@ -596,7 +620,8 @@ mod tests {
         db.update_proxy_config_for_app(config).await.unwrap();
 
         // Route Sonnet to B: B should move to the front while A remains as fallback.
-        db.set_model_route("claude", "sonnet", Some("b")).unwrap();
+        db.set_model_route("claude", "sonnet", Some("b"), None)
+            .unwrap();
 
         let router = ProviderRouter::new(db.clone());
         let (providers, pin) = router
@@ -607,7 +632,40 @@ mod tests {
         assert_eq!(providers.len(), 2);
         assert_eq!(providers[0].id, "b");
         assert_eq!(providers[1].id, "a");
-        assert_eq!(pin.as_deref(), Some("b"));
+        assert_eq!(pin.map(|p| p.provider_id).as_deref(), Some("b"));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_model_route_surfaces_target_model() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        let provider_b =
+            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
+        db.save_provider("claude", &provider_a).unwrap();
+        db.save_provider("claude", &provider_b).unwrap();
+        db.set_current_provider("claude", "a").unwrap();
+
+        // Route Opus to B and pin the upstream model to "gpt-5".
+        db.set_model_route("claude", "opus", Some("b"), Some("gpt-5"))
+            .unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+        let (providers, pin) = router
+            .select_providers_for_model("claude", "claude-opus-4-20250101")
+            .await
+            .unwrap();
+        assert_eq!(providers[0].id, "b");
+        assert_eq!(
+            pin,
+            Some(ModelRoutePin {
+                provider_id: "b".to_string(),
+                target_model: Some("gpt-5".to_string()),
+            })
+        );
     }
 
     #[tokio::test]
@@ -624,8 +682,9 @@ mod tests {
         db.save_provider("claude", &provider_b).unwrap();
         db.set_current_provider("claude", "a").unwrap();
 
-        db.set_model_route("claude", "opus", Some("b")).unwrap();
-        db.set_model_route("claude", "opus", None).unwrap();
+        db.set_model_route("claude", "opus", Some("b"), None)
+            .unwrap();
+        db.set_model_route("claude", "opus", None, None).unwrap();
 
         let router = ProviderRouter::new(db.clone());
         let (providers, pin) = router
