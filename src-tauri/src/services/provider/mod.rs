@@ -28,11 +28,13 @@ pub use live::{
 };
 
 // Internal re-exports (pub(crate))
-pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::{
     build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
     provider_exists_in_live_config, strip_common_config_from_live_settings,
     sync_current_provider_for_app_to_live, write_live_with_common_config,
+};
+pub(crate) use live::{
+    sanitize_claude_common_config_snippet_text, sanitize_claude_settings_for_live,
 };
 
 // Internal re-exports
@@ -388,6 +390,47 @@ mod tests {
             ProviderService::extract_credentials(&provider, &AppType::Claude).unwrap();
         assert_eq!(api_key, "token");
         assert_eq!(base_url, "https://claude.example");
+    }
+
+    #[test]
+    fn extract_claude_common_config_prunes_missing_absolute_commands() {
+        let missing_command = env::temp_dir()
+            .join(format!("cc-switch-missing-command-{}", std::process::id()))
+            .join("bridge");
+        assert!(!missing_command.exists());
+
+        let settings = json!({
+            "includeCoAuthoredBy": false,
+            "hooks": {
+                "SessionStart": [{
+                    "hooks": [{
+                        "type": "command",
+                        "command": missing_command.to_string_lossy()
+                    }]
+                }]
+            },
+            "statusLine": {
+                "type": "command",
+                "command": missing_command.to_string_lossy()
+            },
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "token",
+                "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1"
+            }
+        });
+
+        let extracted = ProviderService::extract_claude_common_config(&settings)
+            .expect("extract_claude_common_config should succeed");
+        let extracted: Value = serde_json::from_str(&extracted).unwrap();
+
+        assert_eq!(extracted["includeCoAuthoredBy"], json!(false));
+        assert_eq!(
+            extracted["env"]["CLAUDE_CODE_DISABLE_TERMINAL_TITLE"],
+            json!("1")
+        );
+        assert!(extracted.get("hooks").is_none());
+        assert!(extracted.get("statusLine").is_none());
+        assert!(extracted["env"].get("ANTHROPIC_AUTH_TOKEN").is_none());
     }
 
     #[test]
@@ -2054,6 +2097,8 @@ impl ProviderService {
                 obj.remove(*key);
             }
         }
+
+        live::prune_missing_absolute_claude_command_references(&mut config);
 
         // Check if result is empty
         if config.as_object().is_none_or(|obj| obj.is_empty()) {

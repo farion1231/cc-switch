@@ -20,8 +20,8 @@ export async function getClaudeCommonConfigSnippet(): Promise<string | null> {
  */
 export async function setClaudeCommonConfigSnippet(
   snippet: string,
-): Promise<void> {
-  return invoke("set_claude_common_config_snippet", { snippet });
+): Promise<string | null> {
+  return invoke<string | null>("set_claude_common_config_snippet", { snippet });
 }
 
 /**
@@ -44,8 +44,11 @@ export async function getCommonConfigSnippet(
 export async function setCommonConfigSnippet(
   appType: AppType,
   snippet: string,
-): Promise<void> {
-  return invoke("set_common_config_snippet", { appType, snippet });
+): Promise<string | null> {
+  return invoke<string | null>("set_common_config_snippet", {
+    appType,
+    snippet,
+  });
 }
 
 /**

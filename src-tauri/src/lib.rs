@@ -1729,6 +1729,25 @@ async fn restore_proxy_state_on_startup(state: &store::AppState) {
 }
 
 fn initialize_common_config_snippets(state: &store::AppState) {
+    if let Ok(Some(snippet)) = state.db.get_config_snippet("claude") {
+        if !snippet.trim().is_empty() {
+            match crate::services::provider::sanitize_claude_common_config_snippet_text(&snippet) {
+                Ok(sanitized) if sanitized != snippet => {
+                    match state.db.set_config_snippet("claude", Some(sanitized)) {
+                        Ok(()) => log::info!(
+                            "✓ Pruned stale Claude command references from common config snippet"
+                        ),
+                        Err(e) => log::warn!(
+                            "✗ Failed to persist sanitized Claude common config snippet: {e}"
+                        ),
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("✗ Failed to sanitize Claude common config snippet: {e}"),
+            }
+        }
+    }
+
     // Auto-extract common config snippets from clean live files when snippet is missing.
     // This must run before proxy takeover is restored on startup, otherwise we'd read
     // proxy-placeholder configs instead of the user's actual live settings.
