@@ -203,7 +203,7 @@ impl<'a> UsageLogger<'a> {
                     .map(Some)
                     .map_err(|e| AppError::Database(format!("解析定价数据失败: {e}")))
             }
-            None => Ok(None),
+            None => Ok(super::pricing::find(model_id)),
         }
     }
 

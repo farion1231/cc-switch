@@ -23,6 +23,10 @@ pub struct ModelPricing {
     pub output_cost_per_million: Decimal,
     pub cache_read_cost_per_million: Decimal,
     pub cache_creation_cost_per_million: Decimal,
+    pub input_cost_above_200k_per_million: Option<Decimal>,
+    pub output_cost_above_200k_per_million: Option<Decimal>,
+    pub cache_read_cost_above_200k_per_million: Option<Decimal>,
+    pub cache_creation_cost_above_200k_per_million: Option<Decimal>,
 }
 
 /// 成本计算器
@@ -85,15 +89,26 @@ impl CostCalculator {
         };
 
         // 各项基础成本（不含倍率）
-        let input_cost =
-            Decimal::from(billable_input_tokens) * pricing.input_cost_per_million / million;
-        let output_cost =
-            Decimal::from(usage.output_tokens) * pricing.output_cost_per_million / million;
-        let cache_read_cost =
-            Decimal::from(usage.cache_read_tokens) * pricing.cache_read_cost_per_million / million;
-        let cache_creation_cost = Decimal::from(usage.cache_creation_tokens)
-            * pricing.cache_creation_cost_per_million
-            / million;
+        let input_cost = Self::tiered_cost(
+            billable_input_tokens,
+            pricing.input_cost_per_million,
+            pricing.input_cost_above_200k_per_million,
+        ) / million;
+        let output_cost = Self::tiered_cost(
+            usage.output_tokens,
+            pricing.output_cost_per_million,
+            pricing.output_cost_above_200k_per_million,
+        ) / million;
+        let cache_read_cost = Self::tiered_cost(
+            usage.cache_read_tokens,
+            pricing.cache_read_cost_per_million,
+            pricing.cache_read_cost_above_200k_per_million,
+        ) / million;
+        let cache_creation_cost = Self::tiered_cost(
+            usage.cache_creation_tokens,
+            pricing.cache_creation_cost_per_million,
+            pricing.cache_creation_cost_above_200k_per_million,
+        ) / million;
 
         // 总成本 = 各项基础成本之和 × 倍率
         let base_total = input_cost + output_cost + cache_read_cost + cache_creation_cost;
@@ -105,6 +120,15 @@ impl CostCalculator {
             cache_read_cost,
             cache_creation_cost,
             total_cost,
+        }
+    }
+
+    fn tiered_cost(tokens: u64, base: Decimal, above_200k: Option<Decimal>) -> Decimal {
+        const THRESHOLD: u64 = 200_000;
+        if let Some(above) = above_200k.filter(|_| tokens > THRESHOLD) {
+            Decimal::from(THRESHOLD) * base + Decimal::from(tokens - THRESHOLD) * above
+        } else {
+            Decimal::from(tokens) * base
         }
     }
 
@@ -141,6 +165,10 @@ impl ModelPricing {
             output_cost_per_million: Decimal::from_str(output)?,
             cache_read_cost_per_million: Decimal::from_str(cache_read)?,
             cache_creation_cost_per_million: Decimal::from_str(cache_creation)?,
+            input_cost_above_200k_per_million: None,
+            output_cost_above_200k_per_million: None,
+            cache_read_cost_above_200k_per_million: None,
+            cache_creation_cost_above_200k_per_million: None,
         })
     }
 }
