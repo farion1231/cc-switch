@@ -330,8 +330,8 @@ function ProviderFormFull({
     isEditMode,
     initialCategory: initialData?.category,
   });
-  const isOmoCategory = (appId === "opencode" || appId === "kilo") && category === "omo";
-  const isOmoSlimCategory = (appId === "opencode" || appId === "kilo") && category === "omo-slim";
+  const isOmoCategory = appId === "opencode" && category === "omo";
+  const isOmoSlimCategory = appId === "opencode" && category === "omo-slim";
   const isAnyOmoCategory = isOmoCategory || isOmoSlimCategory;
 
   useEffect(() => {
@@ -825,7 +825,7 @@ function ProviderFormFull({
   });
 
   const initialOmoSettings =
-    (appId === "opencode" || appId === "kilo") &&
+    appId === "opencode" &&
     (initialData?.category === "omo" || initialData?.category === "omo-slim")
       ? (initialData.settingsConfig as Record<string, unknown> | undefined)
       : undefined;

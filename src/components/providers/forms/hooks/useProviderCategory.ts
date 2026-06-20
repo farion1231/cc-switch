@@ -73,7 +73,13 @@ export function useProviderCategory({
     } else if (type === "opencode" && (appId === "opencode" || appId === "kilo")) {
       const preset = opencodeProviderPresets[index];
       if (preset) {
-        setCategory(preset.category || undefined);
+        const cat = preset.category;
+        // Kilo doesn't support OMO/OMO-Slim categories
+        if (appId === "kilo" && (cat === "omo" || cat === "omo-slim")) {
+          setCategory(undefined);
+        } else {
+          setCategory(cat || undefined);
+        }
       }
     }
   }, [appId, selectedPresetId, isEditMode, initialCategory]);
