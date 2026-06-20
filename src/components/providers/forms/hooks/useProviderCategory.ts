@@ -70,7 +70,10 @@ export function useProviderCategory({
       if (preset) {
         setCategory(preset.category || undefined);
       }
-    } else if (type === "opencode" && (appId === "opencode" || appId === "kilo")) {
+    } else if (
+      type === "opencode" &&
+      (appId === "opencode" || appId === "kilo")
+    ) {
       const preset = opencodeProviderPresets[index];
       if (preset) {
         const cat = preset.category;

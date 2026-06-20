@@ -113,12 +113,7 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
   kilo: {
     label: "Kilo",
     icon: (
-      <ProviderIcon
-        icon="kilo"
-        name="Kilo"
-        size={14}
-        showFallback={false}
-      />
+      <ProviderIcon icon="kilo" name="Kilo" size={14} showFallback={false} />
     ),
     activeClass:
       "bg-teal-500/10 ring-1 ring-teal-500/20 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400",

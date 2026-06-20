@@ -370,7 +370,7 @@ function ProviderFormFull({
           ? CODEX_DEFAULT_CONFIG
           : appId === "gemini"
             ? GEMINI_DEFAULT_CONFIG
-            : (appId === "opencode" || appId === "kilo")
+            : appId === "opencode" || appId === "kilo"
               ? OPENCODE_DEFAULT_CONFIG
               : appId === "openclaw"
                 ? OPENCLAW_DEFAULT_CONFIG
@@ -618,7 +618,7 @@ function ProviderFormFull({
         id: `gemini-${index}`,
         preset,
       }));
-    } else if ((appId === "opencode" || appId === "kilo")) {
+    } else if (appId === "opencode" || appId === "kilo") {
       return opencodeProviderPresets.map<PresetEntry>((preset, index) => ({
         id: `opencode-${index}`,
         preset,
@@ -1307,7 +1307,7 @@ function ProviderFormFull({
       settingsConfig,
     };
 
-    if ((appId === "opencode" || appId === "kilo")) {
+    if (appId === "opencode" || appId === "kilo") {
       if (isAnyOmoCategory) {
         if (!isEditMode) {
           const prefix = category === "omo" ? "omo" : "omo-slim";
@@ -1584,7 +1584,7 @@ function ProviderFormFull({
       if (appId === "gemini") {
         resetGeminiConfig({}, {});
       }
-      if ((appId === "opencode" || appId === "kilo")) {
+      if (appId === "opencode" || appId === "kilo") {
         opencodeForm.resetOpencodeState();
         omoDraft.resetOmoDraftState();
       }
@@ -1650,7 +1650,7 @@ function ProviderFormFull({
       return;
     }
 
-    if ((appId === "opencode" || appId === "kilo")) {
+    if (appId === "opencode" || appId === "kilo") {
       const preset = entry.preset as OpenCodeProviderPreset;
       const config = preset.settingsConfig;
 
@@ -1781,7 +1781,8 @@ function ProviderFormFull({
           <BasicFormFields
             form={form}
             beforeNameSlot={
-              (appId === "opencode" || appId === "kilo") && !isAnyOmoCategory ? (
+              (appId === "opencode" || appId === "kilo") &&
+              !isAnyOmoCategory ? (
                 <div className="space-y-2">
                   <Label htmlFor="opencode-key">
                     {t("opencode.providerKey")}

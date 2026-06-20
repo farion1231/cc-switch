@@ -124,7 +124,10 @@ export function AddProviderDialog({
 
       // OpenCode/OpenClaw/Hermes/Kilo: pass providerKey for ID generation
       if (
-        (appId === "opencode" || appId === "openclaw" || appId === "hermes" || appId === "kilo") &&
+        (appId === "opencode" ||
+          appId === "openclaw" ||
+          appId === "hermes" ||
+          appId === "kilo") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;

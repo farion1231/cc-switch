@@ -162,7 +162,9 @@ export function DirectorySettings({
         />
 
         <DirectoryInput
-          label={t("settings.kiloConfigDir", { defaultValue: "Kilo Config Directory" })}
+          label={t("settings.kiloConfigDir", {
+            defaultValue: "Kilo Config Directory",
+          })}
           description={undefined}
           value={kiloDir}
           resolvedValue={resolvedDirs.kilo}
