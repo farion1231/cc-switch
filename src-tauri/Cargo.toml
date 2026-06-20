@@ -104,6 +104,11 @@ opt-level = "s"
 panic = "unwind"
 strip = "symbols"
 
+[profile.release.build-override]
+# Do not strip build scripts/proc-macro dependencies. Stripping proc-macro dylibs
+# can make rustc fail to load legacy macro crates during release builds.
+strip = false
+
 [dev-dependencies]
 serial_test = "3"
 tempfile = "3"

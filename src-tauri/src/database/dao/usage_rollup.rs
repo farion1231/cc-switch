@@ -493,15 +493,18 @@ mod tests {
 
         {
             let conn = crate::database::lock_conn!(db.conn);
-            let date_str = chrono::DateTime::from_timestamp(old_ts, 0)
+            let date_str = Local
+                .timestamp_opt(old_ts, 0)
+                .single()
                 .unwrap()
                 .format("%Y-%m-%d")
                 .to_string();
             conn.execute(
                 "INSERT INTO usage_daily_rollups
-                    (date, app_type, provider_id, model, request_count, success_count,
+                    (date, app_type, provider_id, model, request_model, pricing_model,
+                     request_count, success_count,
                      input_tokens, output_tokens, total_cost_usd, avg_latency_ms)
-                 VALUES (?1, 'claude', 'p1', 'claude-3', 10, 10, 1000, 500, '0.10', 100)",
+                 VALUES (?1, 'claude', 'p1', 'claude-3', '', '', 10, 10, 1000, 500, '0.10', 100)",
                 [&date_str],
             )?;
             for i in 0..3 {
