@@ -128,6 +128,29 @@ pub const TRAY_SECTIONS: [TrayAppSection; 3] = [
 const UTIL_WARN_PCT: f64 = 70.0;
 const UTIL_DANGER_PCT: f64 = 90.0;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum QuotaDisplayMode {
+    Used,
+    Remaining,
+}
+
+impl QuotaDisplayMode {
+    fn from_usage_script(script: Option<&crate::provider::UsageScript>) -> Self {
+        let value = script.and_then(|s| s.quota_display_mode.as_deref());
+        match value {
+            Some("remaining") => Self::Remaining,
+            _ => Self::Used,
+        }
+    }
+
+    fn display_pct(self, utilization: f64) -> f64 {
+        match self {
+            Self::Used => utilization,
+            Self::Remaining => (100.0 - utilization).max(0.0),
+        }
+    }
+}
+
 fn emoji_for_utilization(pct: f64) -> &'static str {
     if pct >= UTIL_DANGER_PCT {
         "\u{1F534}" // 🔴
@@ -140,6 +163,7 @@ fn emoji_for_utilization(pct: f64) -> &'static str {
 
 fn format_subscription_summary(
     quota: &crate::services::subscription::SubscriptionQuota,
+    display_mode: QuotaDisplayMode,
 ) -> Option<String> {
     if !quota.success {
         return None;
@@ -168,7 +192,7 @@ fn format_subscription_summary(
     let emoji = emoji_for_utilization(worst);
     let body = parts
         .iter()
-        .map(|(label, u)| format!("{label}{}%", u.round() as i64))
+        .map(|(label, u)| format!("{label}{}%", display_mode.display_pct(*u).round() as i64))
         .collect::<Vec<_>>()
         .join(" ");
     Some(format!("{emoji} {body}"))
@@ -197,7 +221,10 @@ fn tier_pct(data: &crate::provider::UsageData) -> Option<f64> {
     }
 }
 
-fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String> {
+fn format_script_summary(
+    result: &crate::provider::UsageResult,
+    display_mode: QuotaDisplayMode,
+) -> Option<String> {
     if !result.success {
         return None;
     }
@@ -223,7 +250,7 @@ fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String
         let emoji = emoji_for_utilization(worst);
         let body = parts
             .iter()
-            .map(|(label, u)| format!("{label}{}%", u.round() as i64))
+            .map(|(label, u)| format!("{label}{}%", display_mode.display_pct(*u).round() as i64))
             .collect::<Vec<_>>()
             .join(" ");
         return Some(format!("{emoji} {body}"));
@@ -262,22 +289,29 @@ fn format_usage_suffix(
     // 当前脚本是否启用：禁用/删除时不再沿用旧 UsageCache 结果，
     // 并顺手 invalidate，防止后续重建继续命中过期数据。
     let is_official_provider = provider.category.as_deref() == Some("official");
+    let usage_script = provider.meta.as_ref().and_then(|m| m.usage_script.as_ref());
+    let quota_display_mode = QuotaDisplayMode::from_usage_script(usage_script);
     let can_use_script = provider.has_usage_script_enabled()
         && (!is_official_provider || provider_uses_official_subscription(provider));
     if can_use_script {
         // 脚本缓存优先（覆盖 Copilot/coding_plan/balance/自定义脚本），借用访问避免克隆整条 UsageResult。
-        if let Some(Some(s)) =
-            app_state
-                .usage_cache
-                .with_script(app_type, provider_id, format_script_summary)
+        if let Some(Some(s)) = app_state
+            .usage_cache
+            .with_script(app_type, provider_id, |result| {
+                let display_mode = if provider_uses_official_subscription(provider) {
+                    quota_display_mode
+                } else {
+                    QuotaDisplayMode::Used
+                };
+                format_script_summary(result, display_mode)
+            })
         {
             return Some(format!(" · {s}"));
         }
         if provider_uses_official_subscription(provider) {
-            if let Some(Some(s)) = app_state
-                .usage_cache
-                .with_subscription(app_type, format_subscription_summary)
-            {
+            if let Some(Some(s)) = app_state.usage_cache.with_subscription(app_type, |quota| {
+                format_subscription_summary(quota, quota_display_mode)
+            }) {
                 return Some(format!(" · {s}"));
             }
         }
@@ -874,7 +908,10 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_script_summary, format_subscription_summary, TRAY_ID};
+    use super::{
+        format_script_summary as raw_format_script_summary,
+        format_subscription_summary as raw_format_subscription_summary, QuotaDisplayMode, TRAY_ID,
+    };
     use crate::provider::{UsageData, UsageResult};
     use crate::services::subscription::{
         CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_GEMINI_FLASH,
@@ -909,6 +946,28 @@ mod tests {
             used_value_usd: None,
             max_value_usd: None,
         }
+    }
+
+    fn format_subscription_summary(quota: &SubscriptionQuota) -> Option<String> {
+        raw_format_subscription_summary(quota, QuotaDisplayMode::Used)
+    }
+
+    fn format_subscription_summary_with_mode(
+        quota: &SubscriptionQuota,
+        mode: QuotaDisplayMode,
+    ) -> Option<String> {
+        raw_format_subscription_summary(quota, mode)
+    }
+
+    fn format_script_summary(result: &UsageResult) -> Option<String> {
+        raw_format_script_summary(result, QuotaDisplayMode::Used)
+    }
+
+    fn format_script_summary_with_mode(
+        result: &UsageResult,
+        mode: QuotaDisplayMode,
+    ) -> Option<String> {
+        raw_format_script_summary(result, mode)
     }
 
     #[test]
@@ -1006,6 +1065,23 @@ mod tests {
         let s = format_subscription_summary(&quota).unwrap();
         assert!(s.contains("w95%"), "expected w95% in {s}");
         assert!(s.starts_with("\u{1F534}"), "expected red emoji in {s}");
+    }
+
+    #[test]
+    fn subscription_summary_can_display_remaining_percent() {
+        let quota = make_quota(
+            "codex",
+            true,
+            vec![tier(TIER_FIVE_HOUR, 10.0), tier(TIER_SEVEN_DAY, 95.0)],
+        );
+        let s = format_subscription_summary_with_mode(&quota, QuotaDisplayMode::Remaining)
+            .expect("should format");
+        assert!(s.contains("h90%"), "expected h90% in {s}");
+        assert!(s.contains("w5%"), "expected w5% in {s}");
+        assert!(
+            s.starts_with("\u{1F534}"),
+            "risk emoji should still use utilization: {s}"
+        );
     }
 
     #[test]
@@ -1125,6 +1201,33 @@ mod tests {
         let s = format_script_summary(&r).unwrap();
         assert!(s.contains("w95%"), "expected w95% in {s}");
         assert!(s.starts_with("\u{1F534}"), "expected red emoji in {s}");
+    }
+
+    #[test]
+    fn script_summary_can_display_remaining_percent_for_official_subscription() {
+        let r = usage_result(
+            true,
+            vec![
+                usage_data(Some(TIER_FIVE_HOUR), 12.0),
+                usage_data(Some(TIER_SEVEN_DAY), 80.0),
+            ],
+        );
+        let s = format_script_summary_with_mode(&r, QuotaDisplayMode::Remaining)
+            .expect("should format");
+        assert!(s.contains("h88%"), "expected h88% in {s}");
+        assert!(s.contains("w20%"), "expected w20% in {s}");
+        assert!(
+            s.starts_with("\u{1F7E0}"),
+            "risk emoji should still use utilization: {s}"
+        );
+    }
+
+    #[test]
+    fn missing_quota_display_mode_defaults_to_used_percent() {
+        assert_eq!(
+            QuotaDisplayMode::from_usage_script(None),
+            QuotaDisplayMode::Used
+        );
     }
 
     #[test]

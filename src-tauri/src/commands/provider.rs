@@ -1086,6 +1086,7 @@ mod native_query_credentials_tests {
             template_type: Some("token_plan".to_string()),
             auto_query_interval: None,
             coding_plan_provider: coding_plan_provider.map(str::to_string),
+            quota_display_mode: None,
         }
     }
 

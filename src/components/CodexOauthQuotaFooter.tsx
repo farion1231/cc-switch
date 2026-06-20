@@ -1,13 +1,17 @@
 import React from "react";
 import type { ProviderMeta } from "@/types";
 import { useCodexOauthQuota } from "@/lib/query/subscription";
-import { SubscriptionQuotaView } from "@/components/SubscriptionQuotaFooter";
+import {
+  SubscriptionQuotaView,
+  type QuotaDisplayMode,
+} from "@/components/SubscriptionQuotaFooter";
 
 interface CodexOauthQuotaFooterProps {
   meta?: ProviderMeta;
   inline?: boolean;
   /** 是否为当前激活的供应商 */
   isCurrent?: boolean;
+  displayMode?: QuotaDisplayMode;
 }
 
 /**
@@ -20,6 +24,7 @@ const CodexOauthQuotaFooter: React.FC<CodexOauthQuotaFooterProps> = ({
   meta,
   inline = false,
   isCurrent = false,
+  displayMode,
 }) => {
   const {
     data: quota,
@@ -34,6 +39,7 @@ const CodexOauthQuotaFooter: React.FC<CodexOauthQuotaFooterProps> = ({
       refetch={refetch}
       appIdForExpiredHint="codex_oauth"
       inline={inline}
+      displayMode={displayMode}
     />
   );
 };
