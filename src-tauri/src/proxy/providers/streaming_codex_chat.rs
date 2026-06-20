@@ -429,8 +429,10 @@ impl ChatToResponsesState {
             if let Some(id) = id_delta {
                 state.call_id = id;
             }
-            if let Some(name) = name_delta {
-                state.name = name;
+            if let Some(ref name) = name_delta {
+                if !name.is_empty() {
+                    state.name.clone_from(name);
+                }
             }
             if !args_delta.is_empty() {
                 state.arguments.push_str(&args_delta);
@@ -442,7 +444,7 @@ impl ChatToResponsesState {
                 }
             }
 
-            if !state.added && (!state.call_id.is_empty() || !state.name.is_empty()) {
+            if !state.added && !state.call_id.is_empty() && !state.name.is_empty() {
                 should_add = true;
                 pending_arguments = state.arguments.clone();
             } else if state.added {
@@ -463,9 +465,6 @@ impl ChatToResponsesState {
             state.added = true;
             if state.call_id.is_empty() {
                 state.call_id = format!("call_{chat_index}");
-            }
-            if state.name.is_empty() {
-                state.name = "unknown_tool".to_string();
             }
             state.output_index = Some(assigned);
             let is_custom_tool = self.tool_context.is_custom_tool_chat_name(&state.name);
@@ -699,6 +698,21 @@ impl ChatToResponsesState {
                 continue;
             }
 
+            // Skip tool calls with missing names (defensive: some models generate
+            // tool call deltas without providing a valid function name)
+            let has_bad_name = self
+                .tools
+                .get(&key)
+                .map(|state| state.name.is_empty())
+                .unwrap_or(true);
+            if has_bad_name {
+                if let Some(state) = self.tools.get_mut(&key) {
+                    state.done = true;
+                }
+                log::warn!("[Codex] Skipping streaming tool call with missing name");
+                continue;
+            }
+
             if self
                 .tools
                 .get(&key)
@@ -712,9 +726,6 @@ impl ChatToResponsesState {
                 state.added = true;
                 if state.call_id.is_empty() {
                     state.call_id = format!("call_{key}");
-                }
-                if state.name.is_empty() {
-                    state.name = "unknown_tool".to_string();
                 }
                 state.output_index = Some(assigned);
                 state.item_id = response_tool_call_item_id_from_chat_name(
