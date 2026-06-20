@@ -11,7 +11,7 @@ import { TEMPLATE_TYPES } from "@/config/constants";
 
 export interface CodingPlanProviderEntry {
   /** 与后端 QuotaTier 的 `codingPlanProvider` 取值对齐 */
-  id: "kimi" | "zhipu" | "minimax" | "zenmux";
+  id: "kimi" | "zhipu" | "minimax" | "zenmux" | "volcengine";
   /** UsageScriptModal 下拉显示用 */
   label: string;
   /** base_url 匹配规则 */
@@ -34,6 +34,13 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     id: "zenmux",
     label: "ZenMux",
     pattern: /zenmux\./i,
+  },
+  {
+    id: "volcengine",
+    label: "火山 Coding Plan",
+    // 精确到 /api/coding：同 host 下还有 DouBaoSeed（/api/compatible）等其它火山产品，
+    // 裸 host 会误判。火山用量查询用 AK/SK 签名，需用户单独填写（见 UsageScriptModal）。
+    pattern: /ark\.cn-beijing\.volces\.com\/api\/coding/i,
   },
 ] as const;
 

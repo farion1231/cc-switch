@@ -514,9 +514,30 @@ async fn query_provider_usage_inner(
         let (base_url, api_key) =
             resolve_coding_plan_credentials(&app_type, provider, usage_script);
 
-        let quota = crate::services::coding_plan::get_coding_plan_quota(&base_url, &api_key)
-            .await
-            .map_err(|e| format!("Failed to query coding plan: {e}"))?;
+        // 火山方舟用量查询用 AK/SK 签名（独立于编码用的 Ark API Key），从 usage_script 取。
+        let is_volcengine = usage_script
+            .and_then(|s| s.coding_plan_provider.as_deref())
+            .map(|p| p.eq_ignore_ascii_case("volcengine"))
+            .unwrap_or(false);
+        let volcengine_ak = if is_volcengine {
+            usage_script.and_then(|s| s.access_key_id.clone())
+        } else {
+            None
+        };
+        let volcengine_sk = if is_volcengine {
+            usage_script.and_then(|s| s.secret_access_key.clone())
+        } else {
+            None
+        };
+
+        let quota = crate::services::coding_plan::get_coding_plan_quota(
+            &base_url,
+            &api_key,
+            volcengine_ak.as_deref(),
+            volcengine_sk.as_deref(),
+        )
+        .await
+        .map_err(|e| format!("Failed to query coding plan: {e}"))?;
 
         // 将 SubscriptionQuota 转换为 UsageResult
         if !quota.success {
@@ -1086,6 +1107,8 @@ mod native_query_credentials_tests {
             template_type: Some("token_plan".to_string()),
             auto_query_interval: None,
             coding_plan_provider: coding_plan_provider.map(str::to_string),
+            access_key_id: None,
+            secret_access_key: None,
         }
     }
 

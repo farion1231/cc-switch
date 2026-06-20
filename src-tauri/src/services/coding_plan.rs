@@ -4,8 +4,12 @@
 //! 复用 subscription 模块的 SubscriptionQuota / QuotaTier 类型。
 
 use super::subscription::{
-    CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_WEEKLY_LIMIT,
+    CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_MONTHLY,
+    TIER_WEEKLY_LIMIT,
 };
+use chrono::{DateTime, Utc};
+use hmac::{Hmac, Mac};
+use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // ── 供应商检测 ──────────────────────────────────────────────
@@ -17,6 +21,7 @@ enum CodingPlanProvider {
     MiniMaxCn,
     MiniMaxEn,
     ZenMux,
+    Volcengine,
 }
 
 fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
@@ -33,6 +38,10 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         Some(CodingPlanProvider::MiniMaxEn)
     } else if url.contains("zenmux") {
         Some(CodingPlanProvider::ZenMux)
+    } else if url.contains("ark.cn-beijing.volces.com/api/coding") {
+        // 精确到 /api/coding：同 host 下还有 DouBaoSeed（/api/compatible）等其它火山产品，
+        // 裸 host 会误判。管控面 GetCodingPlanUsage 用 AK/SK 签名，与编码用的 Ark API Key 无关。
+        Some(CodingPlanProvider::Volcengine)
     } else {
         None
     }
@@ -652,11 +661,282 @@ fn parse_minimax_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
     tiers
 }
 
+// ── 火山方舟 Coding Plan（AK/SK HMAC-SHA256 签名） ─────────
+
+/// 火山方舟管控面 API host。注意编码用的是 `ark.cn-beijing.volces.com`，
+/// 但 GetCodingPlanUsage 这类管控面接口必须打到 `volcengineapi.com`，
+/// 且需 AK/SK 签名（Ark API Key 只能调数据面，调管控面会 401）。
+const VOLCENGINE_ARK_HOST: &str = "ark.cn-beijing.volcengineapi.com";
+const VOLCENGINE_ARK_REGION: &str = "cn-beijing";
+const VOLCENGINE_ARK_SERVICE: &str = "ark";
+
+type HmacSha256 = Hmac<Sha256>;
+
+/// HMAC-SHA256：key 为任意字节，msg 为 UTF-8 字符串。
+fn hmac_sha256_bytes(key: &[u8], msg: &str) -> Vec<u8> {
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
+    mac.update(msg.as_bytes());
+    mac.finalize().into_bytes().to_vec()
+}
+
+/// 字节数组转小写十六进制串（对应 Python `hashlib.hexdigest()`）。
+fn hex_lower(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        s.push(HEX[(b >> 4) as usize] as char);
+        s.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    s
+}
+
+/// SHA-256 摘要的十六进制串。
+fn sha256_hex(data: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data.as_bytes());
+    hex_lower(&hasher.finalize())
+}
+
+/// RFC 3986 percent-encoding，仅保留 unreserved（`A-Za-z0-9-_.~`），
+/// 与 Python `urllib.parse.quote(s, safe="-_.~")` 一致。非 unreserved 字节
+/// 编码为大写 `%XX`。
+fn percent_encode(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for &byte in input.as_bytes() {
+        let c = byte as char;
+        if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~') {
+            out.push(c);
+        } else {
+            out.push('%');
+            out.push_str(&format!("{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// 规范化 query string：每个键/值 percent-encode 后按键升序拼接。
+fn canonical_query(query: &[(&str, &str)]) -> String {
+    let mut pairs: Vec<(String, String)> = query
+        .iter()
+        .map(|(k, v)| (percent_encode(k), percent_encode(v)))
+        .collect();
+    pairs.sort();
+    pairs
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+/// 签名 key 派生链：`sk → (short_date) → region → service → "request"`，
+/// 每步 HMAC-SHA256。对照 volcenginesdkcore.SignerV4。
+fn volc_signing_key(sk: &str, short_date: &str, region: &str, service: &str) -> Vec<u8> {
+    let mut k = hmac_sha256_bytes(sk.as_bytes(), short_date);
+    k = hmac_sha256_bytes(&k, region);
+    k = hmac_sha256_bytes(&k, service);
+    hmac_sha256_bytes(&k, "request")
+}
+
+/// 计算签名请求所需的 headers（不含 Host——reqwest 按目标 URL 自动设置，
+/// 其值与下方 canonical 计算用的 host 一致）。
+///
+/// 时间作为显式参数传入，便于单元测试做确定性断言。运行时入口
+/// [`sign_volcengine_coding_plan`] 用 `Utc::now()` 调用本函数。
+fn build_signed_headers(
+    now: DateTime<Utc>,
+    host: &str,
+    method: &str,
+    path: &str,
+    query: &[(&str, &str)],
+    body: &str,
+    ak: &str,
+    sk: &str,
+    region: &str,
+    service: &str,
+) -> Vec<(String, String)> {
+    let x_date = now.format("%Y%m%dT%H%M%SZ").to_string();
+    let short_date = &x_date[..8];
+    let content_type = "application/json; charset=UTF-8";
+    let body_hash = sha256_hex(body);
+
+    let signed_str = format!(
+        "content-type:{content_type}\nhost:{host}\nx-content-sha256:{body_hash}\nx-date:{x_date}\n"
+    );
+    let signed_headers = "content-type;host;x-content-sha256;x-date";
+    let canonical_request = [
+        method.to_string(),
+        path.to_string(),
+        canonical_query(query),
+        signed_str,
+        signed_headers.to_string(),
+        body_hash.clone(),
+    ]
+    .join("\n");
+    let credential_scope = format!("{short_date}/{region}/{service}/request");
+    let string_to_sign = [
+        "HMAC-SHA256".to_string(),
+        x_date.clone(),
+        credential_scope.clone(),
+        sha256_hex(&canonical_request),
+    ]
+    .join("\n");
+
+    let skey = volc_signing_key(sk, short_date, region, service);
+    let signature = hex_lower(&hmac_sha256_bytes(&skey, &string_to_sign));
+
+    vec![
+        ("Content-Type".to_string(), content_type.to_string()),
+        ("X-Date".to_string(), x_date),
+        ("X-Content-Sha256".to_string(), body_hash),
+        (
+            "Authorization".to_string(),
+            format!(
+                "HMAC-SHA256 Credential={ak}/{credential_scope}, \
+                 SignedHeaders={signed_headers}, Signature={signature}"
+            ),
+        ),
+    ]
+}
+
+/// 运行时签名入口：固定目标为 GetCodingPlanUsage。
+fn sign_volcengine_coding_plan(body: &str, ak: &str, sk: &str) -> Vec<(String, String)> {
+    build_signed_headers(
+        Utc::now(),
+        VOLCENGINE_ARK_HOST,
+        "POST",
+        "/",
+        &[("Action", "GetCodingPlanUsage"), ("Version", "2024-01-01")],
+        body,
+        ak,
+        sk,
+        VOLCENGINE_ARK_REGION,
+        VOLCENGINE_ARK_SERVICE,
+    )
+}
+
+/// 解析 GetCodingPlanUsage 响应为 tier 列表。
+///
+/// 兼容两种实测响应形态：`QuotaUsage` 直接在根，或包在 `Result` 下。
+/// Level 取值 `session`(5h) / `weekly`(周) / `monthly`(月)，未知 Level 跳过。
+/// 固定展示顺序：5 小时 → 周 → 月。
+fn parse_volcengine_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
+    let result = body
+        .get("Result")
+        .filter(|v| v.is_object())
+        .unwrap_or(body);
+    // QuotaUsage 优先取 Result 下；若 Result 存在却为空，回退根级（混合形态兜底）。
+    let quota_usage = result
+        .get("QuotaUsage")
+        .and_then(|v| v.as_array())
+        .or_else(|| body.get("QuotaUsage").and_then(|v| v.as_array()));
+
+    let mut five_hour: Option<(f64, Option<String>)> = None;
+    let mut weekly: Option<(f64, Option<String>)> = None;
+    let mut monthly: Option<(f64, Option<String>)> = None;
+    if let Some(items) = quota_usage {
+        for item in items {
+            if !item.is_object() {
+                continue;
+            }
+            let level = item.get("Level").and_then(|v| v.as_str()).unwrap_or("");
+            let percent = item.get("Percent").and_then(parse_f64).unwrap_or(0.0);
+            // ResetTimestamp 是 epoch 秒；extract_reset_time 已处理秒/毫秒。
+            let resets_at = item.get("ResetTimestamp").and_then(extract_reset_time);
+            let entry = (percent, resets_at);
+            match level {
+                "session" if five_hour.is_none() => five_hour = Some(entry),
+                "weekly" if weekly.is_none() => weekly = Some(entry),
+                "monthly" if monthly.is_none() => monthly = Some(entry),
+                _ => {}
+            }
+        }
+    }
+
+    let mut tiers = Vec::new();
+    for (name, slot) in [
+        (TIER_FIVE_HOUR, five_hour),
+        (TIER_WEEKLY_LIMIT, weekly),
+        (TIER_MONTHLY, monthly),
+    ] {
+        if let Some((percent, resets_at)) = slot {
+            tiers.push(QuotaTier {
+                name: name.to_string(),
+                utilization: percent,
+                resets_at,
+                used_value_usd: None,
+                max_value_usd: None,
+            });
+        }
+    }
+    tiers
+}
+
+async fn query_volcengine(access_key_id: &str, secret_access_key: &str) -> SubscriptionQuota {
+    let client = crate::proxy::http_client::get();
+    let body = "{}";
+    let url = format!(
+        "https://{VOLCENGINE_ARK_HOST}/?Action=GetCodingPlanUsage&Version=2024-01-01"
+    );
+    let headers = sign_volcengine_coding_plan(body, access_key_id, secret_access_key);
+
+    let mut req = client.post(&url).body(body.to_string());
+    for (k, v) in &headers {
+        req = req.header(k, v);
+    }
+    let resp = req.timeout(std::time::Duration::from_secs(15)).send().await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return make_error(format!("Network error: {e}")),
+    };
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        // 签名错误 / AK 无效 / SK 错误都可能落在 400/403，一并提示凭证问题并回显 body。
+        let body_text = resp.text().await.unwrap_or_default();
+        return SubscriptionQuota {
+            tool: "coding_plan".to_string(),
+            credential_status: CredentialStatus::Expired,
+            credential_message: Some("Invalid Access Key".to_string()),
+            success: false,
+            tiers: vec![],
+            extra_usage: None,
+            error: Some(format!("Authentication failed (HTTP {status}): {body_text}")),
+            queried_at: Some(now_millis()),
+        };
+    }
+
+    if !status.is_success() {
+        let body_text = resp.text().await.unwrap_or_default();
+        return make_error(format!("API error (HTTP {status}): {body_text}"));
+    }
+
+    let body: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => return make_error(format!("Failed to parse response: {e}")),
+    };
+
+    let tiers = parse_volcengine_tiers(&body);
+
+    SubscriptionQuota {
+        tool: "coding_plan".to_string(),
+        credential_status: CredentialStatus::Valid,
+        credential_message: None,
+        success: true,
+        tiers,
+        extra_usage: None,
+        error: None,
+        queried_at: Some(now_millis()),
+    }
+}
+
 // ── 公开入口 ────────────────────────────────────────────────
 
 pub async fn get_coding_plan_quota(
     base_url: &str,
     api_key: &str,
+    access_key_id: Option<&str>,
+    secret_access_key: Option<&str>,
 ) -> Result<SubscriptionQuota, String> {
     if api_key.trim().is_empty() {
         return Ok(SubscriptionQuota {
@@ -697,6 +977,27 @@ pub async fn get_coding_plan_quota(
         CodingPlanProvider::MiniMaxCn => query_minimax(api_key, true).await,
         CodingPlanProvider::MiniMaxEn => query_minimax(api_key, false).await,
         CodingPlanProvider::ZenMux => query_zenmux(base_url, api_key).await,
+        CodingPlanProvider::Volcengine => {
+            // 火山方舟用量查询用 AK/SK 签名，与供应商编码用的 Ark API Key 是两套凭证。
+            let ak = access_key_id.unwrap_or("").trim();
+            let sk = secret_access_key.unwrap_or("").trim();
+            if ak.is_empty() || sk.is_empty() {
+                return Ok(SubscriptionQuota {
+                    tool: "coding_plan".to_string(),
+                    credential_status: CredentialStatus::NotFound,
+                    credential_message: None,
+                    success: false,
+                    tiers: vec![],
+                    extra_usage: None,
+                    error: Some(
+                        "Volcengine Access Key ID and Secret Access Key are required"
+                            .to_string(),
+                    ),
+                    queried_at: None,
+                });
+            }
+            query_volcengine(ak, sk).await
+        }
     };
 
     Ok(quota)
@@ -705,9 +1006,11 @@ pub async fn get_coding_plan_quota(
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_minimax_tiers, parse_zhipu_token_tiers, zhipu_quota_base, TIER_FIVE_HOUR,
-        TIER_WEEKLY_LIMIT,
+        build_signed_headers, canonical_query, parse_minimax_tiers, parse_volcengine_tiers,
+        parse_zhipu_token_tiers, percent_encode, zhipu_quota_base, TIER_FIVE_HOUR,
+        TIER_MONTHLY, TIER_WEEKLY_LIMIT,
     };
+    use chrono::{DateTime, Utc};
     use serde_json::json;
 
     #[test]
@@ -1133,6 +1436,135 @@ mod tests {
         assert_eq!(
             zhipu_quota_base("https://Open.BigModel.cn/api/paas/v4"),
             "https://open.bigmodel.cn"
+        );
+    }
+
+    // ── 火山方舟 ──
+
+    #[test]
+    fn volcengine_three_windows_from_root_level_quota_usage() {
+        // 设计文档实测样本：QuotaUsage 直接在根，Percent 为已用百分比，
+        // ResetTimestamp 为 epoch 秒。session→5h、weekly→周、monthly→月。
+        let body = json!({
+            "Status": "Running",
+            "UpdateTimestamp": 1781674850,
+            "QuotaUsage": [
+                { "Level": "session",  "Percent": 4.103,  "ResetTimestamp": 1781690434 },
+                { "Level": "weekly",   "Percent": 0.547,  "ResetTimestamp": 1782057600 },
+                { "Level": "monthly",  "Percent": 0.2735, "ResetTimestamp": 1784303999 }
+            ]
+        });
+        let tiers = parse_volcengine_tiers(&body);
+        assert_eq!(tiers.len(), 3);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert!((tiers[0].utilization - 4.103).abs() < 1e-9);
+        assert!(tiers[0].resets_at.is_some());
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert!((tiers[1].utilization - 0.547).abs() < 1e-9);
+        assert_eq!(tiers[2].name, TIER_MONTHLY);
+        assert!((tiers[2].utilization - 0.2735).abs() < 1e-9);
+    }
+
+    #[test]
+    fn volcengine_quota_usage_under_result_wrapper() {
+        // provider.py 读 Result.QuotaUsage：包在 Result 下也要识别。
+        let body = json!({
+            "Result": {
+                "QuotaUsage": [
+                    { "Level": "session", "Percent": 12.5 },
+                    { "Level": "weekly",  "Percent": 3.0 }
+                ]
+            }
+        });
+        let tiers = parse_volcengine_tiers(&body);
+        assert_eq!(tiers.len(), 2);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert!((tiers[0].utilization - 12.5).abs() < 1e-9);
+        assert!(tiers[0].resets_at.is_none());
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert!((tiers[1].utilization - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn volcengine_unknown_level_skipped_and_fixed_order() {
+        // 未知 Level 跳过；即便乱序输入，仍按 5h→周→月 固定顺序输出。
+        let body = json!({
+            "QuotaUsage": [
+                { "Level": "monthly", "Percent": 9.0 },
+                { "Level": "unknown", "Percent": 99.0 },
+                { "Level": "session", "Percent": 1.0 }
+            ]
+        });
+        let tiers = parse_volcengine_tiers(&body);
+        assert_eq!(tiers.len(), 2);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert!((tiers[0].utilization - 1.0).abs() < 1e-9);
+        assert_eq!(tiers[1].name, TIER_MONTHLY);
+        assert!((tiers[1].utilization - 9.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn volcengine_reset_timestamp_seconds_parsed_as_iso8601() {
+        // ResetTimestamp=1781690434（epoch 秒）应转为 ISO 8601，不按毫秒误判。
+        let body = json!({
+            "QuotaUsage": [{ "Level": "session", "Percent": 1.0, "ResetTimestamp": 1781690434 }]
+        });
+        let tiers = parse_volcengine_tiers(&body);
+        assert_eq!(tiers.len(), 1);
+        let resets_at = tiers[0].resets_at.as_ref().expect("reset time present");
+        // 秒级时间戳 1781690434 → 2026-06-...；若误按毫秒会得到 1970-01-21。
+        assert!(resets_at.starts_with("2026-"));
+    }
+
+    #[test]
+    fn volcengine_percent_encode_matches_unreserved_set() {
+        // unreserved（A-Za-z0-9-_.~）原样保留，其余编码为大写 %XX。
+        assert_eq!(percent_encode("GetCodingPlanUsage"), "GetCodingPlanUsage");
+        assert_eq!(percent_encode("2024-01-01"), "2024-01-01");
+        assert_eq!(percent_encode("a b/c"), "a%20b%2Fc");
+        assert_eq!(percent_encode("中文"), "%E4%B8%AD%E6%96%87");
+    }
+
+    #[test]
+    fn volcengine_canonical_query_sorted_and_encoded() {
+        let cq = canonical_query(&[("Version", "2024-01-01"), ("Action", "GetCodingPlanUsage")]);
+        // 按键字典序：Action 在 Version 前
+        assert_eq!(cq, "Action=GetCodingPlanUsage&Version=2024-01-01");
+    }
+
+    #[test]
+    fn volcengine_signing_matches_reference_algorithm() {
+        // 固定时间 + 固定 AK/SK/body，断言与参考 Python 实现
+        // (ai-plan-insight providers/volcengine_signing.py) 产出完全一致的签名。
+        // 预期值由 /tmp/volc_sign_ref.py 以同一输入（now=2024-01-02T03:04:05Z,
+        // ak=AKTEST, sk=SKTEST, body="{}"）算出。
+        let now: DateTime<Utc> =
+            DateTime::parse_from_rfc3339("2024-01-02T03:04:05Z").unwrap().with_timezone(&Utc);
+        let headers = build_signed_headers(
+            now,
+            "ark.cn-beijing.volcengineapi.com",
+            "POST",
+            "/",
+            &[("Action", "GetCodingPlanUsage"), ("Version", "2024-01-01")],
+            "{}",
+            "AKTEST",
+            "SKTEST",
+            "cn-beijing",
+            "ark",
+        );
+        let map: std::collections::HashMap<String, String> = headers.into_iter().collect();
+        assert_eq!(map.get("X-Date").map(String::as_str), Some("20240102T030405Z"));
+        assert_eq!(
+            map.get("X-Content-Sha256").map(String::as_str),
+            Some("44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a")
+        );
+        assert_eq!(
+            map.get("Authorization").map(String::as_str),
+            Some(
+                "HMAC-SHA256 Credential=AKTEST/20240102/cn-beijing/ark/request, \
+                 SignedHeaders=content-type;host;x-content-sha256;x-date, \
+                 Signature=68cb581113e8ce19462c02b6ca1bc1379b0bf5e5a9fad26df7d24f93d3d8a698"
+            )
         );
     }
 }
