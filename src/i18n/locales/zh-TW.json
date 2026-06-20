@@ -790,7 +790,7 @@
     "officialWebsite": "官方網站",
     "github": "GitHub",
     "oneClickInstall": "一鍵安裝",
-    "oneClickInstallHint": "安裝 Claude Code / Codex / Gemini CLI / OpenCode",
+    "oneClickInstallHint": "安裝或升級 Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw / Hermes / Kilo",
     "localEnvCheck": "本地環境檢查",
     "envBadge": {
       "wsl": "WSL",
