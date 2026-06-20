@@ -599,6 +599,22 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     {t("mcp.unifiedPanel.apps.hermes")}
                   </label>
                 </div>
+
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="enable-kilo"
+                    checked={enabledApps.kilo}
+                    onCheckedChange={(checked: boolean) =>
+                      setEnabledApps({ ...enabledApps, kilo: checked })
+                    }
+                  />
+                  <label
+                    htmlFor="enable-kilo"
+                    className="text-sm text-foreground cursor-pointer select-none"
+                  >
+                    {t("mcp.unifiedPanel.apps.kilo")}
+                  </label>
+                </div>
               </div>
             </div>
 
