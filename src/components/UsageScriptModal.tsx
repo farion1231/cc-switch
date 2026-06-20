@@ -261,8 +261,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             apiKey: (config as any).apiKey,
             baseUrl: (config as any).baseUrl,
           };
-        } else if (appId === "opencode") {
-          // OpenCode (OMO): 凭据嵌在 options.{baseURL, apiKey}（SDK options 对象）
+        } else if (appId === "opencode" || appId === "kilo") {
+          // OpenCode/Kilo: 凭据嵌在 options.{baseURL, apiKey}（SDK options 对象）
           const options = (config as any).options || {};
           return {
             apiKey: options.apiKey,

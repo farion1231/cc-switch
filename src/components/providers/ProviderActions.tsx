@@ -84,9 +84,9 @@ export function ProviderActions({
   const { t } = useTranslation();
   const iconButtonClass = "h-8 w-8 p-1";
 
-  // 累加模式应用（OpenCode 非 OMO / OpenClaw / Hermes）
+  // 累加模式应用（OpenCode/Kilo 非 OMO / OpenClaw / Hermes）
   const isAdditiveMode =
-    (appId === "opencode" && !isOmo) ||
+    ((appId === "opencode" || appId === "kilo") && !isOmo) ||
     appId === "openclaw" ||
     appId === "hermes";
 

@@ -102,6 +102,7 @@ import {
 } from "./hooks";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useSettingsQuery } from "@/lib/query";
+import { useProvidersQuery } from "@/lib/query/queries";
 import {
   CLAUDE_DEFAULT_CONFIG,
   CODEX_DEFAULT_CONFIG,
@@ -329,8 +330,8 @@ function ProviderFormFull({
     isEditMode,
     initialCategory: initialData?.category,
   });
-  const isOmoCategory = appId === "opencode" && category === "omo";
-  const isOmoSlimCategory = appId === "opencode" && category === "omo-slim";
+  const isOmoCategory = (appId === "opencode" || appId === "kilo") && category === "omo";
+  const isOmoSlimCategory = (appId === "opencode" || appId === "kilo") && category === "omo-slim";
   const isAnyOmoCategory = isOmoCategory || isOmoSlimCategory;
 
   useEffect(() => {
@@ -368,7 +369,7 @@ function ProviderFormFull({
           ? CODEX_DEFAULT_CONFIG
           : appId === "gemini"
             ? GEMINI_DEFAULT_CONFIG
-            : appId === "opencode"
+            : (appId === "opencode" || appId === "kilo")
               ? OPENCODE_DEFAULT_CONFIG
               : appId === "openclaw"
                 ? OPENCLAW_DEFAULT_CONFIG
@@ -611,7 +612,7 @@ function ProviderFormFull({
         id: `gemini-${index}`,
         preset,
       }));
-    } else if (appId === "opencode") {
+    } else if ((appId === "opencode" || appId === "kilo")) {
       return opencodeProviderPresets.map<PresetEntry>((preset, index) => ({
         id: `opencode-${index}`,
         preset,
@@ -788,6 +789,27 @@ function ProviderFormFull({
     enabled: appId === "opencode" && !isAnyOmoCategory,
   });
 
+  // Kilo: query existing keys from database
+  const { data: kiloProvidersData } = useProvidersQuery(
+    appId === "kilo" ? "kilo" : "opencode",
+  );
+  const existingKiloKeys = useMemo(() => {
+    if (appId !== "kilo" || !kiloProvidersData?.providers) return [];
+    return Object.keys(kiloProvidersData.providers).filter(
+      (k) => k !== providerId,
+    );
+  }, [appId, kiloProvidersData?.providers, providerId]);
+
+  // Kilo: query live provider IDs from kilo.jsonc
+  const {
+    data: kiloLiveProviderIds = [],
+    isLoading: isKiloLiveProviderIdsLoading,
+  } = useQuery({
+    queryKey: ["kiloLiveProviderIds"],
+    queryFn: () => providersApi.getKiloLiveProviderIds(),
+    enabled: appId === "kilo" && !isAnyOmoCategory,
+  });
+
   const opencodeForm = useOpencodeFormState({
     initialData,
     appId,
@@ -797,7 +819,7 @@ function ProviderFormFull({
   });
 
   const initialOmoSettings =
-    appId === "opencode" &&
+    (appId === "opencode" || appId === "kilo") &&
     (initialData?.category === "omo" || initialData?.category === "omo-slim")
       ? (initialData.settingsConfig as Record<string, unknown> | undefined)
       : undefined;
@@ -844,6 +866,16 @@ function ProviderFormFull({
       );
     }
 
+    if (appId === "kilo" && !isAnyOmoCategory) {
+      return Array.from(
+        new Set(
+          [...existingKiloKeys, ...kiloLiveProviderIds].filter(
+            (key) => key !== providerId,
+          ),
+        ),
+      );
+    }
+
     if (appId === "openclaw") {
       return Array.from(
         new Set(
@@ -868,10 +900,12 @@ function ProviderFormFull({
     return [];
   }, [
     appId,
+    existingKiloKeys,
     existingOpencodeKeys,
     hermesForm.existingHermesKeys,
     hermesLiveProviderIds,
     isAnyOmoCategory,
+    kiloLiveProviderIds,
     openclawForm.existingOpenclawKeys,
     openclawLiveProviderIds,
     opencodeLiveProviderIds,
@@ -882,6 +916,9 @@ function ProviderFormFull({
     if (!isEditMode) return false;
     if (appId === "opencode" && !isAnyOmoCategory) {
       return isOpencodeLiveProviderIdsLoading;
+    }
+    if (appId === "kilo" && !isAnyOmoCategory) {
+      return isKiloLiveProviderIdsLoading;
     }
     if (appId === "openclaw") {
       return isOpenclawLiveProviderIdsLoading;
@@ -895,6 +932,7 @@ function ProviderFormFull({
     isAnyOmoCategory,
     isEditMode,
     isHermesLiveProviderIdsLoading,
+    isKiloLiveProviderIdsLoading,
     isOpenclawLiveProviderIdsLoading,
     isOpencodeLiveProviderIdsLoading,
   ]);
@@ -903,6 +941,9 @@ function ProviderFormFull({
     if (!isEditMode || !providerId) return false;
     if (appId === "opencode" && !isAnyOmoCategory) {
       return opencodeLiveProviderIds.includes(providerId);
+    }
+    if (appId === "kilo" && !isAnyOmoCategory) {
+      return kiloLiveProviderIds.includes(providerId);
     }
     if (appId === "openclaw") {
       return openclawLiveProviderIds.includes(providerId);
@@ -916,6 +957,7 @@ function ProviderFormFull({
     hermesLiveProviderIds,
     isAnyOmoCategory,
     isEditMode,
+    kiloLiveProviderIds,
     openclawLiveProviderIds,
     opencodeLiveProviderIds,
     providerId,
@@ -967,7 +1009,7 @@ function ProviderFormFull({
     // A 类（空）归到 issues；B 类（正则不合法 / 重复 / 状态加载中）仍硬拒绝
     const keyPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
-    if (appId === "opencode" && !isAnyOmoCategory) {
+    if ((appId === "opencode" || appId === "kilo") && !isAnyOmoCategory) {
       // providerKey 是 opencode / openclaw / hermes 的主键 ID，空或格式不合法
       // 都属于完整性约束，保留硬拒绝（mutations 层也会 throw，软化只会让错误更晦涩）
       if (!opencodeForm.opencodeProviderKey.trim()) {
@@ -1077,7 +1119,7 @@ function ProviderFormFull({
 
     // OMO Other Fields JSON：B 类（格式错了保存下去数据就坏了）
     if (
-      appId === "opencode" &&
+      (appId === "opencode" || appId === "kilo") &&
       isAnyOmoCategory &&
       omoDraft.omoOtherFieldsStr.trim()
     ) {
@@ -1225,7 +1267,7 @@ function ProviderFormFull({
         settingsConfig = values.settingsConfig.trim();
       }
     } else if (
-      appId === "opencode" &&
+      (appId === "opencode" || appId === "kilo") &&
       (category === "omo" || category === "omo-slim")
     ) {
       const omoConfig: Record<string, unknown> = {};
@@ -1259,7 +1301,7 @@ function ProviderFormFull({
       settingsConfig,
     };
 
-    if (appId === "opencode") {
+    if ((appId === "opencode" || appId === "kilo")) {
       if (isAnyOmoCategory) {
         if (!isEditMode) {
           const prefix = category === "omo" ? "omo" : "omo-slim";
@@ -1532,7 +1574,7 @@ function ProviderFormFull({
       if (appId === "gemini") {
         resetGeminiConfig({}, {});
       }
-      if (appId === "opencode") {
+      if ((appId === "opencode" || appId === "kilo")) {
         opencodeForm.resetOpencodeState();
         omoDraft.resetOmoDraftState();
       }
@@ -1598,7 +1640,7 @@ function ProviderFormFull({
       return;
     }
 
-    if (appId === "opencode") {
+    if ((appId === "opencode" || appId === "kilo")) {
       const preset = entry.preset as OpenCodeProviderPreset;
       const config = preset.settingsConfig;
 
@@ -1729,7 +1771,7 @@ function ProviderFormFull({
           <BasicFormFields
             form={form}
             beforeNameSlot={
-              appId === "opencode" && !isAnyOmoCategory ? (
+              (appId === "opencode" || appId === "kilo") && !isAnyOmoCategory ? (
                 <div className="space-y-2">
                   <Label htmlFor="opencode-key">
                     {t("opencode.providerKey")}
@@ -2073,7 +2115,7 @@ function ProviderFormFull({
             />
           )}
 
-          {appId === "opencode" && !isAnyOmoCategory && (
+          {(appId === "opencode" || appId === "kilo") && !isAnyOmoCategory && (
             <OpenCodeFormFields
               npm={opencodeForm.opencodeNpm}
               onNpmChange={opencodeForm.handleOpencodeNpmChange}
@@ -2095,7 +2137,7 @@ function ProviderFormFull({
             />
           )}
 
-          {appId === "opencode" &&
+          {(appId === "opencode" || appId === "kilo") &&
             (category === "omo" || category === "omo-slim") && (
               <OmoFormFields
                 modelOptions={omoModelOptions}
@@ -2207,7 +2249,7 @@ function ProviderFormFull({
               />
               {settingsConfigErrorField}
             </>
-          ) : appId === "opencode" &&
+          ) : (appId === "opencode" || appId === "kilo") &&
             (category === "omo" || category === "omo-slim") ? (
             <div className="space-y-2">
               <Label>{t("provider.configJson")}</Label>
@@ -2219,7 +2261,7 @@ function ProviderFormFull({
                 language="json"
               />
             </div>
-          ) : appId === "opencode" &&
+          ) : (appId === "opencode" || appId === "kilo") &&
             category !== "omo" &&
             category !== "omo-slim" ? (
             <>

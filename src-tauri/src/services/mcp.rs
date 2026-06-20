@@ -40,6 +40,9 @@ impl McpService {
         if prev_apps.opencode && !server.apps.opencode {
             Self::remove_server_from_app(state, &server.id, &AppType::OpenCode)?;
         }
+        if prev_apps.kilo && !server.apps.kilo {
+            Self::remove_server_from_app(state, &server.id, &AppType::Kilo)?;
+        }
         if prev_apps.hermes && !server.apps.hermes {
             Self::remove_server_from_app(state, &server.id, &AppType::Hermes)?;
         }
@@ -137,6 +140,13 @@ impl McpService {
             AppType::Hermes => {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
+            AppType::Kilo => {
+                mcp::sync_single_server_to_kilo(
+                    &Default::default(),
+                    &server.id,
+                    &server.server,
+                )?;
+            }
         }
         Ok(())
     }
@@ -171,6 +181,9 @@ impl McpService {
             }
             AppType::Hermes => {
                 mcp::remove_server_from_hermes(id)?;
+            }
+            AppType::Kilo => {
+                mcp::remove_server_from_kilo(id)?;
             }
         }
         Ok(())

@@ -830,7 +830,8 @@
     "gemini": "Gemini",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "kilo": "Kilo"
   },
   "sessionManager": {
     "title": "工作階段管理",
@@ -1320,7 +1321,8 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "kilo": "Kilo"
     },
     "rawInputLabel": "原始",
     "dataSources": "資料來源",
@@ -1330,7 +1332,8 @@
       "codex_db": "Codex 資料庫",
       "codex_session": "Codex 工作階段日誌",
       "gemini_session": "Gemini 工作階段日誌",
-      "opencode_session": "OpenCode 工作階段日誌"
+      "opencode_session": "OpenCode 工作階段日誌",
+      "kilo_session": "Kilo 工作階段日誌"
     },
     "sessionSync": {
       "trigger": "同步工作階段日誌",
@@ -1535,7 +1538,8 @@
         "gemini": "Gemini",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "kilo": "Kilo"
       }
     },
     "userLevelPath": "使用者級 MCP 設定路徑",

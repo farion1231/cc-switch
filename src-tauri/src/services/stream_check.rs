@@ -210,7 +210,7 @@ impl StreamCheckService {
         // 或 `npm` 字段显式指定。它们不走 get_adapter 路径，而是直接分发。
         if matches!(
             app_type,
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Kilo
         ) {
             return Self::check_once_without_adapter(app_type, provider, config, start).await;
         }
@@ -278,9 +278,9 @@ impl StreamCheckService {
                 )
                 .await
             }
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Kilo => {
                 // Already handled via early dispatch above
-                unreachable!("OpenCode/OpenClaw/Hermes 已通过 check_once_without_adapter 处理")
+                unreachable!("OpenCode/OpenClaw/Hermes/Kilo 已通过 check_once_without_adapter 处理")
             }
         };
 
@@ -749,7 +749,17 @@ impl StreamCheckService {
                 )
                 .await
             }
-            _ => unreachable!("check_once_without_adapter 只处理 OpenCode/OpenClaw/Hermes"),
+            AppType::Kilo => {
+                Self::check_additive_app_stream(
+                    &client,
+                    provider,
+                    &model_to_test,
+                    test_prompt,
+                    request_timeout,
+                )
+                .await
+            }
+            _ => unreachable!("check_once_without_adapter 只处理 OpenCode/OpenClaw/Hermes/Kilo"),
         };
 
         let response_time = start.elapsed().as_millis() as u64;
@@ -1407,8 +1417,8 @@ impl StreamCheckService {
                 // Try to extract first model from the models object
                 Self::extract_opencode_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
             }
-            AppType::OpenClaw | AppType::Hermes => {
-                // OpenClaw/Hermes use models array in settings_config
+            AppType::OpenClaw | AppType::Hermes | AppType::Kilo => {
+                // OpenClaw/Hermes/Kilo use models array in settings_config
                 // Try to extract first model from the models array
                 Self::extract_openclaw_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
             }

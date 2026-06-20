@@ -146,7 +146,7 @@ export interface UsageRangeSelection {
  * it is hidden from the Dashboard. `opencode` / `openclaw` / `hermes` have
  * no proxy handler at all — they appear only as managed apps elsewhere.
  */
-export type AppType = "claude" | "codex" | "gemini" | "opencode";
+export type AppType = "claude" | "codex" | "gemini" | "opencode" | "kilo";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -155,6 +155,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "codex",
   "gemini",
   "opencode",
+  "kilo",
 ];
 
 /**

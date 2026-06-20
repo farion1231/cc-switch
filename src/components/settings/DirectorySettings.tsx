@@ -20,6 +20,7 @@ interface DirectorySettingsProps {
   opencodeDir?: string;
   openclawDir?: string;
   hermesDir?: string;
+  kiloDir?: string;
   onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
   onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
   onResetDirectory: (app: DirectoryAppId) => Promise<void>;
@@ -37,6 +38,7 @@ export function DirectorySettings({
   opencodeDir,
   openclawDir,
   hermesDir,
+  kiloDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
@@ -157,6 +159,17 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("hermes", val)}
           onBrowse={() => onBrowseDirectory("hermes")}
           onReset={() => onResetDirectory("hermes")}
+        />
+
+        <DirectoryInput
+          label={t("settings.kiloConfigDir", { defaultValue: "Kilo Config Directory" })}
+          description={undefined}
+          value={kiloDir}
+          resolvedValue={resolvedDirs.kilo}
+          placeholder={t("settings.browsePlaceholderOpencode")}
+          onChange={(val) => onDirectoryChange("kilo", val)}
+          onBrowse={() => onBrowseDirectory("kilo")}
+          onReset={() => onResetDirectory("kilo")}
         />
       </section>
     </div>

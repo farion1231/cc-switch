@@ -323,6 +323,7 @@ export function SettingsPage({
                             opencodeDir={settings.opencodeConfigDir}
                             openclawDir={settings.openclawConfigDir}
                             hermesDir={settings.hermesConfigDir}
+                            kiloDir={settings.kiloConfigDir}
                             onDirectoryChange={updateDirectory}
                             onBrowseDirectory={browseDirectory}
                             onResetDirectory={resetDirectory}

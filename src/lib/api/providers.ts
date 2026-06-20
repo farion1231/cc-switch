@@ -196,6 +196,22 @@ export const providersApi = {
   async importHermesFromLive(): Promise<number> {
     return await invoke("import_hermes_providers_from_live");
   },
+
+  /**
+   * 从 Kilo live 配置导入供应商到数据库
+   * Kilo 特有功能：由于累加模式，用户可能已在 Kilo 配置中配置供应商
+   */
+  async importKiloFromLive(): Promise<number> {
+    return await invoke("import_kilo_providers_from_live");
+  },
+
+  /**
+   * 获取 Kilo live 配置中的供应商 ID 列表
+   * 用于前端判断供应商是否已添加到 Kilo 配置
+   */
+  async getKiloLiveProviderIds(): Promise<string[]> {
+    return await invoke("get_kilo_live_provider_ids");
+  },
 };
 
 // ============================================================================

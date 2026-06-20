@@ -66,10 +66,10 @@ export function EditProviderDialog({
         return;
       }
 
-      // OpenCode uses additive mode - each provider's config is stored independently in DB
-      // Reading live config would return the full opencode.json (with $schema, provider, mcp etc.)
+      // OpenCode/Kilo use additive mode - each provider's config is stored independently in DB
+      // Reading live config would return the full config file (with $schema, provider, mcp etc.)
       // instead of just the provider fragment, causing incorrect nested structure on save
-      if (appId === "opencode") {
+      if (appId === "opencode" || appId === "kilo") {
         if (!cancelled) {
           setLiveSettings(null);
           setHasLoadedLive(true);
@@ -189,7 +189,7 @@ export function EditProviderDialog({
         unknown
       >;
       const nextProviderId =
-        (appId === "opencode" || appId === "openclaw") &&
+        (appId === "opencode" || appId === "openclaw" || appId === "kilo") &&
         values.providerKey?.trim()
           ? values.providerKey.trim()
           : provider.id;

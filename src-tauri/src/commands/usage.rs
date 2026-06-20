@@ -289,6 +289,19 @@ pub fn sync_session_usage(
         }
     }
 
+    // 同步 Kilo 使用数据
+    match crate::services::session_usage_kilo::sync_kilo_usage(&state.db) {
+        Ok(kilo_result) => {
+            result.imported += kilo_result.imported;
+            result.skipped += kilo_result.skipped;
+            result.files_scanned += kilo_result.files_scanned;
+            result.errors.extend(kilo_result.errors);
+        }
+        Err(e) => {
+            result.errors.push(format!("Kilo 同步失败: {e}"));
+        }
+    }
+
     Ok(result)
 }
 

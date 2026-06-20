@@ -125,6 +125,7 @@ const VALID_APPS: AppId[] = [
   "opencode",
   "openclaw",
   "hermes",
+  "kilo",
 ];
 
 const getInitialApp = (): AppId => {
@@ -182,7 +183,7 @@ function App() {
     isLinux() && (settingsData?.useAppWindowControls ?? false);
   const dragBarHeight = useAppWindowControls ? 32 : DEFAULT_DRAG_BAR_HEIGHT;
   const contentTopOffset = dragBarHeight + HEADER_HEIGHT;
-  const visibleApps: VisibleApps = settingsData?.visibleApps ?? {
+  const defaultVisibleApps: VisibleApps = {
     claude: true,
     "claude-desktop": true,
     codex: true,
@@ -190,6 +191,11 @@ function App() {
     opencode: true,
     openclaw: true,
     hermes: true,
+    kilo: true,
+  };
+  const visibleApps: VisibleApps = {
+    ...defaultVisibleApps,
+    ...settingsData?.visibleApps,
   };
 
   const getFirstVisibleApp = (): AppId => {
@@ -200,6 +206,7 @@ function App() {
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
     if (visibleApps.hermes) return "hermes";
+    if (visibleApps.kilo) return "kilo";
     return "claude"; // fallback
   };
 
@@ -218,7 +225,8 @@ function App() {
       sharedFeatureApp !== "opencode" &&
       sharedFeatureApp !== "openclaw" &&
       sharedFeatureApp !== "gemini" &&
-      sharedFeatureApp !== "hermes"
+      sharedFeatureApp !== "hermes" &&
+      sharedFeatureApp !== "kilo"
     ) {
       setCurrentView("providers");
     }
@@ -283,7 +291,8 @@ function App() {
     sharedFeatureApp === "opencode" ||
     sharedFeatureApp === "openclaw" ||
     sharedFeatureApp === "gemini" ||
-    sharedFeatureApp === "hermes";
+    sharedFeatureApp === "hermes" ||
+    sharedFeatureApp === "kilo";
 
   const {
     addProvider,
@@ -648,6 +657,10 @@ function App() {
         await queryClient.invalidateQueries({
           queryKey: hermesKeys.liveProviderIds,
         });
+      } else if (activeApp === "kilo") {
+        await queryClient.invalidateQueries({
+          queryKey: ["kiloLiveProviderIds"],
+        });
       }
       toast.success(
         t("notifications.removeFromConfigSuccess", {
@@ -699,7 +712,8 @@ function App() {
     if (
       activeApp === "opencode" ||
       activeApp === "openclaw" ||
-      activeApp === "hermes"
+      activeApp === "hermes" ||
+      activeApp === "kilo"
     ) {
       let liveProviderIds: string[] = [];
       try {
@@ -714,10 +728,15 @@ function App() {
                   queryKey: openclawKeys.liveProviderIds,
                   queryFn: () => providersApi.getOpenClawLiveProviderIds(),
                 })
-              : await queryClient.ensureQueryData({
-                  queryKey: hermesKeys.liveProviderIds,
-                  queryFn: () => providersApi.getHermesLiveProviderIds(),
-                });
+              : activeApp === "kilo"
+                ? await queryClient.ensureQueryData({
+                    queryKey: ["kiloLiveProviderIds"],
+                    queryFn: () => providersApi.getKiloLiveProviderIds(),
+                  })
+                : await queryClient.ensureQueryData({
+                    queryKey: hermesKeys.liveProviderIds,
+                    queryFn: () => providersApi.getHermesLiveProviderIds(),
+                  });
       } catch (error) {
         console.error(
           "[App] Failed to load live provider IDs for duplication",
@@ -965,7 +984,8 @@ function App() {
                       onRemoveFromConfig={
                         activeApp === "opencode" ||
                         activeApp === "openclaw" ||
-                        activeApp === "hermes"
+                        activeApp === "hermes" ||
+                        activeApp === "kilo"
                           ? (provider) =>
                               setConfirmAction({ provider, action: "remove" })
                           : undefined
@@ -1215,7 +1235,8 @@ function App() {
             {currentView === "providers" &&
               activeApp !== "opencode" &&
               activeApp !== "openclaw" &&
-              activeApp !== "hermes" && (
+              activeApp !== "hermes" &&
+              activeApp !== "kilo" && (
                 <div
                   className="flex shrink-0 items-center gap-1.5"
                   style={{ WebkitAppRegion: "no-drag" } as any}

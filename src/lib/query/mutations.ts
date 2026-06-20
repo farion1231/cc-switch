@@ -41,7 +41,7 @@ export const useAddProviderMutation = (appId: AppId) => {
 
       let id: string;
 
-      if (appId === "opencode" || appId === "openclaw" || appId === "hermes") {
+      if (appId === "opencode" || appId === "openclaw" || appId === "hermes" || appId === "kilo") {
         if (
           providerInput.category === "omo" ||
           providerInput.category === "omo-slim"
@@ -207,6 +207,11 @@ export const useDeleteProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
+      if (appId === "kilo") {
+        await queryClient.invalidateQueries({
+          queryKey: ["kiloLiveProviderIds"],
+        });
+      }
 
       try {
         await providersApi.updateTrayMenu();
@@ -280,6 +285,11 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       }
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
+      }
+      if (appId === "kilo") {
+        await queryClient.invalidateQueries({
+          queryKey: ["kiloLiveProviderIds"],
+        });
       }
 
       try {
