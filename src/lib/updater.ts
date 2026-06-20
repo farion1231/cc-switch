@@ -29,9 +29,22 @@ export async function checkForUpdate(
 > {
   // 动态引入，避免在未安装插件时导致打包期问题
   const { check } = await import("@tauri-apps/plugin-updater");
+  const { getGlobalProxyUrl } = await import("./api/globalProxy");
 
   const currentVersion = await getCurrentVersion();
-  const update = await check({ timeout: opts.timeout ?? 30000 } as any);
+
+  // 读取全局代理配置，传递给 updater 插件
+  let proxyUrl: string | null = null;
+  try {
+    proxyUrl = await getGlobalProxyUrl();
+  } catch {
+    // 获取代理失败时静默忽略，使用直连
+  }
+
+  const update = await check({
+    timeout: opts.timeout ?? 30000,
+    ...(proxyUrl ? { proxy: proxyUrl } : {}),
+  } as any);
 
   if (!update) {
     return { status: "up-to-date" };

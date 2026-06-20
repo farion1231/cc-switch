@@ -191,8 +191,20 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
 pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> {
     use std::time::Duration;
 
-    let updater = app
-        .updater_builder()
+    let mut builder = app.updater_builder();
+
+    // 将 GlobalProxy 配置传递给 updater，使其在代理环境下也能正常访问 GitHub
+    if let Some(proxy_url) = crate::proxy::http_client::get_current_proxy_url() {
+        if let Ok(parsed) = url::Url::parse(&proxy_url) {
+            builder = builder.proxy(parsed);
+            log::info!(
+                "[Updater] Using global proxy: {}",
+                crate::proxy::http_client::mask_url(&proxy_url)
+            );
+        }
+    }
+
+    let updater = builder
         // 不在 builder 上设置 timeout：tauri-plugin-updater 曾有 check() timeout 泄漏到
         // download() 的 bug（#2372），即使已修复也不确定当前版本是否包含。改用
         // tokio::time::timeout 分别为 check 和 download 设置不同的超时。
