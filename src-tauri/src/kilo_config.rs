@@ -13,9 +13,7 @@ pub fn get_kilo_dir() -> PathBuf {
         return override_dir;
     }
 
-    crate::config::get_home_dir()
-        .join(".config")
-        .join("kilo")
+    crate::config::get_home_dir().join(".config").join("kilo")
 }
 
 pub fn get_kilo_config_path() -> PathBuf {

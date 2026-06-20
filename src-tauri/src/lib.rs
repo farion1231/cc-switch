@@ -15,13 +15,13 @@ mod gemini_config;
 mod gemini_mcp;
 pub mod hermes_config;
 mod init_status;
+mod kilo_config;
 mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
 mod mcp;
 mod openclaw_config;
 mod opencode_config;
-mod kilo_config;
 mod panic_hook;
 mod prompt;
 mod prompt_files;

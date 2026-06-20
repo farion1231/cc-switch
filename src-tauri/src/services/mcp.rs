@@ -141,11 +141,7 @@ impl McpService {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
             AppType::Kilo => {
-                mcp::sync_single_server_to_kilo(
-                    &Default::default(),
-                    &server.id,
-                    &server.server,
-                )?;
+                mcp::sync_single_server_to_kilo(&Default::default(), &server.id, &server.server)?;
             }
         }
         Ok(())

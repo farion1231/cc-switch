@@ -312,50 +312,47 @@ fn insert_kilo_message(
         return Ok(false);
     }
 
-    let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) =
-        if msg.cost > 0.0 {
-            (
-                "0".to_string(),
-                "0".to_string(),
-                "0".to_string(),
-                "0".to_string(),
-                msg.cost.to_string(),
-            )
-        } else {
-            let usage = TokenUsage {
-                input_tokens: msg.input_tokens,
-                output_tokens: output_with_reasoning,
-                cache_read_tokens: msg.cache_read_tokens,
-                cache_creation_tokens: msg.cache_write_tokens,
-                model: Some(msg.model_id.clone()),
-                message_id: None,
-            };
-
-            match find_model_pricing(&conn, &msg.model_id) {
-                Some(pricing) => {
-                    let cost = CostCalculator::calculate_for_app(
-                        "kilo",
-                        &usage,
-                        &pricing,
-                        Decimal::from(1),
-                    );
-                    (
-                        cost.input_cost.to_string(),
-                        cost.output_cost.to_string(),
-                        cost.cache_read_cost.to_string(),
-                        cost.cache_creation_cost.to_string(),
-                        cost.total_cost.to_string(),
-                    )
-                }
-                None => (
-                    "0".to_string(),
-                    "0".to_string(),
-                    "0".to_string(),
-                    "0".to_string(),
-                    "0".to_string(),
-                ),
-            }
+    let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) = if msg.cost
+        > 0.0
+    {
+        (
+            "0".to_string(),
+            "0".to_string(),
+            "0".to_string(),
+            "0".to_string(),
+            msg.cost.to_string(),
+        )
+    } else {
+        let usage = TokenUsage {
+            input_tokens: msg.input_tokens,
+            output_tokens: output_with_reasoning,
+            cache_read_tokens: msg.cache_read_tokens,
+            cache_creation_tokens: msg.cache_write_tokens,
+            model: Some(msg.model_id.clone()),
+            message_id: None,
         };
+
+        match find_model_pricing(&conn, &msg.model_id) {
+            Some(pricing) => {
+                let cost =
+                    CostCalculator::calculate_for_app("kilo", &usage, &pricing, Decimal::from(1));
+                (
+                    cost.input_cost.to_string(),
+                    cost.output_cost.to_string(),
+                    cost.cache_read_cost.to_string(),
+                    cost.cache_creation_cost.to_string(),
+                    cost.total_cost.to_string(),
+                )
+            }
+            None => (
+                "0".to_string(),
+                "0".to_string(),
+                "0".to_string(),
+                "0".to_string(),
+                "0".to_string(),
+            ),
+        }
+    };
 
     let inserted_rows = conn.execute(
         "INSERT OR IGNORE INTO proxy_request_logs (

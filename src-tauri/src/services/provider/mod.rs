@@ -1994,7 +1994,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Kilo => Ok(String::new()), // Kilo doesn't use common config snippets
+            AppType::Kilo => Ok(String::new()),   // Kilo doesn't use common config snippets
         }
     }
 
@@ -2011,7 +2011,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Kilo => Ok(String::new()), // Kilo doesn't use common config snippets
+            AppType::Kilo => Ok(String::new()),   // Kilo doesn't use common config snippets
         }
     }
 

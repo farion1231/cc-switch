@@ -15,8 +15,8 @@ mod claude;
 mod codex;
 mod gemini;
 mod hermes;
-mod opencode;
 mod kilo;
+mod opencode;
 mod validation;
 
 // 重新导出公共 API
@@ -32,7 +32,7 @@ pub use gemini::{
     sync_single_server_to_gemini,
 };
 pub use hermes::{import_from_hermes, remove_server_from_hermes, sync_single_server_to_hermes};
+pub use kilo::{import_from_kilo, remove_server_from_kilo, sync_single_server_to_kilo};
 pub use opencode::{
     import_from_opencode, remove_server_from_opencode, sync_single_server_to_opencode,
 };
-pub use kilo::{import_from_kilo, remove_server_from_kilo, sync_single_server_to_kilo};
