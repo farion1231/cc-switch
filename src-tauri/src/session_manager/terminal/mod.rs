@@ -22,6 +22,7 @@ pub fn launch_terminal(
         "wezterm" => launch_wezterm(command, cwd),
         "kaku" => launch_kaku(command, cwd),
         "alacritty" => launch_alacritty(command, cwd),
+        #[cfg(target_os = "macos")]
         "rio" => launch_rio(command, cwd),
         #[cfg(unix)]
         "warp" => launch_warp(command, cwd),
@@ -275,6 +276,7 @@ fn launch_alacritty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn launch_rio(command: &str, cwd: Option<&str>) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
@@ -307,16 +309,22 @@ rm -- "$0"
 
     // Important: drop the file handle so Rio can read it,
     // and keep the temp file around (self-deletes via `rm -- "$0"` above).
-    let (_file, path) = script_file.keep().map_err(|e| format!("Failed to persist temp script for Rio: {e}"))?;
+    let (_file, path) = script_file
+        .keep()
+        .map_err(|e| format!("Failed to persist temp script for Rio: {e}"))?;
     drop(_file);
 
-    Command::new("open")
+    let status = Command::new("open")
         .args(["-na", "Rio", "--args", "-e"])
         .arg(&path)
         .status()
         .map_err(|e| format!("Failed to launch Rio: {e}"))?;
 
-    Ok(())
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to launch Rio.".to_string())
+    }
 }
 
 fn launch_custom(
