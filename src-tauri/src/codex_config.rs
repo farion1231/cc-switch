@@ -334,6 +334,17 @@ fn codex_catalog_model_entry(
     entry_obj.insert("availability_nux".to_string(), Value::Null);
     entry_obj.insert("upgrade".to_string(), Value::Null);
 
+    // Codex desktop app expects this field on every catalog entry; its absence
+    // causes the app to treat the entry as unknown and fall back to a generic
+    // "custom" model with a hardcoded 6-tier reasoning picker.
+    entry_obj.insert("use_responses_lite".to_string(), json!(false));
+
+    // model_messages carries GPT-5.5 personality/instruction templates that are
+    // irrelevant to third-party models. The built-in catalog entries for
+    // non-GPT models do not include this field; keeping it causes the desktop
+    // app to reject the entry during model-list construction.
+    entry_obj.remove("model_messages");
+
     entry
 }
 
