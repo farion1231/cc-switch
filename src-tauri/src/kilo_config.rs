@@ -37,8 +37,8 @@ pub fn get_kilo_db_path() -> PathBuf {
     get_kilo_data_dir().join("kilo.db")
 }
 
-/// Return the Kilo base data directory (`$XDG_DATA_HOME/kilo` or `~/.local/share/kilo`).
-fn get_kilo_base_dir() -> PathBuf {
+/// Return the Kilo data directory (`$XDG_DATA_HOME/kilo` or `~/.local/share/kilo`).
+pub fn get_kilo_data_dir() -> PathBuf {
     if let Ok(xdg_data) = std::env::var("XDG_DATA_HOME") {
         if !xdg_data.is_empty() {
             return PathBuf::from(xdg_data).join("kilo");
@@ -49,11 +49,6 @@ fn get_kilo_base_dir() -> PathBuf {
         .join(".local")
         .join("share")
         .join("kilo")
-}
-
-/// Return the Kilo JSON storage directory (legacy flat-file layout).
-pub fn get_kilo_data_dir() -> PathBuf {
-    get_kilo_base_dir().join("storage")
 }
 
 pub fn read_kilo_config() -> Result<Value, AppError> {
