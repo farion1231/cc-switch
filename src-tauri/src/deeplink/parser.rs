@@ -116,6 +116,10 @@ fn parse_provider_deeplink(
 
     // Extract optional fields
     let model = params.get("model").cloned();
+    let api_format = params
+        .get("apiFormat")
+        .or_else(|| params.get("api_format"))
+        .cloned();
     let notes = params.get("notes").cloned();
     let haiku_model = params.get("haikuModel").cloned();
     let sonnet_model = params.get("sonnetModel").cloned();
@@ -153,6 +157,7 @@ fn parse_provider_deeplink(
         api_key,
         icon,
         model,
+        api_format,
         notes,
         haiku_model,
         sonnet_model,
@@ -225,6 +230,7 @@ fn parse_prompt_deeplink(
         endpoint: None,
         api_key: None,
         model: None,
+        api_format: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -291,6 +297,7 @@ fn parse_mcp_deeplink(
         endpoint: None,
         api_key: None,
         model: None,
+        api_format: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -346,6 +353,7 @@ fn parse_skill_deeplink(
         endpoint: None,
         api_key: None,
         model: None,
+        api_format: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,

@@ -14,6 +14,16 @@ use toml_edit::DocumentMut;
 pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
 const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
+// Codex Desktop currently filters catalog entries through this Statsig dynamic
+// config before rendering the model picker.
+const CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID: &str = "107580212";
+const CODEX_DESKTOP_STATSIG_CACHE_KEY_MARKER: &str = "statsig.cached.evaluations";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexDesktopStatsigWrapperEncoding {
+    Utf8,
+    Utf16Le,
+}
 
 /// Reserved built-in provider IDs from OpenAI Codex's config/model-provider
 /// catalog. Keep in sync with Codex `RESERVED_MODEL_PROVIDER_IDS` and legacy
@@ -313,6 +323,7 @@ fn extract_codex_top_level_u64(config_text: &str, field: &str) -> Option<u64> {
 
 fn codex_catalog_model_entry(
     template: &Value,
+    provider_id: &str,
     model: &str,
     display_name: &str,
     context_window: u64,
@@ -324,10 +335,20 @@ fn codex_catalog_model_entry(
     };
 
     entry_obj.insert("slug".to_string(), json!(model));
+    entry_obj.insert("model".to_string(), json!(model));
+    entry_obj.insert("provider".to_string(), json!(provider_id));
+    entry_obj.insert("backend_provider".to_string(), json!(provider_id));
     entry_obj.insert("display_name".to_string(), json!(display_name));
     entry_obj.insert("description".to_string(), json!(display_name));
     entry_obj.insert("context_window".to_string(), json!(context_window));
     entry_obj.insert("max_context_window".to_string(), json!(context_window));
+    entry_obj.insert("minimal_client_version".to_string(), json!("0.0.1"));
+    entry_obj.insert(
+        "available_in_plans".to_string(),
+        json!(["free", "plus", "pro", "team", "business", "enterprise"]),
+    );
+    entry_obj.insert("visibility".to_string(), json!("list"));
+    entry_obj.insert("supported_in_api".to_string(), json!(true));
     entry_obj.insert("priority".to_string(), json!(1000 + priority));
     entry_obj.insert("additional_speed_tiers".to_string(), json!([]));
     entry_obj.insert("service_tiers".to_string(), json!([]));
@@ -339,9 +360,19 @@ fn codex_catalog_model_entry(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CodexCatalogModelSpec {
+    provider_id: String,
     model: String,
     display_name: String,
     context_window: u64,
+}
+
+fn codex_catalog_provider_id(config_text: &str) -> String {
+    config_text
+        .parse::<DocumentMut>()
+        .ok()
+        .and_then(|doc| active_codex_model_provider_id(&doc))
+        .filter(|id| is_custom_codex_model_provider_id(id))
+        .unwrap_or_else(|| CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string())
 }
 
 fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCatalogModelSpec> {
@@ -355,7 +386,8 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
 
     let default_context_window =
         extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
-    let mut seen = std::collections::HashSet::new();
+    let provider_id = codex_catalog_provider_id(config_text);
+    let mut seen = HashSet::new();
     let mut specs = Vec::new();
 
     for model_config in models {
@@ -387,6 +419,7 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
         .unwrap_or(default_context_window);
 
         specs.push(CodexCatalogModelSpec {
+            provider_id: provider_id.clone(),
             model: model.to_string(),
             display_name: display_name.to_string(),
             context_window,
@@ -394,6 +427,360 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
     }
 
     specs
+}
+
+fn codex_model_ids_from_settings(settings: &Value) -> Vec<String> {
+    let Some(models) = settings
+        .get("modelCatalog")
+        .and_then(|catalog| catalog.get("models"))
+        .and_then(|models| models.as_array())
+    else {
+        return Vec::new();
+    };
+
+    let mut seen = HashSet::new();
+    let mut model_ids = Vec::new();
+    for model_config in models {
+        let Some(model) = model_config
+            .get("model")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+        else {
+            continue;
+        };
+
+        if seen.insert(model.to_string()) {
+            model_ids.push(model.to_string());
+        }
+    }
+
+    model_ids
+}
+
+fn decode_codex_desktop_statsig_wrapper(
+    bytes: &[u8],
+) -> Option<(Option<u8>, CodexDesktopStatsigWrapperEncoding, Value)> {
+    // Chromium localStorage LevelDB values can carry a one-byte type prefix and
+    // may store strings as either UTF-8 or UTF-16LE. Preserve the original form.
+    let (prefix, json_bytes) = if matches!(bytes.first(), Some(0) | Some(1)) {
+        (bytes.first().copied(), &bytes[1..])
+    } else {
+        (None, bytes)
+    };
+
+    if let Ok(text) = std::str::from_utf8(json_bytes) {
+        if let Ok(wrapper) = serde_json::from_str(text) {
+            return Some((prefix, CodexDesktopStatsigWrapperEncoding::Utf8, wrapper));
+        }
+    }
+
+    if json_bytes.len() % 2 == 0 {
+        let units = json_bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        if let Ok(text) = String::from_utf16(&units) {
+            if let Ok(wrapper) = serde_json::from_str(&text) {
+                return Some((prefix, CodexDesktopStatsigWrapperEncoding::Utf16Le, wrapper));
+            }
+        }
+    }
+
+    None
+}
+
+fn encode_codex_desktop_statsig_wrapper(
+    prefix: Option<u8>,
+    encoding: CodexDesktopStatsigWrapperEncoding,
+    wrapper: &Value,
+) -> Option<Vec<u8>> {
+    let text = serde_json::to_string(wrapper).ok()?;
+    let payload_capacity = match encoding {
+        CodexDesktopStatsigWrapperEncoding::Utf8 => text.len(),
+        CodexDesktopStatsigWrapperEncoding::Utf16Le => text.len() * 2,
+    };
+    let mut encoded = Vec::with_capacity(payload_capacity + usize::from(prefix.is_some()));
+    if let Some(prefix) = prefix {
+        encoded.push(prefix);
+    }
+    match encoding {
+        CodexDesktopStatsigWrapperEncoding::Utf8 => encoded.extend_from_slice(text.as_bytes()),
+        CodexDesktopStatsigWrapperEncoding::Utf16Le => {
+            for unit in text.encode_utf16() {
+                encoded.extend_from_slice(&unit.to_le_bytes());
+            }
+        }
+    }
+    Some(encoded)
+}
+
+fn merge_codex_desktop_statsig_available_models(wrapper: &mut Value, model_ids: &[String]) -> bool {
+    if model_ids.is_empty() {
+        return false;
+    }
+
+    let Some(data_text) = wrapper.get("data").and_then(|value| value.as_str()) else {
+        return false;
+    };
+    let Ok(mut data) = serde_json::from_str::<Value>(data_text) else {
+        return false;
+    };
+
+    let Some(data_obj) = data.as_object_mut() else {
+        return false;
+    };
+    let dynamic_configs = data_obj
+        .entry("dynamic_configs")
+        .or_insert_with(|| json!({}));
+    let Some(dynamic_configs_obj) = dynamic_configs.as_object_mut() else {
+        return false;
+    };
+    let config = dynamic_configs_obj
+        .entry(CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID)
+        .or_insert_with(|| json!({ "value": {} }));
+    let Some(config_obj) = config.as_object_mut() else {
+        return false;
+    };
+    let value = config_obj.entry("value").or_insert_with(|| json!({}));
+    let Some(value_obj) = value.as_object_mut() else {
+        return false;
+    };
+    let available_models = value_obj
+        .entry("available_models")
+        .or_insert_with(|| json!([]));
+    let Some(available_models) = available_models.as_array_mut() else {
+        return false;
+    };
+
+    let mut seen = available_models
+        .iter()
+        .filter_map(|value| value.as_str().map(str::to_string))
+        .collect::<HashSet<_>>();
+    let mut changed = false;
+
+    for model_id in model_ids {
+        if seen.insert(model_id.clone()) {
+            available_models.push(json!(model_id));
+            changed = true;
+        }
+    }
+
+    if !changed {
+        return false;
+    }
+
+    let Ok(updated_data_text) = serde_json::to_string(&data) else {
+        return false;
+    };
+    if let Some(wrapper_obj) = wrapper.as_object_mut() {
+        wrapper_obj.insert("data".to_string(), json!(updated_data_text));
+        true
+    } else {
+        false
+    }
+}
+
+fn codex_desktop_local_storage_leveldb_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    #[cfg(target_os = "macos")]
+    {
+        let codex_support_dir = get_home_dir()
+            .join("Library")
+            .join("Application Support")
+            .join("Codex");
+        candidates.push(
+            codex_support_dir
+                .join("Default")
+                .join("Local Storage")
+                .join("leveldb"),
+        );
+        candidates.push(codex_support_dir.join("Local Storage").join("leveldb"));
+        candidates.push(
+            codex_support_dir
+                .join("Default")
+                .join("Partitions")
+                .join("codex-browser-app")
+                .join("Local Storage")
+                .join("leveldb"),
+        );
+        candidates.push(
+            codex_support_dir
+                .join("Partitions")
+                .join("codex-browser-app")
+                .join("Local Storage")
+                .join("leveldb"),
+        );
+        candidates.push(
+            codex_support_dir
+                .join("codex-browser-app")
+                .join("Local Storage")
+                .join("leveldb"),
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            let codex_support_dir = PathBuf::from(appdata).join("Codex");
+            candidates.push(
+                codex_support_dir
+                    .join("Default")
+                    .join("Local Storage")
+                    .join("leveldb"),
+            );
+            candidates.push(codex_support_dir.join("Local Storage").join("leveldb"));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(config_home) = std::env::var_os("XDG_CONFIG_HOME") {
+            let codex_support_dir = PathBuf::from(config_home).join("Codex");
+            candidates.push(
+                codex_support_dir
+                    .join("Default")
+                    .join("Local Storage")
+                    .join("leveldb"),
+            );
+            candidates.push(codex_support_dir.join("Local Storage").join("leveldb"));
+        }
+        let codex_support_dir = get_home_dir().join(".config").join("Codex");
+        candidates.push(
+            codex_support_dir
+                .join("Default")
+                .join("Local Storage")
+                .join("leveldb"),
+        );
+        candidates.push(codex_support_dir.join("Local Storage").join("leveldb"));
+    }
+
+    candidates
+}
+
+fn sync_codex_desktop_available_models_cache_path(
+    leveldb_path: &Path,
+    model_ids: &[String],
+) -> Result<usize, String> {
+    let options = rusty_leveldb::Options {
+        create_if_missing: false,
+        ..Default::default()
+    };
+    let mut db = rusty_leveldb::DB::open(leveldb_path, options).map_err(|err| match err.code {
+        rusty_leveldb::StatusCode::LockError => {
+            format!("Codex Desktop localStorage LevelDB is locked: {leveldb_path:?}")
+        }
+        _ => format!("Failed to open Codex Desktop localStorage LevelDB {leveldb_path:?}: {err}"),
+    })?;
+
+    let mut updates = Vec::new();
+    {
+        use rusty_leveldb::LdbIterator;
+
+        let mut iter = db.new_iter().map_err(|err| {
+            format!("Failed to iterate Codex Desktop localStorage LevelDB: {err}")
+        })?;
+        while iter.advance() {
+            let Some((key, value)) = iter.current() else {
+                continue;
+            };
+            if !String::from_utf8_lossy(&key).contains(CODEX_DESKTOP_STATSIG_CACHE_KEY_MARKER) {
+                continue;
+            }
+
+            let Some((prefix, encoding, mut wrapper)) =
+                decode_codex_desktop_statsig_wrapper(&value)
+            else {
+                continue;
+            };
+            if !merge_codex_desktop_statsig_available_models(&mut wrapper, model_ids) {
+                continue;
+            }
+            let Some(updated_value) =
+                encode_codex_desktop_statsig_wrapper(prefix, encoding, &wrapper)
+            else {
+                continue;
+            };
+            updates.push((key.to_vec(), updated_value));
+        }
+    }
+
+    let updated_count = updates.len();
+    for (key, value) in updates {
+        db.put(&key, &value)
+            .map_err(|err| format!("Failed to update Codex Desktop localStorage LevelDB: {err}"))?;
+    }
+    db.close()
+        .map_err(|err| format!("Failed to close Codex Desktop localStorage LevelDB: {err}"))?;
+
+    Ok(updated_count)
+}
+
+fn sync_codex_desktop_available_models_cache(model_ids: &[String]) -> Result<usize, String> {
+    if model_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let mut seen_paths = HashSet::new();
+    let leveldb_paths = codex_desktop_local_storage_leveldb_candidates()
+        .into_iter()
+        .filter(|path| path.exists())
+        .filter(|path| seen_paths.insert(path.clone()))
+        .collect::<Vec<_>>();
+    if leveldb_paths.is_empty() {
+        return Ok(0);
+    }
+
+    let mut updated_count = 0;
+    let mut errors = Vec::new();
+
+    for leveldb_path in leveldb_paths {
+        match sync_codex_desktop_available_models_cache_path(&leveldb_path, model_ids) {
+            Ok(count) => updated_count += count,
+            Err(err) => errors.push(err),
+        }
+    }
+
+    if updated_count == 0 && !errors.is_empty() {
+        Err(errors.join("; "))
+    } else {
+        if !errors.is_empty() {
+            log::warn!(
+                "Some Codex Desktop model whitelist cache paths could not be synced: {}",
+                errors.join("; ")
+            );
+        }
+        Ok(updated_count)
+    }
+}
+
+fn sync_codex_desktop_available_models_cache_from_settings(settings: &Value) {
+    let model_ids = codex_model_ids_from_settings(settings);
+    if model_ids.is_empty() {
+        return;
+    }
+
+    match sync_codex_desktop_available_models_cache(&model_ids) {
+        Ok(updated_count) if updated_count > 0 => {
+            log::info!(
+                "Synced {} Codex model ids into {} Codex Desktop Statsig cache entries",
+                model_ids.len(),
+                updated_count
+            );
+        }
+        Ok(_) => {
+            log::debug!(
+                "No Codex Desktop Statsig cache entry needed model whitelist updates for {} model ids",
+                model_ids.len()
+            );
+        }
+        Err(err) => {
+            log::warn!(
+                "Failed to sync Codex Desktop model whitelist cache; close Codex Desktop and import/switch again if custom models are still hidden: {err}"
+            );
+        }
+    }
 }
 
 fn find_codex_model_template(catalog: &Value) -> Option<Value> {
@@ -654,6 +1041,7 @@ fn codex_model_catalog_from_specs(specs: &[CodexCatalogModelSpec], template: &Va
         .map(|(index, spec)| {
             codex_catalog_model_entry(
                 template,
+                &spec.provider_id,
                 &spec.model,
                 &spec.display_name,
                 spec.context_window,
@@ -894,7 +1282,10 @@ pub fn write_codex_provider_live_with_catalog(
         .map(|text| prepare_codex_config_text_with_model_catalog(settings, text))
         .transpose()?;
 
-    write_codex_live_for_provider(category, auth, prepared_config.as_deref())
+    write_codex_live_for_provider(category, auth, prepared_config.as_deref())?;
+    sync_codex_desktop_available_models_cache_from_settings(settings);
+
+    Ok(())
 }
 
 /// Extract a provider-scoped `experimental_bearer_token` from Codex `config.toml`.
@@ -2069,7 +2460,12 @@ base_url = "https://production.api/v1"
                 ]
             }
         });
-        let specs = codex_catalog_model_specs(&settings, r#"model_context_window = 128000"#);
+        let specs = codex_catalog_model_specs(
+            &settings,
+            r#"model_provider = "custom"
+model_context_window = 128000
+"#,
+        );
         let catalog = codex_model_catalog_from_specs(&specs, &template);
         let models = catalog
             .get("models")
@@ -2080,6 +2476,33 @@ base_url = "https://production.api/v1"
         assert_eq!(
             models[0].get("slug").and_then(|value| value.as_str()),
             Some("deepseek-v4-flash")
+        );
+        assert_eq!(
+            models[0].get("model").and_then(|value| value.as_str()),
+            Some("deepseek-v4-flash")
+        );
+        assert_eq!(
+            models[0].get("provider").and_then(|value| value.as_str()),
+            Some("custom")
+        );
+        assert_eq!(
+            models[0]
+                .get("backend_provider")
+                .and_then(|value| value.as_str()),
+            Some("custom")
+        );
+        assert_eq!(
+            models[0]
+                .get("minimal_client_version")
+                .and_then(|value| value.as_str()),
+            Some("0.0.1")
+        );
+        assert_eq!(
+            models[0]
+                .get("available_in_plans")
+                .and_then(|value| value.as_array())
+                .map(Vec::len),
+            Some(6)
         );
         assert_eq!(
             models[0]
@@ -2119,6 +2542,164 @@ base_url = "https://production.api/v1"
                 .is_some_and(|value| value.is_null()),
             "generated third-party entries should not inherit GPT-5.5 launch messaging"
         );
+    }
+
+    #[test]
+    fn codex_desktop_statsig_merge_appends_models_without_duplicates() {
+        let data = json!({
+            "dynamic_configs": {
+                CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID: {
+                    "value": {
+                        "available_models": [
+                            "gpt-5.1-codex-max",
+                            "gpt-5.1-codex",
+                            "deepseek-v4-flash"
+                        ]
+                    }
+                }
+            }
+        });
+        let mut wrapper = json!({
+            "source": "NetworkNotModified",
+            "data": data.to_string()
+        });
+        let models = vec![
+            "deepseek-v4-flash".to_string(),
+            "kimi-k2".to_string(),
+            "glm-4.6".to_string(),
+        ];
+
+        assert!(merge_codex_desktop_statsig_available_models(
+            &mut wrapper,
+            &models
+        ));
+
+        let data_text = wrapper
+            .get("data")
+            .and_then(|value| value.as_str())
+            .unwrap();
+        let updated_data: Value = serde_json::from_str(data_text).unwrap();
+        let available_models = updated_data
+            .get("dynamic_configs")
+            .and_then(|value| value.get(CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID))
+            .and_then(|value| value.get("value"))
+            .and_then(|value| value.get("available_models"))
+            .and_then(|value| value.as_array())
+            .unwrap();
+
+        assert_eq!(
+            available_models,
+            &vec![
+                json!("gpt-5.1-codex-max"),
+                json!("gpt-5.1-codex"),
+                json!("deepseek-v4-flash"),
+                json!("kimi-k2"),
+                json!("glm-4.6"),
+            ]
+        );
+    }
+
+    #[test]
+    fn codex_model_ids_from_settings_trims_and_deduplicates() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": " deepseek-v4-flash " },
+                    { "model": "deepseek-v4-flash" },
+                    { "model": "" },
+                    { "model": "kimi-k2" },
+                    { "displayName": "Missing model id" }
+                ]
+            }
+        });
+
+        assert_eq!(
+            codex_model_ids_from_settings(&settings),
+            vec!["deepseek-v4-flash".to_string(), "kimi-k2".to_string()]
+        );
+    }
+
+    #[test]
+    fn codex_desktop_statsig_merge_creates_missing_config_path() {
+        let mut wrapper = json!({
+            "source": "NetworkNotModified",
+            "data": "{}"
+        });
+        let models = vec!["deepseek-v4-flash".to_string()];
+
+        assert!(merge_codex_desktop_statsig_available_models(
+            &mut wrapper,
+            &models
+        ));
+
+        let data_text = wrapper
+            .get("data")
+            .and_then(|value| value.as_str())
+            .unwrap();
+        let updated_data: Value = serde_json::from_str(data_text).unwrap();
+        assert_eq!(
+            updated_data
+                .get("dynamic_configs")
+                .and_then(|value| value.get(CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID))
+                .and_then(|value| value.get("value"))
+                .and_then(|value| value.get("available_models")),
+            Some(&json!(["deepseek-v4-flash"]))
+        );
+    }
+
+    #[test]
+    fn codex_desktop_statsig_wrapper_round_trips_chromium_prefix() {
+        let wrapper = json!({
+            "source": "NetworkNotModified",
+            "data": "{}"
+        });
+        let mut encoded = vec![1];
+        encoded.extend_from_slice(serde_json::to_string(&wrapper).unwrap().as_bytes());
+
+        let (prefix, encoding, decoded) = decode_codex_desktop_statsig_wrapper(&encoded).unwrap();
+        assert_eq!(prefix, Some(1));
+        assert_eq!(encoding, CodexDesktopStatsigWrapperEncoding::Utf8);
+        assert_eq!(decoded, wrapper);
+        assert_eq!(
+            encode_codex_desktop_statsig_wrapper(prefix, encoding, &decoded).unwrap(),
+            encoded
+        );
+    }
+
+    #[test]
+    fn codex_desktop_statsig_wrapper_round_trips_utf16le_values() {
+        let wrapper = json!({
+            "source": "NetworkNotModified",
+            "data": "{}"
+        });
+        let text = serde_json::to_string(&wrapper).unwrap();
+        let mut encoded = vec![1];
+        for unit in text.encode_utf16() {
+            encoded.extend_from_slice(&unit.to_le_bytes());
+        }
+
+        let (prefix, encoding, decoded) = decode_codex_desktop_statsig_wrapper(&encoded).unwrap();
+        assert_eq!(prefix, Some(1));
+        assert_eq!(encoding, CodexDesktopStatsigWrapperEncoding::Utf16Le);
+        assert_eq!(decoded, wrapper);
+        assert_eq!(
+            encode_codex_desktop_statsig_wrapper(prefix, encoding, &decoded).unwrap(),
+            encoded
+        );
+    }
+
+    #[test]
+    fn codex_desktop_statsig_merge_ignores_unparseable_data() {
+        let mut wrapper = json!({
+            "source": "NetworkNotModified",
+            "data": "{not json"
+        });
+        let models = vec!["deepseek-v4-flash".to_string()];
+
+        assert!(!merge_codex_desktop_statsig_available_models(
+            &mut wrapper,
+            &models
+        ));
     }
 
     #[test]

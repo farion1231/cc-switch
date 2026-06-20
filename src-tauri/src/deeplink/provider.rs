@@ -187,15 +187,17 @@ fn get_primary_endpoint(request: &DeepLinkImportRequest) -> String {
 
 /// Build provider meta with usage script configuration
 fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<ProviderMeta>, AppError> {
+    let api_format = extract_codex_api_format_metadata(request);
+    let has_usage_config = request.usage_script.is_some()
+        || request.usage_enabled.is_some()
+        || request.usage_api_key.is_some()
+        || request.usage_base_url.is_some()
+        || request.usage_access_token.is_some()
+        || request.usage_user_id.is_some()
+        || request.usage_auto_interval.is_some();
+
     // Check if any usage script fields are provided
-    if request.usage_script.is_none()
-        && request.usage_enabled.is_none()
-        && request.usage_api_key.is_none()
-        && request.usage_base_url.is_none()
-        && request.usage_access_token.is_none()
-        && request.usage_user_id.is_none()
-        && request.usage_auto_interval.is_none()
-    {
+    if !has_usage_config && api_format.is_none() {
         return Ok(None);
     }
 
@@ -213,34 +215,39 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
 
     // Build UsageScript - use provider's API key and endpoint as defaults
     // Note: use primary endpoint only (first one if comma-separated)
-    let usage_script = UsageScript {
-        enabled,
-        language: "javascript".to_string(),
-        code,
-        timeout: Some(10),
-        api_key: request
-            .usage_api_key
-            .clone()
-            .or_else(|| request.api_key.clone()),
-        base_url: request.usage_base_url.clone().or_else(|| {
-            let primary = get_primary_endpoint(request);
-            if primary.is_empty() {
-                None
-            } else {
-                Some(primary)
-            }
-        }),
-        access_token: request.usage_access_token.clone(),
-        user_id: request.usage_user_id.clone(),
-        template_type: None, // Deeplink providers don't specify template type (will use backward compatibility logic)
-        auto_query_interval: request.usage_auto_interval,
-        coding_plan_provider: None,
-        access_key_id: None,
-        secret_access_key: None,
+    let usage_script = if has_usage_config {
+        Some(UsageScript {
+            enabled,
+            language: "javascript".to_string(),
+            code,
+            timeout: Some(10),
+            api_key: request
+                .usage_api_key
+                .clone()
+                .or_else(|| request.api_key.clone()),
+            base_url: request.usage_base_url.clone().or_else(|| {
+                let primary = get_primary_endpoint(request);
+                if primary.is_empty() {
+                    None
+                } else {
+                    Some(primary)
+                }
+            }),
+            access_token: request.usage_access_token.clone(),
+            user_id: request.usage_user_id.clone(),
+            template_type: None, // Deeplink providers don't specify template type (will use backward compatibility logic)
+            auto_query_interval: request.usage_auto_interval,
+            coding_plan_provider: None,
+            access_key_id: None,
+            secret_access_key: None,
+        })
+    } else {
+        None
     };
 
     Ok(Some(ProviderMeta {
-        usage_script: Some(usage_script),
+        usage_script,
+        api_format,
         ..Default::default()
     }))
 }
@@ -387,12 +394,136 @@ requires_openai_auth = true
 "#
     );
 
-    json!({
+    let mut settings = json!({
         "auth": {
             "OPENAI_API_KEY": request.api_key,
         },
         "config": config_toml
+    });
+
+    if let Some(obj) = settings.as_object_mut() {
+        if let Some(model_catalog) = extract_codex_model_catalog(request) {
+            obj.insert("modelCatalog".to_string(), model_catalog);
+        }
+        if let Some(api_format) = extract_codex_api_format_metadata(request) {
+            obj.insert("apiFormat".to_string(), json!(api_format));
+        }
+    }
+
+    settings
+}
+
+fn extract_inline_config_json(request: &DeepLinkImportRequest) -> Option<serde_json::Value> {
+    let config_b64 = request.config.as_ref()?;
+    let format = request.config_format.as_deref().unwrap_or("json");
+    if format != "json" {
+        return None;
+    }
+
+    let decoded = decode_base64_param("config", config_b64).ok()?;
+    let json_str = std::str::from_utf8(&decoded).ok()?;
+    serde_json::from_str(json_str).ok()
+}
+
+fn trim_non_empty(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn extract_codex_api_format_metadata(request: &DeepLinkImportRequest) -> Option<String> {
+    request
+        .api_format
+        .as_deref()
+        .and_then(trim_non_empty)
+        .or_else(|| {
+            let config = extract_inline_config_json(request)?;
+            config
+                .get("apiFormat")
+                .or_else(|| config.get("api_format"))
+                .and_then(|value| value.as_str())
+                .and_then(trim_non_empty)
+        })
+}
+
+fn parse_codex_catalog_context_window(value: &serde_json::Value) -> Option<u64> {
+    value.as_u64().or_else(|| {
+        value
+            .as_str()
+            .and_then(|text| text.trim().parse::<u64>().ok())
     })
+}
+
+/// Decode and normalize Codex `modelCatalog` from an inline deeplink config.
+///
+/// CC Switch stores a compact private shape in the DB:
+/// `{ "models": [{ "model", "displayName"?, "contextWindow"? }] }`.
+/// External builders may also send a full Codex CLI catalog:
+/// `{ "models": [{ "slug", "display_name", "context_window" }] }`.
+/// Normalize both forms so provider switching can project the catalog to
+/// `cc-switch-model-catalog.json` and `model_catalog_json` on disk.
+fn extract_codex_model_catalog(request: &DeepLinkImportRequest) -> Option<serde_json::Value> {
+    let config = extract_inline_config_json(request)?;
+    let models = config
+        .get("modelCatalog")
+        .or_else(|| config.get("model_catalog"))
+        .and_then(|catalog| catalog.get("models"))
+        .and_then(|models| models.as_array())?;
+
+    let mut seen = std::collections::HashSet::new();
+    let mut normalized_models = Vec::new();
+
+    for model_config in models {
+        let Some(model) = model_config
+            .get("model")
+            .or_else(|| model_config.get("slug"))
+            .and_then(|value| value.as_str())
+            .and_then(trim_non_empty)
+        else {
+            continue;
+        };
+        if !seen.insert(model.to_lowercase()) {
+            continue;
+        }
+
+        let mut normalized = serde_json::Map::new();
+        normalized.insert("model".to_string(), json!(model));
+
+        if let Some(display_name) = model_config
+            .get("displayName")
+            .or_else(|| model_config.get("display_name"))
+            .and_then(|value| value.as_str())
+            .and_then(trim_non_empty)
+        {
+            normalized.insert("displayName".to_string(), json!(display_name));
+        }
+
+        let context_window = model_config
+            .get("contextWindow")
+            .or_else(|| model_config.get("context_window"))
+            .or_else(|| model_config.get("max_context_window"))
+            .and_then(parse_codex_catalog_context_window)
+            .or_else(|| {
+                model_config
+                    .get("model_messages")
+                    .and_then(|messages| messages.get("context_window"))
+                    .and_then(parse_codex_catalog_context_window)
+            });
+        if let Some(context_window) = context_window {
+            normalized.insert("contextWindow".to_string(), json!(context_window));
+        }
+
+        normalized_models.push(serde_json::Value::Object(normalized));
+    }
+
+    if normalized_models.is_empty() {
+        None
+    } else {
+        Some(json!({ "models": normalized_models }))
+    }
 }
 
 /// Build Gemini settings configuration
@@ -799,6 +930,11 @@ fn extract_codex_base_url(toml_value: &toml::Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::prelude::*;
+
+    fn encode_config_json(value: serde_json::Value) -> String {
+        BASE64_STANDARD.encode(value.to_string().as_bytes())
+    }
 
     fn hermes_request() -> DeepLinkImportRequest {
         DeepLinkImportRequest {
@@ -901,6 +1037,131 @@ mod tests {
                 .get("base_url")
                 .and_then(|value| value.as_str()),
             Some("https://api.example.com/v1")
+        );
+    }
+
+    #[test]
+    fn build_codex_provider_preserves_inline_model_catalog_and_api_format() {
+        let config = encode_config_json(json!({
+            "auth": { "OPENAI_API_KEY": "sk-config" },
+            "config": r#"model_provider = "custom"
+model = "gpt-5.5"
+
+[model_providers.custom]
+name = "Relay"
+base_url = "https://relay.example.com/v1"
+wire_api = "responses"
+"#,
+            "apiFormat": "openai_responses",
+            "modelCatalog": {
+                "models": [
+                    { "model": "gpt-5.5" },
+                    {
+                        "model": "deepseek-v4-flash",
+                        "displayName": "DeepSeek V4 Flash",
+                        "contextWindow": 256000
+                    },
+                    { "model": "DeepSeek-V4-Flash" },
+                    { "model": "   " }
+                ]
+            }
+        }));
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("codex".to_string()),
+            name: Some("Mapped Codex".to_string()),
+            endpoint: Some("https://relay.example.com/v1".to_string()),
+            api_key: Some("sk-test".to_string()),
+            model: Some("gpt-5.5".to_string()),
+            config: Some(config),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+
+        let provider = build_provider_from_request(&AppType::Codex, &request).unwrap();
+        assert_eq!(
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.api_format.as_deref()),
+            Some("openai_responses")
+        );
+        assert_eq!(
+            provider.settings_config.get("apiFormat"),
+            Some(&json!("openai_responses"))
+        );
+        assert_eq!(
+            provider.settings_config.get("modelCatalog"),
+            Some(&json!({
+                "models": [
+                    { "model": "gpt-5.5" },
+                    {
+                        "model": "deepseek-v4-flash",
+                        "displayName": "DeepSeek V4 Flash",
+                        "contextWindow": 256000
+                    }
+                ]
+            }))
+        );
+    }
+
+    #[test]
+    fn build_codex_provider_normalizes_full_codex_model_catalog() {
+        let config = encode_config_json(json!({
+            "auth": { "OPENAI_API_KEY": "sk-config" },
+            "config": r#"model_provider = "custom"
+model = "gpt-5.4"
+
+[model_providers.custom]
+name = "Relay"
+base_url = "https://relay.example.com/v1"
+wire_api = "responses"
+"#,
+            "modelCatalog": {
+                "models": [
+                    {
+                        "slug": "gpt-5.4",
+                        "display_name": "GPT 5.4",
+                        "context_window": 128000
+                    },
+                    {
+                        "slug": "deepseek-v4-pro",
+                        "display_name": "DeepSeek V4 Pro",
+                        "max_context_window": "256000"
+                    }
+                ]
+            }
+        }));
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("codex".to_string()),
+            name: Some("Full Catalog Codex".to_string()),
+            endpoint: Some("https://relay.example.com/v1".to_string()),
+            api_key: Some("sk-test".to_string()),
+            model: Some("gpt-5.4".to_string()),
+            config: Some(config),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+
+        let provider = build_provider_from_request(&AppType::Codex, &request).unwrap();
+
+        assert_eq!(
+            provider.settings_config.get("modelCatalog"),
+            Some(&json!({
+                "models": [
+                    {
+                        "model": "gpt-5.4",
+                        "displayName": "GPT 5.4",
+                        "contextWindow": 128000
+                    },
+                    {
+                        "model": "deepseek-v4-pro",
+                        "displayName": "DeepSeek V4 Pro",
+                        "contextWindow": 256000
+                    }
+                ]
+            }))
         );
     }
 
