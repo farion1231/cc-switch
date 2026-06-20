@@ -34,9 +34,15 @@ export async function checkForUpdate(
   const currentVersion = await getCurrentVersion();
 
   // 读取全局代理配置，传递给 updater 插件
+  // 注意：tauri-plugin-updater 仅支持 http/https 代理，SOCKS 代理需跳过
   let proxyUrl: string | null = null;
   try {
-    proxyUrl = await getGlobalProxyUrl();
+    const raw = await getGlobalProxyUrl();
+    if (raw && /^https?:\/\//i.test(raw)) {
+      proxyUrl = raw;
+    } else if (raw) {
+      console.warn(`[Updater] Unsupported proxy scheme, falling back to direct: ${raw}`);
+    }
   } catch {
     // 获取代理失败时静默忽略，使用直连
   }
