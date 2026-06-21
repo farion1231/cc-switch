@@ -2309,7 +2309,7 @@ fn is_claude_messages_path(path: &str) -> bool {
 fn rewrite_codex_responses_endpoint_to_chat(endpoint: &str) -> (String, Option<String>) {
     let (_path, query) = split_endpoint_and_query(endpoint);
     let passthrough_query = query.map(ToString::to_string);
-    let target_path = "/chat/completions";
+    let target_path = "/v1/chat/completions";
     let rewritten = match passthrough_query.as_deref() {
         Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
         _ => target_path.to_string(),
