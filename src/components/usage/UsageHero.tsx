@@ -65,6 +65,10 @@ const TITLE_THEMES: Record<AppType | "all", TitleTheme> = {
     accent: "text-purple-600 dark:text-purple-400",
     iconBg: "bg-purple-500/10",
   },
+  omnigent: {
+    accent: "text-fuchsia-600 dark:text-fuchsia-400",
+    iconBg: "bg-fuchsia-500/10",
+  },
 };
 
 /**

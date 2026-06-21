@@ -208,6 +208,7 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
          WHEN '_codex_session' THEN 'Codex (Session)' \
          WHEN '_gemini_session' THEN 'Gemini (Session)' \
          WHEN '_opencode_session' THEN 'OpenCode (Session)' \
+         WHEN '_omnigent_session' THEN 'Omnigent (Session)' \
          ELSE {log_alias}.provider_id END)"
     )
 }
@@ -293,7 +294,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
     let proxy_data_source = data_source_expr("proxy_dedup");
     format!(
         "NOT (
-            {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
+            {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session', 'omnigent_session')
             AND EXISTS (
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
@@ -308,7 +309,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                       proxy_dedup.cache_creation_tokens = {log_alias}.cache_creation_tokens
                       OR (
                           {log_alias}.cache_creation_tokens = 0
-                          AND {data_source} IN ('codex_session', 'gemini_session', 'opencode_session')
+                          AND {data_source} IN ('codex_session', 'gemini_session', 'opencode_session', 'omnigent_session')
                       )
                   )
                   AND proxy_dedup.created_at BETWEEN
@@ -3471,6 +3472,61 @@ mod tests {
     }
 
     #[test]
+    fn test_effective_usage_dedup_prefers_proxy_over_omnigent_session() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "omnigent-proxy",
+                "omnigent",
+                "openai",
+                "gpt-5.5",
+                "proxy",
+                10_000,
+                100,
+                20,
+                10,
+                7,
+                200,
+                "0.10",
+            )?;
+            insert_usage_log(
+                &conn,
+                "omnigent-session-dup",
+                "omnigent",
+                "_omnigent_session",
+                "gpt-5.5",
+                "omnigent_session",
+                10_060,
+                100,
+                20,
+                10,
+                0,
+                200,
+                "0.10",
+            )?;
+        }
+
+        let summary = db.get_usage_summary(None, None, Some("omnigent"), None, None)?;
+        assert_eq!(summary.total_requests, 1);
+
+        let logs = db.get_request_logs(
+            &LogFilters {
+                app_type: Some("omnigent".to_string()),
+                ..Default::default()
+            },
+            0,
+            10,
+        )?;
+        assert_eq!(logs.total, 1);
+        assert_eq!(logs.data[0].request_id, "omnigent-proxy");
+
+        Ok(())
+    }
+
+    #[test]
     fn test_get_model_stats() -> Result<(), AppError> {
         let db = Database::memory()?;
 
@@ -3566,6 +3622,37 @@ mod tests {
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].provider_id, "_opencode_session");
         assert_eq!(stats[0].provider_name, "OpenCode (Session)");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_provider_stats_labels_omnigent_session_provider() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "omnigent-session",
+                "omnigent",
+                "_omnigent_session",
+                "gpt-5.5",
+                "omnigent_session",
+                1000,
+                100,
+                50,
+                0,
+                0,
+                200,
+                "0.01",
+            )?;
+        }
+
+        let stats = db.get_provider_stats(None, None, Some("omnigent"), None, None)?;
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].provider_id, "_omnigent_session");
+        assert_eq!(stats[0].provider_name, "Omnigent (Session)");
 
         Ok(())
     }

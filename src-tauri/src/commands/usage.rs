@@ -320,6 +320,19 @@ pub fn sync_session_usage(
         }
     }
 
+    // 同步 Omnigent 使用数据
+    match crate::services::session_usage_omnigent::sync_omnigent_usage(&state.db) {
+        Ok(omnigent_result) => {
+            result.imported += omnigent_result.imported;
+            result.skipped += omnigent_result.skipped;
+            result.files_scanned += omnigent_result.files_scanned;
+            result.errors.extend(omnigent_result.errors);
+        }
+        Err(e) => {
+            result.errors.push(format!("Omnigent 同步失败: {e}"));
+        }
+    }
+
     Ok(result)
 }
 
