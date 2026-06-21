@@ -681,39 +681,23 @@ function App() {
   const handleDuplicateProvider = async (provider: Provider) => {
     // Fix #4234: Ensure duplicate appears next to original, even if original lacks sortIndex
     let newSortIndex: number;
-    let needUpdateOriginal = false;
-    // When the whole list lacks sortIndex, normalize all providers to contiguous
-    // indices so the duplicate (otherwise the only indexed item) isn't shoved to the top.
     let needNormalizeAll = false;
     let originalIdx = -1;
 
     if (provider.sortIndex !== undefined) {
-      // Original has sortIndex → insert right below it
+      // Original has sortIndex → insert duplicate right below it
       newSortIndex = provider.sortIndex + 1;
     } else {
-      // Original lacks sortIndex → assign sortIndex to both original and duplicate
-      // to ensure they appear adjacent (not scattered across the list)
+      // Original lacks sortIndex. Indexed items always sort ahead of unindexed ones
+      // (sortIndex ?? MAX_SAFE_INTEGER), so assigning sortIndex only to original+copy
+      // would lift them above the other unindexed providers. Normalize the whole list
+      // to contiguous indices by its current display order, then slot the duplicate
+      // right below the original — this preserves relative order for both the
+      // all-unindexed and the mixed indexed/unindexed cases.
       const allProviders = Object.values(providers); // already sorted by sortProviders
-      const indexedProviders = allProviders.filter(
-        (p) => p.sortIndex !== undefined,
-      );
-
-      if (indexedProviders.length === 0) {
-        // Whole list lacks sortIndex: assigning max+1/max+2 would make original+duplicate
-        // the only indexed items and shove them to the top. Normalize the entire list by
-        // display order, then slot the duplicate right below the original.
-        needNormalizeAll = true;
-        originalIdx = allProviders.findIndex((p) => p.id === provider.id);
-        newSortIndex = originalIdx + 1;
-      } else {
-        const maxSortIndex = indexedProviders.reduce(
-          (max, p) => Math.max(max, p.sortIndex!),
-          0,
-        );
-        // Original will get maxSortIndex + 1, duplicate gets maxSortIndex + 2
-        newSortIndex = maxSortIndex + 2;
-        needUpdateOriginal = true;
-      }
+      originalIdx = allProviders.findIndex((p) => p.id === provider.id);
+      needNormalizeAll = true;
+      newSortIndex = originalIdx + 1;
     }
 
     const duplicatedProvider: Omit<Provider, "id" | "createdAt"> & {
@@ -788,29 +772,19 @@ function App() {
         });
       });
     } else {
-      // If original lacked sortIndex, assign it one now (so it stays adjacent to duplicate)
-      if (needUpdateOriginal) {
-        updates.push({
-          id: provider.id,
-          sortIndex: newSortIndex - 1, // Original gets newSortIndex - 1, duplicate gets newSortIndex
-        });
-      }
-
-      // Update subsequent providers' sortIndex (shift them down by 1 or 2)
-      const shiftAmount = needUpdateOriginal ? 2 : 1;
-      const threshold = needUpdateOriginal ? newSortIndex - 1 : newSortIndex;
-
+      // Original already had sortIndex → shift subsequent indexed providers down by 1
+      // to make room for the duplicate slotted right below the original.
       Object.values(providers)
         .filter(
           (p) =>
             p.sortIndex !== undefined &&
-            p.sortIndex >= threshold &&
+            p.sortIndex >= newSortIndex &&
             p.id !== provider.id,
         )
         .forEach((p) => {
           updates.push({
             id: p.id,
-            sortIndex: p.sortIndex! + shiftAmount,
+            sortIndex: p.sortIndex! + 1,
           });
         });
     }
