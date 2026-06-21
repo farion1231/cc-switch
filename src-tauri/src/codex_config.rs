@@ -2105,8 +2105,8 @@ base_url = "https://production.api/v1"
             Some(128_000)
         );
         assert!(
-            models[0].get("model_messages").is_some(),
-            "Codex requires model_messages in custom catalogs"
+            models[0].get("model_messages").is_none(),
+            "third-party catalog entries should not carry the gpt-5.5 agent template"
         );
         assert_eq!(
             models[0]
@@ -2115,9 +2115,9 @@ base_url = "https://production.api/v1"
             Some("gpt-5.5 base instructions")
         );
         assert_eq!(
-            models[0].get("model_messages"),
-            template.get("model_messages"),
-            "custom catalog entries should keep the gpt-5.5 agent template"
+            models[0].get("use_responses_lite"),
+            Some(&json!(false)),
+            "third-party catalog entries should declare use_responses_lite for desktop app compatibility"
         );
         assert_eq!(
             models[0].get("additional_speed_tiers"),
