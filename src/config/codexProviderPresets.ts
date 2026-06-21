@@ -1318,7 +1318,7 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "opencode_go",
-      "https://opencode.ai/zen/go",
+      "https://opencode.ai/zen/go/v1",
       "deepseek-v4-flash",
     ),
     endpointCandidates: ["https://opencode.ai/zen/go/v1"],
