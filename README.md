@@ -415,6 +415,9 @@ pnpm test:unit
 # Run tests in watch mode (recommended for development)
 pnpm test:unit:watch
 
+# Run Codex Chat tool-call sequence regression tests
+pnpm test:codex-chat-tools
+
 # Build application
 pnpm build
 
@@ -462,6 +465,9 @@ pnpm test:unit:watch
 
 # With coverage report
 pnpm test:unit --coverage
+
+# Codex Chat tool-call sequence regression tests
+pnpm test:codex-chat-tools
 ```
 
 ### Tech Stack
