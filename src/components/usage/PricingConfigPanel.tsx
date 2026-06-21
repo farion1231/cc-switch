@@ -341,7 +341,7 @@ export function PricingConfigPanel() {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h4 className="text-sm font-medium text-muted-foreground">
-            {t("usage.modelPricingDesc")} {t("usage.perMillion")}
+            {t("usage.modelPricingDesc")}
           </h4>
           <Button
             onClick={(e) => {

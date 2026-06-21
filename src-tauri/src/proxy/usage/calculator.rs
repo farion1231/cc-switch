@@ -123,8 +123,8 @@ impl CostCalculator {
         }
     }
 
-    fn tiered_cost(tokens: u64, base: Decimal, above_200k: Option<Decimal>) -> Decimal {
-        const THRESHOLD: u64 = 200_000;
+    fn tiered_cost(tokens: u32, base: Decimal, above_200k: Option<Decimal>) -> Decimal {
+        const THRESHOLD: u32 = 200_000;
         if let Some(above) = above_200k.filter(|_| tokens > THRESHOLD) {
             Decimal::from(THRESHOLD) * base + Decimal::from(tokens - THRESHOLD) * above
         } else {
