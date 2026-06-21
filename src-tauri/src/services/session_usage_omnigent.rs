@@ -14,10 +14,14 @@ use crate::services::session_usage::{
 use crate::services::usage_stats::find_model_pricing;
 use rust_decimal::Decimal;
 use serde_json::Value;
+use std::collections::hash_map::DefaultHasher;
 #[cfg(target_os = "windows")]
 use std::collections::HashSet;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "windows")]
+use std::process::Command;
 
 const OMNIGENT_PROVIDER_ID: &str = "_omnigent_session";
 const OMNIGENT_APP_TYPE: &str = "omnigent";
@@ -143,7 +147,32 @@ fn wsl_omnigent_db_paths() -> Vec<PathBuf> {
         }
     }
 
+    if let Some(candidate) = default_wsl_omnigent_db_path() {
+        let key = candidate.to_string_lossy().to_string();
+        if candidate.exists() && seen.insert(key) {
+            paths.push(candidate);
+        }
+    }
+
     paths
+}
+
+#[cfg(target_os = "windows")]
+fn default_wsl_omnigent_db_path() -> Option<PathBuf> {
+    let output = Command::new("wsl.exe")
+        .args(["--", "sh", "-lc", r#"wslpath -w "$HOME/.omnigent/chat.db""#])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(path))
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -167,9 +196,12 @@ fn sync_single_omnigent_db(db: &Database, db_path: &Path) -> Result<(u32, u32), 
         return Ok((0, 0));
     }
 
-    let omnigent_conn =
-        rusqlite::Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .map_err(|e| AppError::Database(format!("无法打开 Omnigent DB: {e}")))?;
+    let snapshot_path = snapshot_omnigent_db(db_path, file_modified)?;
+    let omnigent_conn = rusqlite::Connection::open_with_flags(
+        &snapshot_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .map_err(|e| AppError::Database(format!("无法打开 Omnigent DB 快照: {e}")))?;
 
     let conversations = query_conversation_usages(&omnigent_conn)?;
     let mut imported = 0;
@@ -229,6 +261,39 @@ fn sync_single_omnigent_db(db: &Database, db_path: &Path) -> Result<(u32, u32), 
     }
 
     Ok((imported, skipped))
+}
+
+fn snapshot_omnigent_db(db_path: &Path, file_modified: i64) -> Result<PathBuf, AppError> {
+    let mut hasher = DefaultHasher::new();
+    db_path.to_string_lossy().hash(&mut hasher);
+    file_modified.hash(&mut hasher);
+
+    let dir = std::env::temp_dir()
+        .join("cc-switch-omnigent")
+        .join(format!("{:x}", hasher.finish()));
+    fs::create_dir_all(&dir)
+        .map_err(|e| AppError::Config(format!("无法创建 Omnigent DB 快照目录: {e}")))?;
+
+    let snapshot = dir.join("chat.db");
+    for path in [
+        snapshot.clone(),
+        snapshot.with_extension("db-wal"),
+        snapshot.with_extension("db-shm"),
+    ] {
+        let _ = fs::remove_file(path);
+    }
+
+    fs::copy(db_path, &snapshot)
+        .map_err(|e| AppError::Config(format!("无法复制 Omnigent DB 快照: {e}")))?;
+    for ext in ["db-wal", "db-shm"] {
+        let source = db_path.with_extension(ext);
+        if source.exists() {
+            fs::copy(source, snapshot.with_extension(ext))
+                .map_err(|e| AppError::Config(format!("无法复制 Omnigent DB {ext} 快照: {e}")))?;
+        }
+    }
+
+    Ok(snapshot)
 }
 
 fn query_conversation_usages(
@@ -683,6 +748,35 @@ mod tests {
         assert_eq!(data_source, OMNIGENT_DATA_SOURCE);
         assert_eq!(input_tokens, 100);
         assert_eq!(cache_read_tokens, 300);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_snapshot_omnigent_db_copies_and_clears_sidecars() -> Result<(), AppError> {
+        let temp =
+            tempfile::tempdir().map_err(|e| AppError::Config(format!("创建临时目录失败: {e}")))?;
+        let db_path = temp.path().join("chat.db");
+        std::fs::write(&db_path, b"db").expect("write db");
+        std::fs::write(db_path.with_extension("db-wal"), b"wal").expect("write wal");
+        std::fs::write(db_path.with_extension("db-shm"), b"shm").expect("write shm");
+
+        let snapshot = snapshot_omnigent_db(&db_path, 1)?;
+        assert_eq!(std::fs::read(&snapshot).expect("read db"), b"db");
+        assert_eq!(
+            std::fs::read(snapshot.with_extension("db-wal")).expect("read wal"),
+            b"wal"
+        );
+        assert_eq!(
+            std::fs::read(snapshot.with_extension("db-shm")).expect("read shm"),
+            b"shm"
+        );
+
+        std::fs::remove_file(db_path.with_extension("db-wal")).expect("remove wal");
+        std::fs::remove_file(db_path.with_extension("db-shm")).expect("remove shm");
+        let snapshot = snapshot_omnigent_db(&db_path, 1)?;
+        assert!(!snapshot.with_extension("db-wal").exists());
+        assert!(!snapshot.with_extension("db-shm").exists());
 
         Ok(())
     }
