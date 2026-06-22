@@ -154,6 +154,14 @@ pub async fn webdav_sync_save_settings(
     }
 
     sync_settings.normalize();
+    if !sync_settings.enabled
+        && sync_settings.base_url.is_empty()
+        && sync_settings.username.is_empty()
+        && sync_settings.password.is_empty()
+    {
+        settings::set_webdav_sync_settings(None).map_err(|e| e.to_string())?;
+        return Ok(json!({ "success": true }));
+    }
     sync_settings.validate().map_err(|e| e.to_string())?;
     settings::set_webdav_sync_settings(Some(sync_settings)).map_err(|e| e.to_string())?;
     Ok(json!({ "success": true }))
@@ -173,6 +181,7 @@ mod tests {
     use super::{
         map_sync_result, persist_sync_error, require_enabled_webdav_settings,
         resolve_password_for_request, run_with_webdav_lock, webdav_sync_mutex,
+        webdav_sync_save_settings,
     };
     use crate::error::AppError;
     use crate::settings::{AppSettings, WebDavSyncSettings};
@@ -304,6 +313,43 @@ mod tests {
             "status error should be updated"
         );
         assert_eq!(after.status.last_error_source.as_deref(), Some("manual"));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn save_settings_clears_empty_disabled_webdav_config() {
+        let test_home = std::env::temp_dir().join("cc-switch-webdav-clear-config-test");
+        let _ = std::fs::remove_dir_all(&test_home);
+        std::fs::create_dir_all(&test_home).expect("create test home");
+        std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
+
+        crate::settings::update_settings(AppSettings::default()).expect("reset settings");
+        crate::settings::set_webdav_sync_settings(Some(WebDavSyncSettings {
+            enabled: true,
+            base_url: "https://dav.example.com/dav/".to_string(),
+            username: "alice".to_string(),
+            password: "secret".to_string(),
+            ..WebDavSyncSettings::default()
+        }))
+        .expect("seed webdav settings");
+
+        webdav_sync_save_settings(
+            WebDavSyncSettings {
+                enabled: false,
+                auto_sync: false,
+                base_url: String::new(),
+                username: String::new(),
+                password: String::new(),
+                remote_root: "cc-switch-sync".to_string(),
+                profile: "default".to_string(),
+                ..WebDavSyncSettings::default()
+            },
+            Some(true),
+        )
+        .await
+        .expect("empty disabled settings should clear config");
+
+        assert!(crate::settings::get_webdav_sync_settings().is_none());
     }
 
     #[test]

@@ -5,6 +5,7 @@
 use super::{lock_conn, Database};
 use crate::config::get_app_config_dir;
 use crate::error::AppError;
+use crate::settings::SyncScope;
 use chrono::{Local, Utc};
 use rusqlite::backup::Backup;
 use rusqlite::types::ValueRef;
@@ -23,6 +24,9 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "proxy_live_backup",
     "usage_daily_rollups",
 ];
+
+const SYNC_MCP_TABLES: &[&str] = &["mcp_servers"];
+const SYNC_SKILL_TABLES: &[&str] = &["skills", "skill_repos"];
 
 /// Tables whose local data is preserved (restored from local snapshot) during WebDAV import.
 /// Excludes ephemeral tables like provider_health that can safely rebuild at runtime.
@@ -51,8 +55,17 @@ impl Database {
 
     /// Export SQL for sync (WebDAV), skipping local-only tables' data
     pub fn export_sql_string_for_sync(&self) -> Result<String, AppError> {
+        self.export_sql_string_for_sync_scope(&SyncScope::full())
+    }
+
+    /// Export SQL for sync, skipping local-only data and any unselected scope tables.
+    pub(crate) fn export_sql_string_for_sync_scope(
+        &self,
+        scope: &SyncScope,
+    ) -> Result<String, AppError> {
         let snapshot = self.snapshot_to_memory()?;
-        Self::dump_sql(&snapshot, SYNC_SKIP_TABLES)
+        let skip_tables = Self::sync_skip_tables_for_scope(scope);
+        Self::dump_sql(&snapshot, &skip_tables)
     }
 
     /// 导出为 SQLite 兼容的 SQL 文本
@@ -87,8 +100,19 @@ impl Database {
 
     /// Import SQL generated for sync, then restore local-only tables from the
     /// current device snapshot before replacing the main database.
+    #[allow(dead_code)]
     pub(crate) fn import_sql_string_for_sync(&self, sql_raw: &str) -> Result<String, AppError> {
-        self.import_sql_string_inner(sql_raw, SYNC_PRESERVE_TABLES)
+        self.import_sql_string_for_sync_scope(sql_raw, &SyncScope::full())
+    }
+
+    /// Import SQL generated for sync, preserving local-only and unselected scope tables.
+    pub(crate) fn import_sql_string_for_sync_scope(
+        &self,
+        sql_raw: &str,
+        scope: &SyncScope,
+    ) -> Result<String, AppError> {
+        let preserve_tables = Self::sync_preserve_tables_for_scope(scope);
+        self.import_sql_string_inner(sql_raw, &preserve_tables)
     }
 
     fn import_sql_string_inner(
@@ -161,6 +185,28 @@ impl Database {
         }
 
         Ok(snapshot)
+    }
+
+    fn sync_skip_tables_for_scope(scope: &SyncScope) -> Vec<&'static str> {
+        let mut tables = SYNC_SKIP_TABLES.to_vec();
+        if !scope.mcp {
+            tables.extend_from_slice(SYNC_MCP_TABLES);
+        }
+        if !scope.skills {
+            tables.extend_from_slice(SYNC_SKILL_TABLES);
+        }
+        tables
+    }
+
+    fn sync_preserve_tables_for_scope(scope: &SyncScope) -> Vec<&'static str> {
+        let mut tables = SYNC_PRESERVE_TABLES.to_vec();
+        if !scope.mcp {
+            tables.extend_from_slice(SYNC_MCP_TABLES);
+        }
+        if !scope.skills {
+            tables.extend_from_slice(SYNC_SKILL_TABLES);
+        }
+        tables
     }
 
     fn validate_cc_switch_sql_export(sql: &str) -> Result<(), AppError> {
@@ -691,7 +737,7 @@ impl Database {
 mod tests {
     use super::Database;
     use crate::error::AppError;
-    use crate::settings::{update_settings, AppSettings};
+    use crate::settings::{update_settings, AppSettings, SyncScope};
     use serial_test::serial;
 
     #[test]
@@ -777,6 +823,138 @@ mod tests {
             stream_logs, 1,
             "local stream check logs should be preserved"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn sync_export_scope_skips_unselected_mcp_and_skills() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('provider-1', 'claude', 'Provider', '{}', '{}')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO mcp_servers (id, name, server_config)
+                 VALUES ('remote-mcp', 'Remote MCP', '{}')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO skills (id, name, directory)
+                 VALUES ('remote-skill', 'Remote Skill', '/tmp/remote-skill')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO skill_repos (owner, name)
+                 VALUES ('remote-owner', 'remote-repo')",
+                [],
+            )?;
+        }
+
+        let scoped_sql = db.export_sql_string_for_sync_scope(&SyncScope::default())?;
+        assert!(scoped_sql.contains("provider-1"));
+        assert!(!scoped_sql.contains("remote-mcp"));
+        assert!(!scoped_sql.contains("remote-skill"));
+        assert!(!scoped_sql.contains("remote-owner"));
+
+        let full_sql = db.export_sql_string_for_sync_scope(&SyncScope::full())?;
+        assert!(full_sql.contains("remote-mcp"));
+        assert!(full_sql.contains("remote-skill"));
+        assert!(full_sql.contains("remote-owner"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn sync_import_scope_preserves_unselected_mcp_and_skills() -> Result<(), AppError> {
+        let remote_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(remote_db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('remote-provider', 'claude', 'Remote Provider', '{}', '{}')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO mcp_servers (id, name, server_config)
+                 VALUES ('remote-mcp', 'Remote MCP', '{}')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO skills (id, name, directory)
+                 VALUES ('remote-skill', 'Remote Skill', '/tmp/remote-skill')",
+                [],
+            )?;
+        }
+        let remote_sql = remote_db.export_sql_string_for_sync_scope(&SyncScope::full())?;
+
+        let local_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(local_db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('local-provider', 'claude', 'Local Provider', '{}', '{}')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO mcp_servers (id, name, server_config)
+                 VALUES ('local-mcp', 'Local MCP', '{}')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO skills (id, name, directory)
+                 VALUES ('local-skill', 'Local Skill', '/tmp/local-skill')",
+                [],
+            )?;
+        }
+
+        local_db.import_sql_string_for_sync_scope(&remote_sql, &SyncScope::default())?;
+
+        let (
+            remote_provider_count,
+            local_mcp_count,
+            remote_mcp_count,
+            local_skill_count,
+            remote_skill_count,
+        ): (i64, i64, i64, i64, i64) = {
+            let conn = crate::database::lock_conn!(local_db.conn);
+            (
+                conn.query_row(
+                    "SELECT COUNT(*) FROM providers WHERE id = 'remote-provider'",
+                    [],
+                    |row| row.get(0),
+                )?,
+                conn.query_row(
+                    "SELECT COUNT(*) FROM mcp_servers WHERE id = 'local-mcp'",
+                    [],
+                    |row| row.get(0),
+                )?,
+                conn.query_row(
+                    "SELECT COUNT(*) FROM mcp_servers WHERE id = 'remote-mcp'",
+                    [],
+                    |row| row.get(0),
+                )?,
+                conn.query_row(
+                    "SELECT COUNT(*) FROM skills WHERE id = 'local-skill'",
+                    [],
+                    |row| row.get(0),
+                )?,
+                conn.query_row(
+                    "SELECT COUNT(*) FROM skills WHERE id = 'remote-skill'",
+                    [],
+                    |row| row.get(0),
+                )?,
+            )
+        };
+
+        assert_eq!(remote_provider_count, 1);
+        assert_eq!(local_mcp_count, 1);
+        assert_eq!(remote_mcp_count, 0);
+        assert_eq!(local_skill_count, 1);
+        assert_eq!(remote_skill_count, 0);
 
         Ok(())
     }

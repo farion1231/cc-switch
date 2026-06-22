@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use crate::error::AppError;
 use crate::services::s3::{self, S3Credentials};
-use crate::settings::{update_s3_sync_status, S3SyncSettings, WebDavSyncStatus};
+use crate::settings::{update_s3_sync_status, S3SyncSettings, SyncScope, WebDavSyncStatus};
 
 use super::sync_protocol::{
     apply_snapshot, build_local_snapshot, localized, persist_sync_success_best_effort, sha256_hex,
@@ -53,14 +53,16 @@ pub async fn upload(
     settings.validate()?;
     let creds = creds_for(settings);
 
-    let snapshot = build_local_snapshot(db)?;
+    let snapshot = build_local_snapshot(db, &SyncScope::full())?;
 
     // Upload order: artifacts first, manifest last (best-effort consistency)
     let db_key = s3_key(settings, REMOTE_DB_SQL);
     s3::put_object(&creds, &db_key, snapshot.db_sql, "application/sql").await?;
 
-    let skills_key = s3_key(settings, REMOTE_SKILLS_ZIP);
-    s3::put_object(&creds, &skills_key, snapshot.skills_zip, "application/zip").await?;
+    if let Some(skills_zip) = snapshot.skills_zip {
+        let skills_key = s3_key(settings, REMOTE_SKILLS_ZIP);
+        s3::put_object(&creds, &skills_key, skills_zip, "application/zip").await?;
+    }
 
     let manifest_key = s3_key(settings, REMOTE_MANIFEST);
     s3::put_object(
@@ -122,7 +124,7 @@ pub async fn download(
         download_and_verify(settings, &creds, REMOTE_SKILLS_ZIP, &manifest.artifacts).await?;
 
     // Apply snapshot
-    apply_snapshot(db, &db_sql, &skills_zip)?;
+    apply_snapshot(db, &db_sql, Some(&skills_zip), &SyncScope::full())?;
 
     let manifest_hash = sha256_hex(&manifest_bytes);
     let _persisted =
