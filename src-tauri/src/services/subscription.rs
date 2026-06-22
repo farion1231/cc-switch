@@ -469,17 +469,32 @@ type CodexCredentials = (
 fn read_codex_credentials() -> CodexCredentials {
     #[cfg(target_os = "macos")]
     {
-        if let Some(result) = read_codex_credentials_from_keychain() {
-            return result;
+        let keychain = read_codex_credentials_from_keychain();
+        let file = read_codex_credentials_from_file();
+        if let Some((keychain_credentials, keychain_last_refresh)) = keychain {
+            let file_last_refresh = file.1.clone();
+            if is_codex_credentials_valid(&file.0)
+                && should_prefer_codex_file_credentials(
+                    keychain_last_refresh.as_deref(),
+                    file_last_refresh.as_deref(),
+                )
+            {
+                return file.0;
+            }
+            return keychain_credentials;
         }
+        return file.0;
     }
 
-    read_codex_credentials_from_file()
+    #[cfg(not(target_os = "macos"))]
+    {
+        read_codex_credentials_from_file().0
+    }
 }
 
 /// 从 macOS Keychain 读取 Codex 凭据
 #[cfg(target_os = "macos")]
-fn read_codex_credentials_from_keychain() -> Option<CodexCredentials> {
+fn read_codex_credentials_from_keychain() -> Option<(CodexCredentials, Option<String>)> {
     let output = std::process::Command::new("security")
         .args(["find-generic-password", "-s", "Codex Auth", "-w"])
         .output()
@@ -495,53 +510,68 @@ fn read_codex_credentials_from_keychain() -> Option<CodexCredentials> {
         return None;
     }
 
-    Some(parse_codex_credentials_json(json_str))
+    Some(parse_codex_credentials_json_with_refresh(json_str))
 }
 
 /// 从文件读取 Codex 凭据
-fn read_codex_credentials_from_file() -> CodexCredentials {
+fn read_codex_credentials_from_file() -> (CodexCredentials, Option<String>) {
     let auth_path = crate::codex_config::get_codex_auth_path();
 
     if !auth_path.exists() {
-        return (None, None, CredentialStatus::NotFound, None);
+        return ((None, None, CredentialStatus::NotFound, None), None);
     }
 
     let content = match std::fs::read_to_string(&auth_path) {
         Ok(c) => c,
         Err(e) => {
             return (
+                (
+                    None,
+                    None,
+                    CredentialStatus::ParseError,
+                    Some(format!("Failed to read Codex auth file: {e}")),
+                ),
                 None,
-                None,
-                CredentialStatus::ParseError,
-                Some(format!("Failed to read Codex auth file: {e}")),
             );
         }
     };
 
-    parse_codex_credentials_json(&content)
+    parse_codex_credentials_json_with_refresh(&content)
 }
 
 /// 解析 Codex 凭据 JSON（Keychain 和文件共用）
+#[cfg(test)]
 fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
+    parse_codex_credentials_json_with_refresh(content).0
+}
+
+fn parse_codex_credentials_json_with_refresh(content: &str) -> (CodexCredentials, Option<String>) {
     let auth: CodexAuthJson = match serde_json::from_str(content) {
         Ok(a) => a,
         Err(e) => {
             return (
+                (
+                    None,
+                    None,
+                    CredentialStatus::ParseError,
+                    Some(format!("Failed to parse Codex auth JSON: {e}")),
+                ),
                 None,
-                None,
-                CredentialStatus::ParseError,
-                Some(format!("Failed to parse Codex auth JSON: {e}")),
             );
         }
     };
+    let last_refresh = auth.last_refresh.clone();
 
     // 仅 OAuth 模式有用量数据
     if auth.auth_mode.as_deref() != Some("chatgpt") {
         return (
-            None,
-            None,
-            CredentialStatus::NotFound,
-            Some("Codex not using OAuth mode".to_string()),
+            (
+                None,
+                None,
+                CredentialStatus::NotFound,
+                Some("Codex not using OAuth mode".to_string()),
+            ),
+            last_refresh,
         );
     }
 
@@ -549,10 +579,13 @@ fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
         Some(t) => t,
         None => {
             return (
-                None,
-                None,
-                CredentialStatus::ParseError,
-                Some("No tokens in Codex auth".to_string()),
+                (
+                    None,
+                    None,
+                    CredentialStatus::ParseError,
+                    Some("No tokens in Codex auth".to_string()),
+                ),
+                last_refresh,
             );
         }
     };
@@ -561,46 +594,49 @@ fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
         Some(t) if !t.is_empty() => t,
         _ => {
             return (
-                None,
-                None,
-                CredentialStatus::ParseError,
-                Some("access_token is empty or missing".to_string()),
+                (
+                    None,
+                    None,
+                    CredentialStatus::ParseError,
+                    Some("access_token is empty or missing".to_string()),
+                ),
+                last_refresh,
             );
         }
     };
 
-    // 检查 token 是否可能过期（距上次刷新 > 8 天）
-    if let Some(ref last_refresh) = auth.last_refresh {
-        if is_codex_token_stale(last_refresh) {
-            return (
-                Some(access_token),
-                tokens.account_id,
-                CredentialStatus::Expired,
-                Some("Codex token may be stale (>8 days since last refresh)".to_string()),
-            );
-        }
-    }
-
     (
-        Some(access_token),
-        tokens.account_id,
-        CredentialStatus::Valid,
-        None,
+        (
+            Some(access_token),
+            tokens.account_id,
+            CredentialStatus::Valid,
+            None,
+        ),
+        last_refresh,
     )
 }
 
-/// 判断 Codex token 是否可能过期（Codex CLI 在 >8 天时自动刷新）
-fn is_codex_token_stale(last_refresh: &str) -> bool {
-    let now_secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+fn codex_last_refresh_timestamp(last_refresh: Option<&str>) -> Option<i64> {
+    last_refresh
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .map(|dt| dt.timestamp())
+}
 
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(last_refresh) {
-        let age_secs = now_secs.saturating_sub(dt.timestamp() as u64);
-        age_secs > 8 * 24 * 3600
-    } else {
-        false
+fn is_codex_credentials_valid(credentials: &CodexCredentials) -> bool {
+    matches!(credentials.2, CredentialStatus::Valid) && credentials.0.is_some()
+}
+
+fn should_prefer_codex_file_credentials(
+    keychain_last_refresh: Option<&str>,
+    file_last_refresh: Option<&str>,
+) -> bool {
+    match (
+        codex_last_refresh_timestamp(keychain_last_refresh),
+        codex_last_refresh_timestamp(file_last_refresh),
+    ) {
+        (Some(keychain_ts), Some(file_ts)) => file_ts > keychain_ts,
+        (None, Some(_)) => true,
+        _ => false,
     }
 }
 
@@ -1334,4 +1370,48 @@ fn now_millis() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_credentials_with_old_last_refresh_remain_valid_until_api_rejects_token() {
+        let auth = r#"{
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": "codex-access-token",
+                "account_id": "acct-1"
+            },
+            "last_refresh": "2020-01-01T00:00:00Z"
+        }"#;
+
+        let (token, account_id, status, message) = parse_codex_credentials_json(auth);
+
+        assert_eq!(token.as_deref(), Some("codex-access-token"));
+        assert_eq!(account_id.as_deref(), Some("acct-1"));
+        assert!(matches!(status, CredentialStatus::Valid));
+        assert!(message.is_none());
+    }
+
+    #[test]
+    fn codex_credentials_prefer_newer_file_over_stale_keychain() {
+        assert!(should_prefer_codex_file_credentials(
+            Some("2026-04-08T18:42:14.794008Z"),
+            Some("2026-06-21T00:58:22.783456Z"),
+        ));
+    }
+
+    #[test]
+    fn invalid_codex_file_credentials_cannot_override_keychain() {
+        let credentials = (
+            None,
+            None,
+            CredentialStatus::ParseError,
+            Some("access_token is empty or missing".to_string()),
+        );
+
+        assert!(!is_codex_credentials_valid(&credentials));
+    }
 }
