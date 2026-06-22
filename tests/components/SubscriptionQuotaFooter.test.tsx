@@ -97,4 +97,30 @@ describe("OfficialSubscriptionDetailsView", () => {
 
     expect(container).toBeEmptyDOMElement();
   });
+
+  it("does not duplicate a failed quota state in the expanded details", () => {
+    const failedQuota: SubscriptionQuota = {
+      tool: "codex",
+      credentialStatus: "valid",
+      credentialMessage: null,
+      success: false,
+      tiers: [],
+      extraUsage: null,
+      resetCredits: null,
+      error: "request failed",
+      queriedAt: Date.now(),
+    };
+
+    const { container } = render(
+      <OfficialSubscriptionDetailsView
+        quota={failedQuota}
+        loading={false}
+        refetch={vi.fn()}
+        appId="codex"
+        includeResetCredits={true}
+      />,
+    );
+
+    expect(container).toBeEmptyDOMElement();
+  });
 });

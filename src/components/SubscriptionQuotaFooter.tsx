@@ -538,6 +538,7 @@ export const OfficialSubscriptionDetailsView: React.FC<
 > = ({ quota, loading, refetch, appId, includeResetCredits }) => {
   if (
     !quota ||
+    !quota.success ||
     quota.credentialStatus === "not_found" ||
     quota.credentialStatus === "parse_error"
   ) {
@@ -545,7 +546,6 @@ export const OfficialSubscriptionDetailsView: React.FC<
   }
 
   const hasSubscriptionDetails =
-    !quota.success ||
     quota.tiers.some((tier) => tier.name in TIER_I18N_KEYS) ||
     quota.extraUsage?.isEnabled === true;
   const hasResetCredits =
