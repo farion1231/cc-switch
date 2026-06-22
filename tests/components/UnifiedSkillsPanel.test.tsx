@@ -1,5 +1,6 @@
 import { createRef } from "react";
 import { render, screen, waitFor, act } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import UnifiedSkillsPanel, {
@@ -13,6 +14,30 @@ const importSkillsMock = vi.fn();
 const installFromZipMock = vi.fn();
 const deleteSkillBackupMock = vi.fn();
 const restoreSkillBackupMock = vi.fn();
+
+const unmanagedSkills = [
+  {
+    directory: "shared-skill",
+    name: "Shared Skill",
+    description: "Imported from Claude",
+    foundIn: ["claude"],
+    path: "/tmp/shared-skill",
+  },
+  {
+    directory: "codex-helper",
+    name: "Codex Helper",
+    description: "Imported from Codex",
+    foundIn: ["codex"],
+    path: "/tmp/codex-helper",
+  },
+  {
+    directory: "gemini-runner",
+    name: "Gemini Runner",
+    description: "Imported from Gemini",
+    foundIn: ["gemini"],
+    path: "/tmp/gemini-runner",
+  },
+];
 
 vi.mock("sonner", () => ({
   toast: {
@@ -47,15 +72,7 @@ vi.mock("@/hooks/useSkills", () => ({
     mutateAsync: uninstallSkillMock,
   }),
   useScanUnmanagedSkills: () => ({
-    data: [
-      {
-        directory: "shared-skill",
-        name: "Shared Skill",
-        description: "Imported from Claude",
-        foundIn: ["claude"],
-        path: "/tmp/shared-skill",
-      },
-    ],
+    data: unmanagedSkills,
     refetch: scanUnmanagedMock,
   }),
   useImportSkillsFromApps: () => ({
@@ -78,15 +95,7 @@ vi.mock("@/hooks/useSkills", () => ({
 describe("UnifiedSkillsPanel", () => {
   beforeEach(() => {
     scanUnmanagedMock.mockResolvedValue({
-      data: [
-        {
-          directory: "shared-skill",
-          name: "Shared Skill",
-          description: "Imported from Claude",
-          foundIn: ["claude"],
-          path: "/tmp/shared-skill",
-        },
-      ],
+      data: unmanagedSkills,
     });
     toggleSkillAppMock.mockReset();
     uninstallSkillMock.mockReset();
@@ -96,7 +105,7 @@ describe("UnifiedSkillsPanel", () => {
     restoreSkillBackupMock.mockReset();
   });
 
-  it("opens the import dialog without crashing when app toggles render", async () => {
+  const openImportDialog = async () => {
     const ref = createRef<UnifiedSkillsPanelHandle>();
 
     render(
@@ -111,10 +120,105 @@ describe("UnifiedSkillsPanel", () => {
       await ref.current?.openImport();
     });
 
+    return ref;
+  };
+
+  it("opens the import dialog without crashing when app toggles render", async () => {
+    await openImportDialog();
+
     await waitFor(() => {
       expect(screen.getByText("skills.import")).toBeInTheDocument();
       expect(screen.getByText("Shared Skill")).toBeInTheDocument();
       expect(screen.getByText("/tmp/shared-skill")).toBeInTheDocument();
+    });
+  });
+
+  it("does not select scanned skills by default", async () => {
+    await openImportDialog();
+
+    await waitFor(() => {
+      expect(screen.getByText("Shared Skill")).toBeInTheDocument();
+    });
+
+    const checkboxes = screen.getAllByRole("checkbox");
+    expect(checkboxes).toHaveLength(unmanagedSkills.length);
+    checkboxes.forEach((checkbox) => {
+      expect(checkbox).not.toBeChecked();
+    });
+    expect(
+      screen.getByRole("button", { name: "skills.importSelected" }),
+    ).toBeDisabled();
+  });
+
+  it("filters import candidates by search query", async () => {
+    const user = userEvent.setup();
+    await openImportDialog();
+
+    await user.type(
+      screen.getByLabelText("skills.importSearchAriaLabel"),
+      "codex",
+    );
+
+    expect(screen.getByText("Codex Helper")).toBeInTheDocument();
+    expect(screen.queryByText("Shared Skill")).not.toBeInTheDocument();
+    expect(screen.queryByText("Gemini Runner")).not.toBeInTheDocument();
+  });
+
+  it("selects and deselects the current filtered results", async () => {
+    const user = userEvent.setup();
+    await openImportDialog();
+
+    await user.type(
+      screen.getByLabelText("skills.importSearchAriaLabel"),
+      "codex",
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "skills.importSelectAll" }),
+    );
+    expect(screen.getByRole("checkbox")).toBeChecked();
+
+    await user.click(
+      screen.getByRole("button", { name: "skills.importDeselectAll" }),
+    );
+    expect(screen.getByRole("checkbox")).not.toBeChecked();
+  });
+
+  it("imports only selected skills after selecting filtered results", async () => {
+    const user = userEvent.setup();
+    importSkillsMock.mockResolvedValue([
+      {
+        id: "codex-helper",
+        name: "Codex Helper",
+      },
+    ]);
+    await openImportDialog();
+
+    await user.type(
+      screen.getByLabelText("skills.importSearchAriaLabel"),
+      "codex",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "skills.importSelectAll" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "skills.importSelected" }),
+    );
+
+    await waitFor(() => {
+      expect(importSkillsMock).toHaveBeenCalledWith([
+        {
+          directory: "codex-helper",
+          apps: {
+            claude: false,
+            codex: true,
+            gemini: false,
+            opencode: false,
+            openclaw: false,
+            hermes: false,
+          },
+        },
+      ]);
     });
   });
 });
