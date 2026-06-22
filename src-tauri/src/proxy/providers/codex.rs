@@ -527,8 +527,13 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
-        self.extract_key(provider)
-            .map(|key| AuthInfo::new(key, AuthStrategy::Bearer))
+        self.extract_key(provider).map(|key| {
+            if key == "codex_oauth_placeholder" {
+                AuthInfo::new(key, AuthStrategy::CodexOAuth)
+            } else {
+                AuthInfo::new(key, AuthStrategy::Bearer)
+            }
+        })
     }
 
     fn build_url(&self, base_url: &str, endpoint: &str) -> String {
