@@ -9,8 +9,15 @@ export const subscriptionApi = {
   getCodingPlanQuota: (
     baseUrl: string,
     apiKey: string,
+    accessKeyId?: string,
+    secretAccessKey?: string,
   ): Promise<SubscriptionQuota> =>
-    invoke("get_coding_plan_quota", { baseUrl, apiKey }),
+    invoke("get_coding_plan_quota", {
+      baseUrl,
+      apiKey,
+      accessKeyId,
+      secretAccessKey,
+    }),
   getBalance: (
     baseUrl: string,
     apiKey: string,

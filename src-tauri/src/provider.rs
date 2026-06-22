@@ -251,6 +251,15 @@ pub struct UsageScript {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "codingPlanProvider")]
     pub coding_plan_provider: Option<String>,
+    /// 火山方舟 Coding Plan 用量查询的 Access Key ID（AK/SK 签名鉴权，
+    /// 与供应商编码用的 Ark API Key 是两套凭证，故单独存在 usage_script 里）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "accessKeyId")]
+    pub access_key_id: Option<String>,
+    /// 火山方舟 Coding Plan 用量查询的 Secret Access Key
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "secretAccessKey")]
+    pub secret_access_key: Option<String>,
 }
 
 /// 用量数据

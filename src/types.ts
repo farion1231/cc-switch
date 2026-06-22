@@ -63,6 +63,8 @@ export interface UsageScript {
   accessToken?: string; // 访问令牌（NewAPI 模板使用）
   userId?: string; // 用户ID（NewAPI 模板使用）
   codingPlanProvider?: string; // Coding Plan 供应商标识（如 "kimi", "zhipu", "minimax"）
+  accessKeyId?: string; // 火山方舟 Coding Plan 用量查询的 Access Key ID（AK/SK 签名）
+  secretAccessKey?: string; // 火山方舟 Coding Plan 用量查询的 Secret Access Key
   autoQueryInterval?: number; // 自动查询间隔（单位：分钟，0 表示禁用）
   autoIntervalMinutes?: number; // 自动查询间隔（分钟）- 别名字段
   request?: {

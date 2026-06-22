@@ -540,14 +540,23 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       if (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN) {
         // ZenMux 使用用户在脚本配置中手动填入的 API Key 和 Base URL
         const isZenMux = script.codingPlanProvider === "zenmux";
+        // 火山方舟用量查询用 AK/SK 签名（独立于编码用的 Ark API Key）
+        const isVolcengine = script.codingPlanProvider === "volcengine";
         const baseUrl = isZenMux
           ? (script.baseUrl ?? "")
           : (providerCredentials.baseUrl ?? "");
         const apiKey = isZenMux
           ? (script.apiKey ?? "")
           : (providerCredentials.apiKey ?? "");
+        const accessKeyId = isVolcengine ? script.accessKeyId : undefined;
+        const secretAccessKey = isVolcengine ? script.secretAccessKey : undefined;
         const { subscriptionApi } = await import("@/lib/api/subscription");
-        const quota = await subscriptionApi.getCodingPlanQuota(baseUrl, apiKey);
+        const quota = await subscriptionApi.getCodingPlanQuota(
+          baseUrl,
+          apiKey,
+          accessKeyId,
+          secretAccessKey,
+        );
         if (quota.success && quota.tiers.length > 0) {
           const summary = quota.tiers
             .map((tier) => `${tier.name}: ${Math.round(tier.utilization)}%`)
@@ -726,13 +735,16 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           providerCredentials.baseUrl,
         );
         const provider = script.codingPlanProvider || autoDetected || "kimi";
-        // ZenMux 允许手动填写 API Key 和 Base URL，不清除
+        // ZenMux 允许手动填写 API Key 和 Base URL；火山允许手动填写 AK/SK，不清除
         const isZenMux = provider === "zenmux";
+        const isVolcengine = provider === "volcengine";
         setScript({
           ...script,
           code: "",
           apiKey: isZenMux ? script.apiKey : undefined,
           baseUrl: isZenMux ? script.baseUrl : undefined,
+          accessKeyId: isVolcengine ? script.accessKeyId : undefined,
+          secretAccessKey: isVolcengine ? script.secretAccessKey : undefined,
           accessToken: undefined,
           userId: undefined,
           codingPlanProvider: provider,
@@ -766,7 +778,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     selectedTemplate === TEMPLATE_TYPES.GENERAL ||
     selectedTemplate === TEMPLATE_TYPES.NEW_API ||
     (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
-      script.codingPlanProvider === "zenmux");
+      (script.codingPlanProvider === "zenmux" ||
+        script.codingPlanProvider === "volcengine"));
 
   const footer = (
     <>
@@ -1221,6 +1234,85 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                               className="border-white/10"
                             />
                             {script.apiKey && (
+                              <button
+                                type="button"
+                                onClick={() => setShowApiKey(!showApiKey)}
+                                className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
+                                aria-label={
+                                  showApiKey
+                                    ? t("apiKeyInput.hide")
+                                    : t("apiKeyInput.show")
+                                }
+                              >
+                                {showApiKey ? (
+                                  <EyeOff size={16} />
+                                ) : (
+                                  <Eye size={16} />
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                  {selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
+                    script.codingPlanProvider === "volcengine" && (
+                      <>
+                        <div className="md:col-span-2 space-y-1">
+                          <p className="text-xs text-muted-foreground">
+                            {t("usageScript.volcengineKeyHint")}
+                          </p>
+                          <a
+                            href="https://console.volcengine.com/iam/keymanage"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center text-xs text-primary underline hover:opacity-80"
+                          >
+                            {t("usageScript.volcengineKeyManageLink")}
+                          </a>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="usage-volc-ak">
+                            {t("usageScript.volcengineAccessKeyId")}
+                          </Label>
+                          <Input
+                            id="usage-volc-ak"
+                            type="text"
+                            value={script.accessKeyId || ""}
+                            onChange={(e) =>
+                              setScript({
+                                ...script,
+                                accessKeyId: e.target.value,
+                              })
+                            }
+                            placeholder="AKLT..."
+                            autoComplete="off"
+                            className="border-white/10"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="usage-volc-sk">
+                            {t("usageScript.volcengineSecretAccessKey")}
+                          </Label>
+                          <div className="relative">
+                            <Input
+                              id="usage-volc-sk"
+                              type={showApiKey ? "text" : "password"}
+                              value={script.secretAccessKey || ""}
+                              onChange={(e) =>
+                                setScript({
+                                  ...script,
+                                  secretAccessKey: e.target.value,
+                                })
+                              }
+                              placeholder="••••••••"
+                              autoComplete="off"
+                              className="border-white/10"
+                            />
+                            {script.secretAccessKey && (
                               <button
                                 type="button"
                                 onClick={() => setShowApiKey(!showApiKey)}
