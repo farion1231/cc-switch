@@ -2181,14 +2181,8 @@ fn codex_repair_command(bin_path: &str, real: &str) -> Option<String> {
     let npm = sibling_bin(bin_path, "npm")?;
     let npm_command = quote_path_if_spaced(&npm);
     let pkg = "@openai/codex";
-    let uninstall = with_bin_dir_on_path(
-        &npm,
-        format!("{npm_command} uninstall -g {pkg}"),
-    );
-    let install = with_bin_dir_on_path(
-        &npm,
-        format!("{npm_command} i -g {pkg}@latest"),
-    );
+    let uninstall = with_bin_dir_on_path(&npm, format!("{npm_command} uninstall -g {pkg}"));
+    let install = with_bin_dir_on_path(&npm, format!("{npm_command} i -g {pkg}@latest"));
     Some(format!("{uninstall} || true; {install}"))
 }
 
