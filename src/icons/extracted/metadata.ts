@@ -140,6 +140,22 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["ccsub", "aggregator", "relay", "claude", "codex", "gateway"],
     defaultColor: "#1E88E5",
   },
+  subrouter: {
+    name: "subrouter",
+    displayName: "SubRouter",
+    category: "ai-provider",
+    keywords: [
+      "subrouter",
+      "subrouter.ai",
+      "aggregator",
+      "relay",
+      "claude",
+      "codex",
+      "gemini",
+      "gateway",
+    ],
+    defaultColor: "#0D9488",
+  },
   chatglm: {
     name: "chatglm",
     displayName: "chatglm",

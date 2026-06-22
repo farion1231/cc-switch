@@ -210,6 +210,21 @@ export const providerPresets: ProviderPreset[] = [
     icon: "ccsub",
   },
   {
+    name: "SubRouter",
+    websiteUrl: "https://subrouter.ai",
+    apiKeyUrl: "https://subrouter.ai/console/token",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://subrouter.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "subrouter",
+    icon: "subrouter",
+  },
+  {
     name: "Unity2.ai",
     websiteUrl: "https://unity2.ai",
     apiKeyUrl: "https://unity2.ai/register?source=ccs",

@@ -295,6 +295,42 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "SubRouter",
+    websiteUrl: "https://subrouter.ai",
+    apiKeyUrl: "https://subrouter.ai/console/token",
+    settingsConfig: {
+      baseUrl: "https://subrouter.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          contextWindow: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "subrouter",
+    icon: "subrouter",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "subrouter/gpt-5.5",
+      },
+      modelCatalog: {
+        "subrouter/gpt-5.5": { alias: "GPT-5.5" },
+      },
+    },
+  },
+  {
     name: "Unity2.ai",
     websiteUrl: "https://unity2.ai",
     apiKeyUrl: "https://unity2.ai/register?source=ccs",
