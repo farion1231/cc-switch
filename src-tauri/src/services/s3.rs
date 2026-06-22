@@ -4,6 +4,7 @@
 //! Implements AWS Signature Version 4 request signing.
 //! The sync protocol logic lives in the upcoming `s3_sync` module.
 
+use bytes::Bytes;
 use reqwest::StatusCode;
 use std::time::Duration;
 use url::Url;
@@ -472,7 +473,8 @@ pub(crate) async fn put_object(
     })?;
 
     let client = http_client::get();
-    let body_hash = sha256_hex(&bytes);
+    let body = Bytes::from(bytes);
+    let body_hash = sha256_hex(&body);
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert("content-type", content_type.parse().unwrap());
     sign_request(
@@ -487,7 +489,7 @@ pub(crate) async fn put_object(
     let resp = client
         .put(url.as_str())
         .headers(headers)
-        .body(bytes.clone())
+        .body(body.clone())
         .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS))
         .send()
         .await
@@ -519,7 +521,7 @@ pub(crate) async fn put_object(
         let retry_resp = client
             .put(retry_url.as_str())
             .headers(retry_headers)
-            .body(bytes)
+            .body(body)
             .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS))
             .send()
             .await
