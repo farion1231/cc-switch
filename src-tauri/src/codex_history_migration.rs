@@ -67,6 +67,7 @@ const CC_SWITCH_LEGACY_CODEX_MODEL_PROVIDER_IDS: &[&str] = &[
     "dmxapi",
     "doubaoseed",
     "eflowcode",
+    "etok",
     "kimi",
     "lemondata",
     "longcat",
@@ -1116,19 +1117,35 @@ fn migrate_codex_state_dbs(
 }
 
 fn codex_state_db_paths(codex_dir: &Path, config_text: &str) -> Vec<PathBuf> {
-    let mut paths = vec![codex_dir.join(CODEX_STATE_DB_FILENAME)];
+    let mut paths = Vec::new();
+    push_unique_path(&mut paths, codex_dir.join(CODEX_STATE_DB_FILENAME));
+    // Codex lets SQLite state move away from CODEX_HOME; config takes precedence.
     if let Some(sqlite_home) = sqlite_home_from_codex_config(config_text) {
-        let db_path = sqlite_home.join(CODEX_STATE_DB_FILENAME);
-        if !paths.contains(&db_path) {
-            paths.push(db_path);
-        }
+        push_unique_path(&mut paths, sqlite_home.join(CODEX_STATE_DB_FILENAME));
+    } else if let Some(sqlite_home) = sqlite_home_from_env() {
+        push_unique_path(&mut paths, sqlite_home.join(CODEX_STATE_DB_FILENAME));
     }
     paths
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.contains(&path) {
+        paths.push(path);
+    }
 }
 
 fn sqlite_home_from_codex_config(config_text: &str) -> Option<PathBuf> {
     let doc = config_text.parse::<DocumentMut>().ok()?;
     let raw = doc.get("sqlite_home")?.as_str()?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    Some(resolve_user_path(raw))
+}
+
+fn sqlite_home_from_env() -> Option<PathBuf> {
+    let raw = std::env::var("CODEX_SQLITE_HOME").ok()?;
+    let raw = raw.trim();
     if raw.is_empty() {
         return None;
     }
@@ -1313,7 +1330,32 @@ fn relative_backup_path(path: &Path, root: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use crate::provider::Provider;
+    use serial_test::serial;
+    use std::ffi::OsString;
     use tempfile::tempdir;
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &Path) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                std::env::set_var(self.key, previous);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
 
     fn source_ids(values: &[&str]) -> BTreeSet<String> {
         values.iter().map(|value| value.to_string()).collect()
@@ -2114,6 +2156,46 @@ base_url = "https://proxy.example/v1"
             )
             .expect("count backed up source providers");
         assert_eq!(backed_up_source_count, 2);
+    }
+
+    #[test]
+    #[serial]
+    fn state_db_paths_include_codex_sqlite_home_env() {
+        let dir = tempdir().expect("tempdir");
+        let codex_dir = dir.path().join(".codex");
+        let sqlite_home = dir.path().join("sqlite-home");
+        let _guard = EnvVarGuard::set("CODEX_SQLITE_HOME", &sqlite_home);
+
+        let paths = codex_state_db_paths(&codex_dir, "");
+
+        assert_eq!(
+            paths,
+            vec![
+                codex_dir.join(CODEX_STATE_DB_FILENAME),
+                sqlite_home.join(CODEX_STATE_DB_FILENAME),
+            ]
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn config_sqlite_home_takes_precedence_over_codex_sqlite_home_env() {
+        let dir = tempdir().expect("tempdir");
+        let codex_dir = dir.path().join(".codex");
+        let env_sqlite_home = dir.path().join("env-sqlite-home");
+        let config_sqlite_home = dir.path().join("config-sqlite-home");
+        let _guard = EnvVarGuard::set("CODEX_SQLITE_HOME", &env_sqlite_home);
+        let config_text = format!("sqlite_home = \"{}\"\n", config_sqlite_home.display());
+
+        let paths = codex_state_db_paths(&codex_dir, &config_text);
+
+        assert_eq!(
+            paths,
+            vec![
+                codex_dir.join(CODEX_STATE_DB_FILENAME),
+                config_sqlite_home.join(CODEX_STATE_DB_FILENAME),
+            ]
+        );
     }
 
     #[test]

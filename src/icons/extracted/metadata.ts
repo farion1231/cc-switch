@@ -202,12 +202,12 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: [],
     defaultColor: "currentColor",
   },
-  ctok: {
-    name: "ctok",
-    displayName: "CTok",
+  etok: {
+    name: "etok",
+    displayName: "ETok",
     category: "ai-provider",
-    keywords: ["ctok", "ai", "programming"],
-    defaultColor: "#3B82F6",
+    keywords: ["etok", "ai", "programming"],
+    defaultColor: "#F97316",
   },
   cubence: {
     name: "cubence",
@@ -305,7 +305,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     displayName: "Kimi",
     category: "ai-provider",
     keywords: ["moonshot"],
-    defaultColor: "#6366F1",
+    defaultColor: "#1783FF",
   },
   meta: {
     name: "meta",
