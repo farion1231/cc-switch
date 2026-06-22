@@ -148,9 +148,8 @@ fn default_mcp_path_for_config_dir(dir: &Path) -> Option<PathBuf> {
     None
 }
 
-fn derive_mcp_path_from_override(dir: &Path) -> Option<PathBuf> {
-    dir.file_name()?;
-    Some(normalize_path_lexically(dir).join(".claude.json"))
+fn derive_mcp_path_from_override(dir: &Path) -> PathBuf {
+    dir.join(".claude.json")
 }
 
 /// 获取 Claude MCP 配置文件路径
@@ -159,9 +158,7 @@ pub fn get_claude_mcp_path() -> PathBuf {
         if let Some(path) = default_mcp_path_for_config_dir(&custom_dir) {
             return path;
         }
-        if let Some(path) = derive_mcp_path_from_override(&custom_dir) {
-            return path;
-        }
+        return derive_mcp_path_from_override(&custom_dir);
     }
     get_default_claude_mcp_path()
 }
@@ -361,31 +358,36 @@ mod tests {
     #[test]
     fn derive_mcp_path_from_override_uses_config_dir_for_custom_path() {
         let override_dir = PathBuf::from("/tmp/profile/.claude");
-        let derived = derive_mcp_path_from_override(&override_dir)
-            .expect("should derive path for nested dir");
+        let derived = derive_mcp_path_from_override(&override_dir);
         assert_eq!(derived, PathBuf::from("/tmp/profile/.claude/.claude.json"));
     }
 
     #[test]
     fn derive_mcp_path_from_override_uses_config_dir_for_non_hidden_folder() {
         let override_dir = PathBuf::from("/data/claude-config");
-        let derived = derive_mcp_path_from_override(&override_dir)
-            .expect("should derive path for standard dir");
+        let derived = derive_mcp_path_from_override(&override_dir);
         assert_eq!(derived, PathBuf::from("/data/claude-config/.claude.json"));
     }
 
     #[test]
     fn derive_mcp_path_from_override_supports_relative_rootless_dir() {
         let override_dir = PathBuf::from("claude");
-        let derived = derive_mcp_path_from_override(&override_dir)
-            .expect("should derive path for single segment");
+        let derived = derive_mcp_path_from_override(&override_dir);
         assert_eq!(derived, PathBuf::from("claude/.claude.json"));
     }
 
     #[test]
-    fn derive_mcp_path_from_root_like_dir_returns_none() {
+    fn derive_mcp_path_from_root_like_dir_uses_root_file() {
         let override_dir = PathBuf::from("/");
-        assert!(derive_mcp_path_from_override(&override_dir).is_none());
+        let derived = derive_mcp_path_from_override(&override_dir);
+        assert_eq!(derived, PathBuf::from("/.claude.json"));
+    }
+
+    #[test]
+    fn derive_mcp_path_from_override_preserves_leading_parent_dirs() {
+        let override_dir = PathBuf::from("../../profiles/work/.claude");
+        let derived = derive_mcp_path_from_override(&override_dir);
+        assert_eq!(derived, override_dir.join(".claude.json"));
     }
 
     #[cfg(windows)]
@@ -418,7 +420,7 @@ mod tests {
         let override_dir = PathBuf::from(r"\\wsl$\Ubuntu\opt\claude\.claude");
         assert!(default_mcp_path_for_config_dir(&override_dir).is_none());
         assert_eq!(
-            derive_mcp_path_from_override(&override_dir).expect("custom WSL dir"),
+            derive_mcp_path_from_override(&override_dir),
             PathBuf::from(r"\\wsl$\Ubuntu\opt\claude\.claude\.claude.json")
         );
     }
