@@ -43,6 +43,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  normalizeRepoSourceHost,
+  normalizeRepoSourceType,
+  repoDisplayName,
+} from "./repoUtils";
 
 interface UnifiedSkillsPanelProps {
   onOpenDiscovery: () => void;
@@ -150,7 +155,14 @@ const UnifiedSkillsPanel = React.forwardRef<
           const installName =
             skill.directory.split(/[/\\]/).pop()?.toLowerCase() ||
             skill.directory.toLowerCase();
-          const skillKey = `${installName}:${skill.repoOwner?.toLowerCase() || ""}:${skill.repoName?.toLowerCase() || ""}`;
+          const sourceType = normalizeRepoSourceType(skill.repoSourceType);
+          const sourceHost = normalizeRepoSourceHost(
+            skill.repoSourceHost,
+            sourceType,
+          );
+          const owner = skill.repoOwner?.toLowerCase() || "";
+          const name = skill.repoName?.toLowerCase() || "";
+          const skillKey = `${installName}:${sourceType}:${sourceHost}:${owner}:${name}`;
 
           const result = await uninstallMutation.mutateAsync({
             id: skill.id,
@@ -509,10 +521,24 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
 
   const sourceLabel = useMemo(() => {
     if (skill.repoOwner && skill.repoName) {
-      return `${skill.repoOwner}/${skill.repoName}`;
+      return repoDisplayName({
+        sourceType: skill.repoSourceType || "github",
+        sourceHost: skill.repoSourceHost || "github.com",
+        owner: skill.repoOwner,
+        name: skill.repoName,
+        branch: skill.repoBranch || "main",
+        enabled: true,
+      });
     }
     return t("skills.local");
-  }, [skill.repoOwner, skill.repoName, t]);
+  }, [
+    skill.repoSourceType,
+    skill.repoSourceHost,
+    skill.repoOwner,
+    skill.repoName,
+    skill.repoBranch,
+    t,
+  ]);
 
   return (
     <ListItemRow isLast={isLast}>

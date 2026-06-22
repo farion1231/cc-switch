@@ -86,6 +86,8 @@ impl Database {
             name TEXT NOT NULL,
             description TEXT,
             directory TEXT NOT NULL,
+            repo_source_type TEXT,
+            repo_source_host TEXT,
             repo_owner TEXT,
             repo_name TEXT,
             repo_branch TEXT DEFAULT 'main',
@@ -106,8 +108,13 @@ impl Database {
         // 6. Skill Repos 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skill_repos (
-            owner TEXT NOT NULL, name TEXT NOT NULL, branch TEXT NOT NULL DEFAULT 'main',
-            enabled BOOLEAN NOT NULL DEFAULT 1, PRIMARY KEY (owner, name)
+            source_type TEXT NOT NULL DEFAULT 'github',
+            source_host TEXT NOT NULL DEFAULT 'github.com',
+            owner TEXT NOT NULL,
+            name TEXT NOT NULL,
+            branch TEXT NOT NULL DEFAULT 'main',
+            enabled BOOLEAN NOT NULL DEFAULT 1,
+            PRIMARY KEY (source_type, source_host, owner, name)
         )",
             [],
         )
@@ -443,6 +450,11 @@ impl Database {
                         log::info!("迁移数据库从 v10 到 v11（usage_daily_rollups 保留 request_model 维度）");
                         Self::migrate_v10_to_v11(conn)?;
                         Self::set_user_version(conn, 11)?;
+                    }
+                    11 => {
+                        log::info!("迁移数据库从 v11 到 v12（Skill 仓库来源支持）");
+                        Self::migrate_v11_to_v12(conn)?;
+                        Self::set_user_version(conn, 12)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1267,6 +1279,67 @@ impl Database {
         log::info!(
             "v10 -> v11 迁移完成：usage_daily_rollups 已保留 request_model/pricing_model 维度"
         );
+        Ok(())
+    }
+
+    /// v11 -> v12：Skill 仓库支持 GitHub/GitLab 来源。
+    fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(conn, "skills", "repo_source_type", "TEXT")?;
+            Self::add_column_if_missing(conn, "skills", "repo_source_host", "TEXT")?;
+            conn.execute(
+                "UPDATE skills
+                 SET repo_source_type = 'github'
+                 WHERE repo_owner IS NOT NULL
+                   AND repo_name IS NOT NULL
+                   AND (repo_source_type IS NULL OR repo_source_type = '')",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("回填 skills.repo_source_type 失败: {e}")))?;
+            conn.execute(
+                "UPDATE skills
+                 SET repo_source_host = 'github.com'
+                 WHERE repo_owner IS NOT NULL
+                   AND repo_name IS NOT NULL
+                   AND (repo_source_host IS NULL OR repo_source_host = '')",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("回填 skills.repo_source_host 失败: {e}")))?;
+        }
+
+        if !Self::table_exists(conn, "skill_repos")? {
+            return Ok(());
+        }
+
+        if Self::has_column(conn, "skill_repos", "source_type")?
+            && Self::has_column(conn, "skill_repos", "source_host")?
+        {
+            log::info!("v11 -> v12：skill_repos 已包含来源字段，跳过重建");
+            return Ok(());
+        }
+
+        conn.execute_batch(
+            "ALTER TABLE skill_repos RENAME TO skill_repos_v11;
+             CREATE TABLE skill_repos (
+                 source_type TEXT NOT NULL DEFAULT 'github',
+                 source_host TEXT NOT NULL DEFAULT 'github.com',
+                 owner TEXT NOT NULL,
+                 name TEXT NOT NULL,
+                 branch TEXT NOT NULL DEFAULT 'main',
+                 enabled BOOLEAN NOT NULL DEFAULT 1,
+                 PRIMARY KEY (source_type, source_host, owner, name)
+             );
+             INSERT OR REPLACE INTO skill_repos
+                 (source_type, source_host, owner, name, branch, enabled)
+             SELECT 'github', 'github.com', owner, name,
+                    COALESCE(NULLIF(branch, ''), 'main'),
+                    COALESCE(enabled, 1)
+             FROM skill_repos_v11;
+             DROP TABLE skill_repos_v11;",
+        )
+        .map_err(|e| AppError::Database(format!("v11 -> v12 重建 skill_repos 失败: {e}")))?;
+
+        log::info!("v11 -> v12 迁移完成：Skill 仓库已支持来源类型和域名");
         Ok(())
     }
 

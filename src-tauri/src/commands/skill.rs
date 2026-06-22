@@ -311,13 +311,30 @@ pub fn add_skill_repo(repo: SkillRepo, app_state: State<'_, AppState>) -> Result
 /// 删除技能仓库
 #[tauri::command]
 pub fn remove_skill_repo(
+    source_type: Option<String>,
+    source_host: Option<String>,
     owner: String,
     name: String,
     app_state: State<'_, AppState>,
 ) -> Result<bool, String> {
+    let repo_for_source = SkillRepo {
+        source_type: source_type.unwrap_or_else(|| "github".to_string()),
+        source_host: source_host.unwrap_or_else(|| "github.com".to_string()),
+        owner: owner.clone(),
+        name: name.clone(),
+        branch: "main".to_string(),
+        enabled: true,
+    };
+    let normalized_source_type = repo_for_source.normalized_source_type();
+    let normalized_source_host = repo_for_source.normalized_source_host();
     app_state
         .db
-        .delete_skill_repo(&owner, &name)
+        .delete_skill_repo(
+            &normalized_source_type,
+            &normalized_source_host,
+            &owner,
+            &name,
+        )
         .map_err(|e| e.to_string())?;
     Ok(true)
 }

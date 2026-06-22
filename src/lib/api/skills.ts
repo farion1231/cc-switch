@@ -28,6 +28,8 @@ export interface InstalledSkill {
   name: string;
   description?: string;
   directory: string;
+  repoSourceType?: string;
+  repoSourceHost?: string;
   repoOwner?: string;
   repoName?: string;
   repoBranch?: string;
@@ -56,6 +58,8 @@ export interface DiscoverableSkill {
   description: string;
   directory: string;
   readmeUrl?: string;
+  repoSourceType: string;
+  repoSourceHost: string;
   repoOwner: string;
   repoName: string;
   repoBranch: string;
@@ -125,6 +129,8 @@ export interface SkillsShSearchResult {
 
 /** 仓库配置 */
 export interface SkillRepo {
+  sourceType: string;
+  sourceHost: string;
   owner: string;
   name: string;
   branch: string;
@@ -262,8 +268,13 @@ export const skillsApi = {
   },
 
   /** 删除仓库 */
-  async removeRepo(owner: string, name: string): Promise<boolean> {
-    return await invoke("remove_skill_repo", { owner, name });
+  async removeRepo(repo: SkillRepo): Promise<boolean> {
+    return await invoke("remove_skill_repo", {
+      sourceType: repo.sourceType || "github",
+      sourceHost: repo.sourceHost || "github.com",
+      owner: repo.owner,
+      name: repo.name,
+    });
   },
 
   // ========== ZIP 安装 ==========

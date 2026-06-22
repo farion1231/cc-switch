@@ -147,6 +147,8 @@ fn sync_to_app_removes_disabled_and_orphaned_ssot_symlinks() {
             repo_owner: None,
             repo_name: None,
             repo_branch: None,
+            repo_source_type: None,
+            repo_source_host: None,
             readme_url: None,
             apps: SkillApps::default(),
             installed_at: 0,
@@ -188,6 +190,8 @@ fn uninstall_skill_creates_backup_before_removing_ssot() {
             repo_owner: None,
             repo_name: None,
             repo_branch: None,
+            repo_source_type: None,
+            repo_source_host: None,
             readme_url: None,
             apps: SkillApps {
                 claude: true,
@@ -256,6 +260,8 @@ fn restore_skill_backup_restores_files_to_ssot_and_current_app() {
             repo_owner: None,
             repo_name: None,
             repo_branch: None,
+            repo_source_type: None,
+            repo_source_host: None,
             readme_url: None,
             apps: SkillApps {
                 claude: true,
@@ -337,6 +343,8 @@ fn delete_skill_backup_removes_backup_directory() {
             repo_owner: None,
             repo_name: None,
             repo_branch: None,
+            repo_source_type: None,
+            repo_source_host: None,
             readme_url: None,
             apps: SkillApps {
                 claude: true,

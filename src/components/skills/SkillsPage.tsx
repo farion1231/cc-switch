@@ -35,6 +35,12 @@ import type {
   SkillsShDiscoverableSkill,
 } from "@/lib/api/skills";
 import { formatSkillError } from "@/lib/errors/skillErrorParser";
+import {
+  normalizeRepoSourceHost,
+  normalizeRepoSourceType,
+  repoDisplayName,
+  skillMatchesRepo,
+} from "./repoUtils";
 
 interface SkillsPageProps {
   initialApp?: AppId;
@@ -43,6 +49,23 @@ interface SkillsPageProps {
 export interface SkillsPageHandle {
   refresh: () => void;
   openRepoManager: () => void;
+}
+
+function skillInstallKey(skill: {
+  directory: string;
+  repoSourceType?: string;
+  repoSourceHost?: string;
+  repoOwner?: string;
+  repoName?: string;
+}): string {
+  const installName =
+    skill.directory.split(/[/\\]/).pop()?.toLowerCase() ||
+    skill.directory.toLowerCase();
+  const sourceType = normalizeRepoSourceType(skill.repoSourceType);
+  const sourceHost = normalizeRepoSourceHost(skill.repoSourceHost, sourceType);
+  const owner = skill.repoOwner?.toLowerCase() || "";
+  const name = skill.repoName?.toLowerCase() || "";
+  return `${installName}:${sourceType}:${sourceHost}:${owner}:${name}`;
 }
 
 type SearchSource = "repos" | "skillssh";
@@ -117,17 +140,10 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const addRepoMutation = useAddSkillRepo();
     const removeRepoMutation = useRemoveSkillRepo();
 
-    // 已安装的 skill key 集合（使用 directory + repoOwner + repoName 组合判断）
+    // 已安装的 skill key 集合（使用 directory + source + repo 组合判断）
     const installedKeys = useMemo(() => {
       if (!installedSkills) return new Set<string>();
-      return new Set(
-        installedSkills.map((s) => {
-          // 构建唯一 key：directory + repoOwner + repoName
-          const owner = s.repoOwner?.toLowerCase() || "";
-          const name = s.repoName?.toLowerCase() || "";
-          return `${s.directory.toLowerCase()}:${owner}:${name}`;
-        }),
-      );
+      return new Set(installedSkills.map(skillInstallKey));
     }, [installedSkills]);
 
     type DiscoverableSkillItem = DiscoverableSkill & { installed: boolean };
@@ -138,7 +154,16 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
       const repoSet = new Set<string>();
       discoverableSkills.forEach((s) => {
         if (s.repoOwner && s.repoName) {
-          repoSet.add(`${s.repoOwner}/${s.repoName}`);
+          repoSet.add(
+            repoDisplayName({
+              sourceType: s.repoSourceType,
+              sourceHost: s.repoSourceHost,
+              owner: s.repoOwner,
+              name: s.repoName,
+              branch: s.repoBranch,
+              enabled: true,
+            }),
+          );
         }
       });
       return Array.from(repoSet).sort();
@@ -148,23 +173,16 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const skills: DiscoverableSkillItem[] = useMemo(() => {
       if (!discoverableSkills) return [];
       return discoverableSkills.map((d) => {
-        // 同时处理 / 和 \ 路径分隔符（兼容 Windows 和 Unix）
-        const installName =
-          d.directory.split(/[/\\]/).pop()?.toLowerCase() ||
-          d.directory.toLowerCase();
-        // 使用 directory + repoOwner + repoName 组合判断是否已安装
-        const key = `${installName}:${d.repoOwner.toLowerCase()}:${d.repoName.toLowerCase()}`;
         return {
           ...d,
-          installed: installedKeys.has(key),
+          installed: installedKeys.has(skillInstallKey(d)),
         };
       });
     }, [discoverableSkills, installedKeys]);
 
     // 检查 skills.sh 结果的安装状态
     const isSkillsShInstalled = (skill: SkillsShDiscoverableSkill): boolean => {
-      const key = `${skill.directory.toLowerCase()}:${skill.repoOwner.toLowerCase()}:${skill.repoName.toLowerCase()}`;
-      return installedKeys.has(key);
+      return installedKeys.has(skillInstallKey(skill));
     };
 
     const loading =
@@ -188,6 +206,8 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
       name: s.name,
       description: "",
       directory: s.directory,
+      repoSourceType: "github",
+      repoSourceHost: "github.com",
       repoOwner: s.repoOwner,
       repoName: s.repoName,
       repoBranch: s.repoBranch,
@@ -246,12 +266,8 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
         // Await discovery so we can report the real count
         const { data: freshSkills } = await refetchDiscoverable();
         const count =
-          freshSkills?.filter(
-            (s) =>
-              s.repoOwner === repo.owner &&
-              s.repoName === repo.name &&
-              (s.repoBranch || "main") === (repo.branch || "main"),
-          ).length ?? 0;
+          freshSkills?.filter((skill) => skillMatchesRepo(skill, repo))
+            .length ?? 0;
         toast.success(
           t("skills.repo.addSuccess", {
             owner: repo.owner,
@@ -267,12 +283,16 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
       }
     };
 
-    const handleRemoveRepo = async (owner: string, name: string) => {
+    const handleRemoveRepo = async (repo: SkillRepo) => {
       try {
-        await removeRepoMutation.mutateAsync({ owner, name });
-        toast.success(t("skills.repo.removeSuccess", { owner, name }), {
-          closeButton: true,
-        });
+        await removeRepoMutation.mutateAsync(repo);
+        toast.success(
+          t("skills.repo.removeSuccess", {
+            owner: repo.owner,
+            name: repo.name,
+          }),
+          { closeButton: true },
+        );
       } catch (error) {
         toast.error(t("common.error"), {
           description: String(error),
@@ -285,7 +305,14 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
       // 按仓库筛选
       const byRepo = skills.filter((skill) => {
         if (filterRepo === "all") return true;
-        const skillRepo = `${skill.repoOwner}/${skill.repoName}`;
+        const skillRepo = repoDisplayName({
+          sourceType: skill.repoSourceType,
+          sourceHost: skill.repoSourceHost,
+          owner: skill.repoOwner,
+          name: skill.repoName,
+          branch: skill.repoBranch,
+          enabled: true,
+        });
         return skillRepo === filterRepo;
       });
 
@@ -304,7 +331,14 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
         const name = skill.name?.toLowerCase() || "";
         const repo =
           skill.repoOwner && skill.repoName
-            ? `${skill.repoOwner}/${skill.repoName}`.toLowerCase()
+            ? repoDisplayName({
+                sourceType: skill.repoSourceType,
+                sourceHost: skill.repoSourceHost,
+                owner: skill.repoOwner,
+                name: skill.repoName,
+                branch: skill.repoBranch,
+                enabled: true,
+              }).toLowerCase()
             : "";
 
         return name.includes(query) || repo.includes(query);

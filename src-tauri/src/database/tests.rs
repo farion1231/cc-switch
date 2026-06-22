@@ -201,6 +201,10 @@ fn schema_migration_adds_missing_columns_for_providers() {
         ("mcp_servers", "enabled_gemini"),
         ("prompts", "updated_at"),
         ("skills", "installed_at"),
+        ("skills", "repo_source_type"),
+        ("skills", "repo_source_host"),
+        ("skill_repos", "source_type"),
+        ("skill_repos", "source_host"),
         ("skill_repos", "enabled"),
     ] {
         assert!(
@@ -265,6 +269,20 @@ fn schema_migration_aligns_column_defaults_and_types() {
     assert_eq!(
         normalize_default(&skill_repo_enabled.default).as_deref(),
         Some("1")
+    );
+
+    let source_type = get_column_info(&conn, "skill_repos", "source_type");
+    assert_eq!(source_type.r#type, "TEXT");
+    assert_eq!(
+        normalize_default(&source_type.default).as_deref(),
+        Some("github")
+    );
+
+    let source_host = get_column_info(&conn, "skill_repos", "source_host");
+    assert_eq!(source_host.r#type, "TEXT");
+    assert_eq!(
+        normalize_default(&source_host.default).as_deref(),
+        Some("github.com")
     );
 }
 
@@ -419,6 +437,83 @@ fn migration_v10_to_v11_rebuilds_rollups_with_request_model_dimension() {
         [],
     )
     .expect("insert row with same model but different request_model");
+
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after migration"),
+        SCHEMA_VERSION
+    );
+}
+
+#[test]
+fn migration_v11_to_v12_adds_skill_repo_sources() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE skills (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            directory TEXT NOT NULL,
+            repo_owner TEXT,
+            repo_name TEXT,
+            repo_branch TEXT DEFAULT 'main',
+            readme_url TEXT,
+            enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+            enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+            enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+            enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            installed_at INTEGER NOT NULL DEFAULT 0,
+            content_hash TEXT,
+            updated_at INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO skills
+            (id, name, directory, repo_owner, repo_name, repo_branch)
+        VALUES ('owner/repo:demo', 'Demo', 'demo', 'owner', 'repo', 'main');
+
+        CREATE TABLE skill_repos (
+            owner TEXT NOT NULL,
+            name TEXT NOT NULL,
+            branch TEXT NOT NULL DEFAULT 'main',
+            enabled BOOLEAN NOT NULL DEFAULT 1,
+            PRIMARY KEY (owner, name)
+        );
+        INSERT INTO skill_repos (owner, name, branch, enabled)
+        VALUES ('owner', 'repo', 'main', 1);
+        "#,
+    )
+    .expect("seed v11 skill tables");
+
+    Database::set_user_version(&conn, 11).expect("set user_version=11");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    assert!(Database::has_column(&conn, "skills", "repo_source_type").unwrap());
+    assert!(Database::has_column(&conn, "skills", "repo_source_host").unwrap());
+    assert!(Database::has_column(&conn, "skill_repos", "source_type").unwrap());
+    assert!(Database::has_column(&conn, "skill_repos", "source_host").unwrap());
+
+    let (skill_source_type, skill_source_host): (String, String) = conn
+        .query_row(
+            "SELECT repo_source_type, repo_source_host FROM skills WHERE id = 'owner/repo:demo'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("migrated skill source");
+    assert_eq!(skill_source_type, "github");
+    assert_eq!(skill_source_host, "github.com");
+
+    let (repo_source_type, repo_source_host, owner, name): (String, String, String, String) = conn
+        .query_row(
+            "SELECT source_type, source_host, owner, name FROM skill_repos",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("migrated repo source");
+    assert_eq!(repo_source_type, "github");
+    assert_eq!(repo_source_host, "github.com");
+    assert_eq!(owner, "owner");
+    assert_eq!(name, "repo");
 
     assert_eq!(
         Database::get_user_version(&conn).expect("version after migration"),
