@@ -26,7 +26,7 @@
 
 [![Kimi K2.6](https://kimi-file.moonshot.cn/prod-chat-kimi/kfs/4/2/2026-06-08/1d8j61pt3v89kkekm5mbg)](https://platform.moonshot.cn/console?aff=cc-switch)
 
-Kimi K2.6 ist ein quelloffenes, nativ multimodales Agenten-Modell von Moonshot AI, das für langfristige Programmierung, code-getriebenes Design und schwarmbasierte Aufgabenorchestrierung entwickelt wurde. Es ist darauf ausgelegt, komplexe End-to-End-Engineering-Arbeiten über Frontend, DevOps, Performance-Optimierung und Full-Stack-Workflows hinweg zu bewältigen und dabei große Gruppen spezialisierter Agenten zu koordinieren, um echte Programmieraufgaben zu planen, umzusetzen, zu testen und zu iterieren.
+Kimi K2.6 ist ein quelloffenes, nativ multimodales Agenten-Modell von Moonshot AI, das für langfristige Programmierung, code-getriebenes Design und schwarmbasierte Aufgabenorchestrierung entwickelt wurde. Es ist darauf ausgelegt, komplexe End-to-End-Engineering-Arbeiten über Frontend, DevOps, Performance-Optimierung und Full-Stack-Workflows hinweg zu bewältigen und dabei große Gruppen spezialisierter Agenten zu koordinieren, um echte Programmieraufgaben zu planen, umzusetzen, zu testen und zu iterieren. **[Hier klicken, um Kimi auszuprobieren](https://platform.moonshot.cn/console?aff=cc-switch)**
 
 ---
 

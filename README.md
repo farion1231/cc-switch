@@ -26,7 +26,7 @@ English | [中文](README_ZH.md) | [日本語](README_JA.md) | [Deutsch](README_
 
 [![Kimi K2.6](https://kimi-file.moonshot.cn/prod-chat-kimi/kfs/4/2/2026-06-08/1d8j61pt3v89kkekm5mbg)](https://platform.moonshot.cn/console?aff=cc-switch)
 
-Kimi K2.6 is an open-source, native multimodal agentic model from Moonshot AI, built for long-horizon coding, coding-driven design, and swarm-based task orchestration. It is designed to handle complex end-to-end engineering work across front-end, DevOps, performance optimization, and full-stack workflows, while coordinating large groups of specialized agents to plan, implement, test, and iterate on real coding tasks.
+Kimi K2.6 is an open-source, native multimodal agentic model from Moonshot AI, built for long-horizon coding, coding-driven design, and swarm-based task orchestration. It is designed to handle complex end-to-end engineering work across front-end, DevOps, performance optimization, and full-stack workflows, while coordinating large groups of specialized agents to plan, implement, test, and iterate on real coding tasks. **[Click here to start using Kimi](https://platform.moonshot.cn/console?aff=cc-switch)**
 
 ---
 
