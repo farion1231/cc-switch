@@ -491,7 +491,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: "Kimi K2.7 Code",
+    name: "Kimi",
     primePartner: true,
     websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
     apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
@@ -2077,11 +2077,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: "CTok.ai",
-    websiteUrl: "https://ctok.ai",
-    apiKeyUrl: "https://ctok.ai",
+    name: "ETok.ai",
+    websiteUrl: "https://etok.ai",
+    apiKeyUrl: "https://etok.ai",
     settingsConfig: {
-      baseUrl: "https://api.ctok.ai",
+      baseUrl: "https://api.etok.ai",
       apiKey: "",
       api: "anthropic-messages",
       models: [
@@ -2095,8 +2095,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     category: "third_party",
     isPartner: true,
-    partnerPromotionKey: "ctok",
-    icon: "ctok",
+    partnerPromotionKey: "etok",
+    icon: "etok",
     iconColor: "#000000",
     templateValues: {
       apiKey: {
@@ -2107,10 +2107,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "ctok/claude-opus-4-8",
+        primary: "etok/claude-opus-4-8",
       },
       modelCatalog: {
-        "ctok/claude-opus-4-8": { alias: "Opus" },
+        "etok/claude-opus-4-8": { alias: "Opus" },
       },
     },
   },

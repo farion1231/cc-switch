@@ -974,19 +974,19 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#000000",
   },
   {
-    name: "CTok.ai",
-    websiteUrl: "https://ctok.ai",
-    apiKeyUrl: "https://ctok.ai",
+    name: "ETok.ai",
+    websiteUrl: "https://etok.ai",
+    apiKeyUrl: "https://etok.ai",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.ctok.ai",
+        ANTHROPIC_BASE_URL: "https://api.etok.ai",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
     category: "third_party",
     isPartner: true, // 合作伙伴
-    partnerPromotionKey: "ctok", // 促销信息 i18n key
-    icon: "ctok",
+    partnerPromotionKey: "etok", // 促销信息 i18n key
+    icon: "etok",
     iconColor: "#000000",
   },
   {

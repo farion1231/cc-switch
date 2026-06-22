@@ -236,6 +236,8 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
         auto_query_interval: request.usage_auto_interval,
         coding_plan_provider: None,
         include_reset_credits: None,
+        access_key_id: None,
+        secret_access_key: None,
     };
 
     Ok(Some(ProviderMeta {
