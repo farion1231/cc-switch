@@ -768,8 +768,8 @@ impl SkillService {
             let member_skill_ids: Vec<String> = manual
                 .skill_ids
                 .iter()
+                .filter(|id| existing_ids.contains(*id))
                 .cloned()
-                .filter(|id| existing_ids.contains(id))
                 .collect();
             normalized_manual_groups.push(ManualSkillGroup {
                 skill_ids: member_skill_ids.clone(),

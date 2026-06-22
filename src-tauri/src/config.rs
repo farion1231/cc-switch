@@ -166,7 +166,6 @@ pub fn get_app_config_dir() -> PathBuf {
         return custom;
     }
 
-    let variant = configured_app_variant();
     let default_dir = get_default_app_config_dir();
 
     // 兼容 v3.10.3：当用户环境存在 `HOME` 且与真实用户目录不同，
@@ -175,6 +174,7 @@ pub fn get_app_config_dir() -> PathBuf {
     // 同时也避免新安装因为 `HOME` 被设置而写入非预期路径。
     #[cfg(windows)]
     {
+        let variant = configured_app_variant();
         if variant.is_none() {
             let default_db = default_dir.join("cc-switch.db");
             if !default_db.exists() {
