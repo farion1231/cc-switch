@@ -421,7 +421,7 @@ async fn query_novita(api_key: &str) -> Result<UsageResult, String> {
 // Also: https://api.kimi.ai/v1/users/me/balance (EN alias)
 // Response: { code: 0, data: { available_balance, voucher_balance, cash_balance }, status: true }
 
-async fn query_kimi(api_key: &str, is_en: bool) -> UsageResult {
+async fn query_kimi(api_key: &str, is_en: bool) -> Result<UsageResult, String> {
     let client = crate::proxy::http_client::get();
 
     let domain = if is_en {
@@ -441,40 +441,48 @@ async fn query_kimi(api_key: &str, is_en: bool) -> UsageResult {
 
     let resp = match resp {
         Ok(r) => r,
-        Err(e) => return make_error(format!("Network error: {e}")),
+        Err(e) => return Err(format!("Network error: {e}")),
     };
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return make_auth_error(status);
+        return Ok(make_auth_error(status));
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return make_error(format!("API error (HTTP {status}): {body}"));
+        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
     }
 
-    let body: serde_json::Value = match resp.json().await {
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
         Ok(v) => v,
-        Err(e) => return make_error(format!("Failed to parse response: {e}")),
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
     };
 
     let data = match body.get("data") {
         Some(d) => d,
-        None => return make_error("Missing 'data' field in response".to_string()),
+        None => return Ok(make_error("Missing 'data' field in response".to_string())),
     };
 
     let available = parse_f64_field(data, "available_balance").unwrap_or(0.0);
     let cash = parse_f64_field(data, "cash_balance").unwrap_or(0.0);
     let voucher = parse_f64_field(data, "voucher_balance").unwrap_or(0.0);
 
-    let plan_name = if is_en { "Kimi (EN)" } else { "Kimi" };
+    let (plan_name, unit, symbol) = if is_en {
+        ("Kimi (EN)", "USD", "$")
+    } else {
+        ("Kimi", "CNY", "¥")
+    };
 
     let mut usage_data = vec![UsageData {
         plan_name: Some(plan_name.to_string()),
         remaining: Some(available),
         total: None,
         used: None,
-        unit: Some("CNY".to_string()),
+        unit: Some(unit.to_string()),
         is_valid: Some(available > 0.0),
         invalid_message: if available <= 0.0 {
             Some("Insufficient balance".to_string())
@@ -487,19 +495,19 @@ async fn query_kimi(api_key: &str, is_en: bool) -> UsageResult {
     if cash > 0.0 || voucher > 0.0 {
         let mut parts = Vec::new();
         if cash > 0.0 {
-            parts.push(format!("Cash: ¥{cash:.2}"));
+            parts.push(format!("Cash: {symbol}{cash:.2}"));
         }
         if voucher > 0.0 {
-            parts.push(format!("Voucher: ¥{voucher:.2}"));
+            parts.push(format!("Voucher: {symbol}{voucher:.2}"));
         }
         usage_data[0].extra = Some(parts.join(", "));
     }
 
-    UsageResult {
+    Ok(UsageResult {
         success: true,
         data: Some(usage_data),
         error: None,
-    }
+    })
 }
 
 // ── 工具函数 ────────────────────────────────────────────────
