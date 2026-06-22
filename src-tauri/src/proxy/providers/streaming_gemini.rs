@@ -599,6 +599,29 @@ mod tests {
         })
     }
 
+    fn collect_gemini_to_openai_chat_stream_output(chunks: Vec<&str>) -> String {
+        let owned_chunks: Vec<String> = chunks.into_iter().map(ToString::to_string).collect();
+        let stream = futures::stream::iter(
+            owned_chunks
+                .into_iter()
+                .map(|chunk| Ok::<Bytes, std::io::Error>(Bytes::from(chunk))),
+        );
+        let anthropic = create_anthropic_sse_stream_from_gemini(stream, None, None, None, None);
+        let converted =
+            crate::proxy::providers::streaming::create_openai_chat_sse_stream_from_anthropic(
+                anthropic,
+            );
+        futures::executor::block_on(async move {
+            converted
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .map(|item| String::from_utf8(item.unwrap().to_vec()).unwrap())
+                .collect::<Vec<_>>()
+                .join("")
+        })
+    }
+
     fn collect_stream_output_with_shadow(
         chunks: Vec<&str>,
         store: Arc<GeminiShadowStore>,
@@ -642,6 +665,21 @@ mod tests {
         assert!(output.contains("\"text\":\"lo\""));
         assert!(output.contains("\"stop_reason\":\"end_turn\""));
         assert!(output.contains("event: message_stop"));
+    }
+
+    #[test]
+    fn converts_gemini_stream_to_openai_chat_sse_for_codex_bridge() {
+        let output = collect_gemini_to_openai_chat_stream_output(vec![
+            "data: {\"responseId\":\"resp_codex\",\"modelVersion\":\"gemini-2.5-pro\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hel\"}]}}],\"usageMetadata\":{\"promptTokenCount\":10,\"totalTokenCount\":13}}\n\n",
+            "data: {\"responseId\":\"resp_codex\",\"modelVersion\":\"gemini-2.5-pro\",\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[{\"text\":\"Hello\"}]}}],\"usageMetadata\":{\"promptTokenCount\":10,\"totalTokenCount\":15}}\n\n",
+        ]);
+
+        assert!(output.contains("\"object\":\"chat.completion.chunk\""));
+        assert!(output.contains("\"delta\":{\"role\":\"assistant\"}"));
+        assert!(output.contains("\"content\":\"Hel\""));
+        assert!(output.contains("\"content\":\"lo\""));
+        assert!(output.contains("\"finish_reason\":\"stop\""));
+        assert!(output.contains("data: [DONE]"));
     }
 
     #[test]

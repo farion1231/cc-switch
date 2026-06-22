@@ -162,8 +162,23 @@ export function ProviderPresetSelector({
     [presetEntries, searchQuery, t],
   );
 
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const visibleUniversalProviderPresets = useMemo(() => {
+    if (!normalizedSearchQuery) {
+      return universalProviderPresets;
+    }
+    return universalProviderPresets.filter((preset) =>
+      [preset.name, preset.providerType, preset.description ?? ""]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedSearchQuery),
+    );
+  }, [normalizedSearchQuery]);
+
   const showUniversal =
-    !!onUniversalPresetSelect && universalProviderPresets.length > 0;
+    !!onUniversalPresetSelect &&
+    (visibleUniversalProviderPresets.length > 0 ||
+      (!!onManageUniversalProviders && !normalizedSearchQuery));
 
   const selectedEntry = useMemo(
     () => presetEntries.find((entry) => entry.id === selectedPresetId) ?? null,
@@ -327,13 +342,15 @@ export function ProviderPresetSelector({
                 </CommandItem>
               </CommandGroup>
 
-              {searchQuery.trim() && visiblePresetEntries.length === 0 && (
-                <div className="px-3 py-4 text-center text-xs text-muted-foreground">
-                  {t("providerPreset.noSearchResults", {
-                    defaultValue: "No matching presets.",
-                  })}
-                </div>
-              )}
+              {normalizedSearchQuery &&
+                visiblePresetEntries.length === 0 &&
+                visibleUniversalProviderPresets.length === 0 && (
+                  <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+                    {t("providerPreset.noSearchResults", {
+                      defaultValue: "No matching presets.",
+                    })}
+                  </div>
+                )}
 
               {visiblePresetEntries.length > 0 && (
                 <CommandGroup>
@@ -386,7 +403,7 @@ export function ProviderPresetSelector({
                     defaultValue: "Unified providers",
                   })}
                 >
-                  {universalProviderPresets.map((preset) => (
+                  {visibleUniversalProviderPresets.map((preset) => (
                     <CommandItem
                       key={`${UNIVERSAL_VALUE_PREFIX}${preset.providerType}`}
                       value={`${UNIVERSAL_VALUE_PREFIX}${preset.providerType}`}
@@ -414,7 +431,7 @@ export function ProviderPresetSelector({
                       <Layers className="ml-auto h-3.5 w-3.5 text-indigo-500" />
                     </CommandItem>
                   ))}
-                  {onManageUniversalProviders && (
+                  {onManageUniversalProviders && !normalizedSearchQuery && (
                     <CommandItem
                       value={MANAGE_VALUE}
                       onSelect={() => {

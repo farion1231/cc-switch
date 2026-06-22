@@ -34,7 +34,8 @@ CC Switch User Manual
 │   ├── 4.2 App Takeover
 │   ├── 4.3 Failover
 │   ├── 4.4 Usage Statistics
-│   └── 4.5 Model Test
+│   ├── 4.5 Model Test
+│   └── 4.6 Cross-Protocol Routing
 │
 └── 5. FAQ
     ├── 5.1 Configuration Files
@@ -85,6 +86,7 @@ CC Switch User Manual
 | [4.3-failover.md](./4-proxy/4.3-failover.md) | Failover queue, circuit breaker, health status |
 | [4.4-usage.md](./4-proxy/4.4-usage.md) | Usage statistics, trend charts, pricing configuration |
 | [4.5-model-test.md](./4-proxy/4.5-model-test.md) | Model test, health check, latency testing |
+| [4.6-cross-protocol-routing.md](./4-proxy/4.6-cross-protocol-routing.md) | Claude, Codex, and Gemini Native cross-protocol routing with live validation checklist |
 
 ### 5. FAQ
 

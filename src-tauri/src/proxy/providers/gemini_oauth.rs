@@ -11,11 +11,12 @@
 //! requests do not each hit Google's token endpoint.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 /// Public installed-app OAuth client used by the Gemini CLI
 /// (`google-gemini/gemini-cli`). Per the OAuth spec installed-app client
@@ -31,7 +32,7 @@ const TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
 const EXPIRY_SKEW: Duration = Duration::from_secs(60);
 
 /// Google OAuth credentials extracted from a provider's key field.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct GoogleOAuthCredentials {
     pub access_token: Option<String>,
     pub refresh_token: Option<String>,
@@ -42,6 +43,18 @@ pub struct GoogleOAuthCredentials {
     pub expiry_date_ms: Option<i64>,
 }
 
+impl fmt::Debug for GoogleOAuthCredentials {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GoogleOAuthCredentials")
+            .field("access_token", &redact_optional_token(&self.access_token))
+            .field("refresh_token", &redact_optional_token(&self.refresh_token))
+            .field("client_id", &self.client_id)
+            .field("client_secret", &redact_optional_token(&self.client_secret))
+            .field("expiry_date_ms", &self.expiry_date_ms)
+            .finish()
+    }
+}
+
 impl GoogleOAuthCredentials {
     #[allow(dead_code)]
     pub fn has_refresh_token(&self) -> bool {
@@ -50,6 +63,26 @@ impl GoogleOAuthCredentials {
             .map(|t| !t.is_empty())
             .unwrap_or(false)
     }
+}
+
+fn redact_optional_token(value: &Option<String>) -> Option<String> {
+    value.as_deref().map(redact_token)
+}
+
+fn redact_token(value: &str) -> String {
+    if value.chars().count() <= 8 {
+        return "***".to_string();
+    }
+    let prefix: String = value.chars().take(4).collect();
+    let suffix: String = value
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{prefix}...{suffix}")
 }
 
 /// Parse OAuth credentials from a provider key value.
@@ -76,6 +109,7 @@ pub fn parse_credentials(key: &str) -> Option<GoogleOAuthCredentials> {
         let str_field = |name: &str| {
             json.get(name)
                 .and_then(|v| v.as_str())
+                .map(str::trim)
                 .filter(|v| !v.is_empty())
                 .map(str::to_string)
         };
@@ -125,6 +159,7 @@ struct TokenResponse {
 #[derive(Default)]
 pub struct GeminiOAuthManager {
     cache: RwLock<HashMap<String, CachedToken>>,
+    refresh_locks: RwLock<HashMap<String, Arc<Mutex<()>>>>,
 }
 
 /// Tauri-managed state holding the shared Gemini OAuth token manager.
@@ -171,6 +206,16 @@ impl GeminiOAuthManager {
             }
         }
 
+        let refresh_lock = self.get_refresh_lock(refresh_token).await;
+        let _refresh_guard = refresh_lock.lock().await;
+
+        // Another request may have refreshed while this one waited for the lock.
+        if let Some(cached) = self.cache.read().await.get(refresh_token) {
+            if Instant::now() < cached.refresh_at {
+                return Ok(cached.access_token.clone());
+            }
+        }
+
         let client_id = creds.client_id.as_deref().unwrap_or(GEMINI_OAUTH_CLIENT_ID);
         let client_secret = creds
             .client_secret
@@ -188,6 +233,18 @@ impl GeminiOAuthManager {
             },
         );
         Ok(refreshed.access_token)
+    }
+
+    async fn get_refresh_lock(&self, refresh_token: &str) -> Arc<Mutex<()>> {
+        if let Some(lock) = self.refresh_locks.read().await.get(refresh_token) {
+            return lock.clone();
+        }
+
+        let mut locks = self.refresh_locks.write().await;
+        locks
+            .entry(refresh_token.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
     }
 }
 
@@ -269,6 +326,22 @@ mod tests {
     }
 
     #[test]
+    fn parse_credentials_trims_json_fields_and_rejects_blank_tokens() {
+        let json = r#"{
+            "access_token": "  ya29.token  ",
+            "refresh_token": "   ",
+            "client_id": " custom-id ",
+            "client_secret": " custom-secret "
+        }"#;
+        let creds = parse_credentials(json).expect("creds");
+        assert_eq!(creds.access_token.as_deref(), Some("ya29.token"));
+        assert_eq!(creds.refresh_token, None);
+        assert_eq!(creds.client_id.as_deref(), Some("custom-id"));
+        assert_eq!(creds.client_secret.as_deref(), Some("custom-secret"));
+        assert!(!creds.has_refresh_token());
+    }
+
+    #[test]
     fn parse_credentials_requires_a_token_field() {
         let json = r#"{ "scope": "https://www.googleapis.com/auth/cloud-platform" }"#;
         assert_eq!(parse_credentials(json), None);
@@ -285,6 +358,26 @@ mod tests {
         assert!(access_token_expired(Some(now - 1000), now));
         // Unknown expiry → expired so we refresh when possible.
         assert!(access_token_expired(None, now));
+    }
+
+    #[test]
+    fn debug_redacts_oauth_tokens_and_client_secret() {
+        let creds = GoogleOAuthCredentials {
+            access_token: Some("access-token-value".to_string()),
+            refresh_token: Some("refresh-token-value".to_string()),
+            client_id: Some("public-client-id".to_string()),
+            client_secret: Some("client-private-value".to_string()),
+            expiry_date_ms: Some(1_700_000_000_000),
+        };
+
+        let debug = format!("{creds:?}");
+        assert!(debug.contains("acce...alue"));
+        assert!(debug.contains("refr...alue"));
+        assert!(debug.contains("clie...alue"));
+        assert!(debug.contains("public-client-id"));
+        assert!(!debug.contains("access-token-value"));
+        assert!(!debug.contains("refresh-token-value"));
+        assert!(!debug.contains("client-private-value"));
     }
 
     #[tokio::test]
@@ -317,5 +410,16 @@ mod tests {
         let manager = GeminiOAuthManager::new();
         let creds = GoogleOAuthCredentials::default();
         assert!(manager.get_valid_access_token(&creds).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn refresh_locks_are_reused_per_refresh_token() {
+        let manager = GeminiOAuthManager::new();
+        let first = manager.get_refresh_lock("1//same").await;
+        let second = manager.get_refresh_lock("1//same").await;
+        let other = manager.get_refresh_lock("1//other").await;
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(!Arc::ptr_eq(&first, &other));
     }
 }

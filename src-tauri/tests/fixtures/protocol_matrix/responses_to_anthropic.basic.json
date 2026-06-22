@@ -1,0 +1,36 @@
+{
+  "name": "OpenAI Responses request to Anthropic Messages",
+  "transform": "responses_to_anthropic_messages",
+  "input": {
+    "model": "claude-sonnet-4-6",
+    "instructions": "You are concise.",
+    "input": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "Hello"
+          }
+        ]
+      }
+    ],
+    "max_output_tokens": 96
+  },
+  "expected": {
+    "model": "claude-sonnet-4-6",
+    "system": "You are concise.",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Hello"
+          }
+        ]
+      }
+    ],
+    "max_tokens": 96
+  }
+}

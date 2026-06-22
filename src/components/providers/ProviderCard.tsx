@@ -220,7 +220,13 @@ export function ProviderCard({
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
   const codexNeedsRouting = useMemo(() => {
     if (appId !== "codex" || provider.category === "official") return false;
-    if (provider.meta?.apiFormat === "openai_chat") return true;
+    if (
+      provider.meta?.apiFormat === "openai_chat" ||
+      provider.meta?.apiFormat === "anthropic" ||
+      provider.meta?.apiFormat === "gemini_native"
+    ) {
+      return true;
+    }
     const config = (provider.settingsConfig as Record<string, any>)?.config;
     return (
       typeof config === "string" &&

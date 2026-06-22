@@ -1,0 +1,29 @@
+{
+  "name": "Anthropic Messages request to OpenAI Chat Completions",
+  "transform": "anthropic_to_openai",
+  "input": {
+    "model": "claude-sonnet-4-6",
+    "max_tokens": 128,
+    "system": "You are concise.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello"
+      }
+    ]
+  },
+  "expected": {
+    "model": "claude-sonnet-4-6",
+    "max_tokens": 128,
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are concise."
+      },
+      {
+        "role": "user",
+        "content": "Hello"
+      }
+    ]
+  }
+}

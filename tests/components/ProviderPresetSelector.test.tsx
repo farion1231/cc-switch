@@ -5,6 +5,7 @@ import type { TFunction } from "i18next";
 import { useForm } from "react-hook-form";
 import { Form } from "@/components/ui/form";
 import type { ProviderCategory } from "@/types";
+import { codexProviderPresets } from "@/config/codexProviderPresets";
 import {
   ProviderPresetSelector,
   filterPresetEntries,
@@ -131,10 +132,16 @@ function renderSelector({
   entries = presetEntries,
   selectedPresetId = "custom",
   onPresetChange = vi.fn(),
+  onUniversalPresetSelect,
+  onManageUniversalProviders,
 }: {
   entries?: TestPresetEntry[];
   selectedPresetId?: string | null;
   onPresetChange?: (value: string) => void;
+  onUniversalPresetSelect?: Parameters<
+    typeof ProviderPresetSelector
+  >[0]["onUniversalPresetSelect"];
+  onManageUniversalProviders?: () => void;
 } = {}) {
   const Wrapper = () => {
     const form = useForm();
@@ -146,6 +153,8 @@ function renderSelector({
           presetEntries={entries}
           presetCategoryLabels={presetCategoryLabels}
           onPresetChange={onPresetChange}
+          onUniversalPresetSelect={onUniversalPresetSelect}
+          onManageUniversalProviders={onManageUniversalProviders}
         />
       </Form>
     );
@@ -203,6 +212,24 @@ describe("ProviderPresetSelector pure helpers", () => {
     expect(getIds(filterPresetEntries(presetEntries, "聚合", t))).toEqual([]);
   });
 
+  it("finds Codex cross-protocol presets by provider capability names", () => {
+    const codexEntries = codexProviderPresets.map((preset, index) => ({
+      id: `codex-${index}`,
+      preset,
+    }));
+
+    expect(
+      filterPresetEntries(codexEntries, "anthropic", t).map((entry) =>
+        "apiFormat" in entry.preset ? entry.preset.apiFormat : null,
+      ),
+    ).toContain("anthropic");
+    expect(
+      filterPresetEntries(codexEntries, "gemini native", t).map((entry) =>
+        "apiFormat" in entry.preset ? entry.preset.apiFormat : null,
+      ),
+    ).toContain("gemini_native");
+  });
+
   it("支持 A-Z 排序、original 副本恢复原顺序，并且 getVisible 先 filter 再 sort", () => {
     const originalMode: PresetSortMode = "original";
     const nameAscMode: PresetSortMode = "nameAsc";
@@ -258,6 +285,39 @@ describe("ProviderPresetSelector dropdown", () => {
     await user.type(getSearchInput(), "gateway");
 
     expect(getOptionTexts()).toEqual(["providerPreset.custom", "Beta Gateway"]);
+  });
+
+  it("filters unified provider presets with the same search box", async () => {
+    const user = userEvent.setup();
+    const onUniversalPresetSelect = vi.fn();
+    renderSelector({ onUniversalPresetSelect });
+
+    await user.type(getSearchInput(), "newapi");
+
+    expect(screen.getByRole("option", { name: /newapi/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: /自定义网关/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides unified provider actions while a non-matching search is active", async () => {
+    const user = userEvent.setup();
+    renderSelector({
+      onUniversalPresetSelect: vi.fn(),
+      onManageUniversalProviders: vi.fn(),
+    });
+
+    await user.type(getSearchInput(), "zzz-no-match");
+
+    expect(getOptionTexts()).toEqual(["providerPreset.custom"]);
+    expect(
+      screen.queryByRole("option", { name: /管理统一供应商/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /providerPreset\.noSearchResults|no matching presets|没有匹配|無結果/i,
+      ),
+    ).toBeInTheDocument();
   });
 
   it("shows an empty hint when no preset matches, Custom still present", async () => {

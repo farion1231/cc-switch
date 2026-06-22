@@ -142,6 +142,10 @@ export function CodexFormFields({
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const needsLocalRouting = apiFormat === "openai_chat";
+  const usesAnthropicBridge = apiFormat === "anthropic";
+  const usesGeminiBridge = apiFormat === "gemini_native";
+  const usesProtocolBridge =
+    needsLocalRouting || usesAnthropicBridge || usesGeminiBridge;
   const canEditCatalog = Boolean(onCatalogModelsChange);
   const canEditReasoning = Boolean(onCodexChatReasoningChange);
   const supportsThinking =
@@ -150,7 +154,7 @@ export function CodexFormFields({
   const supportsEffort = codexChatReasoning.supportsEffort === true;
 
   // needsLocalRouting 非默认值说明预设/用户动过路由配置，需要让模型映射保持可见
-  const hasAnyAdvancedValue = !!customUserAgent || needsLocalRouting;
+  const hasAnyAdvancedValue = !!customUserAgent || usesProtocolBridge;
   const [advancedExpanded, setAdvancedExpanded] = useState(hasAnyAdvancedValue);
 
   // 预设/编辑加载填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
@@ -379,35 +383,63 @@ export function CodexFormFields({
           )}
           <CollapsibleContent className="space-y-3 pt-3">
             {/* 本地路由映射开关 —— 沿用 shouldShowSpeedTest 门控，cloud_provider 保持不可切换 */}
-            {shouldShowSpeedTest && (
-              <div className="flex items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <FormLabel>
-                    {t("codexConfig.localRoutingToggle", {
+            {shouldShowSpeedTest &&
+              !usesAnthropicBridge &&
+              !usesGeminiBridge && (
+                <div className="flex items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <FormLabel>
+                      {t("codexConfig.localRoutingToggle", {
+                        defaultValue: "需要本地路由映射",
+                      })}
+                    </FormLabel>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {needsLocalRouting
+                        ? t("codexConfig.localRoutingOnHint", {
+                            defaultValue:
+                              "Codex 目前仅原生支持 OpenAI Responses API 与 GPT 系列模型；如果您的供应商使用 Chat Completions 协议或非 GPT 模型（如 DeepSeek、Kimi），则需要打开本开关，并在使用过程中保持本地路由开启。",
+                          })
+                        : t("codexConfig.localRoutingOffHint", {
+                            defaultValue:
+                              "如果您的供应商不是原生 OpenAI Responses API，或者模型名不是 Codex 默认的 GPT 系列，请打开此开关。",
+                          })}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={needsLocalRouting}
+                    onCheckedChange={handleLocalRoutingChange}
+                    aria-label={t("codexConfig.localRoutingToggle", {
                       defaultValue: "需要本地路由映射",
                     })}
-                  </FormLabel>
-                  <p className="text-xs leading-relaxed text-muted-foreground">
-                    {needsLocalRouting
-                      ? t("codexConfig.localRoutingOnHint", {
-                          defaultValue:
-                            "Codex 目前仅原生支持 OpenAI Responses API 与 GPT 系列模型；如果您的供应商使用 Chat Completions 协议或非 GPT 模型（如 DeepSeek、Kimi），则需要打开本开关，并在使用过程中保持本地路由开启。",
+                  />
+                </div>
+              )}
+
+            {shouldShowSpeedTest &&
+              (usesAnthropicBridge || usesGeminiBridge) && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+                  <div className="font-medium">
+                    {usesGeminiBridge
+                      ? t("codexConfig.geminiBridgeTitle", {
+                          defaultValue: "Codex → Gemini Native bridge",
                         })
-                      : t("codexConfig.localRoutingOffHint", {
+                      : t("codexConfig.anthropicBridgeTitle", {
+                          defaultValue: "Codex → Anthropic bridge",
+                        })}
+                  </div>
+                  <p className="mt-1">
+                    {usesGeminiBridge
+                      ? t("codexConfig.geminiBridgeHint", {
                           defaultValue:
-                            "如果您的供应商不是原生 OpenAI Responses API，或者模型名不是 Codex 默认的 GPT 系列，请打开此开关。",
+                            "Requires local proxy routing. Paste an AI Studio API key, ya29 access token, or Gemini CLI oauth_creds.json in the credential field; requests are converted through Anthropic messages to Gemini generateContent, then converted back for Codex.",
+                        })
+                      : t("codexConfig.anthropicBridgeHint", {
+                          defaultValue:
+                            "Requires local proxy routing. Codex Responses requests are converted to Anthropic messages before they reach the provider.",
                         })}
                   </p>
                 </div>
-                <Switch
-                  checked={needsLocalRouting}
-                  onCheckedChange={handleLocalRoutingChange}
-                  aria-label={t("codexConfig.localRoutingToggle", {
-                    defaultValue: "需要本地路由映射",
-                  })}
-                />
-              </div>
-            )}
+              )}
 
             {needsLocalRouting && canEditReasoning && (
               <div

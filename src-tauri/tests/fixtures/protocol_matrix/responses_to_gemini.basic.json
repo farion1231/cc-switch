@@ -1,0 +1,42 @@
+{
+  "name": "OpenAI Responses request to Gemini generateContent",
+  "transform": "responses_to_gemini_generate_content",
+  "input": {
+    "model": "gemini-2.5-pro",
+    "instructions": "You are concise.",
+    "input": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "Hello"
+          }
+        ]
+      }
+    ],
+    "max_output_tokens": 96
+  },
+  "expected": {
+    "systemInstruction": {
+      "parts": [
+        {
+          "text": "You are concise."
+        }
+      ]
+    },
+    "contents": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Hello"
+          }
+        ]
+      }
+    ],
+    "generationConfig": {
+      "maxOutputTokens": 96
+    }
+  }
+}

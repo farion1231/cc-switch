@@ -1,0 +1,39 @@
+{
+  "name": "OpenAI Responses request to Chat Completions",
+  "transform": "responses_to_chat_completions",
+  "input": {
+    "model": "gpt-5",
+    "instructions": "You are concise.",
+    "input": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "Hello"
+          }
+        ]
+      }
+    ],
+    "max_output_tokens": 96,
+    "stream": true
+  },
+  "expected": {
+    "model": "gpt-5",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are concise."
+      },
+      {
+        "role": "user",
+        "content": "Hello"
+      }
+    ],
+    "max_tokens": 96,
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    }
+  }
+}

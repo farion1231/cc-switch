@@ -620,6 +620,13 @@ impl ClaudeAdapter {
             return Some(key.to_string());
         }
 
+        if let Some(auth) = provider.settings_config.get("auth") {
+            if let Some(key) = crate::codex_config::extract_codex_auth_api_key(auth) {
+                log::debug!("[Claude] 使用 Codex auth.OPENAI_API_KEY");
+                return Some(key);
+            }
+        }
+
         log::warn!("[Claude] 未找到有效的 API Key");
         None
     }
@@ -699,6 +706,16 @@ impl ProviderAdapter for ClaudeAdapter {
             .and_then(|v| v.as_str())
         {
             return Ok(url.trim_end_matches('/').to_string());
+        }
+
+        if let Some(config_text) = provider
+            .settings_config
+            .get("config")
+            .and_then(|v| v.as_str())
+        {
+            if let Some(url) = crate::codex_config::extract_codex_base_url(config_text) {
+                return Ok(url.trim_end_matches('/').to_string());
+            }
         }
 
         Err(ProxyError::ConfigError(
@@ -999,6 +1016,38 @@ mod tests {
 
         let url = adapter.extract_base_url(&provider).unwrap();
         assert_eq!(url, "https://api.anthropic.com");
+    }
+
+    #[test]
+    fn test_codex_cross_protocol_provider_reads_auth_and_config() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider_with_meta(
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "test-cross-protocol-key"
+                },
+                "config": r#"model_provider = "custom"
+model = "claude-sonnet-4-6"
+
+[model_providers.custom]
+name = "Anthropic"
+base_url = "https://api.anthropic.com"
+wire_api = "responses"
+requires_openai_auth = true"#
+            }),
+            ProviderMeta {
+                api_format: Some("anthropic".to_string()),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            adapter.extract_base_url(&provider).unwrap(),
+            "https://api.anthropic.com"
+        );
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "test-cross-protocol-key");
+        assert_eq!(auth.strategy, AuthStrategy::Anthropic);
     }
 
     #[test]
