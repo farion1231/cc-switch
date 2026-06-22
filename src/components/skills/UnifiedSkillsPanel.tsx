@@ -33,6 +33,9 @@ import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
 import { SKILLS_APP_IDS } from "@/config/appConfig";
 import { AppCountBar } from "@/components/common/AppCountBar";
+import { formatSkillRepoFailure } from "@/lib/errors/skillErrorParser";
+import type { SkillUpdateProgress } from "@/lib/api/skills";
+import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
 import {
@@ -79,7 +82,6 @@ const UnifiedSkillsPanel = React.forwardRef<
   } | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
-
   const { data: skills, isLoading } = useInstalledSkills();
   const {
     data: skillBackups = [],
@@ -95,13 +97,39 @@ const UnifiedSkillsPanel = React.forwardRef<
   const importMutation = useImportSkillsFromApps();
   const installFromZipMutation = useInstallSkillsFromZip();
   const {
-    data: skillUpdates,
+    data: updateCheckResult,
     refetch: checkUpdates,
+    forceRefetch: forceCheckUpdates,
     isFetching: isCheckingUpdates,
   } = useCheckSkillUpdates();
+  const [checkProgress, setCheckProgress] =
+    useState<SkillUpdateProgress | null>(null);
+  useTauriEvent<SkillUpdateProgress>(
+    "skill-update-check-progress",
+    setCheckProgress,
+  );
+  const skillUpdates = updateCheckResult?.updates ?? [];
+  const checkableRepoCount = useMemo(() => {
+    if (!skills) return 0;
+    return new Set(
+      skills
+        .filter((skill) => skill.repoOwner && skill.repoName)
+        .map(
+          (skill) =>
+            `${skill.repoOwner}/${skill.repoName}@${skill.repoBranch || "main"}`,
+        ),
+    ).size;
+  }, [skills]);
+  const actionableUpdates = useMemo(
+    () =>
+      skillUpdates.filter((update) =>
+        ["updateAvailable", "missing"].includes(update.status),
+      ),
+    [skillUpdates],
+  );
+  const isUpdateCheckVisible = isCheckingUpdates;
   const updateSkillMutation = useUpdateSkill();
   const [isUpdatingAll, setIsUpdatingAll] = useState(false);
-
   const updatesMap = useMemo(() => {
     const map: Record<string, SkillUpdateInfo> = {};
     if (skillUpdates) {
@@ -227,23 +255,127 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
   };
 
-  const handleCheckUpdates = async () => {
+  const handleCheckUpdates = async (force = false) => {
+    setCheckProgress(null);
     try {
-      const result = await checkUpdates();
-      const updates = result.data || [];
+      const result = force ? await forceCheckUpdates() : await checkUpdates();
+      const updates = result.data?.updates ?? [];
+      const failures = result.data?.failures ?? [];
+      if (failures.length > 0) {
+        const updateCount = updates.filter((update) =>
+          ["updateAvailable", "conflict", "missing"].includes(update.status),
+        ).length;
+        toast.error(
+          t(
+            updateCount > 0
+              ? "skills.updateCheckPartialWithUpdates"
+              : "skills.updateCheckIncomplete",
+            {
+              updateCount,
+              failureCount: failures.length,
+            },
+          ),
+          {
+            description: (
+              <div className="space-y-1">
+                {failures.map((failure) => (
+                  <div
+                    data-repo-failure
+                    key={`${failure.owner}/${failure.name}@${failure.branch}`}
+                  >
+                    {formatSkillRepoFailure(failure, t)}
+                  </div>
+                ))}
+              </div>
+            ),
+            closeButton: true,
+            duration: Infinity,
+          },
+        );
+        return;
+      }
       if (updates.length === 0) {
         toast.success(t("skills.noUpdates"), { closeButton: true });
       } else {
-        toast.info(t("skills.updatesFound", { count: updates.length }), {
-          closeButton: true,
-        });
+        const remoteUpdateCount = updates.filter((update) =>
+          ["updateAvailable", "conflict", "missing"].includes(update.status),
+        ).length;
+        toast.info(
+          t(
+            remoteUpdateCount > 0
+              ? "skills.updatesFound"
+              : "skills.updateCheckNeedsAttention",
+            {
+              count: remoteUpdateCount > 0 ? remoteUpdateCount : updates.length,
+            },
+          ),
+          {
+            closeButton: true,
+          },
+        );
       }
     } catch (error) {
-      toast.error(t("common.error"), { description: String(error) });
+      toast.error(t("common.error"), {
+        description: String(error),
+        closeButton: true,
+        duration: Infinity,
+      });
+    } finally {
+      setCheckProgress(null);
     }
   };
 
+  const getCheckProgressLabel = () => {
+    if (!checkProgress) {
+      return t("skills.connectingRepositoriesProgress", {
+        current: 0,
+        total: checkableRepoCount,
+      });
+    }
+
+    const key = {
+      connecting: "skills.connectingRepositoriesProgress",
+      checking: "skills.checkingRepositoryProgress",
+      downloading: "skills.downloadingRepository",
+      scanning: "skills.scanningRepository",
+    }[checkProgress.phase];
+    const label = t(key, {
+      current: checkProgress.current,
+      total: checkProgress.total,
+    });
+    return checkProgress.repo ? `${label} · ${checkProgress.repo}` : label;
+  };
+
   const handleUpdateSkill = async (skill: InstalledSkill) => {
+    const update = updatesMap[skill.id];
+    if (update?.status === "conflict" || update?.status === "notChecked") {
+      const isConflict = update.status === "conflict";
+      setConfirmDialog({
+        isOpen: true,
+        title: t(
+          isConflict
+            ? "skills.updateConflictTitle"
+            : "skills.updateUnverifiedTitle",
+        ),
+        message: t(
+          isConflict
+            ? "skills.updateConflictMessage"
+            : "skills.updateUnverifiedMessage",
+          { name: skill.name },
+        ),
+        confirmText: t("skills.update"),
+        variant: "destructive",
+        onConfirm: async () => {
+          setConfirmDialog(null);
+          await performUpdateSkill(skill);
+        },
+      });
+      return;
+    }
+    await performUpdateSkill(skill);
+  };
+
+  const performUpdateSkill = async (skill: InstalledSkill) => {
     try {
       const updated = await updateSkillMutation.mutateAsync(skill.id);
       toast.success(t("skills.updateSuccess", { name: updated.name }), {
@@ -255,10 +387,10 @@ const UnifiedSkillsPanel = React.forwardRef<
   };
 
   const handleUpdateAll = async () => {
-    if (!skillUpdates || skillUpdates.length === 0) return;
+    if (actionableUpdates.length === 0) return;
     setIsUpdatingAll(true);
     let successCount = 0;
-    for (const update of skillUpdates) {
+    for (const update of actionableUpdates) {
       try {
         await updateSkillMutation.mutateAsync(update.id);
         successCount++;
@@ -353,19 +485,14 @@ const UnifiedSkillsPanel = React.forwardRef<
           appIds={SKILLS_APP_IDS}
         />
         <div className="flex items-center gap-1.5">
-          <div
-            className="transition-all duration-300 ease-out overflow-hidden"
-            style={{
-              maxWidth:
-                skillUpdates && skillUpdates.length > 0 ? "200px" : "0px",
-              opacity: skillUpdates && skillUpdates.length > 0 ? 1 : 0,
-            }}
-          >
+          {actionableUpdates.length > 0 && (
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="h-7 text-xs gap-1 whitespace-nowrap"
+              className={`h-7 text-xs gap-1 whitespace-nowrap ${
+                isUpdateCheckVisible ? "invisible" : ""
+              }`}
               onClick={handleUpdateAll}
               disabled={isUpdatingAll || updateSkillMutation.isPending}
             >
@@ -376,25 +503,32 @@ const UnifiedSkillsPanel = React.forwardRef<
               )}
               {isUpdatingAll
                 ? t("skills.updatingAll")
-                : t("skills.updateAll", { count: skillUpdates?.length ?? 0 })}
+                : t("skills.updateAll", { count: actionableUpdates.length })}
             </Button>
-          </div>
+          )}
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            className="h-7 text-xs gap-1"
-            onClick={handleCheckUpdates}
-            disabled={isCheckingUpdates || !skills || skills.length === 0}
+            className="h-7 max-w-[420px] text-xs gap-1"
+            onClick={(event) => handleCheckUpdates(event.shiftKey)}
+            disabled={isCheckingUpdates || checkableRepoCount === 0}
+            title={t(
+              checkableRepoCount > 0
+                ? "skills.forceCheckHint"
+                : "skills.noCheckableUpdates",
+            )}
           >
-            {isCheckingUpdates ? (
+            {isUpdateCheckVisible ? (
               <Loader2 size={12} className="animate-spin" />
             ) : (
               <RefreshCw size={12} />
             )}
-            {isCheckingUpdates
-              ? t("skills.checkingUpdates")
-              : t("skills.checkUpdates")}
+            <span className="truncate">
+              {isUpdateCheckVisible
+                ? getCheckProgressLabel()
+                : t("skills.checkUpdates")}
+            </span>
           </Button>
         </div>
       </div>
@@ -423,7 +557,7 @@ const UnifiedSkillsPanel = React.forwardRef<
                 <InstalledSkillListItem
                   key={skill.id}
                   skill={skill}
-                  hasUpdate={!!updatesMap[skill.id]}
+                  updateInfo={updatesMap[skill.id]}
                   isUpdating={
                     updateSkillMutation.isPending &&
                     updateSkillMutation.variables === skill.id
@@ -479,7 +613,7 @@ UnifiedSkillsPanel.displayName = "UnifiedSkillsPanel";
 
 interface InstalledSkillListItemProps {
   skill: InstalledSkill;
-  hasUpdate?: boolean;
+  updateInfo?: SkillUpdateInfo;
   isUpdating?: boolean;
   onToggleApp: (id: string, app: AppId, enabled: boolean) => void;
   onUninstall: () => void;
@@ -489,7 +623,7 @@ interface InstalledSkillListItemProps {
 
 const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   skill,
-  hasUpdate,
+  updateInfo,
   isUpdating,
   onToggleApp,
   onUninstall,
@@ -497,6 +631,11 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   isLast,
 }) => {
   const { t } = useTranslation();
+  const hasUpdate = updateInfo
+    ? ["updateAvailable", "conflict", "missing", "notChecked"].includes(
+        updateInfo.status,
+      )
+    : false;
 
   const openDocs = async () => {
     if (!skill.readmeUrl) return;
@@ -533,12 +672,12 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
           <span className="text-xs text-muted-foreground/50 flex-shrink-0">
             {sourceLabel}
           </span>
-          {hasUpdate && (
+          {updateInfo && (
             <Badge
               variant="outline"
               className="shrink-0 text-[10px] px-1.5 py-0 h-4 border-amber-500 text-amber-600 dark:text-amber-400"
             >
-              {t("skills.updateAvailable")}
+              {t(`skills.updateStatus.${updateInfo.status}`)}
             </Badge>
           )}
         </div>

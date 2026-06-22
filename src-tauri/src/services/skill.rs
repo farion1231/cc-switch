@@ -10,6 +10,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -111,6 +112,36 @@ pub struct SkillRepo {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone)]
+enum RepoCommitLookupError {
+    Recoverable(String),
+    NotFound(String),
+}
+
+impl RepoCommitLookupError {
+    fn recoverable(message: impl Into<String>) -> Self {
+        Self::Recoverable(message.into())
+    }
+
+    fn not_found(message: impl Into<String>) -> Self {
+        Self::NotFound(message.into())
+    }
+
+    fn is_recoverable(&self) -> bool {
+        matches!(self, Self::Recoverable(_))
+    }
+}
+
+impl std::fmt::Display for RepoCommitLookupError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Recoverable(message) | Self::NotFound(message) => f.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for RepoCommitLookupError {}
+
 /// 技能安装状态（旧版兼容）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillState {
@@ -184,6 +215,139 @@ pub struct SkillUpdateInfo {
     pub current_hash: Option<String>,
     /// 远程最新哈希
     pub remote_hash: String,
+    /// 更新状态
+    pub status: SkillUpdateStatus,
+}
+
+/// Skill 更新状态。只有完整获取到本地与远程内容后才会给出明确结论。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SkillUpdateStatus {
+    Latest,
+    UpdateAvailable,
+    LocalModified,
+    Conflict,
+    Missing,
+    NotChecked,
+}
+
+/// 已验证仓库快照的轻量缓存。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SkillRepoCheckCache {
+    remote_sha_seen: String,
+    last_verified_sha: String,
+    remote_skill_hashes: HashMap<String, String>,
+    snapshot_path: PathBuf,
+    #[serde(default)]
+    discovered_skills: Vec<DiscoverableSkill>,
+}
+
+impl SkillRepoCheckCache {
+    fn can_reuse_snapshot(&self, remote_sha: &str, force: bool) -> bool {
+        !force && self.last_verified_sha == remote_sha && self.snapshot_path.is_dir()
+    }
+
+    fn can_use_stale_discovery(&self) -> bool {
+        !self.last_verified_sha.is_empty()
+            && self.snapshot_path.is_dir()
+            && !self.discovered_skills.is_empty()
+    }
+
+    fn should_keep_existing_snapshot(
+        &self,
+        snapshot: &Path,
+        remote_sha: &str,
+        force: bool,
+    ) -> bool {
+        !force && self.snapshot_path == snapshot && self.can_reuse_snapshot(remote_sha, false)
+    }
+}
+
+enum RemoteHashScanOutcome {
+    Complete(HashMap<String, String>),
+    Partial(HashMap<String, String>),
+    Failed,
+}
+
+enum RepositoryDiscoveryOutcome {
+    Success(Vec<DiscoverableSkill>),
+    Empty,
+    Failure(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillRepoIdentity {
+    pub owner: String,
+    pub name: String,
+    pub branch: String,
+}
+
+/// 仓库拉取失败摘要（用于前端区分“无结果”和“加载失败”）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillRepoFetchFailure {
+    pub owner: String,
+    pub name: String,
+    pub branch: String,
+    pub error: String,
+}
+
+/// 可发现 Skill 扫描结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDiscoveryResult {
+    pub skills: Vec<DiscoverableSkill>,
+    pub failures: Vec<SkillRepoFetchFailure>,
+    #[serde(default)]
+    pub refreshed_repositories: Vec<SkillRepoIdentity>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SkillDiscoveryProgressPhase {
+    Loading,
+    Scanning,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDiscoveryProgress {
+    pub phase: SkillDiscoveryProgressPhase,
+    pub completed: usize,
+    pub total: usize,
+    pub repo: String,
+    pub skill_count: Option<usize>,
+    pub error: Option<String>,
+    pub skills: Option<Vec<DiscoverableSkill>>,
+}
+
+/// Skill 更新检查结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillUpdateCheckResult {
+    pub updates: Vec<SkillUpdateInfo>,
+    pub failures: Vec<SkillRepoFetchFailure>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SkillUpdateProgressPhase {
+    Connecting,
+    Checking,
+    Downloading,
+    Scanning,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillUpdateProgress {
+    pub phase: SkillUpdateProgressPhase,
+    pub current: usize,
+    pub total: usize,
+    pub repo: String,
 }
 
 /// Skill 存储位置迁移结果
@@ -438,7 +602,9 @@ fn parse_agents_lock() -> HashMap<String, LockRepoInfo> {
 
 // ========== SkillService ==========
 
-pub struct SkillService;
+pub struct SkillService {
+    repo_locks: tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+}
 
 impl Default for SkillService {
     fn default() -> Self {
@@ -448,7 +614,32 @@ impl Default for SkillService {
 
 impl SkillService {
     pub fn new() -> Self {
-        Self
+        Self {
+            repo_locks: tokio::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    async fn lock_repo(&self, repo: &SkillRepo) -> tokio::sync::OwnedMutexGuard<()> {
+        self.lock_repo_identity(&repo.owner, &repo.name).await
+    }
+
+    async fn lock_repo_identity(
+        &self,
+        owner: &str,
+        name: &str,
+    ) -> tokio::sync::OwnedMutexGuard<()> {
+        self.repo_lock_handle(owner, name).await.lock_owned().await
+    }
+
+    async fn repo_lock_handle(&self, owner: &str, name: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let key = format!("{}/{}", owner.to_lowercase(), name.to_lowercase(),);
+        {
+            let mut locks = self.repo_locks.lock().await;
+            locks
+                .entry(key)
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+                .clone()
+        }
     }
 
     /// 构建 Skill 文档 URL（指向仓库中的 SKILL.md 文件）
@@ -657,7 +848,7 @@ impl SkillService {
 
             // 下载仓库
             let (temp_dir, used_branch) = timeout(
-                std::time::Duration::from_secs(60),
+                std::time::Duration::from_secs(75),
                 self.download_repo(&repo),
             )
             .await
@@ -667,7 +858,7 @@ impl SkillService {
                     &[
                         ("owner", &repo.owner),
                         ("name", &repo.name),
-                        ("timeout", "60")
+                        ("timeout", "75")
                     ],
                     Some("checkNetwork"),
                 ))
@@ -870,13 +1061,461 @@ impl SkillService {
         Ok(())
     }
 
+    fn classify_update_status(
+        installed_hash: Option<&str>,
+        local_hash: Option<&str>,
+        remote_hash: &str,
+    ) -> SkillUpdateStatus {
+        let Some(local_hash) = local_hash else {
+            return SkillUpdateStatus::Missing;
+        };
+        let Some(installed_hash) = installed_hash else {
+            return if local_hash == remote_hash {
+                SkillUpdateStatus::Latest
+            } else {
+                SkillUpdateStatus::NotChecked
+            };
+        };
+
+        let local_changed = local_hash != installed_hash;
+        let remote_changed = remote_hash != installed_hash;
+        match (local_changed, remote_changed) {
+            (false, false) => SkillUpdateStatus::Latest,
+            (false, true) => SkillUpdateStatus::UpdateAvailable,
+            (true, false) => SkillUpdateStatus::LocalModified,
+            (true, true) => SkillUpdateStatus::Conflict,
+        }
+    }
+
+    fn classify_update_status_with_local_presence(
+        installed_hash: Option<&str>,
+        local_hash: Option<&str>,
+        local_exists: bool,
+        remote_hash: &str,
+    ) -> SkillUpdateStatus {
+        if local_exists && local_hash.is_none() {
+            SkillUpdateStatus::NotChecked
+        } else {
+            Self::classify_update_status(installed_hash, local_hash, remote_hash)
+        }
+    }
+
+    fn sanitize_repo_cache_segment(value: &str) -> String {
+        if matches!(value, "." | "..") {
+            return value.replace('.', "%2E");
+        }
+
+        let mut encoded = String::with_capacity(value.len());
+        for byte in value.as_bytes() {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.') {
+                encoded.push(*byte as char);
+            } else {
+                encoded.push('%');
+                encoded.push_str(&format!("{byte:02X}"));
+            }
+        }
+        encoded
+    }
+
+    fn can_mark_snapshot_verified(hash_failures: &[String]) -> bool {
+        hash_failures.is_empty()
+    }
+
+    fn classify_remote_hash_scan(
+        hashes: HashMap<String, String>,
+        hash_failures: &[String],
+    ) -> RemoteHashScanOutcome {
+        if Self::can_mark_snapshot_verified(hash_failures) {
+            RemoteHashScanOutcome::Complete(hashes)
+        } else if hashes.is_empty() {
+            RemoteHashScanOutcome::Failed
+        } else {
+            RemoteHashScanOutcome::Partial(hashes)
+        }
+    }
+
+    fn classify_repository_discovery(
+        result: Result<Vec<DiscoverableSkill>>,
+    ) -> RepositoryDiscoveryOutcome {
+        match result {
+            Ok(skills) if skills.is_empty() => RepositoryDiscoveryOutcome::Empty,
+            Ok(skills) => RepositoryDiscoveryOutcome::Success(skills),
+            Err(error) => RepositoryDiscoveryOutcome::Failure(error.to_string()),
+        }
+    }
+
+    fn repo_cache_path_from(base: &Path, owner: &str, name: &str) -> PathBuf {
+        base.join(Self::sanitize_repo_cache_segment(owner))
+            .join(Self::sanitize_repo_cache_segment(name))
+    }
+
+    fn repo_cache_root_from(base: &Path, repo: &SkillRepo) -> PathBuf {
+        Self::repo_cache_path_from(base, &repo.owner, &repo.name)
+            .join(Self::sanitize_repo_cache_segment(&repo.branch))
+    }
+
+    fn repo_cache_root(repo: &SkillRepo) -> PathBuf {
+        Self::repo_cache_root_from(&get_app_config_dir().join("skill-repo-cache"), repo)
+    }
+
+    fn remove_repo_cache_from(base: &Path, owner: &str, name: &str) -> Result<()> {
+        let path = Self::repo_cache_path_from(base, owner, name);
+        if path.exists() {
+            fs::remove_dir_all(path)?;
+        }
+        Ok(())
+    }
+
+    async fn remove_repo_cache_from_locked(
+        &self,
+        base: &Path,
+        owner: &str,
+        name: &str,
+    ) -> Result<()> {
+        let _guard = self.lock_repo_identity(owner, name).await;
+        Self::remove_repo_cache_from(base, owner, name)
+    }
+
+    pub async fn remove_repo_cache(&self, owner: &str, name: &str) -> Result<()> {
+        self.remove_repo_cache_from_locked(
+            &get_app_config_dir().join("skill-repo-cache"),
+            owner,
+            name,
+        )
+        .await
+    }
+
+    pub fn remove_repo_cache_in_background(
+        service: Arc<Self>,
+        base: PathBuf,
+        owner: String,
+        name: String,
+    ) {
+        tokio::spawn(async move {
+            if let Err(error) = service
+                .remove_repo_cache_from_locked(&base, &owner, &name)
+                .await
+            {
+                log::warn!("删除仓库 {owner}/{name} 后清理缓存失败: {error}");
+            }
+        });
+    }
+
+    fn load_repo_cache_from(base: &Path, repo: &SkillRepo) -> Result<Option<SkillRepoCheckCache>> {
+        let path = Self::repo_cache_root_from(base, repo).join("metadata.json");
+        if !path.is_file() {
+            return Ok(None);
+        }
+        let value = fs::read_to_string(&path)
+            .with_context(|| format!("读取仓库检查缓存失败: {}", path.display()))?;
+        Ok(Some(
+            serde_json::from_str(&value).context("解析仓库检查缓存失败")?,
+        ))
+    }
+
+    fn load_repo_cache(repo: &SkillRepo) -> Result<Option<SkillRepoCheckCache>> {
+        Self::load_repo_cache_from(&get_app_config_dir().join("skill-repo-cache"), repo)
+    }
+
+    fn write_cache_file_atomically_with<F>(path: &Path, data: &[u8], persist: F) -> Result<()>
+    where
+        F: FnOnce(tempfile::NamedTempFile, &Path) -> Result<()>,
+    {
+        let parent = path
+            .parent()
+            .ok_or_else(|| anyhow!("缓存元数据路径缺少父目录: {}", path.display()))?;
+        fs::create_dir_all(parent)?;
+        let mut temporary = tempfile::Builder::new()
+            .prefix(".metadata.json.")
+            .tempfile_in(parent)
+            .with_context(|| format!("创建仓库检查缓存临时文件失败: {}", parent.display()))?;
+        temporary
+            .write_all(data)
+            .with_context(|| format!("写入仓库检查缓存临时文件失败: {}", path.display()))?;
+        temporary
+            .as_file_mut()
+            .sync_all()
+            .with_context(|| format!("同步仓库检查缓存临时文件失败: {}", path.display()))?;
+        persist(temporary, path)
+    }
+
+    fn write_cache_file_atomically(path: &Path, data: &[u8]) -> Result<()> {
+        Self::write_cache_file_atomically_with(path, data, |temporary, destination| {
+            temporary.persist(destination).map(|_| ()).map_err(|error| {
+                anyhow!(
+                    "替换仓库检查缓存失败: {}: {}",
+                    destination.display(),
+                    error.error
+                )
+            })
+        })
+    }
+
+    fn replace_directory_atomically_with<F>(destination: &Path, prepare: F) -> Result<()>
+    where
+        F: FnOnce(&Path) -> Result<()>,
+    {
+        let parent = destination
+            .parent()
+            .ok_or_else(|| anyhow!("缓存快照路径缺少父目录: {}", destination.display()))?;
+        fs::create_dir_all(parent)?;
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let name = destination
+            .file_name()
+            .map(|value| Self::sanitize_repo_cache_segment(&value.to_string_lossy()))
+            .unwrap_or_else(|| "snapshot".to_string());
+        let staging = parent.join(format!(".{name}.staging-{}-{nonce}", std::process::id()));
+        let backup = parent.join(format!(".{name}.backup-{}-{nonce}", std::process::id()));
+        let _ = Self::remove_path(&staging);
+        let _ = Self::remove_path(&backup);
+
+        if let Err(error) = prepare(&staging) {
+            let _ = Self::remove_path(&staging);
+            return Err(error);
+        }
+        if !staging.is_dir() {
+            let _ = Self::remove_path(&staging);
+            return Err(anyhow!("准备缓存快照后目录不存在: {}", staging.display()));
+        }
+
+        let had_previous = destination.exists() || Self::is_symlink(destination);
+        if had_previous {
+            fs::rename(destination, &backup).with_context(|| {
+                let _ = Self::remove_path(&staging);
+                format!(
+                    "备份旧缓存快照失败: {} -> {}",
+                    destination.display(),
+                    backup.display()
+                )
+            })?;
+        }
+
+        if let Err(error) = fs::rename(&staging, destination) {
+            let _ = Self::remove_path(&staging);
+            if had_previous {
+                fs::rename(&backup, destination).with_context(|| {
+                    format!(
+                        "安装新缓存快照失败且无法恢复旧快照: {} -> {}: {error}",
+                        backup.display(),
+                        destination.display()
+                    )
+                })?;
+            }
+            return Err(anyhow!(
+                "安装新缓存快照失败: {} -> {}: {error}",
+                staging.display(),
+                destination.display()
+            ));
+        }
+
+        if had_previous {
+            Self::remove_path(&backup)?;
+        }
+        Ok(())
+    }
+
+    fn move_or_copy_directory(source: &Path, destination: &Path) -> Result<()> {
+        match fs::rename(source, destination) {
+            Ok(()) => Ok(()),
+            Err(rename_error) => {
+                Self::copy_dir_recursive(source, destination).with_context(|| {
+                    format!(
+                        "移动目录失败（{rename_error}），复制目录也失败: {} -> {}",
+                        source.display(),
+                        destination.display()
+                    )
+                })?;
+                fs::remove_dir_all(source)?;
+                Ok(())
+            }
+        }
+    }
+
+    fn save_repo_cache_to(
+        base: &Path,
+        repo: &SkillRepo,
+        cache: &SkillRepoCheckCache,
+    ) -> Result<()> {
+        let root = Self::repo_cache_root_from(base, repo);
+        let path = root.join("metadata.json");
+        let data = serde_json::to_vec(cache).context("序列化仓库检查缓存失败")?;
+        Self::write_cache_file_atomically(&path, &data)
+    }
+
+    fn save_repo_cache(repo: &SkillRepo, cache: &SkillRepoCheckCache) -> Result<()> {
+        Self::save_repo_cache_to(&get_app_config_dir().join("skill-repo-cache"), repo, cache)
+    }
+
+    fn load_cached_discovery_from(
+        base: &Path,
+        repos: &[SkillRepo],
+    ) -> Result<SkillDiscoveryResult> {
+        let mut skills = Vec::new();
+        for repo in repos.iter().filter(|repo| repo.enabled) {
+            for branch in Self::candidate_repo_branches(&repo.branch) {
+                let resolved_repo = SkillRepo {
+                    branch,
+                    ..repo.clone()
+                };
+                match Self::load_repo_cache_from(base, &resolved_repo) {
+                    Ok(Some(cache)) if cache.can_use_stale_discovery() => {
+                        skills.extend(cache.discovered_skills);
+                        break;
+                    }
+                    Ok(_) => {}
+                    Err(error) => log::warn!(
+                        "读取仓库 {}/{}@{} 的持久发现缓存失败: {error}",
+                        repo.owner,
+                        repo.name,
+                        resolved_repo.branch
+                    ),
+                }
+            }
+        }
+        Self::deduplicate_discoverable_skills(&mut skills);
+        skills.sort_by_key(|skill| skill.name.to_lowercase());
+        Ok(SkillDiscoveryResult {
+            skills,
+            failures: Vec::new(),
+            refreshed_repositories: Vec::new(),
+        })
+    }
+
+    pub fn load_cached_discovery(&self, repos: &[SkillRepo]) -> Result<SkillDiscoveryResult> {
+        Self::load_cached_discovery_from(&get_app_config_dir().join("skill-repo-cache"), repos)
+    }
+
+    fn repo_snapshot_path(repo: &SkillRepo, sha: &str) -> PathBuf {
+        let safe_sha = sha
+            .chars()
+            .map(|c| if c.is_ascii_hexdigit() { c } else { '_' })
+            .collect::<String>();
+        Self::repo_cache_root(repo).join(safe_sha)
+    }
+
+    fn candidate_repo_branches(configured_branch: &str) -> Vec<String> {
+        let mut branches = Vec::new();
+        if !configured_branch.is_empty() && !configured_branch.eq_ignore_ascii_case("HEAD") {
+            branches.push(configured_branch.to_string());
+        }
+        if !branches.iter().any(|branch| branch == "main") {
+            branches.push("main".to_string());
+        }
+        if !branches.iter().any(|branch| branch == "master") {
+            branches.push("master".to_string());
+        }
+        branches
+    }
+
+    fn should_fallback_to_branch_download_after_commit_lookup_error(
+        error: &RepoCommitLookupError,
+    ) -> bool {
+        error.is_recoverable()
+    }
+
+    async fn download_repo_for_unverified_branch_fallback(
+        &self,
+        repo: &SkillRepo,
+    ) -> Result<(PathBuf, String)> {
+        let owner = repo.owner.clone();
+        let name = repo.name.clone();
+        timeout(std::time::Duration::from_secs(75), self.download_repo(repo))
+            .await
+            .map_err(|_| {
+                anyhow!(format_skill_error(
+                    "DOWNLOAD_TIMEOUT",
+                    &[("owner", &owner), ("name", &name), ("timeout", "75")],
+                    Some("checkNetwork"),
+                ))
+            })?
+    }
+
+    async fn fetch_repo_commit_sha(
+        &self,
+        repo: &SkillRepo,
+    ) -> std::result::Result<(String, String), RepoCommitLookupError> {
+        #[derive(Deserialize)]
+        struct CommitResponse {
+            sha: String,
+        }
+
+        for branch in Self::candidate_repo_branches(&repo.branch) {
+            let mut url = url::Url::parse("https://api.github.com")
+                .map_err(|error| RepoCommitLookupError::recoverable(error.to_string()))?;
+            url.path_segments_mut()
+                .map_err(|_| RepoCommitLookupError::recoverable("无法构造 GitHub API 地址"))?
+                .extend([
+                    "repos",
+                    repo.owner.as_str(),
+                    repo.name.as_str(),
+                    "commits",
+                    branch.as_str(),
+                ]);
+            let response = crate::proxy::http_client::get()
+                .get(url)
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "cc-switch")
+                .timeout(std::time::Duration::from_secs(15))
+                .send()
+                .await
+                .map_err(|error| RepoCommitLookupError::recoverable(error.to_string()))?;
+            if response.status().is_success() {
+                let commit = response
+                    .json::<CommitResponse>()
+                    .await
+                    .map_err(|error| RepoCommitLookupError::recoverable(error.to_string()))?;
+                return Ok((commit.sha, branch));
+            }
+
+            let status = response.status().as_u16().to_string();
+            if status == "404" {
+                continue;
+            }
+            return Err(RepoCommitLookupError::recoverable(format_skill_error(
+                "DOWNLOAD_FAILED",
+                &[("status", &status)],
+                match status.as_str() {
+                    "403" => Some("http403"),
+                    "429" => Some("http429"),
+                    _ => Some("checkNetwork"),
+                },
+            )));
+        }
+
+        Err(RepoCommitLookupError::not_found(format_skill_error(
+            "DOWNLOAD_FAILED",
+            &[("status", "404")],
+            Some("http404"),
+        )))
+    }
+
     /// 检查所有已安装 Skill 的更新
     ///
     /// 仅检查有 repo_owner 的 Skill（本地 Skill 跳过），
     /// 按仓库分组下载，避免重复下载同一仓库。
     pub async fn check_updates(&self, db: &Arc<Database>) -> Result<Vec<SkillUpdateInfo>> {
+        Ok(self
+            .check_updates_with_failures(db, false, |_| {})
+            .await?
+            .updates)
+    }
+
+    /// 检查所有已安装 Skill 的更新，并返回失败仓库摘要
+    pub async fn check_updates_with_failures<F>(
+        &self,
+        db: &Arc<Database>,
+        force: bool,
+        mut on_progress: F,
+    ) -> Result<SkillUpdateCheckResult>
+    where
+        F: FnMut(SkillUpdateProgress),
+    {
         let skills = db.get_all_installed_skills()?;
         let mut updates = Vec::new();
+        let mut failures = Vec::new();
 
         // 按 (owner, name, branch) 分组
         let mut repo_groups: HashMap<(String, String, String), Vec<InstalledSkill>> =
@@ -896,95 +1535,468 @@ impl SkillService {
         }
 
         let ssot_dir = Self::get_ssot_dir()?;
-
-        for ((owner, name, branch), group_skills) in &repo_groups {
+        let repo_total = repo_groups.len();
+        // SHA 请求很小且彼此独立，并发获取可避免网络延迟按仓库累加。
+        let mut sha_tasks = futures::stream::FuturesUnordered::new();
+        for (owner, name, branch) in repo_groups.keys() {
             let repo = SkillRepo {
                 owner: owner.clone(),
                 name: name.clone(),
                 branch: branch.clone(),
                 enabled: true,
             };
+            sha_tasks.push(async move {
+                let key = (repo.owner.clone(), repo.name.clone(), repo.branch.clone());
+                (key, self.fetch_repo_commit_sha(&repo).await)
+            });
+        }
+        use futures::StreamExt;
+        let mut sha_results = HashMap::new();
+        let mut connected = 0;
+        while let Some((key, result)) = sha_tasks.next().await {
+            connected += 1;
+            on_progress(SkillUpdateProgress {
+                phase: SkillUpdateProgressPhase::Connecting,
+                current: connected,
+                total: repo_total,
+                repo: format!("{}/{}", key.0, key.1),
+            });
+            sha_results.insert(key, result);
+        }
 
-            // 下载仓库 ZIP
-            let (temp_dir, _used_branch) = match timeout(
-                std::time::Duration::from_secs(60),
-                self.download_repo(&repo),
-            )
-            .await
-            {
-                Ok(Ok(result)) => result,
-                Ok(Err(e)) => {
-                    log::warn!("检查更新时下载 {}/{} 失败: {e}", owner, name);
+        for (repo_index, ((owner, name, branch), group_skills)) in repo_groups.iter().enumerate() {
+            let mut repo = SkillRepo {
+                owner: owner.clone(),
+                name: name.clone(),
+                branch: branch.clone(),
+                enabled: true,
+            };
+
+            on_progress(SkillUpdateProgress {
+                phase: SkillUpdateProgressPhase::Checking,
+                current: repo_index + 1,
+                total: repo_total,
+                repo: format!("{owner}/{name}"),
+            });
+
+            let _repo_guard = self.lock_repo(&repo).await;
+            let mut fallback_temp_dir: Option<PathBuf> = None;
+            let mut remote_sha = String::new();
+            let existing_cache = match sha_results.remove(&(
+                owner.clone(),
+                name.clone(),
+                branch.clone(),
+            )) {
+                Some(Ok((sha, resolved_branch))) => {
+                    remote_sha = sha;
+                    repo.branch = resolved_branch;
+                    let mut existing_cache = Self::load_repo_cache(&repo).unwrap_or_else(|e| {
+                        log::warn!("读取仓库检查缓存失败 {owner}/{name}: {e}");
+                        None
+                    });
+                    if existing_cache.as_ref().is_some_and(|cache| {
+                        !cache.remote_sha_seen.is_empty() && cache.remote_sha_seen != remote_sha
+                    }) {
+                        // SHA 请求与后续缓存处理之间可能有另一个任务更新同一仓库。
+                        // 在持有仓库锁后重新确认变化仓库的 SHA，避免较早任务覆盖较新快照。
+                        match self.fetch_repo_commit_sha(&repo).await {
+                            Ok((confirmed_sha, confirmed_branch)) => {
+                                remote_sha = confirmed_sha;
+                                repo.branch = confirmed_branch;
+                            }
+                            Err(error)
+                                if Self::should_fallback_to_branch_download_after_commit_lookup_error(
+                                    &error,
+                                ) =>
+                            {
+                                log::warn!(
+                                    "GitHub commit SHA 重新确认失败，检查更新回退到未缓存的分支 ZIP 下载 {owner}/{name}: {error}"
+                                );
+                                on_progress(SkillUpdateProgress {
+                                    phase: SkillUpdateProgressPhase::Downloading,
+                                    current: repo_index + 1,
+                                    total: repo_total,
+                                    repo: format!("{owner}/{name}"),
+                                });
+                                match self
+                                    .download_repo_for_unverified_branch_fallback(&repo)
+                                    .await
+                                {
+                                    Ok((temp_dir, fallback_branch)) => {
+                                        repo.branch = fallback_branch;
+                                        fallback_temp_dir = Some(temp_dir);
+                                        existing_cache = None;
+                                    }
+                                    Err(fallback_error) => {
+                                        failures.push(SkillRepoFetchFailure {
+                                            owner: owner.clone(),
+                                            name: name.clone(),
+                                            branch: repo.branch.clone(),
+                                            error: format!(
+                                                "{}; fallback download failed: {}",
+                                                error, fallback_error
+                                            ),
+                                        });
+                                        continue;
+                                    }
+                                }
+                            }
+                            Err(error) => {
+                                failures.push(SkillRepoFetchFailure {
+                                    owner: owner.clone(),
+                                    name: name.clone(),
+                                    branch: repo.branch.clone(),
+                                    error: error.to_string(),
+                                });
+                                continue;
+                            }
+                        }
+                    }
+                    if fallback_temp_dir.is_none() && existing_cache.is_none() {
+                        let _ = Self::save_repo_cache(
+                            &repo,
+                            &SkillRepoCheckCache {
+                                remote_sha_seen: remote_sha.clone(),
+                                last_verified_sha: String::new(),
+                                remote_skill_hashes: HashMap::new(),
+                                snapshot_path: PathBuf::new(),
+                                discovered_skills: Vec::new(),
+                            },
+                        );
+                    }
+                    existing_cache
+                }
+                Some(Err(error))
+                    if Self::should_fallback_to_branch_download_after_commit_lookup_error(
+                        &error,
+                    ) =>
+                {
+                    log::warn!(
+                        "GitHub commit SHA 查询失败，检查更新回退到未缓存的分支 ZIP 下载 {owner}/{name}: {error}"
+                    );
+                    on_progress(SkillUpdateProgress {
+                        phase: SkillUpdateProgressPhase::Downloading,
+                        current: repo_index + 1,
+                        total: repo_total,
+                        repo: format!("{owner}/{name}"),
+                    });
+                    match self
+                        .download_repo_for_unverified_branch_fallback(&repo)
+                        .await
+                    {
+                        Ok((temp_dir, fallback_branch)) => {
+                            repo.branch = fallback_branch;
+                            fallback_temp_dir = Some(temp_dir);
+                            None
+                        }
+                        Err(fallback_error) => {
+                            failures.push(SkillRepoFetchFailure {
+                                owner: owner.clone(),
+                                name: name.clone(),
+                                branch: branch.clone(),
+                                error: format!(
+                                    "{}; fallback download failed: {}",
+                                    error, fallback_error
+                                ),
+                            });
+                            continue;
+                        }
+                    }
+                }
+                Some(Err(e)) => {
+                    failures.push(SkillRepoFetchFailure {
+                        owner: owner.clone(),
+                        name: name.clone(),
+                        branch: branch.clone(),
+                        error: e.to_string(),
+                    });
                     continue;
                 }
-                Err(_) => {
-                    log::warn!("检查更新时下载 {}/{} 超时", owner, name);
+                None => {
+                    failures.push(SkillRepoFetchFailure {
+                        owner: owner.clone(),
+                        name: name.clone(),
+                        branch: branch.clone(),
+                        error: "缺少仓库 SHA 检查结果".to_string(),
+                    });
                     continue;
                 }
             };
-
-            // 扫描仓库中的所有 Skill 目录
-            let mut remote_skills: Vec<DiscoverableSkill> = Vec::new();
-            let _ = self.scan_dir_recursive(&temp_dir, &temp_dir, &repo, &mut remote_skills);
-
-            for skill in group_skills {
-                // 在远程仓库中找到匹配的 Skill 目录
-                let remote_match = remote_skills.iter().find(|rs| {
-                    // 匹配方式：安装名称的最后一段
-                    let remote_install_name =
-                        rs.directory.rsplit('/').next().unwrap_or(&rs.directory);
-                    remote_install_name.eq_ignore_ascii_case(&skill.directory)
+            let (snapshot_path, remote_hashes) = if let Some(temp_dir) = fallback_temp_dir.take() {
+                on_progress(SkillUpdateProgress {
+                    phase: SkillUpdateProgressPhase::Scanning,
+                    current: repo_index + 1,
+                    total: repo_total,
+                    repo: format!("{owner}/{name}"),
                 });
+                let mut remote_skills = Vec::new();
+                if let Err(e) =
+                    self.scan_dir_recursive(&temp_dir, &temp_dir, &repo, &mut remote_skills)
+                {
+                    let _ = fs::remove_dir_all(&temp_dir);
+                    failures.push(SkillRepoFetchFailure {
+                        owner: owner.clone(),
+                        name: name.clone(),
+                        branch: repo.branch.clone(),
+                        error: e.to_string(),
+                    });
+                    continue;
+                }
+                let directories = group_skills
+                    .iter()
+                    .map(|skill| skill.directory.clone())
+                    .collect::<Vec<_>>();
+                let (hashes, hash_failures) =
+                    Self::hash_remote_skill_directories(&temp_dir, &remote_skills, &directories);
+                let _ = fs::remove_dir_all(&temp_dir);
+                if !hash_failures.is_empty() {
+                    failures.push(SkillRepoFetchFailure {
+                        owner: owner.clone(),
+                        name: name.clone(),
+                        branch: repo.branch.clone(),
+                        error: hash_failures.join("; "),
+                    });
+                }
+                match Self::classify_remote_hash_scan(hashes, &hash_failures) {
+                    RemoteHashScanOutcome::Failed => continue,
+                    RemoteHashScanOutcome::Partial(hashes)
+                    | RemoteHashScanOutcome::Complete(hashes) => (PathBuf::new(), hashes),
+                }
+            } else if let Some(mut cache) = existing_cache
+                .clone()
+                .filter(|cache| cache.can_reuse_snapshot(&remote_sha, force))
+            {
+                log::info!("Skills 更新缓存命中 {owner}/{name}@{branch}，复用已验证快照");
+                let missing_hashes = group_skills
+                    .iter()
+                    .any(|skill| !cache.remote_skill_hashes.contains_key(&skill.directory));
+                if missing_hashes {
+                    on_progress(SkillUpdateProgress {
+                        phase: SkillUpdateProgressPhase::Scanning,
+                        current: repo_index + 1,
+                        total: repo_total,
+                        repo: format!("{owner}/{name}"),
+                    });
+                    let mut remote_skills = Vec::new();
+                    if let Err(error) = self.scan_dir_recursive(
+                        &cache.snapshot_path,
+                        &cache.snapshot_path,
+                        &repo,
+                        &mut remote_skills,
+                    ) {
+                        failures.push(SkillRepoFetchFailure {
+                            owner: owner.clone(),
+                            name: name.clone(),
+                            branch: branch.clone(),
+                            error: error.to_string(),
+                        });
+                        continue;
+                    }
+                    let missing_directories = group_skills
+                        .iter()
+                        .filter(|skill| !cache.remote_skill_hashes.contains_key(&skill.directory))
+                        .map(|skill| skill.directory.clone())
+                        .collect::<Vec<_>>();
+                    let (hashes, hash_failures) = Self::hash_remote_skill_directories(
+                        &cache.snapshot_path,
+                        &remote_skills,
+                        &missing_directories,
+                    );
+                    cache.remote_skill_hashes.extend(hashes);
+                    if !hash_failures.is_empty() {
+                        failures.push(SkillRepoFetchFailure {
+                            owner: owner.clone(),
+                            name: name.clone(),
+                            branch: branch.clone(),
+                            error: hash_failures.join("; "),
+                        });
+                    }
+                    if let Err(error) = Self::save_repo_cache(&repo, &cache) {
+                        log::warn!("保存仓库哈希缓存失败 {owner}/{name}: {error}");
+                    }
+                }
+                (cache.snapshot_path, cache.remote_skill_hashes)
+            } else {
+                log::info!("Skills 更新缓存未命中 {owner}/{name}@{branch}，开始下载仓库");
+                // 记录已经看到的远程 SHA，但它不能用于跳过下载。
+                if let Some(mut cache) = existing_cache.clone() {
+                    cache.remote_sha_seen = remote_sha.clone();
+                    let _ = Self::save_repo_cache(&repo, &cache);
+                }
 
-                let remote_skill_dir = match remote_match {
-                    Some(rs) => match Self::resolve_skill_source_dir(&temp_dir, &rs.directory) {
-                        Some(path) => path,
-                        None => continue,
-                    },
-                    None => continue,
-                };
-
-                let remote_hash = match Self::compute_dir_hash(&remote_skill_dir) {
-                    Ok(h) => h,
-                    Err(e) => {
-                        log::warn!("计算远程哈希失败 {}: {e}", skill.id);
+                on_progress(SkillUpdateProgress {
+                    phase: SkillUpdateProgressPhase::Downloading,
+                    current: repo_index + 1,
+                    total: repo_total,
+                    repo: format!("{owner}/{name}"),
+                });
+                let temp_dir = match timeout(
+                    std::time::Duration::from_secs(75),
+                    self.download_repo_at_commit(&repo, &remote_sha),
+                )
+                .await
+                {
+                    Ok(Ok(result)) => result,
+                    Ok(Err(e)) => {
+                        failures.push(SkillRepoFetchFailure {
+                            owner: owner.clone(),
+                            name: name.clone(),
+                            branch: branch.clone(),
+                            error: e.to_string(),
+                        });
+                        continue;
+                    }
+                    Err(_) => {
+                        failures.push(SkillRepoFetchFailure {
+                            owner: owner.clone(),
+                            name: name.clone(),
+                            branch: branch.clone(),
+                            error: format_skill_error(
+                                "DOWNLOAD_TIMEOUT",
+                                &[
+                                    ("owner", owner.as_str()),
+                                    ("name", name.as_str()),
+                                    ("timeout", "75"),
+                                ],
+                                Some("checkNetwork"),
+                            ),
+                        });
                         continue;
                     }
                 };
 
-                // 本地哈希：优先数据库，否则实时计算
-                let local_hash = match &skill.content_hash {
-                    Some(h) => Some(h.clone()),
-                    None => {
-                        let local_dir = ssot_dir.join(&skill.directory);
-                        if local_dir.exists() {
-                            match Self::compute_dir_hash(&local_dir) {
-                                Ok(h) => {
-                                    let _ = db.update_skill_hash(&skill.id, &h, 0);
-                                    Some(h)
-                                }
-                                Err(_) => None,
+                on_progress(SkillUpdateProgress {
+                    phase: SkillUpdateProgressPhase::Scanning,
+                    current: repo_index + 1,
+                    total: repo_total,
+                    repo: format!("{owner}/{name}"),
+                });
+                let mut remote_skills = Vec::new();
+                if let Err(e) =
+                    self.scan_dir_recursive(&temp_dir, &temp_dir, &repo, &mut remote_skills)
+                {
+                    let _ = fs::remove_dir_all(&temp_dir);
+                    failures.push(SkillRepoFetchFailure {
+                        owner: owner.clone(),
+                        name: name.clone(),
+                        branch: branch.clone(),
+                        error: e.to_string(),
+                    });
+                    continue;
+                }
+
+                let directories = group_skills
+                    .iter()
+                    .map(|skill| skill.directory.clone())
+                    .collect::<Vec<_>>();
+                let (hashes, hash_failures) =
+                    Self::hash_remote_skill_directories(&temp_dir, &remote_skills, &directories);
+                if !hash_failures.is_empty() {
+                    failures.push(SkillRepoFetchFailure {
+                        owner: owner.clone(),
+                        name: name.clone(),
+                        branch: branch.clone(),
+                        error: hash_failures.join("; "),
+                    });
+                }
+                match Self::classify_remote_hash_scan(hashes, &hash_failures) {
+                    RemoteHashScanOutcome::Failed => {
+                        let _ = fs::remove_dir_all(&temp_dir);
+                        continue;
+                    }
+                    RemoteHashScanOutcome::Partial(hashes) => {
+                        let _ = fs::remove_dir_all(&temp_dir);
+                        (PathBuf::new(), hashes)
+                    }
+                    RemoteHashScanOutcome::Complete(hashes) => {
+                        let snapshot = Self::repo_snapshot_path(&repo, &remote_sha);
+                        let cache = SkillRepoCheckCache {
+                            remote_sha_seen: remote_sha.clone(),
+                            last_verified_sha: remote_sha.clone(),
+                            remote_skill_hashes: hashes.clone(),
+                            snapshot_path: snapshot.clone(),
+                            discovered_skills: remote_skills.clone(),
+                        };
+                        let keep_existing_snapshot =
+                            existing_cache.as_ref().is_some_and(|previous| {
+                                previous.should_keep_existing_snapshot(
+                                    &snapshot,
+                                    &remote_sha,
+                                    force,
+                                )
+                            });
+                        let persist_result = (|| -> Result<()> {
+                            if keep_existing_snapshot {
+                                fs::remove_dir_all(&temp_dir)?;
+                            } else {
+                                Self::replace_directory_atomically_with(&snapshot, |staging| {
+                                    Self::move_or_copy_directory(&temp_dir, staging)
+                                })
+                                .context("保存仓库缓存快照失败")?;
                             }
-                        } else {
+                            Self::save_repo_cache(&repo, &cache)
+                        })();
+                        if let Err(error) = persist_result {
+                            let _ = fs::remove_dir_all(&temp_dir);
+                            failures.push(SkillRepoFetchFailure {
+                                owner: owner.clone(),
+                                name: name.clone(),
+                                branch: branch.clone(),
+                                error: error.to_string(),
+                            });
+                            continue;
+                        }
+                        if let Some(previous) = existing_cache.as_ref() {
+                            if previous.snapshot_path != snapshot && previous.snapshot_path.is_dir()
+                            {
+                                let _ = fs::remove_dir_all(&previous.snapshot_path);
+                            }
+                        }
+                        (snapshot, hashes)
+                    }
+                }
+            };
+
+            for skill in group_skills {
+                let Some(remote_hash) = remote_hashes.get(&skill.directory).cloned() else {
+                    continue;
+                };
+                let local_dir = ssot_dir.join(&skill.directory);
+                let local_exists = local_dir.exists();
+                let local_hash = if local_exists {
+                    match Self::compute_dir_hash(&local_dir) {
+                        Ok(hash) => Some(hash),
+                        Err(error) => {
+                            log::warn!("计算本地 Skill 哈希失败 {}: {error}", skill.id);
                             None
                         }
                     }
+                } else {
+                    None
                 };
-
-                if local_hash.as_deref() != Some(&remote_hash) {
+                let status = Self::classify_update_status_with_local_presence(
+                    skill.content_hash.as_deref(),
+                    local_hash.as_deref(),
+                    local_exists,
+                    &remote_hash,
+                );
+                if status == SkillUpdateStatus::Latest && skill.content_hash.is_none() {
+                    let _ = db.update_skill_hash(&skill.id, &remote_hash, 0);
+                }
+                if status != SkillUpdateStatus::Latest {
                     updates.push(SkillUpdateInfo {
                         id: skill.id.clone(),
                         name: skill.name.clone(),
                         current_hash: local_hash,
                         remote_hash,
+                        status,
                     });
                 }
             }
-
-            let _ = fs::remove_dir_all(&temp_dir);
+            let _ = snapshot_path;
         }
 
-        Ok(updates)
+        Ok(SkillUpdateCheckResult { updates, failures })
     }
 
     /// 更新单个 Skill（重新下载并替换本地文件）
@@ -1005,32 +2017,62 @@ impl SkillService {
             _ => return Err(anyhow!("Cannot update local skill: {skill_id}")),
         };
 
-        let repo = SkillRepo {
+        let mut repo = SkillRepo {
             owner: owner.clone(),
             name: name.clone(),
             branch: branch.clone(),
             enabled: true,
         };
+        let _repo_guard = self.lock_repo(&repo).await;
 
         let ssot_dir = Self::get_ssot_dir()?;
 
-        // 下载仓库
-        let (temp_dir, used_branch) = timeout(
-            std::time::Duration::from_secs(60),
-            self.download_repo(&repo),
-        )
-        .await
-        .map_err(|_| {
-            anyhow!(format_skill_error(
-                "DOWNLOAD_TIMEOUT",
-                &[("owner", &owner), ("name", &name), ("timeout", "60")],
-                Some("checkNetwork"),
-            ))
-        })??;
+        // 优先复用刚完成检查的已验证快照，避免“检查一次、更新又下载一次”。
+        let (repo_dir, used_branch, remove_after) = match self.fetch_repo_commit_sha(&repo).await {
+            Ok((remote_sha, resolved_branch)) => {
+                repo.branch = resolved_branch.clone();
+                let cached_snapshot = Self::load_repo_cache(&repo)?
+                    .filter(|cache| cache.can_reuse_snapshot(&remote_sha, false))
+                    .map(|cache| cache.snapshot_path);
+                if let Some(snapshot) = cached_snapshot {
+                    (snapshot, resolved_branch.clone(), false)
+                } else {
+                    let temp_dir = timeout(
+                        std::time::Duration::from_secs(75),
+                        self.download_repo_at_commit(&repo, &remote_sha),
+                    )
+                    .await
+                    .map_err(|_| {
+                        anyhow!(format_skill_error(
+                            "DOWNLOAD_TIMEOUT",
+                            &[("owner", &owner), ("name", &name), ("timeout", "75")],
+                            Some("checkNetwork"),
+                        ))
+                    })??;
+                    (temp_dir, resolved_branch, true)
+                }
+            }
+            Err(error)
+                if Self::should_fallback_to_branch_download_after_commit_lookup_error(&error) =>
+            {
+                log::warn!(
+                    "GitHub commit SHA 查询失败，单个 Skill 更新回退到未缓存的分支 ZIP 下载 {owner}/{name}: {error}"
+                );
+                let (temp_dir, fallback_branch) = self
+                    .download_repo_for_unverified_branch_fallback(&repo)
+                    .await
+                    .map_err(|fallback_error| {
+                        anyhow!("{}; fallback download failed: {}", error, fallback_error)
+                    })?;
+                (temp_dir, fallback_branch, true)
+            }
+            Err(error) => return Err(error.into()),
+        };
+        repo.branch = used_branch.clone();
 
         // 在解压的仓库中查找 Skill 源目录
         let mut remote_skills: Vec<DiscoverableSkill> = Vec::new();
-        let _ = self.scan_dir_recursive(&temp_dir, &temp_dir, &repo, &mut remote_skills);
+        self.scan_dir_recursive(&repo_dir, &repo_dir, &repo, &mut remote_skills)?;
 
         let remote_match = remote_skills
             .iter()
@@ -1039,7 +2081,9 @@ impl SkillService {
                 remote_install_name.eq_ignore_ascii_case(&skill.directory)
             })
             .ok_or_else(|| {
-                let _ = fs::remove_dir_all(&temp_dir);
+                if remove_after {
+                    let _ = fs::remove_dir_all(&repo_dir);
+                }
                 anyhow!(format_skill_error(
                     "SKILL_DIR_NOT_FOUND",
                     &[("path", &skill.directory)],
@@ -1047,10 +2091,12 @@ impl SkillService {
                 ))
             })?;
 
-        let source = Self::resolve_skill_source_dir(&temp_dir, &remote_match.directory)
+        let source = Self::resolve_skill_source_dir(&repo_dir, &remote_match.directory)
             .ok_or_else(|| {
-                let missing = temp_dir.join(&remote_match.directory).display().to_string();
-                let _ = fs::remove_dir_all(&temp_dir);
+                let missing = repo_dir.join(&remote_match.directory).display().to_string();
+                if remove_after {
+                    let _ = fs::remove_dir_all(&repo_dir);
+                }
                 anyhow!(format_skill_error(
                     "SKILL_DIR_NOT_FOUND",
                     &[("path", &missing)],
@@ -1058,16 +2104,16 @@ impl SkillService {
                 ))
             })?;
 
-        // 备份旧文件
-        let _ = Self::create_uninstall_backup(&skill);
-
-        // 删除旧 SSOT 目录并复制新文件
         let dest = ssot_dir.join(&skill.directory);
-        if dest.exists() {
-            fs::remove_dir_all(&dest)?;
+        let replace_result = (|| -> Result<()> {
+            // 先确认备份成功，再通过临时目录替换，避免复制失败后丢失原文件。
+            Self::create_uninstall_backup(&skill)?;
+            Self::replace_dest_with_copy(&source, &dest, &skill.directory)
+        })();
+        if remove_after {
+            let _ = fs::remove_dir_all(&repo_dir);
         }
-        Self::copy_dir_recursive(&source, &dest)?;
-        let _ = fs::remove_dir_all(&temp_dir);
+        replace_result?;
 
         // 计算新哈希 + 解析新元数据
         let new_hash = Self::compute_dir_hash(&dest).ok();
@@ -1825,22 +2871,142 @@ impl SkillService {
         &self,
         repos: Vec<SkillRepo>,
     ) -> Result<Vec<DiscoverableSkill>> {
+        Ok(self
+            .discover_available_with_failures(repos, false, |_| {})
+            .await?
+            .skills)
+    }
+
+    /// 列出所有可发现的技能（从仓库获取），并返回失败仓库摘要
+    pub async fn discover_available_with_failures<F>(
+        &self,
+        repos: Vec<SkillRepo>,
+        force: bool,
+        mut on_progress: F,
+    ) -> Result<SkillDiscoveryResult>
+    where
+        F: FnMut(SkillDiscoveryProgress),
+    {
         let mut skills = Vec::new();
+        let mut failures = Vec::new();
+        let mut refreshed_repositories = Vec::new();
 
         // 仅使用启用的仓库
         let enabled_repos: Vec<SkillRepo> = repos.into_iter().filter(|repo| repo.enabled).collect();
 
-        let fetch_tasks = enabled_repos
-            .iter()
-            .map(|repo| self.fetch_repo_skills(repo));
+        let total = enabled_repos.len();
+        let (progress_tx, mut progress_rx) =
+            tokio::sync::mpsc::unbounded_channel::<SkillDiscoveryProgress>();
+        let mut fetch_tasks = futures::stream::FuturesUnordered::new();
+        for repo in enabled_repos {
+            let progress_tx = progress_tx.clone();
+            fetch_tasks.push(async move {
+                let _ = progress_tx.send(SkillDiscoveryProgress {
+                    phase: SkillDiscoveryProgressPhase::Loading,
+                    completed: 0,
+                    total,
+                    repo: format!("{}/{}", repo.owner, repo.name),
+                    skill_count: None,
+                    error: None,
+                    skills: None,
+                });
+                let result = self
+                    .fetch_repo_skills_cached(&repo, force, &progress_tx, total)
+                    .await;
+                (repo, result)
+            });
+        }
+        drop(progress_tx);
 
-        let results: Vec<Result<Vec<DiscoverableSkill>>> =
-            futures::future::join_all(fetch_tasks).await;
-
-        for (repo, result) in enabled_repos.into_iter().zip(results) {
-            match result {
-                Ok(repo_skills) => skills.extend(repo_skills),
-                Err(e) => log::warn!("获取仓库 {}/{} 技能失败: {}", repo.owner, repo.name, e),
+        use futures::StreamExt;
+        let mut completed = 0;
+        while completed < total {
+            tokio::select! {
+                biased;
+                Some(mut progress) = progress_rx.recv() => {
+                    progress.completed = completed;
+                    on_progress(progress);
+                }
+                Some((repo, result)) = fetch_tasks.next() => {
+                    completed += 1;
+                    let repo_name = format!("{}/{}", repo.owner, repo.name);
+                    let refreshed_repository = SkillRepoIdentity {
+                        owner: repo.owner.clone(),
+                        name: repo.name.clone(),
+                        branch: repo.branch.clone(),
+                    };
+                    match Self::classify_repository_discovery(result) {
+                        RepositoryDiscoveryOutcome::Empty => {
+                            let error = format_skill_error(
+                                "NO_SKILLS_IN_ZIP",
+                                &[],
+                                Some("checkZipContent"),
+                            );
+                            refreshed_repositories.push(refreshed_repository);
+                            failures.push(SkillRepoFetchFailure {
+                                owner: repo.owner,
+                                name: repo.name,
+                                branch: repo.branch,
+                                error: error.clone(),
+                            });
+                            on_progress(SkillDiscoveryProgress {
+                                phase: SkillDiscoveryProgressPhase::Failed,
+                                completed,
+                                total,
+                                repo: repo_name,
+                                skill_count: None,
+                                error: Some(error),
+                                skills: None,
+                            });
+                        }
+                        RepositoryDiscoveryOutcome::Success(repo_skills) => {
+                            let skill_count = repo_skills.len();
+                            refreshed_repositories.push(refreshed_repository);
+                            on_progress(SkillDiscoveryProgress {
+                                phase: SkillDiscoveryProgressPhase::Completed,
+                                completed,
+                                total,
+                                repo: repo_name,
+                                skill_count: Some(skill_count),
+                                error: None,
+                                skills: Some(repo_skills.clone()),
+                            });
+                            skills.extend(repo_skills);
+                        }
+                        RepositoryDiscoveryOutcome::Failure(error) => {
+                            log::warn!("获取仓库 {}/{} 技能失败: {}", repo.owner, repo.name, error);
+                            let stale_skills = self
+                                .load_stale_discovery_skills(&repo)
+                                .await
+                                .unwrap_or_else(|cache_error| {
+                                    log::warn!(
+                                        "读取仓库 {}/{} 的上次成功结果失败: {}",
+                                        repo.owner,
+                                        repo.name,
+                                        cache_error
+                                    );
+                                    Vec::new()
+                                });
+                            skills.extend(stale_skills.clone());
+                            failures.push(SkillRepoFetchFailure {
+                                owner: repo.owner,
+                                name: repo.name,
+                                branch: repo.branch,
+                                error: error.clone(),
+                            });
+                            on_progress(SkillDiscoveryProgress {
+                                phase: SkillDiscoveryProgressPhase::Failed,
+                                completed,
+                                total,
+                                repo: repo_name,
+                                skill_count: None,
+                                error: Some(error),
+                                skills: (!stale_skills.is_empty()).then_some(stale_skills),
+                            });
+                        }
+                    }
+                }
+                else => break,
             }
         }
 
@@ -1848,7 +3014,44 @@ impl SkillService {
         Self::deduplicate_discoverable_skills(&mut skills);
         skills.sort_by_key(|skill| skill.name.to_lowercase());
 
-        Ok(skills)
+        Ok(SkillDiscoveryResult {
+            skills,
+            failures,
+            refreshed_repositories,
+        })
+    }
+
+    async fn load_stale_discovery_skills(
+        &self,
+        repo: &SkillRepo,
+    ) -> Result<Vec<DiscoverableSkill>> {
+        let _repo_guard = self.lock_repo(repo).await;
+        Self::load_stale_discovery_skills_from(&get_app_config_dir().join("skill-repo-cache"), repo)
+    }
+
+    fn load_stale_discovery_skills_from(
+        base: &Path,
+        repo: &SkillRepo,
+    ) -> Result<Vec<DiscoverableSkill>> {
+        for branch in Self::candidate_repo_branches(&repo.branch) {
+            let resolved_repo = SkillRepo {
+                branch,
+                ..repo.clone()
+            };
+            match Self::load_repo_cache_from(base, &resolved_repo) {
+                Ok(Some(cache)) if cache.can_use_stale_discovery() => {
+                    return Ok(cache.discovered_skills);
+                }
+                Ok(_) => {}
+                Err(error) => log::warn!(
+                    "读取仓库 {}/{}@{} 的失败兜底缓存失败: {error}",
+                    repo.owner,
+                    repo.name,
+                    resolved_repo.branch
+                ),
+            }
+        }
+        Ok(Vec::new())
     }
 
     /// 列出所有技能（兼容旧 API）
@@ -1918,31 +3121,210 @@ impl SkillService {
         Ok(skills)
     }
 
-    /// 从仓库获取技能列表
-    async fn fetch_repo_skills(&self, repo: &SkillRepo) -> Result<Vec<DiscoverableSkill>> {
-        let (temp_dir, resolved_branch) =
-            timeout(std::time::Duration::from_secs(60), self.download_repo(repo))
-                .await
-                .map_err(|_| {
-                    anyhow!(format_skill_error(
-                        "DOWNLOAD_TIMEOUT",
-                        &[
-                            ("owner", &repo.owner),
-                            ("name", &repo.name),
-                            ("timeout", "60")
-                        ],
-                        Some("checkNetwork"),
-                    ))
-                })??;
+    /// 从仓库缓存快照或网络获取技能列表。
+    async fn fetch_repo_skills_cached(
+        &self,
+        repo: &SkillRepo,
+        force: bool,
+        progress_tx: &tokio::sync::mpsc::UnboundedSender<SkillDiscoveryProgress>,
+        total: usize,
+    ) -> Result<Vec<DiscoverableSkill>> {
+        let _repo_guard = self.lock_repo(repo).await;
+        let (remote_sha, resolved_branch) = match self.fetch_repo_commit_sha(repo).await {
+            Ok(result) => result,
+            Err(error)
+                if Self::should_fallback_to_branch_download_after_commit_lookup_error(&error) =>
+            {
+                log::warn!(
+                    "GitHub commit SHA 查询失败，回退到未缓存的分支 ZIP 下载 {}/{}: {error}",
+                    repo.owner,
+                    repo.name
+                );
+                let _ = progress_tx.send(SkillDiscoveryProgress {
+                    phase: SkillDiscoveryProgressPhase::Loading,
+                    completed: 0,
+                    total,
+                    repo: format!("{}/{}", repo.owner, repo.name),
+                    skill_count: None,
+                    error: None,
+                    skills: None,
+                });
+                let (temp_dir, fallback_branch) = self
+                    .download_repo_for_unverified_branch_fallback(repo)
+                    .await
+                    .map_err(|fallback_error| {
+                        anyhow!("{}; fallback download failed: {}", error, fallback_error)
+                    })?;
+                let fallback_repo = SkillRepo {
+                    branch: fallback_branch,
+                    ..repo.clone()
+                };
+                let _ = progress_tx.send(SkillDiscoveryProgress {
+                    phase: SkillDiscoveryProgressPhase::Scanning,
+                    completed: 0,
+                    total,
+                    repo: format!("{}/{}", repo.owner, repo.name),
+                    skill_count: None,
+                    error: None,
+                    skills: None,
+                });
+                let mut skills = Vec::new();
+                if let Err(scan_error) =
+                    self.scan_dir_recursive(&temp_dir, &temp_dir, &fallback_repo, &mut skills)
+                {
+                    let _ = fs::remove_dir_all(&temp_dir);
+                    return Err(scan_error);
+                }
+                let _ = fs::remove_dir_all(&temp_dir);
+                return Ok(skills);
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let resolved_repo = SkillRepo {
+            branch: resolved_branch,
+            ..repo.clone()
+        };
+        let existing_cache = Self::load_repo_cache(&resolved_repo).unwrap_or_else(|error| {
+            log::warn!(
+                "读取发现页仓库缓存失败 {}/{}: {error}",
+                repo.owner,
+                repo.name
+            );
+            None
+        });
 
+        if let Some(mut cache) = existing_cache
+            .clone()
+            .filter(|cache| cache.can_reuse_snapshot(&remote_sha, force))
+        {
+            if !cache.discovered_skills.is_empty() {
+                log::info!(
+                    "发现技能缓存命中 {}/{}@{}，直接复用 {} 个技能",
+                    repo.owner,
+                    repo.name,
+                    resolved_repo.branch,
+                    cache.discovered_skills.len()
+                );
+                return Ok(cache.discovered_skills);
+            }
+            log::info!(
+                "发现技能缓存命中 {}/{}@{}，首次补建技能清单",
+                repo.owner,
+                repo.name,
+                resolved_repo.branch
+            );
+            let _ = progress_tx.send(SkillDiscoveryProgress {
+                phase: SkillDiscoveryProgressPhase::Scanning,
+                completed: 0,
+                total,
+                repo: format!("{}/{}", repo.owner, repo.name),
+                skill_count: None,
+                error: None,
+                skills: None,
+            });
+            let mut skills = Vec::new();
+            self.scan_dir_recursive(
+                &cache.snapshot_path,
+                &cache.snapshot_path,
+                &resolved_repo,
+                &mut skills,
+            )?;
+            cache.discovered_skills = skills.clone();
+            Self::save_repo_cache(&resolved_repo, &cache)?;
+            return Ok(skills);
+        }
+
+        log::info!(
+            "发现技能缓存未命中 {}/{}@{}，开始下载仓库",
+            repo.owner,
+            repo.name,
+            resolved_repo.branch
+        );
+        let temp_dir = timeout(
+            std::time::Duration::from_secs(75),
+            self.download_repo_at_commit(&resolved_repo, &remote_sha),
+        )
+        .await
+        .map_err(|_| {
+            anyhow!(format_skill_error(
+                "DOWNLOAD_TIMEOUT",
+                &[
+                    ("owner", &repo.owner),
+                    ("name", &repo.name),
+                    ("timeout", "75")
+                ],
+                Some("checkNetwork"),
+            ))
+        })??;
+
+        let _ = progress_tx.send(SkillDiscoveryProgress {
+            phase: SkillDiscoveryProgressPhase::Scanning,
+            completed: 0,
+            total,
+            repo: format!("{}/{}", repo.owner, repo.name),
+            skill_count: None,
+            error: None,
+            skills: None,
+        });
         let mut skills = Vec::new();
-        let scan_dir = temp_dir.clone();
-        let mut resolved_repo = repo.clone();
-        resolved_repo.branch = resolved_branch;
-        self.scan_dir_recursive(&scan_dir, &scan_dir, &resolved_repo, &mut skills)?;
+        if let Err(error) =
+            self.scan_dir_recursive(&temp_dir, &temp_dir, &resolved_repo, &mut skills)
+        {
+            let _ = fs::remove_dir_all(&temp_dir);
+            return Err(error);
+        }
 
-        let _ = fs::remove_dir_all(&temp_dir);
+        let snapshot = Self::repo_snapshot_path(&resolved_repo, &remote_sha);
+        let keep_existing_snapshot = existing_cache.as_ref().is_some_and(|previous| {
+            previous.should_keep_existing_snapshot(&snapshot, &remote_sha, force)
+        });
+        let persist_snapshot = (|| -> Result<()> {
+            if keep_existing_snapshot {
+                fs::remove_dir_all(&temp_dir)?;
+                return Ok(());
+            }
+            Self::replace_directory_atomically_with(&snapshot, |staging| {
+                Self::move_or_copy_directory(&temp_dir, staging)
+            })
+            .context("保存发现页仓库缓存快照失败")
+        })();
+        if let Err(error) = persist_snapshot {
+            log::warn!(
+                "保存发现页仓库缓存快照失败 {}/{}: {error}",
+                repo.owner,
+                repo.name
+            );
+            let _ = fs::remove_dir_all(&temp_dir);
+            return Ok(skills);
+        }
 
+        let remote_skill_hashes = existing_cache
+            .as_ref()
+            .filter(|cache| cache.last_verified_sha == remote_sha)
+            .map(|cache| cache.remote_skill_hashes.clone())
+            .unwrap_or_default();
+        if let Err(error) = Self::save_repo_cache(
+            &resolved_repo,
+            &SkillRepoCheckCache {
+                remote_sha_seen: remote_sha.clone(),
+                last_verified_sha: remote_sha.clone(),
+                remote_skill_hashes,
+                snapshot_path: snapshot.clone(),
+                discovered_skills: skills.clone(),
+            },
+        ) {
+            log::warn!(
+                "保存发现页仓库缓存元数据失败 {}/{}: {error}",
+                repo.owner,
+                repo.name
+            );
+            return Ok(skills);
+        }
+        if let Some(previous) = existing_cache.as_ref() {
+            if previous.snapshot_path != snapshot && previous.snapshot_path.is_dir() {
+                let _ = fs::remove_dir_all(&previous.snapshot_path);
+            }
+        }
         Ok(skills)
     }
 
@@ -2187,6 +3569,51 @@ impl SkillService {
         None
     }
 
+    fn hash_remote_skill_directories(
+        root: &Path,
+        remote_skills: &[DiscoverableSkill],
+        directories: &[String],
+    ) -> (HashMap<String, String>, Vec<String>) {
+        let mut hashes = HashMap::new();
+        let mut failures = Vec::new();
+
+        for directory in directories {
+            let remote_match = remote_skills.iter().find(|remote| {
+                remote
+                    .directory
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&remote.directory)
+                    .eq_ignore_ascii_case(directory)
+            });
+            let Some(remote_match) = remote_match else {
+                failures.push(format_skill_error(
+                    "SKILL_DIR_NOT_FOUND",
+                    &[("path", directory)],
+                    Some("checkRepoUrl"),
+                ));
+                continue;
+            };
+            let Some(remote_dir) = Self::resolve_skill_source_dir(root, &remote_match.directory)
+            else {
+                failures.push(format_skill_error(
+                    "SKILL_DIR_NOT_FOUND",
+                    &[("path", directory)],
+                    Some("checkRepoUrl"),
+                ));
+                continue;
+            };
+            match Self::compute_dir_hash(&remote_dir) {
+                Ok(hash) => {
+                    hashes.insert(directory.clone(), hash);
+                }
+                Err(error) => failures.push(error.to_string()),
+            }
+        }
+
+        (hashes, failures)
+    }
+
     /// 去重技能列表（基于完整 key，不同仓库的同名 skill 分开显示）
     fn deduplicate_discoverable_skills(skills: &mut Vec<DiscoverableSkill>) {
         let mut seen = HashMap::new();
@@ -2203,12 +3630,62 @@ impl SkillService {
         });
     }
 
+    fn repo_download_urls(owner: &str, name: &str, branch: &str) -> [String; 2] {
+        [
+            format!("https://codeload.github.com/{owner}/{name}/zip/refs/heads/{branch}"),
+            format!("https://github.com/{owner}/{name}/archive/refs/heads/{branch}.zip"),
+        ]
+    }
+
+    fn repo_commit_download_urls(owner: &str, name: &str, sha: &str) -> [String; 2] {
+        [
+            format!("https://codeload.github.com/{owner}/{name}/zip/{sha}"),
+            format!("https://github.com/{owner}/{name}/archive/{sha}.zip"),
+        ]
+    }
+
+    fn repo_download_attempt_timeout(url_index: usize) -> u64 {
+        if url_index == 0 {
+            10
+        } else {
+            65
+        }
+    }
+
+    async fn download_repo_urls(&self, urls: [String; 2]) -> Result<PathBuf> {
+        let mut last_error = None;
+        for (url_index, url) in urls.into_iter().enumerate() {
+            // 每个地址使用独立临时目录，避免失败或超时留下的部分文件
+            // 混入下一次下载结果。
+            let temp_dir = tempfile::tempdir()?;
+            let temp_path = temp_dir.path().to_path_buf();
+            let attempt_timeout = Self::repo_download_attempt_timeout(url_index);
+            match timeout(
+                std::time::Duration::from_secs(attempt_timeout),
+                self.download_and_extract(&url, &temp_path),
+            )
+            .await
+            {
+                Ok(Ok(_)) => {
+                    let _ = temp_dir.keep();
+                    return Ok(temp_path);
+                }
+                Ok(Err(error)) => {
+                    last_error = Some(error);
+                }
+                Err(_) => {
+                    last_error = Some(anyhow::anyhow!(
+                        "仓库下载地址超时（{attempt_timeout}秒）: {url}"
+                    ));
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("所有仓库下载地址均失败")))
+    }
+
     /// 下载仓库
     async fn download_repo(&self, repo: &SkillRepo) -> Result<(PathBuf, String)> {
-        let temp_dir = tempfile::tempdir()?;
-        let temp_path = temp_dir.path().to_path_buf();
-        let _ = temp_dir.keep();
-
         let mut branches = Vec::new();
         if !repo.branch.is_empty() && !repo.branch.eq_ignore_ascii_case("HEAD") {
             branches.push(repo.branch.as_str());
@@ -2222,23 +3699,51 @@ impl SkillService {
 
         let mut last_error = None;
         for branch in branches {
-            let url = format!(
-                "https://github.com/{}/{}/archive/refs/heads/{}.zip",
-                repo.owner, repo.name, branch
-            );
-
-            match self.download_and_extract(&url, &temp_path).await {
-                Ok(_) => {
-                    return Ok((temp_path, branch.to_string()));
-                }
-                Err(e) => {
-                    last_error = Some(e);
-                    continue;
-                }
+            let urls = Self::repo_download_urls(&repo.owner, &repo.name, branch);
+            match self.download_repo_urls(urls).await {
+                Ok(temp_path) => return Ok((temp_path, branch.to_string())),
+                Err(error) => last_error = Some(error),
             }
         }
 
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("所有分支下载失败")))
+    }
+
+    /// 下载与已获取 SHA 完全一致的仓库快照，避免分支在 SHA 请求和 ZIP
+    /// 下载之间发生变化后，把新内容错误标记成旧 SHA。
+    async fn download_repo_at_commit(&self, repo: &SkillRepo, sha: &str) -> Result<PathBuf> {
+        self.download_repo_urls(Self::repo_commit_download_urls(
+            &repo.owner,
+            &repo.name,
+            sha,
+        ))
+        .await
+    }
+
+    fn repository_archive_relative_path(
+        root_name: &std::ffi::OsStr,
+        file_path: &Path,
+    ) -> Option<PathBuf> {
+        if file_path.is_absolute() {
+            return None;
+        }
+
+        let mut components = file_path.components();
+        match components.next() {
+            Some(std::path::Component::Normal(component)) if component == root_name => {}
+            _ => return None,
+        }
+
+        let mut relative = PathBuf::new();
+        for component in components {
+            match component {
+                std::path::Component::Normal(component) => relative.push(component),
+                std::path::Component::CurDir => {}
+                _ => return None,
+            }
+        }
+
+        (!relative.as_os_str().is_empty()).then_some(relative)
     }
 
     /// 下载并解压 ZIP
@@ -2263,37 +3768,48 @@ impl SkillService {
         let cursor = std::io::Cursor::new(bytes);
         let mut archive = zip::ZipArchive::new(cursor)?;
 
-        let root_name = if !archive.is_empty() {
-            let first_file = archive.by_index(0)?;
-            let name = first_file.name();
-            name.split('/').next().unwrap_or("").to_string()
-        } else {
+        if archive.is_empty() {
             return Err(anyhow::anyhow!(format_skill_error(
                 "EMPTY_ARCHIVE",
                 &[],
                 Some("checkRepoUrl"),
             )));
-        };
+        }
+
+        let mut root_name = None;
+        for index in 0..archive.len() {
+            let file = archive.by_index(index)?;
+            let Some(path) = file.enclosed_name() else {
+                continue;
+            };
+            if let Some(std::path::Component::Normal(component)) = path.components().next() {
+                root_name = Some(component.to_os_string());
+                break;
+            }
+        }
+        let root_name = root_name.ok_or_else(|| {
+            anyhow::anyhow!(format_skill_error(
+                "EMPTY_ARCHIVE",
+                &[],
+                Some("checkRepoUrl"),
+            ))
+        })?;
 
         // 第一遍：解压普通文件和目录，收集 symlink 条目
         let mut symlinks: Vec<(PathBuf, String)> = Vec::new();
 
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
-            let file_path = file.name().to_string();
-
-            let relative_path =
-                if let Some(stripped) = file_path.strip_prefix(&format!("{root_name}/")) {
-                    stripped
-                } else {
-                    continue;
-                };
-
-            if relative_path.is_empty() {
+            let Some(file_path) = file.enclosed_name() else {
                 continue;
-            }
+            };
+            let Some(relative_path) =
+                Self::repository_archive_relative_path(&root_name, &file_path)
+            else {
+                continue;
+            };
 
-            let outpath = dest.join(relative_path);
+            let outpath = dest.join(&relative_path);
 
             if file.is_symlink() {
                 // 读取 symlink 目标路径
@@ -2319,6 +3835,13 @@ impl SkillService {
 
     /// 递归复制目录
     fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<()> {
+        if Self::copy_destination_would_recurse(src, dest) {
+            return Err(anyhow!(
+                "拒绝将目录复制到自身或子目录: {} -> {}",
+                src.display(),
+                dest.display()
+            ));
+        }
         fs::create_dir_all(dest)?;
 
         for entry in fs::read_dir(src)? {
@@ -2334,6 +3857,35 @@ impl SkillService {
         }
 
         Ok(())
+    }
+
+    fn normalize_path_with_missing_tail(path: &Path) -> PathBuf {
+        if let Ok(canonical) = path.canonicalize() {
+            return canonical;
+        }
+
+        let mut missing = Vec::new();
+        let mut current = path;
+        while let Some(parent) = current.parent() {
+            if let Some(name) = current.file_name() {
+                missing.push(name.to_os_string());
+            }
+            if let Ok(mut canonical_parent) = parent.canonicalize() {
+                for component in missing.iter().rev() {
+                    canonical_parent.push(component);
+                }
+                return canonical_parent;
+            }
+            current = parent;
+        }
+
+        path.to_path_buf()
+    }
+
+    fn copy_destination_would_recurse(src: &Path, dest: &Path) -> bool {
+        let source = Self::normalize_path_with_missing_tail(src);
+        let destination = Self::normalize_path_with_missing_tail(dest);
+        destination == source || destination.starts_with(&source)
     }
 
     fn resolve_uninstall_backup_source(skill: &InstalledSkill) -> Result<Option<PathBuf>> {
@@ -3123,5 +4675,698 @@ mod tests {
             dest.join("SKILL.md").is_file(),
             "existing destination skill should be preserved"
         );
+    }
+
+    #[test]
+    fn repo_download_urls_try_codeload_before_github_archive_redirect() {
+        let urls = SkillService::repo_download_urls("anthropics", "skills", "main");
+
+        assert_eq!(
+            urls[0],
+            "https://codeload.github.com/anthropics/skills/zip/refs/heads/main"
+        );
+        assert_eq!(
+            urls[1],
+            "https://github.com/anthropics/skills/archive/refs/heads/main.zip"
+        );
+        assert_eq!(SkillService::repo_download_attempt_timeout(0), 10);
+        assert_eq!(SkillService::repo_download_attempt_timeout(1), 65);
+    }
+
+    #[test]
+    fn commit_lookup_falls_back_from_the_configured_branch_to_main_and_master() {
+        assert_eq!(
+            SkillService::candidate_repo_branches("feature"),
+            vec!["feature", "main", "master"]
+        );
+        assert_eq!(
+            SkillService::candidate_repo_branches("main"),
+            vec!["main", "master"]
+        );
+        assert_eq!(
+            SkillService::candidate_repo_branches("master"),
+            vec!["master", "main"]
+        );
+    }
+
+    #[test]
+    fn commit_lookup_network_errors_can_fall_back_to_branch_download() {
+        let rate_limited = RepoCommitLookupError::recoverable(format_skill_error(
+            "DOWNLOAD_FAILED",
+            &[("status", "429")],
+            Some("http429"),
+        ));
+        assert!(
+            SkillService::should_fallback_to_branch_download_after_commit_lookup_error(
+                &rate_limited,
+            )
+        );
+
+        let forbidden_or_rate_limited = RepoCommitLookupError::recoverable(format_skill_error(
+            "DOWNLOAD_FAILED",
+            &[("status", "403")],
+            Some("http403"),
+        ));
+        assert!(
+            SkillService::should_fallback_to_branch_download_after_commit_lookup_error(
+                &forbidden_or_rate_limited,
+            )
+        );
+
+        let recoverable_message_that_mentions_404 = RepoCommitLookupError::recoverable(
+            "proxy failed before API response; last cached detail mentioned http404",
+        );
+        assert!(
+            SkillService::should_fallback_to_branch_download_after_commit_lookup_error(
+                &recoverable_message_that_mentions_404,
+            )
+        );
+
+        let not_found = RepoCommitLookupError::not_found(format_skill_error(
+            "DOWNLOAD_FAILED",
+            &[("status", "404")],
+            Some("http404"),
+        ));
+        assert!(
+            !SkillService::should_fallback_to_branch_download_after_commit_lookup_error(&not_found,)
+        );
+    }
+
+    #[test]
+    fn recursive_copy_rejects_destination_inside_source() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        fs::create_dir_all(&source).expect("source");
+        fs::write(source.join("SKILL.md"), "---\nname: Loop\n---\n").expect("skill");
+
+        let destination = source.join("loop");
+
+        assert!(SkillService::copy_destination_would_recurse(
+            &source,
+            &destination
+        ));
+        assert!(SkillService::copy_dir_recursive(&source, &destination).is_err());
+    }
+
+    #[test]
+    fn verified_snapshots_download_the_exact_commit_sha() {
+        let urls =
+            SkillService::repo_commit_download_urls("anthropics", "skills", "0123456789abcdef");
+
+        assert_eq!(
+            urls[0],
+            "https://codeload.github.com/anthropics/skills/zip/0123456789abcdef"
+        );
+        assert_eq!(
+            urls[1],
+            "https://github.com/anthropics/skills/archive/0123456789abcdef.zip"
+        );
+    }
+
+    #[test]
+    fn repository_archive_paths_cannot_escape_the_destination() {
+        assert_eq!(
+            SkillService::repository_archive_relative_path(
+                std::ffi::OsStr::new("repo-main"),
+                Path::new("repo-main/skills/example/SKILL.md"),
+            ),
+            Some(PathBuf::from("skills/example/SKILL.md"))
+        );
+        assert_eq!(
+            SkillService::repository_archive_relative_path(
+                std::ffi::OsStr::new("repo-main"),
+                Path::new("repo-main/../../outside"),
+            ),
+            None
+        );
+        assert_eq!(
+            SkillService::repository_archive_relative_path(
+                std::ffi::OsStr::new("repo-main"),
+                Path::new("/repo-main/outside"),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn missing_remote_skill_does_not_discard_hashes_for_other_skills() {
+        let temp = tempdir().expect("tempdir");
+        let present = temp.path().join("present");
+        fs::create_dir_all(&present).expect("create present skill");
+        fs::write(present.join("SKILL.md"), "---\nname: Present\n---\n").expect("write skill");
+        let remote_skills = vec![DiscoverableSkill {
+            key: "owner/repo:present".to_string(),
+            name: "Present".to_string(),
+            description: String::new(),
+            directory: "present".to_string(),
+            readme_url: None,
+            repo_owner: "owner".to_string(),
+            repo_name: "repo".to_string(),
+            repo_branch: "main".to_string(),
+        }];
+
+        let (hashes, failures) = SkillService::hash_remote_skill_directories(
+            temp.path(),
+            &remote_skills,
+            &["present".to_string(), "removed".to_string()],
+        );
+
+        assert!(hashes.contains_key("present"));
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("removed"));
+    }
+
+    #[test]
+    fn partial_remote_hash_scan_remains_reportable_without_verifying_snapshot() {
+        let hashes = HashMap::from([("present".to_string(), "hash".to_string())]);
+        let failures = vec!["removed skill is missing".to_string()];
+
+        match SkillService::classify_remote_hash_scan(hashes, &failures) {
+            RemoteHashScanOutcome::Partial(reportable) => {
+                assert_eq!(reportable.get("present"), Some(&"hash".to_string()));
+            }
+            _ => panic!("expected partial remote hash scan"),
+        }
+    }
+
+    #[test]
+    fn an_empty_repository_scan_is_a_successful_refresh() {
+        let result = Ok::<_, anyhow::Error>(Vec::new());
+
+        match SkillService::classify_repository_discovery(result) {
+            RepositoryDiscoveryOutcome::Empty => {}
+            RepositoryDiscoveryOutcome::Failure(error) => {
+                panic!("empty repository should not fail: {error}");
+            }
+            RepositoryDiscoveryOutcome::Success(_) => {
+                panic!("empty repository should have an explicit empty outcome");
+            }
+        }
+    }
+
+    #[test]
+    fn removing_a_repository_cache_keeps_other_repository_caches() {
+        let temp = tempdir().expect("tempdir");
+        let removed = SkillService::repo_cache_path_from(temp.path(), "owner", "removed");
+        let kept = SkillService::repo_cache_path_from(temp.path(), "owner", "kept");
+        fs::create_dir_all(&removed).expect("removed cache");
+        fs::create_dir_all(&kept).expect("kept cache");
+
+        SkillService::remove_repo_cache_from(temp.path(), "owner", "removed")
+            .expect("remove cache");
+
+        assert!(!removed.exists());
+        assert!(kept.exists());
+    }
+
+    #[test]
+    fn skill_update_status_distinguishes_remote_and_local_changes() {
+        assert_eq!(
+            SkillService::classify_update_status(Some("base"), Some("base"), "base"),
+            SkillUpdateStatus::Latest
+        );
+        assert_eq!(
+            SkillService::classify_update_status(Some("base"), Some("base"), "remote"),
+            SkillUpdateStatus::UpdateAvailable
+        );
+        assert_eq!(
+            SkillService::classify_update_status(Some("base"), Some("local"), "base"),
+            SkillUpdateStatus::LocalModified
+        );
+        assert_eq!(
+            SkillService::classify_update_status(Some("base"), Some("local"), "remote"),
+            SkillUpdateStatus::Conflict
+        );
+        assert_eq!(
+            SkillService::classify_update_status(Some("base"), None, "remote"),
+            SkillUpdateStatus::Missing
+        );
+    }
+
+    #[test]
+    fn unverified_legacy_hash_is_not_reported_as_latest_when_content_differs() {
+        assert_eq!(
+            SkillService::classify_update_status(None, Some("local"), "remote"),
+            SkillUpdateStatus::NotChecked
+        );
+        assert_eq!(
+            SkillService::classify_update_status(None, Some("same"), "same"),
+            SkillUpdateStatus::Latest
+        );
+    }
+
+    #[test]
+    fn unreadable_existing_local_skill_is_not_reported_as_missing() {
+        assert_eq!(
+            SkillService::classify_update_status_with_local_presence(
+                Some("base"),
+                None,
+                true,
+                "remote",
+            ),
+            SkillUpdateStatus::NotChecked
+        );
+        assert_eq!(
+            SkillService::classify_update_status_with_local_presence(
+                Some("base"),
+                None,
+                false,
+                "remote",
+            ),
+            SkillUpdateStatus::Missing
+        );
+    }
+
+    #[test]
+    fn verified_cache_can_only_skip_download_for_same_sha_and_existing_snapshot() {
+        let temp = tempdir().expect("tempdir");
+        let snapshot = temp.path().join("snapshot");
+        fs::create_dir_all(&snapshot).expect("snapshot");
+        let cache = SkillRepoCheckCache {
+            remote_sha_seen: "abc".to_string(),
+            last_verified_sha: "abc".to_string(),
+            remote_skill_hashes: HashMap::from([("example-skill".to_string(), "hash".to_string())]),
+            snapshot_path: snapshot,
+            discovered_skills: Vec::new(),
+        };
+
+        assert!(cache.can_reuse_snapshot("abc", false));
+        assert!(!cache.can_reuse_snapshot("def", false));
+        assert!(!cache.can_reuse_snapshot("abc", true));
+
+        fs::remove_dir_all(&cache.snapshot_path).expect("remove snapshot");
+        assert!(!cache.can_reuse_snapshot("abc", false));
+    }
+
+    #[test]
+    fn forced_refresh_replaces_an_existing_snapshot_at_the_same_sha() {
+        let temp = tempdir().expect("tempdir");
+        let snapshot = temp.path().join("snapshot");
+        fs::create_dir_all(&snapshot).expect("snapshot");
+        let cache = SkillRepoCheckCache {
+            remote_sha_seen: "abc".to_string(),
+            last_verified_sha: "abc".to_string(),
+            remote_skill_hashes: HashMap::new(),
+            snapshot_path: snapshot.clone(),
+            discovered_skills: Vec::new(),
+        };
+
+        assert!(cache.should_keep_existing_snapshot(&snapshot, "abc", false));
+        assert!(!cache.should_keep_existing_snapshot(&snapshot, "abc", true));
+    }
+
+    #[test]
+    fn failed_snapshot_preparation_keeps_the_previous_snapshot() {
+        let temp = tempdir().expect("tempdir");
+        let snapshot = temp.path().join("snapshot");
+        fs::create_dir_all(&snapshot).expect("snapshot");
+        fs::write(snapshot.join("old.txt"), "old").expect("old snapshot");
+
+        let error = SkillService::replace_directory_atomically_with(&snapshot, |staging| {
+            fs::create_dir_all(staging)?;
+            fs::write(staging.join("new.txt"), "new")?;
+            Err(anyhow!("injected copy failure"))
+        })
+        .expect_err("preparation should fail");
+
+        assert!(error.to_string().contains("injected copy failure"));
+        assert!(snapshot.join("old.txt").is_file());
+        assert!(!snapshot.join("new.txt").exists());
+    }
+
+    #[test]
+    fn repository_cache_segments_do_not_collapse_distinct_names() {
+        assert_ne!(
+            SkillService::sanitize_repo_cache_segment("feature/a"),
+            SkillService::sanitize_repo_cache_segment("feature_a")
+        );
+        assert_ne!(
+            SkillService::sanitize_repo_cache_segment("owner/name"),
+            SkillService::sanitize_repo_cache_segment("owner?name")
+        );
+    }
+
+    #[test]
+    fn repository_cache_segments_encode_dot_only_paths() {
+        assert_eq!(SkillService::sanitize_repo_cache_segment("."), "%2E");
+        assert_eq!(SkillService::sanitize_repo_cache_segment(".."), "%2E%2E");
+
+        let base = tempdir().expect("tempdir");
+        let cache_base = base.path().join("skill-repo-cache");
+        let sibling = base.path().join("backups");
+        let malformed_cache = SkillService::repo_cache_path_from(&cache_base, "..", "backups");
+        fs::create_dir_all(&sibling).expect("sibling app config dir");
+        fs::create_dir_all(&malformed_cache).expect("malformed cache dir");
+
+        SkillService::remove_repo_cache_from(&cache_base, "..", "backups")
+            .expect("remove encoded malformed cache");
+
+        assert!(sibling.exists(), "escaped sibling directory must be kept");
+        assert!(!malformed_cache.exists());
+    }
+
+    #[test]
+    fn repository_snapshot_is_verified_only_after_all_requested_hashes_succeed() {
+        assert!(SkillService::can_mark_snapshot_verified(&[]));
+        assert!(!SkillService::can_mark_snapshot_verified(&[
+            "missing skill".to_string()
+        ]));
+    }
+
+    #[tokio::test]
+    async fn removing_repository_cache_waits_for_an_in_flight_repository_operation() {
+        let service = Arc::new(SkillService::new());
+        let temp = tempdir().expect("tempdir");
+        let cache = SkillService::repo_cache_path_from(temp.path(), "owner", "repo");
+        fs::create_dir_all(&cache).expect("cache");
+        let first = service.lock_repo_identity("owner", "repo").await;
+        let remover = {
+            let service = Arc::clone(&service);
+            let base = temp.path().to_path_buf();
+            tokio::spawn(async move {
+                service
+                    .remove_repo_cache_from_locked(&base, "owner", "repo")
+                    .await
+            })
+        };
+
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert!(
+            !remover.is_finished(),
+            "cache removal must wait for the lock"
+        );
+        drop(first);
+        remover
+            .await
+            .expect("join remover")
+            .expect("remove repository cache");
+
+        assert!(!cache.exists());
+    }
+
+    #[tokio::test]
+    async fn repository_cache_removal_can_be_scheduled_without_waiting_for_the_repo_lock() {
+        let service = Arc::new(SkillService::new());
+        let temp = tempdir().expect("tempdir");
+        let cache = SkillService::repo_cache_path_from(temp.path(), "owner", "repo");
+        fs::create_dir_all(&cache).expect("cache");
+        let first = service.lock_repo_identity("owner", "repo").await;
+
+        SkillService::remove_repo_cache_in_background(
+            Arc::clone(&service),
+            temp.path().to_path_buf(),
+            "owner".to_string(),
+            "repo".to_string(),
+        );
+
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert!(
+            cache.exists(),
+            "background cleanup should wait internally without blocking the caller"
+        );
+
+        drop(first);
+        for _ in 0..20 {
+            if !cache.exists() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("background cleanup did not remove the cache after the lock was released");
+    }
+
+    #[test]
+    fn discovery_can_reuse_verified_snapshot_without_remote_skill_hashes() {
+        let temp = tempdir().expect("tempdir");
+        let snapshot = temp.path().join("snapshot");
+        fs::create_dir_all(&snapshot).expect("snapshot");
+        let cache = SkillRepoCheckCache {
+            remote_sha_seen: "abc".to_string(),
+            last_verified_sha: "abc".to_string(),
+            remote_skill_hashes: HashMap::new(),
+            snapshot_path: snapshot,
+            discovered_skills: Vec::new(),
+        };
+
+        assert!(cache.can_reuse_snapshot("abc", false));
+        assert!(!cache.can_reuse_snapshot("def", false));
+        assert!(!cache.can_reuse_snapshot("abc", true));
+    }
+
+    #[test]
+    fn discovery_cache_can_store_scanned_skill_manifest() {
+        let temp = tempdir().expect("tempdir");
+        let snapshot = temp.path().join("snapshot");
+        fs::create_dir_all(&snapshot).expect("snapshot");
+        let cache = SkillRepoCheckCache {
+            remote_sha_seen: "abc".to_string(),
+            last_verified_sha: "abc".to_string(),
+            remote_skill_hashes: HashMap::new(),
+            snapshot_path: snapshot,
+            discovered_skills: vec![DiscoverableSkill {
+                key: "owner/repo:skill".to_string(),
+                name: "Skill".to_string(),
+                description: String::new(),
+                directory: "skill".to_string(),
+                readme_url: None,
+                repo_owner: "owner".to_string(),
+                repo_name: "repo".to_string(),
+                repo_branch: "main".to_string(),
+            }],
+        };
+
+        assert_eq!(cache.discovered_skills.len(), 1);
+        assert_eq!(cache.discovered_skills[0].directory, "skill");
+    }
+
+    #[test]
+    fn verified_discovery_cache_can_be_shown_when_the_network_is_unavailable() {
+        let temp = tempdir().expect("tempdir");
+        let snapshot = temp.path().join("snapshot");
+        fs::create_dir_all(&snapshot).expect("snapshot");
+        let cache = SkillRepoCheckCache {
+            remote_sha_seen: "abc".to_string(),
+            last_verified_sha: "abc".to_string(),
+            remote_skill_hashes: HashMap::new(),
+            snapshot_path: snapshot,
+            discovered_skills: vec![DiscoverableSkill {
+                key: "owner/repo:skill".to_string(),
+                name: "Skill".to_string(),
+                description: String::new(),
+                directory: "skill".to_string(),
+                readme_url: None,
+                repo_owner: "owner".to_string(),
+                repo_name: "repo".to_string(),
+                repo_branch: "main".to_string(),
+            }],
+        };
+
+        assert!(cache.can_use_stale_discovery());
+        fs::remove_dir_all(&cache.snapshot_path).expect("remove snapshot");
+        assert!(!cache.can_use_stale_discovery());
+    }
+
+    #[test]
+    fn persisted_discovery_cache_is_available_without_a_network_request() {
+        let temp = tempdir().expect("tempdir");
+        let repo = SkillRepo {
+            owner: "owner".to_string(),
+            name: "repo".to_string(),
+            branch: "main".to_string(),
+            enabled: true,
+        };
+        let snapshot = temp.path().join("snapshot");
+        fs::create_dir_all(&snapshot).expect("snapshot");
+        let cache = SkillRepoCheckCache {
+            remote_sha_seen: "abc".to_string(),
+            last_verified_sha: "abc".to_string(),
+            remote_skill_hashes: HashMap::new(),
+            snapshot_path: snapshot,
+            discovered_skills: vec![DiscoverableSkill {
+                key: "owner/repo:skill".to_string(),
+                name: "Cached Skill".to_string(),
+                description: String::new(),
+                directory: "skill".to_string(),
+                readme_url: None,
+                repo_owner: "owner".to_string(),
+                repo_name: "repo".to_string(),
+                repo_branch: "main".to_string(),
+            }],
+        };
+        SkillService::save_repo_cache_to(temp.path(), &repo, &cache).expect("save cache");
+
+        let result =
+            SkillService::load_cached_discovery_from(temp.path(), &[repo]).expect("load cache");
+
+        assert_eq!(result.skills.len(), 1);
+        assert_eq!(result.skills[0].name, "Cached Skill");
+        assert!(result.failures.is_empty());
+    }
+
+    #[test]
+    fn failed_cache_replacement_keeps_previous_metadata() {
+        let temp = tempdir().expect("tempdir");
+        let metadata = temp.path().join("metadata.json");
+        fs::write(&metadata, b"previous").expect("write previous metadata");
+
+        let result = SkillService::write_cache_file_atomically_with(
+            &metadata,
+            b"replacement",
+            |_temporary, _destination| Err(anyhow!("simulated replacement failure")),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read(&metadata).expect("read previous metadata"),
+            b"previous"
+        );
+    }
+
+    #[test]
+    fn persisted_discovery_cache_uses_the_resolved_fallback_branch() {
+        let temp = tempdir().expect("tempdir");
+        let configured_repo = SkillRepo {
+            owner: "owner".to_string(),
+            name: "repo".to_string(),
+            branch: "main".to_string(),
+            enabled: true,
+        };
+        let resolved_repo = SkillRepo {
+            branch: "master".to_string(),
+            ..configured_repo.clone()
+        };
+        let snapshot = temp.path().join("snapshot");
+        fs::create_dir_all(&snapshot).expect("snapshot");
+        SkillService::save_repo_cache_to(
+            temp.path(),
+            &resolved_repo,
+            &SkillRepoCheckCache {
+                remote_sha_seen: "abc".to_string(),
+                last_verified_sha: "abc".to_string(),
+                remote_skill_hashes: HashMap::new(),
+                snapshot_path: snapshot,
+                discovered_skills: vec![DiscoverableSkill {
+                    key: "owner/repo:skill".to_string(),
+                    name: "Fallback Skill".to_string(),
+                    description: String::new(),
+                    directory: "skill".to_string(),
+                    readme_url: None,
+                    repo_owner: "owner".to_string(),
+                    repo_name: "repo".to_string(),
+                    repo_branch: "master".to_string(),
+                }],
+            },
+        )
+        .expect("save fallback cache");
+
+        let result = SkillService::load_cached_discovery_from(temp.path(), &[configured_repo])
+            .expect("load fallback cache");
+
+        assert_eq!(result.skills.len(), 1);
+        assert_eq!(result.skills[0].repo_branch, "master");
+    }
+
+    #[test]
+    fn stale_discovery_fallback_uses_the_resolved_fallback_branch() {
+        let temp = tempdir().expect("tempdir");
+        let configured_repo = SkillRepo {
+            owner: "owner".to_string(),
+            name: "repo".to_string(),
+            branch: "main".to_string(),
+            enabled: true,
+        };
+        let resolved_repo = SkillRepo {
+            branch: "master".to_string(),
+            ..configured_repo.clone()
+        };
+        let snapshot = temp.path().join("snapshot");
+        fs::create_dir_all(&snapshot).expect("snapshot");
+        SkillService::save_repo_cache_to(
+            temp.path(),
+            &resolved_repo,
+            &SkillRepoCheckCache {
+                remote_sha_seen: "abc".to_string(),
+                last_verified_sha: "abc".to_string(),
+                remote_skill_hashes: HashMap::new(),
+                snapshot_path: snapshot,
+                discovered_skills: vec![DiscoverableSkill {
+                    key: "owner/repo:skill".to_string(),
+                    name: "Fallback Skill".to_string(),
+                    description: String::new(),
+                    directory: "skill".to_string(),
+                    readme_url: None,
+                    repo_owner: "owner".to_string(),
+                    repo_name: "repo".to_string(),
+                    repo_branch: "master".to_string(),
+                }],
+            },
+        )
+        .expect("save fallback cache");
+
+        let skills = SkillService::load_stale_discovery_skills_from(temp.path(), &configured_repo)
+            .expect("load stale fallback cache");
+
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].repo_branch, "master");
+    }
+
+    #[test]
+    fn legacy_repository_cache_without_manifest_remains_readable() {
+        let cache: SkillRepoCheckCache = serde_json::from_value(serde_json::json!({
+            "remote_sha_seen": "abc",
+            "last_verified_sha": "abc",
+            "remote_skill_hashes": {},
+            "snapshot_path": "/tmp/snapshot"
+        }))
+        .expect("legacy cache");
+
+        assert!(cache.discovered_skills.is_empty());
+    }
+
+    #[test]
+    fn skill_update_progress_serializes_user_facing_phase() {
+        let progress = SkillUpdateProgress {
+            phase: SkillUpdateProgressPhase::Downloading,
+            current: 2,
+            total: 5,
+            repo: "anthropics/skills".to_string(),
+        };
+
+        assert_eq!(
+            serde_json::to_value(progress).expect("serialize progress"),
+            serde_json::json!({
+                "phase": "downloading",
+                "current": 2,
+                "total": 5,
+                "repo": "anthropics/skills"
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn repository_operations_for_the_same_repo_are_serialized() {
+        let service = SkillService::new();
+        let repo = SkillRepo {
+            owner: "anthropics".to_string(),
+            name: "skills".to_string(),
+            branch: "main".to_string(),
+            enabled: true,
+        };
+
+        let first = service.lock_repo(&repo).await;
+        let second = tokio::time::timeout(
+            std::time::Duration::from_millis(20),
+            service.lock_repo(&repo),
+        )
+        .await;
+        assert!(second.is_err(), "second operation should wait for the lock");
+
+        drop(first);
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            service.lock_repo(&repo),
+        )
+        .await
+        .expect("lock should be available after the first operation finishes");
     }
 }

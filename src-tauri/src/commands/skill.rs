@@ -5,11 +5,12 @@
 //! - SSOT 存储在 ~/.cc-switch/skills/
 
 use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
+use crate::config::get_app_config_dir;
 use crate::error::format_skill_error;
 use crate::services::skill::{
-    DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillBackupEntry, SkillRepo,
-    SkillService, SkillStorageLocation, SkillUninstallResult, SkillUpdateInfo,
-    SkillsShSearchResult,
+    DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillBackupEntry,
+    SkillDiscoveryProgress, SkillDiscoveryResult, SkillRepo, SkillService, SkillStorageLocation,
+    SkillUninstallResult, SkillUpdateCheckResult, SkillsShSearchResult,
 };
 use crate::store::AppState;
 use std::str::FromStr;
@@ -18,6 +19,14 @@ use tauri::State;
 
 /// SkillService 状态包装
 pub struct SkillServiceState(pub Arc<SkillService>);
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillDiscoveryProgressEvent {
+    request_id: Option<String>,
+    #[serde(flatten)]
+    progress: SkillDiscoveryProgress,
+}
 
 /// 解析 app 参数为 AppType
 fn parse_app_type(app: &str) -> Result<AppType, String> {
@@ -116,16 +125,54 @@ pub fn import_skills_from_apps(
 
 // ========== 发现功能命令 ==========
 
-/// 发现可安装的 Skills（从仓库获取）
+/// 立即读取上一次成功的 Skills 发现缓存，不发起网络请求。
 #[tauri::command]
-pub async fn discover_available_skills(
+pub fn get_cached_discoverable_skills(
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
-) -> Result<Vec<DiscoverableSkill>, String> {
+) -> Result<SkillDiscoveryResult, String> {
     let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
     service
         .0
-        .discover_available(repos)
+        .load_cached_discovery(&repos)
+        .map_err(|e| e.to_string())
+}
+
+/// 发现可安装的 Skills（从仓库获取）
+#[tauri::command]
+pub async fn discover_available_skills(
+    force: Option<bool>,
+    request_id: Option<String>,
+    app: tauri::AppHandle,
+    service: State<'_, SkillServiceState>,
+    app_state: State<'_, AppState>,
+) -> Result<SkillDiscoveryResult, String> {
+    use tauri::Emitter;
+    let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
+    service
+        .0
+        .discover_available_with_failures(repos, force.unwrap_or(false), |progress| {
+            let _ = app.emit(
+                "skill-discovery-progress",
+                SkillDiscoveryProgressEvent {
+                    request_id: request_id.clone(),
+                    progress,
+                },
+            );
+        })
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 重新发现单个仓库中的 Skills
+#[tauri::command]
+pub async fn discover_repo_skills(
+    repo: SkillRepo,
+    service: State<'_, SkillServiceState>,
+) -> Result<SkillDiscoveryResult, String> {
+    service
+        .0
+        .discover_available_with_failures(vec![repo], true, |_| {})
         .await
         .map_err(|e| e.to_string())
 }
@@ -133,12 +180,17 @@ pub async fn discover_available_skills(
 /// 检查 Skills 更新
 #[tauri::command]
 pub async fn check_skill_updates(
+    force: Option<bool>,
+    app: tauri::AppHandle,
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
-) -> Result<Vec<SkillUpdateInfo>, String> {
+) -> Result<SkillUpdateCheckResult, String> {
+    use tauri::Emitter;
     service
         .0
-        .check_updates(&app_state.db)
+        .check_updates_with_failures(&app_state.db, force.unwrap_or(false), |progress| {
+            let _ = app.emit("skill-update-check-progress", progress);
+        })
         .await
         .map_err(|e| e.to_string())
 }
@@ -310,15 +362,22 @@ pub fn add_skill_repo(repo: SkillRepo, app_state: State<'_, AppState>) -> Result
 
 /// 删除技能仓库
 #[tauri::command]
-pub fn remove_skill_repo(
+pub async fn remove_skill_repo(
     owner: String,
     name: String,
+    service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<bool, String> {
     app_state
         .db
         .delete_skill_repo(&owner, &name)
         .map_err(|e| e.to_string())?;
+    SkillService::remove_repo_cache_in_background(
+        Arc::clone(&service.0),
+        get_app_config_dir().join("skill-repo-cache"),
+        owner,
+        name,
+    );
     Ok(true)
 }
 
