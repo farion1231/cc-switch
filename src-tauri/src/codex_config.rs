@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::time::Duration;
 
 use crate::config::{
     atomic_write, delete_file, get_home_dir, read_json_file, sanitize_provider_name,
@@ -18,6 +20,19 @@ const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
 // config before rendering the model picker.
 const CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID: &str = "107580212";
 const CODEX_DESKTOP_STATSIG_CACHE_KEY_MARKER: &str = "statsig.cached.evaluations";
+const CODEX_DESKTOP_MODEL_WHITELIST_RETRY_INTERVAL: Duration = Duration::from_secs(5);
+
+#[derive(Debug, Default)]
+struct CodexDesktopModelWhitelistSyncState {
+    model_ids: Vec<String>,
+    generation: u64,
+}
+
+type CodexDesktopModelWhitelistSyncHandle =
+    Arc<(Mutex<CodexDesktopModelWhitelistSyncState>, Condvar)>;
+
+static CODEX_DESKTOP_MODEL_WHITELIST_SYNC: OnceLock<CodexDesktopModelWhitelistSyncHandle> =
+    OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CodexDesktopStatsigWrapperEncoding {
@@ -755,32 +770,157 @@ fn sync_codex_desktop_available_models_cache(model_ids: &[String]) -> Result<usi
     }
 }
 
-fn sync_codex_desktop_available_models_cache_from_settings(settings: &Value) {
-    let model_ids = codex_model_ids_from_settings(settings);
-    if model_ids.is_empty() {
-        return;
-    }
-
-    match sync_codex_desktop_available_models_cache(&model_ids) {
+fn log_codex_desktop_available_models_cache_sync_result(
+    model_ids: &[String],
+    result: Result<usize, String>,
+    is_retry: bool,
+) {
+    match result {
         Ok(updated_count) if updated_count > 0 => {
             log::info!(
-                "Synced {} Codex model ids into {} Codex Desktop Statsig cache entries",
+                "Synced {} Codex model ids into {} Codex Desktop Statsig cache entries{}",
                 model_ids.len(),
-                updated_count
+                updated_count,
+                if is_retry { " during retry" } else { "" }
             );
         }
         Ok(_) => {
             log::debug!(
-                "No Codex Desktop Statsig cache entry needed model whitelist updates for {} model ids",
+                "No Codex Desktop Statsig cache entry needed model whitelist updates for {} model ids{}",
+                model_ids.len(),
+                if is_retry { " during retry" } else { "" }
+            );
+        }
+        Err(err) if is_retry => {
+            log::debug!(
+                "Codex Desktop model whitelist cache retry is pending for {} model ids: {err}",
                 model_ids.len()
             );
         }
         Err(err) => {
             log::warn!(
-                "Failed to sync Codex Desktop model whitelist cache; close Codex Desktop and import/switch again if custom models are still hidden: {err}"
+                "Failed to sync Codex Desktop model whitelist cache; CC Switch will keep retrying while this Codex provider is active: {err}"
             );
         }
     }
+}
+
+fn codex_desktop_model_whitelist_sync_handle() -> CodexDesktopModelWhitelistSyncHandle {
+    CODEX_DESKTOP_MODEL_WHITELIST_SYNC
+        .get_or_init(|| {
+            let handle = Arc::new((
+                Mutex::new(CodexDesktopModelWhitelistSyncState::default()),
+                Condvar::new(),
+            ));
+            let worker_handle = Arc::clone(&handle);
+            if let Err(err) = std::thread::Builder::new()
+                .name("codex-desktop-model-whitelist-sync".to_string())
+                .spawn(move || codex_desktop_model_whitelist_sync_worker(worker_handle))
+            {
+                log::warn!("Failed to start Codex Desktop model whitelist sync worker: {err}");
+            }
+            handle
+        })
+        .clone()
+}
+
+fn codex_desktop_model_whitelist_sync_worker(handle: CodexDesktopModelWhitelistSyncHandle) {
+    let (lock, cvar) = &*handle;
+    let mut seen_generation = 0;
+
+    loop {
+        let model_ids = {
+            let mut state = match lock.lock() {
+                Ok(state) => state,
+                Err(err) => {
+                    log::warn!("Codex Desktop model whitelist sync state was poisoned; continuing");
+                    err.into_inner()
+                }
+            };
+            while state.generation == seen_generation {
+                state = match cvar.wait(state) {
+                    Ok(state) => state,
+                    Err(err) => {
+                        log::warn!(
+                            "Codex Desktop model whitelist sync state was poisoned; continuing"
+                        );
+                        err.into_inner()
+                    }
+                };
+            }
+            seen_generation = state.generation;
+            state.model_ids.clone()
+        };
+
+        if model_ids.is_empty() {
+            continue;
+        }
+
+        // Codex Desktop can lock or refresh its Statsig localStorage after a
+        // provider switch, so keep reconciling the active provider's model IDs.
+        loop {
+            let mut state = match lock.lock() {
+                Ok(state) => state,
+                Err(err) => {
+                    log::warn!("Codex Desktop model whitelist sync state was poisoned; continuing");
+                    err.into_inner()
+                }
+            };
+            let wait_result = cvar.wait_timeout_while(
+                state,
+                CODEX_DESKTOP_MODEL_WHITELIST_RETRY_INTERVAL,
+                |state| state.generation == seen_generation,
+            );
+            state = match wait_result {
+                Ok((state, _)) => state,
+                Err(err) => {
+                    log::warn!("Codex Desktop model whitelist sync state was poisoned; continuing");
+                    err.into_inner().0
+                }
+            };
+
+            if state.generation != seen_generation {
+                break;
+            }
+            drop(state);
+
+            log_codex_desktop_available_models_cache_sync_result(
+                &model_ids,
+                sync_codex_desktop_available_models_cache(&model_ids),
+                true,
+            );
+        }
+    }
+}
+
+fn monitor_codex_desktop_available_models_cache(model_ids: Vec<String>) {
+    let handle = codex_desktop_model_whitelist_sync_handle();
+    let (lock, cvar) = &*handle;
+    let mut state = match lock.lock() {
+        Ok(state) => state,
+        Err(err) => {
+            log::warn!("Codex Desktop model whitelist sync state was poisoned; continuing");
+            err.into_inner()
+        }
+    };
+    state.model_ids = model_ids;
+    state.generation = state.generation.wrapping_add(1);
+    cvar.notify_one();
+}
+
+fn sync_codex_desktop_available_models_cache_from_settings(settings: &Value) {
+    let model_ids = codex_model_ids_from_settings(settings);
+    if model_ids.is_empty() {
+        monitor_codex_desktop_available_models_cache(Vec::new());
+        return;
+    }
+
+    log_codex_desktop_available_models_cache_sync_result(
+        &model_ids,
+        sync_codex_desktop_available_models_cache(&model_ids),
+        false,
+    );
+    monitor_codex_desktop_available_models_cache(model_ids);
 }
 
 fn find_codex_model_template(catalog: &Value) -> Option<Value> {
