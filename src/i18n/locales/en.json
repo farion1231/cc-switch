@@ -511,6 +511,9 @@
       "lastSync": "Last sync: {{time}}",
       "autoSyncLastErrorTitle": "Last auto sync failed",
       "autoSyncLastErrorHint": "Please check network or WebDAV settings. Auto sync will retry on future changes.",
+      "autoSyncRemoteChangedTitle": "Choose sync direction",
+      "autoSyncRemoteChangedMessage": "Cloud sync data changed, so auto sync paused.",
+      "autoSyncRemoteChangedHint": "Choose whether to overwrite the cloud with this device, or overwrite this device with the cloud version.",
       "missingUrl": "Please enter the WebDAV server URL",
       "presets": {
         "label": "Provider",
@@ -559,6 +562,13 @@
         "warning": "This will overwrite existing sync data on the remote server",
         "legacyNotice": "Legacy remote data was detected. This upload will write to the new v2/db-v6 path and will not overwrite the legacy path.",
         "confirm": "Confirm Upload"
+      },
+      "conflictDialog": {
+        "title": "WebDAV Sync Needs a Choice",
+        "message": "The local and cloud sync snapshots differ, so auto sync paused to avoid overwriting either side.",
+        "warning": "Using the local version overwrites the cloud. Using the cloud version overwrites the local database and skill configuration.",
+        "useLocal": "Use Local Version",
+        "useRemote": "Use Cloud Version"
       }
     },
     "syncType": {
@@ -623,6 +633,7 @@
       "uploadSuccess": "Uploaded to S3",
       "uploadFailed": "S3 upload failed: {{error}}",
       "autoSyncFailedToast": "S3 auto sync failed: {{error}}",
+      "autoSyncRemoteChangedToast": "S3 cloud data changed, so auto sync paused. Choose the sync direction manually.",
       "download": "Download from Cloud",
       "downloading": "Downloading...",
       "downloadSuccess": "Downloaded and restored from S3",
@@ -630,6 +641,9 @@
       "lastSync": "Last sync: {{time}}",
       "autoSyncLastErrorTitle": "Last S3 auto sync failed",
       "autoSyncLastErrorHint": "Please check network or S3 settings. Auto sync will retry on future changes.",
+      "autoSyncRemoteChangedTitle": "Choose S3 sync direction",
+      "autoSyncRemoteChangedMessage": "S3 cloud sync data changed, so auto sync paused.",
+      "autoSyncRemoteChangedHint": "Choose whether to overwrite the cloud with this device, or overwrite this device with the cloud version.",
       "missingBucket": "Please enter the S3 bucket",
       "noRemoteData": "No sync data found in the S3 bucket",
       "incompatibleVersion": "Remote data is incompatible (version {{version}}). This client supports protocol v2 / db-v6.",
