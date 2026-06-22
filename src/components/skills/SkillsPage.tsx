@@ -356,9 +356,9 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const searchingSkillsSh =
       (loadingSkillsSh || fetchingSkillsSh) && accumulatedResults.length === 0;
 
-    // 无仓库时默认切换到 skills.sh
+    // 无仓库配置时默认切换到 skills.sh；仓库发现结果为空时仍保留仓库视图，方便手动刷新重试。
     const effectiveSource =
-      searchSource === "repos" && skills.length === 0 && !loading
+      searchSource === "repos" && repos.length === 0 && !loading
         ? "skillssh"
         : searchSource;
 

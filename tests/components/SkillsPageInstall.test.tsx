@@ -10,12 +10,14 @@ import {
 } from "@/components/skills/SkillsPage";
 import type {
   DiscoverableSkill,
+  SkillRepo,
   SkillsShDiscoverableSkill,
   SkillsShSearchResult,
 } from "@/lib/api/skills";
 
 const installMutateAsyncMock = vi.fn();
 let discoverableSkillsMock: DiscoverableSkill[] = [];
+let skillReposMock: SkillRepo[] = [];
 const refetchDiscoverableMock = vi.fn();
 
 // Stable cache so repeated renders see referentially-equal data.
@@ -72,7 +74,7 @@ vi.mock("@/hooks/useSkills", () => ({
     mutateAsync: installMutateAsyncMock,
   }),
   useSkillRepos: () => ({
-    data: [],
+    data: skillReposMock,
     refetch: vi.fn(),
   }),
   useAddSkillRepo: () => ({
@@ -116,11 +118,20 @@ const makeDiscoverableSkill = (
   ...overrides,
 });
 
+const makeSkillRepo = (overrides: Partial<SkillRepo> = {}): SkillRepo => ({
+  owner: "owner-a",
+  name: "repo-a",
+  branch: "main",
+  enabled: true,
+  ...overrides,
+});
+
 describe("SkillsPage - skills.sh install (regression)", () => {
   beforeEach(() => {
     installMutateAsyncMock.mockReset();
     installMutateAsyncMock.mockResolvedValue({});
     discoverableSkillsMock = [];
+    skillReposMock = [];
     refetchDiscoverableMock.mockReset();
     searchCache.clear();
   });
@@ -276,6 +287,20 @@ describe("SkillsPage - skills.sh install (regression)", () => {
     });
   });
 
+  it("keeps the repository source when configured repositories return no discoverable skills", async () => {
+    skillReposMock = [makeSkillRepo()];
+    const onSourceChange = vi.fn();
+
+    render(<SkillsPage initialApp="claude" onSourceChange={onSourceChange} />);
+
+    await waitFor(() => {
+      expect(onSourceChange).toHaveBeenCalledWith("repos");
+    });
+    expect(
+      screen.getByPlaceholderText("skills.searchPlaceholder"),
+    ).toBeVisible();
+  });
+
   it("can switch back to repository results after discoverable skills refresh", async () => {
     const onSourceChange = vi.fn();
     const user = userEvent.setup();
@@ -290,6 +315,7 @@ describe("SkillsPage - skills.sh install (regression)", () => {
     await user.click(screen.getByRole("button", { name: /skills\.sh/i }));
 
     discoverableSkillsMock = [makeDiscoverableSkill()];
+    skillReposMock = [makeSkillRepo()];
     rerender(
       <SkillsPage initialApp="claude" onSourceChange={onSourceChange} />,
     );
