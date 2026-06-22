@@ -475,10 +475,11 @@ fn read_codex_credentials() -> CodexCredentials {
     #[cfg(target_os = "macos")]
     {
         if let Some(result) = read_codex_credentials_from_keychain() {
-            // Only use Keychain result if credentials were actually found/parsed.
-            // A stale entry (e.g. missing auth_mode) returns NotFound — fall through
-            // to ~/.codex/auth.json so a valid file is not shadowed (#3479).
-            if result.2 != CredentialStatus::NotFound {
+            // Only use Keychain result when credentials are fully valid.
+            // Stale entries (missing auth_mode → NotFound, last_refresh >8d → Expired,
+            // malformed JSON → ParseError) must fall through to ~/.codex/auth.json
+            // so a valid file is not shadowed (#3479).
+            if result.2 == CredentialStatus::Valid {
                 return result;
             }
         }
