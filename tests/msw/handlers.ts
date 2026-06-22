@@ -342,6 +342,14 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/is_live_takeover_active`, () => success(false)),
 
+  // 模型层级路由：默认禁用（useModelTierRouting 挂载即拉取，set 返回与后端一致的 true）
+  http.post(`${TAURI_ENDPOINT}/get_model_tier_routing_config`, () =>
+    success({ enabled: false, routes: {} }),
+  ),
+  http.post(`${TAURI_ENDPOINT}/set_model_tier_routing_config`, () =>
+    success(true),
+  ),
+
   // Failover / circuit breaker defaults
   http.post(`${TAURI_ENDPOINT}/get_failover_queue`, () => success([])),
   http.post(`${TAURI_ENDPOINT}/get_available_providers_for_failover`, () =>

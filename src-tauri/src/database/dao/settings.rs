@@ -307,6 +307,31 @@ impl Database {
         self.set_setting("copilot_optimizer_config", &json)
     }
 
+    // --- 模型层级路由配置 ---
+
+    /// 获取模型层级路由配置
+    ///
+    /// 返回配置，不存在或解析失败时返回默认值（禁用、空路由表）。
+    pub fn get_model_tier_routing_config(
+        &self,
+    ) -> Result<crate::proxy::types::ModelTierRoutingConfig, AppError> {
+        match self.get_setting("model_tier_routing_config")? {
+            Some(json) => serde_json::from_str(&json)
+                .map_err(|e| AppError::Database(format!("解析模型层级路由配置失败: {e}"))),
+            None => Ok(crate::proxy::types::ModelTierRoutingConfig::default()),
+        }
+    }
+
+    /// 更新模型层级路由配置
+    pub fn set_model_tier_routing_config(
+        &self,
+        config: &crate::proxy::types::ModelTierRoutingConfig,
+    ) -> Result<(), AppError> {
+        let json = serde_json::to_string(config)
+            .map_err(|e| AppError::Database(format!("序列化模型层级路由配置失败: {e}")))?;
+        self.set_setting("model_tier_routing_config", &json)
+    }
+
     // --- 日志配置 ---
 
     /// 获取日志配置

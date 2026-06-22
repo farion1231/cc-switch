@@ -145,6 +145,13 @@ pub struct RequestForwarder {
     /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
     /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
     max_attempts: usize,
+    /// 模型层级路由命中的目标 Provider id（None 表示本请求未走层级路由）。
+    ///
+    /// 转发时仅对该 Provider 的请求体副本应用 `routing_model_override`，
+    /// 故障转移队列中的其它 Provider 仍用客户端原始别名（保留各自的模型映射）。
+    routed_provider_id: Option<String>,
+    /// 层级路由改写后的上游模型名（与 `routed_provider_id` 同时出现）。
+    routing_model_override: Option<String>,
 }
 
 impl RequestForwarder {
@@ -212,6 +219,8 @@ impl RequestForwarder {
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
         max_retries: u32,
+        routed_provider_id: Option<String>,
+        routing_model_override: Option<String>,
     ) -> Self {
         // max_retries 是「失败后重试次数」语义，attempt 上限 = retries + 1。
         // saturating_add 防止 u32::MAX + 1 溢出。
@@ -235,6 +244,8 @@ impl RequestForwarder {
                 streaming_first_byte_timeout,
             ),
             max_attempts,
+            routed_provider_id,
+            routing_model_override,
         }
     }
 
@@ -462,6 +473,20 @@ impl RequestForwarder {
                     body.clone()
                 };
 
+            // 模型层级路由覆写：仅对被路由命中的目标 Provider 把请求体模型名改写为
+            // 路由表指定的上游模型（如 opus→glm-5.2）。其余 provider（含故障转移目标）
+            // 拿原始客户端别名，保留各自的模型映射。forward 内的 apply_model_mapping 对
+            // 改写后的非层级名原样放行，outbound_model/计费会落到这个真值。
+            if let (Some(rid), Some(m)) = (
+                self.routed_provider_id.as_deref(),
+                self.routing_model_override.as_deref(),
+            ) {
+                if !m.is_empty() && provider.id == rid {
+                    log::debug!("[{app_type_str}] 模型层级路由: provider {rid} model → {m}");
+                    provider_body["model"] = serde_json::json!(m);
+                }
+            }
+
             attempted_providers += 1;
 
             // 更新状态中的当前 Provider 信息（per-attempt 维度的标识）
@@ -509,8 +534,9 @@ impl RequestForwarder {
                         let mut status = self.status.write().await;
                         status.success_requests += 1;
                         status.last_error = None;
-                        let should_switch =
-                            self.current_provider_id_at_start.as_str() != provider.id.as_str();
+                        let should_switch = self.current_provider_id_at_start.as_str()
+                            != provider.id.as_str()
+                            && self.routed_provider_id.is_none();
                         if should_switch {
                             status.failover_count += 1;
 
@@ -614,7 +640,8 @@ impl RequestForwarder {
                                         status.last_error = None;
                                         let should_switch =
                                             self.current_provider_id_at_start.as_str()
-                                                != provider.id.as_str();
+                                                != provider.id.as_str()
+                                                && self.routed_provider_id.is_none();
                                         if should_switch {
                                             status.failover_count += 1;
                                             let fm = self.failover_manager.clone();
@@ -760,7 +787,8 @@ impl RequestForwarder {
                                             status.last_error = None;
                                             let should_switch =
                                                 self.current_provider_id_at_start.as_str()
-                                                    != provider.id.as_str();
+                                                    != provider.id.as_str()
+                                                    && self.routed_provider_id.is_none();
                                             if should_switch {
                                                 status.failover_count += 1;
 
@@ -924,7 +952,8 @@ impl RequestForwarder {
                                         status.last_error = None;
                                         let should_switch =
                                             self.current_provider_id_at_start.as_str()
-                                                != provider.id.as_str();
+                                                != provider.id.as_str()
+                                                && self.routed_provider_id.is_none();
                                         if should_switch {
                                             status.failover_count += 1;
                                             let fm = self.failover_manager.clone();
@@ -3505,6 +3534,8 @@ mod tests {
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,
+            routed_provider_id: None,
+            routing_model_override: None,
         }
     }
 

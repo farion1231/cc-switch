@@ -91,6 +91,7 @@ impl ProxyService {
         config: &mut Value,
         proxy_url: &str,
         provider: &Provider,
+        tier_routing: &ModelTierRoutingConfig,
     ) {
         let auth_policy = if provider.uses_managed_account_auth() {
             // Codex 系（含仅凭 base_url 识别、无 provider_type meta 的）必须保留
@@ -102,8 +103,11 @@ impl ProxyService {
         } else {
             ClaudeTakeoverAuthPolicy::PreserveExistingOrAuthToken
         };
-        // Copilot/Codex 接管时 live config 可能还是旧供应商；显示模型必须跟随目标 provider。
-        let takeover_model_fields = if provider.uses_managed_account_auth() {
+        // 模型层级路由开启时，`*_MODEL`/`*_MODEL_NAME` 完全由路由表派生
+        // （`_MODEL` 仍是稳定别名，`_MODEL_NAME` 来自路由表 display_name）；否则跟随 provider。
+        let takeover_model_fields = if tier_routing.enabled {
+            Self::build_claude_takeover_model_fields_for_tier_routing(tier_routing)
+        } else if provider.uses_managed_account_auth() {
             Self::build_claude_takeover_model_fields(&provider.settings_config)
         } else {
             Self::build_claude_takeover_model_fields(config)
@@ -115,6 +119,28 @@ impl ProxyService {
             auth_policy,
             takeover_model_fields,
         );
+    }
+
+    /// 读取层级路由配置，并剔除指向不可路由 provider（如官方账号）的路由项，
+    /// 仅供 Claude 接管菜单字段构建使用。
+    ///
+    /// 与请求路径 `apply_tier_routing` 的「目标不可路由→回退」对齐：菜单字段
+    /// （`_MODEL`/`_MODEL_NAME`）也只对可路由目标写入，避免 Claude 菜单显示某
+    /// tier 已配、实际请求却因路由器跳过该 tier 的不一致。查不到的 provider
+    /// 视为不可路由（与请求路径一致）。返回前端的命令/请求路径仍读原始 config。
+    fn claude_tier_routing_for_takeover(&self) -> ModelTierRoutingConfig {
+        let mut config = self.db.get_model_tier_routing_config().unwrap_or_default();
+        if let Some(claude_routes) = config.routes.get_mut("claude") {
+            claude_routes.retain(|_tier, route| {
+                self.db
+                    .get_provider_by_id(&route.provider_id, "claude")
+                    .ok()
+                    .flatten()
+                    .map(|p| p.supports_routing())
+                    .unwrap_or(false)
+            });
+        }
+        config
     }
 
     fn apply_claude_takeover_fields_with_policy(
@@ -277,6 +303,75 @@ impl ProxyService {
         fields
     }
 
+    /// 模型层级路由模式的接管字段：遍历路由表中已配置的层级，
+    /// `*_MODEL` 写稳定别名（与 provider 接管一致，让 proxy 按层级子串分类），
+    /// `*_MODEL_NAME` 写路由表里的 `display_name`（空则不写，由上游移除）。
+    /// `route.model` 仅用于判断是否带 `[1M]` 标记；真实模型改写由 proxy 在转发时完成。
+    fn build_claude_takeover_model_fields_for_tier_routing(
+        config: &ModelTierRoutingConfig,
+    ) -> Vec<(&'static str, String)> {
+        let Some(claude_routes) = config.routes.get("claude") else {
+            return Vec::new();
+        };
+
+        // (tier_key, model_env_key, name_env_key, 别名, supports_one_m)
+        const TIERS: &[(&str, &str, &str, &str, bool)] = &[
+            (
+                "haiku",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+                CLAUDE_TAKEOVER_HAIKU_MODEL,
+                false,
+            ),
+            (
+                "sonnet",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+                CLAUDE_TAKEOVER_SONNET_MODEL,
+                true,
+            ),
+            (
+                "opus",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+                CLAUDE_TAKEOVER_OPUS_MODEL,
+                true,
+            ),
+            (
+                "fable",
+                "ANTHROPIC_DEFAULT_FABLE_MODEL",
+                "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+                CLAUDE_TAKEOVER_FABLE_MODEL,
+                false,
+            ),
+        ];
+
+        let mut fields = Vec::new();
+        for &(tier, model_key, name_key, alias, supports_one_m) in TIERS {
+            let Some(route) = claude_routes.get(tier) else {
+                continue;
+            };
+            // 与 apply_tier_routing（model_mapper）对齐：model 为空视为未配置，
+            // 不写 _MODEL/_MODEL_NAME，否则 Claude 菜单显示该 tier 已配、
+            // 实际请求却因路由器回退默认 provider，二者矛盾。
+            if route.model.trim().is_empty() {
+                continue;
+            }
+            // `_MODEL` = 别名；route.model 带 [1M] 标记时给 opus/sonnet 别名补上。
+            let mut client_model = alias.to_string();
+            if supports_one_m && Self::has_claude_one_m_marker(&route.model) {
+                client_model.push_str(CLAUDE_ONE_M_MARKER_FOR_CLIENT);
+            }
+            fields.push((model_key, client_model));
+
+            let display_name = route.display_name.trim();
+            if !display_name.is_empty() {
+                fields.push((name_key, display_name.to_string()));
+            }
+        }
+        fields
+    }
+
     fn push_claude_takeover_role_fields(
         fields: &mut Vec<(&'static str, String)>,
         env: &Map<String, Value>,
@@ -350,6 +445,7 @@ impl ProxyService {
             &mut effective_settings,
             &proxy_url,
             &effective_provider,
+            &self.claude_tier_routing_for_takeover(),
         );
         self.write_claude_live(&effective_settings)?;
         Ok(())
@@ -1348,6 +1444,7 @@ impl ProxyService {
                 &mut live_config,
                 &proxy_url,
                 &claude_provider,
+                &self.claude_tier_routing_for_takeover(),
             );
             self.write_claude_live(&live_config)?;
             log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
@@ -1399,6 +1496,7 @@ impl ProxyService {
                     &mut live_config,
                     &proxy_url,
                     &claude_provider,
+                    &self.claude_tier_routing_for_takeover(),
                 );
                 self.write_claude_live(&live_config)?;
                 log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
@@ -1454,6 +1552,7 @@ impl ProxyService {
                             &mut live_config,
                             &proxy_url,
                             &provider,
+                            &self.claude_tier_routing_for_takeover(),
                         );
                     } else {
                         Self::apply_claude_takeover_fields_with_policy(
@@ -1645,6 +1744,30 @@ impl ProxyService {
                 Err(_) => false,
             },
             _ => false,
+        }
+    }
+
+    /// 若该 app 当前已被代理接管，强制重写一次 Live 配置。
+    ///
+    /// 用于模型层级路由等配置变更后，把新的 `*_MODEL_NAME` 等字段即时同步到
+    /// `settings.json`（`set_takeover_for_app(true)` 对已接管状态是幂等 no-op，
+    /// 不会重写字段，故需要这条强制路径）。未接管时为 no-op。
+    pub async fn refresh_takeover_if_active(&self, app_type: &AppType) -> Result<(), String> {
+        if !self.detect_takeover_in_live_config_for_app(app_type) {
+            return Ok(());
+        }
+        match app_type {
+            // Claude：从当前 provider 重建 live，而非读已被 tier 路由污染的 live 原地改写。
+            // 唯一调用方是 set_model_tier_routing_config（仅 Claude），tier 配置变更后正确
+            // 语义就是“按当前 provider + 新 tier 状态重建”，sync_... 正好做这事（内部已把
+            // get_model_tier_routing_config() 传给 apply_claude_takeover_fields_for_provider，
+            // tier 开/关都对）。不动 apply_... 的 uses_managed_account_auth 分支。
+            AppType::Claude => {
+                let provider = self.require_current_provider_for_app(&AppType::Claude)?;
+                self.sync_claude_live_from_provider_while_proxy_active(&provider)
+                    .await
+            }
+            _ => self.takeover_live_config_strict(app_type).await,
         }
     }
 
@@ -2906,6 +3029,7 @@ mod tests {
             &mut live_config,
             "http://127.0.0.1:15721",
             &provider,
+            &ModelTierRoutingConfig::default(),
         );
 
         let env = live_config
@@ -2921,6 +3045,331 @@ mod tests {
             env.get("ANTHROPIC_AUTH_TOKEN").is_none(),
             "managed OAuth providers should avoid Claude Auth Token login semantics"
         );
+    }
+
+    #[test]
+    fn tier_routing_takeover_writes_alias_model_and_display_name() {
+        let provider = Provider::with_id(
+            "zhipu".to_string(),
+            "Zhipu".to_string(),
+            json!({"env":{"ANTHROPIC_BASE_URL":"https://api.zhipu.ai","ANTHROPIC_AUTH_TOKEN":"sk-x"}}),
+            None,
+        );
+        let mut claude = std::collections::HashMap::new();
+        claude.insert(
+            "opus".to_string(),
+            TierRoute {
+                provider_id: "zhipu".to_string(),
+                model: "glm-5.2".to_string(),
+                display_name: "GLM-5.2".to_string(),
+            },
+        );
+        // fable 配了但 display_name 为空 → 写 _MODEL 别名但不写 _NAME
+        claude.insert(
+            "fable".to_string(),
+            TierRoute {
+                provider_id: "zhipu".to_string(),
+                model: "glm-5.2".to_string(),
+                display_name: String::new(),
+            },
+        );
+        let mut routes = std::collections::HashMap::new();
+        routes.insert("claude".to_string(), claude);
+        let routing = ModelTierRoutingConfig {
+            enabled: true,
+            routes,
+        };
+
+        let mut live = provider.settings_config.clone();
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live,
+            "http://127.0.0.1:15721",
+            &provider,
+            &routing,
+        );
+
+        let env = live.get("env").and_then(|v| v.as_object()).unwrap();
+        // BASE_URL 接管为 proxy
+        assert_eq!(
+            env.get("ANTHROPIC_BASE_URL").and_then(|v| v.as_str()),
+            Some("http://127.0.0.1:15721")
+        );
+        // _MODEL 保持稳定别名（现状），opus 带 [1M] 仅当 route.model 有标记（此处无）
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_OPUS_MODEL")
+                .and_then(|v| v.as_str()),
+            Some("claude-opus-4-8")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_FABLE_MODEL")
+                .and_then(|v| v.as_str()),
+            Some("claude-fable-5")
+        );
+        // _MODEL_NAME 来自路由表 display_name
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_OPUS_MODEL_NAME")
+                .and_then(|v| v.as_str()),
+            Some("GLM-5.2")
+        );
+        // 空 display_name → 不写 _NAME
+        assert!(env.get("ANTHROPIC_DEFAULT_FABLE_MODEL_NAME").is_none());
+        // 未配置的 tier（sonnet/haiku）→ 不写
+        assert!(env.get("ANTHROPIC_DEFAULT_SONNET_MODEL").is_none());
+        assert!(env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL").is_none());
+    }
+
+    #[test]
+    fn tier_routing_disabled_falls_back_to_provider_derived_fields() {
+        // enabled=false → 走现有 provider settings 派生（_MODEL=别名、_MODEL_NAME=上游模型名）
+        let provider = Provider::with_id(
+            "p".to_string(),
+            "P".to_string(),
+            json!({"env":{"ANTHROPIC_BASE_URL":"https://x","ANTHROPIC_AUTH_TOKEN":"sk","ANTHROPIC_DEFAULT_OPUS_MODEL":"glm-5.2"}}),
+            None,
+        );
+        let mut live = provider.settings_config.clone();
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live,
+            "http://127.0.0.1:15721",
+            &provider,
+            &ModelTierRoutingConfig::default(),
+        );
+        let env = live.get("env").and_then(|v| v.as_object()).unwrap();
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_OPUS_MODEL")
+                .and_then(|v| v.as_str()),
+            Some("claude-opus-4-8")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_OPUS_MODEL_NAME")
+                .and_then(|v| v.as_str()),
+            Some("glm-5.2")
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn refresh_takeover_after_tier_disabled_restores_provider_model_name() {
+        // 回归：tier 模式接管把展示名 TierRoutedOpus 写进 live 的 _MODEL_NAME → 关闭 tier
+        // 触发 refresh_takeover_if_active → 修复后走 sync_...（从 provider 重建），
+        // _MODEL_NAME 必须恢复为 provider 真值 my-provider-opus，而非残留 TierRoutedOpus。
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        // 固定端口（不起代理服务器，仅让 build_proxy_urls 产出可用 URL）。
+        {
+            let mut cfg = db.get_proxy_config().await.expect("get proxy config");
+            cfg.listen_port = 15721;
+            db.update_proxy_config(cfg)
+                .await
+                .expect("set fixed proxy port");
+        }
+        let service = ProxyService::new(db.clone());
+
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                    "ANTHROPIC_AUTH_TOKEN": "sk-x",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "my-provider-opus"
+                }
+            }),
+            None,
+        );
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "p1")
+            .expect("set db current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
+            .expect("set local current provider");
+
+        // tier ON：写路由表（display_name = TierRoutedOpus），用 sync 生成真实的
+        // tier 接管 live（BASE_URL=proxy + _MODEL_NAME=TierRoutedOpus）。
+        let mut claude_routes = std::collections::HashMap::new();
+        claude_routes.insert(
+            "opus".to_string(),
+            TierRoute {
+                provider_id: "p1".to_string(),
+                model: "tier-opus-model".to_string(),
+                display_name: "TierRoutedOpus".to_string(),
+            },
+        );
+        let mut routes = std::collections::HashMap::new();
+        routes.insert("claude".to_string(), claude_routes);
+        db.set_model_tier_routing_config(&ModelTierRoutingConfig {
+            enabled: true,
+            routes,
+        })
+        .expect("save tier config (enabled)");
+
+        service
+            .sync_claude_live_from_provider_while_proxy_active(&provider)
+            .await
+            .expect("seed tier-takeover live");
+
+        // 种子确实是 tier 污染态，且被判定为已接管。
+        let seeded = service.read_claude_live().expect("read seeded live");
+        let seeded_env = seeded.get("env").and_then(|v| v.as_object()).unwrap();
+        assert_eq!(
+            seeded_env
+                .get("ANTHROPIC_DEFAULT_OPUS_MODEL_NAME")
+                .and_then(|v| v.as_str()),
+            Some("TierRoutedOpus")
+        );
+        assert!(service.detect_takeover_in_live_config_for_app(&AppType::Claude));
+
+        // 关闭 tier（模拟用户切回 Provider 路由）。
+        db.set_model_tier_routing_config(&ModelTierRoutingConfig::default())
+            .expect("save tier config (disabled)");
+
+        service
+            .refresh_takeover_if_active(&AppType::Claude)
+            .await
+            .expect("refresh after tier disabled");
+
+        let live = service.read_claude_live().expect("read refreshed live");
+        let env = live.get("env").and_then(|v| v.as_object()).unwrap();
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_OPUS_MODEL")
+                .and_then(|v| v.as_str()),
+            Some("claude-opus-4-8"),
+            "_MODEL keeps stable alias"
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_OPUS_MODEL_NAME")
+                .and_then(|v| v.as_str()),
+            Some("my-provider-opus"),
+            "after disabling tier, _MODEL_NAME must come from provider, not stale TierRoutedOpus"
+        );
+    }
+
+    #[test]
+    fn tier_routing_skips_routes_with_empty_model() {
+        // model 为空的路由项视为未配置：不写 _MODEL/_MODEL_NAME（与 apply_tier_routing 对齐），
+        // 否则 Claude 菜单显示该 tier 已配、实际请求却回退默认 provider。
+        let provider = Provider::with_id(
+            "p".to_string(),
+            "P".to_string(),
+            json!({"env":{"ANTHROPIC_BASE_URL":"https://x","ANTHROPIC_AUTH_TOKEN":"sk"}}),
+            None,
+        );
+        let mut claude = std::collections::HashMap::new();
+        // opus 选了 provider 但 model 为空 → 跳过
+        claude.insert(
+            "opus".to_string(),
+            TierRoute {
+                provider_id: "p".to_string(),
+                model: String::new(),
+                display_name: "Should Not Appear".to_string(),
+            },
+        );
+        // sonnet 正常配置 → 写入
+        claude.insert(
+            "sonnet".to_string(),
+            TierRoute {
+                provider_id: "p".to_string(),
+                model: "glm-5.2".to_string(),
+                display_name: "GLM-5.2".to_string(),
+            },
+        );
+        let mut routes = std::collections::HashMap::new();
+        routes.insert("claude".to_string(), claude);
+        let routing = ModelTierRoutingConfig {
+            enabled: true,
+            routes,
+        };
+
+        let mut live = provider.settings_config.clone();
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live,
+            "http://127.0.0.1:15721",
+            &provider,
+            &routing,
+        );
+
+        let env = live.get("env").and_then(|v| v.as_object()).unwrap();
+        // opus（空 model）→ 不写
+        assert!(env.get("ANTHROPIC_DEFAULT_OPUS_MODEL").is_none());
+        assert!(env.get("ANTHROPIC_DEFAULT_OPUS_MODEL_NAME").is_none());
+        // sonnet（正常）→ 写别名 + 展示名
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+                .and_then(|v| v.as_str()),
+            Some("claude-sonnet-4-6")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME")
+                .and_then(|v| v.as_str()),
+            Some("GLM-5.2")
+        );
+    }
+
+    #[test]
+    fn claude_tier_routing_for_takeover_drops_non_routable_routes() {
+        // 菜单字段投影：指向不可路由 provider（官方）的 tier 路由项应被剔除，
+        // 与请求路径 apply_tier_routing 的「目标不可路由→跳过」对齐。
+        // 仅依赖内存 db（不写 live 配置），无需 TempHome/serial。
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let mut official = Provider::with_id(
+            "official-acct".to_string(),
+            "Claude Official".to_string(),
+            json!({ "env": {} }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        db.save_provider("claude", &official)
+            .expect("save official");
+
+        let mut routable = Provider::with_id(
+            "zhipu".to_string(),
+            "Zhipu".to_string(),
+            json!({ "env": { "ANTHROPIC_BASE_URL": "https://open.bigmodel.cn" } }),
+            None,
+        );
+        routable.category = Some("cn_official".to_string());
+        db.save_provider("claude", &routable).expect("save zhipu");
+
+        let mut claude_routes = std::collections::HashMap::new();
+        claude_routes.insert(
+            "opus".to_string(),
+            TierRoute {
+                provider_id: "official-acct".to_string(),
+                model: "claude-opus-4-8".to_string(),
+                display_name: "Official".to_string(),
+            },
+        );
+        claude_routes.insert(
+            "sonnet".to_string(),
+            TierRoute {
+                provider_id: "zhipu".to_string(),
+                model: "glm-5.2".to_string(),
+                display_name: "GLM-5.2".to_string(),
+            },
+        );
+        let mut routes = std::collections::HashMap::new();
+        routes.insert("claude".to_string(), claude_routes);
+        db.set_model_tier_routing_config(&ModelTierRoutingConfig {
+            enabled: true,
+            routes,
+        })
+        .expect("set tier routing config");
+
+        let filtered = service.claude_tier_routing_for_takeover();
+        assert!(filtered.enabled, "enabled 标志保留");
+        let claude = filtered
+            .routes
+            .get("claude")
+            .expect("claude routes present");
+        assert!(
+            claude.get("opus").is_none(),
+            "指向官方的 opus 路由必须被剔除"
+        );
+        assert!(claude.get("sonnet").is_some(), "可路由的 sonnet 路由保留");
     }
 
     #[test]
@@ -2963,6 +3412,7 @@ mod tests {
             &mut live_config,
             "http://127.0.0.1:15721",
             &provider,
+            &ModelTierRoutingConfig::default(),
         );
 
         let env = live_config
@@ -3081,6 +3531,7 @@ mod tests {
             &mut live_config,
             "http://127.0.0.1:15721",
             &provider,
+            &ModelTierRoutingConfig::default(),
         );
 
         let env = live_config
@@ -3134,6 +3585,7 @@ mod tests {
             &mut live_config,
             "http://127.0.0.1:15721",
             &provider,
+            &ModelTierRoutingConfig::default(),
         );
 
         let env = live_config
@@ -3166,6 +3618,7 @@ mod tests {
             &mut live_config,
             "http://127.0.0.1:15721",
             &provider,
+            &ModelTierRoutingConfig::default(),
         );
 
         let env = live_config
@@ -3242,6 +3695,7 @@ mod tests {
             &mut live_config,
             "http://127.0.0.1:15721",
             &provider,
+            &ModelTierRoutingConfig::default(),
         );
 
         let env = live_config

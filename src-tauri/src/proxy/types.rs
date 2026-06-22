@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// 代理服务器配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,6 +193,39 @@ pub struct AppProxyConfig {
     pub circuit_error_rate_threshold: f64,
     /// 计算错误率的最小请求数
     pub circuit_min_requests: u32,
+}
+
+/// 模型层级路由：按请求的模型层级（opus/sonnet/haiku/fable）把请求分发到不同 Provider，
+/// 并把 `body.model` 改写为该层级的真实上游模型名。
+///
+/// 与每个 Provider 自身的「层级→模型名」env 映射解耦：路由表自包含 providerId + model，
+/// 命中层级的请求会同时换 Provider 与模型名；其余层级/未命中时回退到既有 Provider 选择。
+///
+/// 存于 settings 表（key = `model_tier_routing_config`），沿用 rectifier/optimizer 的 JSON 模式。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelTierRoutingConfig {
+    /// 总开关；关闭时完全不介入请求路径。
+    #[serde(default)]
+    pub enabled: bool,
+    /// per app_type → tier（"opus"/"sonnet"/"haiku"/"fable"）→ 路由项。
+    /// 缺失的 app_type / tier 视为未配置，回退到既有选择逻辑。
+    #[serde(default)]
+    pub routes: HashMap<String, HashMap<String, TierRoute>>,
+}
+
+/// 单条层级路由：目标 Provider + 要改写成的上游模型名。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TierRoute {
+    /// 目标 Provider 的 id（必须存在于该 app 的 providers 中）。
+    pub provider_id: String,
+    /// 改写后的上游模型名，如 `glm-5.2`、`kimi-k2.6`。
+    pub model: String,
+    /// 展示名，写入 `ANTHROPIC_DEFAULT_<TIER>_MODEL_NAME`，供 Claude Code 的
+    /// 模型选择菜单显示（如 `GLM-5.2`）。空字符串表示不写该 `_NAME` 变量。
+    #[serde(default)]
+    pub display_name: String,
 }
 
 /// 整流器配置

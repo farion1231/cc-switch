@@ -4,6 +4,7 @@
 
 use crate::app_config::AppType;
 use crate::provider::Provider;
+use crate::proxy::model_mapper::apply_tier_routing;
 use crate::proxy::{
     extract_session_id,
     forwarder::RequestForwarder,
@@ -70,6 +71,13 @@ pub struct RequestContext {
     pub optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     pub copilot_optimizer_config: CopilotOptimizerConfig,
+    /// 模型层级路由命中的目标 Provider id（仅当本请求被层级路由接管时有值）。
+    ///
+    /// 转发器据此把 `model_override` 仅应用到该 Provider 的请求体副本，
+    /// 故障转移队列中的其它 Provider 仍用客户端原始别名。
+    pub routed_provider_id: Option<String>,
+    /// 层级路由改写后的上游模型名（与 `routed_provider_id` 同时出现）。
+    pub routing_model_override: Option<String>,
 }
 
 impl RequestContext {
@@ -143,6 +151,21 @@ impl RequestContext {
                 _ => ProxyError::DatabaseError(e.to_string()),
             })?;
 
+        // 模型层级路由：按请求模型的层级（opus/sonnet/haiku/fable）把请求分发到指定
+        // Provider 并改写模型名。未启用 / 未命中 / 目标 Provider 已删时原样返回既有选择。
+        let routing_config = state.db.get_model_tier_routing_config().unwrap_or_default();
+        let routing_outcome = apply_tier_routing(
+            &request_model,
+            app_type_str,
+            &routing_config,
+            &providers,
+            |id| state.db.get_provider_by_id(id, app_type_str).ok().flatten(),
+        );
+
+        let providers = routing_outcome.providers;
+        let routed_provider_id = routing_outcome.routed_provider_id;
+        let routing_model_override = routing_outcome.model_override;
+
         let provider = providers
             .first()
             .cloned()
@@ -173,6 +196,8 @@ impl RequestContext {
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
+            routed_provider_id,
+            routing_model_override,
         })
     }
 
@@ -241,6 +266,8 @@ impl RequestContext {
             self.optimizer_config.clone(),
             self.copilot_optimizer_config.clone(),
             max_retries,
+            self.routed_provider_id.clone(),
+            self.routing_model_override.clone(),
         )
     }
 

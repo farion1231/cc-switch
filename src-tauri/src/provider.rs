@@ -82,6 +82,18 @@ impl Provider {
             || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
     }
 
+    /// 供应商是否支持经本地代理路由（含模型层级路由）。
+    ///
+    /// 官方供应商（category == "official"）不可路由：无可劫持的 base_url、
+    /// 认证为 1P OAuth/订阅（代理无法注入凭据）。
+    ///
+    /// Rust 侧「是否支持路由」的单一真相源，必须与前端
+    /// `src/utils/providerRouting.ts` 的 `supportsRouting` 保持同判据；
+    /// 后续新增不可路由分类时两边一起改。
+    pub fn supports_routing(&self) -> bool {
+        self.category.as_deref() != Some("official")
+    }
+
     fn provider_type(&self) -> Option<&str> {
         self.meta.as_ref().and_then(|m| m.provider_type.as_deref())
     }

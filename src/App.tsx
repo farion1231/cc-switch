@@ -42,6 +42,7 @@ import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
 import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
 import { hermesApi } from "@/lib/api/hermes";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
+import { useModelTierRouting } from "@/hooks/useModelTierRouting";
 import { useAutoCompact } from "@/hooks/useAutoCompact";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
@@ -60,6 +61,8 @@ import {
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
+import { ModelTierRoutingEditor } from "@/components/providers/ModelTierRoutingEditor";
+import { RoutingModeSelector } from "@/components/providers/RoutingModeSelector";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -263,8 +266,60 @@ function App() {
     isRunning: isProxyRunning,
     takeoverStatus,
     status: proxyStatus,
+    setTakeoverForApp,
   } = useProxyStatus();
   const isCurrentAppTakeoverActive = takeoverStatus?.[activeApp] || false;
+
+  // 模型层级路由（首页「Provider 路由 / 模型层级路由」模式开关）
+  const {
+    config: tierRoutingConfig,
+    setEnabled: setTierRoutingEnabled,
+    persist: persistTierRouting,
+  } = useModelTierRouting();
+  const isModelTierMode =
+    activeApp === "claude" &&
+    Boolean(tierRoutingConfig?.enabled) &&
+    isCurrentAppTakeoverActive;
+  const [showTierProxyConfirm, setShowTierProxyConfirm] = useState(false);
+
+  const handleSwitchToModelTier = () => {
+    if (isCurrentAppTakeoverActive) {
+      void setTierRoutingEnabled(true);
+    } else {
+      setShowTierProxyConfirm(true);
+    }
+  };
+
+  const handleConfirmTierProxy = async () => {
+    setShowTierProxyConfirm(false);
+    try {
+      // 先开 takeover；成功后再开 tier 模式。takeover 失败则不设 enabled，
+      // 避免留下「enabled=true 但实际未接管」的脏状态。
+      await setTakeoverForApp({ appType: "claude", enabled: true });
+      await setTierRoutingEnabled(true);
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
+  // takeover 被关闭（如 header 的 ProxyToggle）时，同步关闭 tier 模式，保持状态一致。
+  // 用 ref 只在 true→false 翻转时触发，避免初始加载（takeover 状态未就绪）误关。
+  const prevTakeoverActiveRef = useRef(isCurrentAppTakeoverActive);
+  useEffect(() => {
+    const wasActive = prevTakeoverActiveRef.current;
+    prevTakeoverActiveRef.current = isCurrentAppTakeoverActive;
+    if (
+      wasActive &&
+      !isCurrentAppTakeoverActive &&
+      activeApp === "claude" &&
+      tierRoutingConfig?.enabled
+    ) {
+      void setTierRoutingEnabled(false);
+    }
+    // 仅由接管状态翻转驱动；其余值读取最新即可。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCurrentAppTakeoverActive]);
+
   const activeProviderId = useMemo(() => {
     const target = proxyStatus?.active_targets?.find(
       (t) => t.app_type === activeApp,
@@ -975,54 +1030,75 @@ function App() {
                     transition={{ duration: 0.15 }}
                     className="space-y-4"
                   >
-                    <ProviderList
-                      providers={providers}
-                      currentProviderId={currentProviderId}
-                      appId={activeApp}
-                      isLoading={isLoading}
-                      isProxyRunning={isProxyRunning}
-                      isProxyTakeover={
-                        isProxyRunning && isCurrentAppTakeoverActive
-                      }
-                      activeProviderId={activeProviderId}
-                      onSwitch={switchProvider}
-                      onEdit={(provider) => {
-                        setEditingProvider(provider);
-                      }}
-                      onDelete={(provider) =>
-                        setConfirmAction({ provider, action: "delete" })
-                      }
-                      onRemoveFromConfig={
-                        activeApp === "opencode" ||
-                        activeApp === "openclaw" ||
-                        activeApp === "hermes"
-                          ? (provider) =>
-                              setConfirmAction({ provider, action: "remove" })
-                          : undefined
-                      }
-                      onDisableOmo={
-                        activeApp === "opencode" ? handleDisableOmo : undefined
-                      }
-                      onDisableOmoSlim={
-                        activeApp === "opencode"
-                          ? handleDisableOmoSlim
-                          : undefined
-                      }
-                      onDuplicate={handleDuplicateProvider}
-                      onConfigureUsage={setUsageProvider}
-                      onOpenWebsite={handleOpenWebsite}
-                      onOpenTerminal={
-                        activeApp === "claude" ? handleOpenTerminal : undefined
-                      }
-                      onCreate={() => setIsAddOpen(true)}
-                      onSetAsDefault={
-                        activeApp === "openclaw"
-                          ? setAsDefaultModel
-                          : activeApp === "hermes"
-                            ? switchProvider
+                    {activeApp === "claude" && (
+                      <RoutingModeSelector
+                        value={isModelTierMode ? "tier" : "provider"}
+                        routingEnabled={isCurrentAppTakeoverActive}
+                        onSelectProvider={() =>
+                          void setTierRoutingEnabled(false)
+                        }
+                        onSelectTier={handleSwitchToModelTier}
+                      />
+                    )}
+                    {isModelTierMode ? (
+                      <ModelTierRoutingEditor
+                        config={tierRoutingConfig}
+                        onChange={persistTierRouting}
+                      />
+                    ) : (
+                      <ProviderList
+                        providers={providers}
+                        currentProviderId={currentProviderId}
+                        appId={activeApp}
+                        isLoading={isLoading}
+                        isProxyRunning={isProxyRunning}
+                        isProxyTakeover={
+                          isProxyRunning && isCurrentAppTakeoverActive
+                        }
+                        activeProviderId={activeProviderId}
+                        onSwitch={switchProvider}
+                        onEdit={(provider) => {
+                          setEditingProvider(provider);
+                        }}
+                        onDelete={(provider) =>
+                          setConfirmAction({ provider, action: "delete" })
+                        }
+                        onRemoveFromConfig={
+                          activeApp === "opencode" ||
+                          activeApp === "openclaw" ||
+                          activeApp === "hermes"
+                            ? (provider) =>
+                                setConfirmAction({ provider, action: "remove" })
                             : undefined
-                      }
-                    />
+                        }
+                        onDisableOmo={
+                          activeApp === "opencode"
+                            ? handleDisableOmo
+                            : undefined
+                        }
+                        onDisableOmoSlim={
+                          activeApp === "opencode"
+                            ? handleDisableOmoSlim
+                            : undefined
+                        }
+                        onDuplicate={handleDuplicateProvider}
+                        onConfigureUsage={setUsageProvider}
+                        onOpenWebsite={handleOpenWebsite}
+                        onOpenTerminal={
+                          activeApp === "claude"
+                            ? handleOpenTerminal
+                            : undefined
+                        }
+                        onCreate={() => setIsAddOpen(true)}
+                        onSetAsDefault={
+                          activeApp === "openclaw"
+                            ? setAsDefaultModel
+                            : activeApp === "hermes"
+                              ? switchProvider
+                              : undefined
+                        }
+                      />
+                    )}
                   </motion.div>
                 </AnimatePresence>
               </div>
@@ -1655,6 +1731,16 @@ function App() {
           })();
         }}
         onCancel={() => setLaunchDashboardOpen(false)}
+      />
+
+      <ConfirmDialog
+        isOpen={showTierProxyConfirm}
+        title={t("home.routingMode.confirmTitle")}
+        message={t("home.routingMode.confirmMessage")}
+        confirmText={t("home.routingMode.confirmAction")}
+        variant="info"
+        onConfirm={() => void handleConfirmTierProxy()}
+        onCancel={() => setShowTierProxyConfirm(false)}
       />
 
       <DeepLinkImportDialog />
