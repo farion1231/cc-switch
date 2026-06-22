@@ -4,8 +4,9 @@ use std::fs;
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_claude_mcp_path, get_claude_settings_path, import_default_config_test_hook, AppError,
-    AppType, McpApps, McpServer, McpService, MultiAppConfig,
+    get_claude_mcp_path, get_claude_settings_path, import_default_config_test_hook,
+    update_settings, AppError, AppSettings, AppType, McpApps, McpServer, McpService,
+    MultiAppConfig,
 };
 
 #[path = "support.rs"]
@@ -766,4 +767,183 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
         servers.contains_key("external-only"),
         "live entries unknown to DB should be preserved"
     );
+}
+
+/// 回归测试：当用户配置了 `claudeConfigDir`（对应 Claude Code 的
+/// `CLAUDE_CONFIG_DIR`），启用某个 MCP 服务器后，cc-switch 必须把它写到
+/// `<override>/.claude.json`（即覆盖目录**内部**，与 Claude Code 实际读取的位置一致）；
+/// 而不是 `<override>.json`（v3.15.x 及更早的 bug：会写到目录的同级位置）。同时
+/// 不应覆盖目标文件中 `mcpServers` 之外的字段。
+#[test]
+fn toggle_claude_mcp_writes_into_override_dir() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let parent = home.join("toggle-override-path");
+    let override_dir = parent.join(".claude");
+    fs::create_dir_all(&override_dir).expect("create override dir");
+
+    // 预先在正确位置准备一份带有其他字段的 .claude.json，验证写入不会清掉它们
+    let existing = json!({
+        "userID": "preserve-me",
+        "mcpServers": {
+            "preexisting": { "type": "stdio", "command": "echo" }
+        }
+    });
+    fs::write(
+        override_dir.join(".claude.json"),
+        serde_json::to_string_pretty(&existing).expect("serialize"),
+    )
+    .expect("seed existing .claude.json");
+
+    let settings = AppSettings {
+        claude_config_dir: Some(override_dir.to_string_lossy().into_owned()),
+        ..AppSettings::default()
+    };
+    update_settings(settings).expect("apply override settings");
+
+    // 验证路径解析也走的是正确位置
+    assert_eq!(
+        get_claude_mcp_path(),
+        override_dir.join(".claude.json"),
+        "get_claude_mcp_path must point inside the override directory"
+    );
+
+    let state = create_test_state().expect("create test state");
+    McpService::upsert_server(
+        &state,
+        McpServer {
+            id: "new-server".to_string(),
+            name: "New".to_string(),
+            server: json!({ "type": "stdio", "command": "echo" }),
+            apps: McpApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    )
+    .expect("upsert with claude enabled");
+
+    let target = override_dir.join(".claude.json");
+    assert!(
+        target.exists(),
+        "override-internal .claude.json should exist"
+    );
+    let sibling_wrong = parent.join(".claude.json");
+    assert!(
+        !sibling_wrong.exists(),
+        "must not write to legacy sibling path"
+    );
+
+    let text = fs::read_to_string(&target).expect("read .claude.json");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("parse json");
+    assert_eq!(
+        value.get("userID").and_then(|v| v.as_str()),
+        Some("preserve-me"),
+        "non-mcp fields must be preserved"
+    );
+    let servers = value
+        .get("mcpServers")
+        .and_then(|v| v.as_object())
+        .expect("mcpServers");
+    assert!(servers.contains_key("preexisting"));
+    assert!(servers.contains_key("new-server"));
+
+    update_settings(AppSettings::default()).expect("reset settings");
+}
+
+/// 回归测试：升级场景。如果用户在旧 cc-switch（v3.15.x 及更早）下已经把
+/// MCP 配置写到了"覆盖目录同级"的错误位置，升级后首次写入应自动将该文件
+/// 搬迁到正确的目录内部位置，保留其中所有条目。
+#[test]
+fn override_migrates_legacy_sibling_file_to_inside_dir() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let parent = home.join("migration-override-path");
+    let override_dir = parent.join(".claude");
+    // 创建覆盖目录本身（模拟 Claude Code 已经使用过该目录），让
+    // should_sync_claude_mcp 通过；但不在内部留下 .claude.json，迫使迁移逻辑
+    // 从旧的同级位置搬数据过来。
+    fs::create_dir_all(&override_dir).expect("create override dir");
+
+    // 模拟旧 cc-switch 写错的位置：parent/.claude.json
+    let legacy_sibling = parent.join(".claude.json");
+    let legacy_payload = json!({
+        "userID": "from-legacy",
+        "mcpServers": {
+            "legacy-server": { "type": "stdio", "command": "echo" }
+        }
+    });
+    fs::write(
+        &legacy_sibling,
+        serde_json::to_string_pretty(&legacy_payload).expect("serialize"),
+    )
+    .expect("seed legacy sibling file");
+
+    let settings = AppSettings {
+        claude_config_dir: Some(override_dir.to_string_lossy().into_owned()),
+        ..AppSettings::default()
+    };
+    update_settings(settings).expect("apply override settings");
+
+    // 触发一次写入路径（启用新服务器），让 ensure_mcp_override_migrated 被调用
+    let state = create_test_state().expect("create test state");
+    McpService::upsert_server(
+        &state,
+        McpServer {
+            id: "fresh-server".to_string(),
+            name: "Fresh".to_string(),
+            server: json!({ "type": "stdio", "command": "echo" }),
+            apps: McpApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    )
+    .expect("upsert with claude enabled");
+
+    let target = override_dir.join(".claude.json");
+    assert!(
+        target.exists(),
+        "migrated file should exist at new location"
+    );
+
+    let text = fs::read_to_string(&target).expect("read migrated file");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("parse json");
+    assert_eq!(
+        value.get("userID").and_then(|v| v.as_str()),
+        Some("from-legacy"),
+        "non-mcp fields from legacy file must be carried over"
+    );
+    let servers = value
+        .get("mcpServers")
+        .and_then(|v| v.as_object())
+        .expect("mcpServers");
+    assert!(
+        servers.contains_key("legacy-server"),
+        "legacy entries must survive the migration"
+    );
+    assert!(
+        servers.contains_key("fresh-server"),
+        "newly-enabled server must also be written"
+    );
+
+    update_settings(AppSettings::default()).expect("reset settings");
 }
