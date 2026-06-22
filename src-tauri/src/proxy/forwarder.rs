@@ -2276,7 +2276,7 @@ impl RequestForwarder {
                 "[Codex] Restored or enriched {restored} cached function call item(s) for Claude-compatible upstream"
             );
         }
-        super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
+        super::providers::apply_codex_bridge_upstream_model(provider, &mut mapped_body);
         let reasoning_config =
             super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
         let chat_body =

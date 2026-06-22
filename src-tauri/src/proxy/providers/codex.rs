@@ -151,6 +151,17 @@ pub fn apply_codex_chat_upstream_model(
     Some(upstream_model)
 }
 
+/// For Codex bridge providers that are not Chat Completions upstreams, replace
+/// the Codex client model with the provider's configured real upstream model.
+pub fn apply_codex_bridge_upstream_model(
+    provider: &Provider,
+    body: &mut JsonValue,
+) -> Option<String> {
+    let upstream_model = codex_provider_upstream_model(provider)?;
+    body["model"] = JsonValue::String(upstream_model.clone());
+    Some(upstream_model)
+}
+
 pub fn resolve_codex_chat_reasoning_config(
     provider: &Provider,
     body: &JsonValue,
@@ -854,6 +865,36 @@ wire_api = "responses"
 
         assert_eq!(upstream_model.as_deref(), Some("kimi-k2"));
         assert_eq!(body.get("model").and_then(|v| v.as_str()), Some("kimi-k2"));
+    }
+
+    #[test]
+    fn test_apply_codex_bridge_upstream_model_uses_non_chat_provider_model() {
+        let mut provider = create_provider(json!({
+            "config": r#"
+model_provider = "anthropic"
+model = "claude-sonnet-4-6"
+
+[model_providers.anthropic]
+name = "Anthropic"
+base_url = "https://api.anthropic.com"
+"#
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("anthropic".to_string()),
+            ..Default::default()
+        });
+        let mut body = json!({
+            "model": "gpt-5-codex",
+            "input": "ping"
+        });
+
+        let upstream_model = apply_codex_bridge_upstream_model(&provider, &mut body);
+
+        assert_eq!(upstream_model.as_deref(), Some("claude-sonnet-4-6"));
+        assert_eq!(
+            body.get("model").and_then(|v| v.as_str()),
+            Some("claude-sonnet-4-6")
+        );
     }
 
     #[test]
