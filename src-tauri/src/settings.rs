@@ -22,6 +22,10 @@ fn default_true() -> bool {
     true
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 /// 主页面显示的应用配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -115,6 +119,8 @@ pub struct WebDavSyncSettings {
     pub username: String,
     #[serde(default)]
     pub password: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub password_configured: bool,
     #[serde(default = "default_remote_root")]
     pub remote_root: String,
     #[serde(default = "default_profile")]
@@ -131,6 +137,7 @@ impl Default for WebDavSyncSettings {
             base_url: String::new(),
             username: String::new(),
             password: String::new(),
+            password_configured: false,
             remote_root: default_remote_root(),
             profile: default_profile(),
             status: WebDavSyncStatus::default(),
@@ -160,6 +167,7 @@ impl WebDavSyncSettings {
     pub fn normalize(&mut self) {
         self.base_url = self.base_url.trim().to_string();
         self.username = self.username.trim().to_string();
+        self.password_configured = !self.password.is_empty();
         self.remote_root = self.remote_root.trim().to_string();
         self.profile = self.profile.trim().to_string();
         if self.remote_root.is_empty() {
@@ -711,6 +719,7 @@ pub fn get_settings() -> AppSettings {
 pub fn get_settings_for_frontend() -> AppSettings {
     let mut settings = get_settings();
     if let Some(sync) = &mut settings.webdav_sync {
+        sync.password_configured = !sync.password.is_empty();
         sync.password.clear();
     }
     if let Some(s3) = &mut settings.s3_sync {
@@ -1112,6 +1121,7 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use crate::app_config::AppType;
+    use serial_test::serial;
 
     #[test]
     fn visible_apps_old_settings_default_claude_desktop_visible() {
@@ -1142,5 +1152,34 @@ mod tests {
         .expect("visible apps");
 
         assert!(!visible.is_visible(&AppType::ClaudeDesktop));
+    }
+
+    #[test]
+    #[serial]
+    fn frontend_settings_marks_webdav_password_configured_without_exposing_it() {
+        let test_home = std::env::temp_dir().join("cc-switch-webdav-password-redaction-test");
+        let _ = std::fs::remove_dir_all(&test_home);
+        std::fs::create_dir_all(&test_home).expect("create test home");
+        std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
+
+        update_settings(AppSettings {
+            webdav_sync: Some(WebDavSyncSettings {
+                enabled: true,
+                base_url: "https://dav.example.com/dav/".to_string(),
+                username: "alice".to_string(),
+                password: "secret".to_string(),
+                ..WebDavSyncSettings::default()
+            }),
+            ..AppSettings::default()
+        })
+        .expect("seed settings");
+
+        let frontend_settings = get_settings_for_frontend();
+        let sync = frontend_settings
+            .webdav_sync
+            .expect("frontend webdav settings");
+
+        assert!(sync.password.is_empty());
+        assert!(sync.password_configured);
     }
 }
