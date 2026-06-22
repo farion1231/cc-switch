@@ -19,14 +19,15 @@ use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    get_sync_state, metadata_modified_nanos, update_sync_state, SessionSyncResult,
+    get_sync_state, is_recently_modified, metadata_modified_nanos, update_sync_state,
+    SessionSyncResult, DEFAULT_AUTO_SYNC_MIN_FILE_AGE,
 };
 use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
 use rust_decimal::Decimal;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 /// 累计 token 用量（跟踪 total_token_usage 字段）
 #[derive(Debug, Clone, Default)]
@@ -144,6 +145,17 @@ fn parse_cumulative_tokens(total_usage: &serde_json::Value) -> Option<Cumulative
 
 /// 同步 Codex 使用数据（从 JSONL 会话日志）
 pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
+    sync_codex_usage_with_min_file_age(db, None)
+}
+
+pub fn sync_codex_usage_auto(db: &Database) -> Result<SessionSyncResult, AppError> {
+    sync_codex_usage_with_min_file_age(db, Some(DEFAULT_AUTO_SYNC_MIN_FILE_AGE))
+}
+
+fn sync_codex_usage_with_min_file_age(
+    db: &Database,
+    min_file_age: Option<Duration>,
+) -> Result<SessionSyncResult, AppError> {
     let codex_dir = get_codex_config_dir();
 
     let files = collect_codex_session_files(&codex_dir);
@@ -160,7 +172,7 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     }
 
     for file_path in &files {
-        match sync_single_codex_file(db, file_path) {
+        match sync_single_codex_file(db, file_path, min_file_age) {
             Ok((imported, skipped)) => {
                 result.imported += imported;
                 result.skipped += skipped;
@@ -229,13 +241,27 @@ fn collect_jsonl_recursive(dir: &Path, files: &mut Vec<PathBuf>, depth: u32, max
 }
 
 /// 同步单个 Codex JSONL 文件，返回 (imported, skipped)
-fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppError> {
+fn sync_single_codex_file(
+    db: &Database,
+    file_path: &Path,
+    min_file_age: Option<Duration>,
+) -> Result<(u32, u32), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
 
     // 获取文件元数据
     let metadata = fs::metadata(file_path)
         .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
     let file_modified = metadata_modified_nanos(&metadata);
+
+    if let Some(min_age) = min_file_age {
+        if is_recently_modified(&metadata, min_age) {
+            log::debug!(
+                "[CODEX-SYNC] skipping active Codex transcript: {}",
+                file_path.display()
+            );
+            return Ok((0, 0));
+        }
+    }
 
     // 检查同步状态
     let (last_modified, last_offset) = get_sync_state(db, &file_path_str)?;
