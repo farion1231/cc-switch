@@ -48,6 +48,11 @@ pub struct RequestContext {
     pub current_provider_id: String,
     /// 请求中的模型名称
     pub request_model: String,
+    /// 命中按模型路由且指定了目标模型时的 `(pinned provider id, 目标上游模型名)`。
+    ///
+    /// 仅在转发到该 pinned 供应商时才改写出站模型名；故障转移到其它供应商时不应套用，
+    /// 因此把目标模型与其供应商绑定。`None` 表示沿用供应商自身的模型映射/默认模型。
+    route_model_override: Option<(String, String)>,
     /// 实际发往上游的模型名（路由接管/模型映射后的真值，forward 成功后回填）。
     ///
     /// usage 归因的兜底顺序：上游响应回显 → outbound_model → request_model。
@@ -107,7 +112,7 @@ impl RequestContext {
         let optimizer_config = state.db.get_optimizer_config().unwrap_or_default();
         let copilot_optimizer_config = state.db.get_copilot_optimizer_config().unwrap_or_default();
 
-        let current_provider_id =
+        let mut current_provider_id =
             crate::settings::get_current_provider(&app_type).unwrap_or_default();
 
         // 从请求体提取模型名称
@@ -131,9 +136,10 @@ impl RequestContext {
 
         // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
         // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
-        let providers = state
+        // 同时应用按模型路由：若该模型类别配置了专属供应商，则把它放到首位。
+        let (providers, model_route_pin) = state
             .provider_router
-            .select_providers(app_type_str)
+            .select_providers_for_model(app_type_str, &request_model)
             .await
             .map_err(|e| match e {
                 crate::error::AppError::AllProvidersCircuitOpen => {
@@ -142,6 +148,17 @@ impl RequestContext {
                 crate::error::AppError::NoProvidersConfigured => ProxyError::NoProvidersConfigured,
                 _ => ProxyError::DatabaseError(e.to_string()),
             })?;
+
+        // 命中按模型路由时，把被路由的供应商视为本次请求的“当前供应商”，
+        // 避免按模型路由触发全局供应商切换（仅故障转移降级时才切换）。
+        // 同时记录该路由的目标模型名（若有，且与其供应商绑定），由 forwarder 在出站前改写。
+        let mut route_model_override = None;
+        if let Some(pin) = model_route_pin {
+            if let Some(target_model) = pin.target_model.filter(|m| !m.is_empty()) {
+                route_model_override = Some((pin.provider_id.clone(), target_model));
+            }
+            current_provider_id = pin.provider_id;
+        }
 
         let provider = providers
             .first()
@@ -164,6 +181,7 @@ impl RequestContext {
             providers,
             current_provider_id,
             request_model,
+            route_model_override,
             outbound_model: None,
             tag,
             app_type_str,
@@ -241,6 +259,7 @@ impl RequestContext {
             self.optimizer_config.clone(),
             self.copilot_optimizer_config.clone(),
             max_retries,
+            self.route_model_override.clone(),
         )
     }
 

@@ -1,0 +1,34 @@
+{
+  "name": "OpenAI Chat Completions request to Anthropic Messages",
+  "transform": "openai_chat_request_to_anthropic",
+  "input": {
+    "model": "gpt-5",
+    "max_completion_tokens": 256,
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are concise."
+      },
+      {
+        "role": "user",
+        "content": "Hello"
+      }
+    ]
+  },
+  "expected": {
+    "model": "gpt-5",
+    "system": "You are concise.",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Hello"
+          }
+        ]
+      }
+    ],
+    "max_tokens": 256
+  }
+}

@@ -12,6 +12,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./tests/setupGlobals.ts", "./tests/setupTests.ts"],
+    exclude: ["**/node_modules/**", "**/dist/**", "**/.worktrees/**"],
     globals: true,
     coverage: {
       reporter: ["text", "lcov"],

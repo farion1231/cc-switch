@@ -21,6 +21,7 @@ pub mod codex_oauth_auth;
 pub mod copilot_auth;
 pub mod copilot_model_map;
 mod gemini;
+pub mod gemini_oauth;
 pub(crate) mod gemini_schema;
 pub mod gemini_shadow;
 pub mod models;
@@ -32,6 +33,10 @@ pub mod transform;
 pub mod transform_codex_chat;
 pub mod transform_gemini;
 pub mod transform_responses;
+pub mod transform_reverse;
+
+#[cfg(test)]
+mod fixture_harness;
 
 use crate::app_config::AppType;
 use crate::provider::Provider;
@@ -47,10 +52,46 @@ pub use claude::{
 };
 pub use codex::CodexAdapter;
 pub use codex::{
-    apply_codex_chat_upstream_model, codex_provider_upstream_model,
+    apply_codex_chat_upstream_model, codex_provider_upstream_model, is_codex_responses_endpoint,
     resolve_codex_chat_reasoning_config, should_convert_codex_responses_to_chat,
 };
 pub use gemini::GeminiAdapter;
+
+pub fn provider_has_anthropic_config(provider: &Provider) -> bool {
+    if provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.api_format.as_deref())
+        == Some("anthropic")
+        && provider.settings_config.get("auth").is_some()
+        && provider.settings_config.get("config").is_some()
+    {
+        return true;
+    }
+
+    const KEYS: &[&str] = &[
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    ];
+
+    KEYS.iter().any(|key| {
+        provider.settings_config.get(*key).is_some()
+            || provider
+                .settings_config
+                .get("env")
+                .and_then(|env| env.get(*key))
+                .is_some()
+    })
+}
+
+pub fn provider_has_gemini_native_config(provider: &Provider) -> bool {
+    get_claude_api_format(provider) == "gemini_native"
+}
 
 /// 供应商类型枚举
 ///

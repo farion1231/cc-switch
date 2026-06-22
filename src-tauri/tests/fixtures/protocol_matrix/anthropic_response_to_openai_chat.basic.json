@@ -1,0 +1,46 @@
+{
+  "name": "Anthropic Messages response to OpenAI Chat response",
+  "transform": "anthropic_response_to_openai_chat",
+  "input": {
+    "id": "msg_123",
+    "type": "message",
+    "role": "assistant",
+    "model": "claude-sonnet-4-6",
+    "content": [
+      {
+        "type": "text",
+        "text": "Hello back"
+      }
+    ],
+    "stop_reason": "end_turn",
+    "usage": {
+      "input_tokens": 10,
+      "cache_read_input_tokens": 2,
+      "output_tokens": 3
+    }
+  },
+  "expected": {
+    "id": "msg_123",
+    "object": "chat.completion",
+    "created": 0,
+    "model": "claude-sonnet-4-6",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Hello back"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 12,
+      "completion_tokens": 3,
+      "total_tokens": 15,
+      "prompt_tokens_details": {
+        "cached_tokens": 2
+      }
+    }
+  }
+}

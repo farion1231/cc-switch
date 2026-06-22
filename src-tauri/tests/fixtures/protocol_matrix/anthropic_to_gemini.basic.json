@@ -1,0 +1,37 @@
+{
+  "name": "Anthropic Messages request to Gemini generateContent",
+  "transform": "anthropic_to_gemini",
+  "input": {
+    "model": "gemini-3.5-flash",
+    "max_tokens": 64,
+    "system": "You are concise.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello"
+      }
+    ]
+  },
+  "expected": {
+    "systemInstruction": {
+      "parts": [
+        {
+          "text": "You are concise."
+        }
+      ]
+    },
+    "contents": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Hello"
+          }
+        ]
+      }
+    ],
+    "generationConfig": {
+      "maxOutputTokens": 64
+    }
+  }
+}

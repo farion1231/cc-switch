@@ -1,3 +1,11 @@
+// Polyfill scrollIntoView for jsdom (used by cmdk / Radix components)
+if (
+  typeof Element !== "undefined" &&
+  typeof Element.prototype.scrollIntoView !== "function"
+) {
+  Element.prototype.scrollIntoView = function scrollIntoView() {};
+}
+
 // Polyfill ResizeObserver for jsdom/happy-dom
 if (typeof globalThis.ResizeObserver === "undefined") {
   globalThis.ResizeObserver = class ResizeObserver {

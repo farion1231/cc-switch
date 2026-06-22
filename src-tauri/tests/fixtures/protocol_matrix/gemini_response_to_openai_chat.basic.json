@@ -1,0 +1,49 @@
+{
+  "name": "Gemini generateContent response to OpenAI Chat response",
+  "transform": "gemini_response_to_openai_chat",
+  "input": {
+    "responseId": "resp_1",
+    "modelVersion": "gemini-2.5-pro",
+    "candidates": [
+      {
+        "finishReason": "STOP",
+        "content": {
+          "parts": [
+            {
+              "text": "Hello from Gemini"
+            }
+          ]
+        }
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 12,
+      "totalTokenCount": 20,
+      "cachedContentTokenCount": 3
+    }
+  },
+  "expected": {
+    "id": "resp_1",
+    "object": "chat.completion",
+    "created": 0,
+    "model": "gemini-2.5-pro",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Hello from Gemini"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 12,
+      "completion_tokens": 8,
+      "total_tokens": 20,
+      "prompt_tokens_details": {
+        "cached_tokens": 3
+      }
+    }
+  }
+}

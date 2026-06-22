@@ -179,6 +179,31 @@ const expectedChatPresets = new Map<
 ]);
 
 describe("Codex Chat provider presets", () => {
+  it("includes cross-protocol presets for Anthropic and Gemini Native", () => {
+    const anthropic = codexProviderPresets.find(
+      (item) => item.name === "Claude / Anthropic via Codex",
+    );
+    const gemini = codexProviderPresets.find(
+      (item) => item.name === "Gemini Native OAuth/API key via Codex",
+    );
+
+    expect(anthropic?.apiFormat).toBe("anthropic");
+    expect(extractCodexBaseUrl(anthropic?.config)).toBe(
+      "https://api.anthropic.com",
+    );
+    expect(extractCodexWireApi(anthropic?.config)).toBe("responses");
+    expect(extractCodexModelName(anthropic?.config)).toBe(
+      "claude-sonnet-4-6",
+    );
+
+    expect(gemini?.apiFormat).toBe("gemini_native");
+    expect(extractCodexBaseUrl(gemini?.config)).toBe(
+      "https://generativelanguage.googleapis.com",
+    );
+    expect(extractCodexWireApi(gemini?.config)).toBe("responses");
+    expect(extractCodexModelName(gemini?.config)).toBe("gemini-2.5-pro");
+  });
+
   it("marks migrated Chat Completions presets for local routing", () => {
     for (const [name, expected] of expectedChatPresets) {
       const preset = codexProviderPresets.find((item) => item.name === name);

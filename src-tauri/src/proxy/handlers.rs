@@ -693,7 +693,7 @@ pub async fn handle_responses(
     ctx.provider = result.provider;
     let response = result.response;
 
-    if super::providers::should_convert_codex_responses_to_chat(&ctx.provider, &endpoint) {
+    if should_convert_codex_intermediate_chat_to_responses(&ctx.provider, &endpoint) {
         return handle_codex_chat_to_responses_transform(
             response,
             &ctx,
@@ -771,7 +771,7 @@ pub async fn handle_responses_compact(
     ctx.provider = result.provider;
     let response = result.response;
 
-    if super::providers::should_convert_codex_responses_to_chat(&ctx.provider, &endpoint) {
+    if should_convert_codex_intermediate_chat_to_responses(&ctx.provider, &endpoint) {
         return handle_codex_chat_to_responses_transform(
             response,
             &ctx,
@@ -791,6 +791,16 @@ pub async fn handle_responses_compact(
         connection_guard,
     )
     .await
+}
+
+fn should_convert_codex_intermediate_chat_to_responses(
+    provider: &crate::provider::Provider,
+    endpoint: &str,
+) -> bool {
+    super::providers::should_convert_codex_responses_to_chat(provider, endpoint)
+        || (super::providers::is_codex_responses_endpoint(endpoint)
+            && (super::providers::provider_has_anthropic_config(provider)
+                || super::providers::provider_has_gemini_native_config(provider)))
 }
 
 async fn handle_codex_chat_to_responses_transform(

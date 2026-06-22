@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "protocols": {
+    "anthropic_messages": {
+      "request_format": "messages",
+      "streaming": "sse",
+      "system_field": "system",
+      "tool_calls": "content_blocks",
+      "tool_results": "user_content_blocks",
+      "image_input": true,
+      "native_oauth": false,
+      "required_fields": ["model", "messages", "max_tokens"]
+    },
+    "openai_chat_completions": {
+      "request_format": "chat_completions",
+      "streaming": "sse",
+      "system_field": "messages.system",
+      "tool_calls": "assistant_tool_calls",
+      "tool_results": "tool_messages",
+      "image_input": true,
+      "native_oauth": false,
+      "required_fields": ["model", "messages"]
+    },
+    "openai_responses": {
+      "request_format": "responses",
+      "streaming": "sse",
+      "system_field": "instructions",
+      "tool_calls": "output_items",
+      "tool_results": "input_items",
+      "image_input": true,
+      "native_oauth": true,
+      "required_fields": ["model", "input"]
+    },
+    "gemini_generate_content": {
+      "request_format": "generate_content",
+      "streaming": "sse",
+      "system_field": "systemInstruction",
+      "tool_calls": "functionCall_parts",
+      "tool_results": "functionResponse_parts",
+      "image_input": true,
+      "native_oauth": true,
+      "required_fields": ["contents"]
+    }
+  },
+  "bridges": [
+    {
+      "from": "anthropic_messages",
+      "to": "openai_chat_completions",
+      "fixture": "anthropic_to_openai_chat.basic.json",
+      "direction": "claude_client_to_openai_provider"
+    },
+    {
+      "from": "openai_chat_completions",
+      "to": "anthropic_messages",
+      "fixture": "openai_chat_to_anthropic.basic.json",
+      "direction": "codex_client_to_claude_provider"
+    },
+    {
+      "from": "anthropic_messages",
+      "to": "gemini_generate_content",
+      "fixture": "anthropic_to_gemini.basic.json",
+      "direction": "claude_client_to_gemini_provider"
+    },
+    {
+      "from": "openai_responses",
+      "to": "openai_chat_completions",
+      "fixture": "responses_to_chat.basic.json",
+      "direction": "codex_responses_client_to_chat_provider"
+    },
+    {
+      "from": "openai_responses",
+      "to": "anthropic_messages",
+      "fixture": "responses_to_anthropic.basic.json",
+      "direction": "codex_client_to_claude_provider"
+    },
+    {
+      "from": "openai_responses",
+      "to": "gemini_generate_content",
+      "fixture": "responses_to_gemini.basic.json",
+      "direction": "codex_client_to_gemini_provider"
+    },
+    {
+      "from": "anthropic_messages",
+      "to": "openai_chat_completions",
+      "fixture": "anthropic_response_to_openai_chat.basic.json",
+      "direction": "claude_provider_to_codex_client"
+    },
+    {
+      "from": "gemini_generate_content",
+      "to": "openai_chat_completions",
+      "fixture": "gemini_response_to_openai_chat.basic.json",
+      "direction": "gemini_provider_to_codex_client"
+    }
+  ]
+}

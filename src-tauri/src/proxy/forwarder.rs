@@ -12,7 +12,7 @@ use super::{
     provider_router::ProviderRouter,
     providers::{
         codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore, get_adapter,
-        AuthInfo, AuthStrategy, ProviderAdapter, ProviderType,
+        get_adapter_for_provider_type, AuthInfo, AuthStrategy, ProviderAdapter, ProviderType,
     },
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
@@ -24,6 +24,7 @@ use super::{
 use crate::commands::{CodexOAuthState, CopilotAuthState};
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
+use crate::proxy::providers::gemini_oauth::GeminiOAuthState;
 use crate::{app_config::AppType, provider::Provider};
 use futures::StreamExt;
 use http::Extensions;
@@ -124,6 +125,11 @@ pub struct RequestForwarder {
     /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
     /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
     max_attempts: usize,
+    /// 命中按模型路由且指定了目标模型时的 `(pinned provider id, 目标上游模型名)`。
+    ///
+    /// 仅当本次转发的供应商等于该 pinned 供应商时才改写出站模型名，避免故障转移到
+    /// 其它供应商时套用错误的模型。`None` 表示沿用供应商的模型映射/默认模型。
+    route_model_override: Option<(String, String)>,
 }
 
 impl RequestForwarder {
@@ -191,6 +197,7 @@ impl RequestForwarder {
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
         max_retries: u32,
+        route_model_override: Option<(String, String)>,
     ) -> Self {
         // max_retries 是「失败后重试次数」语义，attempt 上限 = retries + 1。
         // saturating_add 防止 u32::MAX + 1 溢出。
@@ -214,6 +221,7 @@ impl RequestForwarder {
                 streaming_first_byte_timeout,
             ),
             max_attempts,
+            route_model_override: route_model_override.filter(|(_, m)| !m.is_empty()),
         }
     }
 
@@ -372,8 +380,6 @@ impl RequestForwarder {
         extensions: Extensions,
         providers: Vec<Provider>,
     ) -> Result<ForwardResult, ForwardError> {
-        // 获取适配器
-        let adapter = get_adapter(app_type);
         let app_type_str = app_type.as_str();
 
         if providers.is_empty() {
@@ -392,6 +398,7 @@ impl RequestForwarder {
 
         // 依次尝试每个供应商
         for provider in providers.iter() {
+            let adapter = get_forward_adapter(app_type, provider);
             // 整流器重试标记：每个 provider 独立持有，避免标记跨 provider 短路故障转移
             // —— 首家 provider 整流后被 5xx/timeout 击落时，下家仍能用整流后的请求体走整流流程
             let mut rectifier_retried = false;
@@ -1133,6 +1140,26 @@ impl RequestForwarder {
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
 
+        // 按模型路由的目标模型覆盖：用户为该路由显式指定了上游模型名时，直接改写
+        // 出站模型名，优先于供应商自身的模型映射/默认模型。仅当本次转发的供应商
+        // 正是该路由 pinned 的供应商时才生效，故障转移到其它供应商时不套用。
+        if let Some((_, target_model)) = self
+            .route_model_override
+            .as_ref()
+            .filter(|(pinned_id, _)| *pinned_id == provider.id)
+        {
+            log::info!(
+                "[{}] 按模型路由覆盖出站模型: {} -> {}",
+                provider.id,
+                mapped_body
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
+                target_model
+            );
+            mapped_body["model"] = Value::String(target_model.to_string());
+        }
+
         if is_copilot {
             mapped_body =
                 super::providers::copilot_model_map::apply_copilot_model_normalization(mapped_body);
@@ -1296,15 +1323,64 @@ impl RequestForwarder {
             Some(api_format) => super::providers::claude_api_format_needs_transform(api_format),
             None => adapter.needs_transform(provider),
         };
+        let codex_responses_to_anthropic = matches!(app_type, AppType::Codex)
+            && adapter.name() == "Claude"
+            && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"))
+            && super::providers::is_codex_responses_endpoint(endpoint);
+        let codex_responses_to_gemini = matches!(app_type, AppType::Codex)
+            && adapter.name() == "Claude"
+            && matches!(resolved_claude_api_format.as_deref(), Some("gemini_native"))
+            && super::providers::is_codex_responses_endpoint(endpoint);
         let codex_responses_to_chat = matches!(app_type, AppType::Codex)
             && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
-        let (effective_endpoint, passthrough_query) = if codex_responses_to_chat {
+        let codex_responses_to_claude_native =
+            codex_responses_to_anthropic || codex_responses_to_gemini;
+
+        // Codex->Claude/Gemini bridges both pass through an Anthropic-shaped
+        // intermediate body. Build it once before endpoint rewrite so
+        // gemini_native can derive the generateContent path from the mapped
+        // model and stream flag.
+        let mut mapped_body_slot = Some(mapped_body);
+        let mut codex_bridge_anthropic_body = if codex_responses_to_claude_native {
+            Some(
+                self.build_codex_responses_anthropic_request_body(
+                    provider,
+                    mapped_body_slot
+                        .take()
+                        .expect("mapped body available for Codex bridge"),
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+
+        let (effective_endpoint, passthrough_query) = if codex_responses_to_gemini {
+            let (anthropic_endpoint, _) = rewrite_codex_responses_endpoint_to_anthropic(endpoint);
+            rewrite_claude_transform_endpoint(
+                &anthropic_endpoint,
+                "gemini_native",
+                false,
+                codex_bridge_anthropic_body
+                    .as_ref()
+                    .expect("Anthropic bridge body available for Gemini endpoint rewrite"),
+            )
+        } else if codex_responses_to_anthropic {
+            rewrite_codex_responses_endpoint_to_anthropic(endpoint)
+        } else if codex_responses_to_chat {
             rewrite_codex_responses_endpoint_to_chat(endpoint)
         } else if needs_transform && adapter.name() == "Claude" {
             let api_format = resolved_claude_api_format
                 .as_deref()
                 .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
-            rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot, &mapped_body)
+            rewrite_claude_transform_endpoint(
+                endpoint,
+                api_format,
+                is_copilot,
+                mapped_body_slot
+                    .as_ref()
+                    .expect("mapped body available for endpoint rewrite"),
+            )
         } else {
             (
                 endpoint.to_string(),
@@ -1335,15 +1411,35 @@ impl RequestForwarder {
         // 记录映射后的出站模型名（此时 mapped_body 已完成接管映射 / [1m] 剥离 /
         // Copilot 归一化）。格式转换后若 body 仍带 model 字段会在下方刷新覆盖；
         // gemini_native 等模型在 URL 中的格式则保留此处的转换前真值。
-        let mut outbound_model = mapped_body
-            .get("model")
-            .and_then(|m| m.as_str())
-            .filter(|m| !m.is_empty())
-            .map(str::to_string);
+        let mut outbound_model = mapped_body_slot
+            .as_ref()
+            .or(codex_bridge_anthropic_body.as_ref())
+            .and_then(|body| {
+                body.get("model")
+                    .and_then(|m| m.as_str())
+                    .filter(|m| !m.is_empty())
+                    .map(str::to_string)
+            });
 
         // 转换请求体（如果需要）
-        let mut request_body = if codex_responses_to_chat {
-            let mut mapped_body = mapped_body;
+        let mut request_body = if codex_responses_to_gemini {
+            super::providers::transform_gemini::anthropic_to_gemini_with_shadow(
+                codex_bridge_anthropic_body
+                    .take()
+                    .expect("Anthropic bridge body available for Gemini request"),
+                Some(self.gemini_shadow.as_ref()),
+                Some(&provider.id),
+                self.session_client_provided
+                    .then_some(self.session_id.as_str()),
+            )?
+        } else if codex_responses_to_anthropic {
+            codex_bridge_anthropic_body
+                .take()
+                .expect("Anthropic bridge body available for Anthropic request")
+        } else if codex_responses_to_chat {
+            let mut mapped_body = mapped_body_slot
+                .take()
+                .expect("mapped body available for Codex chat bridge");
             let restored = self
                 .codex_chat_history
                 .enrich_request(&mut mapped_body)
@@ -1361,6 +1457,9 @@ impl RequestForwarder {
                 reasoning_config.as_ref(),
             )?
         } else if needs_transform {
+            let mapped_body = mapped_body_slot
+                .take()
+                .expect("mapped body available for transform");
             if adapter.name() == "Claude" {
                 let api_format = resolved_claude_api_format
                     .as_deref()
@@ -1377,7 +1476,9 @@ impl RequestForwarder {
                 adapter.transform_request(mapped_body, provider)?
             }
         } else {
-            mapped_body
+            mapped_body_slot
+                .take()
+                .expect("mapped body available for passthrough")
         };
 
         if matches!(app_type, AppType::Codex) {
@@ -1405,8 +1506,11 @@ impl RequestForwarder {
         );
         let request_is_streaming =
             is_streaming_request(&effective_endpoint, &filtered_body, headers);
-        let force_identity_encoding =
-            needs_transform || codex_responses_to_chat || request_is_streaming;
+        let force_identity_encoding = needs_transform
+            || codex_responses_to_gemini
+            || codex_responses_to_anthropic
+            || codex_responses_to_chat
+            || request_is_streaming;
 
         // Codex OAuth 需要注入的 ChatGPT-Account-Id（在动态 token 获取期间填充）
         let mut codex_oauth_account_id: Option<String> = None;
@@ -1515,6 +1619,28 @@ impl RequestForwarder {
                     return Err(ProxyError::AuthError(
                         "Codex OAuth 认证不可用（无 AppHandle）".to_string(),
                     ));
+                }
+            }
+
+            // Gemini Google OAuth：用长期 refresh_token 换取新的 access_token。
+            // 适用于 Claude Code / Claude Desktop（gemini_native 后端）与 Gemini
+            // 应用本身——三者在 OAuth 凭证下都产生 GoogleOAuth 策略，原始凭证存于
+            // auth.api_key（可能是 ya29. token 或 oauth_creds.json）。
+            if auth.strategy == AuthStrategy::GoogleOAuth {
+                if let Some(creds) =
+                    super::providers::gemini_oauth::parse_credentials(&auth.api_key)
+                {
+                    if let Some(app_handle) = &self.app_handle {
+                        let gemini_state = app_handle.state::<GeminiOAuthState>();
+                        match gemini_state.0.get_valid_access_token(&creds).await {
+                            Ok(token) => {
+                                auth = AuthInfo::with_access_token(auth.api_key.clone(), token);
+                            }
+                            Err(e) => {
+                                log::warn!("[GeminiOAuth] token 刷新失败，回退到已配置的凭证: {e}");
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1939,6 +2065,15 @@ impl RequestForwarder {
             let response = self
                 .prepare_success_response_for_failover(response, request_is_streaming)
                 .await?;
+            let response = if codex_responses_to_gemini {
+                self.transform_codex_gemini_success_response(response, provider)
+                    .await?
+            } else if codex_responses_to_anthropic {
+                self.transform_codex_anthropic_success_response(response)
+                    .await?
+            } else {
+                response
+            };
             Ok((response, resolved_claude_api_format, outbound_model))
         } else {
             let status_code = status.as_u16();
@@ -2016,6 +2151,140 @@ impl RequestForwarder {
 
         let replay = futures::stream::once(async move { Ok(first) }).chain(stream);
         Ok(ProxyResponse::streamed(status, headers, replay))
+    }
+
+    async fn transform_codex_anthropic_success_response(
+        &self,
+        response: ProxyResponse,
+    ) -> Result<ProxyResponse, ProxyError> {
+        if response.is_sse() {
+            let status = response.status();
+            let mut headers = response.headers().clone();
+            super::response_processor::strip_entity_headers_for_rebuilt_body(&mut headers);
+            headers.insert(
+                http::header::CONTENT_TYPE,
+                http::HeaderValue::from_static("text/event-stream"),
+            );
+            headers.insert(
+                http::header::CACHE_CONTROL,
+                http::HeaderValue::from_static("no-cache"),
+            );
+            let stream = super::providers::streaming::create_openai_chat_sse_stream_from_anthropic(
+                response.bytes_stream(),
+            );
+            return Ok(ProxyResponse::streamed(status, headers, stream));
+        }
+
+        let body_timeout = self.non_streaming_timeout;
+        let (mut headers, status, body) =
+            super::response_processor::read_decoded_body(response, "Codex->Claude", body_timeout)
+                .await?;
+        let anthropic_body: Value = serde_json::from_slice(&body).map_err(|e| {
+            ProxyError::TransformError(format!("Failed to parse Anthropic response: {e}"))
+        })?;
+        let openai_body =
+            super::providers::transform_reverse::anthropic_response_to_openai_chat(anthropic_body)?;
+        let body = serde_json::to_vec(&openai_body).map_err(|e| {
+            ProxyError::Internal(format!("Failed to serialize transformed response: {e}"))
+        })?;
+
+        super::response_processor::strip_entity_headers_for_rebuilt_body(&mut headers);
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("application/json"),
+        );
+
+        Ok(ProxyResponse::buffered(status, headers, body.into()))
+    }
+
+    async fn transform_codex_gemini_success_response(
+        &self,
+        response: ProxyResponse,
+        provider: &Provider,
+    ) -> Result<ProxyResponse, ProxyError> {
+        if response.is_sse() {
+            let status = response.status();
+            let mut headers = response.headers().clone();
+            super::response_processor::strip_entity_headers_for_rebuilt_body(&mut headers);
+            headers.insert(
+                http::header::CONTENT_TYPE,
+                http::HeaderValue::from_static("text/event-stream"),
+            );
+            headers.insert(
+                http::header::CACHE_CONTROL,
+                http::HeaderValue::from_static("no-cache"),
+            );
+
+            let anthropic_stream =
+                super::providers::streaming_gemini::create_anthropic_sse_stream_from_gemini(
+                    response.bytes_stream(),
+                    Some(self.gemini_shadow.clone()),
+                    Some(provider.id.clone()),
+                    self.session_client_provided
+                        .then_some(self.session_id.clone()),
+                    None,
+                );
+            let openai_chat_stream =
+                super::providers::streaming::create_openai_chat_sse_stream_from_anthropic(
+                    anthropic_stream,
+                );
+            return Ok(ProxyResponse::streamed(status, headers, openai_chat_stream));
+        }
+
+        let body_timeout = self.non_streaming_timeout;
+        let (mut headers, status, body) =
+            super::response_processor::read_decoded_body(response, "Codex->Gemini", body_timeout)
+                .await?;
+        let gemini_body: Value = serde_json::from_slice(&body).map_err(|e| {
+            ProxyError::TransformError(format!("Failed to parse Gemini response: {e}"))
+        })?;
+        let anthropic_body =
+            super::providers::transform_gemini::gemini_to_anthropic_with_shadow_and_hints(
+                gemini_body,
+                Some(self.gemini_shadow.as_ref()),
+                Some(&provider.id),
+                self.session_client_provided
+                    .then_some(self.session_id.as_str()),
+                None,
+            )?;
+        let openai_body =
+            super::providers::transform_reverse::anthropic_response_to_openai_chat(anthropic_body)?;
+        let body = serde_json::to_vec(&openai_body).map_err(|e| {
+            ProxyError::Internal(format!("Failed to serialize transformed response: {e}"))
+        })?;
+
+        super::response_processor::strip_entity_headers_for_rebuilt_body(&mut headers);
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("application/json"),
+        );
+
+        Ok(ProxyResponse::buffered(status, headers, body.into()))
+    }
+
+    async fn build_codex_responses_anthropic_request_body(
+        &self,
+        provider: &Provider,
+        mut mapped_body: Value,
+    ) -> Result<Value, ProxyError> {
+        let restored = self
+            .codex_chat_history
+            .enrich_request(&mut mapped_body)
+            .await;
+        if restored > 0 {
+            log::debug!(
+                "[Codex] Restored or enriched {restored} cached function call item(s) for Claude-compatible upstream"
+            );
+        }
+        super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
+        let reasoning_config =
+            super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
+        let chat_body =
+            super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+                mapped_body,
+                reasoning_config.as_ref(),
+            )?;
+        super::providers::transform_reverse::openai_chat_request_to_anthropic(chat_body)
     }
 
     async fn resolve_claude_api_format(
@@ -2281,6 +2550,21 @@ fn extract_json_error_message(body: &Value) -> Option<String> {
         .find_map(|value| value.as_str().map(ToString::to_string))
 }
 
+fn get_forward_adapter(app_type: &AppType, provider: &Provider) -> Box<dyn ProviderAdapter> {
+    if matches!(app_type, AppType::Codex)
+        && super::providers::provider_has_anthropic_config(provider)
+    {
+        return get_adapter_for_provider_type(&ProviderType::Claude);
+    }
+    if matches!(app_type, AppType::Codex)
+        && super::providers::provider_has_gemini_native_config(provider)
+    {
+        return get_adapter_for_provider_type(&ProviderType::Claude);
+    }
+
+    get_adapter(app_type)
+}
+
 fn split_endpoint_and_query(endpoint: &str) -> (&str, Option<&str>) {
     endpoint
         .split_once('?')
@@ -2310,6 +2594,18 @@ fn rewrite_codex_responses_endpoint_to_chat(endpoint: &str) -> (String, Option<S
     let (_path, query) = split_endpoint_and_query(endpoint);
     let passthrough_query = query.map(ToString::to_string);
     let target_path = "/chat/completions";
+    let rewritten = match passthrough_query.as_deref() {
+        Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
+        _ => target_path.to_string(),
+    };
+
+    (rewritten, passthrough_query)
+}
+
+fn rewrite_codex_responses_endpoint_to_anthropic(endpoint: &str) -> (String, Option<String>) {
+    let (_path, query) = split_endpoint_and_query(endpoint);
+    let passthrough_query = query.map(ToString::to_string);
+    let target_path = "/v1/messages";
     let rewritten = match passthrough_query.as_deref() {
         Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
         _ => target_path.to_string(),
@@ -2658,6 +2954,7 @@ mod tests {
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,
+            route_model_override: None,
         }
     }
 
@@ -3058,6 +3355,43 @@ mod tests {
 
         assert_eq!(endpoint, "/chat/completions?foo=bar");
         assert_eq!(passthrough_query.as_deref(), Some("foo=bar"));
+    }
+
+    #[test]
+    fn rewrite_codex_responses_endpoint_to_anthropic_preserves_query() {
+        let (endpoint, passthrough_query) =
+            rewrite_codex_responses_endpoint_to_anthropic("/v1/responses?foo=bar");
+
+        assert_eq!(endpoint, "/v1/messages?foo=bar");
+        assert_eq!(passthrough_query.as_deref(), Some("foo=bar"));
+    }
+
+    #[test]
+    fn codex_gemini_native_provider_uses_claude_adapter() {
+        let mut provider = test_provider_with_type(None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("gemini_native".to_string()),
+            ..Default::default()
+        });
+
+        let adapter = get_forward_adapter(&AppType::Codex, &provider);
+        assert_eq!(adapter.name(), "Claude");
+    }
+
+    #[test]
+    fn codex_responses_endpoint_detection_includes_compact_paths() {
+        assert!(crate::proxy::providers::is_codex_responses_endpoint(
+            "/responses"
+        ));
+        assert!(crate::proxy::providers::is_codex_responses_endpoint(
+            "/v1/responses"
+        ));
+        assert!(crate::proxy::providers::is_codex_responses_endpoint(
+            "/v1/responses/compact?foo=bar"
+        ));
+        assert!(!crate::proxy::providers::is_codex_responses_endpoint(
+            "/v1/chat/completions"
+        ));
     }
 
     #[test]

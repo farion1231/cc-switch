@@ -540,6 +540,12 @@ function ProviderFormFull({
       if (initialData?.meta?.apiFormat === "openai_responses") {
         return "openai_responses";
       }
+      if (initialData?.meta?.apiFormat === "anthropic") {
+        return "anthropic";
+      }
+      if (initialData?.meta?.apiFormat === "gemini_native") {
+        return "gemini_native";
+      }
       return (
         codexApiFormatFromWireApi(
           extractCodexWireApi(

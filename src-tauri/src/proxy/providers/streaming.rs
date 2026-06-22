@@ -143,6 +143,271 @@ fn build_message_delta_event(stop_reason: Option<String>, usage_json: Option<Val
     })
 }
 
+fn current_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn map_anthropic_stop_reason_to_chat(stop_reason: Option<&str>) -> &'static str {
+    match stop_reason {
+        Some("max_tokens") => "length",
+        Some("tool_use") => "tool_calls",
+        Some("end_turn") | Some("stop_sequence") => "stop",
+        _ => "stop",
+    }
+}
+
+fn anthropic_usage_to_chat_usage(usage: Option<&Value>) -> Option<Value> {
+    let usage = usage?;
+    let input_tokens = usage
+        .get("input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_read = usage
+        .get("cache_read_input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_creation = usage
+        .get("cache_creation_input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let output_tokens = usage
+        .get("output_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let prompt_tokens = input_tokens
+        .saturating_add(cache_read)
+        .saturating_add(cache_creation);
+    let mut chat_usage = json!({
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": output_tokens,
+        "total_tokens": prompt_tokens.saturating_add(output_tokens)
+    });
+    if cache_read > 0 {
+        chat_usage["prompt_tokens_details"] = json!({ "cached_tokens": cache_read });
+    }
+    Some(chat_usage)
+}
+
+fn openai_chat_sse_data(chunk: Value) -> Bytes {
+    Bytes::from(format!(
+        "data: {}\n\n",
+        serde_json::to_string(&chunk).unwrap_or_default()
+    ))
+}
+
+fn openai_chat_chunk(id: &str, model: &str, delta: Value) -> Value {
+    json!({
+        "id": id,
+        "object": "chat.completion.chunk",
+        "created": current_unix_secs(),
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "delta": delta,
+            "finish_reason": null
+        }]
+    })
+}
+
+fn openai_chat_finish_chunk(
+    id: &str,
+    model: &str,
+    finish_reason: &str,
+    usage: Option<Value>,
+) -> Value {
+    let mut chunk = json!({
+        "id": id,
+        "object": "chat.completion.chunk",
+        "created": current_unix_secs(),
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "delta": {},
+            "finish_reason": finish_reason
+        }]
+    });
+    if let Some(usage) = usage {
+        chunk["usage"] = usage;
+    }
+    chunk
+}
+
+/// 创建 OpenAI Chat Completions SSE 流
+pub fn create_openai_chat_sse_stream_from_anthropic<E: std::error::Error + Send + 'static>(
+    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    async_stream::stream! {
+        let mut buffer = String::new();
+        let mut utf8_remainder: Vec<u8> = Vec::new();
+        let mut message_id = "chatcmpl_ccswitch".to_string();
+        let mut model = String::new();
+        let mut emitted_role = false;
+        let mut emitted_terminal = false;
+
+        tokio::pin!(stream);
+
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(bytes) => {
+                    crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+
+                    while let Some(block) = take_sse_block(&mut buffer) {
+                        if block.trim().is_empty() {
+                            continue;
+                        }
+
+                        for line in block.lines() {
+                            let Some(data) = strip_sse_field(line, "data") else {
+                                continue;
+                            };
+                            if data.trim() == "[DONE]" {
+                                if !emitted_terminal {
+                                    let finish = openai_chat_finish_chunk(&message_id, &model, "stop", None);
+                                    yield Ok(openai_chat_sse_data(finish));
+                                    emitted_terminal = true;
+                                }
+                                yield Ok(Bytes::from_static(b"data: [DONE]\n\n"));
+                                continue;
+                            }
+
+                            let Ok(event) = serde_json::from_str::<Value>(data) else {
+                                continue;
+                            };
+
+                            match event.get("type").and_then(Value::as_str) {
+                                Some("message_start") => {
+                                    if let Some(message) = event.get("message") {
+                                        if let Some(id) = message.get("id").and_then(Value::as_str) {
+                                            message_id = id.to_string();
+                                        }
+                                        if let Some(upstream_model) = message.get("model").and_then(Value::as_str) {
+                                            model = upstream_model.to_string();
+                                        }
+                                    }
+                                    if !emitted_role {
+                                        let chunk = openai_chat_chunk(&message_id, &model, json!({"role": "assistant"}));
+                                        yield Ok(openai_chat_sse_data(chunk));
+                                        emitted_role = true;
+                                    }
+                                }
+                                Some("content_block_start") => {
+                                    if !emitted_role {
+                                        let chunk = openai_chat_chunk(&message_id, &model, json!({"role": "assistant"}));
+                                        yield Ok(openai_chat_sse_data(chunk));
+                                        emitted_role = true;
+                                    }
+                                    let index = event.get("index").and_then(Value::as_u64).unwrap_or(0);
+                                    let Some(content_block) = event.get("content_block") else {
+                                        continue;
+                                    };
+                                    match content_block.get("type").and_then(Value::as_str) {
+                                        Some("text") => {
+                                            if let Some(text) = content_block.get("text").and_then(Value::as_str).filter(|text| !text.is_empty()) {
+                                                let chunk = openai_chat_chunk(&message_id, &model, json!({"content": text}));
+                                                yield Ok(openai_chat_sse_data(chunk));
+                                            }
+                                        }
+                                        Some("thinking") => {
+                                            if let Some(text) = content_block.get("thinking").and_then(Value::as_str).filter(|text| !text.is_empty()) {
+                                                let chunk = openai_chat_chunk(&message_id, &model, json!({"reasoning_content": text}));
+                                                yield Ok(openai_chat_sse_data(chunk));
+                                            }
+                                        }
+                                        Some("tool_use") => {
+                                            let id = content_block.get("id").and_then(Value::as_str).unwrap_or("");
+                                            let name = content_block.get("name").and_then(Value::as_str).unwrap_or("");
+                                            let chunk = openai_chat_chunk(&message_id, &model, json!({
+                                                "tool_calls": [{
+                                                    "index": index,
+                                                    "id": id,
+                                                    "type": "function",
+                                                    "function": {
+                                                        "name": name,
+                                                        "arguments": ""
+                                                    }
+                                                }]
+                                            }));
+                                            yield Ok(openai_chat_sse_data(chunk));
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                Some("content_block_delta") => {
+                                    let index = event.get("index").and_then(Value::as_u64).unwrap_or(0);
+                                    let Some(delta) = event.get("delta") else {
+                                        continue;
+                                    };
+                                    match delta.get("type").and_then(Value::as_str) {
+                                        Some("text_delta") => {
+                                            if let Some(text) = delta.get("text").and_then(Value::as_str).filter(|text| !text.is_empty()) {
+                                                let chunk = openai_chat_chunk(&message_id, &model, json!({"content": text}));
+                                                yield Ok(openai_chat_sse_data(chunk));
+                                            }
+                                        }
+                                        Some("thinking_delta") => {
+                                            if let Some(text) = delta.get("thinking").and_then(Value::as_str).filter(|text| !text.is_empty()) {
+                                                let chunk = openai_chat_chunk(&message_id, &model, json!({"reasoning_content": text}));
+                                                yield Ok(openai_chat_sse_data(chunk));
+                                            }
+                                        }
+                                        Some("input_json_delta") => {
+                                            if let Some(partial_json) = delta.get("partial_json").and_then(Value::as_str) {
+                                                let chunk = openai_chat_chunk(&message_id, &model, json!({
+                                                    "tool_calls": [{
+                                                        "index": index,
+                                                        "function": {
+                                                            "arguments": partial_json
+                                                        }
+                                                    }]
+                                                }));
+                                                yield Ok(openai_chat_sse_data(chunk));
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                Some("message_delta") => {
+                                    let stop_reason = event
+                                        .pointer("/delta/stop_reason")
+                                        .and_then(Value::as_str);
+                                    let usage = anthropic_usage_to_chat_usage(event.get("usage"));
+                                    let finish = openai_chat_finish_chunk(
+                                        &message_id,
+                                        &model,
+                                        map_anthropic_stop_reason_to_chat(stop_reason),
+                                        usage,
+                                    );
+                                    yield Ok(openai_chat_sse_data(finish));
+                                    emitted_terminal = true;
+                                }
+                                Some("message_stop") => {
+                                    if !emitted_terminal {
+                                        let finish = openai_chat_finish_chunk(&message_id, &model, "stop", None);
+                                        yield Ok(openai_chat_sse_data(finish));
+                                        emitted_terminal = true;
+                                    }
+                                    yield Ok(Bytes::from_static(b"data: [DONE]\n\n"));
+                                }
+                                Some("error") => {
+                                    yield Ok(Bytes::from(format!("data: {data}\n\n")));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    yield Err(std::io::Error::other(e.to_string()));
+                    break;
+                }
+            }
+        }
+    }
+}
+
 /// 创建 Anthropic SSE 流
 pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
@@ -728,6 +993,84 @@ mod tests {
                 serde_json::from_str::<Value>(data).ok()
             })
             .collect()
+    }
+
+    async fn collect_openai_chat_chunks_from_anthropic(input: &str) -> Vec<Value> {
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
+        let converted = create_openai_chat_sse_stream_from_anthropic(upstream);
+        let chunks: Vec<_> = converted.collect().await;
+        let merged = chunks
+            .into_iter()
+            .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
+            .collect::<String>();
+
+        merged
+            .split("\n\n")
+            .filter_map(|block| {
+                let data = block
+                    .lines()
+                    .find_map(|line| strip_sse_field(line, "data"))?;
+                if data.trim() == "[DONE]" {
+                    return None;
+                }
+                serde_json::from_str::<Value>(data).ok()
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn converts_anthropic_text_sse_to_openai_chat_sse() {
+        let input = concat!(
+            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-sonnet-4-6\"}}\n\n",
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n",
+            "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"input_tokens\":10,\"cache_read_input_tokens\":2,\"output_tokens\":3}}\n\n",
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+        );
+
+        let chunks = collect_openai_chat_chunks_from_anthropic(input).await;
+        assert_eq!(chunks[0]["choices"][0]["delta"]["role"], "assistant");
+        assert_eq!(chunks[1]["choices"][0]["delta"]["content"], "Hello");
+        let finish = chunks
+            .iter()
+            .find(|chunk| chunk["choices"][0]["finish_reason"] == "stop")
+            .expect("finish chunk");
+        assert_eq!(finish["usage"]["prompt_tokens"], 12);
+        assert_eq!(finish["usage"]["completion_tokens"], 3);
+        assert_eq!(finish["usage"]["prompt_tokens_details"]["cached_tokens"], 2);
+    }
+
+    #[tokio::test]
+    async fn converts_anthropic_tool_sse_to_openai_chat_tool_calls() {
+        let input = concat!(
+            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_tool\",\"model\":\"claude-sonnet-4-6\"}}\n\n",
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"Bash\",\"input\":{}}}\n\n",
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"command\\\":\"}}\n\n",
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"pwd\\\"}\"}}\n\n",
+            "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"input_tokens\":4,\"output_tokens\":2}}\n\n",
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+        );
+
+        let chunks = collect_openai_chat_chunks_from_anthropic(input).await;
+        let start = chunks
+            .iter()
+            .find_map(|chunk| chunk["choices"][0]["delta"]["tool_calls"].as_array())
+            .expect("tool start");
+        assert_eq!(start[0]["id"], "toolu_1");
+        assert_eq!(start[0]["function"]["name"], "Bash");
+        let arg_deltas: Vec<&str> = chunks
+            .iter()
+            .filter_map(|chunk| {
+                chunk["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"].as_str()
+            })
+            .collect();
+        assert!(arg_deltas.contains(&"{\"command\":"));
+        assert!(arg_deltas.contains(&"\"pwd\"}"));
+        assert!(chunks
+            .iter()
+            .any(|chunk| chunk["choices"][0]["finish_reason"] == "tool_calls"));
     }
 
     fn event_type(event: &Value) -> Option<&str> {
