@@ -1279,12 +1279,14 @@ impl Database {
 
     /// v11 -> v12 迁移：添加 Kilo 独立启用列
     fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
-        Self::add_column_if_missing(
-            conn,
-            "mcp_servers",
-            "enabled_kilo",
-            "BOOLEAN NOT NULL DEFAULT 0",
-        )?;
+        if Self::table_exists(conn, "mcp_servers")? {
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_kilo",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
 
         if Self::table_exists(conn, "skills")? {
             Self::add_column_if_missing(
