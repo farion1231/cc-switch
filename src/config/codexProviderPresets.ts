@@ -1345,6 +1345,11 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
         contextWindow: 200000,
       },
       {
+        model: "minimax-m2.5",
+        displayName: "MiniMax M2.5",
+        contextWindow: 1000000,
+      },
+      {
         model: "qwen3.5-plus",
         displayName: "Qwen3.5 Plus",
         contextWindow: 1000000,
