@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
   Sparkles,
   Trash2,
@@ -25,6 +26,7 @@ import {
   useCheckSkillUpdates,
   useUpdateSkill,
   type InstalledSkill,
+  type SkillRepoFetchFailure,
   type SkillUpdateInfo,
 } from "@/hooks/useSkills";
 import type { AppId } from "@/lib/api/types";
@@ -35,6 +37,7 @@ import { SKILLS_APP_IDS } from "@/config/appConfig";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
+import { formatSkillRepoFailure } from "@/lib/errors/skillErrorParser";
 import {
   Dialog,
   DialogContent,
@@ -43,6 +46,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+
+const UPDATE_CHECK_FAILURE_TOAST_DURATION_MS = Infinity;
 
 interface UnifiedSkillsPanelProps {
   onOpenDiscovery: () => void;
@@ -62,6 +67,16 @@ function formatSkillBackupDate(unixSeconds: number): string {
   return Number.isNaN(date.getTime())
     ? String(unixSeconds)
     : date.toLocaleString();
+}
+
+function formatUpdateFailures(
+  failures: SkillRepoFetchFailure[],
+  t: TFunction,
+): string {
+  return failures
+    .slice(0, 3)
+    .map((failure) => formatSkillRepoFailure(failure, t))
+    .join("\n");
 }
 
 const UnifiedSkillsPanel = React.forwardRef<
@@ -96,19 +111,18 @@ const UnifiedSkillsPanel = React.forwardRef<
   const importMutation = useImportSkillsFromApps();
   const installFromZipMutation = useInstallSkillsFromZip();
   const {
-    data: skillUpdates,
+    data: skillUpdateResult,
     refetch: checkUpdates,
     isFetching: isCheckingUpdates,
   } = useCheckSkillUpdates();
+  const skillUpdates = skillUpdateResult?.updates ?? [];
   const updateSkillMutation = useUpdateSkill();
   const [isUpdatingAll, setIsUpdatingAll] = useState(false);
 
   const updatesMap = useMemo(() => {
     const map: Record<string, SkillUpdateInfo> = {};
-    if (skillUpdates) {
-      for (const u of skillUpdates) {
-        map[u.id] = u;
-      }
+    for (const u of skillUpdates) {
+      map[u.id] = u;
     }
     return map;
   }, [skillUpdates]);
@@ -231,9 +245,33 @@ const UnifiedSkillsPanel = React.forwardRef<
   const handleCheckUpdates = async () => {
     try {
       const result = await checkUpdates();
-      const updates = result.data || [];
-      if (updates.length === 0) {
+      const updates = result.data?.updates ?? [];
+      const failures = result.data?.failures ?? [];
+      if (updates.length === 0 && failures.length === 0) {
         toast.success(t("skills.noUpdates"), { closeButton: true });
+      } else if (failures.length > 0) {
+        const key =
+          updates.length > 0
+            ? "skills.updateCheckPartialWithUpdates"
+            : "skills.updateCheckIncomplete";
+        const message =
+          updates.length > 0
+            ? t(key, {
+                updateCount: updates.length,
+                failureCount: failures.length,
+              })
+            : t(key, { failureCount: failures.length });
+        const description = formatUpdateFailures(failures, t);
+        const options = {
+          closeButton: true,
+          description,
+          duration: UPDATE_CHECK_FAILURE_TOAST_DURATION_MS,
+        };
+        if (updates.length > 0) {
+          toast.info(message, options);
+        } else {
+          toast.error(message, options);
+        }
       } else {
         toast.info(t("skills.updatesFound", { count: updates.length }), {
           closeButton: true,
@@ -256,7 +294,7 @@ const UnifiedSkillsPanel = React.forwardRef<
   };
 
   const handleUpdateAll = async () => {
-    if (!skillUpdates || skillUpdates.length === 0) return;
+    if (skillUpdates.length === 0) return;
     setIsUpdatingAll(true);
     let successCount = 0;
     for (const update of skillUpdates) {
@@ -357,9 +395,8 @@ const UnifiedSkillsPanel = React.forwardRef<
           <div
             className="transition-all duration-300 ease-out overflow-hidden"
             style={{
-              maxWidth:
-                skillUpdates && skillUpdates.length > 0 ? "200px" : "0px",
-              opacity: skillUpdates && skillUpdates.length > 0 ? 1 : 0,
+              maxWidth: skillUpdates.length > 0 ? "200px" : "0px",
+              opacity: skillUpdates.length > 0 ? 1 : 0,
             }}
           >
             <Button
@@ -377,7 +414,7 @@ const UnifiedSkillsPanel = React.forwardRef<
               )}
               {isUpdatingAll
                 ? t("skills.updatingAll")
-                : t("skills.updateAll", { count: skillUpdates?.length ?? 0 })}
+                : t("skills.updateAll", { count: skillUpdates.length })}
             </Button>
           </div>
           <Button

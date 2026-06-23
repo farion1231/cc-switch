@@ -5,6 +5,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import UnifiedSkillsPanel, {
   type UnifiedSkillsPanelHandle,
 } from "@/components/skills/UnifiedSkillsPanel";
+import { toast } from "sonner";
 
 const scanUnmanagedMock = vi.fn();
 const toggleSkillAppMock = vi.fn();
@@ -13,6 +14,7 @@ const importSkillsMock = vi.fn();
 const installFromZipMock = vi.fn();
 const deleteSkillBackupMock = vi.fn();
 const restoreSkillBackupMock = vi.fn();
+const checkUpdatesMock = vi.fn();
 
 vi.mock("sonner", () => ({
   toast: {
@@ -65,8 +67,8 @@ vi.mock("@/hooks/useSkills", () => ({
     mutateAsync: installFromZipMock,
   }),
   useCheckSkillUpdates: () => ({
-    data: [],
-    refetch: vi.fn(),
+    data: { updates: [], failures: [] },
+    refetch: checkUpdatesMock,
     isFetching: false,
   }),
   useUpdateSkill: () => ({
@@ -94,6 +96,7 @@ describe("UnifiedSkillsPanel", () => {
     installFromZipMock.mockReset();
     deleteSkillBackupMock.mockReset();
     restoreSkillBackupMock.mockReset();
+    checkUpdatesMock.mockReset();
   });
 
   it("opens the import dialog without crashing when app toggles render", async () => {
@@ -116,5 +119,48 @@ describe("UnifiedSkillsPanel", () => {
       expect(screen.getByText("Shared Skill")).toBeInTheDocument();
       expect(screen.getByText("/tmp/shared-skill")).toBeInTheDocument();
     });
+  });
+
+  it("reports incomplete update checks instead of treating failures as latest", async () => {
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+    checkUpdatesMock.mockResolvedValue({
+      data: {
+        updates: [],
+        failures: [
+          {
+            owner: "owner",
+            name: "repo",
+            branch: "main",
+            error: "network unavailable",
+          },
+        ],
+      },
+    });
+
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={() => {}}
+        currentApp="claude"
+      />,
+    );
+
+    await act(async () => {
+      await ref.current?.checkUpdates();
+    });
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        "skills.updateCheckIncomplete",
+        expect.objectContaining({
+          description: "owner/repo@main: skills.repo.failureReason.network",
+          duration: Infinity,
+        }),
+      );
+    });
+    expect(toast.success).not.toHaveBeenCalledWith(
+      "skills.noUpdates",
+      expect.anything(),
+    );
   });
 });

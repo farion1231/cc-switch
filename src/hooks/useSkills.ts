@@ -10,6 +10,8 @@ import {
   type DiscoverableSkill,
   type ImportSkillSelection,
   type InstalledSkill,
+  type SkillUpdateCheckResult,
+  type SkillRepoFetchFailure,
   type SkillUpdateInfo,
   type SkillsShSearchResult,
 } from "@/lib/api/skills";
@@ -128,6 +130,20 @@ export function useUninstallSkill() {
           if (!oldData) return oldData;
           return oldData.filter((s) => s.id !== _vars.id);
         },
+      );
+      const installedAfterRemoval = queryClient.getQueryData<InstalledSkill[]>([
+        "skills",
+        "installed",
+      ]);
+      queryClient.setQueryData<SkillUpdateCheckResult>(
+        ["skills", "updates"],
+        (oldData) =>
+          oldData
+            ? filterUpdateCheckResultForInstalledSkills(
+                oldData,
+                installedAfterRemoval,
+              )
+            : oldData,
       );
 
       // 更新 discoverable 缓存中对应技能的 installed 状态
@@ -292,13 +308,104 @@ export function useInstallSkillsFromZip() {
 
 // ========== 更新检测 ==========
 
+function normalizeRepoBranch(branch?: string): string {
+  return branch || "main";
+}
+
+function skillRepoIdentity(
+  owner?: string,
+  name?: string,
+  branch?: string,
+): string | null {
+  if (!owner || !name) return null;
+  return `${owner}/${name}@${normalizeRepoBranch(branch)}`.toLowerCase();
+}
+
+export function filterUpdateCheckResultForInstalledSkills(
+  result: SkillUpdateCheckResult,
+  installedSkills?: InstalledSkill[],
+  installedAtStart?: InstalledSkill[],
+): SkillUpdateCheckResult {
+  if (!installedSkills) return result;
+
+  const installedById = new Map(
+    installedSkills.map((skill) => [skill.id, skill]),
+  );
+  const initialById = installedAtStart
+    ? new Map(installedAtStart.map((skill) => [skill.id, skill]))
+    : undefined;
+  const installedRepos = new Set<string>();
+  for (const skill of installedSkills) {
+    const identity = skillRepoIdentity(
+      skill.repoOwner,
+      skill.repoName,
+      skill.repoBranch,
+    );
+    if (identity) {
+      installedRepos.add(identity);
+    }
+  }
+
+  return {
+    updates: result.updates.filter((update) => {
+      const current = installedById.get(update.id);
+      if (!current) return false;
+
+      const initial = initialById?.get(update.id);
+      return !initial || isSameInstalledSkill(current, initial);
+    }),
+    failures: result.failures.filter((failure) => {
+      if (failure.skillId) {
+        const current = installedById.get(failure.skillId);
+        if (!current) return false;
+
+        const initial = initialById?.get(failure.skillId);
+        return !initial || isSameInstalledSkill(current, initial);
+      }
+
+      return installedRepos.has(
+        skillRepoIdentity(failure.owner, failure.name, failure.branch) ?? "",
+      );
+    }),
+  };
+}
+
+function isSameInstalledSkill(
+  current: InstalledSkill,
+  initial: InstalledSkill,
+) {
+  return (
+    current.id === initial.id &&
+    current.directory === initial.directory &&
+    current.repoOwner === initial.repoOwner &&
+    current.repoName === initial.repoName &&
+    normalizeRepoBranch(current.repoBranch) ===
+      normalizeRepoBranch(initial.repoBranch) &&
+    current.installedAt === initial.installedAt &&
+    current.contentHash === initial.contentHash
+  );
+}
+
 /**
  * 检查 Skills 更新（手动触发）
  */
 export function useCheckSkillUpdates() {
+  const queryClient = useQueryClient();
+
   return useQuery({
     queryKey: ["skills", "updates"],
-    queryFn: () => skillsApi.checkUpdates(),
+    queryFn: async () => {
+      const installedAtStart = queryClient.getQueryData<InstalledSkill[]>([
+        "skills",
+        "installed",
+      ]);
+      const result = await skillsApi.checkUpdates();
+      return filterUpdateCheckResultForInstalledSkills(
+        result,
+        queryClient.getQueryData<InstalledSkill[]>(["skills", "installed"]),
+        installedAtStart,
+      );
+    },
     enabled: false,
     staleTime: 5 * 60 * 1000,
   });
@@ -321,11 +428,14 @@ export function useUpdateSkill() {
           );
         },
       );
-      queryClient.setQueryData<SkillUpdateInfo[]>(
+      queryClient.setQueryData<SkillUpdateCheckResult>(
         ["skills", "updates"],
         (oldData) => {
           if (!oldData) return oldData;
-          return oldData.filter((u) => u.id !== updatedSkill.id);
+          return {
+            ...oldData,
+            updates: oldData.updates.filter((u) => u.id !== updatedSkill.id),
+          };
         },
       );
     },
@@ -359,6 +469,8 @@ export type {
   DiscoverableSkill,
   ImportSkillSelection,
   SkillBackupEntry,
+  SkillRepoFetchFailure,
+  SkillUpdateCheckResult,
   SkillUpdateInfo,
   SkillsShSearchResult,
   AppId,

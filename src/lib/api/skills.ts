@@ -97,6 +97,21 @@ export interface SkillUpdateInfo {
   remoteHash: string;
 }
 
+/** 仓库拉取/扫描失败摘要 */
+export interface SkillRepoFetchFailure {
+  owner: string;
+  name: string;
+  branch: string;
+  skillId?: string;
+  error: string;
+}
+
+/** Skills 更新检查结果 */
+export interface SkillUpdateCheckResult {
+  updates: SkillUpdateInfo[];
+  failures: SkillRepoFetchFailure[];
+}
+
 /** 存储位置迁移结果 */
 export interface MigrationResult {
   migratedCount: number;
@@ -195,7 +210,7 @@ export const skillsApi = {
   },
 
   /** 检查 Skills 更新 */
-  async checkUpdates(): Promise<SkillUpdateInfo[]> {
+  async checkUpdates(): Promise<SkillUpdateCheckResult> {
     return await invoke("check_skill_updates");
   },
 

@@ -7,6 +7,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
+use futures::{stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -186,6 +187,26 @@ pub struct SkillUpdateInfo {
     pub remote_hash: String,
 }
 
+/// 仓库拉取/扫描失败摘要
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillRepoFetchFailure {
+    pub owner: String,
+    pub name: String,
+    pub branch: String,
+    #[serde(rename = "skillId", skip_serializing_if = "Option::is_none")]
+    pub skill_id: Option<String>,
+    pub error: String,
+}
+
+/// Skill 更新检查结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillUpdateCheckResult {
+    pub updates: Vec<SkillUpdateInfo>,
+    pub failures: Vec<SkillRepoFetchFailure>,
+}
+
 /// Skill 存储位置迁移结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -265,6 +286,7 @@ struct SkillBackupMetadata {
 }
 
 const SKILL_BACKUP_RETAIN_COUNT: usize = 20;
+const UPDATE_CHECK_REPO_CONCURRENCY: usize = 4;
 
 /// 技能元数据 (从 SKILL.md 解析)
 #[derive(Debug, Clone, Deserialize)]
@@ -870,13 +892,12 @@ impl SkillService {
         Ok(())
     }
 
-    /// 检查所有已安装 Skill 的更新
+    /// 检查所有已安装 Skill 的更新，并保留未完成检查的仓库。
     ///
     /// 仅检查有 repo_owner 的 Skill（本地 Skill 跳过），
     /// 按仓库分组下载，避免重复下载同一仓库。
-    pub async fn check_updates(&self, db: &Arc<Database>) -> Result<Vec<SkillUpdateInfo>> {
+    pub async fn check_updates(&self, db: &Arc<Database>) -> Result<SkillUpdateCheckResult> {
         let skills = db.get_all_installed_skills()?;
-        let mut updates = Vec::new();
 
         // 按 (owner, name, branch) 分组
         let mut repo_groups: HashMap<(String, String, String), Vec<InstalledSkill>> =
@@ -896,95 +917,182 @@ impl SkillService {
         }
 
         let ssot_dir = Self::get_ssot_dir()?;
+        let repo_results: Vec<SkillUpdateCheckResult> = stream::iter(repo_groups)
+            .map(|((owner, name, branch), group_skills)| {
+                let ssot_dir = ssot_dir.clone();
+                async move {
+                    self.check_repo_updates(db, ssot_dir, owner, name, branch, group_skills)
+                        .await
+                }
+            })
+            .buffer_unordered(UPDATE_CHECK_REPO_CONCURRENCY)
+            .collect()
+            .await;
 
-        for ((owner, name, branch), group_skills) in &repo_groups {
-            let repo = SkillRepo {
+        let mut updates = Vec::new();
+        let mut failures = Vec::new();
+        for result in repo_results {
+            updates.extend(result.updates);
+            failures.extend(result.failures);
+        }
+
+        Ok(SkillUpdateCheckResult { updates, failures })
+    }
+
+    async fn check_repo_updates(
+        &self,
+        db: &Arc<Database>,
+        ssot_dir: PathBuf,
+        owner: String,
+        name: String,
+        branch: String,
+        group_skills: Vec<InstalledSkill>,
+    ) -> SkillUpdateCheckResult {
+        let mut updates = Vec::new();
+        let mut failures = Vec::new();
+        let repo = SkillRepo {
+            owner: owner.clone(),
+            name: name.clone(),
+            branch: branch.clone(),
+            enabled: true,
+        };
+
+        // 下载仓库 ZIP
+        let (temp_dir, _used_branch) = match timeout(
+            std::time::Duration::from_secs(60),
+            self.download_repo(&repo),
+        )
+        .await
+        {
+            Ok(Ok(result)) => result,
+            Ok(Err(e)) => {
+                log::warn!("检查更新时下载 {owner}/{name} 失败: {e}");
+                failures.push(SkillRepoFetchFailure {
+                    owner,
+                    name,
+                    branch,
+                    skill_id: None,
+                    error: e.to_string(),
+                });
+                return SkillUpdateCheckResult { updates, failures };
+            }
+            Err(_) => {
+                log::warn!("检查更新时下载 {owner}/{name} 超时");
+                failures.push(SkillRepoFetchFailure {
+                    owner,
+                    name,
+                    branch,
+                    skill_id: None,
+                    error: "download timed out".to_string(),
+                });
+                return SkillUpdateCheckResult { updates, failures };
+            }
+        };
+
+        // 扫描仓库中的所有 Skill 目录
+        let mut remote_skills: Vec<DiscoverableSkill> = Vec::new();
+        if let Err(e) = self.scan_dir_recursive(&temp_dir, &temp_dir, &repo, &mut remote_skills) {
+            failures.push(SkillRepoFetchFailure {
                 owner: owner.clone(),
                 name: name.clone(),
                 branch: branch.clone(),
-                enabled: true,
-            };
-
-            // 下载仓库 ZIP
-            let (temp_dir, _used_branch) = match timeout(
-                std::time::Duration::from_secs(60),
-                self.download_repo(&repo),
-            )
-            .await
-            {
-                Ok(Ok(result)) => result,
-                Ok(Err(e)) => {
-                    log::warn!("检查更新时下载 {}/{} 失败: {e}", owner, name);
-                    continue;
-                }
-                Err(_) => {
-                    log::warn!("检查更新时下载 {}/{} 超时", owner, name);
-                    continue;
-                }
-            };
-
-            // 扫描仓库中的所有 Skill 目录
-            let mut remote_skills: Vec<DiscoverableSkill> = Vec::new();
-            let _ = self.scan_dir_recursive(&temp_dir, &temp_dir, &repo, &mut remote_skills);
-
-            for skill in group_skills {
-                // 在远程仓库中找到匹配的 Skill 目录
-                let remote_match = remote_skills.iter().find(|rs| {
-                    // 匹配方式：安装名称的最后一段
-                    let remote_install_name =
-                        rs.directory.rsplit('/').next().unwrap_or(&rs.directory);
-                    remote_install_name.eq_ignore_ascii_case(&skill.directory)
-                });
-
-                let remote_skill_dir = match remote_match {
-                    Some(rs) => match Self::resolve_skill_source_dir(&temp_dir, &rs.directory) {
-                        Some(path) => path,
-                        None => continue,
-                    },
-                    None => continue,
-                };
-
-                let remote_hash = match Self::compute_dir_hash(&remote_skill_dir) {
-                    Ok(h) => h,
-                    Err(e) => {
-                        log::warn!("计算远程哈希失败 {}: {e}", skill.id);
-                        continue;
-                    }
-                };
-
-                // 本地哈希：优先数据库，否则实时计算
-                let local_hash = match &skill.content_hash {
-                    Some(h) => Some(h.clone()),
-                    None => {
-                        let local_dir = ssot_dir.join(&skill.directory);
-                        if local_dir.exists() {
-                            match Self::compute_dir_hash(&local_dir) {
-                                Ok(h) => {
-                                    let _ = db.update_skill_hash(&skill.id, &h, 0);
-                                    Some(h)
-                                }
-                                Err(_) => None,
-                            }
-                        } else {
-                            None
-                        }
-                    }
-                };
-
-                if local_hash.as_deref() != Some(&remote_hash) {
-                    updates.push(SkillUpdateInfo {
-                        id: skill.id.clone(),
-                        name: skill.name.clone(),
-                        current_hash: local_hash,
-                        remote_hash,
-                    });
-                }
-            }
-
+                skill_id: None,
+                error: e.to_string(),
+            });
             let _ = fs::remove_dir_all(&temp_dir);
+            return SkillUpdateCheckResult { updates, failures };
         }
 
-        Ok(updates)
+        if let Some(failure) = Self::missing_remote_skill_failure(
+            &owner,
+            &name,
+            &branch,
+            &group_skills,
+            &remote_skills,
+        ) {
+            failures.push(failure);
+        }
+
+        for skill in &group_skills {
+            // 在远程仓库中找到匹配的 Skill 目录
+            let remote_match = Self::remote_skill_for_directory(&remote_skills, &skill.directory);
+
+            let remote_skill_dir = match remote_match {
+                Some(rs) => match Self::resolve_skill_source_dir(&temp_dir, &rs.directory) {
+                    Some(path) => path,
+                    None => continue,
+                },
+                None => continue,
+            };
+
+            let remote_hash = match Self::compute_dir_hash(&remote_skill_dir) {
+                Ok(h) => h,
+                Err(e) => {
+                    log::warn!("计算远程哈希失败 {}: {e}", skill.id);
+                    continue;
+                }
+            };
+
+            // 本地哈希：优先数据库，否则实时计算
+            let local_hash = match &skill.content_hash {
+                Some(h) => Some(h.clone()),
+                None => {
+                    let local_dir = ssot_dir.join(&skill.directory);
+                    if local_dir.exists() {
+                        match Self::compute_dir_hash(&local_dir) {
+                            Ok(h) => {
+                                let _ = db.update_skill_hash(&skill.id, &h, 0);
+                                Some(h)
+                            }
+                            Err(_) => None,
+                        }
+                    } else {
+                        None
+                    }
+                }
+            };
+
+            if local_hash.as_deref() != Some(&remote_hash) {
+                updates.push(SkillUpdateInfo {
+                    id: skill.id.clone(),
+                    name: skill.name.clone(),
+                    current_hash: local_hash,
+                    remote_hash,
+                });
+            }
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        SkillUpdateCheckResult { updates, failures }
+    }
+
+    fn remote_skill_for_directory<'a>(
+        remote_skills: &'a [DiscoverableSkill],
+        directory: &str,
+    ) -> Option<&'a DiscoverableSkill> {
+        remote_skills.iter().find(|rs| {
+            let remote_install_name = rs.directory.rsplit('/').next().unwrap_or(&rs.directory);
+            remote_install_name.eq_ignore_ascii_case(directory)
+        })
+    }
+
+    fn missing_remote_skill_failure(
+        owner: &str,
+        name: &str,
+        branch: &str,
+        installed_skills: &[InstalledSkill],
+        remote_skills: &[DiscoverableSkill],
+    ) -> Option<SkillRepoFetchFailure> {
+        let missing = installed_skills.iter().find(|skill| {
+            Self::remote_skill_for_directory(remote_skills, &skill.directory).is_none()
+        })?;
+        Some(SkillRepoFetchFailure {
+            owner: owner.to_string(),
+            name: name.to_string(),
+            branch: branch.to_string(),
+            skill_id: Some(missing.id.clone()),
+            error: format!("SKILL_DIR_NOT_FOUND: {}", missing.directory),
+        })
     }
 
     /// 更新单个 Skill（重新下载并替换本地文件）
@@ -3060,6 +3168,36 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn installed_skill(directory: &str) -> InstalledSkill {
+        InstalledSkill {
+            id: format!("owner/repo:{directory}"),
+            name: directory.to_string(),
+            description: None,
+            directory: directory.to_string(),
+            repo_owner: Some("owner".to_string()),
+            repo_name: Some("repo".to_string()),
+            repo_branch: Some("main".to_string()),
+            readme_url: None,
+            apps: SkillApps::default(),
+            installed_at: 1,
+            content_hash: None,
+            updated_at: 0,
+        }
+    }
+
+    fn discoverable_skill(directory: &str) -> DiscoverableSkill {
+        DiscoverableSkill {
+            key: format!("owner/repo:{directory}"),
+            name: directory.to_string(),
+            description: String::new(),
+            directory: directory.to_string(),
+            readme_url: None,
+            repo_owner: "owner".to_string(),
+            repo_name: "repo".to_string(),
+            repo_branch: "main".to_string(),
+        }
+    }
+
     fn write_skill(dir: &Path, name: &str) {
         fs::create_dir_all(dir).expect("create skill dir");
         fs::write(
@@ -3102,6 +3240,27 @@ mod tests {
             .expect("install name should fall back to the matching discovered skill directory");
 
         assert_eq!(resolved, nested);
+    }
+
+    #[test]
+    fn missing_remote_skill_is_reported_as_update_check_failure() {
+        let failure = SkillService::missing_remote_skill_failure(
+            "owner",
+            "repo",
+            "main",
+            &[installed_skill("installed-skill")],
+            &[discoverable_skill("other-skill")],
+        )
+        .expect("missing remote skill should produce a repo failure");
+
+        assert_eq!(failure.owner, "owner");
+        assert_eq!(failure.name, "repo");
+        assert_eq!(failure.branch, "main");
+        assert_eq!(
+            failure.skill_id.as_deref(),
+            Some("owner/repo:installed-skill")
+        );
+        assert!(failure.error.contains("SKILL_DIR_NOT_FOUND"));
     }
 
     #[test]
