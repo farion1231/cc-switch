@@ -25,15 +25,17 @@ use url::Url;
 
 use super::copilot_auth::{GitHubAccount, GitHubDeviceCodeResponse};
 
-const XAI_CLIENT_ID: &str = "grok-build";
-const XAI_AUTH_URL: &str = "https://accounts.x.ai/oauth/authorize";
-const XAI_TOKEN_URL: &str = "https://accounts.x.ai/oauth/token";
+const XAI_CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
+const XAI_AUTH_URL: &str = "https://auth.x.ai/oauth2/authorize";
+const XAI_TOKEN_URL: &str = "https://auth.x.ai/oauth2/token";
 const XAI_REDIRECT_URI: &str = "http://127.0.0.1:56121/callback";
-const XAI_SCOPE: &str = "openid profile email offline_access";
+const XAI_SCOPE: &str = "openid profile email offline_access grok-cli:access api:access";
 const TOKEN_REFRESH_BUFFER_MS: i64 = 60_000;
 const DEFAULT_LOGIN_EXPIRES_IN: u64 = 300;
 const DEFAULT_LOGIN_INTERVAL: u64 = 3;
 const XAI_USER_AGENT: &str = "cc-switch-xai-oauth";
+#[cfg(not(test))]
+const LOOPBACK_REQUEST_MAX_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum XaiOAuthError {
@@ -162,6 +164,7 @@ impl CachedAccessToken {
 struct PendingXaiLogin {
     authorization_url: String,
     code_verifier: String,
+    code_challenge: String,
     expires_at_ms: i64,
     completion: Option<PendingXaiLoginCompletion>,
 }
@@ -228,9 +231,10 @@ impl XaiOAuthManager {
 
     pub async fn start_device_flow(&self) -> Result<GitHubDeviceCodeResponse, XaiOAuthError> {
         let state = generate_pkce_value("state");
+        let nonce = generate_pkce_value("nonce");
         let code_verifier = generate_pkce_value("verifier");
         let code_challenge = pkce_challenge(&code_verifier);
-        let authorization_url = build_authorization_url(&state, &code_challenge)?;
+        let authorization_url = build_authorization_url(&state, &code_challenge, &nonce)?;
         let expires_at_ms =
             chrono::Utc::now().timestamp_millis() + (DEFAULT_LOGIN_EXPIRES_IN as i64) * 1000;
 
@@ -243,6 +247,7 @@ impl XaiOAuthManager {
                 PendingXaiLogin {
                     authorization_url: authorization_url.clone(),
                     code_verifier,
+                    code_challenge,
                     expires_at_ms,
                     completion: None,
                 },
@@ -299,7 +304,7 @@ impl XaiOAuthManager {
         .ok_or(XaiOAuthError::ExpiredToken)?;
 
         let tokens = self
-            .exchange_code_for_tokens(code, &pending.code_verifier)
+            .exchange_code_for_tokens(code, &pending.code_verifier, &pending.code_challenge)
             .await?;
         self.complete_pending_login_with_tokens(state, tokens).await
     }
@@ -321,9 +326,7 @@ impl XaiOAuthManager {
 
         while let Ok(Ok((mut stream, _))) = tokio::time::timeout(deadline, listener.accept()).await
         {
-            let mut buffer = [0_u8; 4096];
-            let bytes_read = stream.read(&mut buffer).await?;
-            let request = String::from_utf8_lossy(&buffer[..bytes_read]);
+            let request = read_loopback_request(&mut stream).await?;
             let path = request
                 .lines()
                 .next()
@@ -332,6 +335,9 @@ impl XaiOAuthManager {
 
             let handled = self.handle_loopback_callback_url(path).await;
             let success = handled.is_ok();
+            if let Err(err) = &handled {
+                log::warn!("[XaiOAuth] loopback callback failed: {err}");
+            }
             write_loopback_response(&mut stream, success).await?;
 
             if success {
@@ -425,6 +431,7 @@ impl XaiOAuthManager {
         &self,
         code: &str,
         code_verifier: &str,
+        code_challenge: &str,
     ) -> Result<XaiOAuthTokenResponse, XaiOAuthError> {
         let response = self
             .http_client
@@ -436,6 +443,8 @@ impl XaiOAuthManager {
                 ("client_id", XAI_CLIENT_ID),
                 ("code", code),
                 ("code_verifier", code_verifier),
+                ("code_challenge", code_challenge),
+                ("code_challenge_method", "S256"),
                 ("redirect_uri", XAI_REDIRECT_URI),
             ])
             .send()
@@ -848,7 +857,11 @@ fn pkce_challenge(verifier: &str) -> String {
     URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
 }
 
-fn build_authorization_url(state: &str, code_challenge: &str) -> Result<String, XaiOAuthError> {
+fn build_authorization_url(
+    state: &str,
+    code_challenge: &str,
+    nonce: &str,
+) -> Result<String, XaiOAuthError> {
     let mut url = Url::parse(XAI_AUTH_URL).map_err(|e| XaiOAuthError::ParseError(e.to_string()))?;
     url.query_pairs_mut()
         .append_pair("response_type", "code")
@@ -857,8 +870,38 @@ fn build_authorization_url(state: &str, code_challenge: &str) -> Result<String, 
         .append_pair("scope", XAI_SCOPE)
         .append_pair("state", state)
         .append_pair("code_challenge", code_challenge)
-        .append_pair("code_challenge_method", "S256");
+        .append_pair("code_challenge_method", "S256")
+        .append_pair("nonce", nonce)
+        .append_pair("plan", "generic")
+        .append_pair("referrer", "cc-switch");
     Ok(url.to_string())
+}
+
+#[cfg(not(test))]
+async fn read_loopback_request(
+    stream: &mut tokio::net::TcpStream,
+) -> Result<String, XaiOAuthError> {
+    let mut request = Vec::with_capacity(4096);
+    let mut buffer = [0_u8; 4096];
+
+    loop {
+        let bytes_read = stream.read(&mut buffer).await?;
+        if bytes_read == 0 {
+            break;
+        }
+
+        request.extend_from_slice(&buffer[..bytes_read]);
+        if request.windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
+        }
+        if request.len() > LOOPBACK_REQUEST_MAX_BYTES {
+            return Err(XaiOAuthError::ParseError(
+                "xAI OAuth callback request exceeded size limit".to_string(),
+            ));
+        }
+    }
+
+    String::from_utf8(request).map_err(|e| XaiOAuthError::ParseError(e.to_string()))
 }
 
 #[cfg(not(test))]
@@ -932,12 +975,17 @@ mod tests {
 
     #[test]
     fn xai_oauth_authorization_url_contains_loopback_pkce_contract() {
-        let url = build_authorization_url("state-123", "challenge-456").unwrap();
-        assert!(url.starts_with("https://accounts.x.ai/oauth/authorize?"));
-        assert!(url.contains("client_id=grok-build"));
+        let url = build_authorization_url("state-123", "challenge-456", "nonce-789").unwrap();
+        assert!(url.starts_with("https://auth.x.ai/oauth2/authorize?"));
+        assert!(url.contains("client_id=b1a00492-073a-47ea-816f-4c329264a828"));
         assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A56121%2Fcallback"));
+        assert!(url.contains("grok-cli%3Aaccess"));
+        assert!(url.contains("api%3Aaccess"));
         assert!(url.contains("code_challenge=challenge-456"));
         assert!(url.contains("code_challenge_method=S256"));
+        assert!(url.contains("nonce=nonce-789"));
+        assert!(url.contains("plan=generic"));
+        assert!(url.contains("referrer=cc-switch"));
     }
 
     #[test]

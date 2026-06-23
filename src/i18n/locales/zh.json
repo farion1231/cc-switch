@@ -327,7 +327,8 @@
       "description": "在 Claude Code 中使用您的其他订阅，请注意合规风险。",
       "beta": "Beta",
       "copilotDescription": "管理 GitHub Copilot 账号",
-      "codexOauthDescription": "管理 ChatGPT 账号"
+      "codexOauthDescription": "管理 ChatGPT 账号",
+      "xaiOauthDescription": "管理 xAI Grok 账号"
     },
     "advanced": {
       "configDir": {

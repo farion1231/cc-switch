@@ -9,6 +9,7 @@ use crate::proxy::providers::copilot_auth::{
     CopilotAuthError, GitHubAccount, GitHubDeviceCodeResponse,
 };
 use crate::proxy::providers::xai_oauth_auth::{XaiOAuthError, XaiOAuthManager};
+use crate::services::model_fetch::FetchedModel;
 
 const AUTH_PROVIDER_GITHUB_COPILOT: &str = "github_copilot";
 const AUTH_PROVIDER_CODEX_OAUTH: &str = "codex_oauth";
@@ -383,4 +384,35 @@ pub async fn auth_logout(
         }
         _ => unreachable!(),
     }
+}
+
+/// 获取 xAI Grok OAuth 可用模型列表。
+///
+/// xAI OAuth 仍使用 OpenAI-compatible `/v1/models`，但 bearer token 来自
+/// 托管 OAuth 账号，而不是表单里的 API Key。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_xai_oauth_models(
+    account_id: Option<String>,
+    xai_state: State<'_, XaiOAuthState>,
+) -> Result<Vec<FetchedModel>, String> {
+    let manager = xai_state.0.read().await;
+    let resolved = match account_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        Some(id) => Some(id.to_string()),
+        None => manager.default_account_id().await,
+    };
+    let Some(id) = resolved else {
+        return Err("No xAI account available".to_string());
+    };
+
+    let token = manager
+        .get_valid_token_for_account(&id)
+        .await
+        .map_err(|e| format!("xAI OAuth token unavailable: {e}"))?;
+
+    crate::services::model_fetch::fetch_models("https://api.x.ai/v1", &token, false, None, None)
+        .await
 }

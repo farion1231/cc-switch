@@ -2008,6 +2008,7 @@ function ProviderFormFull({
                 templatePreset?.providerType === "xai_oauth" ||
                 initialData?.meta?.providerType === "xai_oauth"
               }
+              isXaiOauthAuthenticated={isXaiOauthAuthenticated}
               usesOAuth={
                 templatePreset?.requiresOAuth === true ||
                 templatePreset?.providerType === "github_copilot" ||

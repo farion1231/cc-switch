@@ -327,7 +327,8 @@
       "description": "Claude Code で他のサブスクリプションをご利用いただけます。コンプライアンスリスクにご注意ください。",
       "beta": "Beta",
       "copilotDescription": "GitHub Copilot アカウントを管理します",
-      "codexOauthDescription": "ChatGPT アカウントを管理します"
+      "codexOauthDescription": "ChatGPT アカウントを管理します",
+      "xaiOauthDescription": "xAI Grok アカウントを管理します"
     },
     "advanced": {
       "configDir": {
