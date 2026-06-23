@@ -305,7 +305,7 @@ export function ProviderCard({
         !(isActiveProvider || hasPersistentConfigHighlight) &&
           "hover:shadow-sm",
         dragHandleProps?.isDragging &&
-          "cursor-grabbing border-primary shadow-lg scale-105 z-10",
+          "provider-card-grabbing-cursor cursor-grabbing border-primary shadow-lg scale-105 z-10",
       )}
     >
       <div
@@ -324,9 +324,10 @@ export function ProviderCard({
           <button
             type="button"
             className={cn(
-              "-ml-1.5 flex-shrink-0 cursor-grab active:cursor-grabbing p-1.5",
+              "-ml-1.5 flex-shrink-0 provider-card-grab-cursor cursor-grab active:cursor-grabbing p-1.5",
               "text-muted-foreground/50 hover:text-muted-foreground transition-colors",
-              dragHandleProps?.isDragging && "cursor-grabbing",
+              dragHandleProps?.isDragging &&
+                "provider-card-grabbing-cursor cursor-grabbing",
             )}
             aria-label={t("provider.dragHandle")}
             {...(dragHandleProps?.attributes ?? {})}
