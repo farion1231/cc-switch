@@ -303,12 +303,37 @@ fn parse_codex_positive_u64(value: Option<&Value>) -> Option<u64> {
     }
 }
 
-fn extract_codex_top_level_u64(config_text: &str, field: &str) -> Option<u64> {
+fn extract_codex_positive_u64_from_toml(value: Option<&toml::Value>) -> Option<u64> {
+    match value {
+        Some(toml::Value::Integer(value)) => u64::try_from(*value).ok().filter(|value| *value > 0),
+        Some(toml::Value::String(value)) => {
+            value.trim().parse::<u64>().ok().filter(|value| *value > 0)
+        }
+        _ => None,
+    }
+}
+
+fn extract_codex_config_u64(config_text: &str, field: &str) -> Option<u64> {
     let doc = config_text.parse::<toml::Value>().ok()?;
-    doc.get(field)
-        .and_then(|value| value.as_integer())
-        .and_then(|value| u64::try_from(value).ok())
-        .filter(|value| *value > 0)
+    let active_provider = doc
+        .get("model_provider")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    if let Some(active_provider) = active_provider {
+        if let Some(provider_value) = doc
+            .get("model_providers")
+            .and_then(|providers| providers.get(active_provider))
+            .and_then(|provider| provider.get(field))
+        {
+            if let Some(value) = extract_codex_positive_u64_from_toml(Some(provider_value)) {
+                return Some(value);
+            }
+        }
+    }
+
+    extract_codex_positive_u64_from_toml(doc.get(field))
 }
 
 fn extract_codex_top_level_string(config_text: &str, field: &str) -> Option<String> {
@@ -363,7 +388,7 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
     };
 
     let default_context_window =
-        extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
+        extract_codex_config_u64(config_text, "model_context_window").unwrap_or(128_000);
     let mut seen = std::collections::HashSet::new();
     let mut specs = Vec::new();
 
@@ -695,7 +720,7 @@ pub fn codex_model_catalog_from_live_config_model(
         return Ok(None);
     };
     let context_window =
-        extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
+        extract_codex_config_u64(config_text, "model_context_window").unwrap_or(128_000);
     let specs = [CodexCatalogModelSpec {
         model: model.clone(),
         display_name: model,
@@ -833,7 +858,7 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
     let models = catalog.get("models").and_then(|m| m.as_array())?;
 
     let default_context_window =
-        extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
+        extract_codex_config_u64(config_text, "model_context_window").unwrap_or(128_000);
 
     let mut entries = Vec::with_capacity(models.len());
     for entry in models {
@@ -2172,6 +2197,36 @@ model_context_window = 1000000
                 .get("context_window")
                 .and_then(|value| value.as_u64()),
             Some(1_000_000)
+        );
+    }
+
+    #[test]
+    fn codex_model_catalog_fallback_uses_active_provider_context_window() {
+        let config = r#"
+model_provider = "eflowcode"
+model = "gpt-5.5"
+model_context_window = 128000
+
+[model_providers.eflowcode]
+model_context_window = 1000000
+
+[model_providers.other]
+model_context_window = 64000
+"#;
+        let catalog = codex_model_catalog_from_live_config_model(config)
+            .expect("fallback catalog should build")
+            .expect("top-level model should produce a catalog");
+        let models = catalog
+            .get("models")
+            .and_then(|value| value.as_array())
+            .expect("models should be an array");
+
+        assert_eq!(
+            models[0]
+                .get("context_window")
+                .and_then(|value| value.as_u64()),
+            Some(1_000_000),
+            "active provider context should override top-level fallback"
         );
     }
 
