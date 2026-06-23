@@ -60,7 +60,8 @@ export interface ProviderPreset {
   // 供应商类型标识（用于特殊供应商检测）
   // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）
   // - "codex_oauth": OpenAI Codex via ChatGPT Plus/Pro 反代（需要 OAuth 认证）
-  providerType?: "github_copilot" | "codex_oauth";
+  // - "xai_oauth": xAI Grok via SuperGrok / X Premium+ OAuth（需要 OAuth 认证）
+  providerType?: "github_copilot" | "codex_oauth" | "xai_oauth";
 
   // 是否需要 OAuth 认证（而非 API Key）
   requiresOAuth?: boolean;
@@ -1104,6 +1105,25 @@ export const providerPresets: ProviderPreset[] = [
     providerType: "codex_oauth",
     requiresOAuth: true,
     icon: "openai",
+    iconColor: "#000000",
+  },
+  {
+    name: "xAI Grok OAuth (SuperGrok / X Premium+)",
+    websiteUrl: "https://x.ai",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.x.ai/v1",
+        ANTHROPIC_MODEL: "grok-build-0.1",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "grok-build-0.1",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "grok-build-0.1",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "grok-build-0.1",
+      },
+    },
+    category: "third_party",
+    apiFormat: "openai_responses",
+    providerType: "xai_oauth",
+    requiresOAuth: true,
+    icon: "x",
     iconColor: "#000000",
   },
   {

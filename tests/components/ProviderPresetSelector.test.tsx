@@ -14,6 +14,7 @@ import {
   sortPresetEntries,
   type PresetSortMode,
 } from "@/components/providers/forms/ProviderPresetSelector";
+import { providerPresets } from "@/config/claudeProviderPresets";
 
 // Mock ProviderIcon 以避免依赖图标库的实际内容
 vi.mock("@/components/ProviderIcon", () => ({
@@ -199,6 +200,21 @@ describe("ProviderPresetSelector pure helpers", () => {
       getIds(filterPresetEntries(presetEntries, "cn-gateway.example.com", t)),
     ).toEqual([]);
     expect(getIds(filterPresetEntries(presetEntries, "聚合", t))).toEqual([]);
+  });
+
+  it("xAI Grok OAuth preset is visible and searchable by name", () => {
+    const entries = providerPresets.map((preset, index) => ({
+      id: `claude-${index}`,
+      preset,
+    }));
+
+    const xaiEntries = filterPresetEntries(entries, "grok oauth", t);
+
+    expect(xaiEntries).toHaveLength(1);
+    expect(xaiEntries[0].preset).toMatchObject({
+      providerType: "xai_oauth",
+      requiresOAuth: true,
+    });
   });
 
   it("支持 A-Z 排序、original 模式将官方分类置顶，并且 getVisible 先 filter 再 sort", () => {

@@ -950,6 +950,18 @@ pub fn run() {
                 log::info!("✓ CodexOAuthManager initialized");
             }
 
+            // 初始化 XaiOAuthManager (xAI Grok managed OAuth)
+            {
+                use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
+                use commands::XaiOAuthState;
+                use tokio::sync::RwLock;
+
+                let app_config_dir = crate::config::get_app_config_dir();
+                let xai_oauth_manager = XaiOAuthManager::new(app_config_dir);
+                app.manage(XaiOAuthState(Arc::new(RwLock::new(xai_oauth_manager))));
+                log::info!("✓ XaiOAuthManager initialized");
+            }
+
             // 初始化全局出站代理 HTTP 客户端
             {
                 let db = &app.state::<AppState>().db;

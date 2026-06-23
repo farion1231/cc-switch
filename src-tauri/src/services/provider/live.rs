@@ -33,6 +33,41 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
     v
 }
 
+fn apply_managed_claude_auth_placeholders_for_live(settings: &mut Value, provider: &Provider) {
+    if !provider.uses_managed_account_auth() {
+        return;
+    }
+
+    if !settings.is_object() {
+        *settings = json!({});
+    }
+
+    let root = settings
+        .as_object_mut()
+        .expect("Claude settings should be normalized to an object");
+    let env = root.entry("env".to_string()).or_insert_with(|| json!({}));
+    if !env.is_object() {
+        *env = json!({});
+    }
+
+    let env = env
+        .as_object_mut()
+        .expect("Claude env should be normalized to an object");
+    for key in [
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "OPENROUTER_API_KEY",
+        "OPENAI_API_KEY",
+    ] {
+        env.remove(key);
+    }
+
+    env.insert("ANTHROPIC_API_KEY".to_string(), json!("PROXY_MANAGED"));
+    if !provider.is_github_copilot() {
+        env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), json!("PROXY_MANAGED"));
+    }
+}
+
 pub(crate) fn provider_exists_in_live_config(
     app_type: &AppType,
     provider_id: &str,
@@ -740,7 +775,8 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
-            let settings = sanitize_claude_settings_for_live(&provider.settings_config);
+            let mut settings = sanitize_claude_settings_for_live(&provider.settings_config);
+            apply_managed_claude_auth_placeholders_for_live(&mut settings, provider);
             write_json_file(&path, &settings)?;
         }
         AppType::ClaudeDesktop => {
