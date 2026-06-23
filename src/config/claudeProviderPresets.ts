@@ -392,6 +392,15 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.kimi.com/coding/",
         ANTHROPIC_AUTH_TOKEN: "",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "${CLAUDE_CODE_AUTO_COMPACT_WINDOW}",
+      },
+    },
+    templateValues: {
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: {
+        label: "Auto Compact Window",
+        placeholder: "262144",
+        defaultValue: "262144",
+        editorValue: "262144",
       },
     },
     category: "cn_official",
