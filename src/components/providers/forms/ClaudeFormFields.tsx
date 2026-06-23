@@ -52,6 +52,7 @@ import {
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
+import { CustomUserAgentField } from "./CustomUserAgentField";
 import type {
   ProviderCategory,
   ClaudeApiFormat,
@@ -127,6 +128,8 @@ interface ClaudeFormFieldsProps {
   defaultSonnetModelName: string;
   defaultOpusModel: string;
   defaultOpusModelName: string;
+  defaultFableModel: string;
+  defaultFableModelName: string;
   onModelChange: (field: ClaudeModelEnvField, value: string) => void;
 
   // Speed Test Endpoints
@@ -147,6 +150,10 @@ interface ClaudeFormFieldsProps {
   // Custom API Key Header
   apiKeyHeaderName?: string;
   onApiKeyHeaderNameChange: (name: string | undefined) => void;
+
+  // Local proxy User-Agent override
+  customUserAgent: string;
+  onCustomUserAgentChange: (value: string) => void;
 }
 
 export function ClaudeFormFields({
@@ -191,6 +198,8 @@ export function ClaudeFormFields({
   defaultSonnetModelName,
   defaultOpusModel,
   defaultOpusModelName,
+  defaultFableModel,
+  defaultFableModelName,
   onModelChange,
   speedTestEndpoints,
   apiFormat,
@@ -201,6 +210,8 @@ export function ClaudeFormFields({
   onFullUrlChange,
   apiKeyHeaderName,
   onApiKeyHeaderNameChange,
+  customUserAgent,
+  onCustomUserAgentChange,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
   const hasAnyAdvancedValue = !!(
@@ -208,8 +219,10 @@ export function ClaudeFormFields({
     defaultHaikuModel ||
     defaultSonnetModel ||
     defaultOpusModel ||
+    defaultFableModel ||
     apiFormat !== "anthropic" ||
-    apiKeyField !== "ANTHROPIC_AUTH_TOKEN"
+    apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
+    customUserAgent
   );
   const [advancedExpanded, setAdvancedExpanded] = useState(hasAnyAdvancedValue);
 
@@ -262,7 +275,7 @@ export function ClaudeFormFields({
     const modelsUrl = matchedPreset?.modelsUrl;
 
     setIsFetchingModels(true);
-    fetchModelsForConfig(baseUrl, apiKey, isFullUrl, modelsUrl)
+    fetchModelsForConfig(baseUrl, apiKey, isFullUrl, modelsUrl, customUserAgent)
       .then((models) => {
         setFetchedModels(models);
         showModelFetchResult(models.length);
@@ -272,7 +285,7 @@ export function ClaudeFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [baseUrl, apiKey, isFullUrl, showModelFetchResult, t]);
+  }, [baseUrl, apiKey, isFullUrl, customUserAgent, showModelFetchResult, t]);
 
   const handleFetchCopilotModels = useCallback(() => {
     if (!isCopilotAuthenticated) {
@@ -498,7 +511,7 @@ export function ClaudeFormFields({
   };
 
   type ModelRoleRow = {
-    role: "sonnet" | "opus" | "haiku";
+    role: "sonnet" | "opus" | "fable" | "haiku";
     label: string;
     model: string;
     displayName: string;
@@ -527,6 +540,16 @@ export function ClaudeFormFields({
       modelField: "ANTHROPIC_DEFAULT_OPUS_MODEL",
       displayNameField: "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
       inputId: "claudeDefaultOpusModel",
+      supportsOneM: true,
+    },
+    {
+      role: "fable",
+      label: t("providerForm.modelRoleFable", { defaultValue: "Fable" }),
+      model: defaultFableModel,
+      displayName: defaultFableModelName,
+      modelField: "ANTHROPIC_DEFAULT_FABLE_MODEL",
+      displayNameField: "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+      inputId: "claudeDefaultFableModel",
       supportsOneM: true,
     },
     {
@@ -683,7 +706,6 @@ export function ClaudeFormFields({
         />
       )}
 
-      {/* 高级选项（API 格式 + 认证字段 + 模型映射） */}
       {shouldShowModelSelector && (
         <Collapsible open={advancedExpanded} onOpenChange={setAdvancedExpanded}>
           <CollapsibleTrigger asChild>
@@ -797,6 +819,7 @@ export function ClaudeFormFields({
                         claudeModel ||
                         defaultSonnetModel ||
                         defaultOpusModel ||
+                        defaultFableModel ||
                         defaultHaikuModel;
                       if (value) {
                         for (const row of modelRoleRows) {
@@ -820,7 +843,8 @@ export function ClaudeFormFields({
                       !claudeModel &&
                       !defaultHaikuModel &&
                       !defaultSonnetModel &&
-                      !defaultOpusModel
+                      !defaultOpusModel &&
+                      !defaultFableModel
                     }
                     className="h-7 gap-1"
                   >
@@ -947,10 +971,16 @@ export function ClaudeFormFields({
               <p className="text-xs text-muted-foreground">
                 {t("providerForm.fallbackModelHint", {
                   defaultValue:
-                    "仅在 Claude Code 请求没有明确落到 Sonnet、Opus 或 Haiku 角色时使用；通常可以留空。",
+                    "用于未明确落到 Sonnet、Opus、Fable、Haiku 角色的请求。使用第三方/中转端点时建议填写：否则这些请求（含 Haiku 后台子任务）会以原始 Claude 模型名透传给上游，可能因上游无此模型而报错。官方端点可留空。",
                 })}
               </p>
             </div>
+
+            <CustomUserAgentField
+              id="claude-custom-user-agent"
+              value={customUserAgent}
+              onChange={onCustomUserAgentChange}
+            />
           </CollapsibleContent>
         </Collapsible>
       )}

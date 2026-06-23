@@ -42,6 +42,48 @@ use live::{
 };
 use usage::validate_usage_script;
 
+/// 统一会话开关变更后，立即按新开关状态重写当前官方 Codex 供应商的
+/// live 配置，使开关即时生效（无需等下一次切换）。
+/// 当前供应商非官方（或不存在）时为 no-op：注入只作用于官方配置，
+/// 第三方 live 配置不受开关影响。
+pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, AppError> {
+    let current_id = ProviderService::current(state, AppType::Codex)?;
+    if current_id.is_empty() {
+        return Ok(false);
+    }
+    let providers = state.db.get_all_providers(AppType::Codex.as_str())?;
+    let Some(provider) = providers.get(&current_id) else {
+        return Ok(false);
+    };
+    if provider.category.as_deref() != Some("official") {
+        return Ok(false);
+    }
+
+    // 代理接管期间 live 归代理所有（开启代理时官方供应商只警告不拦截，
+    // 二者可以共存）。与切换/保存路径一致：以 backup/占位符为所有权信号，
+    // 只更新备份，注入后的配置由接管释放时的恢复路径落盘。
+    let has_live_backup =
+        futures::executor::block_on(state.db.get_live_backup(AppType::Codex.as_str()))
+            .ok()
+            .flatten()
+            .is_some();
+    let live_taken_over = state
+        .proxy_service
+        .detect_takeover_in_live_config_for_app(&AppType::Codex);
+    if has_live_backup || live_taken_over {
+        futures::executor::block_on(
+            state
+                .proxy_service
+                .update_live_backup_from_provider(AppType::Codex.as_str(), provider),
+        )
+        .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+        return Ok(true);
+    }
+
+    live::write_live_with_common_config(&state.db, &AppType::Codex, provider)?;
+    Ok(true)
+}
+
 /// Provider business logic service
 pub struct ProviderService;
 
@@ -55,9 +97,13 @@ pub struct SwitchResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(any(target_os = "macos", windows))]
+    use crate::claude_desktop_config::PROFILE_ID;
     use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
     use crate::database::Database;
     use crate::provider::ProviderMeta;
+    #[cfg(any(target_os = "macos", windows))]
+    use crate::provider::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
     use crate::proxy::types::ProxyConfig;
     use crate::store::AppState;
     use serde_json::json;
@@ -72,6 +118,8 @@ mod tests {
         #[allow(dead_code)]
         dir: TempDir,
         original_home: Option<String>,
+        #[cfg(windows)]
+        original_local_app_data: Option<String>,
         original_userprofile: Option<String>,
         original_test_home: Option<String>,
     }
@@ -80,16 +128,22 @@ mod tests {
         fn new() -> Self {
             let dir = TempDir::new().expect("failed to create temp home");
             let original_home = env::var("HOME").ok();
+            #[cfg(windows)]
+            let original_local_app_data = env::var("LOCALAPPDATA").ok();
             let original_userprofile = env::var("USERPROFILE").ok();
             let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
 
             env::set_var("HOME", dir.path());
+            #[cfg(windows)]
+            env::set_var("LOCALAPPDATA", dir.path().join("AppData").join("Local"));
             env::set_var("USERPROFILE", dir.path());
             env::set_var("CC_SWITCH_TEST_HOME", dir.path());
 
             Self {
                 dir,
                 original_home,
+                #[cfg(windows)]
+                original_local_app_data,
                 original_userprofile,
                 original_test_home,
             }
@@ -103,6 +157,14 @@ mod tests {
                 None => env::remove_var("HOME"),
             }
 
+            #[cfg(windows)]
+            {
+                match &self.original_local_app_data {
+                    Some(value) => env::set_var("LOCALAPPDATA", value),
+                    None => env::remove_var("LOCALAPPDATA"),
+                }
+            }
+
             match &self.original_userprofile {
                 Some(value) => env::set_var("USERPROFILE", value),
                 None => env::remove_var("USERPROFILE"),
@@ -113,6 +175,24 @@ mod tests {
                 None => env::remove_var("CC_SWITCH_TEST_HOME"),
             }
         }
+    }
+
+    #[cfg(windows)]
+    fn claude_desktop_profile_path(home: &Path) -> PathBuf {
+        home.join("AppData")
+            .join("Local")
+            .join("Claude-3p")
+            .join("configLibrary")
+            .join(format!("{PROFILE_ID}.json"))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn claude_desktop_profile_path(home: &Path) -> PathBuf {
+        home.join("Library")
+            .join("Application Support")
+            .join("Claude-3p")
+            .join("configLibrary")
+            .join(format!("{PROFILE_ID}.json"))
     }
 
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
@@ -383,6 +463,7 @@ base_url = "http://localhost:8080"
 
         db.update_proxy_config(ProxyConfig {
             live_takeover_active: true,
+            listen_port: 0,
             ..Default::default()
         })
         .await
@@ -411,7 +492,7 @@ base_url = "http://localhost:8080"
         )
         .expect("seed taken-over live file");
 
-        state
+        let proxy_info = state
             .proxy_service
             .start()
             .await
@@ -464,7 +545,7 @@ base_url = "http://localhost:8080"
             live.get("env")
                 .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
                 .and_then(|v| v.as_str()),
-            Some("http://127.0.0.1:15721"),
+            Some(format!("http://127.0.0.1:{}", proxy_info.port).as_str()),
             "proxy base URL should stay intact"
         );
         assert!(
@@ -472,6 +553,122 @@ base_url = "http://localhost:8080"
                 .and_then(|env| env.get("ANTHROPIC_MODEL"))
                 .is_none(),
             "model override should be removed in takeover live config"
+        );
+    }
+
+    #[cfg(any(target_os = "macos", windows))]
+    #[tokio::test]
+    #[serial]
+    async fn update_current_claude_desktop_provider_syncs_profile_when_proxy_takeover_is_active() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        let mut original = Provider::with_id(
+            "p1".into(),
+            "Desktop A".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-a",
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go"
+                }
+            }),
+            None,
+        );
+        original.meta = Some(ProviderMeta {
+            api_format: Some("openai_chat".into()),
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            claude_desktop_model_routes: std::collections::HashMap::from([(
+                "claude-sonnet-4-6".into(),
+                ClaudeDesktopModelRoute {
+                    model: "deepseek-v4-flash".into(),
+                    label_override: Some("DeepSeek V4 Flash".into()),
+                    supports_1m: None,
+                },
+            )]),
+            ..Default::default()
+        });
+        db.save_provider("claude-desktop", &original)
+            .expect("save provider");
+        db.set_current_provider("claude-desktop", "p1")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::ClaudeDesktop, Some("p1"))
+            .expect("set local current provider");
+
+        // Claude Desktop keeps backup state from takeover startup; this sentinel only
+        // marks takeover as active so provider updates rewrite the 3P profile.
+        db.save_live_backup("claude-desktop", "{}")
+            .await
+            .expect("seed live backup");
+        {
+            let mut config = db
+                .get_proxy_config_for_app("claude-desktop")
+                .await
+                .expect("get app proxy config");
+            config.enabled = true;
+            db.update_proxy_config_for_app(config)
+                .await
+                .expect("update app proxy config");
+        }
+
+        state
+            .proxy_service
+            .start()
+            .await
+            .expect("start proxy service");
+
+        let mut updated = Provider::with_id(
+            "p1".into(),
+            "Desktop A".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-updated",
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go"
+                }
+            }),
+            None,
+        );
+        updated.meta = Some(ProviderMeta {
+            api_format: Some("openai_chat".into()),
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            claude_desktop_model_routes: std::collections::HashMap::from([(
+                "claude-sonnet-4-6".into(),
+                ClaudeDesktopModelRoute {
+                    model: "deepseek-v4-flash".into(),
+                    label_override: Some("DeepSeek V4 Flash Updated".into()),
+                    supports_1m: Some(true),
+                },
+            )]),
+            ..Default::default()
+        });
+
+        ProviderService::update(&state, AppType::ClaudeDesktop, None, updated.clone())
+            .expect("update current provider");
+
+        let backup = db
+            .get_live_backup("claude-desktop")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        assert_eq!(
+            backup.original_config, "{}",
+            "Claude Desktop provider edits should not rewrite takeover backup"
+        );
+
+        let profile_path = claude_desktop_profile_path(home.dir.path());
+        let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
+        assert_eq!(
+            profile["inferenceGatewayBaseUrl"],
+            json!("http://127.0.0.1:15721/claude-desktop"),
+            "desktop profile should stay pointed at the local gateway during takeover"
+        );
+        assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
+        assert_eq!(
+            profile["inferenceModels"],
+            json!([{ "name": "claude-sonnet-4-6", "labelOverride": "DeepSeek V4 Flash Updated", "supports1m": true }]),
+            "provider edits should propagate into the Claude Desktop 3P profile during takeover"
         );
     }
 
@@ -1237,21 +1434,29 @@ impl ProviderService {
                     .ok()
                     .flatten()
                     .is_some();
-            let is_proxy_running = futures::executor::block_on(state.proxy_service.is_running());
             let live_taken_over = state
                 .proxy_service
                 .detect_takeover_in_live_config_for_app(&app_type);
-            let should_sync_via_proxy = is_proxy_running && (has_live_backup || live_taken_over);
+            // Backup or live placeholders mean the live file is currently owned
+            // by proxy takeover, including the short activation window before
+            // proxy_config.enabled is committed.
+            let should_sync_via_proxy = has_live_backup || live_taken_over;
 
             if should_sync_via_proxy {
-                futures::executor::block_on(
-                    state
-                        .proxy_service
-                        .update_live_backup_from_provider(app_type.as_str(), &provider),
-                )
-                .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+                if matches!(app_type, AppType::ClaudeDesktop) {
+                    write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
+                } else {
+                    futures::executor::block_on(
+                        state
+                            .proxy_service
+                            .update_live_backup_from_provider(app_type.as_str(), &provider),
+                    )
+                    .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+                }
 
-                if matches!(app_type, AppType::Claude) {
+                if matches!(app_type, AppType::Claude)
+                    && futures::executor::block_on(state.proxy_service.is_running())
+                {
                     futures::executor::block_on(
                         state
                             .proxy_service
@@ -1401,7 +1606,7 @@ impl ProviderService {
     /// Switch flow:
     /// 1. Validate target provider exists
     /// 2. Check if proxy takeover mode is active AND proxy server is running
-    /// 3. If takeover mode active: hot-switch proxy target only (no Live config write)
+    /// 3. If takeover mode active: hot-switch proxy target and refresh proxy-safe Live labels
     /// 4. If normal mode:
     ///    a. **Backfill mechanism**: Backfill current live config to current provider
     ///    b. Update local settings current_provider_xxx (device-level)
@@ -1431,21 +1636,32 @@ impl ProviderService {
             return Self::switch_normal(state, app_type, id, &providers);
         }
 
-        // Check if proxy takeover mode is active AND proxy server is actually running
-        // Both conditions must be true to use hot-switch mode
-        // Use blocking wait since this is a sync function
+        // Provider switches and takeover toggles both mutate live config and the
+        // restore backup. Serialize them per app, then decide from the locked
+        // current state so a just-started takeover cannot be overwritten by a
+        // normal live write.
+        let _switch_guard =
+            if matches!(app_type, AppType::Claude | AppType::Codex | AppType::Gemini) {
+                Some(futures::executor::block_on(
+                    state.proxy_service.lock_switch_for_app(app_type.as_str()),
+                ))
+            } else {
+                None
+            };
+
+        // Backup or live placeholders mean the live file is owned by proxy
+        // takeover, even if the proxy server is temporarily stopped or is in the
+        // activation window before enabled=true is committed.
         let is_app_taken_over =
             futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
                 .ok()
                 .flatten()
                 .is_some();
-        let is_proxy_running = futures::executor::block_on(state.proxy_service.is_running());
         let live_taken_over = state
             .proxy_service
             .detect_takeover_in_live_config_for_app(&app_type);
 
-        // Hot-switch only when BOTH: this app is taken over AND proxy server is actually running
-        let should_hot_switch = (is_app_taken_over || live_taken_over) && is_proxy_running;
+        let should_hot_switch = is_app_taken_over || live_taken_over;
 
         // Block switching to official providers when proxy takeover is active.
         // Using a proxy with official APIs (Anthropic/OpenAI/Google) may cause account bans.
@@ -1458,7 +1674,9 @@ impl ProviderService {
         }
 
         if should_hot_switch {
-            // Proxy takeover mode: hot-switch only, don't write Live config
+            // Proxy takeover mode: hot-switch without restoring upstream Live config.
+            // The proxy layer may still refresh proxy-safe Live fields so client labels
+            // follow the selected provider while endpoints remain local.
             log::info!(
                 "代理接管模式：热切换 {} 的目标供应商为 {}",
                 app_type.as_str(),
@@ -1468,12 +1686,12 @@ impl ProviderService {
             futures::executor::block_on(
                 state
                     .proxy_service
-                    .hot_switch_provider(app_type.as_str(), id),
+                    .hot_switch_provider_inner(app_type.as_str(), id),
             )
             .map_err(|e| AppError::Message(format!("热切换失败: {e}")))?;
 
-            // Note: No Live config write, no MCP sync
-            // The proxy server will route requests to the new provider via is_current
+            // The proxy server will route requests to the new provider via is_current.
+            // MCP sync is intentionally skipped while Live config is owned by takeover.
             return Ok(SwitchResult::default());
         }
 
@@ -1642,11 +1860,6 @@ impl ProviderService {
             return Ok(());
         };
 
-        let takeover_enabled =
-            futures::executor::block_on(state.db.get_proxy_config_for_app(app_type.as_str()))
-                .map(|config| config.enabled)
-                .unwrap_or(false);
-
         let has_live_backup =
             futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
                 .ok()
@@ -1657,7 +1870,14 @@ impl ProviderService {
             .proxy_service
             .detect_takeover_in_live_config_for_app(&app_type);
 
-        if takeover_enabled && (has_live_backup || live_taken_over) {
+        // See the save path above: backup/placeholders are the ownership signal
+        // here, not just proxy_config.enabled.
+        if has_live_backup || live_taken_over {
+            if matches!(app_type, AppType::ClaudeDesktop) {
+                write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
+                return Ok(());
+            }
+
             futures::executor::block_on(
                 state
                     .proxy_service
@@ -2244,7 +2464,7 @@ impl ProviderService {
                 Ok((credentials.api_key, credentials.base_url))
             }
             AppType::Codex => {
-                let auth = provider
+                let _auth = provider
                     .settings_config
                     .get("auth")
                     .and_then(|v| v.as_object())
@@ -2256,23 +2476,23 @@ impl ProviderService {
                         )
                     })?;
 
-                let api_key = auth
-                    .get("OPENAI_API_KEY")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.codex.api_key.missing",
-                            "缺少 API Key",
-                            "API key is missing",
-                        )
-                    })?
-                    .to_string();
-
                 let config_toml = provider
                     .settings_config
                     .get("config")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
+
+                let api_key = crate::codex_config::extract_codex_api_key(
+                    provider.settings_config.get("auth"),
+                    Some(config_toml),
+                )
+                .ok_or_else(|| {
+                    AppError::localized(
+                        "provider.codex.api_key.missing",
+                        "缺少 API Key",
+                        "API key is missing",
+                    )
+                })?;
 
                 let base_url = if config_toml.contains("base_url") {
                     let re = Regex::new(r#"base_url\s*=\s*["']([^"']+)["']"#).map_err(|e| {

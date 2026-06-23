@@ -25,7 +25,7 @@ pub async fn execute_usage_script(
 
     // 2. 验证 base_url 的安全性（仅当提供了 base_url 时）
     // 自定义模板模式下，用户可能不使用模板变量，而是直接在脚本中写完整 URL
-    if !base_url.is_empty() {
+    if should_validate_base_url(base_url, is_custom_template) {
         validate_base_url(base_url)?;
     }
 
@@ -470,6 +470,10 @@ fn validate_base_url(base_url: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+fn should_validate_base_url(base_url: &str, is_custom_template: bool) -> bool {
+    !base_url.is_empty() && !is_custom_template
+}
+
 /// 验证请求 URL 是否安全（HTTPS 强制 + 同源检查）
 fn validate_request_url(
     request_url: &str,
@@ -577,6 +581,24 @@ mod tests {
         assert!(
             result.is_err(),
             "Should reject HTTP for non-localhost domains"
+        );
+    }
+
+    #[test]
+    fn test_custom_template_allows_http_lan_request_with_different_base_url() {
+        assert!(
+            !should_validate_base_url("http://10.37.192.156:8090/anthropic", true),
+            "Custom scripts should not validate an unused provider base_url fallback"
+        );
+
+        let result = validate_request_url(
+            "http://10.37.192.156:18344/user/balance",
+            "http://10.37.192.156:8090/anthropic",
+            true,
+        );
+        assert!(
+            result.is_ok(),
+            "Custom usage scripts should be able to call an explicit HTTP quota endpoint"
         );
     }
 

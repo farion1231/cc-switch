@@ -83,6 +83,8 @@ const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
     defaultSonnetModelName: "Claude Sonnet",
     defaultOpusModel: "",
     defaultOpusModelName: "",
+    defaultFableModel: "",
+    defaultFableModelName: "",
     onModelChange: vi.fn(),
     speedTestEndpoints: [],
     apiFormat: "anthropic",
@@ -92,6 +94,8 @@ const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
     isFullUrl: false,
     onFullUrlChange: vi.fn(),
     onApiKeyHeaderNameChange: vi.fn(),
+    customUserAgent: "",
+    onCustomUserAgentChange: vi.fn(),
     ...overrides,
   };
 

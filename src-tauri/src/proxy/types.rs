@@ -213,6 +213,19 @@ pub struct RectifierConfig {
     /// 处理错误：budget_tokens + thinking 相关约束
     #[serde(default = "default_true")]
     pub request_thinking_budget: bool,
+    /// 请求整流：不支持的图片降级（默认开启）
+    ///
+    /// 上游拒绝图片输入时，把图片块替换为 [Unsupported Image] 标记，
+    /// 让对话不中断。总开关，管辖「显式声明 text-only」与「上游报错后兜底」两条事实驱动路径。
+    #[serde(default = "default_true")]
+    pub request_media_fallback: bool,
+    /// 请求整流：启发式 text-only 模型名匹配（默认开启）
+    ///
+    /// 在模型未声明能力时，按内置模型名列表预测性地剥离图片（发送前）。
+    /// 受 request_media_fallback 管辖；单独关闭后仅保留「显式声明」与「上游兜底」，
+    /// 避免内置列表把多模态模型误判成 text-only 而静默剥图。
+    #[serde(default = "default_true")]
+    pub request_media_heuristic: bool,
 }
 
 fn default_true() -> bool {
@@ -229,6 +242,8 @@ impl Default for RectifierConfig {
             enabled: true,
             request_thinking_signature: true,
             request_thinking_budget: true,
+            request_media_fallback: true,
+            request_media_heuristic: true,
         }
     }
 }
@@ -386,6 +401,14 @@ mod tests {
             config.request_thinking_budget,
             "thinking budget 整流器默认应为 true"
         );
+        assert!(
+            config.request_media_fallback,
+            "media 降级总开关默认应为 true"
+        );
+        assert!(
+            config.request_media_heuristic,
+            "启发式 text-only 模型识别默认应为 true"
+        );
     }
 
     #[test]
@@ -396,6 +419,14 @@ mod tests {
         assert!(config.enabled);
         assert!(config.request_thinking_signature);
         assert!(config.request_thinking_budget);
+        assert!(
+            config.request_media_fallback,
+            "缺 requestMediaFallback 时应回退默认值 true"
+        );
+        assert!(
+            config.request_media_heuristic,
+            "缺 requestMediaHeuristic 时应回退默认值 true"
+        );
     }
 
     #[test]
@@ -416,6 +447,19 @@ mod tests {
         let config: RectifierConfig = serde_json::from_str(json).unwrap();
         assert!(config.enabled);
         assert!(!config.request_thinking_signature);
+        assert!(config.request_thinking_budget);
+    }
+
+    #[test]
+    fn test_rectifier_config_serde_media_explicit_false() {
+        // 验证 media 两字段显式 false 时被如实反序列化（用户主动关闭须生效，不能被默认值覆盖）
+        let json = r#"{"requestMediaFallback": false, "requestMediaHeuristic": false}"#;
+        let config: RectifierConfig = serde_json::from_str(json).unwrap();
+        assert!(!config.request_media_fallback);
+        assert!(!config.request_media_heuristic);
+        // 其余字段仍走默认 true
+        assert!(config.enabled);
+        assert!(config.request_thinking_signature);
         assert!(config.request_thinking_budget);
     }
 
