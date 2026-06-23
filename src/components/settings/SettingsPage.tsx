@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { motion } from "framer-motion";
 import {
   Loader2,
@@ -102,6 +109,7 @@ export function SettingsPage({
 
   const [activeTab, setActiveTab] = useState<string>("general");
   const [showRestartPrompt, setShowRestartPrompt] = useState(false);
+  const tabScrollContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (open) {
@@ -115,6 +123,12 @@ export function SettingsPage({
       setShowRestartPrompt(true);
     }
   }, [requiresRestart]);
+
+  useLayoutEffect(() => {
+    if (tabScrollContainerRef.current) {
+      tabScrollContainerRef.current.scrollTop = 0;
+    }
+  }, [activeTab]);
 
   const closeAfterSave = useCallback(() => {
     // 保存成功后关闭：不再重置语言，避免需要“保存两次”才生效
@@ -226,7 +240,10 @@ export function SettingsPage({
           </TabsList>
 
           <div className="flex-1 min-h-0 flex flex-col">
-            <div className="flex-1 overflow-y-auto overflow-x-hidden pr-2">
+            <div
+              ref={tabScrollContainerRef}
+              className="flex-1 overflow-y-auto overflow-x-hidden pr-2"
+            >
               <TabsContent value="general" className="space-y-6 mt-0">
                 {settings ? (
                   <motion.div
