@@ -886,7 +886,11 @@ base_url = "http://localhost:8080"
                     .codex_oauth_manager
                     .read()
                     .await
-                    .add_test_account_with_access_token("acct-managed", "managed-token")
+                    .add_test_account_with_access_token(
+                        "acct-managed",
+                        "managed-token",
+                        Some("managed-id-token"),
+                    )
                     .await
                     .expect("seed managed Codex OAuth account");
             });

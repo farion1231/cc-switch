@@ -86,9 +86,11 @@ fn extract_codex_managed_oauth_auth(auth: &Value) -> Option<(String, String)> {
 
     let tokens = auth.get("tokens").and_then(|value| value.as_object())?;
 
+    // id_token 与原生浏览器登录一致，允许存在；但原生登录特有的
+    // refresh_token 等字段仍会被拒绝，从而保留「托管 vs 原生」的指纹区分。
     if tokens
         .keys()
-        .any(|key| !matches!(key.as_str(), "access_token" | "account_id"))
+        .any(|key| !matches!(key.as_str(), "access_token" | "account_id" | "id_token"))
     {
         return None;
     }
@@ -1789,6 +1791,48 @@ base_url = "https://single.example.com/v1"
             !codex_auth_matches_recorded_managed_oauth(&same_account_native_auth, "acct-managed")
                 .expect("same-account native token should not match"),
             "a later native login for the same account must not be cleared"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn recorded_managed_oauth_marker_tolerates_id_token_but_rejects_native_login_shape() {
+        let _home = TempHome::new();
+        // 托管写入：tokens 仅含 id_token + access_token + account_id
+        let managed_auth_with_id_token = json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": {
+                "id_token": "managed-id-token",
+                "access_token": "managed-token",
+                "account_id": "acct-managed"
+            }
+        });
+        // 原生浏览器登录：即使 access_token 巧合相同，也带有 refresh_token
+        // 与顶层 last_refresh，必须被判定为非托管、永不清除。
+        let native_login_auth = json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": {
+                "id_token": "native-id-token",
+                "access_token": "managed-token",
+                "refresh_token": "native-refresh-token",
+                "account_id": "acct-managed"
+            },
+            "last_refresh": "2026-01-01T00:00:00Z"
+        });
+
+        record_codex_managed_oauth_live_auth(&managed_auth_with_id_token).expect("record marker");
+
+        assert!(
+            codex_auth_matches_recorded_managed_oauth(&managed_auth_with_id_token, "acct-managed")
+                .expect("managed auth with id_token should match"),
+            "an id_token alongside access_token/account_id must still be treated as managed"
+        );
+        assert!(
+            !codex_auth_matches_recorded_managed_oauth(&native_login_auth, "acct-managed")
+                .expect("native login should not match"),
+            "a real browser login (refresh_token + last_refresh) must never be treated as managed"
         );
     }
 

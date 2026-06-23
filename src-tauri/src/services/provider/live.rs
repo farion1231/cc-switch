@@ -586,8 +586,9 @@ fn apply_codex_managed_oauth_auth(
         ));
     };
 
-    let access_token = get_codex_managed_oauth_token(manager.clone(), account_id.clone())?;
-    let auth = codex_managed_oauth_live_auth(&account_id, &access_token);
+    let (access_token, id_token) =
+        get_codex_managed_oauth_token(manager.clone(), account_id.clone())?;
+    let auth = codex_managed_oauth_live_auth(&account_id, &access_token, id_token.as_deref());
 
     let Some(settings_obj) = provider.settings_config.as_object_mut() else {
         return Err(AppError::Config(
@@ -602,13 +603,13 @@ fn apply_codex_managed_oauth_auth(
 fn get_codex_managed_oauth_token(
     manager: Arc<RwLock<CodexOAuthManager>>,
     account_id: String,
-) -> Result<String, AppError> {
+) -> Result<(String, Option<String>), AppError> {
     let result = std::thread::spawn(move || {
         tauri::async_runtime::block_on(async move {
             let error_account_id = account_id.clone();
             let manager = manager.read().await;
             manager
-                .get_valid_token_for_account(&account_id)
+                .get_valid_token_and_id_token_for_account(&account_id)
                 .await
                 .map_err(|err| {
                     format!(
@@ -623,14 +624,28 @@ fn get_codex_managed_oauth_token(
     result.map_err(AppError::Message)
 }
 
-pub(crate) fn codex_managed_oauth_live_auth(account_id: &str, access_token: &str) -> Value {
+pub(crate) fn codex_managed_oauth_live_auth(
+    account_id: &str,
+    access_token: &str,
+    id_token: Option<&str>,
+) -> Value {
+    // 与原生 Codex 浏览器登录的 tokens 字段顺序对齐：id_token 在前。
+    let mut tokens = serde_json::Map::new();
+    if let Some(id_token) = id_token {
+        tokens.insert("id_token".to_string(), Value::String(id_token.to_string()));
+    }
+    tokens.insert(
+        "access_token".to_string(),
+        Value::String(access_token.to_string()),
+    );
+    tokens.insert(
+        "account_id".to_string(),
+        Value::String(account_id.to_string()),
+    );
     json!({
         "auth_mode": "chatgpt",
         "OPENAI_API_KEY": null,
-        "tokens": {
-            "access_token": access_token,
-            "account_id": account_id,
-        },
+        "tokens": Value::Object(tokens),
     })
 }
 
@@ -1799,7 +1814,24 @@ mod tests {
     #[test]
     fn codex_managed_oauth_live_auth_matches_codex_cli_shape() {
         assert_eq!(
-            codex_managed_oauth_live_auth("acct-managed", "access-token"),
+            codex_managed_oauth_live_auth("acct-managed", "access-token", Some("id-token")),
+            json!({
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": null,
+                "tokens": {
+                    "id_token": "id-token",
+                    "access_token": "access-token",
+                    "account_id": "acct-managed"
+                }
+            }),
+            "managed live auth should include id_token to match native browser login"
+        );
+    }
+
+    #[test]
+    fn codex_managed_oauth_live_auth_without_id_token_omits_it() {
+        assert_eq!(
+            codex_managed_oauth_live_auth("acct-managed", "access-token", None),
             json!({
                 "auth_mode": "chatgpt",
                 "OPENAI_API_KEY": null,
@@ -1807,7 +1839,8 @@ mod tests {
                     "access_token": "access-token",
                     "account_id": "acct-managed"
                 }
-            })
+            }),
+            "without a stored id_token the field is omitted rather than written as null"
         );
     }
 
@@ -1821,7 +1854,11 @@ mod tests {
             manager
                 .read()
                 .await
-                .add_test_account_with_access_token("acct-managed", "managed-token")
+                .add_test_account_with_access_token(
+                    "acct-managed",
+                    "managed-token",
+                    Some("managed-id-token"),
+                )
                 .await
                 .expect("seed managed account");
         });
@@ -1854,7 +1891,8 @@ mod tests {
             provider.settings_config.get("auth"),
             Some(&codex_managed_oauth_live_auth(
                 "acct-managed",
-                "managed-token"
+                "managed-token",
+                Some("managed-id-token")
             )),
             "explicit account binding should write the managed ChatGPT token to Codex live auth"
         );
@@ -1870,7 +1908,7 @@ mod tests {
             manager
                 .read()
                 .await
-                .add_test_account_with_access_token("acct-managed", "managed-token")
+                .add_test_account_with_access_token("acct-managed", "managed-token", None)
                 .await
                 .expect("seed managed account");
         });

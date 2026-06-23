@@ -189,6 +189,10 @@ struct CodexAccountData {
     pub refresh_token: String,
     /// 认证时间戳（秒）
     pub authenticated_at: i64,
+    /// ChatGPT id_token（JWT，持久化）。用于让托管写入的 Codex auth.json
+    /// 与原生浏览器登录保持一致的 tokens 字段形状；刷新时若返回新值则更新。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id_token: Option<String>,
 }
 
 /// 公开的账号信息（返回给前端，复用 GitHubAccount 结构）
@@ -204,6 +208,8 @@ impl From<&CodexAccountData> for GitHubAccount {
             avatar_url: None,
             authenticated_at: data.authenticated_at,
             github_domain: "github.com".to_string(),
+            // 旧账号（升级前登录）没有持久化 id_token，需重新登录补全
+            reauth_required: data.id_token.is_none(),
         }
     }
 }
@@ -419,7 +425,13 @@ impl CodexOAuthManager {
         }
 
         let account = self
-            .add_account_internal(account_id, refresh_token, email)
+            .add_account_internal(
+                account_id,
+                refresh_token,
+                email,
+                // 空字符串视为缺失，避免写出空的 id_token
+                tokens.id_token.clone().filter(|t| !t.trim().is_empty()),
+            )
             .await?;
 
         Ok(Some(account))
@@ -539,16 +551,33 @@ impl CodexOAuthManager {
 
         let new_tokens = self.refresh_with_token(&refresh_token).await?;
 
-        // 如果服务端返回了新的 refresh_token，更新存储
-        if let Some(new_refresh) = new_tokens.refresh_token.clone() {
-            if new_refresh != refresh_token {
-                let mut accounts = self.accounts.write().await;
-                if let Some(account) = accounts.get_mut(account_id) {
-                    account.refresh_token = new_refresh;
+        // 如果服务端返回了新的 refresh_token 或 id_token，更新存储
+        let mut needs_save = false;
+        {
+            let mut accounts = self.accounts.write().await;
+            if let Some(account) = accounts.get_mut(account_id) {
+                if let Some(new_refresh) = new_tokens.refresh_token.clone() {
+                    if new_refresh != account.refresh_token {
+                        account.refresh_token = new_refresh;
+                        needs_save = true;
+                    }
                 }
-                drop(accounts);
-                self.save_to_disk().await?;
+                // 刷新使用 openid scope，正常会返回新 id_token；为空则视为缺失，
+                // 保留旧值而非覆盖（旧值的 claims 仍可用于账号/套餐显示）。
+                if let Some(new_id_token) = new_tokens
+                    .id_token
+                    .clone()
+                    .filter(|token| !token.trim().is_empty())
+                {
+                    if account.id_token.as_deref() != Some(new_id_token.as_str()) {
+                        account.id_token = Some(new_id_token);
+                        needs_save = true;
+                    }
+                }
             }
+        }
+        if needs_save {
+            self.save_to_disk().await?;
         }
 
         let access_token = new_tokens.access_token.clone();
@@ -566,6 +595,24 @@ impl CodexOAuthManager {
         }
 
         Ok(access_token)
+    }
+
+    /// 获取指定账号的有效 access_token 与 id_token（必要时自动刷新）
+    ///
+    /// id_token 用于让托管写入的 Codex auth.json 与原生浏览器登录保持
+    /// 一致的 tokens 字段形状（仅托管绑定路径使用）。旧账号若无 id_token
+    /// 会返回 `None`，前端据此提示重新登录。
+    pub async fn get_valid_token_and_id_token_for_account(
+        &self,
+        account_id: &str,
+    ) -> Result<(String, Option<String>), CodexOAuthError> {
+        // 先确保 access_token 有效；刷新过程会顺带更新持久化的 id_token
+        let access_token = self.get_valid_token_for_account(account_id).await?;
+        let id_token = {
+            let accounts = self.accounts.read().await;
+            accounts.get(account_id).and_then(|a| a.id_token.clone())
+        };
+        Ok((access_token, id_token))
     }
 
     /// 获取默认账号的有效 token
@@ -700,11 +747,13 @@ impl CodexOAuthManager {
         &self,
         account_id: &str,
         access_token: &str,
+        id_token: Option<&str>,
     ) -> Result<(), CodexOAuthError> {
         self.add_account_internal(
             account_id.to_string(),
             "test-refresh-token".to_string(),
             Some(format!("{account_id}@example.test")),
+            id_token.map(|token| token.to_string()),
         )
         .await?;
 
@@ -727,6 +776,7 @@ impl CodexOAuthManager {
         account_id: String,
         refresh_token: String,
         email: Option<String>,
+        id_token: Option<String>,
     ) -> Result<GitHubAccount, CodexOAuthError> {
         let now = chrono::Utc::now().timestamp();
 
@@ -735,6 +785,7 @@ impl CodexOAuthManager {
             email,
             refresh_token,
             authenticated_at: now,
+            id_token,
         };
 
         let account = GitHubAccount::from(&data);
@@ -1116,6 +1167,7 @@ mod tests {
                     "acc-123".to_string(),
                     "rt-secret".to_string(),
                     Some("user@example.com".to_string()),
+                    None,
                 )
                 .await
                 .unwrap();
@@ -1138,6 +1190,7 @@ mod tests {
                 "acc-123".to_string(),
                 "rt".to_string(),
                 Some("a@example.com".to_string()),
+                None,
             )
             .await
             .unwrap();
@@ -1146,6 +1199,7 @@ mod tests {
                 "acc-456".to_string(),
                 "rt2".to_string(),
                 Some("b@example.com".to_string()),
+                None,
             )
             .await
             .unwrap();

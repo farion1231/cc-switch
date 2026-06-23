@@ -5079,7 +5079,11 @@ base_url = "https://codex.example/v1"
             .codex_oauth_manager
             .read()
             .await
-            .add_test_account_with_access_token("acct-managed", "managed-token")
+            .add_test_account_with_access_token(
+                "acct-managed",
+                "managed-token",
+                Some("managed-id-token"),
+            )
             .await
             .expect("seed managed Codex OAuth account");
 
@@ -5145,6 +5149,13 @@ base_url = "https://codex.example/v1"
                 .pointer("/auth/tokens/account_id")
                 .and_then(|value| value.as_str()),
             Some("acct-managed")
+        );
+        assert_eq!(
+            stored
+                .pointer("/auth/tokens/id_token")
+                .and_then(|value| value.as_str()),
+            Some("managed-id-token"),
+            "managed backup auth should carry the account id_token to match native login"
         );
     }
 

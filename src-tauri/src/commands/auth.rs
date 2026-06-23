@@ -19,6 +19,8 @@ pub struct ManagedAuthAccount {
     pub authenticated_at: i64,
     pub is_default: bool,
     pub github_domain: String,
+    /// 托管账号是否需要重新登录以补全缺失的凭据（Codex 旧账号缺少 id_token）
+    pub reauth_required: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -55,6 +57,7 @@ fn map_account(
 ) -> ManagedAuthAccount {
     ManagedAuthAccount {
         is_default: default_account_id == Some(account.id.as_str()),
+        reauth_required: account.reauth_required,
         id: account.id,
         provider: provider.to_string(),
         login: account.login,
