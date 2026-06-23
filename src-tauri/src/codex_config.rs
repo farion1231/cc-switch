@@ -311,6 +311,15 @@ fn extract_codex_top_level_u64(config_text: &str, field: &str) -> Option<u64> {
         .filter(|value| *value > 0)
 }
 
+fn extract_codex_top_level_string(config_text: &str, field: &str) -> Option<String> {
+    let doc = config_text.parse::<toml::Value>().ok()?;
+    doc.get(field)
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 fn codex_catalog_model_entry(
     template: &Value,
     model: &str,
@@ -674,6 +683,24 @@ fn codex_model_catalog_from_settings(
         return Ok(None);
     }
 
+    let template = load_codex_model_catalog_template()?;
+    Ok(Some(codex_model_catalog_from_specs(&specs, &template)))
+}
+
+/// 当 live config 缺少 cc-switch catalog 指针时，用当前模型生成最小 catalog，避免 `/v1/models` 返回空列表。
+pub fn codex_model_catalog_from_live_config_model(
+    config_text: &str,
+) -> Result<Option<Value>, AppError> {
+    let Some(model) = extract_codex_top_level_string(config_text, "model") else {
+        return Ok(None);
+    };
+    let context_window =
+        extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
+    let specs = [CodexCatalogModelSpec {
+        model: model.clone(),
+        display_name: model,
+        context_window,
+    }];
     let template = load_codex_model_catalog_template()?;
     Ok(Some(codex_model_catalog_from_specs(&specs, &template)))
 }
@@ -2118,6 +2145,44 @@ base_url = "https://production.api/v1"
                 .get("availability_nux")
                 .is_some_and(|value| value.is_null()),
             "generated third-party entries should not inherit GPT-5.5 launch messaging"
+        );
+    }
+
+    #[test]
+    fn codex_model_catalog_can_fall_back_to_live_config_model() {
+        let config = r#"
+model = "gpt-5.5"
+model_context_window = 1000000
+"#;
+        let catalog = codex_model_catalog_from_live_config_model(config)
+            .expect("fallback catalog should build")
+            .expect("top-level model should produce a catalog");
+        let models = catalog
+            .get("models")
+            .and_then(|value| value.as_array())
+            .expect("models should be an array");
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(
+            models[0].get("slug").and_then(|value| value.as_str()),
+            Some("gpt-5.5")
+        );
+        assert_eq!(
+            models[0]
+                .get("context_window")
+                .and_then(|value| value.as_u64()),
+            Some(1_000_000)
+        );
+    }
+
+    #[test]
+    fn codex_model_catalog_fallback_ignores_missing_live_model() {
+        let catalog = codex_model_catalog_from_live_config_model("model_context_window = 1000000")
+            .expect("fallback catalog lookup should not fail");
+
+        assert!(
+            catalog.is_none(),
+            "missing top-level model should not produce a fallback catalog"
         );
     }
 

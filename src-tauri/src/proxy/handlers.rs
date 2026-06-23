@@ -75,12 +75,10 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// Codex live-setting import.
 pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
     let generated_path = crate::codex_config::get_codex_model_catalog_path();
-    let active_catalog_path = match crate::codex_config::read_codex_config_text() {
-        Ok(config_text) => {
-            crate::codex_config::resolve_cc_switch_catalog_path(&config_text, &generated_path)
-        }
-        Err(_) => None,
-    };
+    let config_text = crate::codex_config::read_codex_config_text().ok();
+    let active_catalog_path = config_text.as_ref().and_then(|config_text| {
+        crate::codex_config::resolve_cc_switch_catalog_path(config_text, &generated_path)
+    });
 
     let catalog = if let Some(catalog_path) =
         active_catalog_path.as_ref().filter(|path| path.exists())
@@ -88,6 +86,27 @@ pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
         let text = std::fs::read_to_string(catalog_path).unwrap_or_default();
         serde_json::from_str(&text).unwrap_or(json!({"models": []}))
     } else {
+        if let Some(config_text) = config_text.as_deref() {
+            match crate::codex_config::codex_model_catalog_from_live_config_model(config_text) {
+                Ok(Some(catalog)) => {
+                    if active_catalog_path.is_none() {
+                        log::debug!(
+                            "[models] serving live-config fallback catalog (model_catalog_json not set to cc-switch catalog)"
+                        );
+                    } else {
+                        log::debug!(
+                            "[models] serving live-config fallback catalog (cc-switch catalog file missing)"
+                        );
+                    }
+                    return Ok(Json(catalog));
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    log::debug!("[models] live-config fallback catalog unavailable: {err}");
+                }
+            }
+        }
+
         if active_catalog_path.is_none() {
             log::debug!(
                 "[models] stale guard: catalog not served (model_catalog_json not set to cc-switch catalog)"
