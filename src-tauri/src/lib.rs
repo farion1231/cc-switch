@@ -409,6 +409,33 @@ pub fn run() {
                     Err(e) => {
                         log::error!("Failed to init database: {e}");
 
+                        // 数据库版本过新（应用过旧）：无法向下迁移，反复重试也无效。
+                        // 记录可恢复错误并进入应用内「升级应用」恢复界面，而不是死循环弹窗。
+                        if let Ok(Some(version)) =
+                            crate::database::Database::stored_user_version_exceeds_supported(
+                                &db_path,
+                            )
+                        {
+                            log::warn!("数据库版本过新（v{version}），引导用户在应用内升级应用");
+                            crate::init_status::set_init_error(
+                                crate::init_status::InitErrorPayload {
+                                    path: db_path.display().to_string(),
+                                    error: e.to_string(),
+                                    kind: Some("db_version_too_new".to_string()),
+                                    db_version: Some(version),
+                                    supported_version: Some(
+                                        crate::database::SCHEMA_VERSION,
+                                    ),
+                                },
+                            );
+                            // 主窗口默认 visible:false，恢复界面必须强制显示
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                            return Ok(());
+                        }
+
                         if !show_database_init_error_dialog(app.handle(), &db_path, &e.to_string())
                         {
                             log::info!("用户选择退出程序");
@@ -1187,6 +1214,7 @@ pub fn run() {
             commands::set_log_config,
             commands::restart_app,
             commands::install_update_and_restart,
+            commands::check_app_update_available,
             commands::check_for_updates,
             commands::is_portable_mode,
             commands::copy_text_to_clipboard,
