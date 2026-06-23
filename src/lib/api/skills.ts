@@ -194,6 +194,11 @@ export const skillsApi = {
     return await invoke("discover_available_skills");
   },
 
+  /** 读取上次完整验证过的发现结果缓存（不访问网络） */
+  async loadCachedDiscoverable(): Promise<DiscoverableSkill[]> {
+    return await invoke("load_cached_discoverable_skills");
+  },
+
   /** 检查 Skills 更新 */
   async checkUpdates(): Promise<SkillUpdateInfo[]> {
     return await invoke("check_skill_updates");

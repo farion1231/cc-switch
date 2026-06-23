@@ -4,12 +4,14 @@ import {
   useQueryClient,
   keepPreviousData,
 } from "@tanstack/react-query";
+import { useEffect } from "react";
 import {
   skillsApi,
   type SkillBackupEntry,
   type DiscoverableSkill,
   type ImportSkillSelection,
   type InstalledSkill,
+  type SkillRepo,
   type SkillUpdateInfo,
   type SkillsShSearchResult,
 } from "@/lib/api/skills";
@@ -53,10 +55,67 @@ export function useDeleteSkillBackup() {
  * 使用 staleTime: Infinity 和 placeholderData: keepPreviousData
  * 实现首次进入使用缓存，只有刷新时才重新获取
  */
+function repositoryIdentity(owner: string, name: string) {
+  return `${owner}/${name}`.toLowerCase();
+}
+
+export function filterDiscoverableSkillsForRepos(
+  skills: DiscoverableSkill[],
+  repos?: SkillRepo[],
+) {
+  if (!repos) return skills;
+
+  const enabledRepos = new Set(
+    repos
+      .filter((repo) => repo.enabled)
+      .map((repo) => repositoryIdentity(repo.owner, repo.name)),
+  );
+  return skills.filter((skill) =>
+    enabledRepos.has(repositoryIdentity(skill.repoOwner, skill.repoName)),
+  );
+}
+
 export function useDiscoverableSkills() {
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    let cancelled = false;
+    skillsApi
+      .loadCachedDiscoverable()
+      .then((cached) => {
+        const hasData =
+          queryClient.getQueryData(["skills", "discoverable"]) !== undefined;
+        if (!cancelled && cached.length > 0 && !hasData) {
+          queryClient.setQueryData(
+            ["skills", "discoverable"],
+            filterDiscoverableSkillsForRepos(
+              cached,
+              queryClient.getQueryData<SkillRepo[]>(["skills", "repos"]),
+            ),
+          );
+        }
+      })
+      .catch((error) => {
+        console.warn(
+          "[useDiscoverableSkills] Failed to load cached discoverable skills",
+          error,
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [queryClient]);
+
   return useQuery({
     queryKey: ["skills", "discoverable"],
-    queryFn: () => skillsApi.discoverAvailable(),
+    queryFn: async () => {
+      const skills = await skillsApi.discoverAvailable();
+      return filterDiscoverableSkillsForRepos(
+        skills,
+        queryClient.getQueryData<SkillRepo[]>(["skills", "repos"]),
+      );
+    },
     staleTime: Infinity,
     placeholderData: keepPreviousData,
   });
@@ -241,7 +300,22 @@ export function useAddSkillRepo() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: skillsApi.addRepo,
-    onSuccess: () => {
+    onSuccess: (_result, repo) => {
+      queryClient.setQueryData<SkillRepo[]>(["skills", "repos"], (current) => {
+        if (!current) return [repo];
+
+        const addedRepo = repositoryIdentity(repo.owner, repo.name);
+        const existingIndex = current.findIndex(
+          (item) => repositoryIdentity(item.owner, item.name) === addedRepo,
+        );
+        if (existingIndex === -1) {
+          return [...current, repo];
+        }
+
+        return current.map((item, index) =>
+          index === existingIndex ? repo : item,
+        );
+      });
       queryClient.invalidateQueries({ queryKey: ["skills", "repos"] });
       queryClient.invalidateQueries({ queryKey: ["skills", "discoverable"] });
     },
@@ -256,7 +330,22 @@ export function useRemoveSkillRepo() {
   return useMutation({
     mutationFn: ({ owner, name }: { owner: string; name: string }) =>
       skillsApi.removeRepo(owner, name),
-    onSuccess: () => {
+    onSuccess: (_result, { owner, name }) => {
+      const removedRepo = repositoryIdentity(owner, name);
+      queryClient.setQueryData<SkillRepo[]>(["skills", "repos"], (oldData) =>
+        oldData?.filter(
+          (repo) => repositoryIdentity(repo.owner, repo.name) !== removedRepo,
+        ),
+      );
+      queryClient.setQueryData<DiscoverableSkill[]>(
+        ["skills", "discoverable"],
+        (oldData) =>
+          oldData?.filter(
+            (skill) =>
+              repositoryIdentity(skill.repoOwner, skill.repoName) !==
+              removedRepo,
+          ),
+      );
       queryClient.invalidateQueries({ queryKey: ["skills", "repos"] });
       queryClient.invalidateQueries({ queryKey: ["skills", "discoverable"] });
     },

@@ -18,6 +18,7 @@ import type {
 const installMutateAsyncMock = vi.fn();
 let discoverableSkillsMock: DiscoverableSkill[] = [];
 let skillReposMock: SkillRepo[] = [];
+let discoverableFetchingMock = false;
 const refetchDiscoverableMock = vi.fn();
 
 // Stable cache so repeated renders see referentially-equal data.
@@ -63,7 +64,7 @@ vi.mock("@/hooks/useSkills", () => ({
   useDiscoverableSkills: () => ({
     data: discoverableSkillsMock,
     isLoading: false,
-    isFetching: false,
+    isFetching: discoverableFetchingMock,
     refetch: refetchDiscoverableMock,
   }),
   useInstalledSkills: () => ({
@@ -132,6 +133,7 @@ describe("SkillsPage - skills.sh install (regression)", () => {
     installMutateAsyncMock.mockResolvedValue({});
     discoverableSkillsMock = [];
     skillReposMock = [];
+    discoverableFetchingMock = false;
     refetchDiscoverableMock.mockReset();
     searchCache.clear();
   });
@@ -287,6 +289,39 @@ describe("SkillsPage - skills.sh install (regression)", () => {
     });
   });
 
+  it("keeps cached repository results visible during background refresh", () => {
+    discoverableSkillsMock = [makeDiscoverableSkill()];
+    skillReposMock = [makeSkillRepo()];
+    discoverableFetchingMock = true;
+
+    render(<SkillsPage initialApp="claude" />);
+
+    expect(screen.getByText("Repo Skill")).toBeInTheDocument();
+  });
+
+  it("continues rendering repository skills automatically in batches", async () => {
+    discoverableSkillsMock = Array.from({ length: 49 }, (_, index) =>
+      makeDiscoverableSkill({
+        key: `repo-skill-${index + 1}:owner-a:repo-a`,
+        name: `Repo Skill ${index + 1}`,
+        directory: `repo-skill-${index + 1}`,
+      }),
+    );
+    skillReposMock = [makeSkillRepo()];
+
+    render(<SkillsPage initialApp="claude" />);
+
+    expect(screen.getByText("Repo Skill 48")).toBeInTheDocument();
+    expect(screen.queryByText("Repo Skill 49")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "skills.discoveryLoadMore" }),
+    ).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByText("Repo Skill 49")).toBeInTheDocument();
+    });
+  });
+
   it("keeps the repository source when configured repositories return no discoverable skills", async () => {
     skillReposMock = [makeSkillRepo()];
     const onSourceChange = vi.fn();
@@ -336,4 +371,5 @@ describe("SkillsPage - skills.sh install (regression)", () => {
       getSkillsPageHeaderActions("skillssh").map((action) => action.key),
     ).toEqual(["manage-repos"]);
   });
+
 });

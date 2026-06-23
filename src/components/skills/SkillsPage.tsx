@@ -47,6 +47,7 @@ export type SkillsPageSource = "repos" | "skillssh";
 interface SkillsPageProps {
   initialApp?: AppId;
   onSourceChange?: (source: SkillsPageSource) => void;
+  onRefreshingChange?: (refreshing: boolean) => void;
 }
 
 export interface SkillsPageHandle {
@@ -59,15 +60,23 @@ type SkillsPageHeaderAction = {
   sources: readonly SkillsPageSource[];
   labelKey: string;
   Icon: LucideIcon;
+  isBusy?: boolean;
   execute: (page: SkillsPageHandle | null) => void;
 };
 
-const SKILLS_PAGE_HEADER_ACTIONS: readonly SkillsPageHeaderAction[] = [
+type SkillsPageHeaderActionOptions = {
+  refreshingRepos?: boolean;
+};
+
+const createSkillsPageHeaderActions = ({
+  refreshingRepos = false,
+}: SkillsPageHeaderActionOptions = {}): readonly SkillsPageHeaderAction[] => [
   {
     key: "refresh-repos",
     sources: ["repos"],
-    labelKey: "skills.refresh",
-    Icon: RefreshCw,
+    labelKey: refreshingRepos ? "skills.refreshing" : "skills.refresh",
+    Icon: refreshingRepos ? Loader2 : RefreshCw,
+    isBusy: refreshingRepos,
     execute: (page) => page?.refresh(),
   },
   {
@@ -75,23 +84,28 @@ const SKILLS_PAGE_HEADER_ACTIONS: readonly SkillsPageHeaderAction[] = [
     sources: ["repos", "skillssh"],
     labelKey: "skills.repoManager",
     Icon: Settings,
+    isBusy: false,
     execute: (page) => page?.openRepoManager(),
   },
 ];
 
-export const getSkillsPageHeaderActions = (source: SkillsPageSource) =>
-  SKILLS_PAGE_HEADER_ACTIONS.filter((action) =>
+export const getSkillsPageHeaderActions = (
+  source: SkillsPageSource,
+  options?: SkillsPageHeaderActionOptions,
+) =>
+  createSkillsPageHeaderActions(options).filter((action) =>
     action.sources.includes(source),
   );
 
 const SKILLSSH_PAGE_SIZE = 20;
+const REPO_SKILL_BATCH_SIZE = 48;
 
 /**
  * Skills 发现面板
  * 用于浏览和安装来自仓库或 skills.sh 的 Skills
  */
 export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
-  ({ initialApp = "claude", onSourceChange }, ref) => {
+  ({ initialApp = "claude", onSourceChange, onRefreshingChange }, ref) => {
     const { t } = useTranslation();
     const [repoManagerOpen, setRepoManagerOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
@@ -99,6 +113,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const [filterStatus, setFilterStatus] = useState<
       "all" | "installed" | "uninstalled"
     >("all");
+    const [repoSkillLimit, setRepoSkillLimit] = useState(REPO_SKILL_BATCH_SIZE);
 
     // skills.sh 搜索状态
     const [searchSource, setSearchSource] = useState<SkillsPageSource>("repos");
@@ -171,17 +186,21 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
 
     type DiscoverableSkillItem = DiscoverableSkill & { installed: boolean };
 
-    // 从可发现技能中提取所有仓库选项
+    // 从配置仓库和可发现技能中提取仓库选项。配置仓库确保刷新中/空结果仓库仍可见。
     const repoOptions = useMemo(() => {
-      if (!discoverableSkills) return [];
       const repoSet = new Set<string>();
-      discoverableSkills.forEach((s) => {
+      repos.forEach((repo) => {
+        if (repo.enabled) {
+          repoSet.add(`${repo.owner}/${repo.name}`);
+        }
+      });
+      discoverableSkills?.forEach((s) => {
         if (s.repoOwner && s.repoName) {
           repoSet.add(`${s.repoOwner}/${s.repoName}`);
         }
       });
       return Array.from(repoSet).sort();
-    }, [discoverableSkills]);
+    }, [discoverableSkills, repos]);
 
     // 为发现列表补齐 installed 状态，供 SkillCard 使用
     const skills: DiscoverableSkillItem[] = useMemo(() => {
@@ -206,18 +225,24 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
       return installedKeys.has(key);
     };
 
+    const hasDiscoverableData = (discoverableSkills?.length ?? 0) > 0;
     const loading =
       searchSource === "repos"
-        ? loadingDiscoverable || fetchingDiscoverable
+        ? (loadingDiscoverable || fetchingDiscoverable) && !hasDiscoverableData
         : false;
 
     useImperativeHandle(ref, () => ({
       refresh: () => {
+        setRepoSkillLimit(REPO_SKILL_BATCH_SIZE);
         refetchDiscoverable();
         refetchRepos();
       },
       openRepoManager: () => setRepoManagerOpen(true),
     }));
+
+    useEffect(() => {
+      setRepoSkillLimit(REPO_SKILL_BATCH_SIZE);
+    }, [searchQuery, filterRepo, filterStatus]);
 
     // skills.sh 结果转为 DiscoverableSkill（复用现有安装流程）
     const toDiscoverableSkill = (
@@ -349,6 +374,23 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
         return name.includes(query) || repo.includes(query);
       });
     }, [skills, searchQuery, filterRepo, filterStatus]);
+    const displayedRepoSkills = useMemo(
+      () => filteredSkills.slice(0, repoSkillLimit),
+      [filteredSkills, repoSkillLimit],
+    );
+
+    useEffect(() => {
+      if (searchSource !== "repos" || loading) return;
+      if (repoSkillLimit >= filteredSkills.length) return;
+
+      const frameId = window.requestAnimationFrame(() => {
+        setRepoSkillLimit((current) =>
+          Math.min(current + REPO_SKILL_BATCH_SIZE, filteredSkills.length),
+        );
+      });
+
+      return () => window.cancelAnimationFrame(frameId);
+    }, [filteredSkills.length, loading, repoSkillLimit, searchSource]);
 
     // 是否有更多 skills.sh 结果
     const hasMoreSkillsSh =
@@ -365,6 +407,10 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     useEffect(() => {
       onSourceChange?.(effectiveSource);
     }, [effectiveSource, onSourceChange]);
+
+    useEffect(() => {
+      onRefreshingChange?.(effectiveSource === "repos" && fetchingDiscoverable);
+    }, [effectiveSource, fetchingDiscoverable, onRefreshingChange]);
 
     return (
       <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden bg-background/50">
@@ -560,7 +606,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredSkills.map((skill) => (
+                  {displayedRepoSkills.map((skill) => (
                     <SkillCard
                       key={skill.key}
                       skill={skill}
