@@ -2,7 +2,7 @@
 //!
 //! 将旧版 config.json (MultiAppConfig) 数据迁移到 SQLite 数据库。
 
-use super::{lock_conn, to_json_string, Database};
+use super::{lock_conn, to_json_string, Database, DEFAULT_SKILL_REPOS_INITIALIZED_KEY};
 use crate::app_config::MultiAppConfig;
 use crate::error::AppError;
 use rusqlite::{params, Connection};
@@ -16,6 +16,15 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         Self::migrate_from_json_tx(&tx, config)?;
+        tx.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, 'true')",
+            params![DEFAULT_SKILL_REPOS_INITIALIZED_KEY],
+        )
+        .map_err(|e| {
+            AppError::Database(format!(
+                "Mark default Skill repositories initialized failed: {e}"
+            ))
+        })?;
 
         tx.commit()
             .map_err(|e| AppError::Database(format!("Commit migration failed: {e}")))?;
@@ -241,5 +250,35 @@ impl Database {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::skill::SkillRepo;
+
+    fn config_with_repository() -> MultiAppConfig {
+        let mut config = MultiAppConfig::default();
+        config.skills.repos = vec![SkillRepo {
+            owner: "owner".to_string(),
+            name: "repo".to_string(),
+            branch: "main".to_string(),
+            enabled: true,
+        }];
+        config
+    }
+
+    #[test]
+    fn migration_and_repository_initialization_marker_commit_together() {
+        let db = Database::memory().expect("memory database");
+
+        db.migrate_from_json(&config_with_repository())
+            .expect("migrate configuration");
+
+        assert_eq!(db.get_skill_repos().expect("read repositories").len(), 1);
+        assert!(db
+            .default_skill_repos_initialized()
+            .expect("read initialization marker"));
     }
 }
