@@ -19,6 +19,7 @@ export interface CodexProviderPreset {
   config: string; // 将写入 ~/.codex/config.toml（TOML 字符串）
   isOfficial?: boolean; // 标识是否为官方预设
   isPartner?: boolean; // 标识是否为商业合作伙伴
+  primePartner?: boolean; // 置顶合作伙伴（顶级）：徽章显示为心形
   partnerPromotionKey?: string; // 合作伙伴促销信息的 i18n key
   category?: ProviderCategory; // 新增：分类
   isCustomTemplate?: boolean; // 标识是否为自定义模板
@@ -135,9 +136,9 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   {
     name: "火山Agentplan",
     websiteUrl:
-      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
-      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "ark_agentplan",
@@ -420,18 +421,54 @@ requires_openai_auth = true`,
   },
   {
     name: "Kimi",
+    primePartner: true,
     websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
     apiKeyUrl: "https://platform.moonshot.cn/console/api-keys?aff=cc-switch",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "kimi",
       "https://api.moonshot.cn/v1",
-      "kimi-k2.6",
+      "kimi-k2.7-code",
     ),
     endpointCandidates: ["https://api.moonshot.cn/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
-      { model: "kimi-k2.6", displayName: "Kimi K2.6", contextWindow: 262144 },
+      {
+        model: "kimi-k2.7-code",
+        displayName: "Kimi K2.7 Code",
+        contextWindow: 262144,
+      },
+    ]),
+    codexChatReasoning: {
+      supportsThinking: true,
+      supportsEffort: false,
+      thinkingParam: "thinking",
+      effortParam: "none",
+      outputFormat: "reasoning_content",
+    },
+    category: "cn_official",
+    icon: "kimi",
+    iconColor: "#6366F1",
+  },
+  {
+    name: "Kimi For Coding",
+    primePartner: true,
+    websiteUrl: "https://www.kimi.com/code/docs/",
+    apiKeyUrl: "https://www.kimi.com/code/",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "kimi_coding",
+      "https://api.kimi.com/coding/v1",
+      "kimi-for-coding",
+    ),
+    endpointCandidates: ["https://api.kimi.com/coding/v1"],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      {
+        model: "kimi-for-coding",
+        displayName: "Kimi For Coding",
+        contextWindow: 262144,
+      },
     ]),
     codexChatReasoning: {
       supportsThinking: true,
@@ -580,7 +617,6 @@ requires_openai_auth = true`,
       outputFormat: "reasoning_details",
     },
     category: "cn_official",
-    isPartner: true,
     partnerPromotionKey: "minimax_cn",
     theme: {
       backgroundColor: "#f64551",
@@ -616,7 +652,6 @@ requires_openai_auth = true`,
       outputFormat: "reasoning_details",
     },
     category: "cn_official",
-    isPartner: true,
     partnerPromotionKey: "minimax_en",
     theme: {
       backgroundColor: "#f64551",
@@ -945,7 +980,11 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://api.atlascloud.ai/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
-      { model: "zai-org/glm-5.1", displayName: "GLM 5.1" },
+      {
+        model: "zai-org/glm-5.1",
+        displayName: "GLM 5.1",
+        contextWindow: 200000,
+      },
     ]),
     isPartner: true,
     partnerPromotionKey: "atlascloud",
@@ -971,8 +1010,6 @@ wire_api = "responses"
 requires_openai_auth = true`,
     endpointCandidates: ["https://sudocode.us/v1", "https://sudocode.run/v1"],
     apiFormat: "openai_responses",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
     icon: "sudocode",
   },
   {
@@ -1185,20 +1222,20 @@ requires_openai_auth = true`,
     iconColor: "#000000",
   },
   {
-    name: "CTok.ai",
-    websiteUrl: "https://ctok.ai",
-    apiKeyUrl: "https://ctok.ai",
+    name: "ETok.ai",
+    websiteUrl: "https://etok.ai",
+    apiKeyUrl: "https://etok.ai",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
-      "ctok",
-      "https://api.ctok.ai/v1",
+      "etok",
+      "https://api.etok.ai/v1",
       "gpt-5.5",
     ),
-    endpointCandidates: ["https://api.ctok.ai/v1"],
+    endpointCandidates: ["https://api.etok.ai/v1"],
     category: "third_party",
     isPartner: true, // 合作伙伴
-    partnerPromotionKey: "ctok", // 促销信息 i18n key
-    icon: "ctok",
+    partnerPromotionKey: "etok", // 促销信息 i18n key
+    icon: "etok",
     iconColor: "#000000",
   },
   {
@@ -1225,22 +1262,6 @@ model_auto_compact_token_limit = 9000000`,
     endpointCandidates: ["https://e-flowcode.cc/v1"],
     icon: "eflowcode",
     iconColor: "#000000",
-  },
-  {
-    name: "LemonData",
-    websiteUrl: "https://lemondata.cc",
-    apiKeyUrl: "https://lemondata.cc/r/FFX1ZDUP",
-    category: "third_party",
-    auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig(
-      "lemondata",
-      "https://api.lemondata.cc/v1",
-      "gpt-5.5",
-    ),
-    endpointCandidates: ["https://api.lemondata.cc/v1"],
-    isPartner: true,
-    partnerPromotionKey: "lemondata",
-    icon: "lemondata",
   },
   {
     name: "PIPELLM",

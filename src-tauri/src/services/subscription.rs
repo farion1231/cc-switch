@@ -307,6 +307,11 @@ pub const TIER_SEVEN_DAY_SONNET: &str = "seven_day_sonnet";
 /// 写入、tray 渲染、commands::provider 扁平化三处共用同一标识。
 pub const TIER_WEEKLY_LIMIT: &str = "weekly_limit";
 
+/// 月窗口 tier 名。火山方舟 Agent Plan / Coding Plan 有 5h / 周 / 月 三个展示
+/// 窗口（Kimi / MiniMax 只有 5h + 周），月窗口共用此标识；前端 `TIER_I18N_KEYS`
+/// 映射到 `subscription.monthly`。
+pub const TIER_MONTHLY: &str = "monthly";
+
 /// Gemini 用量分组名称（按模型而非时间窗口）。`classify_gemini_model` 输出。
 pub const TIER_GEMINI_PRO: &str = "gemini_pro";
 pub const TIER_GEMINI_FLASH: &str = "gemini_flash";
@@ -328,7 +333,7 @@ async fn query_claude_quota(access_token: &str) -> SubscriptionQuota {
         .header("Authorization", format!("Bearer {access_token}"))
         .header("anthropic-beta", "oauth-2025-04-20")
         .header("Accept", "application/json")
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await;
 
@@ -668,7 +673,7 @@ pub(crate) async fn query_codex_quota(
         req = req.header("ChatGPT-Account-Id", id);
     }
 
-    let resp = match req.timeout(std::time::Duration::from_secs(10)).send().await {
+    let resp = match req.timeout(std::time::Duration::from_secs(15)).send().await {
         Ok(r) => r,
         Err(e) => {
             return SubscriptionQuota::error(
@@ -964,7 +969,7 @@ async fn refresh_gemini_token(refresh_token: &str) -> Option<String> {
             ("refresh_token", refresh_token),
             ("grant_type", "refresh_token"),
         ])
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
         .ok()?;
@@ -1048,7 +1053,7 @@ async fn query_gemini_quota(access_token: &str) -> SubscriptionQuota {
                 "pluginType": "GEMINI"
             }
         }))
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await;
 
@@ -1109,7 +1114,7 @@ async fn query_gemini_quota(access_token: &str) -> SubscriptionQuota {
         .header("Authorization", format!("Bearer {access_token}"))
         .header("Content-Type", "application/json")
         .json(&quota_body)
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(15))
         .send()
         .await;
 

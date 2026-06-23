@@ -19,6 +19,8 @@ const W_TIER_NAMES: &[&str] = &[
     crate::services::subscription::TIER_SEVEN_DAY_OPUS,
     crate::services::subscription::TIER_SEVEN_DAY_SONNET,
 ];
+// 火山方舟 Agent/Coding Plan 的月窗口（5h/周/月 三档）。
+const M_TIER_NAMES: &[&str] = &[crate::services::subscription::TIER_MONTHLY];
 const GEMINI_PRO_TIER_NAMES: &[&str] = &[crate::services::subscription::TIER_GEMINI_PRO];
 const GEMINI_FLASH_TIER_NAMES: &[&str] = &[crate::services::subscription::TIER_GEMINI_FLASH];
 const GEMINI_FLASH_LITE_TIER_NAMES: &[&str] =
@@ -26,6 +28,7 @@ const GEMINI_FLASH_LITE_TIER_NAMES: &[&str] =
 const TIER_LABEL_GROUPS: &[(&str, &[&str])] = &[
     ("h", H_TIER_NAMES),
     ("w", W_TIER_NAMES),
+    ("m", M_TIER_NAMES),
     ("p", GEMINI_PRO_TIER_NAMES),
     ("f", GEMINI_FLASH_TIER_NAMES),
     ("l", GEMINI_FLASH_LITE_TIER_NAMES),
@@ -878,7 +881,7 @@ mod tests {
     use crate::provider::{UsageData, UsageResult};
     use crate::services::subscription::{
         CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_GEMINI_FLASH,
-        TIER_GEMINI_FLASH_LITE, TIER_GEMINI_PRO, TIER_SEVEN_DAY, TIER_SEVEN_DAY_OPUS,
+        TIER_GEMINI_FLASH_LITE, TIER_GEMINI_PRO, TIER_MONTHLY, TIER_SEVEN_DAY, TIER_SEVEN_DAY_OPUS,
         TIER_SEVEN_DAY_SONNET, TIER_WEEKLY_LIMIT,
     };
 
@@ -1092,6 +1095,36 @@ mod tests {
         let r = usage_result(true, vec![usage_data(Some(TIER_WEEKLY_LIMIT), 50.0)]);
         let s = format_script_summary(&r).expect("should format");
         assert!(s.contains("w50%"), "expected w50% in {s}");
+    }
+
+    #[test]
+    fn script_summary_token_plan_volcengine_three_tiers_with_monthly() {
+        // 火山方舟 Agent Plan 回 5h/周/月三档，托盘应包含 m（月）窗口，
+        // 不再静默丢弃。
+        let r = usage_result(
+            true,
+            vec![
+                usage_data(Some(TIER_FIVE_HOUR), 25.0),
+                usage_data(Some(TIER_WEEKLY_LIMIT), 30.0),
+                usage_data(Some(TIER_MONTHLY), 42.0),
+            ],
+        );
+        let s = format_script_summary(&r).expect("should format");
+        assert!(s.contains("h25%"), "expected h25% in {s}");
+        assert!(s.contains("w30%"), "expected w30% in {s}");
+        assert!(s.contains("m42%"), "expected m42% in {s}");
+    }
+
+    #[test]
+    fn script_summary_token_plan_monthly_only_renders_label_not_raw_name() {
+        // 仅月窗口激活时不应回落到原始 "monthly" 机器名，而是走 m 标签。
+        let r = usage_result(true, vec![usage_data(Some(TIER_MONTHLY), 60.0)]);
+        let s = format_script_summary(&r).expect("should format");
+        assert!(s.contains("m60%"), "expected m60% in {s}");
+        assert!(
+            !s.contains("monthly"),
+            "raw tier name should not leak into label: {s}"
+        );
     }
 
     #[test]
