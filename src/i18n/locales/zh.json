@@ -1661,6 +1661,8 @@
     "editCodexServer": "编辑 Codex MCP",
     "configPath": "配置路径",
     "serverCount": "已配置 {{count}} 个 MCP 服务器",
+    "searchPlaceholder": "搜索 MCP 服务器...",
+    "noResults": "未找到匹配的服务器",
     "enabledCount": "已启用 {{count}} 个",
     "template": {
       "fetch": "快速模板：mcp-fetch"
@@ -2177,6 +2179,7 @@
       "allRepos": "全部仓库"
     },
     "noResults": "未找到匹配的技能",
+    "searchInstalledPlaceholder": "搜索已安装的技能...",
     "noInstalled": "暂无已安装的技能",
     "noInstalledDescription": "从仓库发现并安装技能，或导入已有的技能",
     "discover": "发现技能",

@@ -78,10 +78,8 @@ export function AppSwitcher({
             type="button"
             onClick={() => handleSwitch(app)}
             className={cn(
-              "group inline-flex items-center px-3 h-8 rounded-md text-sm font-medium transition-all duration-200",
-              isActive
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground hover:bg-background/50",
+              "group inline-flex items-center px-3 h-8 rounded-lg text-sm font-medium transition-all duration-200",
+              isActive ? "bg-background shadow-sm" : "hover:bg-background/50",
             )}
           >
             <span className="relative inline-flex shrink-0">
@@ -93,10 +91,10 @@ export function AppSwitcher({
               {BadgeIcon && (
                 <span
                   className={cn(
-                    "absolute -bottom-0.5 -right-0.5 flex items-center justify-center rounded-[3px] border h-[11px] w-[11px]",
+                    "absolute -bottom-0.5 -right-0.5 flex items-center justify-center rounded-[3px] border h-[11px] w-[11px] text-foreground",
                     isActive
-                      ? "bg-background border-border text-foreground"
-                      : "bg-muted border-background text-muted-foreground group-hover:bg-background group-hover:text-foreground",
+                      ? "bg-background border-border"
+                      : "bg-muted border-background group-hover:bg-background",
                   )}
                   aria-hidden="true"
                 >
@@ -115,6 +113,9 @@ export function AppSwitcher({
             <span
               className={cn(
                 "transition-all duration-200 whitespace-nowrap overflow-hidden",
+                isActive
+                  ? "text-foreground"
+                  : "text-muted-foreground group-hover:text-foreground",
                 compact
                   ? "max-w-0 opacity-0 ml-0"
                   : "max-w-[120px] opacity-100 ml-2",

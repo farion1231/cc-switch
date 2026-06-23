@@ -1633,6 +1633,8 @@
     "editCodexServer": "編輯 Codex MCP",
     "configPath": "設定路徑",
     "serverCount": "已設定 {{count}} 個 MCP 伺服器",
+    "searchPlaceholder": "搜尋 MCP 伺服器...",
+    "noResults": "未找到符合的伺服器",
     "enabledCount": "已啟用 {{count}} 個",
     "template": {
       "fetch": "快速範本：mcp-fetch"
@@ -2149,6 +2151,7 @@
       "allRepos": "全部儲存庫"
     },
     "noResults": "未找到相符的技能",
+    "searchInstalledPlaceholder": "搜尋已安裝的技能...",
     "noInstalled": "暫無已安裝的技能",
     "noInstalledDescription": "從儲存庫發現並安裝技能，或匯入已有的技能",
     "discover": "發現技能",

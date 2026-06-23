@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Server } from "lucide-react";
+import { Server, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   useAllMcpServers,
@@ -18,6 +19,7 @@ import { settingsApi } from "@/lib/api";
 import { mcpPresets } from "@/config/mcpPresets";
 import { toast } from "sonner";
 import { MCP_APP_IDS } from "@/config/appConfig";
+import { useSettingsQuery } from "@/lib/query";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
@@ -45,10 +47,19 @@ const UnifiedMcpPanel = React.forwardRef<
     onConfirm: () => void;
   } | null>(null);
 
+  const [searchQuery, setSearchQuery] = useState("");
+
   const { data: serversMap, isLoading } = useAllMcpServers();
   const toggleAppMutation = useToggleMcpApp();
   const deleteServerMutation = useDeleteMcpServer();
   const importMutation = useImportMcpFromApps();
+
+  const { data: settingsData } = useSettingsQuery();
+  const visibleAppIds = useMemo(() => {
+    const vis = settingsData?.visibleApps;
+    if (!vis) return MCP_APP_IDS;
+    return MCP_APP_IDS.filter((id) => vis[id]);
+  }, [settingsData?.visibleApps]);
 
   const serverEntries = useMemo((): Array<[string, McpServer]> => {
     if (!serversMap) return [];
@@ -66,12 +77,22 @@ const UnifiedMcpPanel = React.forwardRef<
       hermes: 0,
     };
     serverEntries.forEach(([_, server]) => {
-      for (const app of MCP_APP_IDS) {
+      for (const app of visibleAppIds) {
         if (server.apps[app]) counts[app]++;
       }
     });
     return counts;
-  }, [serverEntries]);
+  }, [serverEntries, visibleAppIds]);
+
+  const filteredEntries = useMemo(() => {
+    const query = searchQuery.toLowerCase().trim();
+    if (!query) return serverEntries;
+    return serverEntries.filter(([id, server]) => {
+      const name = (server.name || id).toLowerCase();
+      const desc = (server.description || "").toLowerCase();
+      return name.includes(query) || desc.includes(query);
+    });
+  }, [serverEntries, searchQuery]);
 
   const handleToggleApp = async (
     serverId: string,
@@ -141,13 +162,7 @@ const UnifiedMcpPanel = React.forwardRef<
 
   return (
     <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
-      <AppCountBar
-        totalLabel={t("mcp.serverCount", { count: serverEntries.length })}
-        counts={enabledCounts}
-        appIds={MCP_APP_IDS}
-      />
-
-      <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden pb-4 mt-2 flex flex-col">
         {isLoading ? (
           <div className="text-center py-12 text-muted-foreground">
             {t("mcp.loading")}
@@ -166,18 +181,46 @@ const UnifiedMcpPanel = React.forwardRef<
           </div>
         ) : (
           <TooltipProvider delayDuration={300}>
-            <div className="rounded-xl border border-border-default overflow-hidden">
-              {serverEntries.map(([id, server], index) => (
-                <UnifiedMcpListItem
-                  key={id}
-                  id={id}
-                  server={server}
-                  onToggleApp={handleToggleApp}
-                  onEdit={handleEdit}
-                  onDelete={handleDelete}
-                  isLast={index === serverEntries.length - 1}
+            <div className="rounded-xl border border-border-default overflow-hidden flex-1">
+              <div className="flex items-center justify-between px-4 py-2 border-b border-border-default">
+                <AppCountBar
+                  totalLabel={t("mcp.serverCount", {
+                    count: serverEntries.length,
+                  })}
+                  counts={enabledCounts}
+                  appIds={visibleAppIds}
                 />
-              ))}
+              </div>
+              <div className="relative border-b border-border-default">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  type="text"
+                  placeholder={t("mcp.searchPlaceholder")}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10 pr-3 border-0 shadow-none rounded-none focus:ring-0 h-10"
+                />
+              </div>
+              {filteredEntries.length === 0 ? (
+                <div className="text-center py-12">
+                  <p className="text-sm text-muted-foreground">
+                    {t("mcp.noResults")}
+                  </p>
+                </div>
+              ) : (
+                filteredEntries.map(([id, server], index) => (
+                  <UnifiedMcpListItem
+                    key={id}
+                    id={id}
+                    server={server}
+                    onToggleApp={handleToggleApp}
+                    onEdit={handleEdit}
+                    onDelete={handleDelete}
+                    appIds={visibleAppIds}
+                    isLast={index === filteredEntries.length - 1}
+                  />
+                ))
+              )}
             </div>
           </TooltipProvider>
         )}
@@ -220,6 +263,7 @@ interface UnifiedMcpListItemProps {
   onToggleApp: (serverId: string, app: AppId, enabled: boolean) => void;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
+  appIds: AppId[];
   isLast?: boolean;
 }
 
@@ -229,6 +273,7 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
   onToggleApp,
   onEdit,
   onDelete,
+  appIds,
   isLast,
 }) => {
   const { t } = useTranslation();
@@ -286,7 +331,7 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
       <AppToggleGroup
         apps={server.apps}
         onToggle={(app, enabled) => onToggleApp(id, app, enabled)}
-        appIds={MCP_APP_IDS}
+        appIds={appIds}
       />
 
       <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">

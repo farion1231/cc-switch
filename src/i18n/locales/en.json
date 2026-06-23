@@ -1661,6 +1661,8 @@
     "editCodexServer": "Edit Codex MCP",
     "configPath": "Config Path",
     "serverCount": "{{count}} MCP server(s) configured",
+    "searchPlaceholder": "Search MCP servers...",
+    "noResults": "No matching servers found",
     "enabledCount": "{{count}} enabled",
     "template": {
       "fetch": "Quick Template: mcp-fetch"
@@ -2177,6 +2179,7 @@
       "allRepos": "All repos"
     },
     "noResults": "No matching skills found",
+    "searchInstalledPlaceholder": "Search installed skills...",
     "noInstalled": "No skills installed",
     "noInstalledDescription": "Discover and install skills from repositories, or import existing skills",
     "discover": "Discover Skills",
