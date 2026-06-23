@@ -78,6 +78,11 @@ pub struct DeepLinkImportRequest {
     /// Optional Opus model (Claude only, v3.7.1+)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub opus_model: Option<String>,
+    /// Optional npm package override (OpenCode only).
+    /// Defaults to "@ai-sdk/openai-compatible" when omitted. Use this to point
+    /// OpenCode at a provider-specific SDK (e.g. "@ai-sdk/google" for Gemini).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub npm: Option<String>,
 
     // ============ Prompt-specific fields ============
     /// Base64 encoded Markdown content
