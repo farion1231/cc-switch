@@ -19,8 +19,8 @@ jobs:
       matrix:
         include:
           - os: windows-2022
-          - os: ubuntu-22.04
-          - os: ubuntu-22.04-arm
+          - os: ubuntu-latest
+          - os: ubuntu-latest-arm
             arch: arm64
           - os: macos-14
 
@@ -516,7 +516,7 @@ jobs:
 
   publish-release:
     name: Publish GitHub Release
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     needs: release
     permissions:
       contents: write
@@ -564,7 +564,7 @@ jobs:
 
   assemble-latest-json:
     name: Assemble latest.json
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     needs: publish-release
     permissions:
       contents: write
