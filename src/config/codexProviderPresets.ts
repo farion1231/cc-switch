@@ -199,14 +199,14 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     config: generateThirdPartyConfig(
       "doubaoseed",
       "https://ark.cn-beijing.volces.com/api/v3",
-      "doubao-seed-2-0-code-preview-latest",
+      "doubao-seed-2-1-pro",
     ),
     endpointCandidates: ["https://ark.cn-beijing.volces.com/api/v3"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
       {
-        model: "doubao-seed-2-0-code-preview-latest",
-        displayName: "Doubao Seed Code Preview",
+        model: "doubao-seed-2-1-pro",
+        displayName: "Doubao Seed 2.1 Pro",
         contextWindow: 256000,
       },
     ]),
