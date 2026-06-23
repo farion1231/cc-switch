@@ -1473,6 +1473,8 @@
     "customRangeHint": "日付と時刻の両方に対応",
     "startTime": "開始時刻",
     "endTime": "終了時刻",
+    "liveEndTime": "終了時刻を現在時刻に追従",
+    "liveEndTimeNow": "現在",
     "input": "Input",
     "output": "Output",
     "cacheWrite": "作成",

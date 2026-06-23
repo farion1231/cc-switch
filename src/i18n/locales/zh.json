@@ -1473,6 +1473,8 @@
     "customRangeHint": "支持日期与时间",
     "startTime": "开始时间",
     "endTime": "结束时间",
+    "liveEndTime": "结束时间跟随当前时刻",
+    "liveEndTimeNow": "现在",
     "input": "Input",
     "output": "Output",
     "cacheWrite": "创建",

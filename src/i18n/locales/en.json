@@ -1473,6 +1473,8 @@
     "customRangeHint": "Supports both date and time",
     "startTime": "Start Time",
     "endTime": "End Time",
+    "liveEndTime": "End time follows current time",
+    "liveEndTimeNow": "Now",
     "input": "Input",
     "output": "Output",
     "cacheWrite": "Creation",

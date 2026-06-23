@@ -1445,6 +1445,8 @@
     "customRangeHint": "支援日期與時間",
     "startTime": "開始時間",
     "endTime": "結束時間",
+    "liveEndTime": "結束時間跟隨當前時刻",
+    "liveEndTimeNow": "現在",
     "input": "Input",
     "output": "Output",
     "cacheWrite": "建立",
