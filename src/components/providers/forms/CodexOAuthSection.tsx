@@ -121,9 +121,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   };
 
   // 升级前登录的旧账号没有持久化 id_token，需重新登录补全
-  const hasReauthAccounts = accounts.some(
-    (account) => account.reauth_required,
-  );
+  const hasReauthAccounts = accounts.some((account) => account.reauth_required);
   const selectedAccountNeedsReauth =
     !!selectedAccountId &&
     accounts.some(
