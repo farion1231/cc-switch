@@ -14,6 +14,12 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
+#[cfg(not(test))]
+use std::time::Duration;
+#[cfg(not(test))]
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(not(test))]
+use tokio::net::TcpListener;
 use tokio::sync::{Mutex, RwLock};
 use url::Url;
 
@@ -157,6 +163,28 @@ struct PendingXaiLogin {
     authorization_url: String,
     code_verifier: String,
     expires_at_ms: i64,
+    completion: Option<PendingXaiLoginCompletion>,
+}
+
+#[derive(Debug, Clone)]
+enum PendingXaiLoginCompletion {
+    Account(GitHubAccount),
+    Error(PendingXaiLoginError),
+}
+
+#[derive(Debug, Clone)]
+enum PendingXaiLoginError {
+    AccessDenied,
+    Failure(String),
+}
+
+impl PendingXaiLoginError {
+    fn into_error(self) -> XaiOAuthError {
+        match self {
+            PendingXaiLoginError::AccessDenied => XaiOAuthError::AccessDenied,
+            PendingXaiLoginError::Failure(message) => XaiOAuthError::TokenFetchFailed(message),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -167,6 +195,7 @@ struct XaiIdClaims {
     email: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct XaiOAuthManager {
     accounts: Arc<RwLock<HashMap<String, XaiAccountData>>>,
     default_account_id: Arc<RwLock<Option<String>>>,
@@ -215,9 +244,13 @@ impl XaiOAuthManager {
                     authorization_url: authorization_url.clone(),
                     code_verifier,
                     expires_at_ms,
+                    completion: None,
                 },
             );
         }
+
+        #[cfg(not(test))]
+        self.start_loopback_callback_listener();
 
         Ok(GitHubDeviceCodeResponse {
             device_code: state,
@@ -232,22 +265,25 @@ impl XaiOAuthManager {
         &self,
         device_code: &str,
     ) -> Result<Option<GitHubAccount>, XaiOAuthError> {
-        let pending = {
-            let pending = self.pending_logins.read().await;
-            pending.get(device_code).cloned()
-        };
-
-        let Some(entry) = pending else {
+        let mut pending = self.pending_logins.write().await;
+        let Some(entry) = pending.get(device_code).cloned() else {
             return Err(XaiOAuthError::ExpiredToken);
         };
 
         if entry.expires_at_ms <= chrono::Utc::now().timestamp_millis() {
-            let mut pending = self.pending_logins.write().await;
             pending.remove(device_code);
             return Err(XaiOAuthError::ExpiredToken);
         }
 
-        let _ = (&entry.authorization_url, &entry.code_verifier);
+        if let Some(completion) = entry.completion {
+            pending.remove(device_code);
+            return match completion {
+                PendingXaiLoginCompletion::Account(account) => Ok(Some(account)),
+                PendingXaiLoginCompletion::Error(error) => Err(error.into_error()),
+            };
+        }
+
+        let _ = &entry.authorization_url;
         Err(XaiOAuthError::AuthorizationPending)
     }
 
@@ -257,15 +293,132 @@ impl XaiOAuthManager {
         code: &str,
     ) -> Result<GitHubAccount, XaiOAuthError> {
         let pending = {
-            let mut pending = self.pending_logins.write().await;
-            pending.remove(state)
+            let pending = self.pending_logins.read().await;
+            pending.get(state).cloned()
         }
         .ok_or(XaiOAuthError::ExpiredToken)?;
 
         let tokens = self
             .exchange_code_for_tokens(code, &pending.code_verifier)
             .await?;
-        self.persist_tokens(tokens).await
+        self.complete_pending_login_with_tokens(state, tokens).await
+    }
+
+    #[cfg(not(test))]
+    fn start_loopback_callback_listener(&self) {
+        let manager = self.clone();
+        tokio::spawn(async move {
+            if let Err(err) = manager.run_loopback_callback_listener().await {
+                log::warn!("[XaiOAuth] loopback callback listener stopped: {err}");
+            }
+        });
+    }
+
+    #[cfg(not(test))]
+    async fn run_loopback_callback_listener(&self) -> Result<(), XaiOAuthError> {
+        let listener = TcpListener::bind("127.0.0.1:56121").await?;
+        let deadline = Duration::from_secs(DEFAULT_LOGIN_EXPIRES_IN);
+
+        while let Ok(Ok((mut stream, _))) = tokio::time::timeout(deadline, listener.accept()).await
+        {
+            let mut buffer = [0_u8; 4096];
+            let bytes_read = stream.read(&mut buffer).await?;
+            let request = String::from_utf8_lossy(&buffer[..bytes_read]);
+            let path = request
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .unwrap_or_default();
+
+            let handled = self.handle_loopback_callback_url(path).await;
+            let success = handled.is_ok();
+            write_loopback_response(&mut stream, success).await?;
+
+            if success {
+                return Ok(());
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn handle_loopback_callback_url(&self, path_or_url: &str) -> Result<(), XaiOAuthError> {
+        let callback_url =
+            if path_or_url.starts_with("http://") || path_or_url.starts_with("https://") {
+                Url::parse(path_or_url)
+            } else {
+                Url::parse(&format!("http://127.0.0.1:56121{path_or_url}"))
+            }
+            .map_err(|e| XaiOAuthError::ParseError(e.to_string()))?;
+
+        if callback_url.path() != "/callback" {
+            return Err(XaiOAuthError::ParseError(
+                "unexpected xAI OAuth callback path".to_string(),
+            ));
+        }
+
+        let mut state = None;
+        let mut code = None;
+        let mut error = None;
+        for (key, value) in callback_url.query_pairs() {
+            match key.as_ref() {
+                "state" => state = Some(value.into_owned()),
+                "code" => code = Some(value.into_owned()),
+                "error" => error = Some(value.into_owned()),
+                _ => {}
+            }
+        }
+
+        let state = state.ok_or_else(|| {
+            XaiOAuthError::ParseError("xAI OAuth callback omitted state".to_string())
+        })?;
+
+        if let Some(error) = error {
+            let pending_error = if error == "access_denied" {
+                PendingXaiLoginError::AccessDenied
+            } else {
+                PendingXaiLoginError::Failure(error)
+            };
+            self.fail_pending_login(&state, pending_error.clone())
+                .await?;
+            return Err(pending_error.into_error());
+        }
+
+        let code = code.ok_or_else(|| {
+            XaiOAuthError::ParseError("xAI OAuth callback omitted code".to_string())
+        })?;
+        self.complete_authorization_code(&state, &code).await?;
+        Ok(())
+    }
+
+    async fn complete_pending_login_with_tokens(
+        &self,
+        state: &str,
+        tokens: XaiOAuthTokenResponse,
+    ) -> Result<GitHubAccount, XaiOAuthError> {
+        {
+            let pending = self.pending_logins.read().await;
+            if !pending.contains_key(state) {
+                return Err(XaiOAuthError::ExpiredToken);
+            }
+        }
+
+        let account = self.persist_tokens(tokens).await?;
+        let mut pending = self.pending_logins.write().await;
+        let entry = pending.get_mut(state).ok_or(XaiOAuthError::ExpiredToken)?;
+        entry.completion = Some(PendingXaiLoginCompletion::Account(account.clone()));
+        Ok(account)
+    }
+
+    async fn fail_pending_login(
+        &self,
+        state: &str,
+        error: PendingXaiLoginError,
+    ) -> Result<(), XaiOAuthError> {
+        let mut pending = self.pending_logins.write().await;
+        let entry = pending.get_mut(state).ok_or(XaiOAuthError::ExpiredToken)?;
+        entry.completion = Some(PendingXaiLoginCompletion::Error(error));
+        Ok(())
     }
 
     async fn exchange_code_for_tokens(
@@ -708,6 +861,31 @@ fn build_authorization_url(state: &str, code_challenge: &str) -> Result<String, 
     Ok(url.to_string())
 }
 
+#[cfg(not(test))]
+async fn write_loopback_response(
+    stream: &mut tokio::net::TcpStream,
+    success: bool,
+) -> Result<(), XaiOAuthError> {
+    let (status, body) = if success {
+        (
+            "200 OK",
+            "<!doctype html><title>xAI OAuth</title><p>Authorization complete. You can return to cc-switch.</p>",
+        )
+    } else {
+        (
+            "400 Bad Request",
+            "<!doctype html><title>xAI OAuth</title><p>Authorization failed. You can close this tab and try again.</p>",
+        )
+    };
+    let response = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(response.as_bytes()).await?;
+    stream.shutdown().await?;
+    Ok(())
+}
+
 fn parse_jwt_claims(token: &str) -> Option<XaiIdClaims> {
     let parts: Vec<&str> = token.split('.').collect();
     if parts.len() != 3 {
@@ -867,6 +1045,70 @@ mod tests {
         manager.set_default_account("old").await.unwrap();
         manager.remove_account("old").await.unwrap();
         assert_eq!(manager.default_account_id().await.as_deref(), Some("new"));
+    }
+
+    #[tokio::test]
+    async fn xai_oauth_poll_waits_until_loopback_callback_completes() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = XaiOAuthManager::new(temp.path().to_path_buf());
+        let flow = manager.start_device_flow().await.unwrap();
+
+        let pending = manager.poll_for_token(&flow.device_code).await.unwrap_err();
+        assert!(matches!(pending, XaiOAuthError::AuthorizationPending));
+
+        let id_token = fake_jwt(r#"{"sub":"sub-123","email":"user@example.com"}"#);
+        let tokens = XaiOAuthTokenResponse {
+            access_token: "fake-access".to_string(),
+            refresh_token: Some("fake-refresh".to_string()),
+            id_token: Some(id_token),
+            expires_in: Some(3600),
+        };
+        manager
+            .complete_pending_login_with_tokens(&flow.device_code, tokens)
+            .await
+            .unwrap();
+
+        let account = manager
+            .poll_for_token(&flow.device_code)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(account.id, "sub-123");
+        assert_eq!(account.provider_login(), "user@example.com");
+        assert!(manager.is_authenticated().await);
+    }
+
+    #[tokio::test]
+    async fn xai_oauth_loopback_callback_error_is_returned_by_poll() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = XaiOAuthManager::new(temp.path().to_path_buf());
+        let flow = manager.start_device_flow().await.unwrap();
+        let callback = format!(
+            "http://127.0.0.1:56121/callback?state={}&error=access_denied",
+            flow.device_code
+        );
+
+        let err = manager
+            .handle_loopback_callback_url(&callback)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, XaiOAuthError::AccessDenied));
+
+        let err = manager.poll_for_token(&flow.device_code).await.unwrap_err();
+        assert!(matches!(err, XaiOAuthError::AccessDenied));
+    }
+
+    #[tokio::test]
+    async fn xai_oauth_loopback_callback_requires_matching_pending_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = XaiOAuthManager::new(temp.path().to_path_buf());
+        let err = manager
+            .handle_loopback_callback_url(
+                "http://127.0.0.1:56121/callback?state=missing&error=access_denied",
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, XaiOAuthError::ExpiredToken));
     }
 
     #[tokio::test]
