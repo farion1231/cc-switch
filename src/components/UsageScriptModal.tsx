@@ -8,6 +8,7 @@ import { usageApi, settingsApi, type AppId } from "@/lib/api";
 import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
 import { useSettingsQuery } from "@/lib/query";
 import { resolveManagedAccountId } from "@/lib/authBinding";
+import { useDarkMode } from "@/hooks/useDarkMode";
 import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
@@ -196,6 +197,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const queryClient = useQueryClient();
   const { data: settingsData } = useSettingsQuery();
   const [showUsageConfirm, setShowUsageConfirm] = useState(false);
+  const isDarkMode = useDarkMode();
 
   // 生成带国际化的预设模板
   const PRESET_TEMPLATES = generatePresetTemplates(t);
@@ -1420,6 +1422,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                 height={480}
                 language="javascript"
                 showMinimap={false}
+                darkMode={isDarkMode}
               />
             </div>
           )}
