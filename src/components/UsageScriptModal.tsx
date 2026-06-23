@@ -538,8 +538,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
       // Coding Plan 模板使用专用 API
       if (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN) {
-        // ZenMux 使用用户在脚本配置中手动填入的 API Key 和 Base URL
+        // ZenMux 手填 baseUrl/apiKey；火山是 native 供应商，baseUrl 走推理配置，
+        // 另用账号 AK/SK 签名查询控制面用量。
         const isZenMux = script.codingPlanProvider === "zenmux";
+        const isVolcengine = script.codingPlanProvider === "volcengine";
         const baseUrl = isZenMux
           ? (script.baseUrl ?? "")
           : (providerCredentials.baseUrl ?? "");
@@ -547,7 +549,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           ? (script.apiKey ?? "")
           : (providerCredentials.apiKey ?? "");
         const { subscriptionApi } = await import("@/lib/api/subscription");
-        const quota = await subscriptionApi.getCodingPlanQuota(baseUrl, apiKey);
+        const quota = await subscriptionApi.getCodingPlanQuota(
+          baseUrl,
+          apiKey,
+          isVolcengine ? script.accessKeyId : undefined,
+          isVolcengine ? script.secretAccessKey : undefined,
+        );
         if (quota.success && quota.tiers.length > 0) {
           const summary = quota.tiers
             .map((tier) => `${tier.name}: ${Math.round(tier.utilization)}%`)
@@ -726,8 +733,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           providerCredentials.baseUrl,
         );
         const provider = script.codingPlanProvider || autoDetected || "kimi";
-        // ZenMux 允许手动填写 API Key 和 Base URL，不清除
+        // ZenMux 保留手填 baseUrl/apiKey；火山保留账号 AK/SK；其余清除。
         const isZenMux = provider === "zenmux";
+        const isVolcengine = provider === "volcengine";
         setScript({
           ...script,
           code: "",
@@ -735,6 +743,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           baseUrl: isZenMux ? script.baseUrl : undefined,
           accessToken: undefined,
           userId: undefined,
+          accessKeyId: isVolcengine ? script.accessKeyId : undefined,
+          secretAccessKey: isVolcengine ? script.secretAccessKey : undefined,
           codingPlanProvider: provider,
         });
       } else if (presetName === TEMPLATE_TYPES.BALANCE) {
@@ -1245,6 +1255,83 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                 </div>
               </div>
             )}
+
+            {/* 火山方舟：控制面用量查询需账号 AK/SK（与推理 Key 是两套凭据） */}
+            {selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
+              script.codingPlanProvider === "volcengine" && (
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="text-sm font-medium text-foreground">
+                      {t("usageScript.credentialsConfig")}
+                    </h4>
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                      {t("usageScript.volcengineAkSkHint")}
+                    </p>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="usage-volcengine-ak">
+                        {t("usageScript.accessKeyId")}
+                      </Label>
+                      <Input
+                        id="usage-volcengine-ak"
+                        type="text"
+                        value={script.accessKeyId || ""}
+                        onChange={(e) =>
+                          setScript({
+                            ...script,
+                            accessKeyId: e.target.value,
+                          })
+                        }
+                        placeholder="AKLT..."
+                        autoComplete="off"
+                        className="border-white/10"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="usage-volcengine-sk">
+                        {t("usageScript.secretAccessKey")}
+                      </Label>
+                      <div className="relative">
+                        <Input
+                          id="usage-volcengine-sk"
+                          type={showApiKey ? "text" : "password"}
+                          value={script.secretAccessKey || ""}
+                          onChange={(e) =>
+                            setScript({
+                              ...script,
+                              secretAccessKey: e.target.value,
+                            })
+                          }
+                          placeholder="••••••••"
+                          autoComplete="off"
+                          className="border-white/10"
+                        />
+                        {script.secretAccessKey && (
+                          <button
+                            type="button"
+                            onClick={() => setShowApiKey(!showApiKey)}
+                            className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
+                            aria-label={
+                              showApiKey
+                                ? t("apiKeyInput.hide")
+                                : t("apiKeyInput.show")
+                            }
+                          >
+                            {showApiKey ? (
+                              <EyeOff size={16} />
+                            ) : (
+                              <Eye size={16} />
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
             {/* 通用配置（始终显示） */}
             <div className="grid gap-4 md:grid-cols-2 pt-4 border-t border-white/10">

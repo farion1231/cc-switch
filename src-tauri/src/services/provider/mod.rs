@@ -463,6 +463,7 @@ base_url = "http://localhost:8080"
 
         db.update_proxy_config(ProxyConfig {
             live_takeover_active: true,
+            listen_port: 0,
             ..Default::default()
         })
         .await
@@ -491,7 +492,7 @@ base_url = "http://localhost:8080"
         )
         .expect("seed taken-over live file");
 
-        state
+        let proxy_info = state
             .proxy_service
             .start()
             .await
@@ -544,7 +545,7 @@ base_url = "http://localhost:8080"
             live.get("env")
                 .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
                 .and_then(|v| v.as_str()),
-            Some("http://127.0.0.1:15721"),
+            Some(format!("http://127.0.0.1:{}", proxy_info.port).as_str()),
             "proxy base URL should stay intact"
         );
         assert!(

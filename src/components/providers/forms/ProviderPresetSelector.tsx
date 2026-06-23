@@ -88,7 +88,21 @@ export function sortPresetEntries(
   t: PresetTranslator,
 ): PresetEntry[] {
   if (sortMode === PresetSortMode.Original) {
-    return [...entries];
+    // 置顶优先级：官方分类 > 尊享合作伙伴（Kimi）> 其余原顺序。
+    // 用分区拼接而非排序，确保每组内部各自的相对顺序都不变；
+    // 排他条件保证「既是官方又是 prime」的预设只归入官方组、不被重复。
+    const official = entries.filter(
+      (entry) => entry.preset.category === "official",
+    );
+    const prime = entries.filter(
+      (entry) =>
+        entry.preset.category !== "official" && entry.preset.primePartner,
+    );
+    const rest = entries.filter(
+      (entry) =>
+        entry.preset.category !== "official" && !entry.preset.primePartner,
+    );
+    return [...official, ...prime, ...rest];
   }
 
   return [...entries].sort((a, b) =>
