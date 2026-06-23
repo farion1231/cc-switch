@@ -80,6 +80,16 @@ import {
   type PricingModelSourceOption,
 } from "./ProviderAdvancedConfig";
 import {
+  CodexModelMappingConfig,
+  defaultCodexModelMappingConfig,
+  type CodexModelMappingConfig as CodexModelMappingConfigType,
+} from "./CodexModelMappingConfig";
+import {
+  RequestBodyRewriterConfig,
+  defaultRequestBodyRewriterConfig,
+  type RequestBodyRewriterConfig as RequestBodyRewriterConfigType,
+} from "./RequestBodyRewriterConfig";
+import {
   useProviderCategory,
   useApiKeyState,
   useBaseUrlState,
@@ -324,6 +334,20 @@ function ProviderFormFull({
       initialData?.meta?.pricingModelSource,
     ),
   }));
+
+  // Codex 模型映射配置状态
+  const [codexModelMapping, setCodexModelMapping] =
+    useState<CodexModelMappingConfigType>(() => {
+      if (appId !== "codex") return defaultCodexModelMappingConfig;
+      return initialData?.meta?.codexModelMapping ?? defaultCodexModelMappingConfig;
+    });
+
+  // 请求体重写器配置状态
+  const [requestBodyRewriter, setRequestBodyRewriter] =
+    useState<RequestBodyRewriterConfigType>(() => {
+      if (appId !== "codex") return defaultRequestBodyRewriterConfig;
+      return initialData?.meta?.requestBodyRewriter ?? defaultRequestBodyRewriterConfig;
+    });
 
   const { category } = useProviderCategory({
     appId,
@@ -1422,6 +1446,16 @@ function ProviderFormFull({
         supportsFullUrl && category !== "official" && localIsFullUrl
           ? true
           : undefined,
+      // Codex 模型映射配置（仅 Codex 供应商使用）
+      codexModelMapping:
+        appId === "codex" && codexModelMapping.enabled
+          ? codexModelMapping
+          : undefined,
+      // 请求体重写器配置（仅 Codex 供应商使用）
+      requestBodyRewriter:
+        appId === "codex" && requestBodyRewriter.enabled
+          ? requestBodyRewriter
+          : undefined,
     };
 
     if (!isCodexOauthProvider && "codexFastMode" in nextMeta) {
@@ -2335,6 +2369,22 @@ function ProviderFormFull({
                 onPricingConfigChange={setPricingConfig}
               />
             )}
+
+          {/* Codex 模型映射配置 */}
+          {appId === "codex" && (
+            <CodexModelMappingConfig
+              config={codexModelMapping}
+              onConfigChange={setCodexModelMapping}
+            />
+          )}
+
+          {/* 请求体字段重写器（仅 Codex） */}
+          {appId === "codex" && (
+            <RequestBodyRewriterConfig
+              config={requestBodyRewriter}
+              onConfigChange={setRequestBodyRewriter}
+            />
+          )}
 
           {showButtons && (
             <div className="flex justify-end gap-2">

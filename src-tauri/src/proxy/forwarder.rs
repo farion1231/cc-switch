@@ -34,6 +34,35 @@ use tokio::sync::RwLock;
 
 const PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
 
+/// 应用重写规则到 JSON 对象
+/// path 支持点分隔（如 "text.verbosity"），value 为 None 表示删除该字段，Some(v) 表示覆盖
+fn apply_rewrite_rule(obj: &mut serde_json::Map<String, Value>, path: &str, value: Option<Value>) {
+    let parts: Vec<&str> = path.split('.').collect();
+    if parts.is_empty() {
+        return;
+    }
+
+    if parts.len() == 1 {
+        // 单层路径：直接删除或覆盖
+        let key = parts[0];
+        match value {
+            None => {
+                obj.remove(key);
+            }
+            Some(v) => {
+                obj.insert(key.to_string(), v);
+            }
+        }
+    } else {
+        // 嵌套路径：递归处理
+        let key = parts[0];
+        if let Some(Value::Object(inner)) = obj.get_mut(key) {
+            let remaining_path = parts[1..].join(".");
+            apply_rewrite_rule(inner, &remaining_path, value);
+        }
+    }
+}
+
 pub struct ForwardResult {
     pub response: ProxyResponse,
     pub provider: Provider,
@@ -1124,6 +1153,11 @@ impl RequestForwarder {
         let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
             crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
                 .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+        } else if adapter.name() == "Codex" {
+            // Codex 使用专用映射器，支持 effort 组合映射
+            let (mapped_body, _original_model, _mapped_model) =
+                super::codex_model_mapper::apply_codex_model_mapping(body.clone(), provider);
+            mapped_body
         } else {
             let (mapped_body, _original_model, _mapped_model) =
                 super::model_mapper::apply_model_mapping(body.clone(), provider);
@@ -1386,7 +1420,19 @@ impl RequestForwarder {
 
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段
-        let filtered_body = prepare_upstream_request_body(request_body);
+        let mut filtered_body = prepare_upstream_request_body(request_body);
+
+        // 应用请求体重写器（用户自定义字段过滤/覆盖）
+        if let Some(rewriter) = provider.meta.as_ref().and_then(|m| m.request_body_rewriter.as_ref()) {
+            if rewriter.enabled {
+                if let Some(obj) = filtered_body.as_object_mut() {
+                    for (path, value) in &rewriter.rules {
+                        apply_rewrite_rule(obj, path, value.clone());
+                    }
+                }
+            }
+        }
+
         // 出站 body 定稿后刷新真值（覆盖 Codex chat 上游模型覆写、转换层模型改写）
         if let Some(m) = filtered_body
             .get("model")
