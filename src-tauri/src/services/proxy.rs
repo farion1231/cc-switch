@@ -65,6 +65,18 @@ pub struct HotSwitchOutcome {
     pub logical_target_changed: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProviderSwitchMode {
+    Normal,
+    Failover,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexClientOwnedMergeMode {
+    KeepTargetOnConflict,
+    ExistingWinsOnConflict,
+}
+
 impl ProxyService {
     pub fn new(db: Arc<Database>) -> Self {
         Self {
@@ -343,9 +355,10 @@ impl ProxyService {
         )
         .map_err(|e| format!("构建 codex 有效配置失败: {e}"))?;
         if let Some(existing_live) = existing_live.as_ref() {
-            Self::preserve_codex_mcp_servers_from_existing_config(
+            Self::preserve_codex_client_owned_tables_from_existing_config(
                 &mut effective_settings,
                 existing_live,
+                CodexClientOwnedMergeMode::ExistingWinsOnConflict,
             )?;
         }
         let (_, proxy_codex_base_url) = self.build_proxy_urls().await?;
@@ -655,6 +668,14 @@ impl ProxyService {
                 // 只看占位符会把半接管/旧端口残留误判为可复用，导致开启接管后
                 // live 文件仍停留在普通供应商配置。
                 if has_backup && live_matches_current_proxy {
+                    if matches!(app, AppType::Codex) {
+                        if let Err(e) = self
+                            .repair_codex_live_backup_client_owned_tables_from_live()
+                            .await
+                        {
+                            log::warn!("修复 Codex Live 备份中的客户端自有配置失败: {e}");
+                        }
+                    }
                     return Ok(());
                 }
                 restore_existing_backup_before_takeover = has_backup;
@@ -1506,8 +1527,9 @@ impl ProxyService {
             }
             AppType::Codex => {
                 if let Ok(Some(backup)) = self.db.get_live_backup("codex").await {
-                    let config: Value = serde_json::from_str(&backup.original_config)
+                    let mut config: Value = serde_json::from_str(&backup.original_config)
                         .map_err(|e| format!("解析 Codex 备份失败: {e}"))?;
+                    self.preserve_codex_client_owned_tables_from_current_live(&mut config)?;
                     self.write_codex_live(&config)?;
                     log::info!("Codex Live 配置已恢复");
                 }
@@ -1568,7 +1590,7 @@ impl ProxyService {
             .await
             .map_err(|e| format!("获取 {app_type_str} Live 备份失败: {e}"))?;
         if let Some(backup) = backup {
-            let config: Value = serde_json::from_str(&backup.original_config)
+            let mut config: Value = serde_json::from_str(&backup.original_config)
                 .map_err(|e| format!("解析 {app_type_str} 备份失败: {e}"))?;
 
             // 备份若是代理占位符（异常历史：上次 stop 失败导致 Live 留在了代理状态，
@@ -1579,6 +1601,9 @@ impl ProxyService {
                     "{app_type_str} 备份本身已是代理占位符（异常历史状态），跳过备份，改走 SSOT 重建 Live"
                 );
             } else {
+                if matches!(app_type, AppType::Codex) {
+                    self.preserve_codex_client_owned_tables_from_current_live(&mut config)?;
+                }
                 self.write_live_config_for_app(app_type, &config)?;
                 log::info!("{app_type_str} Live 配置已从备份恢复");
                 return Ok(());
@@ -2027,9 +2052,10 @@ impl ProxyService {
                 .transpose()?;
 
             if let Some(existing_value) = existing_backup_value.as_ref() {
-                Self::preserve_codex_mcp_servers_from_existing_config(
+                Self::preserve_codex_client_owned_tables_from_existing_config(
                     &mut effective_settings,
                     existing_value,
+                    CodexClientOwnedMergeMode::KeepTargetOnConflict,
                 )?;
                 Self::preserve_codex_oauth_auth_in_backup(&mut effective_settings, existing_value)?;
             }
@@ -2070,6 +2096,45 @@ impl ProxyService {
         Ok(())
     }
 
+    async fn update_codex_live_backup_from_failover_provider(
+        &self,
+        provider: &Provider,
+    ) -> Result<(), String> {
+        let mut effective_settings = build_effective_settings_with_common_config(
+            self.db.as_ref(),
+            &AppType::Codex,
+            provider,
+        )
+        .map_err(|e| format!("构建 codex 有效配置失败: {e}"))?;
+
+        self.preserve_codex_client_owned_tables_from_current_live(&mut effective_settings)?;
+
+        let existing_backup_value = self
+            .db
+            .get_live_backup("codex")
+            .await
+            .map_err(|e| format!("读取 codex 现有备份失败: {e}"))?
+            .map(|backup| {
+                serde_json::from_str::<Value>(&backup.original_config)
+                    .map_err(|e| format!("解析 codex 现有备份失败: {e}"))
+            })
+            .transpose()?;
+
+        if let Some(existing_value) = existing_backup_value.as_ref() {
+            Self::preserve_codex_oauth_auth_in_backup(&mut effective_settings, existing_value)?;
+        }
+
+        let backup_json = serde_json::to_string(&effective_settings)
+            .map_err(|e| format!("序列化 Codex 配置失败: {e}"))?;
+        self.db
+            .save_live_backup("codex", &backup_json)
+            .await
+            .map_err(|e| format!("更新 codex 备份失败: {e}"))?;
+
+        log::info!("已更新 codex Live 备份（故障转移）");
+        Ok(())
+    }
+
     pub async fn hot_switch_provider(
         &self,
         app_type: &str,
@@ -2079,10 +2144,34 @@ impl ProxyService {
         self.hot_switch_provider_inner(app_type, provider_id).await
     }
 
+    pub async fn hot_switch_provider_for_failover(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+    ) -> Result<HotSwitchOutcome, String> {
+        let _guard = self.switch_locks.lock_for_app(app_type).await;
+        self.hot_switch_provider_inner_with_mode(
+            app_type,
+            provider_id,
+            ProviderSwitchMode::Failover,
+        )
+        .await
+    }
+
     pub(crate) async fn hot_switch_provider_inner(
         &self,
         app_type: &str,
         provider_id: &str,
+    ) -> Result<HotSwitchOutcome, String> {
+        self.hot_switch_provider_inner_with_mode(app_type, provider_id, ProviderSwitchMode::Normal)
+            .await
+    }
+
+    async fn hot_switch_provider_inner_with_mode(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        mode: ProviderSwitchMode,
     ) -> Result<HotSwitchOutcome, String> {
         let app_type_enum =
             AppType::from_str(app_type).map_err(|_| format!("无效的应用类型: {app_type}"))?;
@@ -2113,7 +2202,10 @@ impl ProxyService {
             .map_err(|e| format!("读取 {app_type} 备份失败: {e}"))?
             .is_some();
         let live_taken_over = self.detect_takeover_in_live_config_for_app(&app_type_enum);
-        let should_sync_backup = has_backup || live_taken_over;
+        let is_codex_failover =
+            matches!(mode, ProviderSwitchMode::Failover) && matches!(app_type_enum, AppType::Codex);
+        let should_sync_backup = (has_backup || live_taken_over) && !is_codex_failover;
+        let allow_codex_live_write = !is_codex_failover;
 
         self.db
             .set_current_provider(app_type_enum.as_str(), provider_id)
@@ -2128,13 +2220,23 @@ impl ProxyService {
             if matches!(app_type_enum, AppType::Claude) {
                 self.sync_claude_live_from_provider_while_proxy_active(&provider)
                     .await?;
-            } else if live_taken_over && matches!(app_type_enum, AppType::Codex) {
+            } else if allow_codex_live_write
+                && live_taken_over
+                && matches!(app_type_enum, AppType::Codex)
+            {
                 self.sync_codex_live_from_provider_while_proxy_active(&provider)
                     .await?;
             }
+        } else if is_codex_failover && (has_backup || live_taken_over) {
+            self.update_codex_live_backup_from_failover_provider(&provider)
+                .await?;
         }
 
-        if has_backup && !live_taken_over && matches!(app_type_enum, AppType::Codex) {
+        if allow_codex_live_write
+            && has_backup
+            && !live_taken_over
+            && matches!(app_type_enum, AppType::Codex)
+        {
             let effective_settings = build_effective_settings_with_common_config(
                 self.db.as_ref(),
                 &AppType::Codex,
@@ -2171,9 +2273,10 @@ impl ProxyService {
         self.switch_locks.lock_for_app(app_type).await
     }
 
-    fn preserve_codex_mcp_servers_from_existing_config(
+    fn preserve_codex_client_owned_tables_from_existing_config(
         target_settings: &mut Value,
         existing_config: &Value,
+        mode: CodexClientOwnedMergeMode,
     ) -> Result<(), String> {
         let target_obj = target_settings
             .as_object_mut()
@@ -2204,31 +2307,105 @@ impl ProxyService {
             .parse::<toml_edit::DocumentMut>()
             .map_err(|e| format!("解析现有 Codex 备份失败: {e}"))?;
 
-        if let Some(existing_mcp_servers) = existing_doc.get("mcp_servers") {
-            match target_doc.get_mut("mcp_servers") {
-                Some(target_mcp_servers) => {
+        for table_name in [
+            "mcp_servers",
+            "plugins",
+            "projects",
+            "marketplaces",
+            "memories",
+            "desktop",
+            "features",
+        ] {
+            let Some(existing_item) = existing_doc.get(table_name) else {
+                continue;
+            };
+
+            match target_doc.get_mut(table_name) {
+                Some(target_item) => {
                     if let (Some(target_table), Some(existing_table)) = (
-                        target_mcp_servers.as_table_like_mut(),
-                        existing_mcp_servers.as_table_like(),
+                        target_item.as_table_like_mut(),
+                        existing_item.as_table_like(),
                     ) {
-                        for (server_id, server_item) in existing_table.iter() {
-                            if target_table.get(server_id).is_none() {
-                                target_table.insert(server_id, server_item.clone());
+                        for (entry_key, entry_item) in existing_table.iter() {
+                            match mode {
+                                CodexClientOwnedMergeMode::KeepTargetOnConflict => {
+                                    if target_table.get(entry_key).is_none() {
+                                        target_table.insert(entry_key, entry_item.clone());
+                                    }
+                                }
+                                CodexClientOwnedMergeMode::ExistingWinsOnConflict => {
+                                    target_table.insert(entry_key, entry_item.clone());
+                                }
                             }
                         }
                     } else {
                         log::warn!(
-                            "Codex config contains a non-table mcp_servers section; skipping MCP merge"
+                            "Codex config contains a non-table {table_name} section; skipping merge"
                         );
                     }
                 }
                 None => {
-                    target_doc["mcp_servers"] = existing_mcp_servers.clone();
+                    target_doc[table_name] = existing_item.clone();
                 }
             }
         }
 
         target_obj.insert("config".to_string(), json!(target_doc.to_string()));
+        Ok(())
+    }
+
+    fn preserve_codex_client_owned_tables_from_current_live(
+        &self,
+        target_settings: &mut Value,
+    ) -> Result<(), String> {
+        let existing_live = match self.read_codex_live() {
+            Ok(live) => live,
+            Err(e) => {
+                log::debug!("读取当前 Codex Live 配置失败，跳过客户端自有配置合并: {e}");
+                return Ok(());
+            }
+        };
+
+        Self::preserve_codex_client_owned_tables_from_existing_config(
+            target_settings,
+            &existing_live,
+            CodexClientOwnedMergeMode::ExistingWinsOnConflict,
+        )
+    }
+
+    async fn repair_codex_live_backup_client_owned_tables_from_live(&self) -> Result<(), String> {
+        let Some(backup) = self
+            .db
+            .get_live_backup("codex")
+            .await
+            .map_err(|e| format!("读取 Codex Live 备份失败: {e}"))?
+        else {
+            return Ok(());
+        };
+
+        let mut backup_value: Value = serde_json::from_str(&backup.original_config)
+            .map_err(|e| format!("解析 Codex Live 备份失败: {e}"))?;
+        let before = backup_value
+            .get("config")
+            .and_then(|value| value.as_str())
+            .map(str::to_string);
+
+        self.preserve_codex_client_owned_tables_from_current_live(&mut backup_value)?;
+
+        let after = backup_value
+            .get("config")
+            .and_then(|value| value.as_str())
+            .map(str::to_string);
+        if after != before {
+            let backup_json = serde_json::to_string(&backup_value)
+                .map_err(|e| format!("序列化 Codex Live 备份失败: {e}"))?;
+            self.db
+                .save_live_backup("codex", &backup_json)
+                .await
+                .map_err(|e| format!("保存 Codex Live 备份失败: {e}"))?;
+            log::info!("已修复 Codex Live 备份中的客户端自有配置");
+        }
+
         Ok(())
     }
 
@@ -2749,6 +2926,23 @@ mod tests {
                 None => env::remove_var("CC_SWITCH_TEST_HOME"),
             }
         }
+    }
+
+    async fn configure_test_proxy_port(db: &Arc<Database>) -> u16 {
+        let listener =
+            std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind ephemeral test port");
+        let port = listener
+            .local_addr()
+            .expect("read ephemeral test port")
+            .port();
+        drop(listener);
+
+        let mut proxy_config = ProxyConfig::default();
+        proxy_config.listen_port = port;
+        db.update_proxy_config(proxy_config)
+            .await
+            .expect("set test proxy config");
+        port
     }
 
     fn assert_env_str(env: &Map<String, Value>, key: &str, expected: Option<&str>) {
@@ -3436,6 +3630,7 @@ wire_api = "responses"
         let db = Arc::new(Database::memory().expect("init db"));
         use_ephemeral_proxy_port(&db).await;
         let service = ProxyService::new(db.clone());
+        configure_test_proxy_port(&db).await;
         let oauth_auth = json!({
             "auth_mode": "chatgpt",
             "tokens": {
@@ -3516,6 +3711,7 @@ wire_api = "responses"
         let db = Arc::new(Database::memory().expect("init db"));
         use_ephemeral_proxy_port(&db).await;
         let state = crate::store::AppState::new(db.clone());
+        configure_test_proxy_port(&db).await;
         let oauth_auth = json!({
             "auth_mode": "chatgpt",
             "tokens": {
@@ -3737,6 +3933,7 @@ wire_api = "responses"
         let db = Arc::new(Database::memory().expect("init db"));
         use_ephemeral_proxy_port(&db).await;
         let service = ProxyService::new(db.clone());
+        let proxy_port = configure_test_proxy_port(&db).await;
         let oauth_auth = json!({
             "auth_mode": "chatgpt",
             "tokens": {
@@ -5036,6 +5233,136 @@ base_url = "https://new.example/v1"
 
     #[tokio::test]
     #[serial]
+    async fn update_live_backup_from_provider_preserves_codex_client_owned_tables() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": {
+                    "OPENAI_API_KEY": "old-token"
+                },
+                "config": r#"model_provider = "old"
+model = "gpt-4"
+
+[model_providers.old]
+base_url = "https://old.example/v1"
+
+[plugins."sample-plugin@local"]
+enabled = true
+
+[projects."/tmp/cc-switch-test/project-demo"]
+trust_level = "trusted"
+
+[marketplaces.sample]
+enabled = true
+
+[memories]
+use_memories = true
+
+[desktop]
+notifications = true
+"#
+            }))
+            .expect("serialize seed backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        let provider = Provider::with_id(
+            "p2".to_string(),
+            "P2".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "new-token"
+                },
+                "config": r#"model_provider = "new"
+model = "gpt-5"
+
+[model_providers.new]
+base_url = "https://new.example/v1"
+"#
+            }),
+            None,
+        );
+
+        service
+            .update_live_backup_from_provider("codex", &provider)
+            .await
+            .expect("update live backup");
+
+        let backup = db
+            .get_live_backup("codex")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let stored: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup json");
+        let config = stored
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("config string");
+        let parsed: toml::Value = toml::from_str(config).expect("parse merged codex config");
+
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("new"))
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("https://new.example/v1"),
+            "provider-specific config should still update"
+        );
+        assert!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("old"))
+                .is_none(),
+            "old provider-specific config should not be preserved"
+        );
+        assert!(
+            parsed
+                .get("plugins")
+                .and_then(|v| v.get("sample-plugin@local"))
+                .is_some(),
+            "Codex plugin config should survive backup hot-switch updates"
+        );
+        assert!(
+            parsed
+                .get("projects")
+                .and_then(|v| v.get("/tmp/cc-switch-test/project-demo"))
+                .is_some(),
+            "Codex project trust config should survive backup hot-switch updates"
+        );
+        assert!(
+            parsed
+                .get("marketplaces")
+                .and_then(|v| v.get("sample"))
+                .is_some(),
+            "Codex marketplace config should survive backup hot-switch updates"
+        );
+        assert_eq!(
+            parsed
+                .get("memories")
+                .and_then(|v| v.get("use_memories"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            parsed
+                .get("desktop")
+                .and_then(|v| v.get("notifications"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn hot_switch_codex_provider_preserves_provider_model_provider_in_backup_and_restore() {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
@@ -5248,6 +5575,9 @@ name = "DeepSeek"
 base_url = "https://api.deepseek.com/v1"
 wire_api = "responses"
 requires_openai_auth = true
+
+[features]
+goals = false
 "#
             }),
             None,
@@ -5284,6 +5614,9 @@ name = "Stable"
 base_url = "http://127.0.0.1:15721/v1"
 wire_api = "responses"
 requires_openai_auth = true
+
+[features]
+goals = true
 "#
             }))
             .expect("seed taken-over Codex live config");
@@ -5323,6 +5656,14 @@ requires_openai_auth = true
         assert_eq!(
             parsed_live.get("model").and_then(|v| v.as_str()),
             Some("deepseek-v4-flash")
+        );
+        assert_eq!(
+            parsed_live
+                .get("features")
+                .and_then(|v| v.get("goals"))
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "current live client-owned feature flags should win over provider templates"
         );
         assert_eq!(
             live.get("auth")
@@ -5420,6 +5761,246 @@ command = "latest-command"
                 .and_then(|v| v.as_str()),
             Some("latest-command"),
             "new MCP entries should remain in the restore backup"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn failover_hot_switch_codex_keeps_local_proxy_live_config_without_placeholder() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        crate::settings::update_settings(crate::settings::AppSettings {
+            preserve_codex_official_auth_on_switch: true,
+            ..Default::default()
+        })
+        .expect("enable Codex official auth preservation");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "Provider A".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "provider-a-key"
+                },
+                "config": r#"model_provider = "custom"
+model = "gpt-5"
+
+[model_providers.custom]
+name = "Provider A"
+base_url = "https://provider-a.example/v1"
+wire_api = "responses"
+"#
+            }),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "b".to_string(),
+            "Provider B".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "provider-b-key"
+                },
+                "config": r#"model_provider = "custom"
+model = "gpt-5"
+
+[model_providers.custom]
+name = "Provider B"
+base_url = "https://provider-b.example/v1"
+wire_api = "responses"
+"#
+            }),
+            None,
+        );
+
+        db.save_provider("codex", &provider_a)
+            .expect("save provider a");
+        db.save_provider("codex", &provider_b)
+            .expect("save provider b");
+        db.set_current_provider("codex", "a")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some("a"))
+            .expect("set local current provider");
+
+        let mut app_proxy = db
+            .get_proxy_config_for_app("codex")
+            .await
+            .expect("get Codex proxy config");
+        app_proxy.enabled = true;
+        app_proxy.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(app_proxy)
+            .await
+            .expect("enable Codex proxy failover");
+
+        let oauth_auth = json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "id_token": "oauth-id",
+                "access_token": "oauth-access"
+            }
+        });
+        let live_config = r#"model_provider = "custom"
+model = "gpt-5"
+
+[model_providers.custom]
+name = "CC Switch Local Proxy"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+
+[mcp_servers.sample_mcp]
+command = "sample-mcp"
+args = ["serve", "--mcp"]
+
+[plugins."sample-plugin@local"]
+enabled = true
+
+[projects."/tmp/cc-switch-test/project-demo"]
+trust_level = "trusted"
+
+[marketplaces.sample]
+enabled = true
+
+[memories]
+use_memories = true
+
+[desktop]
+enabled = true
+"#;
+        crate::codex_config::write_codex_live_atomic(&oauth_auth, Some(live_config))
+            .expect("seed Codex live config");
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": oauth_auth,
+                "config": live_config
+            }))
+            .expect("serialize live backup"),
+        )
+        .await
+        .expect("seed Codex live backup");
+
+        let outcome = service
+            .hot_switch_provider_for_failover("codex", "b")
+            .await
+            .expect("failover hot switch Codex provider");
+
+        assert!(
+            outcome.logical_target_changed,
+            "failover should still update the internal current provider"
+        );
+        assert_eq!(
+            db.get_current_provider("codex")
+                .expect("get current provider")
+                .as_deref(),
+            Some("b")
+        );
+        let backup = db
+            .get_live_backup("codex")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let backup_value: Value =
+            serde_json::from_str(&backup.original_config).expect("parse live backup");
+        let backup_config = backup_value
+            .get("config")
+            .and_then(|value| value.as_str())
+            .expect("backup config");
+        let parsed_backup: toml::Value =
+            toml::from_str(backup_config).expect("parse backup config");
+        assert_eq!(
+            backup_value.get("auth"),
+            Some(&oauth_auth),
+            "Codex failover backup should preserve OAuth auth material"
+        );
+        assert!(
+            backup_config.contains("provider-b-key"),
+            "Codex failover backup should carry the failover provider token in config.toml"
+        );
+        assert_eq!(
+            parsed_backup
+                .get("model_providers")
+                .and_then(|value| value.get("custom"))
+                .and_then(|value| value.get("base_url"))
+                .and_then(|value| value.as_str()),
+            Some("https://provider-b.example/v1"),
+            "Codex failover should keep the restore backup aligned with the current provider"
+        );
+        assert_eq!(
+            parsed_backup
+                .get("mcp_servers")
+                .and_then(|value| value.get("sample_mcp"))
+                .and_then(|value| value.get("command"))
+                .and_then(|value| value.as_str()),
+            Some("sample-mcp"),
+            "Codex failover backup should preserve live-owned MCP config"
+        );
+        assert!(
+            parsed_backup
+                .get("plugins")
+                .and_then(|value| value.get("sample-plugin@local"))
+                .is_some(),
+            "Codex failover backup should preserve live-owned plugin config"
+        );
+        assert_eq!(
+            parsed_backup
+                .get("projects")
+                .and_then(|value| value.get("/tmp/cc-switch-test/project-demo"))
+                .and_then(|value| value.get("trust_level"))
+                .and_then(|value| value.as_str()),
+            Some("trusted"),
+            "Codex failover backup should preserve live-owned project config"
+        );
+
+        let after =
+            std::fs::read_to_string(crate::codex_config::get_codex_config_path()).expect("read");
+        assert_eq!(
+            after, live_config,
+            "Codex failover must not rewrite the client live config when it already points at the local proxy"
+        );
+        assert!(
+            !after.contains("https://provider-b.example/v1"),
+            "upstream provider endpoint must remain internal to CC Switch during failover"
+        );
+
+        service
+            .set_takeover_for_app("codex", false)
+            .await
+            .expect("disable Codex takeover");
+
+        let restored = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read restored Codex config");
+        let parsed_restored: toml::Value =
+            toml::from_str(&restored).expect("parse restored config");
+        assert_eq!(
+            parsed_restored
+                .get("model_providers")
+                .and_then(|value| value.get("custom"))
+                .and_then(|value| value.get("base_url"))
+                .and_then(|value| value.as_str()),
+            Some("https://provider-b.example/v1"),
+            "disabling takeover after failover should restore the failover provider"
+        );
+        assert_eq!(
+            parsed_restored
+                .get("mcp_servers")
+                .and_then(|value| value.get("sample_mcp"))
+                .and_then(|value| value.get("command"))
+                .and_then(|value| value.as_str()),
+            Some("sample-mcp"),
+            "disabling takeover after failover should preserve live-owned MCP config"
+        );
+        assert!(
+            restored.contains("provider-b-key"),
+            "disabling takeover after failover should restore the failover provider token"
+        );
+        let restored_auth: Value =
+            crate::config::read_json_file(&crate::codex_config::get_codex_auth_path())
+                .expect("read restored Codex auth");
+        assert_eq!(
+            restored_auth, oauth_auth,
+            "disabling takeover after failover should preserve OAuth auth material"
         );
     }
 
@@ -5873,6 +6454,346 @@ requires_openai_auth = true
         assert!(
             !crate::codex_config::get_codex_auth_path().exists(),
             "empty-auth restore must delete auth.json rather than write an empty one"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_restore_from_stale_backup_preserves_client_owned_live_tables() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let live_proxy_config = r#"model_provider = "custom"
+model = "gpt-5.5"
+
+[model_providers.custom]
+name = "CC Switch Local Proxy"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+experimental_bearer_token = "PROXY_MANAGED"
+
+[features]
+remote_connections = true
+goals = true
+
+[projects."/tmp/cc-switch-test/project-alpha"]
+trust_level = "trusted"
+
+[plugins."sample-plugin@local"]
+enabled = true
+
+[mcp_servers.sample_mcp]
+enabled = true
+command = "sample-mcp"
+args = ["serve", "--mcp"]
+startup_timeout_sec = 120
+
+[marketplaces.sample]
+source_type = "local"
+
+[memories]
+use_memories = true
+
+[desktop]
+git-show-sidebar-pr-icons = true
+"#;
+        crate::codex_config::write_codex_live_config_atomic(Some(live_proxy_config))
+            .expect("seed current proxy live config");
+
+        let stale_backup_config = r#"model_provider = "custom"
+model = "gpt-5.5"
+
+[model_providers.custom]
+name = "Upstream"
+base_url = "https://upstream.example/v1"
+wire_api = "responses"
+
+[features]
+remote_connections = true
+goals = false
+
+[projects."/tmp/cc-switch-test/project-alpha"]
+trust_level = "untrusted"
+
+[plugins."sample-plugin@local"]
+enabled = false
+
+[mcp_servers.sample_mcp]
+enabled = false
+command = "stale-mcp"
+
+[projects."/tmp/cc-switch-test/project-beta"]
+trust_level = "trusted"
+"#;
+        let stale_backup = serde_json::to_string(&json!({
+            "auth": {
+                "OPENAI_API_KEY": "upstream-token"
+            },
+            "config": stale_backup_config
+        }))
+        .expect("serialize stale backup");
+        db.save_live_backup("codex", &stale_backup)
+            .await
+            .expect("seed stale live backup");
+
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Codex)
+            .await
+            .expect("restore codex live from stale backup");
+
+        let restored = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read restored config.toml");
+        let parsed: toml::Value = toml::from_str(&restored).expect("parse restored config");
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("custom"))
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("https://upstream.example/v1"),
+            "restore should keep provider-owned upstream base_url from backup"
+        );
+        assert!(
+            parsed
+                .get("mcp_servers")
+                .and_then(|v| v.get("sample_mcp"))
+                .is_some(),
+            "restore must preserve current live MCP config"
+        );
+        assert_eq!(
+            parsed
+                .get("mcp_servers")
+                .and_then(|v| v.get("sample_mcp"))
+                .and_then(|v| v.get("command"))
+                .and_then(|v| v.as_str()),
+            Some("sample-mcp"),
+            "restore must let current live MCP config win on conflict"
+        );
+        assert!(
+            parsed
+                .get("plugins")
+                .and_then(|v| v.get("sample-plugin@local"))
+                .is_some(),
+            "restore must preserve current live plugin config"
+        );
+        assert_eq!(
+            parsed
+                .get("plugins")
+                .and_then(|v| v.get("sample-plugin@local"))
+                .and_then(|v| v.get("enabled"))
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "restore must let current live plugin config win on conflict"
+        );
+        assert!(
+            parsed
+                .get("projects")
+                .and_then(|v| v.get("/tmp/cc-switch-test/project-alpha"))
+                .is_some(),
+            "restore must preserve current live project trust config"
+        );
+        assert_eq!(
+            parsed
+                .get("projects")
+                .and_then(|v| v.get("/tmp/cc-switch-test/project-alpha"))
+                .and_then(|v| v.get("trust_level"))
+                .and_then(|v| v.as_str()),
+            Some("trusted"),
+            "restore must let current live project trust config win on conflict"
+        );
+        assert_eq!(
+            parsed
+                .get("features")
+                .and_then(|v| v.get("goals"))
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "restore must preserve current live feature flags"
+        );
+        assert!(
+            parsed
+                .get("marketplaces")
+                .and_then(|v| v.get("sample"))
+                .is_some(),
+            "restore must preserve marketplace config"
+        );
+        assert_eq!(
+            parsed
+                .get("memories")
+                .and_then(|v| v.get("use_memories"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            parsed
+                .get("desktop")
+                .and_then(|v| v.get("git-show-sidebar-pr-icons"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_takeover_startup_repairs_stale_backup_from_current_proxy_live_config() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let proxy_port = configure_test_proxy_port(&db).await;
+
+        let live_proxy_config = format!(
+            r#"model_provider = "custom"
+model = "gpt-5.5"
+
+[model_providers.custom]
+name = "CC Switch Local Proxy"
+base_url = "http://127.0.0.1:{proxy_port}/v1"
+wire_api = "responses"
+experimental_bearer_token = "PROXY_MANAGED"
+
+[features]
+goals = true
+
+[projects."/tmp/cc-switch-test/project-alpha"]
+trust_level = "trusted"
+
+[plugins."sample-plugin@local"]
+enabled = true
+
+[mcp_servers.sample_mcp]
+enabled = true
+command = "sample-mcp"
+"#
+        );
+        crate::codex_config::write_codex_live_config_atomic(Some(&live_proxy_config))
+            .expect("seed current proxy live config");
+
+        let stale_backup_config = r#"model_provider = "custom"
+model = "gpt-5.5"
+
+[model_providers.custom]
+name = "Upstream"
+base_url = "https://upstream.example/v1"
+wire_api = "responses"
+
+[features]
+goals = false
+
+[projects."/tmp/cc-switch-test/project-alpha"]
+trust_level = "untrusted"
+
+[plugins."sample-plugin@local"]
+enabled = false
+
+[mcp_servers.sample_mcp]
+enabled = false
+command = "stale-mcp"
+"#;
+        let stale_backup = serde_json::to_string(&json!({
+            "auth": {
+                "OPENAI_API_KEY": "upstream-token"
+            },
+            "config": stale_backup_config
+        }))
+        .expect("serialize stale backup");
+        db.save_live_backup("codex", &stale_backup)
+            .await
+            .expect("seed stale live backup");
+        let mut app_proxy = db
+            .get_proxy_config_for_app("codex")
+            .await
+            .expect("get Codex proxy config");
+        app_proxy.enabled = true;
+        db.update_proxy_config_for_app(app_proxy)
+            .await
+            .expect("mark Codex takeover enabled");
+
+        service
+            .set_takeover_for_app("codex", true)
+            .await
+            .expect("restore Codex takeover");
+        service.stop().await.expect("stop test proxy server");
+
+        let backup = db
+            .get_live_backup("codex")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let backup_value: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup");
+        let backup_config = backup_value
+            .get("config")
+            .and_then(|value| value.as_str())
+            .expect("backup config");
+        let parsed: toml::Value = toml::from_str(backup_config).expect("parse backup config");
+
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("custom"))
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("https://upstream.example/v1"),
+            "backup repair should keep provider-owned upstream base_url"
+        );
+        assert!(
+            parsed
+                .get("mcp_servers")
+                .and_then(|v| v.get("sample_mcp"))
+                .is_some(),
+            "startup should repair stale backup with current live MCP config"
+        );
+        assert_eq!(
+            parsed
+                .get("mcp_servers")
+                .and_then(|v| v.get("sample_mcp"))
+                .and_then(|v| v.get("command"))
+                .and_then(|v| v.as_str()),
+            Some("sample-mcp"),
+            "startup backup repair should let current live MCP config win on conflict"
+        );
+        assert!(
+            parsed
+                .get("plugins")
+                .and_then(|v| v.get("sample-plugin@local"))
+                .is_some(),
+            "startup should repair stale backup with current live plugin config"
+        );
+        assert_eq!(
+            parsed
+                .get("plugins")
+                .and_then(|v| v.get("sample-plugin@local"))
+                .and_then(|v| v.get("enabled"))
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "startup backup repair should let current live plugin config win on conflict"
+        );
+        assert!(
+            parsed
+                .get("projects")
+                .and_then(|v| v.get("/tmp/cc-switch-test/project-alpha"))
+                .is_some(),
+            "startup should repair stale backup with current live project config"
+        );
+        assert_eq!(
+            parsed
+                .get("projects")
+                .and_then(|v| v.get("/tmp/cc-switch-test/project-alpha"))
+                .and_then(|v| v.get("trust_level"))
+                .and_then(|v| v.as_str()),
+            Some("trusted"),
+            "startup backup repair should let current live project config win on conflict"
+        );
+        assert_eq!(
+            parsed
+                .get("features")
+                .and_then(|v| v.get("goals"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
         );
     }
 
