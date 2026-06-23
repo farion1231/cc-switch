@@ -1222,20 +1222,20 @@ requires_openai_auth = true`,
     iconColor: "#000000",
   },
   {
-    name: "CTok.ai",
-    websiteUrl: "https://ctok.ai",
-    apiKeyUrl: "https://ctok.ai",
+    name: "ETok.ai",
+    websiteUrl: "https://etok.ai",
+    apiKeyUrl: "https://etok.ai",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
-      "ctok",
-      "https://api.ctok.ai/v1",
+      "etok",
+      "https://api.etok.ai/v1",
       "gpt-5.5",
     ),
-    endpointCandidates: ["https://api.ctok.ai/v1"],
+    endpointCandidates: ["https://api.etok.ai/v1"],
     category: "third_party",
     isPartner: true, // 合作伙伴
-    partnerPromotionKey: "ctok", // 促销信息 i18n key
-    icon: "ctok",
+    partnerPromotionKey: "etok", // 促销信息 i18n key
+    icon: "etok",
     iconColor: "#000000",
   },
   {
