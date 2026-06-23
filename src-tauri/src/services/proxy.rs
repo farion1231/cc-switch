@@ -105,7 +105,7 @@ impl ProxyService {
         };
         // 模型层级路由开启时，`*_MODEL`/`*_MODEL_NAME` 完全由路由表派生
         // （`_MODEL` 仍是稳定别名，`_MODEL_NAME` 来自路由表 display_name）；否则跟随 provider。
-        let takeover_model_fields = if tier_routing.enabled {
+        let takeover_model_fields = if tier_routing.is_enabled_for_app("claude") {
             Self::build_claude_takeover_model_fields_for_tier_routing(tier_routing)
         } else if provider.uses_managed_account_auth() {
             Self::build_claude_takeover_model_fields(&provider.settings_config)
@@ -3078,6 +3078,7 @@ mod tests {
         let routing = ModelTierRoutingConfig {
             enabled: true,
             routes,
+            ..Default::default()
         };
 
         let mut live = provider.settings_config.clone();
@@ -3202,6 +3203,7 @@ mod tests {
         db.set_model_tier_routing_config(&ModelTierRoutingConfig {
             enabled: true,
             routes,
+            ..Default::default()
         })
         .expect("save tier config (enabled)");
 
@@ -3280,6 +3282,7 @@ mod tests {
         let routing = ModelTierRoutingConfig {
             enabled: true,
             routes,
+            ..Default::default()
         };
 
         let mut live = provider.settings_config.clone();
@@ -3356,6 +3359,7 @@ mod tests {
         db.set_model_tier_routing_config(&ModelTierRoutingConfig {
             enabled: true,
             routes,
+            ..Default::default()
         })
         .expect("set tier routing config");
 

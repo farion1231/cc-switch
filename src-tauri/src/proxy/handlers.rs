@@ -142,6 +142,12 @@ pub async fn handle_claude_desktop_models(
     headers: axum::http::HeaderMap,
 ) -> Result<Json<Value>, ProxyError> {
     validate_claude_desktop_gateway_auth(&state, &headers)?;
+    if let Some(response) =
+        crate::claude_desktop_config::model_list_response_for_tier_routing(state.db.as_ref())
+            .map_err(|e| ProxyError::ConfigError(e.to_string()))?
+    {
+        return Ok(Json(response));
+    }
     let providers = state
         .provider_router
         .select_providers("claude-desktop")

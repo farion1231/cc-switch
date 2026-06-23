@@ -2956,6 +2956,7 @@
       "tierLockedHint": "需先啟用路由模式",
       "confirmTitle": "啟用本地代理",
       "confirmMessage": "模型層級路由需要本地代理把每個層級分發到對應 provider。現在為 Claude 啟用代理接管嗎？",
+      "confirmMessageClaudeDesktop": "Claude Desktop 的模型層級路由需要本地路由服務。現在啟動本地路由並切換到模型層級路由嗎？",
       "confirmAction": "啟用並切換"
     },
     "modelTierRouting": {

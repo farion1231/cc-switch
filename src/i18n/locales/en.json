@@ -2984,6 +2984,7 @@
       "tierLockedHint": "Enable routing mode first",
       "confirmTitle": "Enable Local Proxy",
       "confirmMessage": "Model tier routing requires the local proxy to distribute each tier to its target provider. Enable proxy takeover for Claude now?",
+      "confirmMessageClaudeDesktop": "Model tier routing for Claude Desktop requires the local routing service. Start it now and switch to model tier routing?",
       "confirmAction": "Enable & Switch"
     },
     "modelTierRouting": {

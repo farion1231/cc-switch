@@ -1185,9 +1185,22 @@ impl RequestForwarder {
         // 应用模型映射（独立于格式转换）
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
         // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
+        let desktop_tier_routed_provider = matches!(app_type, AppType::ClaudeDesktop)
+            && self.routed_provider_id.as_deref() == Some(provider.id.as_str())
+            && self
+                .routing_model_override
+                .as_deref()
+                .is_some_and(|model| !model.is_empty());
         let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
-            crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
-                .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+            if desktop_tier_routed_provider {
+                crate::claude_desktop_config::prepare_proxy_request_with_upstream_model(
+                    body.clone(),
+                    provider,
+                )
+            } else {
+                crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
+                    .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+            }
         } else {
             let (mapped_body, _original_model, _mapped_model) =
                 super::model_mapper::apply_model_mapping(body.clone(), provider);

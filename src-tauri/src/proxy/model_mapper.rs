@@ -250,7 +250,7 @@ pub fn apply_tier_routing(
         model_override: None,
     };
 
-    if !config.enabled {
+    if !config.is_enabled_for_app(app_type) {
         return fallback();
     }
 
@@ -658,6 +658,7 @@ mod tests {
         ModelTierRoutingConfig {
             enabled: true,
             routes: map,
+            ..Default::default()
         }
     }
 
@@ -742,6 +743,26 @@ mod tests {
         });
         assert_eq!(out.providers[0].id, "a");
         assert!(out.routed_provider_id.is_none());
+    }
+
+    #[test]
+    fn tier_routing_respects_per_app_enabled_for_claude_desktop() {
+        let selected = vec![provider_with_id("current")];
+        let mut cfg = build_config(&[("claude-desktop", "opus", route("zhipu", "glm-5.2"))]);
+        let disabled_out =
+            apply_tier_routing("claude-opus-4-8", "claude-desktop", &cfg, &selected, |id| {
+                Some(provider_with_id(id))
+            });
+        assert_eq!(disabled_out.providers[0].id, "current");
+        assert!(disabled_out.routed_provider_id.is_none());
+
+        cfg.enabled_apps.insert("claude-desktop".to_string(), true);
+        let enabled_out =
+            apply_tier_routing("claude-opus-4-8", "claude-desktop", &cfg, &selected, |id| {
+                Some(provider_with_id(id))
+            });
+        assert_eq!(enabled_out.providers[0].id, "zhipu");
+        assert_eq!(enabled_out.model_override.as_deref(), Some("glm-5.2"));
     }
 
     #[test]

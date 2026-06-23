@@ -42,7 +42,11 @@ import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
 import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
 import { hermesApi } from "@/lib/api/hermes";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
-import { useModelTierRouting } from "@/hooks/useModelTierRouting";
+import {
+  isModelTierRoutingEnabledForApp,
+  supportsModelTierRoutingApp,
+  useModelTierRouting,
+} from "@/hooks/useModelTierRouting";
 import { useAutoCompact } from "@/hooks/useAutoCompact";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
@@ -267,6 +271,7 @@ function App() {
     takeoverStatus,
     status: proxyStatus,
     setTakeoverForApp,
+    startProxyServer,
   } = useProxyStatus();
   const isCurrentAppTakeoverActive = takeoverStatus?.[activeApp] || false;
 
@@ -276,15 +281,25 @@ function App() {
     setEnabled: setTierRoutingEnabled,
     persist: persistTierRouting,
   } = useModelTierRouting();
+  const activeTierRoutingApp = supportsModelTierRoutingApp(activeApp)
+    ? activeApp
+    : null;
+  const isTierRoutingTransportActive =
+    activeApp === "claude"
+      ? isCurrentAppTakeoverActive
+      : activeApp === "claude-desktop"
+        ? isProxyRunning
+        : false;
   const isModelTierMode =
-    activeApp === "claude" &&
-    Boolean(tierRoutingConfig?.enabled) &&
-    isCurrentAppTakeoverActive;
+    !!activeTierRoutingApp &&
+    isModelTierRoutingEnabledForApp(tierRoutingConfig, activeTierRoutingApp) &&
+    isTierRoutingTransportActive;
   const [showTierProxyConfirm, setShowTierProxyConfirm] = useState(false);
 
   const handleSwitchToModelTier = () => {
-    if (isCurrentAppTakeoverActive) {
-      void setTierRoutingEnabled(true);
+    if (!activeTierRoutingApp) return;
+    if (isTierRoutingTransportActive) {
+      void setTierRoutingEnabled(activeTierRoutingApp, true);
     } else {
       setShowTierProxyConfirm(true);
     }
@@ -293,10 +308,15 @@ function App() {
   const handleConfirmTierProxy = async () => {
     setShowTierProxyConfirm(false);
     try {
-      // 先开 takeover；成功后再开 tier 模式。takeover 失败则不设 enabled，
-      // 避免留下「enabled=true 但实际未接管」的脏状态。
-      await setTakeoverForApp({ appType: "claude", enabled: true });
-      await setTierRoutingEnabled(true);
+      if (!activeTierRoutingApp) return;
+      // 先打开对应的本地路由能力；成功后再开 tier 模式。前置步骤失败则不设 enabled，
+      // 避免留下「enabled=true 但实际不可路由」的脏状态。
+      if (activeTierRoutingApp === "claude") {
+        await setTakeoverForApp({ appType: "claude", enabled: true });
+      } else {
+        await startProxyServer();
+      }
+      await setTierRoutingEnabled(activeTierRoutingApp, true);
     } catch (e) {
       toast.error(String(e));
     }
@@ -312,13 +332,30 @@ function App() {
       wasActive &&
       !isCurrentAppTakeoverActive &&
       activeApp === "claude" &&
-      tierRoutingConfig?.enabled
+      isModelTierRoutingEnabledForApp(tierRoutingConfig, "claude")
     ) {
-      void setTierRoutingEnabled(false);
+      void setTierRoutingEnabled("claude", false);
     }
     // 仅由接管状态翻转驱动；其余值读取最新即可。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCurrentAppTakeoverActive]);
+
+  // Claude Desktop 的层级路由依赖本地代理服务。服务被关闭时同步关闭 tier 模式，
+  // 并触发后端把 Desktop profile 刷回当前 provider 的普通路由。
+  const prevProxyRunningForTierRef = useRef(isProxyRunning);
+  useEffect(() => {
+    const wasRunning = prevProxyRunningForTierRef.current;
+    prevProxyRunningForTierRef.current = isProxyRunning;
+    if (
+      wasRunning &&
+      !isProxyRunning &&
+      isModelTierRoutingEnabledForApp(tierRoutingConfig, "claude-desktop")
+    ) {
+      void setTierRoutingEnabled("claude-desktop", false);
+    }
+    // 仅由代理运行状态翻转驱动；其余值读取最新即可。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isProxyRunning]);
 
   const activeProviderId = useMemo(() => {
     const target = proxyStatus?.active_targets?.find(
@@ -1030,18 +1067,22 @@ function App() {
                     transition={{ duration: 0.15 }}
                     className="space-y-4"
                   >
-                    {activeApp === "claude" && (
+                    {activeTierRoutingApp && (
                       <RoutingModeSelector
                         value={isModelTierMode ? "tier" : "provider"}
-                        routingEnabled={isCurrentAppTakeoverActive}
+                        routingEnabled={isTierRoutingTransportActive}
                         onSelectProvider={() =>
-                          void setTierRoutingEnabled(false)
+                          void setTierRoutingEnabled(
+                            activeTierRoutingApp,
+                            false,
+                          )
                         }
                         onSelectTier={handleSwitchToModelTier}
                       />
                     )}
                     {isModelTierMode ? (
                       <ModelTierRoutingEditor
+                        appId={activeTierRoutingApp!}
                         config={tierRoutingConfig}
                         onChange={persistTierRouting}
                       />
@@ -1736,7 +1777,11 @@ function App() {
       <ConfirmDialog
         isOpen={showTierProxyConfirm}
         title={t("home.routingMode.confirmTitle")}
-        message={t("home.routingMode.confirmMessage")}
+        message={
+          activeTierRoutingApp === "claude-desktop"
+            ? t("home.routingMode.confirmMessageClaudeDesktop")
+            : t("home.routingMode.confirmMessage")
+        }
         confirmText={t("home.routingMode.confirmAction")}
         variant="info"
         onConfirm={() => void handleConfirmTierProxy()}

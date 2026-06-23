@@ -2984,6 +2984,7 @@
       "tierLockedHint": "先にルーティングモードを有効にしてください",
       "confirmTitle": "ローカルプロキシを有効化",
       "confirmMessage": "モデルティアルーティングは、各ティアを対象プロバイダーに振り分けるためにローカルプロキシが必要です。Claude のプロキシ接管を今すぐ有効にしますか？",
+      "confirmMessageClaudeDesktop": "Claude Desktop のモデルティアルーティングにはローカルルーティングサービスが必要です。今すぐ起動してモデルティアルーティングに切り替えますか？",
       "confirmAction": "有効化して切替"
     },
     "modelTierRouting": {

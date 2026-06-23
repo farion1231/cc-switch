@@ -709,6 +709,7 @@ pub async fn set_model_tier_routing_config(
     state: tauri::State<'_, crate::AppState>,
     config: crate::proxy::types::ModelTierRoutingConfig,
 ) -> Result<bool, String> {
+    let previous = state.db.get_model_tier_routing_config().unwrap_or_default();
     state
         .db
         .set_model_tier_routing_config(&config)
@@ -722,6 +723,16 @@ pub async fn set_model_tier_routing_config(
         .await
     {
         log::warn!("[ModelTierRouting] 刷新 Claude 接管 live 配置失败: {e}");
+    }
+
+    if previous.is_enabled_for_app("claude-desktop") || config.is_enabled_for_app("claude-desktop")
+    {
+        if let Err(e) = crate::services::ProviderService::sync_current_provider_for_app(
+            &state,
+            crate::app_config::AppType::ClaudeDesktop,
+        ) {
+            log::warn!("[ModelTierRouting] 刷新 Claude Desktop profile 失败: {e}");
+        }
     }
 
     Ok(true)

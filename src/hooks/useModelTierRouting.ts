@@ -10,14 +10,45 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { settingsApi, type ModelTierRoutingConfig } from "@/lib/api/settings";
+import type { AppId } from "@/lib/api/types";
 
 const EMPTY_CONFIG: ModelTierRoutingConfig = {
   enabled: false,
+  enabledApps: {},
   routes: {},
 };
 
-/** 当前仅 Claude 有层级语义；UI 只编辑 claude 的路由表。 */
-export const ROUTING_APP = "claude";
+export type ModelTierRoutingApp = Extract<AppId, "claude" | "claude-desktop">;
+export const MODEL_TIER_ROUTING_APPS: ModelTierRoutingApp[] = [
+  "claude",
+  "claude-desktop",
+];
+
+export function supportsModelTierRoutingApp(
+  appId: AppId,
+): appId is ModelTierRoutingApp {
+  return MODEL_TIER_ROUTING_APPS.includes(appId as ModelTierRoutingApp);
+}
+
+function materializeEnabledApps(
+  config: ModelTierRoutingConfig,
+): Record<ModelTierRoutingApp, boolean> {
+  const legacyClaudeEnabled =
+    config.enabled &&
+    !Object.prototype.hasOwnProperty.call(config.enabledApps ?? {}, "claude");
+  return {
+    claude: config.enabledApps?.claude ?? legacyClaudeEnabled,
+    "claude-desktop": config.enabledApps?.["claude-desktop"] ?? false,
+  };
+}
+
+export function isModelTierRoutingEnabledForApp(
+  config: ModelTierRoutingConfig | null | undefined,
+  appId: AppId,
+): boolean {
+  if (!config?.enabled || !supportsModelTierRoutingApp(appId)) return false;
+  return materializeEnabledApps(config)[appId];
+}
 
 export function useModelTierRouting() {
   const [config, setConfig] = useState<ModelTierRoutingConfig>(EMPTY_CONFIG);
@@ -57,7 +88,16 @@ export function useModelTierRouting() {
   }, []);
 
   const setEnabled = useCallback(
-    (enabled: boolean) => persist({ ...config, enabled }),
+    (appId: ModelTierRoutingApp, enabled: boolean) => {
+      const enabledApps = {
+        ...materializeEnabledApps(config),
+        [appId]: enabled,
+      };
+      const anyEnabled = MODEL_TIER_ROUTING_APPS.some(
+        (app) => enabledApps[app],
+      );
+      return persist({ ...config, enabled: anyEnabled, enabledApps });
+    },
     [config, persist],
   );
 

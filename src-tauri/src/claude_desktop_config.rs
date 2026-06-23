@@ -10,6 +10,7 @@ use crate::database::Database;
 use crate::database::CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID;
 use crate::error::AppError;
 use crate::provider::{ClaudeDesktopMode, Provider};
+use crate::proxy::types::ModelTierRoutingConfig;
 
 pub const PROFILE_ID: &str = "00000000-0000-4000-8000-000000157210";
 pub const PROFILE_NAME: &str = "CC Switch";
@@ -70,6 +71,14 @@ pub const DEFAULT_PROXY_ROUTES: &[ClaudeDesktopDefaultRoute] = &[
         env_key: "ANTHROPIC_DEFAULT_FABLE_MODEL",
         supports_1m: true,
     },
+];
+
+const MODEL_TIER_ROUTING_APP: &str = "claude-desktop";
+const DESKTOP_TIER_ROUTES: &[(&str, &str)] = &[
+    ("sonnet", "claude-sonnet-4-6"),
+    ("opus", CURRENT_OPUS_ROUTE_ID),
+    ("haiku", "claude-haiku-4-5"),
+    ("fable", "claude-fable-5"),
 ];
 
 #[derive(Debug, Clone)]
@@ -179,19 +188,29 @@ pub fn get_status(db: &Database, proxy_running: bool) -> Result<ClaudeDesktopSta
     .ok()
     .flatten()
     .and_then(|id| db.get_provider_by_id(&id, "claude-desktop").ok().flatten());
-    let mode = current_provider.as_ref().map(provider_mode);
-    let expected_base_url = match mode {
-        Some(ClaudeDesktopMode::Proxy) => proxy_gateway_base_url_from_db(db).ok(),
-        Some(ClaudeDesktopMode::Direct) => current_provider
-            .as_ref()
-            .and_then(|provider| direct_gateway_credentials(provider).ok())
-            .map(|credentials| credentials.base_url),
-        None => None,
+    let use_tier_routing_profile = has_desktop_tier_routing_profile(db)?;
+    let mode = if use_tier_routing_profile {
+        Some(ClaudeDesktopMode::Proxy)
+    } else {
+        current_provider.as_ref().map(provider_mode)
     };
-    let missing_route_mappings = current_provider.as_ref().is_some_and(|provider| {
-        matches!(provider_mode(provider), ClaudeDesktopMode::Proxy)
-            && proxy_model_routes(provider).is_err()
-    });
+    let expected_base_url = if use_tier_routing_profile {
+        proxy_gateway_base_url_from_db(db).ok()
+    } else {
+        match mode {
+            Some(ClaudeDesktopMode::Proxy) => proxy_gateway_base_url_from_db(db).ok(),
+            Some(ClaudeDesktopMode::Direct) => current_provider
+                .as_ref()
+                .and_then(|provider| direct_gateway_credentials(provider).ok())
+                .map(|credentials| credentials.base_url),
+            None => None,
+        }
+    };
+    let missing_route_mappings = !use_tier_routing_profile
+        && current_provider.as_ref().is_some_and(|provider| {
+            matches!(provider_mode(provider), ClaudeDesktopMode::Proxy)
+                && proxy_model_routes(provider).is_err()
+        });
 
     Ok(ClaudeDesktopStatus {
         supported: true,
@@ -644,16 +663,36 @@ fn next_catalog_safe_route_id(
 
 pub fn model_list_response(provider: &Provider) -> Result<Value, AppError> {
     let routes = proxy_model_routes(provider)?;
-    let data: Vec<Value> = routes
+    let model_specs = routes
         .iter()
-        .map(|route| {
-            let model_id = route.route_id.clone();
+        .map(|route| InferenceModelSpec {
+            name: route.route_id.clone(),
+            label_override: route.label_override.clone(),
+            supports_1m: route.supports_1m,
+        })
+        .collect::<Vec<_>>();
+    Ok(model_list_response_from_specs(&model_specs))
+}
+
+pub fn model_list_response_for_tier_routing(db: &Database) -> Result<Option<Value>, AppError> {
+    let config = db.get_model_tier_routing_config()?;
+    let model_specs = desktop_tier_routing_model_specs(db, &config)?;
+    if model_specs.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(model_list_response_from_specs(&model_specs)))
+}
+
+fn model_list_response_from_specs(model_specs: &[InferenceModelSpec]) -> Value {
+    let data: Vec<Value> = model_specs
+        .iter()
+        .map(|spec| {
             let mut item = json!({
                 "type": "model",
-                "id": model_id,
+                "id": spec.name.clone(),
                 "created_at": DEFAULT_CREATED_AT,
             });
-            if route.supports_1m {
+            if spec.supports_1m {
                 item["supports1m"] = json!(true);
             }
             item
@@ -670,12 +709,76 @@ pub fn model_list_response(provider: &Provider) -> Result<Value, AppError> {
         .and_then(Value::as_str)
         .map(str::to_string);
 
-    Ok(json!({
+    json!({
         "data": data,
         "has_more": false,
         "first_id": first_id,
         "last_id": last_id,
-    }))
+    })
+}
+
+fn desktop_tier_routing_model_specs(
+    db: &Database,
+    config: &ModelTierRoutingConfig,
+) -> Result<Vec<InferenceModelSpec>, AppError> {
+    if !config.is_enabled_for_app(MODEL_TIER_ROUTING_APP) {
+        return Ok(Vec::new());
+    }
+
+    let Some(routes) = config.routes.get(MODEL_TIER_ROUTING_APP) else {
+        return Ok(Vec::new());
+    };
+
+    let mut specs = Vec::new();
+    for &(tier, route_id) in DESKTOP_TIER_ROUTES {
+        let Some(route) = routes.get(tier) else {
+            continue;
+        };
+        if route.provider_id.trim().is_empty() || route.model.trim().is_empty() {
+            continue;
+        }
+        let Some(provider) = db.get_provider_by_id(&route.provider_id, MODEL_TIER_ROUTING_APP)?
+        else {
+            continue;
+        };
+        if !provider.supports_routing() {
+            continue;
+        }
+
+        let model = route.model.trim();
+        let display_name = route.display_name.trim();
+        let label_override = (!display_name.is_empty()).then(|| display_name.to_string());
+        specs.push(InferenceModelSpec {
+            name: route_id.to_string(),
+            label_override,
+            supports_1m: model_has_one_m_marker(model),
+        });
+    }
+    Ok(specs)
+}
+
+fn has_desktop_tier_routing_profile(db: &Database) -> Result<bool, AppError> {
+    let config = db.get_model_tier_routing_config()?;
+    Ok(!desktop_tier_routing_model_specs(db, &config)?.is_empty())
+}
+
+fn model_has_one_m_marker(model: &str) -> bool {
+    let trimmed = model.trim();
+    let marker = ONE_M_CONTEXT_MARKER.as_bytes();
+    let bytes = trimmed.as_bytes();
+    bytes.len() >= marker.len() && bytes[bytes.len() - marker.len()..].eq_ignore_ascii_case(marker)
+}
+
+pub fn prepare_proxy_request_with_upstream_model(mut body: Value, provider: &Provider) -> Value {
+    let upstream_model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if should_normalize_mimo_anthropic_thinking_history(provider, &upstream_model) {
+        normalize_mimo_anthropic_thinking_history(&mut body);
+    }
+    body
 }
 
 pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<Value, AppError> {
@@ -933,11 +1036,14 @@ fn apply_provider_to_paths(
     provider: &Provider,
     paths: &ClaudeDesktopPaths,
 ) -> Result<(), AppError> {
-    if is_official_provider(provider) {
+    let use_tier_routing_profile = has_desktop_tier_routing_profile(db)?;
+    if is_official_provider(provider) && !use_tier_routing_profile {
         return restore_official_at_paths(paths);
     }
 
-    validate_provider(provider)?;
+    if !use_tier_routing_profile {
+        validate_provider(provider)?;
+    }
     with_rollback(paths, |paths| {
         apply_provider_to_paths_inner(db, provider, paths)
     })
@@ -971,28 +1077,40 @@ fn apply_provider_to_paths_inner(
     provider: &Provider,
     paths: &ClaudeDesktopPaths,
 ) -> Result<(), AppError> {
+    let tier_routing = db.get_model_tier_routing_config()?;
+    let tier_model_specs = desktop_tier_routing_model_specs(db, &tier_routing)?;
     let profile = match provider_mode(provider) {
         ClaudeDesktopMode::Direct => {
-            let credentials = direct_gateway_credentials(provider)?;
-            let model_specs = direct_inference_model_specs(provider)?;
-            build_gateway_profile(
-                &credentials.base_url,
-                &credentials.api_key,
-                (!model_specs.is_empty()).then_some(model_specs.as_slice()),
-            )
+            if !tier_model_specs.is_empty() {
+                let base_url = proxy_gateway_base_url_from_db(db)?;
+                let api_key = get_or_create_gateway_token(db)?;
+                build_gateway_profile(&base_url, &api_key, Some(tier_model_specs.as_slice()))
+            } else {
+                let credentials = direct_gateway_credentials(provider)?;
+                let model_specs = direct_inference_model_specs(provider)?;
+                build_gateway_profile(
+                    &credentials.base_url,
+                    &credentials.api_key,
+                    (!model_specs.is_empty()).then_some(model_specs.as_slice()),
+                )
+            }
         }
         ClaudeDesktopMode::Proxy => {
             let base_url = proxy_gateway_base_url_from_db(db)?;
             let api_key = get_or_create_gateway_token(db)?;
-            let routes = proxy_model_routes(provider)?;
-            let model_specs = routes
-                .iter()
-                .map(|route| InferenceModelSpec {
-                    name: route.route_id.clone(),
-                    label_override: route.label_override.clone(),
-                    supports_1m: route.supports_1m,
-                })
-                .collect::<Vec<_>>();
+            let model_specs = if !tier_model_specs.is_empty() {
+                tier_model_specs
+            } else {
+                let routes = proxy_model_routes(provider)?;
+                routes
+                    .iter()
+                    .map(|route| InferenceModelSpec {
+                        name: route.route_id.clone(),
+                        label_override: route.label_override.clone(),
+                        supports_1m: route.supports_1m,
+                    })
+                    .collect::<Vec<_>>()
+            };
             build_gateway_profile(&base_url, &api_key, Some(model_specs.as_slice()))
         }
     };
@@ -1576,6 +1694,69 @@ mod tests {
             json!([{ "name": "claude-sonnet-4-6", "labelOverride": "Kimi K2", "supports1m": true }])
         );
         assert!(!profile.to_string().contains("kimi-k2"));
+    }
+
+    #[test]
+    fn claude_desktop_tier_routing_profile_uses_configured_routes() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let current_provider = direct_provider("direct-current");
+        let mut routed_provider = proxy_provider("zhipu");
+        routed_provider.category = Some("cn_official".to_string());
+        let db = test_db();
+        set_proxy_port(&db, 15721);
+        db.save_provider(MODEL_TIER_ROUTING_APP, &routed_provider)
+            .expect("save routed provider");
+
+        let mut enabled_apps = std::collections::HashMap::new();
+        enabled_apps.insert(MODEL_TIER_ROUTING_APP.to_string(), true);
+        let mut claude_desktop_routes = std::collections::HashMap::new();
+        claude_desktop_routes.insert(
+            "opus".to_string(),
+            crate::proxy::types::TierRoute {
+                provider_id: "zhipu".to_string(),
+                model: "glm-5.2[1m]".to_string(),
+                display_name: "GLM-5.2".to_string(),
+            },
+        );
+        claude_desktop_routes.insert(
+            "sonnet".to_string(),
+            crate::proxy::types::TierRoute {
+                provider_id: "missing".to_string(),
+                model: "should-not-appear".to_string(),
+                display_name: "Missing".to_string(),
+            },
+        );
+        let mut routes = std::collections::HashMap::new();
+        routes.insert(MODEL_TIER_ROUTING_APP.to_string(), claude_desktop_routes);
+        db.set_model_tier_routing_config(&crate::proxy::types::ModelTierRoutingConfig {
+            enabled: true,
+            enabled_apps,
+            routes,
+        })
+        .expect("set tier config");
+
+        apply_provider_to_paths(&db, &current_provider, &paths)
+            .expect("apply tier routing profile");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(
+            profile["inferenceGatewayBaseUrl"],
+            json!("http://127.0.0.1:15721/claude-desktop")
+        );
+        let models = profile["inferenceModels"]
+            .as_array()
+            .expect("inferenceModels array");
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0]["name"], json!(CURRENT_OPUS_ROUTE_ID));
+        assert_eq!(models[0]["labelOverride"], json!("GLM-5.2"));
+        assert_eq!(models[0]["supports1m"], json!(true));
+
+        let list = model_list_response_for_tier_routing(&db)
+            .expect("model list response")
+            .expect("tier response present");
+        assert_eq!(list["data"][0]["id"], json!(CURRENT_OPUS_ROUTE_ID));
+        assert_eq!(list["data"][0]["supports1m"], json!(true));
     }
 
     #[test]

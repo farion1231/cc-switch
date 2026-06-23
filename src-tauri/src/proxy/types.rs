@@ -206,12 +206,32 @@ pub struct AppProxyConfig {
 #[serde(rename_all = "camelCase")]
 pub struct ModelTierRoutingConfig {
     /// 总开关；关闭时完全不介入请求路径。
+    ///
+    /// 兼容旧配置：历史版本只有这个字段，且仅 Claude Code 使用层级路由。
     #[serde(default)]
     pub enabled: bool,
+    /// per app_type → 是否启用层级路由。
+    ///
+    /// 缺失时按旧配置解释：`enabled=true` 只代表 `claude` 开启，避免升级后误把
+    /// `claude-desktop` 也切到层级路由。
+    #[serde(default)]
+    pub enabled_apps: HashMap<String, bool>,
     /// per app_type → tier（"opus"/"sonnet"/"haiku"/"fable"）→ 路由项。
     /// 缺失的 app_type / tier 视为未配置，回退到既有选择逻辑。
     #[serde(default)]
     pub routes: HashMap<String, HashMap<String, TierRoute>>,
+}
+
+impl ModelTierRoutingConfig {
+    pub fn is_enabled_for_app(&self, app_type: &str) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        self.enabled_apps
+            .get(app_type)
+            .copied()
+            .unwrap_or(app_type == "claude")
+    }
 }
 
 /// 单条层级路由：目标 Provider + 要改写成的上游模型名。

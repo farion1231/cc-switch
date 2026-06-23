@@ -2,14 +2,14 @@
  * 首页「模型层级路由」编辑器。
  *
  * 在模型层级模式下替代 ProviderList：为每个 Claude 层级（Opus/Sonnet/Haiku/Fable）
- * 配置 provider + 模型名（proxy 改写后的真实模型）+ 展示名（写入 _MODEL_NAME）。
+ * 配置 provider + 模型名（proxy 改写后的真实模型）+ 展示名（写入可见模型菜单）。
  * 每次 onChange 即时保存（后端 set_model_tier_routing_config 会刷新 live 配置）。
  */
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { providersApi } from "@/lib/api/providers";
 import type { ModelTierRoutingConfig, TierRoute } from "@/lib/api/settings";
-import { ROUTING_APP } from "@/hooks/useModelTierRouting";
+import type { ModelTierRoutingApp } from "@/hooks/useModelTierRouting";
 import {
   Select,
   SelectContent,
@@ -29,9 +29,10 @@ const NONE_PROVIDER = "__none__";
 
 function readRoute(
   config: ModelTierRoutingConfig,
+  appId: ModelTierRoutingApp,
   tier: TierKey,
 ): { providerId: string; model: string; displayName: string } {
-  const route = config.routes?.[ROUTING_APP]?.[tier];
+  const route = config.routes?.[appId]?.[tier];
   return {
     providerId: route?.providerId ?? "",
     model: route?.model ?? "",
@@ -41,10 +42,11 @@ function readRoute(
 
 function writeRoute(
   config: ModelTierRoutingConfig,
+  appId: ModelTierRoutingApp,
   tier: TierKey,
   next: { providerId: string; model: string; displayName: string },
 ): ModelTierRoutingConfig {
-  const appRoutes = { ...(config.routes?.[ROUTING_APP] ?? {}) };
+  const appRoutes = { ...(config.routes?.[appId] ?? {}) };
   if (!next.providerId) {
     delete appRoutes[tier];
   } else {
@@ -55,24 +57,25 @@ function writeRoute(
     };
     appRoutes[tier] = route;
   }
-  return { ...config, routes: { ...config.routes, [ROUTING_APP]: appRoutes } };
+  return { ...config, routes: { ...config.routes, [appId]: appRoutes } };
 }
 
 interface Props {
+  appId: ModelTierRoutingApp;
   config: ModelTierRoutingConfig;
   onChange: (next: ModelTierRoutingConfig) => void;
 }
 
-export function ModelTierRoutingEditor({ config, onChange }: Props) {
+export function ModelTierRoutingEditor({ appId, config, onChange }: Props) {
   const { t } = useTranslation();
   const [providers, setProviders] = useState<Record<string, Provider>>({});
 
   useEffect(() => {
     providersApi
-      .getAll(ROUTING_APP)
+      .getAll(appId)
       .then((map) => setProviders(map ?? {}))
       .catch((e) => console.error("Failed to load providers:", e));
-  }, []);
+  }, [appId]);
 
   const providerList = Object.values(providers).sort(
     (a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0),
@@ -86,7 +89,10 @@ export function ModelTierRoutingEditor({ config, onChange }: Props) {
     patch: Partial<{ providerId: string; model: string; displayName: string }>,
   ) => {
     onChange(
-      writeRoute(config, tier, { ...readRoute(config, tier), ...patch }),
+      writeRoute(config, appId, tier, {
+        ...readRoute(config, appId, tier),
+        ...patch,
+      }),
     );
   };
 
@@ -111,7 +117,7 @@ export function ModelTierRoutingEditor({ config, onChange }: Props) {
         </div>
 
         {TIERS.map((tier) => {
-          const route = readRoute(config, tier);
+          const route = readRoute(config, appId, tier);
           // 边界：route 已指向官方 provider（脏数据/旧值）。过滤后不在可选项里，
           // 但保留为 disabled 项让 trigger 仍能显示当前值，并标注原因，引导改选。
           const selectedProvider = route.providerId

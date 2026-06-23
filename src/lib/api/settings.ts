@@ -361,11 +361,11 @@ export interface TierRoute {
  * 模型层级路由配置。
  *
  * `routes` 为 `appType → tier(opus|sonnet|haiku|fable) → TierRoute` 的两层映射。
- * 层级命名是 Claude 专属（Claude Code 始终以 opus/sonnet/haiku/fable 之一作为请求模型），
- * 故当前仅 `claude` appType 有意义；Codex/Gemini 的真实模型名不会被归类为层级。
+ * 层级命名是 Claude 专属；当前支持 Claude Code 与 Claude Desktop。
  */
 export interface ModelTierRoutingConfig {
   enabled: boolean;
+  enabledApps?: Record<string, boolean>;
   routes: Record<string, Record<string, TierRoute>>;
 }
 
