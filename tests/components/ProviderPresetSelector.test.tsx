@@ -60,6 +60,7 @@ type TestPresetEntry = {
     websiteUrl: string;
     settingsConfig: Record<string, never>;
     category: ProviderCategory;
+    primePartner?: boolean;
   };
 };
 
@@ -200,13 +201,14 @@ describe("ProviderPresetSelector pure helpers", () => {
     expect(getIds(filterPresetEntries(presetEntries, "聚合", t))).toEqual([]);
   });
 
-  it("支持 A-Z 排序、original 副本恢复原顺序，并且 getVisible 先 filter 再 sort", () => {
+  it("支持 A-Z 排序、original 模式将官方分类置顶，并且 getVisible 先 filter 再 sort", () => {
     const originalMode: PresetSortMode = "original";
     const nameAscMode: PresetSortMode = "nameAsc";
 
     const original = sortPresetEntries(presetEntries, originalMode, t);
     expect(original).not.toBe(presetEntries);
-    expect(getIds(original)).toEqual(["gamma", "alpha", "beta", "delta"]);
+    // original 模式置顶官方分类（alpha），其余保持传入顺序。
+    expect(getIds(original)).toEqual(["alpha", "gamma", "beta", "delta"]);
 
     expect(getIds(sortPresetEntries(presetEntries, nameAscMode, t))).toEqual([
       "alpha",
@@ -226,16 +228,81 @@ describe("ProviderPresetSelector pure helpers", () => {
       ),
     ).toEqual(["alpha", "beta", "delta", "gamma"]);
   });
+
+  it("original 模式按「官方 → 尊享伙伴 → 其余」三段排序，各组内部保序且双重身份不重复", () => {
+    // 故意打乱传入顺序，验证：
+    // - official 组置顶（officialOnly、officialPrime 按出现顺序）；
+    // - 非官方且 primePartner 的预设居中（primeOnly）；
+    // - 其余保持传入顺序（restFirst、restLast）；
+    // - 既是 official 又是 primePartner 的预设只归入官方组、不在 prime 组重复。
+    const mixed: TestPresetEntry[] = [
+      {
+        id: "restFirst",
+        preset: {
+          name: "Rest First",
+          websiteUrl: "https://rest-first.example.com",
+          settingsConfig: {},
+          category: "third_party",
+        },
+      },
+      {
+        id: "primeOnly",
+        preset: {
+          name: "Prime Only",
+          websiteUrl: "https://prime-only.example.com",
+          settingsConfig: {},
+          category: "cn_official",
+          primePartner: true,
+        },
+      },
+      {
+        id: "officialOnly",
+        preset: {
+          name: "Official Only",
+          websiteUrl: "https://official-only.example.com",
+          settingsConfig: {},
+          category: "official",
+        },
+      },
+      {
+        id: "officialPrime",
+        preset: {
+          name: "Official Prime",
+          websiteUrl: "https://official-prime.example.com",
+          settingsConfig: {},
+          category: "official",
+          primePartner: true,
+        },
+      },
+      {
+        id: "restLast",
+        preset: {
+          name: "Rest Last",
+          websiteUrl: "https://rest-last.example.com",
+          settingsConfig: {},
+          category: "aggregator",
+        },
+      },
+    ];
+
+    expect(getIds(sortPresetEntries(mixed, "original", t))).toEqual([
+      "officialOnly",
+      "officialPrime",
+      "primeOnly",
+      "restFirst",
+      "restLast",
+    ]);
+  });
 });
 
 describe("ProviderPresetSelector", () => {
-  it("默认按传入的预设数组顺序渲染，不按分类或名称重新排序", () => {
+  it("默认（original 模式）将官方分类置顶，其余保持传入顺序", () => {
     renderSelector();
 
     expect(getPresetButtonTexts()).toEqual([
       "providerPreset.custom",
-      "preset.gamma",
       "preset.alpha",
+      "preset.gamma",
       "Beta Gateway",
       "Delta Mirror",
     ]);
@@ -259,8 +326,8 @@ describe("ProviderPresetSelector", () => {
 
     expect(getPresetButtonTexts()).toEqual([
       "providerPreset.custom",
-      "preset.gamma",
       "preset.alpha",
+      "preset.gamma",
       "Beta Gateway",
       "Delta Mirror",
     ]);

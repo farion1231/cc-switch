@@ -4,7 +4,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::config::{atomic_write, get_claude_configured_mcp_path, get_default_claude_mcp_path};
+use crate::config::{atomic_write, get_claude_configured_mcp_path};
 use crate::error::AppError;
 
 /// 需要在 Windows 上用 cmd /c 包装的命令
@@ -98,49 +98,7 @@ pub struct McpStatus {
 }
 
 fn user_config_path() -> PathBuf {
-    ensure_mcp_override_migrated();
     get_claude_configured_mcp_path()
-}
-
-fn ensure_mcp_override_migrated() {
-    if crate::settings::get_claude_configured_override_dir().is_none() {
-        return;
-    }
-
-    let new_path = get_claude_configured_mcp_path();
-    if new_path.exists() {
-        return;
-    }
-
-    let legacy_path = get_default_claude_mcp_path();
-    if !legacy_path.exists() {
-        return;
-    }
-
-    if let Some(parent) = new_path.parent() {
-        if let Err(err) = fs::create_dir_all(parent) {
-            log::warn!("创建 MCP 目录失败: {err}");
-            return;
-        }
-    }
-
-    match fs::copy(&legacy_path, &new_path) {
-        Ok(_) => {
-            log::info!(
-                "已根据覆盖目录复制 MCP 配置: {} -> {}",
-                legacy_path.display(),
-                new_path.display()
-            );
-        }
-        Err(err) => {
-            log::warn!(
-                "复制 MCP 配置失败: {} -> {}: {}",
-                legacy_path.display(),
-                new_path.display(),
-                err
-            );
-        }
-    }
 }
 
 fn read_json_value(path: &Path) -> Result<Value, AppError> {
@@ -498,36 +456,6 @@ mod tests {
             }
             let _ = crate::settings::reload_settings();
         }
-    }
-
-    #[test]
-    #[serial]
-    fn mcp_override_migration_ignores_provider_profile_override() {
-        let home = TempHome::new();
-        let configured_dir = home.path().join("configured").join(".claude");
-        let profile_dir = home.path().join("external-profile").join(".claude");
-        let configured_mcp = home.path().join("configured").join(".claude.json");
-        let profile_mcp = home.path().join("external-profile").join(".claude.json");
-
-        fs::write(get_default_claude_mcp_path(), r#"{"mcpServers":{}}"#)
-            .expect("seed default mcp config");
-        crate::settings::update_settings(crate::settings::AppSettings {
-            claude_config_dir: Some(configured_dir.to_string_lossy().into_owned()),
-            claude_provider_config_dir: Some(profile_dir.to_string_lossy().into_owned()),
-            ..Default::default()
-        })
-        .expect("set claude overrides");
-
-        ensure_mcp_override_migrated();
-
-        assert!(
-            configured_mcp.exists(),
-            "migration should copy MCP config to the configured Claude override"
-        );
-        assert!(
-            !profile_mcp.exists(),
-            "migration must not create MCP config beside a provider-only profile"
-        );
     }
 
     /// 测试 Windows 命令包装功能

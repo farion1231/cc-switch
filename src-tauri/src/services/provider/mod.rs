@@ -2286,7 +2286,7 @@ mod tests {
                 }),
             )
             .expect("seed official profile settings");
-            let profile_mcp_path = profile_dir.with_extension("json");
+            let profile_mcp_path = profile_dir.join(".claude.json");
             let existing_profile_mcp = json!({
                 "mcpServers": {
                     "external": {
@@ -2672,7 +2672,7 @@ mod tests {
             ProviderService::switch(state, AppType::Claude, "claude-api")
                 .expect("switch to api profile");
 
-            let profile_mcp_path = api_dir.with_extension("json");
+            let profile_mcp_path = api_dir.join(".claude.json");
             let profile_mcp: Value =
                 read_json_file(&profile_mcp_path).expect("read api profile mcp file");
             assert_eq!(
@@ -3663,7 +3663,7 @@ mod tests {
 
             let profile_dir = home.join(".claude-profiles").join("api");
             fs::create_dir_all(&profile_dir).expect("create api profile dir");
-            let profile_mcp_path = profile_dir.with_extension("json");
+            let profile_mcp_path = profile_dir.join(".claude.json");
             let existing_profile_mcp = json!({
                 "mcpServers": {
                     "external": {
@@ -3762,7 +3762,7 @@ mod tests {
 
             let profile_dir = home.join(".claude-profiles").join("api");
             fs::create_dir_all(&profile_dir).expect("create api profile dir");
-            let profile_mcp_path = profile_dir.with_extension("json");
+            let profile_mcp_path = profile_dir.join(".claude.json");
             let existing_profile_mcp = json!({
                 "mcpServers": {
                     "external": {
@@ -4818,6 +4818,7 @@ base_url = "http://localhost:8080"
 
         db.update_proxy_config(ProxyConfig {
             live_takeover_active: true,
+            listen_port: 0,
             ..Default::default()
         })
         .await
@@ -4846,7 +4847,7 @@ base_url = "http://localhost:8080"
         )
         .expect("seed taken-over live file");
 
-        state
+        let proxy_info = state
             .proxy_service
             .start()
             .await
@@ -4899,7 +4900,7 @@ base_url = "http://localhost:8080"
             live.get("env")
                 .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
                 .and_then(|v| v.as_str()),
-            Some("http://127.0.0.1:15721"),
+            Some(format!("http://127.0.0.1:{}", proxy_info.port).as_str()),
             "proxy base URL should stay intact"
         );
         assert!(

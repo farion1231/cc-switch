@@ -248,7 +248,7 @@ mod tests {
     fn direct_claude_mcp_sync_ignores_provider_only_profile_override() {
         let home = TempHome::new();
         let profile_dir = home.path().join("external-profile").join(".claude");
-        let profile_mcp_path = home.path().join("external-profile").join(".claude.json");
+        let profile_mcp_path = profile_dir.join(".claude.json");
         let default_mcp_path = crate::config::get_default_claude_mcp_path();
         std::fs::create_dir_all(&profile_dir).expect("create profile dir");
         std::fs::write(

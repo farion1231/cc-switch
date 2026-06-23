@@ -514,9 +514,19 @@ async fn query_provider_usage_inner(
         let (base_url, api_key) =
             resolve_coding_plan_credentials(&app_type, provider, usage_script);
 
-        let quota = crate::services::coding_plan::get_coding_plan_quota(&base_url, &api_key)
-            .await
-            .map_err(|e| format!("Failed to query coding plan: {e}"))?;
+        // 火山方舟用账号 AK/SK 签名查询用量（存于 usage_script，与推理 api_key 分离）；
+        // 其他供应商为 None，service 层沿用 api_key。
+        let access_key_id = usage_script.and_then(|s| s.access_key_id.clone());
+        let secret_access_key = usage_script.and_then(|s| s.secret_access_key.clone());
+
+        let quota = crate::services::coding_plan::get_coding_plan_quota(
+            &base_url,
+            &api_key,
+            access_key_id.as_deref(),
+            secret_access_key.as_deref(),
+        )
+        .await
+        .map_err(|e| format!("Failed to query coding plan: {e}"))?;
 
         // 将 SubscriptionQuota 转换为 UsageResult
         if !quota.success {
@@ -1086,6 +1096,8 @@ mod native_query_credentials_tests {
             template_type: Some("token_plan".to_string()),
             auto_query_interval: None,
             coding_plan_provider: coding_plan_provider.map(str::to_string),
+            access_key_id: None,
+            secret_access_key: None,
         }
     }
 
