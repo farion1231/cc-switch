@@ -2884,7 +2884,6 @@ echo "$CLAUDE_CONFIG_DIR"
     format!(
         r#"#!/usr/bin/env sh
 {cleanup}
-unset CLAUDE_CONFIG_DIR
 {config_fragment}{final_cd_command}{exec_line}
 "#,
         cleanup = cleanup,
@@ -3448,7 +3447,6 @@ del \"%~f0\" >nul 2>&1
         return format!(
             "@echo off
 {cwd_command}
-set \"CLAUDE_CONFIG_DIR=\"
 echo Using provider-specific claude config:
 echo {}
 claude --settings \"{}\"
@@ -3465,7 +3463,6 @@ del \"%~f0\" >nul 2>&1
     format!(
         "@echo off
 {cwd_command}
-set \"CLAUDE_CONFIG_DIR=\"
 claude
 del \"%~f0\" >nul 2>&1
 ",
@@ -4049,7 +4046,7 @@ mod tests {
     }
 
     #[test]
-    fn unix_legacy_settings_launch_unsets_stale_claude_config_dir() {
+    fn unix_legacy_settings_launch_preserves_external_claude_config_dir() {
         let script = build_unix_claude_launch_script(
             Some(Path::new("/tmp/claude_provider.json")),
             Path::new("/tmp/launcher.sh"),
@@ -4059,13 +4056,13 @@ mod tests {
             "/bin/bash",
         );
 
-        assert!(script.contains("unset CLAUDE_CONFIG_DIR\n"));
+        assert!(!script.contains("unset CLAUDE_CONFIG_DIR"));
         assert!(script.contains("claude --settings"));
         assert!(script.contains("/tmp/claude_provider.json"));
     }
 
     #[test]
-    fn unix_legacy_default_launch_unsets_stale_claude_config_dir() {
+    fn unix_legacy_default_launch_preserves_external_claude_config_dir() {
         let script = build_unix_claude_launch_script(
             None,
             Path::new("/tmp/launcher.sh"),
@@ -4075,7 +4072,7 @@ mod tests {
             "/bin/bash",
         );
 
-        assert!(script.contains("unset CLAUDE_CONFIG_DIR\n"));
+        assert!(!script.contains("unset CLAUDE_CONFIG_DIR"));
         assert!(script.contains("cd '/tmp/project' || exit 1\nclaude\n"));
     }
 
@@ -4098,7 +4095,7 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn windows_legacy_launch_unsets_stale_claude_config_dir() {
+    fn windows_legacy_settings_launch_preserves_external_claude_config_dir() {
         let batch = build_windows_claude_launch_batch_content(
             Some(Path::new(r"C:\Temp\claude_provider.json")),
             Some(Path::new(r"C:\Work\project")),
@@ -4106,8 +4103,22 @@ mod tests {
             None,
         );
 
-        assert!(batch.contains("set \"CLAUDE_CONFIG_DIR=\"\n"));
+        assert!(!batch.contains("set \"CLAUDE_CONFIG_DIR=\"\n"));
         assert!(batch.contains(r#"claude --settings "C:\Temp\claude_provider.json""#));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_legacy_default_launch_preserves_external_claude_config_dir() {
+        let batch = build_windows_claude_launch_batch_content(
+            None,
+            Some(Path::new(r"C:\Work\project")),
+            None,
+            None,
+        );
+
+        assert!(!batch.contains("set \"CLAUDE_CONFIG_DIR=\"\n"));
+        assert!(batch.contains("claude\n"));
     }
 
     #[cfg(target_os = "windows")]
