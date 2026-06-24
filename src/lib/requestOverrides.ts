@@ -10,6 +10,12 @@ export interface HeaderOverrideValidationResult {
   error?: string;
 }
 
+// RFC 9110 HTTP field-name token. Keep this aligned with Rust's
+// http::HeaderName parser for user-facing validation.
+export function isValidHttpHeaderName(name: string): boolean {
+  return /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name);
+}
+
 // Keep this aligned with Rust's http::HeaderValue runtime guard: only control
 // characters other than tab are rejected.
 export function isValidHttpHeaderValue(value: string): boolean {
@@ -42,6 +48,17 @@ export function parseRequestOverrideJson(
   }
 }
 
+export function parseBodyOverrideJson(raw: string): RequestOverrideJsonResult {
+  const parsed = parseRequestOverrideJson(raw);
+  if (parsed.error || !parsed.value) {
+    return parsed;
+  }
+  if (Object.prototype.hasOwnProperty.call(parsed.value, "stream")) {
+    return { error: 'Body override must not include protocol field "stream"' };
+  }
+  return parsed;
+}
+
 export function parseHeaderOverrideJson(
   raw: string,
 ): HeaderOverrideValidationResult {
@@ -56,13 +73,22 @@ export function parseHeaderOverrideJson(
     if (!headerName) {
       return { error: "Header name must not be empty" };
     }
+    if (!isValidHttpHeaderName(headerName)) {
+      return { error: `Header "${name}" name is not a valid HTTP token` };
+    }
     if (typeof value !== "string") {
       return { error: `Header "${name}" value must be a string` };
     }
     if (!isValidHttpHeaderValue(value)) {
       return { error: `Header "${name}" value contains control characters` };
     }
-    headers[headerName] = value;
+    const normalizedHeaderName = headerName.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(headers, normalizedHeaderName)) {
+      return {
+        error: `Header "${name}" duplicates another header after case normalization`,
+      };
+    }
+    headers[normalizedHeaderName] = value;
   }
 
   return { headers };
@@ -84,7 +110,7 @@ export function buildLocalProxyRequestOverrides(
     return { error: headerResult.error };
   }
 
-  const bodyResult = parseRequestOverrideJson(bodyJson);
+  const bodyResult = parseBodyOverrideJson(bodyJson);
   if (bodyResult.error) {
     return { error: bodyResult.error };
   }

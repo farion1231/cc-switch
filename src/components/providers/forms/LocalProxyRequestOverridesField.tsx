@@ -2,8 +2,8 @@ import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  parseBodyOverrideJson,
   parseHeaderOverrideJson,
-  parseRequestOverrideJson,
 } from "@/lib/requestOverrides";
 
 interface LocalProxyRequestOverridesFieldProps {
@@ -21,7 +21,7 @@ export function LocalProxyRequestOverridesField({
 }: LocalProxyRequestOverridesFieldProps) {
   const { t } = useTranslation();
   const headerError = parseHeaderOverrideJson(headersJson).error;
-  const bodyError = parseRequestOverrideJson(bodyJson).error;
+  const bodyError = parseBodyOverrideJson(bodyJson).error;
 
   return (
     <div className="space-y-3">

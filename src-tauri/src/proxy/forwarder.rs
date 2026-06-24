@@ -2584,13 +2584,23 @@ fn apply_local_proxy_body_overrides(
 }
 
 fn merge_json_override(target: &mut Value, patch: &Value) -> bool {
+    merge_json_override_inner(target, patch, true)
+}
+
+fn merge_json_override_inner(target: &mut Value, patch: &Value, is_top_level: bool) -> bool {
     match (target, patch) {
         (Value::Object(target_map), Value::Object(patch_map)) => {
             let mut changed = false;
             for (key, patch_value) in patch_map {
+                if is_top_level && key == "stream" {
+                    log::warn!(
+                        "[LocalProxyOverrides] Ignoring body override for protected field: stream"
+                    );
+                    continue;
+                }
                 match target_map.get_mut(key) {
                     Some(target_value) => {
-                        changed |= merge_json_override(target_value, patch_value);
+                        changed |= merge_json_override_inner(target_value, patch_value, false);
                     }
                     None => {
                         target_map.insert(key.clone(), patch_value.clone());
@@ -2669,6 +2679,7 @@ fn is_protected_local_proxy_override_header(name: &http::HeaderName) -> bool {
             | "trailer"
             | "upgrade"
             | "accept-encoding"
+            | "content-type"
             | "authorization"
             | "x-api-key"
             | "x-goog-api-key"
@@ -2968,7 +2979,7 @@ mod tests {
     }
 
     #[test]
-    fn local_proxy_body_overrides_deep_merge_final_body() {
+    fn local_proxy_body_overrides_deep_merge_final_body_without_stream() {
         let mut body = json!({
             "model": "before",
             "stream": false,
@@ -2994,7 +3005,7 @@ mod tests {
         assert!(apply_local_proxy_body_overrides(&mut body, &overrides));
 
         assert_eq!(body["model"], "after");
-        assert_eq!(body["stream"], true);
+        assert_eq!(body["stream"], false);
         assert_eq!(body["metadata"]["keep"], true);
         assert_eq!(body["metadata"]["temperature"], 0.2);
         assert_eq!(body["metadata"]["top_p"], 0.9);
@@ -3012,12 +3023,17 @@ mod tests {
             http::header::AUTHORIZATION,
             http::HeaderValue::from_static("Bearer good"),
         );
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("application/json"),
+        );
 
         let overrides = LocalProxyRequestOverrides {
             headers: HashMap::from([
                 ("User-Agent".to_string(), "custom".to_string()),
                 ("X-Test".to_string(), "ok".to_string()),
                 ("Authorization".to_string(), "Bearer bad".to_string()),
+                ("Content-Type".to_string(), "text/plain".to_string()),
                 ("X-Bad".to_string(), "bad\nvalue".to_string()),
             ]),
             body: None,
@@ -3036,6 +3052,12 @@ mod tests {
                 .get(http::header::AUTHORIZATION)
                 .and_then(|value| value.to_str().ok()),
             Some("Bearer good")
+        );
+        assert_eq!(
+            headers
+                .get(http::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("application/json")
         );
         assert_eq!(
             headers.get("x-test").and_then(|value| value.to_str().ok()),

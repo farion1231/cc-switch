@@ -214,6 +214,10 @@ const normalizeCodexChatReasoningForSave = (
   };
 };
 
+type LocalProxyRequestOverridesBuildResult = ReturnType<
+  typeof buildLocalProxyRequestOverrides
+>;
+
 export interface ProviderFormProps {
   appId: AppId;
   providerId?: string;
@@ -426,6 +430,10 @@ function ProviderFormFull({
   const [softIssues, setSoftIssues] = useState<string[] | null>(null);
   const [pendingFormValues, setPendingFormValues] =
     useState<ProviderFormData | null>(null);
+  const [
+    pendingLocalProxyRequestOverridesResult,
+    setPendingLocalProxyRequestOverridesResult,
+  ] = useState<LocalProxyRequestOverridesBuildResult | null>(null);
   // 确认框走的提交路径绕过了 react-hook-form 的 isSubmitting，单独追踪
   const [isConfirmSubmitting, setIsConfirmSubmitting] = useState(false);
 
@@ -1212,19 +1220,17 @@ function ProviderFormFull({
       // 弹确认框让用户决定是否仍要保存
       setSoftIssues(issues);
       setPendingFormValues(values);
+      setPendingLocalProxyRequestOverridesResult(overridesResult);
       return;
     }
 
-    await performSubmit(values);
+    await performSubmit(values, overridesResult);
   };
 
-  const performSubmit = async (values: ProviderFormData) => {
-    const overridesResult = shouldApplyLocalProxyRequestOverrides
-      ? buildLocalProxyRequestOverrides(
-          localProxyHeadersOverride,
-          localProxyBodyOverride,
-        )
-      : {};
+  const performSubmit = async (
+    values: ProviderFormData,
+    overridesResult: LocalProxyRequestOverridesBuildResult,
+  ) => {
     if (overridesResult.error) {
       toast.error(
         t("providerForm.localProxyRequestOverridesInvalid", {
@@ -2450,15 +2456,19 @@ function ProviderFormFull({
         onConfirm={async () => {
           if (isConfirmSubmitting) return;
           const values = pendingFormValues;
-          if (!values) {
+          const overridesResult = pendingLocalProxyRequestOverridesResult;
+          if (!values || !overridesResult) {
             setSoftIssues(null);
+            setPendingFormValues(null);
+            setPendingLocalProxyRequestOverridesResult(null);
             return;
           }
           setIsConfirmSubmitting(true);
           try {
-            await performSubmit(values);
+            await performSubmit(values, overridesResult);
             setSoftIssues(null);
             setPendingFormValues(null);
+            setPendingLocalProxyRequestOverridesResult(null);
           } catch (error) {
             console.error("[ProviderForm] soft-confirm submit failed:", error);
             // 保留确认框和 pending values，让用户可以重试或取消
@@ -2470,6 +2480,7 @@ function ProviderFormFull({
           if (isConfirmSubmitting) return;
           setSoftIssues(null);
           setPendingFormValues(null);
+          setPendingLocalProxyRequestOverridesResult(null);
         }}
       />
     </>

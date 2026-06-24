@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildLocalProxyRequestOverrides,
+  isValidHttpHeaderName,
   isValidHttpHeaderValue,
+  parseBodyOverrideJson,
   parseHeaderOverrideJson,
   parseRequestOverrideJson,
 } from "@/lib/requestOverrides";
@@ -19,7 +21,7 @@ describe("requestOverrides", () => {
       ),
     ).toEqual({
       overrides: {
-        headers: { "X-Test": "ok" },
+        headers: { "x-test": "ok" },
         body: { temperature: 0.2 },
       },
     });
@@ -33,8 +35,28 @@ describe("requestOverrides", () => {
     expect(parseHeaderOverrideJson('{ "X-Test": 1 }').error).toBeTruthy();
   });
 
+  it("rejects invalid header names", () => {
+    expect(isValidHttpHeaderName("X-Test")).toBe(true);
+    expect(isValidHttpHeaderName("X Foo")).toBe(false);
+    expect(isValidHttpHeaderName("Authorization:")).toBe(false);
+    expect(parseHeaderOverrideJson('{ "X Foo": "bar" }').error).toBeTruthy();
+  });
+
+  it("rejects duplicate header names after case normalization", () => {
+    expect(
+      parseHeaderOverrideJson('{ "X-Foo": "a", "x-foo": "b" }').error,
+    ).toBeTruthy();
+  });
+
   it("matches backend header value control-character rule", () => {
     expect(isValidHttpHeaderValue("hello\tworld")).toBe(true);
     expect(isValidHttpHeaderValue("hello\nworld")).toBe(false);
+  });
+
+  it("rejects stream in body overrides", () => {
+    expect(parseBodyOverrideJson('{ "stream": true }').error).toBeTruthy();
+    expect(
+      buildLocalProxyRequestOverrides("", '{ "stream": false }').error,
+    ).toBeTruthy();
   });
 });
