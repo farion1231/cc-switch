@@ -5,7 +5,7 @@
 use crate::app_config::AppType;
 use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
 use crate::database::Database;
-use crate::provider::Provider;
+use crate::provider::{ClaudeDesktopMode, Provider};
 use crate::proxy::server::ProxyServer;
 use crate::proxy::switch_lock::SwitchLockManager;
 use crate::proxy::types::*;
@@ -2570,6 +2570,16 @@ impl ProxyService {
             .await
             .map_err(|e| format!("保存代理配置失败: {e}"))?;
 
+        let endpoint_changed = new_config.listen_address != previous.listen_address
+            || new_config.listen_port != previous.listen_port;
+        if endpoint_changed {
+            match self.sync_claude_desktop_proxy_profile() {
+                Ok(true) => log::info!("已同步更新 Claude Desktop 3P 网关地址"),
+                Ok(false) => {}
+                Err(e) => log::warn!("同步 Claude Desktop 3P 网关地址失败: {e}"),
+            }
+        }
+
         // 检查服务器当前状态
         let mut server_guard = self.server.write().await;
         if server_guard.is_none() {
@@ -2577,8 +2587,7 @@ impl ProxyService {
         }
 
         // 判断是否需要重启（地址或端口变更）
-        let require_restart = new_config.listen_address != previous.listen_address
-            || new_config.listen_port != previous.listen_port;
+        let require_restart = endpoint_changed;
 
         if require_restart {
             if let Some(server) = server_guard.take() {
@@ -2638,6 +2647,39 @@ impl ProxyService {
         }
 
         Ok(())
+    }
+
+    fn sync_claude_desktop_proxy_profile(&self) -> Result<bool, String> {
+        let current_id = match crate::settings::get_effective_current_provider(
+            &self.db,
+            &AppType::ClaudeDesktop,
+        )
+        .map_err(|e| format!("读取 Claude Desktop 当前 provider 失败: {e}"))?
+        {
+            Some(id) => id,
+            None => return Ok(false),
+        };
+
+        let provider = match self
+            .db
+            .get_provider_by_id(&current_id, AppType::ClaudeDesktop.as_str())
+            .map_err(|e| format!("读取 Claude Desktop provider '{current_id}' 失败: {e}"))?
+        {
+            Some(provider) => provider,
+            None => return Ok(false),
+        };
+
+        if !matches!(
+            crate::claude_desktop_config::provider_mode(&provider),
+            ClaudeDesktopMode::Proxy
+        ) {
+            return Ok(false);
+        }
+
+        write_live_with_common_config(&self.db, &AppType::ClaudeDesktop, &provider)
+            .map_err(|e| format!("写入 Claude Desktop 3P profile 失败: {e}"))?;
+
+        Ok(true)
     }
 
     /// 检查服务器是否正在运行
@@ -3000,6 +3042,40 @@ mod tests {
             .expect("env should exist");
         assert_env_str(env, "ANTHROPIC_API_KEY", Some(PROXY_TOKEN_PLACEHOLDER));
         assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
+    }
+
+    #[test]
+    fn managed_account_claude_takeover_xai_injects_placeholders_without_real_token() {
+        let mut provider = Provider::with_id(
+            "xai".to_string(),
+            "xAI Grok OAuth".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.x.ai/v1",
+                    "ANTHROPIC_MODEL": "grok-build-0.1"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("xai_oauth".to_string()),
+            ..Default::default()
+        });
+
+        let mut live_config = provider.settings_config.clone();
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_config,
+            "http://127.0.0.1:15721",
+            &provider,
+        );
+
+        let env = live_config
+            .get("env")
+            .and_then(|value| value.as_object())
+            .expect("env should exist");
+        assert_env_str(env, "ANTHROPIC_API_KEY", Some(PROXY_TOKEN_PLACEHOLDER));
+        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
+        assert_env_str(env, "ANTHROPIC_MODEL", None);
     }
 
     #[test]

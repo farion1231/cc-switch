@@ -128,6 +128,13 @@ pub enum AuthStrategy {
     ///
     /// 使用动态获取的 OpenAI access_token（通过 Device Code 流程获取）
     CodexOAuth,
+
+    /// xAI OAuth 认证方式（SuperGrok / X Premium+）
+    ///
+    /// - Header: `Authorization: Bearer <access_token>`
+    ///
+    /// 使用动态获取的 xAI access_token（通过 managed OAuth 流程获取）
+    XaiOAuth,
 }
 
 #[cfg(test)]
@@ -244,6 +251,7 @@ mod tests {
             AuthStrategy::GoogleOAuth,
             AuthStrategy::GitHubCopilot,
             AuthStrategy::CodexOAuth,
+            AuthStrategy::XaiOAuth,
         ];
 
         for (i, s1) in strategies.iter().enumerate() {

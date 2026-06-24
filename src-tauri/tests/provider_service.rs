@@ -1718,6 +1718,105 @@ fn provider_service_switch_missing_provider_returns_error() {
 }
 
 #[test]
+fn provider_service_switch_xai_oauth_preserves_providers_and_uses_placeholders() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let settings_path = get_claude_settings_path();
+    std::fs::create_dir_all(settings_path.parent().expect("settings dir")).expect("create dir");
+    std::fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://old.example.com",
+                "ANTHROPIC_API_KEY": "legacy-key"
+            }
+        }))
+        .expect("serialize live config"),
+    )
+    .expect("seed claude live config");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "existing-provider".to_string();
+        manager.providers.insert(
+            "existing-provider".to_string(),
+            Provider::with_id(
+                "existing-provider".to_string(),
+                "Existing".to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_BASE_URL": "https://old.example.com",
+                        "ANTHROPIC_API_KEY": "legacy-key"
+                    }
+                }),
+                None,
+            ),
+        );
+
+        let mut xai = Provider::with_id(
+            "xai-oauth".to_string(),
+            "xAI Grok OAuth".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.x.ai/v1",
+                    "ANTHROPIC_MODEL": "grok-build-0.1"
+                }
+            }),
+            None,
+        );
+        xai.meta = Some(
+            serde_json::from_value(json!({
+                "providerType": "xai_oauth",
+                "apiFormat": "openai_responses",
+                "claudeDesktopMode": "proxy"
+            }))
+            .expect("deserialize xai provider meta"),
+        );
+        manager.providers.insert("xai-oauth".to_string(), xai);
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Claude, "xai-oauth")
+        .expect("switch to xai oauth provider");
+
+    let live_after: serde_json::Value =
+        read_json_file(&settings_path).expect("read claude live settings");
+    let env = live_after
+        .get("env")
+        .and_then(|value| value.as_object())
+        .expect("live env should exist");
+
+    let api_key = env
+        .get("ANTHROPIC_API_KEY")
+        .and_then(|value| value.as_str());
+    let auth_token = env
+        .get("ANTHROPIC_AUTH_TOKEN")
+        .and_then(|value| value.as_str());
+    assert!(
+        api_key == Some("PROXY_MANAGED") || auth_token == Some("PROXY_MANAGED"),
+        "managed xAI OAuth config should use a proxy placeholder, env={env:?}"
+    );
+    assert!(
+        env.values()
+            .all(|value| value.as_str() != Some("fake-xai-token")),
+        "live config must not contain real xAI OAuth tokens"
+    );
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Claude.as_str())
+        .expect("get providers");
+    assert!(providers.contains_key("existing-provider"));
+    assert!(providers.contains_key("xai-oauth"));
+}
+
+#[test]
 fn provider_service_switch_codex_missing_auth_returns_error() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();

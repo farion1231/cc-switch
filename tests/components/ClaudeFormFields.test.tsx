@@ -35,6 +35,10 @@ vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
   CodexOAuthSection: () => <div data-testid="codex-oauth-section" />,
 }));
 
+vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
+  XaiOAuthSection: () => <div data-testid="xai-oauth-section" />,
+}));
+
 type ClaudeFormFieldsProps = ComponentProps<typeof ClaudeFormFields>;
 
 const FormShell = ({ children }: PropsWithChildren) => {
@@ -116,6 +120,20 @@ const renderCodexOauthForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) =>
     ...overrides,
   });
 
+const renderXaiOauthForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) =>
+  renderCopilotForm({
+    isCopilotPreset: false,
+    isCopilotAuthenticated: false,
+    selectedGitHubAccountId: null,
+    isCodexOauthPreset: false,
+    isCodexOauthAuthenticated: false,
+    selectedCodexAccountId: null,
+    isXaiOauthPreset: true,
+    selectedXaiAccountId: "xai-1",
+    usesOAuth: true,
+    ...overrides,
+  });
+
 describe("ClaudeFormFields", () => {
   beforeEach(() => {
     copilotApiMock.copilotGetModels.mockResolvedValue([]);
@@ -168,5 +186,12 @@ describe("ClaudeFormFields", () => {
         "chatgpt-1",
       );
     });
+  });
+
+  it("xAI OAuth 表单显示 OAuth 区块且不请求 Codex OAuth 模型", () => {
+    renderXaiOauthForm();
+
+    expect(screen.getByTestId("xai-oauth-section")).toBeInTheDocument();
+    expect(modelFetchApiMock.fetchCodexOauthModels).not.toHaveBeenCalled();
   });
 });
