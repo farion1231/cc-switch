@@ -17,21 +17,17 @@ function formatNumber(value: number): string {
  * (tokens / 次 / points / requests / ... ) renders as an integer,
  * since APIs return whole quantities for those units.
  *
- * Kept as a Set for O(1) lookup; matched case-sensitively because
- * currency codes (USD/CNY/...) are conventionally upper-case and the
- * symbol forms ($/¥/€) have no case variants.
+ * Matched case-sensitively for the symbol forms ($/¥/€/£, which have no
+ * case variants) and case-insensitively for the ISO code forms: user
+ * extractor scripts may write `"usd"` as easily as `"USD"`, and the
+ * `unit` field on `UsageData` is a free-form string.
  */
-const CURRENCY_UNITS = new Set([
-  "USD",
-  "CNY",
-  "EUR",
-  "GBP",
-  "JPY",
-  "$",
-  "¥",
-  "€",
-  "£",
-]);
+const CURRENCY_CODES = new Set(["USD", "CNY", "EUR", "GBP", "JPY"]);
+const CURRENCY_SYMBOLS = new Set(["$", "¥", "€", "£"]);
+
+function isCurrencyUnit(unit: string): boolean {
+  return CURRENCY_SYMBOLS.has(unit) || CURRENCY_CODES.has(unit.toUpperCase());
+}
 
 /**
  * Format a usage quantity for display with smart decimal precision and
@@ -39,23 +35,35 @@ const CURRENCY_UNITS = new Set([
  *
  * - Currency units → 2 decimals (e.g. `12.50`).
  * - Non-currency units (tokens / 次 / points / ...) → integer (e.g. `5,000,000`).
- * - No unit → keep the existing integer/2-decimal adaptive behaviour so
- *   call sites that previously relied on it are unchanged.
+ * - `%` → adaptive integer/2-decimal (e.g. `45%`, `45.12%`), grouped.
+ * - No unit → adaptive integer/2-decimal, grouped.
  *
  * Thousands separators are applied to every numeric value regardless of
  * unit, so large token counts become readable (`12,000,000` instead of
  * `12000000`). See issue #4456.
  *
- * `toLocaleString('en-US', ...)` is used so the separators are `,`
- * (matching the rest of the app's `en-US` numeric formatting) and the
- * output is deterministic across locales.
+ * `toLocaleString('en-US', ...)` is used for both grouping and rounding
+ * so the separators are `,` and the last-digit rounding is consistent
+ * across every branch (note: `toLocaleString` rounds half up, which
+ * differs from `toFixed`'s binary-float rounding — using it uniformly
+ * avoids a per-unit off-by-one-cent divergence).
+ *
+ * Non-finite values (`NaN`, `Infinity`) render as `"—"` rather than the
+ * literal `"NaN"`/`"∞"` strings, mirroring the `isNumber` guard already
+ * used by `formatUsageDataSummary` and avoiding a collision with the
+ * `total === -1 → "∞"` sentinel in `UsageFooter`.
  */
 export function formatUsageValue(value: number, unit?: string): string {
+  if (!Number.isFinite(value)) {
+    return "—";
+  }
+
+  const fractionDigits = Number.isInteger(value) ? 0 : 2;
+
   if (!unit) {
     // Preserve the prior adaptive behaviour: integers stay integers,
     // fractional values keep 2 decimals — but now with thousands
     // separators applied.
-    const fractionDigits = Number.isInteger(value) ? 0 : 2;
     return value.toLocaleString("en-US", {
       minimumFractionDigits: fractionDigits,
       maximumFractionDigits: fractionDigits,
@@ -63,10 +71,15 @@ export function formatUsageValue(value: number, unit?: string): string {
   }
 
   if (unit === "%") {
-    return `${formatNumber(value)}%`;
+    // Adaptive like the no-unit branch, so a large percentage stays
+    // grouped and the rounding mode matches every other branch.
+    return `${value.toLocaleString("en-US", {
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits,
+    })}%`;
   }
 
-  const decimals = CURRENCY_UNITS.has(unit) ? 2 : 0;
+  const decimals = isCurrencyUnit(unit) ? 2 : 0;
   return value.toLocaleString("en-US", {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
