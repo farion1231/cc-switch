@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { type AppId } from "@/lib/api";
 import { useUsageQuery } from "@/lib/query/queries";
 import { UsageData, Provider } from "@/types";
+import { formatUsageValue } from "@/utils/usageDisplay";
 import { TierBadge } from "@/components/SubscriptionQuotaFooter";
 import type { QuotaTier } from "@/types/subscription";
 
@@ -224,7 +225,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
                 {t("usage.used")}
               </span>
               <span className="tabular-nums text-gray-600 dark:text-gray-400 font-medium">
-                {firstUsage.used.toFixed(2)}
+                {formatUsageValue(firstUsage.used, firstUsage.unit)}
               </span>
             </div>
           )}
@@ -245,7 +246,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
                       : "text-green-600 dark:text-green-400"
                 }`}
               >
-                {firstUsage.remaining.toFixed(2)}
+                {formatUsageValue(firstUsage.remaining, firstUsage.unit)}
               </span>
             </div>
           )}
@@ -377,7 +378,7 @@ const UsagePlanItem: React.FC<{ data: UsageData }> = ({ data }) => {
               {t("usage.total")}
             </span>
             <span className="tabular-nums text-gray-600 dark:text-gray-400">
-              {total === -1 ? "∞" : total.toFixed(2)}
+              {total === -1 ? "∞" : formatUsageValue(total, unit)}
             </span>
             <span className="text-gray-400 dark:text-gray-600">|</span>
           </>
@@ -390,7 +391,7 @@ const UsagePlanItem: React.FC<{ data: UsageData }> = ({ data }) => {
               {t("usage.used")}
             </span>
             <span className="tabular-nums text-gray-600 dark:text-gray-400">
-              {used.toFixed(2)}
+              {formatUsageValue(used, unit)}
             </span>
             <span className="text-gray-400 dark:text-gray-600">|</span>
           </>
@@ -411,7 +412,7 @@ const UsagePlanItem: React.FC<{ data: UsageData }> = ({ data }) => {
                     : "text-green-600 dark:text-green-400"
               }`}
             >
-              {remaining.toFixed(2)}
+              {formatUsageValue(remaining, unit)}
             </span>
           </>
         )}
