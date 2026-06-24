@@ -1623,6 +1623,23 @@
     "tip2": "• 抽出関数はサンドボックスで実行され、ES2020+ の構文を使えます",
     "tip3": "• 全体を () で囲み、オブジェクトリテラル式にしてください"
   },
+  "dbUpgrade": {
+    "title": "データベースのバージョンが新しすぎます",
+    "description": "このデータベースは新しいバージョンの CC Switch で作成されています。続行するにはアプリを更新してください。更新してもデータは削除されません。",
+    "versionInfo": "データベース v{{db}} · アプリ対応 v{{supported}}",
+    "dbPath": "データベースファイル",
+    "checking": "利用可能な更新を確認中…",
+    "updateAvailable": "新しいバージョン v{{version}} が利用可能です。更新すると続行できます。",
+    "incompatibleTitle": "更新しても解決できません",
+    "incompatibleDescription": "すでに最新バージョンですが、データベース（v{{db}}）はこのアプリの対応バージョン（v{{supported}}）より新しいままです。サードパーティ製クライアントまたはより新しいビルドで作成された可能性があり、公式アプリを更新しても互換性は得られません。",
+    "preparing": "更新を準備中…",
+    "downloading": "更新をダウンロード中…",
+    "upgradeNow": "アプリを更新",
+    "retry": "更新を再試行",
+    "openReleases": "リリースページを開く",
+    "openConfigDir": "設定フォルダを開く",
+    "quit": "終了"
+  },
   "errors": {
     "usage_query_failed": "利用状況の取得に失敗しました",
     "configLoadFailedTitle": "設定の読み込みに失敗しました",

@@ -1595,6 +1595,23 @@
     "tip2": "• extractor 函式在沙盒環境中執行，支援 ES2020+ 語法",
     "tip3": "• 整個設定必須用 () 包覆，形成物件實字運算式"
   },
+  "dbUpgrade": {
+    "title": "資料庫版本過新",
+    "description": "目前資料庫由較新版本的 CC Switch 建立，需要升級應用後才能繼續使用。升級不會刪除你的資料。",
+    "versionInfo": "資料庫版本 v{{db}} · 應用支援 v{{supported}}",
+    "dbPath": "資料庫檔案",
+    "checking": "正在檢查可用更新…",
+    "updateAvailable": "發現新版本 v{{version}}，升級後即可繼續使用。",
+    "incompatibleTitle": "升級也無法解決",
+    "incompatibleDescription": "你已是最新版本，但資料庫版本（v{{db}}）仍高於本應用支援的版本（v{{supported}}）。該資料庫可能由第三方用戶端或更高版本建立，升級目前官方應用也無法相容。",
+    "preparing": "正在準備更新…",
+    "downloading": "正在下載更新…",
+    "upgradeNow": "升級應用",
+    "retry": "重試升級",
+    "openReleases": "開啟發佈頁",
+    "openConfigDir": "開啟設定目錄",
+    "quit": "結束"
+  },
   "errors": {
     "usage_query_failed": "用量查詢失敗",
     "configLoadFailedTitle": "設定載入失敗",
