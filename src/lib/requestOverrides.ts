@@ -16,6 +16,56 @@ export function isValidHttpHeaderName(name: string): boolean {
   return /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name);
 }
 
+export const PROTECTED_LOCAL_PROXY_HEADER_NAMES = new Set([
+  "host",
+  "content-length",
+  "transfer-encoding",
+  "connection",
+  "proxy-authorization",
+  "proxy-authenticate",
+  "te",
+  "trailer",
+  "upgrade",
+  "accept-encoding",
+  "content-type",
+  "authorization",
+  "x-api-key",
+  "x-goog-api-key",
+  "chatgpt-account-id",
+  "session_id",
+  "x-client-request-id",
+  "x-codex-window-id",
+  "x-forwarded-host",
+  "x-forwarded-port",
+  "x-forwarded-proto",
+  "forwarded",
+  "cf-connecting-ip",
+  "cf-ipcountry",
+  "cf-ray",
+  "cf-visitor",
+  "true-client-ip",
+  "fastly-client-ip",
+  "x-azure-clientip",
+  "x-azure-fdid",
+  "x-azure-ref",
+  "akamai-origin-hop",
+  "x-akamai-config-log-detail",
+  "x-request-id",
+  "x-correlation-id",
+  "x-trace-id",
+  "x-amzn-trace-id",
+  "x-b3-traceid",
+  "x-b3-spanid",
+  "x-b3-parentspanid",
+  "x-b3-sampled",
+  "traceparent",
+  "tracestate",
+]);
+
+export function isProtectedLocalProxyHeaderName(name: string): boolean {
+  return PROTECTED_LOCAL_PROXY_HEADER_NAMES.has(name.toLowerCase());
+}
+
 // Keep this aligned with Rust's http::HeaderValue runtime guard: only control
 // characters other than tab are rejected.
 export function isValidHttpHeaderValue(value: string): boolean {
@@ -86,6 +136,11 @@ export function parseHeaderOverrideJson(
     if (Object.prototype.hasOwnProperty.call(headers, normalizedHeaderName)) {
       return {
         error: `Header "${name}" duplicates another header after case normalization`,
+      };
+    }
+    if (isProtectedLocalProxyHeaderName(normalizedHeaderName)) {
+      return {
+        error: `Header "${name}" is managed by the local proxy and cannot be overridden`,
       };
     }
     headers[normalizedHeaderName] = value;

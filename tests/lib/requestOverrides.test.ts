@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildLocalProxyRequestOverrides,
+  isProtectedLocalProxyHeaderName,
   isValidHttpHeaderName,
   isValidHttpHeaderValue,
   parseBodyOverrideJson,
@@ -45,6 +46,18 @@ describe("requestOverrides", () => {
   it("rejects duplicate header names after case normalization", () => {
     expect(
       parseHeaderOverrideJson('{ "X-Foo": "a", "x-foo": "b" }').error,
+    ).toBeTruthy();
+  });
+
+  it("rejects protected proxy-managed header names", () => {
+    expect(isProtectedLocalProxyHeaderName("Content-Type")).toBe(true);
+    expect(isProtectedLocalProxyHeaderName("authorization")).toBe(true);
+    expect(isProtectedLocalProxyHeaderName("X-Test")).toBe(false);
+    expect(
+      parseHeaderOverrideJson('{ "content-type": "text/plain" }').error,
+    ).toBeTruthy();
+    expect(
+      parseHeaderOverrideJson('{ "Authorization": "Bearer x" }').error,
     ).toBeTruthy();
   });
 

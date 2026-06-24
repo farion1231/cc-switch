@@ -55,8 +55,9 @@ export function LocalProxyRequestOverridesField({
           />
           {headerError && (
             <p className="text-xs text-destructive">
-              {t("providerForm.localProxyHeaderOverridesInvalid", {
-                defaultValue: "Header 覆盖必须是字符串值 JSON 对象。",
+              {t("providerForm.localProxyHeaderOverridesInvalidDetail", {
+                error: headerError,
+                defaultValue: "Header 覆盖格式错误：{{error}}",
               })}
             </p>
           )}
@@ -77,8 +78,9 @@ export function LocalProxyRequestOverridesField({
           />
           {bodyError && (
             <p className="text-xs text-destructive">
-              {t("providerForm.localProxyBodyOverridesInvalid", {
-                defaultValue: "Body 覆盖必须是 JSON 对象。",
+              {t("providerForm.localProxyBodyOverridesInvalidDetail", {
+                error: bodyError,
+                defaultValue: "Body 覆盖格式错误：{{error}}",
               })}
             </p>
           )}
