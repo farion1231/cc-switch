@@ -1479,6 +1479,10 @@ pub fn strip_codex_unified_session_bucket_from_settings(
 ///
 /// 最佳努力（best-effort）：旧文件不存在时按空 live 处理，读失败时返回
 /// `new_text` 的拷贝，绝不阻断底层写入。
+///
+/// 注意：read-then-write 不是原子的。若 Codex CLI 在本函数读取旧 live 之后、
+/// 底层 atomic 写入之前并发写入 `config.toml`，那次写入的 runtime 变更会被本次
+/// 覆盖丢失。对单用户桌面场景可接受，故不额外加锁。
 fn preserve_runtime_codex_mcp_state(new_text: &str) -> String {
     let live_path = get_codex_config_path();
     let old_text = if live_path.exists() {
