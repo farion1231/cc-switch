@@ -88,17 +88,14 @@ impl Provider {
 
         match app_type {
             crate::app_config::AppType::Claude => {
-                self.is_codex_oauth()
-                    || self.claude_converted_base_url_is_official_equivalent()
-                    || self
-                        .settings_config
-                        .pointer("/env/ANTHROPIC_BASE_URL")
-                        .is_none_or(|base_url| {
-                            value_is_null_or_blank_string(base_url)
-                                || base_url
-                                    .as_str()
-                                    .is_some_and(claude_base_url_is_official_equivalent)
-                        })
+                if self.is_codex_oauth() || self.claude_converted_base_url_is_official_equivalent()
+                {
+                    return true;
+                }
+
+                self.claude_base_url().is_none_or(|base_url| {
+                    base_url.trim().is_empty() || claude_base_url_is_official_equivalent(base_url)
+                })
             }
             crate::app_config::AppType::Codex => {
                 let config_text = self.settings_config.get("config").and_then(Value::as_str);
@@ -123,11 +120,7 @@ impl Provider {
     }
 
     fn claude_converted_base_url_is_official_equivalent(&self) -> bool {
-        let Some(base_url) = self
-            .settings_config
-            .pointer("/env/ANTHROPIC_BASE_URL")
-            .and_then(Value::as_str)
-        else {
+        let Some(base_url) = self.claude_base_url() else {
             return false;
         };
 
@@ -171,10 +164,21 @@ impl Provider {
         self.meta.as_ref().and_then(|m| m.provider_type.as_deref())
     }
 
-    fn claude_base_url_contains(&self, needle: &str) -> bool {
+    fn claude_base_url(&self) -> Option<&str> {
         self.settings_config
             .pointer("/env/ANTHROPIC_BASE_URL")
-            .and_then(|value| value.as_str())
+            .and_then(Value::as_str)
+            .or_else(|| self.settings_config.get("base_url").and_then(Value::as_str))
+            .or_else(|| self.settings_config.get("baseURL").and_then(Value::as_str))
+            .or_else(|| {
+                self.settings_config
+                    .get("apiEndpoint")
+                    .and_then(Value::as_str)
+            })
+    }
+
+    fn claude_base_url_contains(&self, needle: &str) -> bool {
+        self.claude_base_url()
             .map(|base_url| base_url.contains(needle))
             .unwrap_or(false)
     }
@@ -1362,6 +1366,20 @@ mod tests {
         assert!(
             !gemini_provider.is_official_equivalent_for_app(&crate::app_config::AppType::Claude)
         );
+    }
+
+    #[test]
+    fn claude_top_level_custom_base_url_is_not_official_equivalent() {
+        let provider = Provider::with_id(
+            "legacy-third-party-claude".to_string(),
+            "Legacy Third Party Claude".to_string(),
+            json!({
+                "baseURL": "https://openrouter.ai/api/v1"
+            }),
+            None,
+        );
+
+        assert!(!provider.is_official_equivalent_for_app(&crate::app_config::AppType::Claude));
     }
 
     #[test]
