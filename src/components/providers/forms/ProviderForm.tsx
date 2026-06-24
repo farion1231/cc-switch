@@ -8,6 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Form, FormField, FormItem, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
+import {
+  buildLocalProxyRequestOverrides,
+  formatRequestOverrideObject,
+} from "@/lib/requestOverrides";
 import { providersApi, settingsApi, type AppId } from "@/lib/api";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type {
@@ -212,6 +216,10 @@ const normalizeCodexChatReasoningForSave = (
   };
 };
 
+type LocalProxyRequestOverridesBuildResult = ReturnType<
+  typeof buildLocalProxyRequestOverrides
+>;
+
 export interface ProviderFormProps {
   appId: AppId;
   providerId?: string;
@@ -376,6 +384,16 @@ function ProviderFormFull({
     });
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
+    setLocalProxyHeadersOverride(
+      formatRequestOverrideObject(
+        initialData?.meta?.localProxyRequestOverrides?.headers,
+      ),
+    );
+    setLocalProxyBodyOverride(
+      formatRequestOverrideObject(
+        initialData?.meta?.localProxyRequestOverrides?.body,
+      ),
+    );
   }, [appId, initialData, supportsFullUrl]);
 
   const defaultValues: ProviderFormData = useMemo(
@@ -432,6 +450,10 @@ function ProviderFormFull({
   const [softIssues, setSoftIssues] = useState<string[] | null>(null);
   const [pendingFormValues, setPendingFormValues] =
     useState<ProviderFormData | null>(null);
+  const [
+    pendingLocalProxyRequestOverridesResult,
+    setPendingLocalProxyRequestOverridesResult,
+  ] = useState<LocalProxyRequestOverridesBuildResult | null>(null);
   // 确认框走的提交路径绕过了 react-hook-form 的 isSubmitting，单独追踪
   const [isConfirmSubmitting, setIsConfirmSubmitting] = useState(false);
 
@@ -534,6 +556,18 @@ function ProviderFormFull({
     );
   const [customUserAgent, setCustomUserAgent] = useState<string>(
     () => initialData?.meta?.customUserAgent ?? "",
+  );
+  const [localProxyHeadersOverride, setLocalProxyHeadersOverride] =
+    useState<string>(() =>
+      formatRequestOverrideObject(
+        initialData?.meta?.localProxyRequestOverrides?.headers,
+      ),
+    );
+  const [localProxyBodyOverride, setLocalProxyBodyOverride] = useState<string>(
+    () =>
+      formatRequestOverrideObject(
+        initialData?.meta?.localProxyRequestOverrides?.body,
+      ),
   );
 
   const {
@@ -949,7 +983,26 @@ function ProviderFormFull({
 
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 
+  const shouldApplyLocalProxyRequestOverrides =
+    (appId === "claude" || appId === "codex") && category !== "official";
+
   const handleSubmit = async (values: ProviderFormData) => {
+    const overridesResult = shouldApplyLocalProxyRequestOverrides
+      ? buildLocalProxyRequestOverrides(
+          localProxyHeadersOverride,
+          localProxyBodyOverride,
+        )
+      : {};
+    if (overridesResult.error) {
+      toast.error(
+        t("providerForm.localProxyRequestOverridesInvalid", {
+          defaultValue: `本地代理请求覆盖格式错误：${overridesResult.error}`,
+          error: overridesResult.error,
+        }),
+      );
+      return;
+    }
+
     // 软性问题（业务约束，用户可选择仍要保存）
     const issues: string[] = [];
 
@@ -1187,13 +1240,27 @@ function ProviderFormFull({
       // 弹确认框让用户决定是否仍要保存
       setSoftIssues(issues);
       setPendingFormValues(values);
+      setPendingLocalProxyRequestOverridesResult(overridesResult);
       return;
     }
 
-    await performSubmit(values);
+    await performSubmit(values, overridesResult);
   };
 
-  const performSubmit = async (values: ProviderFormData) => {
+  const performSubmit = async (
+    values: ProviderFormData,
+    overridesResult: LocalProxyRequestOverridesBuildResult,
+  ) => {
+    if (overridesResult.error) {
+      toast.error(
+        t("providerForm.localProxyRequestOverridesInvalid", {
+          defaultValue: `本地代理请求覆盖格式错误：${overridesResult.error}`,
+          error: overridesResult.error,
+        }),
+      );
+      return;
+    }
+
     // OAuth / 其它身份识别（与 handleSubmit 保持一致）
     const isCopilotProvider =
       templatePreset?.providerType === "github_copilot" ||
@@ -1417,6 +1484,9 @@ function ProviderFormFull({
         (appId === "claude" || appId === "codex") && category !== "official"
           ? customUserAgent.trim() || undefined
           : undefined,
+      localProxyRequestOverrides: shouldApplyLocalProxyRequestOverrides
+        ? overridesResult.overrides
+        : undefined,
       testConfig: testConfig.enabled ? testConfig : undefined,
       costMultiplier: pricingConfig.enabled
         ? pricingConfig.costMultiplier
@@ -2066,6 +2136,10 @@ function ProviderFormFull({
               onActivationModeChange={setClaudeActivationMode}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}
+              localProxyHeadersOverride={localProxyHeadersOverride}
+              onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
+              localProxyBodyOverride={localProxyBodyOverride}
+              onLocalProxyBodyOverrideChange={setLocalProxyBodyOverride}
             />
           )}
 
@@ -2100,6 +2174,10 @@ function ProviderFormFull({
               speedTestEndpoints={speedTestEndpoints}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}
+              localProxyHeadersOverride={localProxyHeadersOverride}
+              onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
+              localProxyBodyOverride={localProxyBodyOverride}
+              onLocalProxyBodyOverrideChange={setLocalProxyBodyOverride}
             />
           )}
 
@@ -2424,15 +2502,19 @@ function ProviderFormFull({
         onConfirm={async () => {
           if (isConfirmSubmitting) return;
           const values = pendingFormValues;
-          if (!values) {
+          const overridesResult = pendingLocalProxyRequestOverridesResult;
+          if (!values || !overridesResult) {
             setSoftIssues(null);
+            setPendingFormValues(null);
+            setPendingLocalProxyRequestOverridesResult(null);
             return;
           }
           setIsConfirmSubmitting(true);
           try {
-            await performSubmit(values);
+            await performSubmit(values, overridesResult);
             setSoftIssues(null);
             setPendingFormValues(null);
+            setPendingLocalProxyRequestOverridesResult(null);
           } catch (error) {
             console.error("[ProviderForm] soft-confirm submit failed:", error);
             // 保留确认框和 pending values，让用户可以重试或取消
@@ -2444,6 +2526,7 @@ function ProviderFormFull({
           if (isConfirmSubmitting) return;
           setSoftIssues(null);
           setPendingFormValues(null);
+          setPendingLocalProxyRequestOverridesResult(null);
         }}
       />
     </>
