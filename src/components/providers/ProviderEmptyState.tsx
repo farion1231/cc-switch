@@ -1,7 +1,7 @@
 import { Download, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
-import type { AppId } from "@/lib/api/types";
+import { isClaudeApp, type AppId } from "@/lib/api/types";
 
 interface ProviderEmptyStateProps {
   appId: AppId;
@@ -16,7 +16,7 @@ export function ProviderEmptyState({
 }: ProviderEmptyStateProps) {
   const { t } = useTranslation();
   const showSnippetHint =
-    appId === "claude" || appId === "codex" || appId === "gemini";
+    isClaudeApp(appId) || appId === "codex" || appId === "gemini";
 
   return (
     <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border p-10 text-center">

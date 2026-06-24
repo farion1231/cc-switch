@@ -313,6 +313,7 @@ pub fn import_from_hermes(config: &mut MultiAppConfig) -> Result<usize, AppError
                     server: unified_spec,
                     apps: McpApps {
                         claude: false,
+                        claude_xcode: false,
                         codex: false,
                         gemini: false,
                         opencode: false,

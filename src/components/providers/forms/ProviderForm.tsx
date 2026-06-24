@@ -12,7 +12,7 @@ import {
   buildLocalProxyRequestOverrides,
   formatRequestOverrideObject,
 } from "@/lib/requestOverrides";
-import { providersApi, settingsApi, type AppId } from "@/lib/api";
+import { providersApi, settingsApi, isClaudeApp, type AppId } from "@/lib/api";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type {
   ProviderCategory,
@@ -310,7 +310,7 @@ function ProviderFormFull({
   const [endpointAutoSelect, setEndpointAutoSelect] = useState<boolean>(
     () => initialData?.meta?.endpointAutoSelect ?? true,
   );
-  const supportsFullUrl = appId === "claude" || appId === "codex";
+  const supportsFullUrl = isClaudeApp(appId) || appId === "codex";
   const [localIsFullUrl, setLocalIsFullUrl] = useState<boolean>(() => {
     if (!supportsFullUrl) return false;
     return initialData?.meta?.isFullUrl ?? false;
@@ -453,7 +453,7 @@ function ProviderFormFull({
     selectedPresetId,
     category,
     appType: appId,
-    apiKeyField: appId === "claude" ? localApiKeyField : undefined,
+    apiKeyField: isClaudeApp(appId) ? localApiKeyField : undefined,
   });
 
   const { baseUrl, handleClaudeBaseUrlChange } = useBaseUrlState({
@@ -684,8 +684,8 @@ function ProviderFormFull({
     handleTemplateValueChange,
     validateTemplateValues,
   } = useTemplateValues({
-    selectedPresetId: appId === "claude" ? selectedPresetId : null,
-    presetEntries: appId === "claude" ? presetEntries : [],
+    selectedPresetId: isClaudeApp(appId) ? selectedPresetId : null,
+    presetEntries: isClaudeApp(appId) ? presetEntries : [],
     settingsConfig: form.getValues("settingsConfig"),
     onConfigChange: handleSettingsConfigChange,
   });
@@ -701,11 +701,12 @@ function ProviderFormFull({
   } = useCommonConfigSnippet({
     settingsConfig: form.getValues("settingsConfig"),
     onConfigChange: handleSettingsConfigChange,
-    initialData: appId === "claude" ? initialData : undefined,
-    initialEnabled:
-      appId === "claude" ? initialData?.meta?.commonConfigEnabled : undefined,
+    initialData: isClaudeApp(appId) ? initialData : undefined,
+    initialEnabled: isClaudeApp(appId)
+      ? initialData?.meta?.commonConfigEnabled
+      : undefined,
     selectedPresetId: selectedPresetId ?? undefined,
-    enabled: appId === "claude",
+    enabled: isClaudeApp(appId),
   });
 
   const {
@@ -989,7 +990,7 @@ function ProviderFormFull({
     const issues: string[] = [];
 
     // 模板变量未填：A 类（空值）
-    if (appId === "claude" && templateValueEntries.length > 0) {
+    if (isClaudeApp(appId) && templateValueEntries.length > 0) {
       const validation = validateTemplateValues();
       if (!validation.isValid && validation.missingField) {
         issues.push(
@@ -1170,7 +1171,7 @@ function ProviderFormFull({
     // 非官方供应商端点 / API Key 空：A 类
     // cloud_provider（如 Bedrock）通过模板变量处理认证，跳过通用校验
     if (category !== "official" && category !== "cloud_provider") {
-      if (appId === "claude") {
+      if (isClaudeApp(appId)) {
         if (!isCodexOauthProvider && !baseUrl.trim()) {
           issues.push(
             t("providerForm.endpointRequired", {
@@ -1424,14 +1425,13 @@ function ProviderFormFull({
 
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
-      commonConfigEnabled:
-        appId === "claude"
-          ? useCommonConfig
-          : appId === "codex"
-            ? useCodexCommonConfigFlag
-            : appId === "gemini"
-              ? useGeminiCommonConfigFlag
-              : undefined,
+      commonConfigEnabled: isClaudeApp(appId)
+        ? useCommonConfig
+        : appId === "codex"
+          ? useCodexCommonConfigFlag
+          : appId === "gemini"
+            ? useGeminiCommonConfigFlag
+            : undefined,
       endpointAutoSelect,
       claudeDesktopMode: undefined,
       // 保存 providerType（用于识别 Copilot / Codex OAuth 等特殊供应商）
@@ -1462,7 +1462,7 @@ function ProviderFormFull({
           ? normalizeCodexChatReasoningForSave(codexChatReasoning)
           : undefined,
       customUserAgent:
-        (appId === "claude" || appId === "codex") && category !== "official"
+        (isClaudeApp(appId) || appId === "codex") && category !== "official"
           ? customUserAgent.trim() || undefined
           : undefined,
       localProxyRequestOverrides: shouldApplyLocalProxyRequestOverrides
@@ -1477,13 +1477,13 @@ function ProviderFormFull({
           ? pricingConfig.pricingModelSource
           : undefined,
       apiFormat:
-        appId === "claude" && category !== "official"
+        isClaudeApp(appId) && category !== "official"
           ? localApiFormat
           : appId === "codex" && category !== "official"
             ? localCodexApiFormat
             : undefined,
       apiKeyField:
-        appId === "claude" &&
+        isClaudeApp(appId) &&
         category !== "official" &&
         localApiKeyField !== "ANTHROPIC_AUTH_TOKEN"
           ? localApiKeyField
@@ -2020,7 +2020,7 @@ function ProviderFormFull({
             }
           />
 
-          {appId === "claude" && (
+          {isClaudeApp(appId) && (
             <ClaudeFormFields
               providerId={providerId}
               shouldShowApiKey={

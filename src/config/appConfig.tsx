@@ -7,6 +7,7 @@ import {
   OpenClawIcon,
 } from "@/components/BrandIcons";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import { isMac } from "@/lib/platform";
 
 export interface AppConfig {
   label: string;
@@ -15,8 +16,12 @@ export interface AppConfig {
   badgeClass: string;
 }
 
+// Claude (Xcode) 仅在 macOS 暴露入口
+const CLAUDE_XCODE_APPS: AppId[] = isMac() ? ["claude-xcode"] : [];
+
 export const APP_IDS: AppId[] = [
   "claude",
+  ...CLAUDE_XCODE_APPS,
   "claude-desktop",
   "codex",
   "gemini",
@@ -28,6 +33,7 @@ export const APP_IDS: AppId[] = [
 /** App IDs shown in Skills panels (excludes OpenClaw — it doesn't support Skills) */
 export const SKILLS_APP_IDS: AppId[] = [
   "claude",
+  ...CLAUDE_XCODE_APPS,
   "codex",
   "gemini",
   "opencode",
@@ -45,6 +51,14 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-orange-500/10 ring-1 ring-orange-500/20 hover:bg-orange-500/20 text-orange-600 dark:text-orange-400",
     badgeClass:
       "bg-orange-500/10 text-orange-700 dark:text-orange-300 hover:bg-orange-500/20 border-0 gap-1.5",
+  },
+  "claude-xcode": {
+    label: "Claude (Xcode)",
+    icon: <ClaudeIcon size={14} />,
+    activeClass:
+      "bg-sky-500/10 ring-1 ring-sky-500/20 hover:bg-sky-500/20 text-sky-600 dark:text-sky-400",
+    badgeClass:
+      "bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20 border-0 gap-1.5",
   },
   "claude-desktop": {
     label: "Claude Desktop",

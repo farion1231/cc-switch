@@ -6,7 +6,7 @@ import type {
   DraggableSyntheticListeners,
 } from "@dnd-kit/core";
 import type { Provider } from "@/types";
-import type { AppId } from "@/lib/api";
+import { isClaudeApp, type AppId } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
@@ -72,7 +72,7 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
   }
 
   const config = provider.settingsConfig as Record<string, any>;
-  if (appId === "claude") {
+  if (isClaudeApp(appId)) {
     const baseUrl = config?.env?.ANTHROPIC_BASE_URL;
     return !baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === "");
   }
@@ -372,7 +372,7 @@ export function ProviderCard({
                   </span>
                 )}
 
-              {appId === "claude" &&
+              {isClaudeApp(appId) &&
                 provider.category !== "official" &&
                 provider.meta?.apiFormat &&
                 provider.meta.apiFormat !== "anthropic" && (
@@ -391,7 +391,7 @@ export function ProviderCard({
                 </span>
               )}
 
-              {appId === "claude" && provider.category === "official" && (
+              {isClaudeApp(appId) && provider.category === "official" && (
                 <span className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200">
                   {t("claudeCode.noRoutingSupport", {
                     defaultValue: "不支持路由",

@@ -179,6 +179,39 @@ pub fn get_claude_settings_path() -> PathBuf {
     settings
 }
 
+/// Claude (Xcode) 默认配置目录：Xcode 的 ClaudeAgentConfig 目录（仅 macOS 实际存在）
+pub fn get_claude_xcode_default_dir() -> PathBuf {
+    get_home_dir().join("Library/Developer/Xcode/CodingAssistant/ClaudeAgentConfig")
+}
+
+/// 获取 Claude (Xcode) 配置目录路径
+pub fn get_claude_xcode_config_dir() -> PathBuf {
+    crate::settings::get_claude_xcode_override_dir().unwrap_or_else(get_claude_xcode_default_dir)
+}
+
+/// 获取 Claude (Xcode) MCP 配置文件路径
+///
+/// 目录结构与 ~/.claude 一致，MCP 文件相对配置目录派生为 `<dir>/.claude.json`
+/// （等同于 Claude 的 override-dir 行为，不复用 ~/.claude.json 特例与 WSL 派生）。
+pub fn get_claude_xcode_mcp_path() -> PathBuf {
+    get_claude_xcode_config_dir().join(".claude.json")
+}
+
+/// 获取 Claude (Xcode) 主配置文件路径
+pub fn get_claude_xcode_settings_path() -> PathBuf {
+    let dir = get_claude_xcode_config_dir();
+    let settings = dir.join("settings.json");
+    if settings.exists() {
+        return settings;
+    }
+    // 兼容旧版命名：若存在旧文件则继续使用
+    let legacy = dir.join("claude.json");
+    if legacy.exists() {
+        return legacy;
+    }
+    settings
+}
+
 /// 获取应用配置目录路径 (~/.cc-switch)
 pub fn get_app_config_dir() -> PathBuf {
     if let Some(custom) = crate::app_store::get_app_config_dir_override() {
@@ -550,6 +583,15 @@ pub struct ConfigStatus {
 /// 获取 Claude Code 配置状态
 pub fn get_claude_config_status() -> ConfigStatus {
     let path = get_claude_settings_path();
+    ConfigStatus {
+        exists: path.exists(),
+        path: path.to_string_lossy().to_string(),
+    }
+}
+
+/// 获取 Claude (Xcode) 配置状态
+pub fn get_claude_xcode_config_status() -> ConfigStatus {
+    let path = get_claude_xcode_settings_path();
     ConfigStatus {
         exists: path.exists(),
         path: path.to_string_lossy().to_string(),

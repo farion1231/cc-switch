@@ -266,6 +266,7 @@ export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 // 主页面显示的应用配置
 export interface VisibleApps {
   claude: boolean;
+  "claude-xcode": boolean;
   "claude-desktop": boolean;
   codex: boolean;
   gemini: boolean;
@@ -378,6 +379,8 @@ export interface Settings {
   // ===== 设备级目录覆盖 =====
   // 覆盖 Claude Code 配置目录（可选）
   claudeConfigDir?: string;
+  // 覆盖 Claude (Xcode) 配置目录（可选，默认指向 Xcode Claude Agent 目录）
+  claudeXcodeConfigDir?: string;
   // 覆盖 Codex 配置目录（可选）
   codexConfigDir?: string;
   // 覆盖 Gemini 配置目录（可选）
@@ -392,6 +395,8 @@ export interface Settings {
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
   currentProviderClaude?: string;
+  // 当前 Claude (Xcode) 供应商 ID（优先于数据库 is_current）
+  currentProviderClaudeXcode?: string;
   // 当前 Claude Desktop 供应商 ID（优先于数据库 is_current）
   currentProviderClaudeDesktop?: string;
   // 当前 Codex 供应商 ID（优先于数据库 is_current）
@@ -473,6 +478,7 @@ export interface McpServerSpec {
 // v3.7.0: MCP 服务器应用启用状态
 export interface McpApps {
   claude: boolean;
+  "claude-xcode"?: boolean;
   "claude-desktop"?: boolean;
   codex: boolean;
   gemini: boolean;

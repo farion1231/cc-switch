@@ -510,6 +510,11 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
+            AppType::ClaudeXcode => {
+                // claude-xcode 配置目录始终存在（默认 Xcode 目录或用户覆盖），
+                // 直接派生 skills 子目录，无需回退到主目录标准位置。
+                return Ok(crate::config::get_claude_xcode_config_dir().join("skills"));
+            }
             AppType::ClaudeDesktop => {}
             AppType::Codex => {
                 if let Some(custom) = crate::settings::get_codex_override_dir() {
@@ -547,6 +552,7 @@ impl SkillService {
 
         Ok(match app {
             AppType::Claude => home.join(".claude").join("skills"),
+            AppType::ClaudeXcode => crate::config::get_claude_xcode_config_dir().join("skills"),
             AppType::ClaudeDesktop => home.join(".claude-desktop").join("skills"),
             AppType::Codex => home.join(".codex").join("skills"),
             AppType::Gemini => home.join(".gemini").join("skills"),

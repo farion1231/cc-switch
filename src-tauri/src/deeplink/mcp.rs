@@ -164,6 +164,7 @@ pub fn import_mcp_from_deeplink(
 pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
     let mut apps = McpApps {
         claude: false,
+        claude_xcode: false,
         codex: false,
         gemini: false,
         opencode: false,

@@ -8,6 +8,7 @@ import type { SettingsFormState } from "./useSettingsForm";
 export type DirectoryAppId = Exclude<AppId, "claude-desktop">;
 type AppDirectoryKey =
   | "claude"
+  | "claude-xcode"
   | "codex"
   | "gemini"
   | "opencode"
@@ -18,6 +19,7 @@ type DirectoryKey = "appConfig" | AppDirectoryKey;
 export interface ResolvedDirectories {
   appConfig: string;
   claude: string;
+  "claude-xcode": string;
   codex: string;
   gemini: string;
   opencode: string;
@@ -31,6 +33,10 @@ const APP_DIRECTORY_META: Record<
   { key: AppDirectoryKey; defaultFolder: string }
 > = {
   claude: { key: "claude", defaultFolder: ".claude" },
+  "claude-xcode": {
+    key: "claude-xcode",
+    defaultFolder: "Library/Developer/Xcode/CodingAssistant/ClaudeAgentConfig",
+  },
   codex: { key: "codex", defaultFolder: ".codex" },
   gemini: { key: "gemini", defaultFolder: ".gemini" },
   opencode: { key: "opencode", defaultFolder: ".config/opencode" },
@@ -43,6 +49,7 @@ const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
   keyof SettingsFormState
 > = {
   claude: "claudeConfigDir",
+  "claude-xcode": "claudeXcodeConfigDir",
   codex: "codexConfigDir",
   gemini: "geminiConfigDir",
   opencode: "opencodeConfigDir",
@@ -128,6 +135,7 @@ export function useDirectorySettings({
   const [resolvedDirs, setResolvedDirs] = useState<ResolvedDirectories>({
     appConfig: "",
     claude: "",
+    "claude-xcode": "",
     codex: "",
     gemini: "",
     opencode: "",
@@ -139,6 +147,7 @@ export function useDirectorySettings({
   const defaultsRef = useRef<ResolvedDirectories>({
     appConfig: "",
     claude: "",
+    "claude-xcode": "",
     codex: "",
     gemini: "",
     opencode: "",
@@ -157,6 +166,7 @@ export function useDirectorySettings({
         const [
           overrideRaw,
           claudeDir,
+          claudeXcodeDir,
           codexDir,
           geminiDir,
           opencodeDir,
@@ -164,6 +174,7 @@ export function useDirectorySettings({
           hermesDir,
           defaultAppConfig,
           defaultClaudeDir,
+          defaultClaudeXcodeDir,
           defaultCodexDir,
           defaultGeminiDir,
           defaultOpencodeDir,
@@ -172,6 +183,7 @@ export function useDirectorySettings({
         ] = await Promise.all([
           settingsApi.getAppConfigDirOverride(),
           settingsApi.getConfigDir("claude"),
+          settingsApi.getConfigDir("claude-xcode"),
           settingsApi.getConfigDir("codex"),
           settingsApi.getConfigDir("gemini"),
           settingsApi.getConfigDir("opencode"),
@@ -179,6 +191,7 @@ export function useDirectorySettings({
           settingsApi.getConfigDir("hermes"),
           computeDefaultAppConfigDir(),
           computeDefaultConfigDir("claude"),
+          computeDefaultConfigDir("claude-xcode"),
           computeDefaultConfigDir("codex"),
           computeDefaultConfigDir("gemini"),
           computeDefaultConfigDir("opencode"),
@@ -193,6 +206,7 @@ export function useDirectorySettings({
         defaultsRef.current = {
           appConfig: defaultAppConfig ?? "",
           claude: defaultClaudeDir ?? "",
+          "claude-xcode": defaultClaudeXcodeDir ?? "",
           codex: defaultCodexDir ?? "",
           gemini: defaultGeminiDir ?? "",
           opencode: defaultOpencodeDir ?? "",
@@ -206,6 +220,7 @@ export function useDirectorySettings({
         setResolvedDirs({
           appConfig: normalizedOverride ?? defaultsRef.current.appConfig,
           claude: claudeDir || defaultsRef.current.claude,
+          "claude-xcode": claudeXcodeDir || defaultsRef.current["claude-xcode"],
           codex: codexDir || defaultsRef.current.codex,
           gemini: geminiDir || defaultsRef.current.gemini,
           opencode: opencodeDir || defaultsRef.current.opencode,
@@ -347,6 +362,8 @@ export function useDirectorySettings({
         appConfig:
           initialAppConfigDirRef.current ?? defaultsRef.current.appConfig,
         claude: overrides?.claude ?? defaultsRef.current.claude,
+        "claude-xcode":
+          overrides?.["claude-xcode"] ?? defaultsRef.current["claude-xcode"],
         codex: overrides?.codex ?? defaultsRef.current.codex,
         gemini: overrides?.gemini ?? defaultsRef.current.gemini,
         opencode: overrides?.opencode ?? defaultsRef.current.opencode,

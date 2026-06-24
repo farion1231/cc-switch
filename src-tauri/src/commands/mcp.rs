@@ -20,7 +20,7 @@ pub async fn get_claude_mcp_status() -> Result<claude_mcp::McpStatus, String> {
 /// 读取 mcp.json 文本内容
 #[tauri::command]
 pub async fn read_claude_mcp_config() -> Result<Option<String>, String> {
-    claude_mcp::read_mcp_json().map_err(|e| e.to_string())
+    claude_mcp::read_mcp_json(&crate::config::get_claude_mcp_path()).map_err(|e| e.to_string())
 }
 
 /// 新增或更新一个 MCP 服务器条目

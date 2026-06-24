@@ -374,6 +374,17 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        conn.execute(
+            "INSERT OR IGNORE INTO proxy_config (
+                app_type, max_retries,
+                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                circuit_error_rate_threshold, circuit_min_requests
+            ) VALUES ('claude-xcode', 6, 90, 180, 600, 8, 3, 90, 0.7, 15)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // codex: 默认配置
         conn.execute(
             "INSERT OR IGNORE INTO proxy_config (

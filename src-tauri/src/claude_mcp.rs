@@ -136,12 +136,11 @@ pub fn get_mcp_status() -> Result<McpStatus, AppError> {
     })
 }
 
-pub fn read_mcp_json() -> Result<Option<String>, AppError> {
-    let path = user_config_path();
+pub fn read_mcp_json(path: &Path) -> Result<Option<String>, AppError> {
     if !path.exists() {
         return Ok(None);
     }
-    let content = fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?;
+    let content = fs::read_to_string(path).map_err(|e| AppError::io(path, e))?;
     Ok(Some(content))
 }
 
@@ -324,13 +323,14 @@ pub fn validate_command_in_path(cmd: &str) -> Result<bool, AppError> {
 }
 
 /// 读取 ~/.claude.json 中的 mcpServers 映射
-pub fn read_mcp_servers_map() -> Result<std::collections::HashMap<String, Value>, AppError> {
-    let path = user_config_path();
+pub fn read_mcp_servers_map(
+    path: &Path,
+) -> Result<std::collections::HashMap<String, Value>, AppError> {
     if !path.exists() {
         return Ok(std::collections::HashMap::new());
     }
 
-    let root = read_json_value(&path)?;
+    let root = read_json_value(path)?;
     let servers = root
         .get("mcpServers")
         .and_then(|v| v.as_object())
@@ -343,18 +343,18 @@ pub fn read_mcp_servers_map() -> Result<std::collections::HashMap<String, Value>
 /// 将给定的启用 MCP 服务器映射写入到用户级 ~/.claude.json 的 mcpServers 字段
 /// 仅覆盖 mcpServers，其他字段保持不变
 pub fn set_mcp_servers_map(
+    path: &Path,
     servers: &std::collections::HashMap<String, Value>,
 ) -> Result<(), AppError> {
-    let path = user_config_path();
     let mut root = if path.exists() {
-        read_json_value(&path)?
+        read_json_value(path)?
     } else {
         serde_json::json!({})
     };
 
     // 构建 mcpServers 对象：移除 UI 辅助字段（enabled/source），仅保留实际 MCP 规范
     // 检测目标路径是否为 WSL，若是则跳过 cmd /c 包装
-    let is_wsl_target = is_wsl_path(&path);
+    let is_wsl_target = is_wsl_path(path);
     if is_wsl_target {
         log::info!("检测到 WSL 路径，跳过 cmd /c 包装: {}", path.display());
     }
@@ -399,7 +399,7 @@ pub fn set_mcp_servers_map(
         obj.insert("mcpServers".into(), Value::Object(out));
     }
 
-    write_json_value(&path, &root)?;
+    write_json_value(path, &root)?;
     Ok(())
 }
 

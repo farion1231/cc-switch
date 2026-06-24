@@ -47,7 +47,8 @@ export function AddProviderDialog({
     appId !== "opencode" &&
     appId !== "openclaw" &&
     appId !== "hermes" &&
-    appId !== "claude-desktop";
+    appId !== "claude-desktop" &&
+    appId !== "claude-xcode";
   const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
     "app-specific",
   );
@@ -144,7 +145,7 @@ export function AddProviderDialog({
         };
 
         if (values.presetId) {
-          if (appId === "claude") {
+          if (appId === "claude" || appId === "claude-xcode") {
             const presets = providerPresets;
             const presetIndex = parseInt(
               values.presetId.replace("claude-", ""),
@@ -206,7 +207,7 @@ export function AddProviderDialog({
           }
         }
 
-        if (appId === "claude") {
+        if (appId === "claude" || appId === "claude-xcode") {
           const env = parsedConfig.env as Record<string, any> | undefined;
           if (env?.ANTHROPIC_BASE_URL) {
             addUrl(env.ANTHROPIC_BASE_URL);

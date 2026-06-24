@@ -2,12 +2,14 @@ import type { AppId } from "@/lib/api";
 import type { VisibleApps } from "@/types";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { cn } from "@/lib/utils";
+import { isMac } from "@/lib/platform";
 import { Monitor, Terminal } from "lucide-react";
 
 const APP_BADGE_ICON: Partial<
   Record<AppId, { icon: typeof Terminal; offsetY?: number }>
 > = {
   claude: { icon: Terminal },
+  "claude-xcode": { icon: Terminal },
   "claude-desktop": { icon: Monitor, offsetY: 0.5 },
 };
 
@@ -20,6 +22,7 @@ interface AppSwitcherProps {
 
 const ALL_APPS: AppId[] = [
   "claude",
+  "claude-xcode",
   "claude-desktop",
   "codex",
   "gemini",
@@ -43,6 +46,7 @@ export function AppSwitcher({
   const iconSize = 20;
   const appIconName: Record<AppId, string> = {
     claude: "claude",
+    "claude-xcode": "claude",
     "claude-desktop": "claude",
     codex: "openai",
     gemini: "gemini",
@@ -52,6 +56,7 @@ export function AppSwitcher({
   };
   const appDisplayName: Record<AppId, string> = {
     claude: "Claude Code",
+    "claude-xcode": "Claude (Xcode)",
     "claude-desktop": "Claude Desktop",
     codex: "Codex",
     gemini: "Gemini",
@@ -62,6 +67,8 @@ export function AppSwitcher({
 
   // Filter apps based on visibility settings (default all visible)
   const appsToShow = ALL_APPS.filter((app) => {
+    // Claude (Xcode) 仅 macOS 显示
+    if (app === "claude-xcode" && !isMac()) return false;
     if (!visibleApps) return true;
     return visibleApps[app];
   });

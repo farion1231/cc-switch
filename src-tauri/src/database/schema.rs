@@ -64,7 +64,8 @@ impl Database {
             "CREATE TABLE IF NOT EXISTS mcp_servers (
             id TEXT PRIMARY KEY, name TEXT NOT NULL, server_config TEXT NOT NULL,
             description TEXT, homepage TEXT, docs TEXT, tags TEXT NOT NULL DEFAULT '[]',
-            enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+            enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_claude_xcode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0
         )",
@@ -91,6 +92,7 @@ impl Database {
             repo_branch TEXT DEFAULT 'main',
             readme_url TEXT,
             enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+            enabled_claude_xcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
@@ -120,9 +122,9 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 8. Proxy Config 表（三行结构，app_type 主键）
+        // 8. Proxy Config 表（每应用一行，app_type 主键）
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_config (
-            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','claude-xcode','codex','gemini')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
@@ -136,7 +138,7 @@ impl Database {
             created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 初始化三行数据（每应用不同默认值）
+        // 初始化每应用数据（每应用不同默认值）
         //
         // 兼容旧数据库：
         // - 老版本 proxy_config 是单例表（没有 app_type 列），此时不能执行三行 seed insert；
@@ -148,6 +150,15 @@ impl Database {
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
                 circuit_error_rate_threshold, circuit_min_requests)
                 VALUES ('claude', 6, 90, 180, 600, 8, 3, 90, 0.7, 15)",
+                [],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+            conn.execute(
+                "INSERT OR IGNORE INTO proxy_config (app_type, max_retries,
+                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                circuit_error_rate_threshold, circuit_min_requests)
+                VALUES ('claude-xcode', 6, 90, 180, 600, 8, 3, 90, 0.7, 15)",
                 [],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -340,6 +351,7 @@ impl Database {
         {
             Self::migrate_proxy_config_to_per_app(conn)?;
         }
+        Self::ensure_proxy_config_supports_claude_xcode(conn)?;
 
         // 确保 in_failover_queue 列存在（对于已存在的 v2 数据库）
         Self::add_column_if_missing(
@@ -443,6 +455,10 @@ impl Database {
                         log::info!("迁移数据库从 v10 到 v11（usage_daily_rollups 保留 request_model 维度）");
                         Self::migrate_v10_to_v11(conn)?;
                         Self::set_user_version(conn, 11)?;
+                    }
+                    11 => {
+                        Self::migrate_v11_to_v12(conn)?;
+                        Self::set_user_version(conn, 12)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -743,6 +759,7 @@ impl Database {
                 old_cb.3,
                 old_cb.4,
             ),
+            ("claude-xcode", false, false, 6, 45, 90, 8, 3, 90, 0.6, 15),
             (
                 "gemini",
                 get_bool("proxy_takeover_gemini"),
@@ -761,7 +778,7 @@ impl Database {
         // 创建新表
         conn.execute("DROP TABLE IF EXISTS proxy_config_new", [])?;
         conn.execute("CREATE TABLE proxy_config_new (
-            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','claude-xcode','codex','gemini')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
@@ -800,6 +817,69 @@ impl Database {
         )?;
 
         log::info!("proxy_config 已迁移为三行结构");
+        Ok(())
+    }
+
+    fn ensure_proxy_config_supports_claude_xcode(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "proxy_config")?
+            || !Self::has_column(conn, "proxy_config", "app_type")?
+        {
+            return Ok(());
+        }
+
+        let has_claude_xcode = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM proxy_config WHERE app_type = 'claude-xcode')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if has_claude_xcode {
+            return Ok(());
+        }
+
+        conn.execute_batch(
+            "ALTER TABLE proxy_config RENAME TO proxy_config_old;
+             CREATE TABLE proxy_config (
+                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','claude-xcode','codex','gemini')),
+                proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+                listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
+                enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+                max_retries INTEGER NOT NULL DEFAULT 3, streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+                streaming_idle_timeout INTEGER NOT NULL DEFAULT 120, non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+                circuit_failure_threshold INTEGER NOT NULL DEFAULT 4, circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+                circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60, circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
+                circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                default_cost_multiplier TEXT NOT NULL DEFAULT '1',
+                pricing_model_source TEXT NOT NULL DEFAULT 'response',
+                live_takeover_active INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+             );
+             INSERT INTO proxy_config (
+                app_type, proxy_enabled, listen_address, listen_port, enable_logging,
+                enabled, auto_failover_enabled, max_retries, streaming_first_byte_timeout,
+                streaming_idle_timeout, non_streaming_timeout, circuit_failure_threshold,
+                circuit_success_threshold, circuit_timeout_seconds, circuit_error_rate_threshold,
+                circuit_min_requests, default_cost_multiplier, pricing_model_source,
+                live_takeover_active, created_at, updated_at
+             )
+             SELECT
+                app_type, proxy_enabled, listen_address, listen_port, enable_logging,
+                enabled, auto_failover_enabled, max_retries, streaming_first_byte_timeout,
+                streaming_idle_timeout, non_streaming_timeout, circuit_failure_threshold,
+                circuit_success_threshold, circuit_timeout_seconds, circuit_error_rate_threshold,
+                circuit_min_requests, default_cost_multiplier, pricing_model_source,
+                live_takeover_active, created_at, updated_at
+             FROM proxy_config_old;
+             INSERT INTO proxy_config (app_type, max_retries,
+                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                circuit_error_rate_threshold, circuit_min_requests)
+             VALUES ('claude-xcode', 6, 90, 180, 600, 8, 3, 90, 0.7, 15);
+             DROP TABLE proxy_config_old;",
+        )
+        .map_err(|e| AppError::Database(format!("扩展 proxy_config 支持 claude-xcode 失败: {e}")))?;
+
         Ok(())
     }
 
@@ -1210,6 +1290,34 @@ impl Database {
         }
 
         log::info!("v9 -> v10 迁移完成：已添加 Hermes Agent 支持");
+        Ok(())
+    }
+
+    /// v11 -> v12 迁移：添加 Claude (Xcode) 支持
+    fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
+        // mcp_servers table may not exist in databases migrated from very old versions
+        if Self::table_exists(conn, "mcp_servers")? {
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_claude_xcode",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+
+        // skills table may not exist in databases migrated from very old versions
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "enabled_claude_xcode",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+
+        Self::ensure_proxy_config_supports_claude_xcode(conn)?;
+
+        log::info!("v11 -> v12 迁移完成：已添加 Claude (Xcode) 支持");
         Ok(())
     }
 

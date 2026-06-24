@@ -233,6 +233,7 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                         server: spec_v,
                         apps: McpApps {
                             claude: false,
+                            claude_xcode: false,
                             codex: true,
                             gemini: false,
                             opencode: false,

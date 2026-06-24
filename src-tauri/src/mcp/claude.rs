@@ -3,15 +3,32 @@
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::app_config::{McpApps, McpConfig, McpServer, MultiAppConfig};
+use std::path::PathBuf;
+
+use crate::app_config::{AppType, McpApps, McpConfig, McpServer, MultiAppConfig};
 use crate::error::AppError;
 
 use super::validation::{extract_server_spec, validate_server_spec};
 
-fn should_sync_claude_mcp() -> bool {
-    // Claude 未安装/未初始化时：通常 ~/.claude 目录与 ~/.claude.json 都不存在。
+/// 解析指定 Claude 系应用（Claude / Claude Xcode）的配置目录与 MCP 文件路径
+fn claude_dir_and_mcp_path(app: &AppType) -> (PathBuf, PathBuf) {
+    match app {
+        AppType::ClaudeXcode => (
+            crate::config::get_claude_xcode_config_dir(),
+            crate::config::get_claude_xcode_mcp_path(),
+        ),
+        _ => (
+            crate::config::get_claude_config_dir(),
+            crate::config::get_claude_mcp_path(),
+        ),
+    }
+}
+
+fn should_sync_claude_mcp(app: &AppType) -> bool {
+    // Claude 未安装/未初始化时：通常配置目录与 MCP 文件都不存在。
     // 按用户偏好：此时跳过写入/删除，不创建任何文件或目录。
-    crate::config::get_claude_config_dir().exists() || crate::config::get_claude_mcp_path().exists()
+    let (dir, mcp_path) = claude_dir_and_mcp_path(app);
+    dir.exists() || mcp_path.exists()
 }
 
 /// 返回已启用的 MCP 服务器（过滤 enabled==true）
@@ -39,17 +56,17 @@ fn collect_enabled_servers(cfg: &McpConfig) -> HashMap<String, Value> {
 
 /// 将 config.json 中 enabled==true 的项投影写入 ~/.claude.json
 pub fn sync_enabled_to_claude(config: &MultiAppConfig) -> Result<(), AppError> {
-    if !should_sync_claude_mcp() {
+    if !should_sync_claude_mcp(&AppType::Claude) {
         return Ok(());
     }
     let enabled = collect_enabled_servers(&config.mcp.claude);
-    crate::claude_mcp::set_mcp_servers_map(&enabled)
+    crate::claude_mcp::set_mcp_servers_map(&crate::config::get_claude_mcp_path(), &enabled)
 }
 
 /// 从 ~/.claude.json 导入 mcpServers 到统一结构（v3.7.0+）
 /// 已存在的服务器将启用 Claude 应用，不覆盖其他字段和应用状态
 pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, AppError> {
-    let text_opt = crate::claude_mcp::read_mcp_json()?;
+    let text_opt = crate::claude_mcp::read_mcp_json(&crate::config::get_claude_mcp_path())?;
     let Some(text) = text_opt else { return Ok(0) };
 
     let v: Value = serde_json::from_str(&text)
@@ -89,6 +106,7 @@ pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, AppError
                     server: spec.clone(),
                     apps: McpApps {
                         claude: true,
+                        claude_xcode: false,
                         codex: false,
                         gemini: false,
                         opencode: false,
@@ -112,37 +130,41 @@ pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, AppError
     Ok(changed)
 }
 
-/// 将单个 MCP 服务器同步到 Claude live 配置
+/// 将单个 MCP 服务器同步到 Claude（含 Claude Xcode）live 配置
 pub fn sync_single_server_to_claude(
-    _config: &MultiAppConfig,
+    app: &AppType,
     id: &str,
     server_spec: &Value,
 ) -> Result<(), AppError> {
-    if !should_sync_claude_mcp() {
+    if !should_sync_claude_mcp(app) {
         return Ok(());
     }
+    let (_, mcp_path) = claude_dir_and_mcp_path(app);
+
     // 读取现有的 MCP 配置
-    let current = crate::claude_mcp::read_mcp_servers_map()?;
+    let current = crate::claude_mcp::read_mcp_servers_map(&mcp_path)?;
 
     // 创建新的 HashMap，包含现有的所有服务器 + 当前要同步的服务器
     let mut updated = current;
     updated.insert(id.to_string(), server_spec.clone());
 
     // 写回
-    crate::claude_mcp::set_mcp_servers_map(&updated)
+    crate::claude_mcp::set_mcp_servers_map(&mcp_path, &updated)
 }
 
-/// 从 Claude live 配置中移除单个 MCP 服务器
-pub fn remove_server_from_claude(id: &str) -> Result<(), AppError> {
-    if !should_sync_claude_mcp() {
+/// 从 Claude（含 Claude Xcode）live 配置中移除单个 MCP 服务器
+pub fn remove_server_from_claude(app: &AppType, id: &str) -> Result<(), AppError> {
+    if !should_sync_claude_mcp(app) {
         return Ok(());
     }
+    let (_, mcp_path) = claude_dir_and_mcp_path(app);
+
     // 读取现有的 MCP 配置
-    let mut current = crate::claude_mcp::read_mcp_servers_map()?;
+    let mut current = crate::claude_mcp::read_mcp_servers_map(&mcp_path)?;
 
     // 移除指定服务器
     current.remove(id);
 
     // 写回
-    crate::claude_mcp::set_mcp_servers_map(&current)
+    crate::claude_mcp::set_mcp_servers_map(&mcp_path, &current)
 }

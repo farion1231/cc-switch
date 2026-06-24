@@ -31,6 +31,9 @@ impl McpService {
         if prev_apps.claude && !server.apps.claude {
             Self::remove_server_from_app(state, &server.id, &AppType::Claude)?;
         }
+        if prev_apps.claude_xcode && !server.apps.claude_xcode {
+            Self::remove_server_from_app(state, &server.id, &AppType::ClaudeXcode)?;
+        }
         if prev_apps.codex && !server.apps.codex {
             Self::remove_server_from_app(state, &server.id, &AppType::Codex)?;
         }
@@ -109,8 +112,8 @@ impl McpService {
 
     fn sync_server_to_app_no_config(server: &McpServer, app: &AppType) -> Result<(), AppError> {
         match app {
-            AppType::Claude => {
-                mcp::sync_single_server_to_claude(&Default::default(), &server.id, &server.server)?;
+            AppType::Claude | AppType::ClaudeXcode => {
+                mcp::sync_single_server_to_claude(app, &server.id, &server.server)?;
             }
             AppType::ClaudeDesktop => {
                 log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
@@ -156,7 +159,7 @@ impl McpService {
 
     fn remove_server_from_app(_state: &AppState, id: &str, app: &AppType) -> Result<(), AppError> {
         match app {
-            AppType::Claude => mcp::remove_server_from_claude(id)?,
+            AppType::Claude | AppType::ClaudeXcode => mcp::remove_server_from_claude(app, id)?,
             AppType::ClaudeDesktop => {
                 log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
             }

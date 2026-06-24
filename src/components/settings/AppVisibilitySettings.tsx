@@ -5,6 +5,7 @@ import { ProviderIcon } from "@/components/ProviderIcon";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import type { VisibleApps } from "@/types";
 import type { AppId } from "@/lib/api";
+import { isMac } from "@/lib/platform";
 
 interface AppVisibilitySettingsProps {
   settings: SettingsFormState;
@@ -17,6 +18,7 @@ const APP_CONFIG: Array<{
   nameKey: string;
 }> = [
   { id: "claude", icon: "claude", nameKey: "apps.claudeCode" },
+  { id: "claude-xcode", icon: "claude", nameKey: "apps.claudeXcode" },
   {
     id: "claude-desktop",
     icon: "claude",
@@ -37,6 +39,7 @@ export function AppVisibilitySettings({
 
   const visibleApps: VisibleApps = settings.visibleApps ?? {
     claude: true,
+    "claude-xcode": true,
     "claude-desktop": true,
     codex: true,
     gemini: true,
@@ -72,24 +75,26 @@ export function AppVisibilitySettings({
         </p>
       </header>
       <div className="inline-flex gap-1 rounded-md border border-border-default bg-background p-1">
-        {APP_CONFIG.map((app) => {
-          const isVisible = visibleApps[app.id];
-          // Disable button if this is the last visible app
-          const isDisabled = isVisible && visibleCount <= 1;
+        {APP_CONFIG.filter((app) => app.id !== "claude-xcode" || isMac()).map(
+          (app) => {
+            const isVisible = visibleApps[app.id];
+            // Disable button if this is the last visible app
+            const isDisabled = isVisible && visibleCount <= 1;
 
-          return (
-            <AppButton
-              key={app.id}
-              active={isVisible}
-              disabled={isDisabled}
-              onClick={() => handleToggle(app.id)}
-              icon={app.icon}
-              name={t(app.nameKey)}
-            >
-              {t(app.nameKey)}
-            </AppButton>
-          );
-        })}
+            return (
+              <AppButton
+                key={app.id}
+                active={isVisible}
+                disabled={isDisabled}
+                onClick={() => handleToggle(app.id)}
+                icon={app.icon}
+                name={t(app.nameKey)}
+              >
+                {t(app.nameKey)}
+              </AppButton>
+            );
+          },
+        )}
       </div>
     </section>
   );

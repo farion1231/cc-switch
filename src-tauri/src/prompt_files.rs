@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::app_config::AppType;
 use crate::codex_config::get_codex_auth_path;
-use crate::config::get_claude_settings_path;
+use crate::config::{get_claude_settings_path, get_claude_xcode_settings_path};
 use crate::error::AppError;
 use crate::gemini_config::get_gemini_dir;
 use crate::openclaw_config::get_openclaw_dir;
@@ -20,6 +20,10 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
 
     let base_dir: PathBuf = match app {
         AppType::Claude => get_base_dir_with_fallback(get_claude_settings_path(), ".claude")?,
+        AppType::ClaudeXcode => get_base_dir_with_fallback(
+            get_claude_xcode_settings_path(),
+            "Library/Developer/Xcode/CodingAssistant/ClaudeAgentConfig",
+        )?,
         AppType::Codex => get_base_dir_with_fallback(get_codex_auth_path(), ".codex")?,
         AppType::Gemini => get_gemini_dir(),
         AppType::OpenCode => get_opencode_dir(),
@@ -29,7 +33,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
     };
 
     let filename = match app {
-        AppType::Claude => "CLAUDE.md",
+        AppType::Claude | AppType::ClaudeXcode => "CLAUDE.md",
         AppType::Codex => "AGENTS.md",
         AppType::Gemini => "GEMINI.md",
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => "AGENTS.md",

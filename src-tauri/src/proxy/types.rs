@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+pub(crate) const PROXY_CONFIG_APP_TYPES: [&str; 4] = ["claude", "claude-xcode", "codex", "gemini"];
+
 /// 代理服务器配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyConfig {
@@ -111,6 +113,8 @@ pub struct ProxyServerInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProxyTakeoverStatus {
     pub claude: bool,
+    #[serde(rename = "claude-xcode")]
+    pub claude_xcode: bool,
     pub codex: bool,
     pub gemini: bool,
     pub opencode: bool,

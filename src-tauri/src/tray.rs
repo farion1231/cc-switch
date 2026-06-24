@@ -103,29 +103,52 @@ pub struct TrayAppSection {
 pub const AUTO_SUFFIX: &str = "auto";
 pub const TRAY_ID: &str = "cc-switch";
 
-pub const TRAY_SECTIONS: [TrayAppSection; 3] = [
-    TrayAppSection {
-        app_type: AppType::Claude,
-        prefix: "claude_",
-        empty_id: "claude_empty",
-        header_label: "Claude",
-        log_name: "Claude",
-    },
-    TrayAppSection {
-        app_type: AppType::Codex,
-        prefix: "codex_",
-        empty_id: "codex_empty",
-        header_label: "Codex",
-        log_name: "Codex",
-    },
-    TrayAppSection {
-        app_type: AppType::Gemini,
-        prefix: "gemini_",
-        empty_id: "gemini_empty",
-        header_label: "Gemini",
-        log_name: "Gemini",
-    },
+/// Claude (Xcode) 分区，仅 macOS 提供。可见性进一步由 `VisibleApps` 控制。
+#[cfg(target_os = "macos")]
+const CLAUDE_XCODE_SECTION: TrayAppSection = TrayAppSection {
+    app_type: AppType::ClaudeXcode,
+    prefix: "claude_xcode_",
+    empty_id: "claude_xcode_empty",
+    header_label: "Claude (Xcode)",
+    log_name: "Claude (Xcode)",
+};
+
+const CLAUDE_SECTION: TrayAppSection = TrayAppSection {
+    app_type: AppType::Claude,
+    prefix: "claude_",
+    empty_id: "claude_empty",
+    header_label: "Claude",
+    log_name: "Claude",
+};
+
+const CODEX_SECTION: TrayAppSection = TrayAppSection {
+    app_type: AppType::Codex,
+    prefix: "codex_",
+    empty_id: "codex_empty",
+    header_label: "Codex",
+    log_name: "Codex",
+};
+
+const GEMINI_SECTION: TrayAppSection = TrayAppSection {
+    app_type: AppType::Gemini,
+    prefix: "gemini_",
+    empty_id: "gemini_empty",
+    header_label: "Gemini",
+    log_name: "Gemini",
+};
+
+// 注意：`claude_xcode_` 必须排在 `claude_` 之前，否则 `strip_prefix("claude_")`
+// 会先吃掉 claude-xcode 的菜单事件 id，导致路由到错误的应用分区。
+#[cfg(target_os = "macos")]
+pub const TRAY_SECTIONS: [TrayAppSection; 4] = [
+    CLAUDE_XCODE_SECTION,
+    CLAUDE_SECTION,
+    CODEX_SECTION,
+    GEMINI_SECTION,
 ];
+
+#[cfg(not(target_os = "macos"))]
+pub const TRAY_SECTIONS: [TrayAppSection; 3] = [CLAUDE_SECTION, CODEX_SECTION, GEMINI_SECTION];
 
 /// 配色阈值（与前端 `utilizationColor` 语义一致）。
 const UTIL_WARN_PCT: f64 = 70.0;

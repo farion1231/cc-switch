@@ -302,23 +302,22 @@ impl ProxyService {
 
     fn claude_provider_with_effective_settings(
         &self,
+        app_type: &AppType,
         provider: &Provider,
     ) -> Result<Provider, String> {
         let mut effective_provider = provider.clone();
-        effective_provider.settings_config = build_effective_settings_with_common_config(
-            self.db.as_ref(),
-            &AppType::Claude,
-            provider,
-        )
-        .map_err(|e| format!("构建 claude 有效配置失败: {e}"))?;
+        effective_provider.settings_config =
+            build_effective_settings_with_common_config(self.db.as_ref(), app_type, provider)
+                .map_err(|e| format!("构建 claude 有效配置失败: {e}"))?;
         Ok(effective_provider)
     }
 
     pub async fn sync_claude_live_from_provider_while_proxy_active(
         &self,
+        app_type: &AppType,
         provider: &Provider,
     ) -> Result<(), String> {
-        let effective_provider = self.claude_provider_with_effective_settings(provider)?;
+        let effective_provider = self.claude_provider_with_effective_settings(app_type, provider)?;
         let mut effective_settings = effective_provider.settings_config.clone();
         let (proxy_url, _) = self.build_proxy_urls().await?;
 
@@ -327,7 +326,10 @@ impl ProxyService {
             &proxy_url,
             &effective_provider,
         );
-        self.write_claude_live(&effective_settings)?;
+        match app_type {
+            AppType::ClaudeXcode => self.write_claude_xcode_live(&effective_settings)?,
+            _ => self.write_claude_live(&effective_settings)?,
+        }
         Ok(())
     }
 
@@ -586,6 +588,12 @@ impl ProxyService {
             .await
             .map(|c| c.enabled)
             .unwrap_or(false);
+        let claude_xcode_enabled = self
+            .db
+            .get_proxy_config_for_app("claude-xcode")
+            .await
+            .map(|c| c.enabled)
+            .unwrap_or(false);
         let codex_enabled = self
             .db
             .get_proxy_config_for_app("codex")
@@ -604,6 +612,7 @@ impl ProxyService {
 
         Ok(ProxyTakeoverStatus {
             claude: claude_enabled,
+            claude_xcode: claude_xcode_enabled,
             codex: codex_enabled,
             gemini: gemini_enabled,
             opencode: opencode_enabled,
@@ -801,6 +810,7 @@ impl ProxyService {
     async fn sync_live_to_provider(&self, app_type: &AppType) -> Result<(), String> {
         let live_config = match app_type {
             AppType::Claude => self.read_claude_live()?,
+            AppType::ClaudeXcode => self.read_claude_xcode_live()?,
             AppType::Codex => self.read_codex_live()?,
             AppType::Gemini => self.read_gemini_live()?,
             _ => return Err("该应用不支持代理功能".to_string()),
@@ -816,14 +826,14 @@ impl ProxyService {
         live_config: &Value,
     ) -> Result<(), String> {
         match app_type {
-            AppType::Claude => {
+            AppType::Claude | AppType::ClaudeXcode => {
                 let provider_id =
-                    crate::settings::get_effective_current_provider(&self.db, &AppType::Claude)
+                    crate::settings::get_effective_current_provider(&self.db, app_type)
                         .map_err(|e| format!("获取 Claude 当前供应商失败: {e}"))?;
 
                 if let Some(provider_id) = provider_id {
                     if let Ok(Some(mut provider)) =
-                        self.db.get_provider_by_id(&provider_id, "claude")
+                        self.db.get_provider_by_id(&provider_id, app_type.as_str())
                     {
                         if let Some(env) = live_config.get("env").and_then(|v| v.as_object()) {
                             let token_pair = [
@@ -896,7 +906,7 @@ impl ProxyService {
                                 }
 
                                 if let Err(e) = self.db.update_provider_settings_config(
-                                    "claude",
+                                    app_type.as_str(),
                                     &provider_id,
                                     &provider.settings_config,
                                 ) {
@@ -1091,7 +1101,7 @@ impl ProxyService {
             .map_err(|e| format!("清除接管状态失败: {e}"))?;
 
         // 4. 清除所有应用的 enabled 状态（用户手动关闭，不需要下次自动恢复）
-        for app_type in ["claude", "codex", "gemini"] {
+        for app_type in PROXY_CONFIG_APP_TYPES {
             if let Ok(mut config) = self.db.get_proxy_config_for_app(app_type).await {
                 if config.enabled {
                     config.enabled = false;
@@ -1210,6 +1220,7 @@ impl ProxyService {
     async fn backup_live_config_strict(&self, app_type: &AppType) -> Result<(), String> {
         let (app_type_str, config) = match app_type {
             AppType::Claude => ("claude", self.read_claude_live()?),
+            AppType::ClaudeXcode => ("claude-xcode", self.read_claude_xcode_live()?),
             AppType::Codex => ("codex", self.read_codex_live()?),
             AppType::Gemini => ("gemini", self.read_gemini_live()?),
             _ => return Err("该应用不支持代理功能".to_string()),
@@ -1287,7 +1298,8 @@ impl ProxyService {
         // Claude: 修改 ANTHROPIC_BASE_URL，使用占位符替代真实 Token（代理会注入真实 Token）
         if let Ok(mut live_config) = self.read_claude_live() {
             let claude_provider = self.require_current_provider_for_app(&AppType::Claude)?;
-            let claude_provider = self.claude_provider_with_effective_settings(&claude_provider)?;
+            let claude_provider =
+                self.claude_provider_with_effective_settings(&AppType::Claude, &claude_provider)?;
             Self::apply_claude_takeover_fields_for_provider(
                 &mut live_config,
                 &proxy_url,
@@ -1295,6 +1307,20 @@ impl ProxyService {
             );
             self.write_claude_live(&live_config)?;
             log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
+        }
+
+        // Claude (Xcode): 与 Claude 一致，仅写入 Xcode 配置目录
+        if let Ok(mut live_config) = self.read_claude_xcode_live() {
+            let claude_provider = self.require_current_provider_for_app(&AppType::ClaudeXcode)?;
+            let claude_provider = self
+                .claude_provider_with_effective_settings(&AppType::ClaudeXcode, &claude_provider)?;
+            Self::apply_claude_takeover_fields_for_provider(
+                &mut live_config,
+                &proxy_url,
+                &claude_provider,
+            );
+            self.write_claude_xcode_live(&live_config)?;
+            log::info!("Claude (Xcode) Live 配置已接管，代理地址: {proxy_url}");
         }
 
         // Codex: 修改 config.toml 的 base_url，auth.json 的 OPENAI_API_KEY（代理会注入真实 Token）
@@ -1352,17 +1378,23 @@ impl ProxyService {
         let (proxy_url, proxy_codex_base_url) = self.build_proxy_urls().await?;
 
         match app_type {
-            AppType::Claude => {
-                let mut live_config = self.read_claude_live()?;
-                let claude_provider = self.require_current_provider_for_app(&AppType::Claude)?;
+            AppType::Claude | AppType::ClaudeXcode => {
+                let mut live_config = match app_type {
+                    AppType::ClaudeXcode => self.read_claude_xcode_live()?,
+                    _ => self.read_claude_live()?,
+                };
+                let claude_provider = self.require_current_provider_for_app(app_type)?;
                 let claude_provider =
-                    self.claude_provider_with_effective_settings(&claude_provider)?;
+                    self.claude_provider_with_effective_settings(app_type, &claude_provider)?;
                 Self::apply_claude_takeover_fields_for_provider(
                     &mut live_config,
                     &proxy_url,
                     &claude_provider,
                 );
-                self.write_claude_live(&live_config)?;
+                match app_type {
+                    AppType::ClaudeXcode => self.write_claude_xcode_live(&live_config)?,
+                    _ => self.write_claude_live(&live_config)?,
+                }
                 log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
             }
             AppType::Codex => {
@@ -1418,14 +1450,19 @@ impl ProxyService {
         let (proxy_url, proxy_codex_base_url) = self.build_proxy_urls().await?;
 
         match app_type {
-            AppType::Claude => {
-                if let Ok(mut live_config) = self.read_claude_live() {
+            AppType::Claude | AppType::ClaudeXcode => {
+                let live = match app_type {
+                    AppType::ClaudeXcode => self.read_claude_xcode_live(),
+                    _ => self.read_claude_live(),
+                };
+                if let Ok(mut live_config) = live {
                     let claude_provider = self
-                        .get_current_provider_for_app(&AppType::Claude)
+                        .get_current_provider_for_app(app_type)
                         .ok()
                         .flatten();
                     if let Some(provider) = claude_provider.as_ref() {
-                        let provider = self.claude_provider_with_effective_settings(provider)?;
+                        let provider =
+                            self.claude_provider_with_effective_settings(app_type, provider)?;
                         Self::apply_claude_takeover_fields_for_provider(
                             &mut live_config,
                             &proxy_url,
@@ -1438,7 +1475,10 @@ impl ProxyService {
                             ClaudeTakeoverAuthPolicy::PreserveExistingOrAuthToken,
                         );
                     }
-                    let _ = self.write_claude_live(&live_config);
+                    let _ = match app_type {
+                        AppType::ClaudeXcode => self.write_claude_xcode_live(&live_config),
+                        _ => self.write_claude_live(&live_config),
+                    };
                 }
             }
             AppType::Codex => {
@@ -1504,6 +1544,14 @@ impl ProxyService {
                     log::info!("Claude Live 配置已恢复");
                 }
             }
+            AppType::ClaudeXcode => {
+                if let Ok(Some(backup)) = self.db.get_live_backup("claude-xcode").await {
+                    let config: Value = serde_json::from_str(&backup.original_config)
+                        .map_err(|e| format!("解析 Claude (Xcode) 备份失败: {e}"))?;
+                    self.write_claude_xcode_live(&config)?;
+                    log::info!("Claude (Xcode) Live 配置已恢复");
+                }
+            }
             AppType::Codex => {
                 if let Ok(Some(backup)) = self.db.get_live_backup("codex").await {
                     let config: Value = serde_json::from_str(&backup.original_config)
@@ -1530,7 +1578,12 @@ impl ProxyService {
     async fn restore_live_configs(&self) -> Result<(), String> {
         let mut errors = Vec::new();
 
-        for app_type in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+        for app_type in [
+            AppType::Claude,
+            AppType::ClaudeXcode,
+            AppType::Codex,
+            AppType::Gemini,
+        ] {
             if let Err(e) = self
                 .restore_live_config_for_app_with_fallback(&app_type)
                 .await
@@ -1617,6 +1670,7 @@ impl ProxyService {
     fn write_live_config_for_app(&self, app_type: &AppType, config: &Value) -> Result<(), String> {
         match app_type {
             AppType::Claude => self.write_claude_live(config),
+            AppType::ClaudeXcode => self.write_claude_xcode_live(config),
             AppType::Codex => self.write_codex_live(config),
             AppType::Gemini => self.write_gemini_live(config),
             _ => Err("该应用不支持代理功能".to_string()),
@@ -1626,6 +1680,10 @@ impl ProxyService {
     pub fn detect_takeover_in_live_config_for_app(&self, app_type: &AppType) -> bool {
         match app_type {
             AppType::Claude => match self.read_claude_live() {
+                Ok(config) => Self::is_claude_live_taken_over(&config),
+                Err(_) => false,
+            },
+            AppType::ClaudeXcode => match self.read_claude_xcode_live() {
                 Ok(config) => Self::is_claude_live_taken_over(&config),
                 Err(_) => false,
             },
@@ -1685,6 +1743,7 @@ impl ProxyService {
     ) -> Result<(), String> {
         match app_type {
             AppType::Claude => self.cleanup_claude_takeover_placeholders_in_live(),
+            AppType::ClaudeXcode => self.cleanup_claude_xcode_takeover_placeholders_in_live(),
             AppType::Codex => self.cleanup_codex_takeover_placeholders_in_live(),
             AppType::Gemini => self.cleanup_gemini_takeover_placeholders_in_live(),
             _ => Ok(()),
@@ -1748,8 +1807,11 @@ impl ProxyService {
         let (proxy_url, proxy_codex_base_url) = self.build_proxy_urls().await?;
 
         match app_type {
-            AppType::Claude => {
-                let config = self.read_claude_live()?;
+            AppType::Claude | AppType::ClaudeXcode => {
+                let config = match app_type {
+                    AppType::ClaudeXcode => self.read_claude_xcode_live()?,
+                    _ => self.read_claude_live()?,
+                };
                 let base_url_matches = config
                     .get("env")
                     .and_then(|value| value.get("ANTHROPIC_BASE_URL"))
@@ -1810,6 +1872,37 @@ impl ProxyService {
         }
 
         self.write_claude_live(&config)?;
+        Ok(())
+    }
+
+    fn cleanup_claude_xcode_takeover_placeholders_in_live(&self) -> Result<(), String> {
+        let mut config = self.read_claude_xcode_live()?;
+
+        let Some(env) = config.get_mut("env").and_then(|v| v.as_object_mut()) else {
+            return Ok(());
+        };
+
+        for key in [
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_API_KEY",
+            "OPENROUTER_API_KEY",
+            "OPENAI_API_KEY",
+        ] {
+            if env.get(key).and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER) {
+                env.remove(key);
+            }
+        }
+
+        if env
+            .get("ANTHROPIC_BASE_URL")
+            .and_then(|v| v.as_str())
+            .map(Self::is_local_proxy_url)
+            .unwrap_or(false)
+        {
+            env.remove("ANTHROPIC_BASE_URL");
+        }
+
+        self.write_claude_xcode_live(&config)?;
         Ok(())
     }
 
@@ -1981,7 +2074,7 @@ impl ProxyService {
     /// 两种情况下都应该走 SSOT 兜底重建 Live。
     fn live_has_proxy_placeholder_for_app(app_type: &AppType, config: &Value) -> bool {
         match app_type {
-            AppType::Claude => Self::is_claude_live_taken_over(config),
+            AppType::Claude | AppType::ClaudeXcode => Self::is_claude_live_taken_over(config),
             AppType::Codex => Self::codex_live_has_proxy_placeholder(config),
             AppType::Gemini => Self::is_gemini_live_taken_over(config),
             _ => false,
@@ -2044,7 +2137,7 @@ impl ProxyService {
         }
 
         let backup_json = match app_type_enum {
-            AppType::Claude => serde_json::to_string(&effective_settings)
+            AppType::Claude | AppType::ClaudeXcode => serde_json::to_string(&effective_settings)
                 .map_err(|e| format!("序列化 Claude 配置失败: {e}"))?,
             AppType::Codex => serde_json::to_string(&effective_settings)
                 .map_err(|e| format!("序列化 Codex 配置失败: {e}"))?,
@@ -2125,8 +2218,8 @@ impl ProxyService {
             self.update_live_backup_from_provider_inner(app_type, &provider)
                 .await?;
 
-            if matches!(app_type_enum, AppType::Claude) {
-                self.sync_claude_live_from_provider_while_proxy_active(&provider)
+            if matches!(app_type_enum, AppType::Claude | AppType::ClaudeXcode) {
+                self.sync_claude_live_from_provider_while_proxy_active(&app_type_enum, &provider)
                     .await?;
             } else if live_taken_over && matches!(app_type_enum, AppType::Codex) {
                 self.sync_codex_live_from_provider_while_proxy_active(&provider)
@@ -2333,13 +2426,20 @@ impl ProxyService {
     }
 
     fn read_claude_live(&self) -> Result<Value, String> {
-        let path = get_claude_settings_path();
+        self.read_claude_live_at(&get_claude_settings_path())
+    }
+
+    fn read_claude_xcode_live(&self) -> Result<Value, String> {
+        self.read_claude_live_at(&crate::config::get_claude_xcode_settings_path())
+    }
+
+    fn read_claude_live_at(&self, path: &std::path::Path) -> Result<Value, String> {
         if !path.exists() {
             return Err("Claude 配置文件不存在".to_string());
         }
 
         let mut value: Value =
-            read_json_file(&path).map_err(|e| format!("读取 Claude 配置失败: {e}"))?;
+            read_json_file(path).map_err(|e| format!("读取 Claude 配置失败: {e}"))?;
 
         if value.is_null() {
             value = json!({});
@@ -2364,9 +2464,16 @@ impl ProxyService {
     }
 
     fn write_claude_live(&self, config: &Value) -> Result<(), String> {
-        let path = get_claude_settings_path();
+        self.write_claude_live_at(&get_claude_settings_path(), config)
+    }
+
+    fn write_claude_xcode_live(&self, config: &Value) -> Result<(), String> {
+        self.write_claude_live_at(&crate::config::get_claude_xcode_settings_path(), config)
+    }
+
+    fn write_claude_live_at(&self, path: &std::path::Path, config: &Value) -> Result<(), String> {
         let settings = crate::services::provider::sanitize_claude_settings_for_live(config);
-        write_json_file(&path, &settings).map_err(|e| format!("写入 Claude 配置失败: {e}"))
+        write_json_file(path, &settings).map_err(|e| format!("写入 Claude 配置失败: {e}"))
     }
 
     fn read_codex_live(&self) -> Result<Value, String> {

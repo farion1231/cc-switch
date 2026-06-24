@@ -256,6 +256,7 @@ pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppErr
                     server: unified_spec,
                     apps: McpApps {
                         claude: false,
+                        claude_xcode: false,
                         codex: false,
                         gemini: false,
                         opencode: true,

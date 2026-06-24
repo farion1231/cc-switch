@@ -142,7 +142,9 @@ pub(crate) fn build_provider_from_request(
     request: &DeepLinkImportRequest,
 ) -> Result<Provider, AppError> {
     let settings_config = match app_type {
-        AppType::Claude | AppType::ClaudeDesktop => build_claude_settings(request),
+        AppType::Claude | AppType::ClaudeXcode | AppType::ClaudeDesktop => {
+            build_claude_settings(request)
+        }
         AppType::Codex => build_codex_settings(request),
         AppType::Gemini => build_gemini_settings(request),
         AppType::OpenCode => build_opencode_settings(request),

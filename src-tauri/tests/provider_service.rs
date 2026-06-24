@@ -162,6 +162,7 @@ command = "say"
             }),
             apps: McpApps {
                 claude: false,
+                claude_xcode: false,
                 codex: true,
                 gemini: false,
                 opencode: false,

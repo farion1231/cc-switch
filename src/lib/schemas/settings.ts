@@ -21,6 +21,7 @@ export const settingsSchema = z.object({
 
   // 设备级目录覆盖
   claudeConfigDir: directorySchema.nullable().optional(),
+  claudeXcodeConfigDir: directorySchema.nullable().optional(),
   codexConfigDir: directorySchema.nullable().optional(),
   geminiConfigDir: directorySchema.nullable().optional(),
   opencodeConfigDir: directorySchema.nullable().optional(),
@@ -28,6 +29,7 @@ export const settingsSchema = z.object({
 
   // 当前供应商 ID（设备级）
   currentProviderClaude: z.string().optional(),
+  currentProviderClaudeXcode: z.string().optional(),
   currentProviderClaudeDesktop: z.string().optional(),
   currentProviderCodex: z.string().optional(),
   currentProviderGemini: z.string().optional(),

@@ -9,7 +9,10 @@ use toml_edit::{DocumentMut, Item, TableLike};
 
 use crate::app_config::AppType;
 use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
-use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
+use crate::config::{
+    delete_file, get_claude_settings_path, get_claude_xcode_settings_path, read_json_file,
+    write_json_file,
+};
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
@@ -313,7 +316,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
     }
 
     match app_type {
-        AppType::Claude => match serde_json::from_str::<Value>(trimmed) {
+        AppType::Claude | AppType::ClaudeXcode => match serde_json::from_str::<Value>(trimmed) {
             Ok(source) if source.is_object() => json_is_subset(settings, &source),
             _ => false,
         },
@@ -379,7 +382,7 @@ pub(crate) fn remove_common_config_from_settings(
     }
 
     match app_type {
-        AppType::Claude => {
+        AppType::Claude | AppType::ClaudeXcode => {
             let source = serde_json::from_str::<Value>(trimmed)
                 .map_err(|e| AppError::Message(format!("Invalid Claude common config: {e}")))?;
             let mut result = settings.clone();
@@ -434,7 +437,7 @@ fn apply_common_config_to_settings(
     }
 
     match app_type {
-        AppType::Claude => {
+        AppType::Claude | AppType::ClaudeXcode => {
             let source = serde_json::from_str::<Value>(trimmed)
                 .map_err(|e| AppError::Message(format!("Invalid Claude common config: {e}")))?;
             let mut result = settings.clone();
@@ -743,6 +746,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             let settings = sanitize_claude_settings_for_live(&provider.settings_config);
             write_json_file(&path, &settings)?;
         }
+        AppType::ClaudeXcode => {
+            let path = get_claude_xcode_settings_path();
+            let settings = sanitize_claude_settings_for_live(&provider.settings_config);
+            write_json_file(&path, &settings)?;
+        }
         AppType::ClaudeDesktop => {
             return Err(AppError::localized(
                 "claude_desktop.live.requires_db_context",
@@ -1043,6 +1051,17 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             }
             read_json_file(&path)
         }
+        AppType::ClaudeXcode => {
+            let path = get_claude_xcode_settings_path();
+            if !path.exists() {
+                return Err(AppError::localized(
+                    "claude_xcode.live.missing",
+                    "Claude (Xcode) 配置文件不存在",
+                    "Claude (Xcode) settings file is missing",
+                ));
+            }
+            read_json_file(&path)
+        }
         AppType::ClaudeDesktop => Err(AppError::localized(
             "claude_desktop.live.read_unsupported",
             "Claude Desktop 3P 配置不支持作为通用 live 配置导入，请使用“从 Claude 导入兼容供应商”。",
@@ -1171,6 +1190,19 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                     "claude.live.missing",
                     "Claude Code 配置文件不存在",
                     "Claude settings file is missing",
+                ));
+            }
+            let mut v = read_json_file::<Value>(&settings_path)?;
+            let _ = normalize_claude_models_in_value(&mut v);
+            v
+        }
+        AppType::ClaudeXcode => {
+            let settings_path = get_claude_xcode_settings_path();
+            if !settings_path.exists() {
+                return Err(AppError::localized(
+                    "claude_xcode.live.missing",
+                    "Claude (Xcode) 配置文件不存在",
+                    "Claude (Xcode) settings file is missing",
                 ));
             }
             let mut v = read_json_file::<Value>(&settings_path)?;

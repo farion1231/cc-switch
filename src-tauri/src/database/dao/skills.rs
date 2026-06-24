@@ -22,7 +22,7 @@ impl Database {
         let mut stmt = conn
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
-                        readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode,
+                        readme_url, enabled_claude, enabled_claude_xcode, enabled_codex, enabled_gemini, enabled_opencode,
                         enabled_hermes, installed_at, content_hash, updated_at
                  FROM skills ORDER BY name ASC",
             )
@@ -41,14 +41,15 @@ impl Database {
                     readme_url: row.get(7)?,
                     apps: SkillApps {
                         claude: row.get(8)?,
-                        codex: row.get(9)?,
-                        gemini: row.get(10)?,
-                        opencode: row.get(11)?,
-                        hermes: row.get(12)?,
+                        claude_xcode: row.get(9)?,
+                        codex: row.get(10)?,
+                        gemini: row.get(11)?,
+                        opencode: row.get(12)?,
+                        hermes: row.get(13)?,
                     },
-                    installed_at: row.get(13)?,
-                    content_hash: row.get(14)?,
-                    updated_at: row.get::<_, i64>(15).unwrap_or(0),
+                    installed_at: row.get(14)?,
+                    content_hash: row.get(15)?,
+                    updated_at: row.get::<_, i64>(16).unwrap_or(0),
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -67,7 +68,7 @@ impl Database {
         let mut stmt = conn
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
-                        readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode,
+                        readme_url, enabled_claude, enabled_claude_xcode, enabled_codex, enabled_gemini, enabled_opencode,
                         enabled_hermes, installed_at, content_hash, updated_at
                  FROM skills WHERE id = ?1",
             )
@@ -85,14 +86,15 @@ impl Database {
                 readme_url: row.get(7)?,
                 apps: SkillApps {
                     claude: row.get(8)?,
-                    codex: row.get(9)?,
-                    gemini: row.get(10)?,
-                    opencode: row.get(11)?,
-                    hermes: row.get(12)?,
+                    claude_xcode: row.get(9)?,
+                    codex: row.get(10)?,
+                    gemini: row.get(11)?,
+                    opencode: row.get(12)?,
+                    hermes: row.get(13)?,
                 },
-                installed_at: row.get(13)?,
-                content_hash: row.get(14)?,
-                updated_at: row.get::<_, i64>(15).unwrap_or(0),
+                installed_at: row.get(14)?,
+                content_hash: row.get(15)?,
+                updated_at: row.get::<_, i64>(16).unwrap_or(0),
             })
         });
 
@@ -109,9 +111,9 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO skills
              (id, name, description, directory, repo_owner, repo_name, repo_branch,
-              readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_hermes,
+              readme_url, enabled_claude, enabled_claude_xcode, enabled_codex, enabled_gemini, enabled_opencode, enabled_hermes,
               installed_at, content_hash, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 skill.id,
                 skill.name,
@@ -122,6 +124,7 @@ impl Database {
                 skill.repo_branch,
                 skill.readme_url,
                 skill.apps.claude,
+                skill.apps.claude_xcode,
                 skill.apps.codex,
                 skill.apps.gemini,
                 skill.apps.opencode,
@@ -157,8 +160,8 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let affected = conn
             .execute(
-                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_opencode = ?4, enabled_hermes = ?5 WHERE id = ?6",
-                params![apps.claude, apps.codex, apps.gemini, apps.opencode, apps.hermes, id],
+                "UPDATE skills SET enabled_claude = ?1, enabled_claude_xcode = ?2, enabled_codex = ?3, enabled_gemini = ?4, enabled_opencode = ?5, enabled_hermes = ?6 WHERE id = ?7",
+                params![apps.claude, apps.claude_xcode, apps.codex, apps.gemini, apps.opencode, apps.hermes, id],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(affected > 0)

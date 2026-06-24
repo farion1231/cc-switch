@@ -189,6 +189,7 @@ function App() {
   const contentTopOffset = dragBarHeight + HEADER_HEIGHT;
   const visibleApps: VisibleApps = settingsData?.visibleApps ?? {
     claude: true,
+    "claude-xcode": true,
     "claude-desktop": true,
     codex: true,
     gemini: true,

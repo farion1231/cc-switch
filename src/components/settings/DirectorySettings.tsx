@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
+import { isMac } from "@/lib/platform";
 import type { ResolvedDirectories } from "@/hooks/useSettings";
 
 type DirectoryAppId = Exclude<AppId, "claude-desktop">;
@@ -15,6 +16,7 @@ interface DirectorySettingsProps {
   onBrowseAppConfig: () => Promise<void>;
   onResetAppConfig: () => Promise<void>;
   claudeDir?: string;
+  claudeXcodeDir?: string;
   codexDir?: string;
   geminiDir?: string;
   opencodeDir?: string;
@@ -32,6 +34,7 @@ export function DirectorySettings({
   onBrowseAppConfig,
   onResetAppConfig,
   claudeDir,
+  claudeXcodeDir,
   codexDir,
   geminiDir,
   opencodeDir,
@@ -103,6 +106,19 @@ export function DirectorySettings({
           onBrowse={() => onBrowseDirectory("claude")}
           onReset={() => onResetDirectory("claude")}
         />
+
+        {isMac() && (
+          <DirectoryInput
+            label={t("settings.claudeXcodeConfigDir")}
+            description={undefined}
+            value={claudeXcodeDir}
+            resolvedValue={resolvedDirs["claude-xcode"]}
+            placeholder={t("settings.browsePlaceholderClaudeXcode")}
+            onChange={(val) => onDirectoryChange("claude-xcode", val)}
+            onBrowse={() => onBrowseDirectory("claude-xcode")}
+            onReset={() => onResetDirectory("claude-xcode")}
+          />
+        )}
 
         <DirectoryInput
           label={t("settings.codexConfigDir")}

@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { Provider, UsageScript, UsageData, createUsageScript } from "@/types";
-import { usageApi, settingsApi, type AppId } from "@/lib/api";
+import { usageApi, settingsApi, isClaudeApp, type AppId } from "@/lib/api";
 import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
 import { useSettingsQuery } from "@/lib/query";
 import { resolveManagedAccountId } from "@/lib/authBinding";
@@ -148,11 +148,12 @@ function detectBalanceProvider(baseUrl: string | undefined): boolean {
 }
 
 function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
-  if (!["claude", "codex", "gemini"].includes(appId)) return false;
+  if (!["claude", "claude-xcode", "codex", "gemini"].includes(appId))
+    return false;
   if (provider.category === "official") return true;
 
   const config = provider.settingsConfig as Record<string, any>;
-  if (appId === "claude") {
+  if (isClaudeApp(appId)) {
     const baseUrl = config?.env?.ANTHROPIC_BASE_URL;
     return !baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === "");
   }
@@ -218,7 +219,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         if (!config) return { apiKey: undefined, baseUrl: undefined };
 
         // 处理不同应用的配置格式
-        if (appId === "claude" || appId === "claude-desktop") {
+        if (isClaudeApp(appId) || appId === "claude-desktop") {
           // Claude / Claude Desktop: { env: { ANTHROPIC_AUTH_TOKEN | ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL } }
           // Key fallbacks mirror the backend resolver (Provider::resolve_usage_credentials).
           const env = (config as any).env || {};

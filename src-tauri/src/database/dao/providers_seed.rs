@@ -39,6 +39,16 @@ pub(crate) const OFFICIAL_SEEDS: &[OfficialProviderSeed] = &[
         settings_config_json: r#"{"env":{}}"#,
     },
     OfficialProviderSeed {
+        id: "claude-xcode-official",
+        app_type: AppType::ClaudeXcode,
+        name: "Claude Official",
+        website_url: "https://www.anthropic.com/claude-code",
+        icon: "anthropic",
+        icon_color: "#D4915D",
+        // 与 Claude 一致：空 env 走 Claude CLI 默认认证流程
+        settings_config_json: r#"{"env":{}}"#,
+    },
+    OfficialProviderSeed {
         id: CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID,
         app_type: AppType::ClaudeDesktop,
         name: "Claude Desktop Official",

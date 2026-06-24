@@ -185,7 +185,7 @@ impl Provider {
             // Claude and Claude Desktop both use the Anthropic-style env map, keeping
             // the OpenRouter/Google key fallbacks the JS-script path relies on.
             // Listed explicitly (not `_`) so a new AppType fails to compile here.
-            AppType::Claude | AppType::ClaudeDesktop => {
+            AppType::Claude | AppType::ClaudeXcode | AppType::ClaudeDesktop => {
                 let env = settings.get("env");
                 let base_url = str_at(env.and_then(|e| e.get("ANTHROPIC_BASE_URL")));
                 let api_key = first_non_empty(

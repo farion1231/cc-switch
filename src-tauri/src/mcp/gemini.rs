@@ -85,6 +85,7 @@ pub fn import_from_gemini(config: &mut MultiAppConfig) -> Result<usize, AppError
                     server: spec.clone(),
                     apps: McpApps {
                         claude: false,
+                        claude_xcode: false,
                         codex: false,
                         gemini: true,
                         opencode: false,
