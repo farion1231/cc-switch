@@ -1139,6 +1139,14 @@ pub fn run() {
                 }
             }
 
+            // Startup grace 期结束：setup 闭包末尾释放。任何由 `tauri::async_runtime::spawn`
+            // 派发的后台维护任务（periodic_backup_if_needed、recover_from_crash 等）若
+            // 在 setup 返回后且写入 `settings` / `providers` 等触发表，会触发一次额外同步；
+            // 这是 acceptable 的 trade-off（极不频繁），换来 setup 期间不会"每天首次启动就
+            // 自动覆盖别人上传的同步"。见 #4547。
+            crate::services::webdav_auto_sync::release_startup_auto_sync();
+            crate::services::s3_auto_sync::release_startup_auto_sync();
+
 
             Ok(())
         })
