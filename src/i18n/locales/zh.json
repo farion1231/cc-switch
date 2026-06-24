@@ -1232,6 +1232,27 @@
     "pricingModelSourceResponse": "返回模型",
     "pricingModelSourceHint": "选择按请求模型还是返回模型进行定价匹配"
   },
+  "xaiOauth": {
+    "authStatus": "认证状态",
+    "accountCount": "{{count}} 个账号",
+    "accountCount_plural": "{{count}} 个账号",
+    "notAuthenticated": "未认证",
+    "entitlementNotice": "OAuth 登录成功不代表 xAI 一定允许 API 访问；若订阅不支持 OAuth API 访问，后续请求可能返回 HTTP 403。此时请改用 xAI API Key 供应商。",
+    "selectAccount": "选择账号",
+    "selectAccountPlaceholder": "选择一个 xAI 账号",
+    "useDefaultAccount": "使用默认账号",
+    "loggedInAccounts": "已登录账号",
+    "defaultAccount": "默认",
+    "selected": "已选择",
+    "setAsDefault": "设为默认",
+    "removeAccount": "移除账号",
+    "addAnotherAccount": "添加另一个 xAI 账号",
+    "loginWithXai": "使用 xAI 登录",
+    "openBrowser": "请在浏览器中完成登录。",
+    "copyCode": "复制代码",
+    "retry": "重试",
+    "loginRequired": "使用此供应商前请先登录 xAI。"
+  },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
     "authJsonPlaceholder": "{\n  \"OPENAI_API_KEY\": \"sk-your-api-key-here\"\n}",

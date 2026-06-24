@@ -397,7 +397,7 @@ pub fn transform_claude_request_for_api_format(
             super::transform_responses::anthropic_to_responses(
                 body,
                 cache_key,
-                is_codex_oauth || is_xai_oauth,
+                is_codex_oauth,
                 codex_fast_mode,
             )
         }
@@ -1409,6 +1409,41 @@ mod tests {
         let adapter = ClaudeAdapter::new();
         let url = adapter.build_url("https://api.x.ai/v1", "/v1/messages");
         assert_eq!(url, "https://api.x.ai/v1/responses");
+    }
+
+    #[test]
+    fn test_xai_oauth_responses_transform_keeps_output_controls() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.x.ai/v1"
+                }
+            }),
+            ProviderMeta {
+                provider_type: Some("xai_oauth".to_string()),
+                api_format: Some("openai_responses".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let transformed = adapter
+            .transform_request(
+                json!({
+                    "model": "grok-build-0.1",
+                    "max_tokens": 1024,
+                    "temperature": 0.2,
+                    "top_p": 0.9,
+                    "messages": [{"role": "user", "content": "hello"}]
+                }),
+                &provider,
+            )
+            .unwrap();
+
+        assert_eq!(transformed["max_output_tokens"], json!(1024));
+        assert_eq!(transformed["temperature"], json!(0.2));
+        assert_eq!(transformed["top_p"], json!(0.9));
+        assert!(transformed.get("store").is_none());
     }
 
     #[test]

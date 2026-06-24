@@ -230,6 +230,9 @@ impl XaiOAuthManager {
     }
 
     pub async fn start_device_flow(&self) -> Result<GitHubDeviceCodeResponse, XaiOAuthError> {
+        #[cfg(not(test))]
+        let loopback_listener = TcpListener::bind("127.0.0.1:56121").await?;
+
         let state = generate_pkce_value("state");
         let nonce = generate_pkce_value("nonce");
         let code_verifier = generate_pkce_value("verifier");
@@ -255,7 +258,7 @@ impl XaiOAuthManager {
         }
 
         #[cfg(not(test))]
-        self.start_loopback_callback_listener();
+        self.start_loopback_callback_listener(loopback_listener);
 
         Ok(GitHubDeviceCodeResponse {
             device_code: state,
@@ -310,18 +313,20 @@ impl XaiOAuthManager {
     }
 
     #[cfg(not(test))]
-    fn start_loopback_callback_listener(&self) {
+    fn start_loopback_callback_listener(&self, listener: TcpListener) {
         let manager = self.clone();
         tokio::spawn(async move {
-            if let Err(err) = manager.run_loopback_callback_listener().await {
+            if let Err(err) = manager.run_loopback_callback_listener(listener).await {
                 log::warn!("[XaiOAuth] loopback callback listener stopped: {err}");
             }
         });
     }
 
     #[cfg(not(test))]
-    async fn run_loopback_callback_listener(&self) -> Result<(), XaiOAuthError> {
-        let listener = TcpListener::bind("127.0.0.1:56121").await?;
+    async fn run_loopback_callback_listener(
+        &self,
+        listener: TcpListener,
+    ) -> Result<(), XaiOAuthError> {
         let deadline = Duration::from_secs(DEFAULT_LOGIN_EXPIRES_IN);
 
         while let Ok(Ok((mut stream, _))) = tokio::time::timeout(deadline, listener.accept()).await
@@ -845,12 +850,11 @@ fn compute_expires_at_ms(expires_in: Option<i64>) -> i64 {
 }
 
 fn generate_pkce_value(prefix: &str) -> String {
-    let seed = format!(
-        "{prefix}-{}-{}",
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default(),
-        std::process::id()
-    );
-    URL_SAFE_NO_PAD.encode(Sha256::digest(seed.as_bytes()))
+    let mut bytes = Vec::with_capacity(prefix.len() + 64);
+    bytes.extend_from_slice(prefix.as_bytes());
+    bytes.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
+    bytes.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
+    URL_SAFE_NO_PAD.encode(bytes)
 }
 
 fn pkce_challenge(verifier: &str) -> String {
@@ -971,6 +975,19 @@ mod tests {
         assert!(!challenge.contains('+'));
         assert!(!challenge.contains('/'));
         assert!(!challenge.contains('='));
+    }
+
+    #[test]
+    fn xai_oauth_pkce_values_are_random_and_url_safe() {
+        let first = generate_pkce_value("state");
+        let second = generate_pkce_value("state");
+        assert_ne!(first, second);
+        for value in [first, second] {
+            assert!(value.len() >= 43);
+            assert!(!value.contains('+'));
+            assert!(!value.contains('/'));
+            assert!(!value.contains('='));
+        }
     }
 
     #[test]
