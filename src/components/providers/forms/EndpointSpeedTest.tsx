@@ -15,6 +15,7 @@ const ENDPOINT_TIMEOUT_SECS: Record<AppId, number> = {
   "claude-desktop": 8,
   gemini: 8,
   opencode: 8,
+  kimi: 8,
   openclaw: 8,
   hermes: 8,
 };

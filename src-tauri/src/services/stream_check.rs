@@ -200,6 +200,7 @@ impl StreamCheckService {
                 let npm = Self::extract_opencode_npm(provider);
                 Self::resolve_opencode_base_url(provider, npm.as_deref())
             }
+            AppType::Kimi => Self::extract_kimi_base_url(provider),
             AppType::OpenClaw => Self::extract_openclaw_base_url(provider),
             AppType::Hermes => Self::extract_hermes_base_url(provider),
             AppType::ClaudeDesktop => ClaudeAdapter::new()
@@ -342,6 +343,27 @@ impl StreamCheckService {
                     "Hermes provider is missing `base_url`",
                 )
             })
+    }
+
+    /// Kimi: `{ config: "<config.toml>" }`.
+    fn extract_kimi_base_url(provider: &Provider) -> Result<String, AppError> {
+        let config = provider
+            .settings_config
+            .get("config")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let (base_url, _) =
+            crate::kimi_config::extract_credentials_from_config(config, Some(&provider.id));
+
+        if base_url.trim().is_empty() {
+            return Err(AppError::localized(
+                "kimi_base_url_missing",
+                "Kimi 供应商缺少 base_url",
+                "Kimi provider is missing `base_url`",
+            ));
+        }
+
+        Ok(base_url.trim().to_string())
     }
 
     /// OpenCode: `{ npm, options: { baseURL, apiKey }, ... }`

@@ -9,12 +9,14 @@
 //! - `codex` - Codex MCP 同步和导入（含 TOML 转换）
 //! - `gemini` - Gemini MCP 同步和导入
 //! - `opencode` - OpenCode MCP 同步和导入（含 local/remote 格式转换）
+//! - `kimi` - Kimi Code MCP 同步和导入
 //! - `hermes` - Hermes MCP 同步和导入
 
 mod claude;
 mod codex;
 mod gemini;
 mod hermes;
+mod kimi;
 mod opencode;
 mod validation;
 
@@ -31,6 +33,7 @@ pub use gemini::{
     sync_single_server_to_gemini,
 };
 pub use hermes::{import_from_hermes, remove_server_from_hermes, sync_single_server_to_hermes};
+pub use kimi::{import_from_kimi, remove_server_from_kimi, sync_single_server_to_kimi};
 pub use opencode::{
     import_from_opencode, remove_server_from_opencode, sync_single_server_to_opencode,
 };

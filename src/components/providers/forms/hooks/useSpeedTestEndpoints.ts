@@ -2,12 +2,24 @@ import { useMemo } from "react";
 import type { AppId } from "@/lib/api";
 import type { ProviderPreset } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
+import type { GeminiProviderPreset } from "@/config/geminiProviderPresets";
+import type { OpenCodeProviderPreset } from "@/config/opencodeProviderPresets";
+import type { OpenClawProviderPreset } from "@/config/openclawProviderPresets";
+import type { HermesProviderPreset } from "@/config/hermesProviderPresets";
+import type { KimiProviderPreset } from "@/config/kimiProviderPresets";
 import type { ProviderMeta, EndpointCandidate } from "@/types";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 
 type PresetEntry = {
   id: string;
-  preset: ProviderPreset | CodexProviderPreset;
+  preset:
+    | ProviderPreset
+    | CodexProviderPreset
+    | GeminiProviderPreset
+    | OpenCodeProviderPreset
+    | OpenClawProviderPreset
+    | HermesProviderPreset
+    | KimiProviderPreset;
 };
 
 interface UseSpeedTestEndpointsProps {

@@ -72,8 +72,16 @@ export const handlers = [
     success(getLiveProviderIds("opencode")),
   ),
 
+  http.post(`${TAURI_ENDPOINT}/get_kimi_live_provider_ids`, () =>
+    success(getLiveProviderIds("kimi")),
+  ),
+
   http.post(`${TAURI_ENDPOINT}/get_openclaw_live_provider_ids`, () =>
     success(getLiveProviderIds("openclaw")),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/get_hermes_live_provider_ids`, () =>
+    success(getLiveProviderIds("hermes")),
   ),
 
   http.post(`${TAURI_ENDPOINT}/get_openclaw_default_model`, () =>

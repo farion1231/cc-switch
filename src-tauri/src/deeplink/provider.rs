@@ -146,6 +146,7 @@ pub(crate) fn build_provider_from_request(
         AppType::Codex => build_codex_settings(request),
         AppType::Gemini => build_gemini_settings(request),
         AppType::OpenCode => build_opencode_settings(request),
+        AppType::Kimi => build_kimi_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
     };
@@ -439,6 +440,33 @@ fn build_opencode_settings(request: &DeepLinkImportRequest) -> serde_json::Value
     })
 }
 
+/// Build Kimi settings configuration.
+///
+/// Kimi providers are stored as TOML fragments. `kimi_config::set_provider`
+/// nests this root table under `[providers.<id>]` and creates a matching
+/// `[models.<id>]` alias when writing live.
+fn build_kimi_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    let endpoint = get_primary_endpoint(request)
+        .trim()
+        .trim_end_matches('/')
+        .to_string();
+
+    let provider_type = toml_edit::Value::from("kimi").to_string();
+    let endpoint = toml_edit::Value::from(endpoint.as_str()).to_string();
+    let api_key = toml_edit::Value::from(request.api_key.as_deref().unwrap_or("")).to_string();
+
+    let mut config_toml =
+        format!("type = {provider_type}\napi_key = {api_key}\nbase_url = {endpoint}\n");
+
+    if let Some(model) = request.model.as_deref().filter(|s| !s.trim().is_empty()) {
+        let model = toml_edit::Value::from(model.trim()).to_string();
+        config_toml.push_str(&format!("model = {model}\n"));
+        config_toml.push_str("max_context_size = 262144\n");
+    }
+
+    json!({ "config": config_toml })
+}
+
 /// Build settings for OpenClaw (camelCase live config).
 /// Format: { baseUrl, apiKey, api, models }
 fn build_additive_app_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
@@ -568,6 +596,9 @@ pub fn parse_and_merge_config(
         "claude" => merge_claude_config(&mut merged, &config_value)?,
         "codex" => merge_codex_config(&mut merged, &config_value)?,
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,
+        "kimi" | "kimi-code" | "kimi_code" | "kimicode" => {
+            merge_kimi_config(&mut merged, &config_value)?
+        }
         // Additive mode apps use JSON config directly; pass through as-is
         "openclaw" | "opencode" | "hermes" => {
             merge_additive_config(&mut merged, &config_value)?;
@@ -736,6 +767,39 @@ fn merge_gemini_config(
             if request.homepage.is_none() {
                 request.homepage = Some("https://ai.google.dev".to_string());
             }
+        }
+    }
+
+    Ok(())
+}
+
+fn merge_kimi_config(
+    request: &mut DeepLinkImportRequest,
+    config: &serde_json::Value,
+) -> Result<(), AppError> {
+    let config_text = if let Some(text) = config.get("config").and_then(|v| v.as_str()) {
+        text.to_string()
+    } else {
+        toml::to_string(config)
+            .map_err(|e| AppError::InvalidInput(format!("Invalid Kimi config: {e}")))?
+    };
+
+    if request.api_key.as_ref().is_none_or(|s| s.is_empty())
+        || request.endpoint.as_ref().is_none_or(|s| s.is_empty())
+    {
+        let (base_url, api_key) =
+            crate::kimi_config::extract_credentials_from_config(&config_text, None);
+        if request.api_key.as_ref().is_none_or(|s| s.is_empty()) && !api_key.is_empty() {
+            request.api_key = Some(api_key);
+        }
+        if request.endpoint.as_ref().is_none_or(|s| s.is_empty()) && !base_url.is_empty() {
+            request.endpoint = Some(base_url);
+        }
+    }
+
+    if request.homepage.as_ref().is_none_or(|s| s.is_empty()) {
+        if let Some(endpoint) = request.endpoint.as_ref().filter(|s| !s.is_empty()) {
+            request.homepage = infer_homepage_from_endpoint(endpoint);
         }
     }
 

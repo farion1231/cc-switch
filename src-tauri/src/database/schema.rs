@@ -66,6 +66,7 @@ impl Database {
             description TEXT, homepage TEXT, docs TEXT, tags TEXT NOT NULL DEFAULT '[]',
             enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
@@ -94,6 +95,7 @@ impl Database {
             enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
@@ -360,6 +362,42 @@ impl Database {
             [],
         );
 
+        Self::ensure_app_enable_columns(conn)?;
+
+        Ok(())
+    }
+
+    fn ensure_app_enable_columns(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "mcp_servers")? {
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_kimi",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_hermes",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "enabled_kimi",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "enabled_hermes",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+
         Ok(())
     }
 
@@ -443,6 +481,11 @@ impl Database {
                         log::info!("迁移数据库从 v10 到 v11（usage_daily_rollups 保留 request_model 维度）");
                         Self::migrate_v10_to_v11(conn)?;
                         Self::set_user_version(conn, 11)?;
+                    }
+                    11 => {
+                        log::info!("迁移数据库从 v11 到 v12（补齐 Kimi Code 应用启用列）");
+                        Self::migrate_v11_to_v12(conn)?;
+                        Self::set_user_version(conn, 12)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1198,6 +1241,12 @@ impl Database {
             "enabled_hermes",
             "BOOLEAN NOT NULL DEFAULT 0",
         )?;
+        Self::add_column_if_missing(
+            conn,
+            "mcp_servers",
+            "enabled_kimi",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
 
         // skills table may not exist in databases migrated from very old versions
         if Self::table_exists(conn, "skills")? {
@@ -1205,6 +1254,12 @@ impl Database {
                 conn,
                 "skills",
                 "enabled_hermes",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "enabled_kimi",
                 "BOOLEAN NOT NULL DEFAULT 0",
             )?;
         }
@@ -1267,6 +1322,33 @@ impl Database {
         log::info!(
             "v10 -> v11 迁移完成：usage_daily_rollups 已保留 request_model/pricing_model 维度"
         );
+        Ok(())
+    }
+
+    /// v11 -> v12：补齐 Kimi Code 应用启用列。
+    ///
+    /// Kimi Code 支持曾在未提升 schema version 的情况下加入到当前表结构和 DAO 查询中。
+    /// 已处于 v11 的用户数据库不会重跑旧迁移，因此需要显式修复既有库。
+    fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "mcp_servers")? {
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_kimi",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "enabled_kimi",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+
+        log::info!("v11 -> v12 迁移完成：已补齐 Kimi Code 启用列");
         Ok(())
     }
 

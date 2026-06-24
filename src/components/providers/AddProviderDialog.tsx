@@ -42,7 +42,7 @@ export function AddProviderDialog({
   onSubmit,
 }: AddProviderDialogProps) {
   const { t } = useTranslation();
-  // OpenCode and OpenClaw don't support universal providers
+  // Some app-specific provider flows don't support the universal provider tab.
   const showUniversalTab =
     appId !== "opencode" &&
     appId !== "openclaw" &&
@@ -121,9 +121,12 @@ export function AddProviderDialog({
           preset?.category === "official";
       }
 
-      // OpenCode/OpenClaw: pass providerKey for ID generation
+      // Additive config providers use the provider key as the stored ID.
       if (
-        (appId === "opencode" || appId === "openclaw" || appId === "hermes") &&
+        (appId === "opencode" ||
+          appId === "openclaw" ||
+          appId === "kimi" ||
+          appId === "hermes") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;
@@ -357,7 +360,7 @@ export function AddProviderDialog({
           </TabsContent>
         </Tabs>
       ) : (
-        // OpenCode/OpenClaw: directly show form without tabs
+        // Apps without universal tab: directly show form without tabs.
         <ProviderForm
           appId={appId}
           submitLabel={t("common.add")}

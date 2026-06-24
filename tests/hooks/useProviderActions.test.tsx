@@ -198,6 +198,25 @@ describe("useProviderActions", () => {
     );
   });
 
+  it("shows add-to-config toast when adding Kimi provider to live config", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({ category: "custom" });
+
+    const { result } = renderHook(() => useProviderActions("kimi"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
+    expect(toastSuccessMock).toHaveBeenCalledWith("已添加到配置", {
+      closeButton: true,
+    });
+  });
+
   it("warns but still switches providers that require proxy when proxy is not running", async () => {
     switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     const { wrapper } = createWrapper();

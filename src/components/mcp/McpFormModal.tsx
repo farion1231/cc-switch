@@ -66,6 +66,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     codex: boolean;
     gemini: boolean;
     opencode: boolean;
+    kimi: boolean;
     openclaw: boolean;
     hermes: boolean;
   }>(() => {
@@ -77,6 +78,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       codex: defaultEnabledApps.includes("codex"),
       gemini: defaultEnabledApps.includes("gemini"),
       opencode: defaultEnabledApps.includes("opencode"),
+      kimi: defaultEnabledApps.includes("kimi"),
       openclaw: defaultEnabledApps.includes("openclaw"),
       hermes: defaultEnabledApps.includes("hermes"),
     };
@@ -579,6 +581,22 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     className="text-sm text-foreground cursor-pointer select-none"
                   >
                     {t("mcp.unifiedPanel.apps.opencode")}
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="enable-kimi"
+                    checked={enabledApps.kimi}
+                    onCheckedChange={(checked: boolean) =>
+                      setEnabledApps({ ...enabledApps, kimi: checked })
+                    }
+                  />
+                  <label
+                    htmlFor="enable-kimi"
+                    className="text-sm text-foreground cursor-pointer select-none"
+                  >
+                    {t("mcp.unifiedPanel.apps.kimi")}
                   </label>
                 </div>
 

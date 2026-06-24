@@ -41,7 +41,12 @@ export const useAddProviderMutation = (appId: AppId) => {
 
       let id: string;
 
-      if (appId === "opencode" || appId === "openclaw" || appId === "hermes") {
+      if (
+        appId === "opencode" ||
+        appId === "kimi" ||
+        appId === "openclaw" ||
+        appId === "hermes"
+      ) {
         if (
           providerInput.category === "omo" ||
           providerInput.category === "omo-slim"
@@ -73,6 +78,9 @@ export const useAddProviderMutation = (appId: AppId) => {
 
       if (appId === "opencode") {
         await queryClient.invalidateQueries({
+          queryKey: ["opencodeLiveProviderIds"],
+        });
+        await queryClient.invalidateQueries({
           queryKey: ["omo", "current-provider-id"],
         });
         await queryClient.invalidateQueries({
@@ -83,6 +91,12 @@ export const useAddProviderMutation = (appId: AppId) => {
         });
         await queryClient.invalidateQueries({
           queryKey: ["omo-slim", "provider-count"],
+        });
+      }
+
+      if (appId === "kimi") {
+        await queryClient.invalidateQueries({
+          queryKey: ["kimiLiveProviderIds"],
         });
       }
 
@@ -143,6 +157,11 @@ export const useUpdateProviderMutation = (appId: AppId) => {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      if (appId === "kimi") {
+        await queryClient.invalidateQueries({
+          queryKey: ["kimiLiveProviderIds"],
+        });
+      }
       if (appId === "openclaw") {
         await queryClient.invalidateQueries({
           queryKey: openclawKeys.health,
@@ -185,6 +204,9 @@ export const useDeleteProviderMutation = (appId: AppId) => {
 
       if (appId === "opencode") {
         await queryClient.invalidateQueries({
+          queryKey: ["opencodeLiveProviderIds"],
+        });
+        await queryClient.invalidateQueries({
           queryKey: ["omo", "current-provider-id"],
         });
         await queryClient.invalidateQueries({
@@ -195,6 +217,12 @@ export const useDeleteProviderMutation = (appId: AppId) => {
         });
         await queryClient.invalidateQueries({
           queryKey: ["omo-slim", "provider-count"],
+        });
+      }
+
+      if (appId === "kimi") {
+        await queryClient.invalidateQueries({
+          queryKey: ["kimiLiveProviderIds"],
         });
       }
 
@@ -276,6 +304,11 @@ export const useSwitchProviderMutation = (appId: AppId) => {
         });
         await queryClient.invalidateQueries({
           queryKey: openclawKeys.health,
+        });
+      }
+      if (appId === "kimi") {
+        await queryClient.invalidateQueries({
+          queryKey: ["kimiLiveProviderIds"],
         });
       }
       if (appId === "hermes") {

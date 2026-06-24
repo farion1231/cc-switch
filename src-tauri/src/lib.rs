@@ -15,6 +15,7 @@ mod gemini_config;
 mod gemini_mcp;
 pub mod hermes_config;
 mod init_status;
+mod kimi_config;
 mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
@@ -45,10 +46,11 @@ pub use database::Database;
 pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkImportRequest};
 pub use error::AppError;
 pub use mcp::{
-    import_from_claude, import_from_codex, import_from_gemini, remove_server_from_claude,
-    remove_server_from_codex, remove_server_from_gemini, sync_enabled_to_claude,
-    sync_enabled_to_codex, sync_enabled_to_gemini, sync_single_server_to_claude,
-    sync_single_server_to_codex, sync_single_server_to_gemini,
+    import_from_claude, import_from_codex, import_from_gemini, import_from_kimi,
+    remove_server_from_claude, remove_server_from_codex, remove_server_from_gemini,
+    remove_server_from_kimi, sync_enabled_to_claude, sync_enabled_to_codex, sync_enabled_to_gemini,
+    sync_single_server_to_claude, sync_single_server_to_codex, sync_single_server_to_gemini,
+    sync_single_server_to_kimi,
 };
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
@@ -644,6 +646,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No new OpenCode providers to import"),
                 Err(e) => log::warn!("✗ Failed to import OpenCode providers: {e}"),
             }
+            match crate::services::provider::import_kimi_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Imported {count} Kimi provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No new Kimi providers to import"),
+                Err(e) => log::warn!("✗ Failed to import Kimi providers: {e}"),
+            }
             match crate::services::provider::import_openclaw_providers_from_live(&app_state) {
                 Ok(count) if count > 0 => {
                     log::info!("✓ Imported {count} OpenClaw provider(s) from live config");
@@ -746,6 +755,14 @@ pub fn run() {
                     Err(e) => log::warn!("✗ Failed to import OpenCode MCP: {e}"),
                 }
 
+                match crate::services::mcp::McpService::import_from_kimi(&app_state) {
+                    Ok(count) if count > 0 => {
+                        log::info!("✓ Imported {count} MCP server(s) from Kimi");
+                    }
+                    Ok(_) => log::debug!("○ No Kimi MCP servers found to import"),
+                    Err(e) => log::warn!("✗ Failed to import Kimi MCP: {e}"),
+                }
+
                 match crate::services::mcp::McpService::import_from_hermes(&app_state) {
                     Ok(count) if count > 0 => {
                         log::info!("✓ Imported {count} MCP server(s) from Hermes");
@@ -764,6 +781,7 @@ pub fn run() {
                     crate::app_config::AppType::Codex,
                     crate::app_config::AppType::Gemini,
                     crate::app_config::AppType::OpenCode,
+                    crate::app_config::AppType::Kimi,
                     crate::app_config::AppType::OpenClaw,
                     crate::app_config::AppType::Hermes,
                 ] {
@@ -1377,6 +1395,9 @@ pub fn run() {
             // OpenCode specific
             commands::import_opencode_providers_from_live,
             commands::get_opencode_live_provider_ids,
+            // Kimi specific
+            commands::import_kimi_providers_from_live,
+            commands::get_kimi_live_provider_ids,
             // OpenClaw specific
             commands::import_openclaw_providers_from_live,
             commands::get_openclaw_live_provider_ids,

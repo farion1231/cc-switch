@@ -427,6 +427,136 @@ fn migration_v10_to_v11_rebuilds_rollups_with_request_model_dimension() {
 }
 
 #[test]
+fn migration_v11_to_v12_adds_missing_kimi_enabled_columns() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE mcp_servers (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            server_config TEXT NOT NULL,
+            description TEXT,
+            homepage TEXT,
+            docs TEXT,
+            tags TEXT NOT NULL DEFAULT '[]',
+            enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+            enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+            enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+            enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_hermes BOOLEAN NOT NULL DEFAULT 0
+        );
+        CREATE TABLE skills (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            directory TEXT NOT NULL,
+            enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+            enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+            enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+            enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            installed_at INTEGER NOT NULL DEFAULT 0,
+            updated_at INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO mcp_servers (id, name, server_config)
+        VALUES ('echo', 'Echo', '{"command":"echo"}');
+        "#,
+    )
+    .expect("seed v11 schema missing kimi columns");
+
+    Database::set_user_version(&conn, 11).expect("set user_version=11");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    for (table, column) in [("mcp_servers", "enabled_kimi"), ("skills", "enabled_kimi")] {
+        assert!(
+            Database::has_column(&conn, table, column).expect("check column"),
+            "{table}.{column} should exist after migration"
+        );
+        let info = get_column_info(&conn, table, column);
+        assert_eq!(info.r#type, "BOOLEAN");
+        assert_eq!(info.notnull, 1);
+        assert_eq!(normalize_default(&info.default).as_deref(), Some("0"));
+    }
+
+    let enabled_kimi: bool = conn
+        .query_row(
+            "SELECT enabled_kimi FROM mcp_servers WHERE id = 'echo'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read default enabled_kimi");
+    assert!(!enabled_kimi);
+
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after migration"),
+        SCHEMA_VERSION
+    );
+}
+
+#[test]
+fn schema_create_tables_repairs_missing_app_enable_columns_on_current_version() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE mcp_servers (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            server_config TEXT NOT NULL,
+            description TEXT,
+            homepage TEXT,
+            docs TEXT,
+            tags TEXT NOT NULL DEFAULT '[]',
+            enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+            enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+            enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+            enabled_opencode BOOLEAN NOT NULL DEFAULT 0
+        );
+        CREATE TABLE skills (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            directory TEXT NOT NULL,
+            enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+            enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+            enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+            enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            installed_at INTEGER NOT NULL DEFAULT 0,
+            updated_at INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO mcp_servers (id, name, server_config)
+        VALUES ('echo', 'Echo', '{"command":"echo"}');
+        "#,
+    )
+    .expect("seed current-version schema missing app enable columns");
+    Database::set_user_version(&conn, SCHEMA_VERSION).expect("set current user_version");
+
+    Database::create_tables_on_conn(&conn).expect("create tables should repair enable columns");
+
+    for (table, column) in [
+        ("mcp_servers", "enabled_kimi"),
+        ("mcp_servers", "enabled_hermes"),
+        ("skills", "enabled_kimi"),
+        ("skills", "enabled_hermes"),
+    ] {
+        assert!(
+            Database::has_column(&conn, table, column).expect("check repaired column"),
+            "{table}.{column} should be repaired by create_tables_on_conn"
+        );
+    }
+
+    let enabled_kimi: bool = conn
+        .query_row(
+            "SELECT enabled_kimi FROM mcp_servers WHERE id = 'echo'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read repaired enabled_kimi default");
+    assert!(!enabled_kimi);
+}
+
+#[test]
 fn schema_create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
     let conn = Connection::open_in_memory().expect("open memory db");
 

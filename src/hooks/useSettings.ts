@@ -111,6 +111,7 @@ export function useSettings(): UseSettingsResult {
       codex: sanitizeDir(data?.codexConfigDir),
       gemini: sanitizeDir(data?.geminiConfigDir),
       opencode: sanitizeDir(data?.opencodeConfigDir),
+      kimi: sanitizeDir(data?.kimiConfigDir),
       openclaw: sanitizeDir(data?.openclawConfigDir),
       hermes: sanitizeDir(data?.hermesConfigDir),
     });
@@ -190,9 +191,11 @@ export function useSettings(): UseSettingsResult {
         const sanitizedOpencodeDir = sanitizeDir(
           mergedSettings.opencodeConfigDir,
         );
+        const sanitizedKimiDir = sanitizeDir(mergedSettings.kimiConfigDir);
         const sanitizedOpenclawDir = sanitizeDir(
           mergedSettings.openclawConfigDir,
         );
+        const sanitizedHermesDir = sanitizeDir(mergedSettings.hermesConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -205,7 +208,9 @@ export function useSettings(): UseSettingsResult {
           codexConfigDir: sanitizedCodexDir,
           geminiConfigDir: sanitizedGeminiDir,
           opencodeConfigDir: sanitizedOpencodeDir,
+          kimiConfigDir: sanitizedKimiDir,
           openclawConfigDir: sanitizedOpenclawDir,
+          hermesConfigDir: sanitizedHermesDir,
           language: mergedSettings.language,
         };
 
@@ -321,15 +326,19 @@ export function useSettings(): UseSettingsResult {
         const sanitizedOpencodeDir = sanitizeDir(
           mergedSettings.opencodeConfigDir,
         );
+        const sanitizedKimiDir = sanitizeDir(mergedSettings.kimiConfigDir);
         const sanitizedOpenclawDir = sanitizeDir(
           mergedSettings.openclawConfigDir,
         );
+        const sanitizedHermesDir = sanitizeDir(mergedSettings.hermesConfigDir);
         const previousAppDir = initialAppConfigDir;
         const previousClaudeDir = sanitizeDir(data?.claudeConfigDir);
         const previousCodexDir = sanitizeDir(data?.codexConfigDir);
         const previousGeminiDir = sanitizeDir(data?.geminiConfigDir);
         const previousOpencodeDir = sanitizeDir(data?.opencodeConfigDir);
+        const previousKimiDir = sanitizeDir(data?.kimiConfigDir);
         const previousOpenclawDir = sanitizeDir(data?.openclawConfigDir);
+        const previousHermesDir = sanitizeDir(data?.hermesConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -342,7 +351,9 @@ export function useSettings(): UseSettingsResult {
           codexConfigDir: sanitizedCodexDir,
           geminiConfigDir: sanitizedGeminiDir,
           opencodeConfigDir: sanitizedOpencodeDir,
+          kimiConfigDir: sanitizedKimiDir,
           openclawConfigDir: sanitizedOpenclawDir,
+          hermesConfigDir: sanitizedHermesDir,
           language: mergedSettings.language,
         };
 
@@ -422,20 +433,24 @@ export function useSettings(): UseSettingsResult {
           console.warn("[useSettings] Failed to refresh tray menu", error);
         }
 
-        // 如果 Claude/Codex/Gemini/OpenCode/OpenClaw 的目录覆盖发生变化，则立即将"当前使用的供应商"写回对应应用的 live 配置
+        // 如果应用目录覆盖发生变化，则立即将"当前使用的供应商"写回对应应用的 live 配置
         // 如果插件同步已经执行过 syncCurrentProvidersLiveSafe，则跳过避免重复
         const claudeDirChanged = sanitizedClaudeDir !== previousClaudeDir;
         const codexDirChanged = sanitizedCodexDir !== previousCodexDir;
         const geminiDirChanged = sanitizedGeminiDir !== previousGeminiDir;
         const opencodeDirChanged = sanitizedOpencodeDir !== previousOpencodeDir;
+        const kimiDirChanged = sanitizedKimiDir !== previousKimiDir;
         const openclawDirChanged = sanitizedOpenclawDir !== previousOpenclawDir;
+        const hermesDirChanged = sanitizedHermesDir !== previousHermesDir;
         if (
           !pluginSynced &&
           (claudeDirChanged ||
             codexDirChanged ||
             geminiDirChanged ||
             opencodeDirChanged ||
-            openclawDirChanged)
+            kimiDirChanged ||
+            openclawDirChanged ||
+            hermesDirChanged)
         ) {
           const syncResult = await syncCurrentProvidersLiveSafe();
           if (!syncResult.ok) {

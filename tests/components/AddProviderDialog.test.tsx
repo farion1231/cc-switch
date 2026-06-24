@@ -125,4 +125,40 @@ describe("AddProviderDialog", () => {
       },
     });
   });
+
+  it("添加 Kimi 供应商时透传 providerKey", async () => {
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+
+    mockFormValues = {
+      name: "Kimi Code",
+      websiteUrl: "https://www.kimi.com/code",
+      settingsConfig: JSON.stringify({
+        config: 'default_model = "kimi-code/kimi-for-coding"',
+      }),
+      providerKey: "managed:kimi-code",
+    };
+
+    render(
+      <AddProviderDialog
+        open
+        onOpenChange={vi.fn()}
+        appId="kimi"
+        onSubmit={handleSubmit}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "common.add",
+      }),
+    );
+
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+
+    expect(handleSubmit.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        providerKey: "managed:kimi-code",
+      }),
+    );
+  });
 });

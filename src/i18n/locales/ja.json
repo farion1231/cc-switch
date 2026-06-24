@@ -761,6 +761,8 @@
     "geminiConfigDirDescription": "Gemini の設定ディレクトリ（.env）を上書きします。",
     "opencodeConfigDir": "OpenCode 設定ディレクトリ",
     "opencodeConfigDirDescription": "OpenCode の設定ディレクトリ（opencode.json）を上書きします。",
+    "kimiConfigDir": "Kimi Code 設定ディレクトリ",
+    "kimiConfigDirDescription": "Kimi Code の設定ディレクトリ（config.toml）を上書きします。",
     "openclawConfigDir": "OpenClaw 設定ディレクトリ",
     "openclawConfigDirDescription": "OpenClaw の設定ディレクトリ（openclaw.json）を上書きします。",
     "hermesConfigDir": "Hermes 設定ディレクトリ",
@@ -769,6 +771,7 @@
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
     "browsePlaceholderOpencode": "例: /home/<your-username>/.config/opencode",
+    "browsePlaceholderKimi": "例: /home/<your-username>/.kimi-code",
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
     "browseDirectory": "ディレクトリを選択",
@@ -879,6 +882,7 @@
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode",
+    "kimi": "Kimi Code",
     "openclaw": "OpenClaw",
     "hermes": "Hermes"
   },
@@ -1343,6 +1347,15 @@
     "modelOptionKeyPlaceholder": "provider",
     "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
   },
+  "kimi": {
+    "providerKey": "プロバイダーキー",
+    "providerKeyPlaceholder": "managed:kimi-code",
+    "providerKeyHint": "例: managed:kimi-code。config.toml の provider 名として使用されます。",
+    "providerKeyLockedHint": "このプロバイダーは Kimi 設定に追加済みのため、キーは変更できません。",
+    "providerKeyRequired": "プロバイダーキーは必須です",
+    "providerKeyDuplicate": "このプロバイダーキーは既に存在します",
+    "providerKeyInvalid": "プロバイダーキーに角括弧や改行は使用できません"
+  },
   "providerPreset": {
     "label": "プロバイダータイプ",
     "custom": "カスタム設定",
@@ -1645,6 +1658,7 @@
         "codex": "Codex",
         "gemini": "Gemini",
         "opencode": "OpenCode",
+        "kimi": "Kimi Code",
         "openclaw": "OpenClaw",
         "hermes": "Hermes"
       }

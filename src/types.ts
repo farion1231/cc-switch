@@ -263,6 +263,7 @@ export interface VisibleApps {
   codex: boolean;
   gemini: boolean;
   opencode: boolean;
+  kimi: boolean;
   openclaw: boolean;
   hermes: boolean;
 }
@@ -377,6 +378,8 @@ export interface Settings {
   geminiConfigDir?: string;
   // 覆盖 OpenCode 配置目录（可选）
   opencodeConfigDir?: string;
+  // 覆盖 Kimi Code 配置目录（可选）
+  kimiConfigDir?: string;
   // 覆盖 OpenClaw 配置目录（可选）
   openclawConfigDir?: string;
   // 覆盖 Hermes 配置目录（可选）
@@ -470,6 +473,7 @@ export interface McpApps {
   codex: boolean;
   gemini: boolean;
   opencode: boolean;
+  kimi: boolean;
   openclaw: boolean;
   hermes: boolean;
 }

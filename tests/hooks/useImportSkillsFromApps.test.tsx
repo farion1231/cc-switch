@@ -12,6 +12,7 @@ function makeSkill(overrides: Partial<InstalledSkill> = {}): InstalledSkill {
       codex: false,
       gemini: false,
       opencode: false,
+      kimi: false,
       openclaw: false,
       hermes: false,
     },
