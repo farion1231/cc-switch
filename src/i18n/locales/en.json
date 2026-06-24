@@ -30,6 +30,7 @@
     "copy": "Copy",
     "view": "View",
     "back": "Back",
+    "close": "Close",
     "refresh": "Refresh",
     "refreshing": "Refreshing...",
     "import": "Import",
@@ -41,6 +42,21 @@
     "auto": "Auto",
     "enabled": "Enabled",
     "notSet": "Not Set"
+  },
+  "skillEnv": {
+    "title": "Skill Environment Variables",
+    "description": "Configure global Skill environment variables using .env format. Saving writes the source file and generates the environment file for this system.",
+    "loadFailed": "Failed to load environment variables",
+    "saveSuccess": "Environment variables saved and applied",
+    "saveFailed": "Failed to save environment variables",
+    "reloadApply": "Reload and Apply",
+    "refreshSuccess": "Environment variables reloaded and applied",
+    "refreshFailed": "Failed to reload environment variables",
+    "refreshCount": "Reloaded {{count}} variable(s)",
+    "sourcePath": "Source file: {{path}}",
+    "outputPath": "Generated file: {{path}}",
+    "parsedCount": "Variables: {{count}}",
+    "restartHint": "After saving/reloading, new processes launched by CC Switch will use these variables. Already running clients need a restart."
   },
   "firstRunNotice": {
     "title": "Welcome to CC Switch",
@@ -717,6 +733,13 @@
       "symlink": "Symlink",
       "copy": "Copy Files",
       "symlinkHint": "Symlinks save disk space and enable real-time sync. Note: May require admin privileges or Developer Mode on Windows"
+    },
+    "skillEnv": {
+      "pathTitle": "Skill Environment Variables File",
+      "pathDescription": "Configure the generated system environment file path. Edit variables from the environment button on the main page.",
+      "pathSaved": "Skill environment variables file path saved",
+      "resetDefault": "Restore Default Path",
+      "effectivePath": "Effective path: {{path}}"
     },
     "terminal": {
       "title": "Preferred Terminal",

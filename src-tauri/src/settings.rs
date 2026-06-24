@@ -446,6 +446,9 @@ pub struct AppSettings {
     /// Skill 存储位置：cc_switch（默认）或 unified（~/.agents/skills/）
     #[serde(default)]
     pub skill_storage_location: SkillStorageLocation,
+    /// Skill 环境变量生成文件路径（源文件固定为 ~/.cc-switch/skill-env.env）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill_env_output_path: Option<String>,
 
     // ===== WebDAV 同步设置 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -526,6 +529,7 @@ impl Default for AppSettings {
             current_provider_hermes: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
+            skill_env_output_path: None,
             webdav_sync: None,
             s3_sync: None,
             webdav_backup: None,
@@ -595,6 +599,13 @@ impl AppSettings {
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "ja"))
+            .map(|s| s.to_string());
+
+        self.skill_env_output_path = self
+            .skill_env_output_path
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
 
         if let Some(sync) = &mut self.webdav_sync {

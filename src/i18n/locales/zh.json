@@ -30,6 +30,7 @@
     "copy": "复制",
     "view": "查看",
     "back": "返回",
+    "close": "关闭",
     "refresh": "刷新",
     "refreshing": "刷新中...",
     "import": "导入",
@@ -41,6 +42,21 @@
     "auto": "自动",
     "enabled": "已开启",
     "notSet": "未设置"
+  },
+  "skillEnv": {
+    "title": "Skill 环境变量",
+    "description": "使用 .env 格式配置全局 Skill 环境变量。保存后会写入源文件并生成当前系统的环境变量文件。",
+    "loadFailed": "读取环境变量失败",
+    "saveSuccess": "环境变量已保存并应用",
+    "saveFailed": "保存环境变量失败",
+    "reloadApply": "重新加载并应用",
+    "refreshSuccess": "环境变量已重新加载并应用",
+    "refreshFailed": "重新加载环境变量失败",
+    "refreshCount": "已重新加载 {{count}} 个变量",
+    "sourcePath": "源文件：{{path}}",
+    "outputPath": "生成文件：{{path}}",
+    "parsedCount": "变量数量：{{count}}",
+    "restartHint": "保存/重新加载后，CC Switch 后续启动的进程会使用新变量；已运行的客户端需要重启。"
   },
   "firstRunNotice": {
     "title": "欢迎使用 CC Switch",
@@ -717,6 +733,13 @@
       "symlink": "软连接",
       "copy": "文件复制",
       "symlinkHint": "软连接节省磁盘空间并支持实时同步。注意：Windows 可能需要管理员权限或开启开发者模式"
+    },
+    "skillEnv": {
+      "pathTitle": "Skill 环境变量存储位置",
+      "pathDescription": "配置 CC Switch 生成的系统环境变量文件路径。变量内容通过主页面环境变量按钮编辑。",
+      "pathSaved": "Skill 环境变量存储位置已保存",
+      "resetDefault": "恢复默认路径",
+      "effectivePath": "当前生效路径：{{path}}"
     },
     "terminal": {
       "title": "首选终端",

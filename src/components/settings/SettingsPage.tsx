@@ -40,6 +40,7 @@ import { WindowSettings } from "@/components/settings/WindowSettings";
 import { AppVisibilitySettings } from "@/components/settings/AppVisibilitySettings";
 import { SkillStorageLocationSettings } from "@/components/settings/SkillStorageLocationSettings";
 import { SkillSyncMethodSettings } from "@/components/settings/SkillSyncMethodSettings";
+import { SkillEnvPathSettings } from "@/components/settings/SkillEnvPathSettings";
 import { TerminalSettings } from "@/components/settings/TerminalSettings";
 import { DirectorySettings } from "@/components/settings/DirectorySettings";
 import { ImportExportSection } from "@/components/settings/ImportExportSection";
@@ -272,6 +273,12 @@ export function SettingsPage({
                       value={settings.skillSyncMethod ?? "auto"}
                       onChange={(method) =>
                         handleAutoSave({ skillSyncMethod: method })
+                      }
+                    />
+                    <SkillEnvPathSettings
+                      value={settings.skillEnvOutputPath}
+                      onChange={(path) =>
+                        handleAutoSave({ skillEnvOutputPath: path })
                       }
                     />
                     <CodexAuthSettings
