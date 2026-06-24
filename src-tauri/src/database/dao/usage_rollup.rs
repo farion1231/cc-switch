@@ -160,7 +160,8 @@ impl Database {
             LEFT JOIN usage_daily_rollups old
                 ON old.date = agg.d AND old.app_type = agg.a
                 AND old.provider_id = agg.p AND old.model = agg.m
-                AND old.request_model = agg.rm AND old.pricing_model = agg.pm"
+                AND COALESCE(old.request_model, '') = agg.rm
+                AND COALESCE(old.pricing_model, '') = agg.pm"
         );
 
         conn.execute(&aggregation_sql, [cutoff])
@@ -493,7 +494,9 @@ mod tests {
 
         {
             let conn = crate::database::lock_conn!(db.conn);
-            let date_str = chrono::DateTime::from_timestamp(old_ts, 0)
+            let date_str = Local
+                .timestamp_opt(old_ts, 0)
+                .single()
                 .unwrap()
                 .format("%Y-%m-%d")
                 .to_string();

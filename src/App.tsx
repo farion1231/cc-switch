@@ -91,6 +91,21 @@ import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
 
+const hasTauriRuntime = () =>
+  import.meta.env.MODE === "test" ||
+  (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window);
+
+const getTauriWindowOrNull = () => {
+  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+    return null;
+  }
+  try {
+    return getCurrentWindow();
+  } catch {
+    return null;
+  }
+};
+
 type View =
   | "providers"
   | "settings"
@@ -333,6 +348,8 @@ function App() {
   };
 
   useEffect(() => {
+    if (!hasTauriRuntime()) return;
+
     let unsubscribe: (() => void) | undefined;
     let active = true;
 
@@ -422,7 +439,9 @@ function App() {
 
     const setupWindowStateSync = async () => {
       try {
-        const currentWindow = getCurrentWindow();
+        const currentWindow = getTauriWindowOrNull();
+        if (!currentWindow) return;
+
         const syncWindowMaximizedState = async () => {
           const maximized = await currentWindow.isMaximized();
           if (active) {
@@ -452,7 +471,9 @@ function App() {
 
     const syncWindowDecorations = async () => {
       try {
-        await getCurrentWindow().setDecorations(!useAppWindowControls);
+        const currentWindow = getTauriWindowOrNull();
+        if (!currentWindow) return;
+        await currentWindow.setDecorations(!useAppWindowControls);
       } catch (error) {
         console.error("[App] Failed to update window decorations", error);
       }
@@ -462,6 +483,8 @@ function App() {
   }, [useAppWindowControls, settingsData]);
 
   useEffect(() => {
+    if (!hasTauriRuntime()) return;
+
     const checkEnvOnStartup = async () => {
       try {
         const allConflicts = await checkAllEnvConflicts();
@@ -486,6 +509,8 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!hasTauriRuntime()) return;
+
     const checkMigration = async () => {
       try {
         const migrated = await invoke<boolean>("get_migration_result");
@@ -504,6 +529,8 @@ function App() {
   }, [t]);
 
   useEffect(() => {
+    if (!hasTauriRuntime()) return;
+
     const checkSkillsMigration = async () => {
       try {
         const result = await invoke<{ count: number; error?: string } | null>(
@@ -532,6 +559,8 @@ function App() {
   }, [t, queryClient]);
 
   useEffect(() => {
+    if (!hasTauriRuntime()) return;
+
     const checkEnvOnSwitch = async () => {
       try {
         const conflicts = await checkEnvConflicts(activeApp);
@@ -830,7 +859,9 @@ function App() {
 
   const handleWindowMinimize = async () => {
     try {
-      await getCurrentWindow().minimize();
+      const currentWindow = getTauriWindowOrNull();
+      if (!currentWindow) return;
+      await currentWindow.minimize();
     } catch (error) {
       console.error("[App] Failed to minimize window", error);
       notifyWindowControlError(error);
@@ -839,7 +870,8 @@ function App() {
 
   const handleWindowToggleMaximize = async () => {
     try {
-      const currentWindow = getCurrentWindow();
+      const currentWindow = getTauriWindowOrNull();
+      if (!currentWindow) return;
       await currentWindow.toggleMaximize();
       setIsWindowMaximized(await currentWindow.isMaximized());
     } catch (error) {
@@ -850,7 +882,9 @@ function App() {
 
   const handleWindowClose = async () => {
     try {
-      await getCurrentWindow().close();
+      const currentWindow = getTauriWindowOrNull();
+      if (!currentWindow) return;
+      await currentWindow.close();
     } catch (error) {
       console.error("[App] Failed to close window", error);
       notifyWindowControlError(error);
