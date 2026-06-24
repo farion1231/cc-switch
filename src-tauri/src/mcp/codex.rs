@@ -651,6 +651,10 @@ fn snapshot_unmanaged_subtables(
         .collect()
 }
 
+/// 分类只认标准子表（`v.as_table()`）。Codex CLI 始终以
+/// `[mcp_servers.<id>.tools.<tool>]` 标准表写入 runtime 权限，所以这个判定足够。
+/// 内联表形式（`tools = { ... }`）不在覆盖范围：遇到时既不剥离也不保留，按原样
+/// 透传——`snapshot_unmanaged_subtables` 与 Layer 2 的 new/old 遍历同此约定。
 fn remove_unmanaged_subtables(server_tbl: &mut toml_edit::Table) -> bool {
     let keys: Vec<String> = server_tbl
         .iter()
@@ -683,15 +687,13 @@ fn restore_unmanaged_subtables(
     else {
         return;
     };
+    // 调用方此前已用 json spec 把该 server 子表整张重写。`json_server_to_toml_table`
+    // 写出的标准子表（Item::Table）只有受管的 env/http_headers；其余未知对象字段一律
+    // 渲染为内联表（Item::Value），而快照只收集标准子表（`v.as_table()`）。因此快照里的
+    // 非管辖子表绝不会与重写结果中的同名标准子表冲突，整表写入即可。语义与 Layer 2
+    // `merge_codex_runtime_subtables` 的恢复步骤一致：旧 live 是 runtime 子表的唯一权威。
     for (k, tbl) in preserved {
-        match server_tbl.get_mut(&k).and_then(|item| item.as_table_mut()) {
-            Some(existing_tbl) => {
-                merge_table_preserving_old(existing_tbl, &tbl);
-            }
-            None => {
-                server_tbl.insert(&k, toml_edit::Item::Table(tbl));
-            }
-        }
+        server_tbl.insert(&k, toml_edit::Item::Table(tbl));
     }
 }
 
@@ -710,7 +712,9 @@ fn restore_unmanaged_subtables(
 ///   恢复时整表写入旧 live 的子表——new 侧同名子表已在上一步清空，旧 live 即唯一
 ///   权威，从而避免 provider 中被 backfill 的 stale runtime 副本覆盖 Codex CLI 最新权限。
 /// - **不为新文本中不存在的 server 凭空建父表**：新文本没有的 server 说明切换后的
-///   provider 配置不含它，且 provider 切换路径之后不会再跑 MCP sync 补全 command/url，
+///   provider 配置不含它。切换后确实仍会跑 MCP sync（`McpService::sync_all_enabled`
+///   → `sync_single_server_to_codex`），但它只为 cc-switch enabled 列表中的 server
+///   补全 command/url；新文本不含的 server 同样不在该列表，sync 不会重建它。为它
 ///   建一个只有 `tools.*` 的残缺 server 会让 Codex 无法加载——这类孤儿 runtime 子表直接丢弃。
 /// - 解析失败 / 旧文件不可读时退回原文本；新文本没有 `[mcp_servers]` 时不创建父表，
 ///   best-effort 不阻塞底层写入。
@@ -789,9 +793,12 @@ pub(crate) fn merge_codex_runtime_subtables(new_text: &str, old_text: &str) -> S
 /// 剥离 `[mcp_servers.<id>]` 下所有非 cc-switch 管辖的子表（典型为 Codex CLI
 /// 运行时写入的 `tools.*`），返回处理后的 TOML 文本。
 ///
-/// 用于 backfill 边界：provider switch 后会把 live config 文本回填进 provider 的
-/// stored config，但 cc-switch 数据库不应持有 Codex runtime 状态。先剥离再回填，
-/// 可确保 stored config 不会种下 stale `tools.*`——live 才是 runtime 子表的唯一权威。
+/// 用于 backfill 边界（两个入口都接：`ConfigService::sync_codex_live` 的
+/// common-config save，以及 `ProviderService::switch_provider` 经
+/// `restore_live_settings_for_provider_backfill` 的 provider 切换）：回填会把
+/// live config 文本写进 provider 的 stored config，但 cc-switch 数据库不应持有
+/// Codex runtime 状态。先剥离再回填，可确保 stored config 不会种下 stale
+/// `tools.*`——live 才是 runtime 子表的唯一权威。
 ///
 /// 受管子表（`CC_SWITCH_MANAGED_SUBTABLE_KEYS`，即 `env`/`http_headers`/`headers`）保留。
 /// 空文本 / 解析失败 / 无 `[mcp_servers]` 时原样返回，best-effort 不阻塞回填。
@@ -824,26 +831,6 @@ pub(crate) fn strip_codex_runtime_subtables(config_text: &str) -> String {
         doc.to_string()
     } else {
         config_text.to_string()
-    }
-}
-
-/// 深度合并：把 `old` 的键并入 `target`，同名叶子键以 `old`（旧 live/runtime）优先；
-/// 两边同名且皆为子表时递归合并。用于在 `tools` 等子表层面做到逐工具粒度的保留。
-fn merge_table_preserving_old(target: &mut toml_edit::Table, old: &toml_edit::Table) {
-    for (k, v) in old.iter() {
-        match target.get_mut(k) {
-            None => {
-                target.insert(k, v.clone());
-            }
-            Some(existing) => {
-                if let (Some(existing_tbl), Some(old_tbl)) = (existing.as_table_mut(), v.as_table())
-                {
-                    merge_table_preserving_old(existing_tbl, old_tbl);
-                } else {
-                    *existing = v.clone();
-                }
-            }
-        }
     }
 }
 
@@ -1394,6 +1381,86 @@ approval_mode = "approve"
         assert!(
             server.get("tools").is_none(),
             "backfill 写回 provider 存储前应剥离 Codex runtime tools.*"
+        );
+    }
+
+    #[test]
+    fn merge_runtime_handles_multiple_servers_and_drops_orphan() {
+        // 一次 merge 覆盖多 server：live 权威保留、清掉 new 侧 stale、恢复缺失子表、
+        // 丢弃新文本不含的孤儿 server。
+        let old = r#"
+[mcp_servers.x]
+command = "x"
+
+[mcp_servers.x.tools.search]
+approval_mode = "approve"
+
+[mcp_servers.y]
+command = "y"
+
+[mcp_servers.y.tools.read]
+approval_mode = "approve"
+
+[mcp_servers.z.tools.gone]
+approval_mode = "approve"
+"#;
+        let new = r#"
+[mcp_servers.x]
+command = "x"
+
+[mcp_servers.x.tools.stale]
+approval_mode = "approve"
+
+[mcp_servers.y]
+command = "y"
+"#;
+        let merged = merge_codex_runtime_subtables(new, old);
+        let v: toml::Value = toml::from_str(&merged).expect("merged is valid toml");
+
+        // x：以 old live 为权威保留 search，清掉 new 侧 stale
+        assert_eq!(
+            v["mcp_servers"]["x"]["tools"]["search"]["approval_mode"].as_str(),
+            Some("approve")
+        );
+        assert!(
+            v["mcp_servers"]["x"]["tools"].get("stale").is_none(),
+            "new 侧 stale tool 应被清除"
+        );
+        // y：从 old live 恢复 read（new 侧本无 tools）
+        assert_eq!(
+            v["mcp_servers"]["y"]["tools"]["read"]["approval_mode"].as_str(),
+            Some("approve")
+        );
+        // z：新文本不含该 server，孤儿 runtime 子表整体丢弃
+        assert!(
+            v["mcp_servers"].get("z").is_none(),
+            "新文本不含的 server 不得为其孤儿 tools.* 建残缺父表"
+        );
+    }
+
+    #[test]
+    fn merge_runtime_returns_new_verbatim_when_nothing_to_change() {
+        // old/new 都没有非管辖 runtime 子表 → changed=false，原样返回 new，不 reserialize。
+        let old = r#"
+[mcp_servers.x]
+command = "x"
+"#;
+        let new = "model_provider = \"anthropic\"\n\n[mcp_servers.x]\ncommand = \"x\"\n";
+        let merged = merge_codex_runtime_subtables(new, old);
+        assert_eq!(
+            merged, new,
+            "无 runtime 子表可处理时应原样返回新文本，不引入无谓 reformat"
+        );
+    }
+
+    #[test]
+    fn strip_runtime_returns_verbatim_when_no_runtime_subtables() {
+        // 只有受管子表（env）时 changed=false，应原样返回，不 reformat。
+        let config = "[mcp_servers.x]\ncommand = \"x\"\n\n[mcp_servers.x.env]\nTOKEN = \"1\"\n";
+        let stripped = strip_codex_runtime_subtables(config);
+        assert_eq!(
+            stripped, config,
+            "只有受管子表时应原样返回，不引入无谓 reformat"
         );
     }
 }
