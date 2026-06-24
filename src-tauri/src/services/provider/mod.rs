@@ -1414,6 +1414,66 @@ mod tests {
         });
     }
 
+    #[test]
+    #[serial]
+    fn switch_codex_without_source_preserves_unrelated_rollout_for_null_db_rows() {
+        with_test_home(|state, home| {
+            let api_provider = codex_provider(
+                "codex-api",
+                "Codex API",
+                "model_provider = \"OpenAI\"\nmodel = \"gpt-5.4\"\n",
+            );
+            let other_provider = codex_provider(
+                "codex-other",
+                "Codex Other",
+                "model_provider = \"azure\"\nmodel = \"gpt-5.4\"\n",
+            );
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &other_provider)
+                .expect("save other provider");
+            seed_codex_thread_rows_nullable(
+                home,
+                &[
+                    ("missing-thread", None),
+                    ("unrelated-null-thread", None),
+                    ("api-thread", Some("OpenAI")),
+                ],
+            );
+            rewrite_codex_rollout_provider(home, "unrelated-null-thread", "azure");
+
+            ProviderService::switch(state, AppType::Codex, "codex-api")
+                .expect("switch to api codex provider without current provider");
+
+            assert_eq!(
+                codex_thread_provider_rows(home),
+                vec![
+                    ("api-thread".to_string(), Some("OpenAI".to_string())),
+                    ("missing-thread".to_string(), Some("openai".to_string())),
+                    ("unrelated-null-thread".to_string(), None),
+                ],
+                "source-less switches should not relabel null DB rows whose rollout belongs to another provider"
+            );
+            assert_eq!(
+                codex_rollout_providers(home),
+                vec![
+                    ("api-thread".to_string(), Some("OpenAI".to_string())),
+                    ("missing-thread".to_string(), Some("openai".to_string())),
+                    (
+                        "unrelated-null-thread".to_string(),
+                        Some("azure".to_string())
+                    ),
+                ],
+                "unrelated rollout metadata should remain under its original provider"
+            );
+        });
+    }
+
     /// Seed threads with DB provider and rollout provider set independently.
     fn seed_codex_thread_rows_db_rollout(
         home: &Path,
@@ -6660,6 +6720,17 @@ impl ProviderService {
         }
     }
 
+    fn codex_should_relabel_source_less_thread_without_source(
+        rollout_path: &Path,
+        target_provider: &str,
+    ) -> Result<bool, AppError> {
+        match Self::codex_rollout_session_meta_provider(rollout_path)? {
+            Some(None) => Ok(true),
+            Some(Some(current_provider)) => Ok(current_provider == target_provider),
+            None => Ok(false),
+        }
+    }
+
     fn sync_codex_desktop_threads_to_provider(
         target_provider: &str,
         source_provider: Option<&str>,
@@ -6723,10 +6794,24 @@ impl ProviderService {
                 paths
             } else {
                 let mut stmt = conn.prepare(
-                    "SELECT rollout_path FROM threads WHERE model_provider IS NULL OR model_provider = ''",
+                    "SELECT id, rollout_path FROM threads WHERE model_provider IS NULL OR model_provider = ''",
                 )?;
-                let rows = stmt.query_map([], |row| row.get(0))?;
-                rows.collect::<Result<Vec<String>, _>>()?
+                let rows = stmt.query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+                let mut paths = Vec::new();
+                for row in rows {
+                    let (id, rollout_path) = row?;
+                    if Self::codex_should_relabel_source_less_thread_without_source(
+                        Path::new(&rollout_path),
+                        target_provider,
+                    )? {
+                        source_less_thread_ids.push(id);
+                        paths.push(rollout_path);
+                    }
+                }
+
+                paths
             }
         } else {
             Vec::new()
@@ -6750,6 +6835,8 @@ impl ProviderService {
                 Self::codex_provider_switch_where_clause("model_provider")
             );
             conn.execute(&sql, rusqlite::params![source_provider, target_provider])?
+        } else if has_rollout_path {
+            0
         } else {
             conn.execute(
                 "UPDATE threads SET model_provider = ?1 WHERE model_provider IS NULL OR model_provider = ''",
