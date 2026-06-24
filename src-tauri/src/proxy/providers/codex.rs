@@ -9,7 +9,7 @@ use super::{AuthInfo, AuthStrategy, ProviderAdapter};
 use crate::provider::{CodexChatReasoningConfig, Provider};
 use crate::proxy::error::ProxyError;
 use regex::Regex;
-use serde_json::Value as JsonValue;
+use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 use toml::Value as TomlValue;
@@ -124,7 +124,7 @@ fn codex_provider_catalog_model_ids(provider: &Provider) -> HashSet<String> {
 /// model before converting the request to Chat Completions.
 pub fn apply_codex_chat_upstream_model(
     provider: &Provider,
-    body: &mut JsonValue,
+    body: &mut Value,
 ) -> Option<String> {
     if !codex_provider_uses_chat_completions(provider) {
         return None;
@@ -143,13 +143,13 @@ pub fn apply_codex_chat_upstream_model(
     }
 
     let upstream_model = codex_provider_upstream_model(provider)?;
-    body["model"] = JsonValue::String(upstream_model.clone());
+    body["model"] = Value::String(upstream_model.clone());
     Some(upstream_model)
 }
 
 pub fn resolve_codex_chat_reasoning_config(
     provider: &Provider,
-    body: &JsonValue,
+    body: &Value,
 ) -> Option<CodexChatReasoningConfig> {
     if let Some(config) = provider
         .meta
@@ -173,7 +173,7 @@ fn normalize_codex_chat_reasoning_config(
 
 fn infer_codex_chat_reasoning_config(
     provider: &Provider,
-    body: &JsonValue,
+    body: &Value,
 ) -> Option<CodexChatReasoningConfig> {
     let model = body
         .get("model")
@@ -573,6 +573,101 @@ impl ProviderAdapter for CodexAdapter {
             http::HeaderName::from_static("authorization"),
             auth_header_value(&bearer)?,
         )])
+    }
+
+    /// Codex 适配器是否需要格式转换
+    ///
+    /// 当 provider 配置中设置了 `api_format = "chat_completions"` 时返回 true，
+    /// 表示上游不支持 Responses API，需要转换为 Chat Completions 格式。
+    fn needs_transform(&self, provider: &Provider) -> bool {
+        // 1. 检查 settings_config 顶层的 api_format
+        if let Some(fmt) = provider
+            .settings_config
+            .get("api_format")
+            .and_then(|v| v.as_str())
+        {
+            if fmt == "chat_completions" {
+                return true;
+            }
+        }
+
+        // 2. 检查 config TOML 字符串中的 api_format
+        if let Some(config) = provider.settings_config.get("config") {
+            if let Some(config_str) = config.as_str() {
+                for marker in &[
+                    "api_format = \"chat_completions\"",
+                    "api_format = 'chat_completions'",
+                ] {
+                    if config_str.contains(marker) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // 3. 检查 meta.apiFormat（从 Codex 供应商表单的 API 格式下拉框设置）
+        if let Some(fmt) = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.api_format.as_deref())
+        {
+            if fmt == "chat_completions" {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// 转换请求：Responses API → Chat Completions，并重写 model 为上游支持的名称
+    fn transform_request(&self, body: Value, provider: &Provider) -> Result<Value, ProxyError> {
+        let mut body = body;
+
+        // 用 provider 配置中的 model 覆盖，确保上游模型名正确
+        if let Some(upstream_model) = CodexAdapter::extract_model(provider) {
+            log::info!("[Codex] 重写模型名: {} → {}", body.get("model").and_then(|m| m.as_str()).unwrap_or("?"), upstream_model);
+            body["model"] = json!(upstream_model);
+        }
+
+        super::transform_responses::responses_to_chat_completions(body)
+    }
+
+    /// 转换响应：Chat Completions → Responses API
+    fn transform_response(&self, body: Value) -> Result<Value, ProxyError> {
+        super::transform_responses::chat_completions_to_responses(body)
+    }
+}
+
+impl CodexAdapter {
+    /// 从 provider 配置中提取上游模型名
+    fn extract_model(provider: &Provider) -> Option<String> {
+        // 1. settings_config 顶层 model
+        if let Some(m) = provider.settings_config.get("model").and_then(|v| v.as_str()) {
+            return Some(m.to_string());
+        }
+        // 2. config TOML 字符串中的 model
+        if let Some(config) = provider.settings_config.get("config") {
+            if let Some(config_str) = config.as_str() {
+                if let Some(v) = Self::extract_toml_value(config_str, "model") {
+                    return Some(v);
+                }
+            }
+        }
+        None
+    }
+
+    /// 从 TOML 字符串中提取指定 key 的值
+    fn extract_toml_value(toml_str: &str, key: &str) -> Option<String> {
+        for pattern in [format!("{key} = \""), format!("{key} = '")] {
+            if let Some(start) = toml_str.find(&pattern) {
+                let rest = &toml_str[start + pattern.len()..];
+                let end_char = if pattern.contains('"') { '"' } else { '\'' };
+                if let Some(end) = rest.find(end_char) {
+                    return Some(rest[..end].to_string());
+                }
+            }
+        }
+        None
     }
 }
 
