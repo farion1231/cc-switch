@@ -1756,13 +1756,9 @@ impl ProxyService {
             return false;
         };
 
-        let active_provider = doc
-            .get("model_provider")
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|id| !id.is_empty());
+        let active_provider = crate::codex_config::extract_codex_model_provider(config_text);
 
-        if let Some(provider_id) = active_provider {
+        if let Some(provider_id) = active_provider.as_deref() {
             if doc
                 .get("model_providers")
                 .and_then(|value| value.get(provider_id))
@@ -4618,6 +4614,32 @@ wire_api = "chat"
         assert!(
             openai_provider.get("base_url").is_none(),
             "takeover must not rewrite the inactive top-level provider"
+        );
+    }
+
+    #[test]
+    fn codex_base_url_match_uses_selected_profile_provider() {
+        let input = r#"
+model_provider = "openai"
+profile = "work"
+
+[profiles.work]
+model_provider = "local"
+
+[model_providers.openai]
+name = "OpenAI"
+
+[model_providers.local]
+name = "Local"
+base_url = "http://127.0.0.1:5000/v1"
+wire_api = "responses"
+"#;
+
+        assert!(
+            ProxyService::codex_config_has_base_url_matching(input, |url| {
+                ProxyService::proxy_urls_match(url, "http://127.0.0.1:5000/v1")
+            }),
+            "takeover health checks should inspect the selected profile provider"
         );
     }
 

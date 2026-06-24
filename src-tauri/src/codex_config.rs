@@ -1796,10 +1796,7 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
         Err(_) => return toml_str.to_string(),
     };
 
-    let model_provider = doc
-        .get("model_provider")
-        .and_then(|item| item.as_str())
-        .map(str::to_string);
+    let model_provider = active_codex_model_provider_id(&doc);
 
     if let Some(provider_key) = model_provider {
         if let Some(model_providers) = doc
@@ -2969,6 +2966,43 @@ wire_api = "responses"
             any_section.get("wire_api").and_then(|v| v.as_str()),
             Some("responses")
         );
+    }
+
+    #[test]
+    fn remove_base_url_if_uses_selected_profile_provider() {
+        let input = r#"model_provider = "openai"
+profile = "work"
+
+[profiles.work]
+model_provider = "local"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+
+[model_providers.local]
+base_url = "http://127.0.0.1:5000/v1"
+wire_api = "responses"
+"#;
+
+        let result =
+            remove_codex_toml_base_url_if(input, |url| url.starts_with("http://127.0.0.1"));
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        let local_base_url = parsed
+            .get("model_providers")
+            .and_then(|v| v.get("local"))
+            .and_then(|v| v.get("base_url"));
+        assert!(
+            local_base_url.is_none(),
+            "cleanup should remove the local proxy URL from the selected profile provider"
+        );
+
+        let openai_base_url = parsed
+            .get("model_providers")
+            .and_then(|v| v.get("openai"))
+            .and_then(|v| v.get("base_url"))
+            .and_then(|v| v.as_str());
+        assert_eq!(openai_base_url, Some("https://api.openai.com/v1"));
     }
 
     #[test]
