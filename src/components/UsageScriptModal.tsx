@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Play, Wand2, Eye, EyeOff, Save } from "lucide-react";
+import { Play, Wand2, Eye, EyeOff, Save, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
@@ -30,6 +30,14 @@ import {
   detectCodingPlanProvider,
 } from "@/config/codingPlanProviders";
 import { formatUsageDataSummary } from "@/utils/usageDisplay";
+
+/**
+ * 火山引擎账号级 AccessKey 的密钥管理页（IAM）。
+ * 用量查询走控制面 OpenAPI，需要 AK/SK 签名，与推理 API Key 是两套凭据，
+ * 直接给用户一个可点击的直达地址，省得在控制台里翻菜单。
+ */
+const VOLCENGINE_KEY_CONSOLE_URL =
+  "https://console.volcengine.com/iam/keymanage";
 
 interface UsageScriptModalProps {
   provider: Provider;
@@ -1268,6 +1276,19 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                     </h4>
                     <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
                       {t("usageScript.volcengineAkSkHint")}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1.5">
+                      {t("usageScript.volcengineKeyConsoleLink")}{" "}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          settingsApi.openExternal(VOLCENGINE_KEY_CONSOLE_URL)
+                        }
+                        className="inline-flex items-center gap-1 text-blue-400 dark:text-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors break-all align-baseline underline-offset-2 hover:underline"
+                      >
+                        {VOLCENGINE_KEY_CONSOLE_URL}
+                        <ExternalLink size={12} className="shrink-0" />
+                      </button>
                     </p>
                   </div>
 

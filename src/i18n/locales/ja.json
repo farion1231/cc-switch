@@ -1569,6 +1569,7 @@
     "accessKeyId": "AccessKey ID",
     "secretAccessKey": "SecretAccessKey",
     "volcengineAkSkHint": "Volcengine の使用量照会にはアカウントレベルの AccessKey ID / Secret が必要です（推論 API キーとは別物）。Volcengine コンソール右上のアカウントメニュー →「API アクセスキー」で作成してください。",
+    "volcengineKeyConsoleLink": "キー作成ページ：",
     "defaultPlan": "デフォルトプラン",
     "queryFailedMessage": "照会に失敗しました",
     "queryScript": "照会スクリプト (JavaScript)",

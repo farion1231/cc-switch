@@ -1541,6 +1541,7 @@
     "accessKeyId": "AccessKey ID",
     "secretAccessKey": "SecretAccessKey",
     "volcengineAkSkHint": "火山用量查詢需帳號級 AccessKey ID / Secret（與推理 API Key 不同）。請在火山引擎主控台右上角帳號選單 →「API存取金鑰」中建立。",
+    "volcengineKeyConsoleLink": "金鑰建立網址：",
     "defaultPlan": "預設方案",
     "queryFailedMessage": "查詢失敗",
     "queryScript": "查詢腳本（JavaScript）",

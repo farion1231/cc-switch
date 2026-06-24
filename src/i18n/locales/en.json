@@ -1569,6 +1569,7 @@
     "accessKeyId": "AccessKey ID",
     "secretAccessKey": "SecretAccessKey",
     "volcengineAkSkHint": "Volcengine usage query needs an account-level AccessKey ID / Secret (different from the inference API key). Create them in the Volcengine console via the top-right account menu → 'API Access Keys'.",
+    "volcengineKeyConsoleLink": "Create keys at:",
     "defaultPlan": "Default Plan",
     "queryFailedMessage": "Query failed",
     "queryScript": "Query script (JavaScript)",
