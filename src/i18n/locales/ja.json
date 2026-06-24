@@ -1262,8 +1262,12 @@
     "modelNameHint": "使用するモデルを指定します。config.toml に自動更新されます",
     "modelName": "モデル名",
     "localRoutingToggle": "ローカルルーティングが必要",
-    "localRoutingOffHint": "プロバイダーがネイティブの OpenAI Responses API でない場合、またはモデル名が Codex デフォルトの GPT 系列でない場合は、このスイッチを有効にしてください。",
-    "localRoutingOnHint": "Codex は現在、OpenAI Responses API と GPT 系列モデルのみをネイティブにサポートしています。プロバイダーが Chat Completions プロトコルや非 GPT モデル（DeepSeek、Kimi など）を使用する場合は、このスイッチを有効にし、使用中はローカルルーティングを起動したままにしてください。",
+    "localRoutingOffHint": "プロバイダーのモデル名を書き換える必要がなく、/model メニューにカスタム名を表示する必要もない場合はオフのままで構いません。モデルマッピングが必要なときにオンにしてください。",
+    "localRoutingOnHint": "オンにすると下でモデルマッピングを設定できます。Codex の /model メニューにカスタムモデル名を表示し、リクエストを実際の上流モデルにマッピングします。",
+    "upstreamFormatLabel": "上流フォーマット",
+    "upstreamFormatHint": "プロバイダーがネイティブ Responses API なら Responses を選択（直結、フォーマット変換なし）。Chat Completions プロトコルなら Chat を選択（Chat Completions へ変換）。",
+    "upstreamFormatChat": "Chat Completions（変換）",
+    "upstreamFormatResponses": "Responses（ネイティブ）",
     "upstreamModelName": "上流モデル名",
     "upstreamModelNameHint": "Chat 形式ではここに実際の上流モデルを入力します。ルーティングで Codex の Responses リクエストを Chat Completions に変換し、このモデルを維持します。",
     "modelNamePlaceholder": "例: gpt-5-codex",
@@ -1291,7 +1295,7 @@
     "reasoningEffortHint": "上流が low/high/max などの思考の深さの制御に対応している場合に有効化します。有効にすると思考モードも自動的にオンになり、Codex の reasoning.effort を上流の Chat パラメータに変換します。",
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "プリセットの供給元は自動的に設定され、カスタム供給元は名前/URL から自動推論されます。自動識別が正しくない場合のみ手動で上書きしてください。",
-    "advancedSectionHint": "ローカルルーティング、モデルマッピング、思考能力、カスタム User-Agent の設定を含みます。供給元が Chat Completions プロトコルまたは GPT 以外のモデルを使用する場合は、ここでローカルルーティングを有効にしてください。"
+    "advancedSectionHint": "ローカルルーティング、上流フォーマット、モデルマッピング、思考能力、カスタム User-Agent の設定を含みます。供給元が Chat Completions プロトコルまたは GPT 以外のモデルを使用する場合は、ここでローカルルーティングを有効にしてください。"
   },
   "geminiConfig": {
     "envFile": "環境変数 (.env)",
@@ -2212,6 +2216,7 @@
     "importSuccess": "{{count}} 件のスキルをインポートしました",
     "importSelected": "選択をインポート ({{count}})",
     "noUnmanagedFound": "インポートするスキルが見つかりませんでした。すべてのスキルは CC Switch で管理されています。",
+    "unmanagedAvailable": "インポート可能なスキルがあります",
     "foundIn": "発見場所",
     "local": "ローカル",
     "uninstallConfirm": "「{{name}}」をアンインストールしますか？すべてのアプリからこのスキルが削除され、削除前にローカルバックアップが自動作成されます。",

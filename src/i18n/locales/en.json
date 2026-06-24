@@ -1262,8 +1262,12 @@
     "modelNameHint": "Specify the model to use, will be auto-updated in config.toml",
     "modelName": "Model Name",
     "localRoutingToggle": "Needs Local Routing",
-    "localRoutingOffHint": "If your provider is not native OpenAI Responses API, or the model name is not Codex's default GPT series, please enable this switch.",
-    "localRoutingOnHint": "Codex currently only natively supports OpenAI Responses API and GPT series models. If your provider uses the Chat Completions protocol or non-GPT models (such as DeepSeek or Kimi), enable this switch and keep local routing running while in use.",
+    "localRoutingOffHint": "Keep off when the provider's model names need no rewriting and you don't need custom names shown in the /model menu; enable it when you need model mapping.",
+    "localRoutingOnHint": "When on, configure model mapping below: show custom model names in Codex's /model menu and map requests to the real upstream model.",
+    "upstreamFormatLabel": "Upstream Format",
+    "upstreamFormatHint": "Pick Responses when your provider is natively a Responses API (direct, no format conversion); pick Chat when it uses the Chat Completions protocol (converts to Chat Completions).",
+    "upstreamFormatChat": "Chat Completions (convert)",
+    "upstreamFormatResponses": "Responses (native)",
     "upstreamModelName": "Upstream Model Name",
     "upstreamModelNameHint": "For Chat format, enter the real upstream model here; routing converts Codex Responses requests to Chat Completions while keeping this model.",
     "modelNamePlaceholder": "e.g., gpt-5-codex",
@@ -1291,7 +1295,7 @@
     "reasoningEffortHint": "Enable when the upstream supports thinking-depth control such as low/high/max. Enabling this also turns on thinking mode and converts Codex's reasoning.effort into the upstream Chat parameter.",
     "reasoningGroupTitle": "Reasoning Capability",
     "reasoningSectionHint": "Preset providers are configured automatically; custom providers are inferred from name/URL. Override manually only when auto-detection is wrong.",
-    "advancedSectionHint": "Includes local routing, model mapping, reasoning overrides and custom User-Agent. Enable local routing here when your provider uses the Chat Completions protocol or non-GPT models."
+    "advancedSectionHint": "Includes local routing, upstream format, model mapping, reasoning overrides and custom User-Agent. Enable local routing here when your provider uses the Chat Completions protocol or non-GPT models."
   },
   "geminiConfig": {
     "envFile": "Environment Variables (.env)",
@@ -2212,6 +2216,7 @@
     "importSuccess": "Successfully imported {{count}} skills",
     "importSelected": "Import Selected ({{count}})",
     "noUnmanagedFound": "No skills to import found. All skills are already managed by CC Switch.",
+    "unmanagedAvailable": "Skills available to import",
     "foundIn": "Found in",
     "local": "Local",
     "uninstallConfirm": "Are you sure you want to uninstall \"{{name}}\"? This will remove the skill from all apps and create a local backup first.",
