@@ -1836,7 +1836,16 @@ impl SkillService {
         }
 
         let app_dir = Self::get_app_skills_dir_for_db(db.as_ref(), app)?;
-        Self::remove_from_app_dir(directory, app, &app_dir)
+        Self::remove_from_app_dir(directory, app, &app_dir)?;
+
+        if matches!(app, AppType::Claude) {
+            let configured_dir = Self::get_app_skills_dir(app)?;
+            if configured_dir != app_dir {
+                Self::remove_from_app_dir(directory, app, &configured_dir)?;
+            }
+        }
+
+        Ok(())
     }
 
     fn remove_from_app_dir(directory: &str, app: &AppType, app_dir: &Path) -> Result<()> {
@@ -3344,6 +3353,50 @@ mod tests {
                 .join("SKILL.md")
                 .exists(),
             "profile-and-config Claude sync should not land in configured/default Claude dir"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn remove_from_app_clears_profile_and_configured_claude_skills_dirs() {
+        let _settings = SettingsGuard::new();
+        let temp = tempdir().expect("tempdir");
+        let configured_claude_dir = temp.path().join("configured-claude");
+        let provider_profile_dir = temp.path().join("profile-and-config");
+
+        let mut settings = crate::settings::AppSettings::default();
+        settings.claude_config_dir = Some(configured_claude_dir.to_string_lossy().to_string());
+        crate::settings::update_settings(settings).expect("update test settings");
+
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let provider = claude_provider_with_profile(
+            "profile-and-config",
+            &provider_profile_dir,
+            ClaudeActivationMode::ProfileAndConfig,
+        );
+        db.save_provider(AppType::Claude.as_str(), &provider)
+            .expect("save provider");
+        db.set_current_provider(AppType::Claude.as_str(), "profile-and-config")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("profile-and-config"))
+            .expect("set local current provider");
+
+        let skill_dir = "disabled-skill";
+        let profile_skill = provider_profile_dir.join("skills").join(skill_dir);
+        let configured_skill = configured_claude_dir.join("skills").join(skill_dir);
+        write_skill(&profile_skill, "Disabled Skill");
+        write_skill(&configured_skill, "Disabled Skill");
+
+        SkillService::remove_from_app_with_db(&db, skill_dir, &AppType::Claude)
+            .expect("remove Claude skill");
+
+        assert!(
+            !profile_skill.exists(),
+            "profile-and-config Claude skill copy should be removed"
+        );
+        assert!(
+            !configured_skill.exists(),
+            "configured/default Claude skill copy should also be removed"
         );
     }
 
