@@ -16,7 +16,9 @@ export type ClaudeModelEnvField =
   | "ANTHROPIC_DEFAULT_FABLE_MODEL"
   | "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME";
 
-export const CLAUDE_ONE_M_MARKER = "[1M]";
+// Claude Code 只识别小写 `[1m]` 后缀（见官方文档 model-config）。
+// 读取侧虽用 toLowerCase() 容错，但写入侧必须用小写，否则 /context 不会启用 1M 上下文。
+export const CLAUDE_ONE_M_MARKER = "[1m]";
 
 export function hasClaudeOneMMarker(model: string): boolean {
   return model.trimEnd().toLowerCase().endsWith("[1m]");
