@@ -2135,12 +2135,51 @@ impl ProxyService {
         }
 
         if has_backup && !live_taken_over && matches!(app_type_enum, AppType::Codex) {
-            let effective_settings = build_effective_settings_with_common_config(
+            let mut effective_settings = build_effective_settings_with_common_config(
                 self.db.as_ref(),
                 &AppType::Codex,
                 &provider,
             )
             .map_err(|e| format!("构建 Codex 有效配置失败: {e}"))?;
+            if let Ok(existing_live) = crate::codex_config::read_codex_live_settings() {
+                let mut existing_for_merge = existing_live;
+                if crate::services::provider::provider_uses_common_config(
+                    &AppType::Codex,
+                    &provider,
+                    self.db
+                        .get_config_snippet(AppType::Codex.as_str())
+                        .map_err(|e| format!("读取 Codex Common Config 失败: {e}"))?
+                        .as_deref(),
+                ) {
+                    if let Some(snippet) = self
+                        .db
+                        .get_config_snippet(AppType::Codex.as_str())
+                        .map_err(|e| format!("读取 Codex Common Config 失败: {e}"))?
+                    {
+                        existing_for_merge =
+                            crate::services::provider::remove_common_config_from_settings(
+                                &AppType::Codex,
+                                &existing_for_merge,
+                                &snippet,
+                            )
+                            .map_err(|e| format!("剥离 Codex Common Config 失败: {e}"))?;
+                    }
+                }
+
+                if let Some(obj) = effective_settings.as_object_mut() {
+                    let target_config = obj.get("config").and_then(|v| v.as_str()).unwrap_or("");
+                    let existing_config = existing_for_merge
+                        .get("config")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let merged = crate::codex_config::merge_existing_codex_mcp_servers(
+                        target_config,
+                        existing_config,
+                    )
+                    .map_err(|e| format!("合并 Codex MCP 配置失败: {e}"))?;
+                    obj.insert("config".to_string(), json!(merged));
+                }
+            }
             let auth = effective_settings
                 .get("auth")
                 .ok_or_else(|| "Codex 供应商缺少 auth 配置".to_string())?;
@@ -5514,6 +5553,16 @@ requires_openai_auth = true
             .proxy_service
             .write_codex_live_for_provider(&provider_a.settings_config, Some(&provider_a))
             .expect("seed live codex config");
+        let live_with_extra_mcp = format!(
+            "{}\n[mcp_servers.live_only]\ncommand = \"live-only-command\"\n",
+            std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+                .expect("read seeded live config")
+        );
+        crate::codex_config::write_codex_live_atomic(
+            &json!({ "OPENAI_API_KEY": "key-a" }),
+            Some(&live_with_extra_mcp),
+        )
+        .expect("add live-only mcp entry");
         assert!(
             !state
                 .proxy_service
@@ -5571,6 +5620,14 @@ requires_openai_auth = true
         assert!(
             config_text.contains(r#"command = "shared-command""#),
             "config.toml must include common config content after switch"
+        );
+        assert!(
+            config_text.contains("[mcp_servers.live_only]"),
+            "provider switch during restored-backup flow must preserve live-only MCP entries"
+        );
+        assert!(
+            config_text.contains(r#"command = "live-only-command""#),
+            "live-only MCP entry content must survive restored-backup provider switch"
         );
     }
 

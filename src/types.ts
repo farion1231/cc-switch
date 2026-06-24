@@ -42,6 +42,11 @@ export interface CustomEndpoint {
   lastUsed?: number;
 }
 
+export interface ProviderCustomHeaderEntry {
+  key: string;
+  value: string;
+}
+
 // 端点候选项（用于端点测速弹窗）
 export interface EndpointCandidate {
   id?: string;
@@ -217,6 +222,8 @@ export interface ProviderMeta {
   codexFastMode?: boolean;
   // Codex Responses -> Chat Completions reasoning capability metadata
   codexChatReasoning?: CodexChatReasoning;
+  // Provider-level custom headers injected by the local proxy
+  customHeaders?: Record<string, string>;
   // Custom User-Agent for local proxy routing. Only applied by the local proxy.
   customUserAgent?: string;
   // 供应商类型（用于识别 Copilot 等特殊供应商）

@@ -525,6 +525,39 @@ pub(crate) fn write_live_with_common_config(
         return Ok(());
     }
 
+    if matches!(app_type, AppType::Codex) {
+        let existing_live = crate::codex_config::read_codex_live_settings().ok();
+        if let (Some(existing_live), Some(obj)) = (
+            existing_live.as_ref(),
+            effective_provider.settings_config.as_object_mut(),
+        ) {
+            let mut existing_for_merge = existing_live.clone();
+            if provider_uses_common_config(
+                app_type,
+                provider,
+                db.get_config_snippet(app_type.as_str())?.as_deref(),
+            ) {
+                if let Some(snippet) = db.get_config_snippet(app_type.as_str())? {
+                    existing_for_merge = remove_common_config_from_settings(
+                        app_type,
+                        &existing_for_merge,
+                        &snippet,
+                    )?;
+                }
+            }
+            let target_config = obj.get("config").and_then(|v| v.as_str()).unwrap_or("");
+            let existing_config = existing_for_merge
+                .get("config")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let merged = crate::codex_config::merge_existing_codex_mcp_servers(
+                target_config,
+                existing_config,
+            )?;
+            obj.insert("config".to_string(), Value::String(merged));
+        }
+    }
+
     write_live_snapshot(app_type, &effective_provider)
 }
 
@@ -1642,6 +1675,83 @@ mod tests {
         let stripped =
             remove_common_config_from_settings(&AppType::Codex, &applied, snippet).unwrap();
         assert_eq!(stripped, settings);
+    }
+
+    #[test]
+    fn codex_live_write_preserves_live_only_mcp_without_reviving_removed_common_config_mcp() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp_home.path());
+
+        let result = (|| -> Result<(), AppError> {
+            let db = Database::memory().expect("init db");
+            db.set_config_snippet(
+                AppType::Codex.as_str(),
+                Some(
+                    r#"[mcp_servers.shared]
+command = "shared-command"
+"#
+                    .to_string(),
+                ),
+            )?;
+
+            let mut provider = Provider::with_id(
+                "codex-provider".to_string(),
+                "Codex Provider".to_string(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": "sk-test" },
+                    "config": r#"model_provider = "custom"
+model = "gpt-5"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://provider.example/v1"
+"#
+                }),
+                None,
+            );
+            provider.meta = Some(crate::provider::ProviderMeta {
+                common_config_enabled: Some(false),
+                ..Default::default()
+            });
+
+            let codex_dir = crate::codex_config::get_codex_config_dir();
+            std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+            std::fs::write(
+                crate::codex_config::get_codex_config_path(),
+                r#"model_provider = "previous"
+
+[mcp_servers.shared]
+command = "shared-command"
+
+[mcp_servers.live_only]
+command = "live-only-command"
+"#,
+            )
+            .expect("seed live config");
+
+            write_live_with_common_config(&db, &AppType::Codex, &provider)?;
+
+            let written = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+                .expect("read written config");
+            assert!(
+                !written.contains("[mcp_servers.shared]"),
+                "disabled common config MCP entries should not be resurrected from live config"
+            );
+            assert!(
+                written.contains("[mcp_servers.live_only]"),
+                "live-only MCP entries should still be preserved"
+            );
+
+            Ok(())
+        })();
+
+        match old_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+
+        result.expect("write should succeed");
     }
 
     #[test]
