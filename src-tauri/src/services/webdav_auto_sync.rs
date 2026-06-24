@@ -153,17 +153,24 @@ pub fn start_worker(db: Arc<crate::database::Database>, app: tauri::AppHandle) {
         return;
     }
 
-    // 进入 startup grace 期：setup 阶段产生的大量数据库写入（migration、默认值、
-    // 用量回填、periodic backup prune 等）不应该被 SQLite update_hook 当作"用户
-    // 改了配置"并触发上传。setup 末尾调用 release_startup_auto_sync() 释放。
-    // 见 #4547。
-    AUTO_SYNC_SUPPRESS_DEPTH.fetch_add(1, Ordering::SeqCst);
-
     // Buffer size 1 is enough: we only need "dirty" signals, not every event.
     let (tx, rx) = channel::<String>(1);
     if DB_CHANGE_TX.set(tx).is_err() {
         return;
     }
+
+    // Startup grace: setup-stage DB writes (migration, defaults,
+    // periodic_backup_if_needed, recover_from_crash settings writes)
+    // must not trigger an auto-upload before the user has done
+    // anything. push 2 here; setup closure releases once and a
+    // delayed-release task (spawned from setup) releases once more —
+    // net zero, but coverage spans both the setup synchronous path
+    // AND tasks spawned from it that complete after setup returns.
+    // 30s is enough for startup background tasks to land (typically
+    // <5s) and short enough that a real user interaction is never
+    // suppressed (UI is still rendering at that point).
+    // See #4547 + codex review P1.
+    AUTO_SYNC_SUPPRESS_DEPTH.fetch_add(2, Ordering::SeqCst);
 
     tauri::async_runtime::spawn(async move {
         run_worker_loop(db, rx, app).await;
@@ -225,6 +232,29 @@ mod tests {
     // 共享 crate::services::SUPPRESS_TEST_LOCK 串行化所有读取/修改它的测试。
     // 现有 `suppression_guard_enables_and_restores_state` 也加同一把锁，
     // 否则它会与新测试并行跑、相互污染。
+
+    #[test]
+    fn start_worker_pushes_two_for_setup_and_delayed_release() {
+        let _lock = crate::services::SUPPRESS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // Regression guard for codex review P1 on #4587: start_worker
+        // must push *2* (one for the setup closure release, one for the
+        // 30s delayed-release task spawned from setup), not just 1.
+        // If a future refactor drops back to push(1), this test will
+        // detect it because two paired releases no longer leave
+        // suppression fully off.
+        let _startup = AutoSyncSuppressionGuard::new(); // simulates start_worker push
+        AutoSyncSuppressionGuard::new(); // second push for the delayed-release path
+                                         // Two releases — one sync (setup), one for the 30s path.
+        release_startup_auto_sync();
+        release_startup_auto_sync();
+        // net = 0 → no suppression
+        assert!(
+            !is_auto_sync_suppressed(),
+            "expected suppression cleared after paired push(2)/release(2)"
+        );
+    }
 
     #[test]
     fn release_startup_auto_sync_clears_suppression_when_paired() {
