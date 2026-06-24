@@ -1610,6 +1610,23 @@
     "tip2": "• Extractor function runs in sandbox environment, supports ES2020+ syntax",
     "tip3": "• Entire config must be wrapped in () to form object literal expression"
   },
+  "dbUpgrade": {
+    "title": "Database version is too new",
+    "description": "This database was created by a newer version of CC Switch. Upgrade the app to continue. Upgrading will not delete your data.",
+    "versionInfo": "Database v{{db}} · App supports v{{supported}}",
+    "dbPath": "Database file",
+    "checking": "Checking for available updates…",
+    "updateAvailable": "Version v{{version}} is available; upgrading will let you continue.",
+    "incompatibleTitle": "Upgrading won't fix this",
+    "incompatibleDescription": "You are already on the latest version, but the database (v{{db}}) is still newer than this app supports (v{{supported}}). It was likely created by a third-party client or a newer build, so upgrading the official app cannot make it compatible.",
+    "preparing": "Preparing update…",
+    "downloading": "Downloading update…",
+    "upgradeNow": "Upgrade app",
+    "retry": "Retry upgrade",
+    "openReleases": "Open releases page",
+    "openConfigDir": "Open config folder",
+    "quit": "Quit"
+  },
   "errors": {
     "usage_query_failed": "Usage query failed",
     "configLoadFailedTitle": "Configuration Load Failed",

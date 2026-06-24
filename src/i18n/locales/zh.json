@@ -1610,6 +1610,23 @@
     "tip2": "• extractor 函数在沙箱环境中执行，支持 ES2020+ 语法",
     "tip3": "• 整个配置必须用 () 包裹，形成对象字面量表达式"
   },
+  "dbUpgrade": {
+    "title": "数据库版本过新",
+    "description": "当前数据库由更新版本的 CC Switch 创建，需要升级应用后才能继续使用。升级不会删除你的数据。",
+    "versionInfo": "数据库版本 v{{db}} · 应用支持 v{{supported}}",
+    "dbPath": "数据库文件",
+    "checking": "正在检查可用更新…",
+    "updateAvailable": "发现新版本 v{{version}}，升级后即可继续使用。",
+    "incompatibleTitle": "升级也无法解决",
+    "incompatibleDescription": "你已是最新版本，但数据库版本（v{{db}}）仍高于本应用支持的版本（v{{supported}}）。该数据库可能由第三方客户端或更高版本创建，升级当前官方应用也无法兼容。",
+    "preparing": "正在准备更新…",
+    "downloading": "正在下载更新…",
+    "upgradeNow": "升级应用",
+    "retry": "重试升级",
+    "openReleases": "打开发布页",
+    "openConfigDir": "打开配置目录",
+    "quit": "退出"
+  },
   "errors": {
     "usage_query_failed": "用量查询失败",
     "configLoadFailedTitle": "配置加载失败",
