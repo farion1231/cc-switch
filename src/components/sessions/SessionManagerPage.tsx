@@ -16,6 +16,10 @@ import {
   FileText,
   X,
   CheckSquare,
+  ListTree,
+  List,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import {
   useDeleteSessionMutation,
@@ -35,6 +39,11 @@ import {
 } from "@/components/ui/select";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   Tooltip,
@@ -57,8 +66,12 @@ import {
   getProviderIconName,
   getProviderLabel,
   getSessionKey,
+  groupSessionsByProviderAndDirectory,
   shouldHideCodexMessageFromToc,
 } from "./utils";
+
+const SESSION_LIST_VIEW_MODE_STORAGE_KEY =
+  "cc-switch.sessionManager.listViewMode";
 
 type ProviderFilter =
   | "all"
@@ -68,6 +81,16 @@ type ProviderFilter =
   | "openclaw"
   | "gemini"
   | "hermes";
+
+type SessionListViewMode = "flat" | "grouped";
+
+const readInitialSessionListViewMode = (): SessionListViewMode => {
+  if (typeof window === "undefined") return "flat";
+  const stored = window.localStorage.getItem(
+    SESSION_LIST_VIEW_MODE_STORAGE_KEY,
+  );
+  return stored === "grouped" || stored === "flat" ? stored : "flat";
+};
 
 export function SessionManagerPage({ appId }: { appId: string }) {
   const { t } = useTranslation();
@@ -96,6 +119,15 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     appId as ProviderFilter,
   );
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [listViewMode, setListViewMode] = useState<SessionListViewMode>(
+    readInitialSessionListViewMode,
+  );
+  const [expandedProviderGroups, setExpandedProviderGroups] = useState<
+    Set<string>
+  >(() => new Set());
+  const [expandedDirectoryGroups, setExpandedDirectoryGroups] = useState<
+    Set<string>
+  >(() => new Set());
 
   // 使用 FlexSearch 全文搜索
   const { search: searchSessions } = useSessionSearch({
@@ -106,6 +138,39 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const filteredSessions = useMemo(() => {
     return searchSessions(search);
   }, [searchSessions, search]);
+
+  const groupedSessions = useMemo(
+    () =>
+      groupSessionsByProviderAndDirectory(
+        filteredSessions,
+        t("sessionManager.unknownDirectory", {
+          defaultValue: "未知目录",
+        }),
+      ),
+    [filteredSessions, t],
+  );
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      SESSION_LIST_VIEW_MODE_STORAGE_KEY,
+      listViewMode,
+    );
+  }, [listViewMode]);
+
+  useEffect(() => {
+    if (listViewMode !== "grouped") return;
+
+    setExpandedProviderGroups(
+      new Set(groupedSessions.map((group) => group.providerId)),
+    );
+    setExpandedDirectoryGroups(
+      new Set(
+        groupedSessions.flatMap((group) =>
+          group.directories.map((directory) => directory.key),
+        ),
+      ),
+    );
+  }, [groupedSessions, listViewMode]);
 
   useEffect(() => {
     if (filteredSessions.length === 0) {
@@ -130,6 +195,15 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       ) || null
     );
   }, [filteredSessions, selectedKey]);
+
+  const listViewModeLabel =
+    listViewMode === "grouped"
+      ? t("sessionManager.viewModeGrouped", {
+          defaultValue: "分类",
+        })
+      : t("sessionManager.viewModeFlat", {
+          defaultValue: "列表",
+        });
 
   const { data: messages = [], isLoading: isLoadingMessages } =
     useSessionMessagesQuery(
@@ -416,6 +490,49 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     });
   };
 
+  const toggleProviderGroup = (providerId: string) => {
+    setExpandedProviderGroups((current) => {
+      const next = new Set(current);
+      if (next.has(providerId)) {
+        next.delete(providerId);
+      } else {
+        next.add(providerId);
+      }
+      return next;
+    });
+  };
+
+  const toggleDirectoryGroup = (directoryKey: string) => {
+    setExpandedDirectoryGroups((current) => {
+      const next = new Set(current);
+      if (next.has(directoryKey)) {
+        next.delete(directoryKey);
+      } else {
+        next.add(directoryKey);
+      }
+      return next;
+    });
+  };
+
+  const renderSessionItem = (session: SessionMeta) => {
+    const sessionKey = getSessionKey(session);
+    const isSelected = selectedKey !== null && sessionKey === selectedKey;
+
+    return (
+      <SessionItem
+        key={sessionKey}
+        session={session}
+        isSelected={isSelected}
+        selectionMode={selectionMode}
+        searchQuery={search}
+        isChecked={selectedSessionKeys.has(sessionKey)}
+        isCheckDisabled={!session.sourcePath}
+        onSelect={setSelectedKey}
+        onToggleChecked={(checked) => toggleSessionChecked(session, checked)}
+      />
+    );
+  };
+
   const handleToggleSelectAll = () => {
     setSelectedSessionKeys((current) => {
       const next = new Set(current);
@@ -570,6 +687,60 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                             </TooltipContent>
                           </Tooltip>
                         )}
+                        <Select
+                          value={listViewMode}
+                          onValueChange={(value) =>
+                            setListViewMode(value as SessionListViewMode)
+                          }
+                        >
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <SelectTrigger
+                                className="size-7 p-0 justify-center border-0 bg-transparent hover:bg-muted"
+                                aria-label={t(
+                                  "sessionManager.viewModeTooltip",
+                                  {
+                                    defaultValue: "查看方式",
+                                  },
+                                )}
+                              >
+                                <span className="sr-only">
+                                  {t("sessionManager.viewModeTooltip", {
+                                    defaultValue: "查看方式",
+                                  })}
+                                </span>
+                                {listViewMode === "grouped" ? (
+                                  <ListTree className="size-3.5" />
+                                ) : (
+                                  <List className="size-3.5" />
+                                )}
+                              </SelectTrigger>
+                            </TooltipTrigger>
+                            <TooltipContent>{listViewModeLabel}</TooltipContent>
+                          </Tooltip>
+                          <SelectContent className="w-40">
+                            <SelectItem value="flat">
+                              <div className="flex items-center gap-2">
+                                <List className="size-3.5" />
+                                <span>
+                                  {t("sessionManager.viewModeFlat", {
+                                    defaultValue: "列表",
+                                  })}
+                                </span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="grouped">
+                              <div className="flex items-center gap-2">
+                                <ListTree className="size-3.5" />
+                                <span>
+                                  {t("sessionManager.viewModeGrouped", {
+                                    defaultValue: "分类",
+                                  })}
+                                </span>
+                              </div>
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button
@@ -600,7 +771,20 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                         >
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <SelectTrigger className="size-7 p-0 justify-center border-0 bg-transparent hover:bg-muted">
+                              <SelectTrigger
+                                className="size-7 p-0 justify-center border-0 bg-transparent hover:bg-muted"
+                                aria-label={t(
+                                  "sessionManager.providerFilterTooltip",
+                                  {
+                                    defaultValue: "供应商筛选",
+                                  },
+                                )}
+                              >
+                                <span className="sr-only">
+                                  {t("sessionManager.providerFilterTooltip", {
+                                    defaultValue: "供应商筛选",
+                                  })}
+                                </span>
                                 <ProviderIcon
                                   icon={
                                     providerFilter === "all"
@@ -784,31 +968,148 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                           {t("sessionManager.noSessions")}
                         </p>
                       </div>
-                    ) : (
-                      <div className="space-y-1">
-                        {filteredSessions.map((session) => {
-                          const isSelected =
-                            selectedKey !== null &&
-                            getSessionKey(session) === selectedKey;
+                    ) : listViewMode === "grouped" ? (
+                      <div className="space-y-2">
+                        {groupedSessions.map((providerGroup) => {
+                          const providerOpen = expandedProviderGroups.has(
+                            providerGroup.providerId,
+                          );
+                          const providerLabel = getProviderLabel(
+                            providerGroup.providerId,
+                            t,
+                          );
 
                           return (
-                            <SessionItem
-                              key={getSessionKey(session)}
-                              session={session}
-                              isSelected={isSelected}
-                              selectionMode={selectionMode}
-                              searchQuery={search}
-                              isChecked={selectedSessionKeys.has(
-                                getSessionKey(session),
-                              )}
-                              isCheckDisabled={!session.sourcePath}
-                              onSelect={setSelectedKey}
-                              onToggleChecked={(checked) =>
-                                toggleSessionChecked(session, checked)
+                            <Collapsible
+                              key={providerGroup.providerId}
+                              open={providerOpen}
+                              onOpenChange={() =>
+                                toggleProviderGroup(providerGroup.providerId)
                               }
-                            />
+                            >
+                              <CollapsibleTrigger asChild>
+                                <button
+                                  type="button"
+                                  className="flex w-full items-center gap-2 rounded-md border bg-muted/40 px-2.5 py-2 text-left transition-colors hover:bg-muted"
+                                  aria-label={t(
+                                    "sessionManager.toggleProviderGroup",
+                                    {
+                                      defaultValue:
+                                        "展开或折叠 {{provider}} 供应商分组",
+                                      provider: providerLabel,
+                                    },
+                                  )}
+                                >
+                                  {providerOpen ? (
+                                    <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                                  ) : (
+                                    <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+                                  )}
+                                  <ProviderIcon
+                                    icon={getProviderIconName(
+                                      providerGroup.providerId,
+                                    )}
+                                    name={providerGroup.providerId}
+                                    size={16}
+                                  />
+                                  <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                                    {providerLabel}
+                                  </span>
+                                  <Badge
+                                    variant="secondary"
+                                    className="shrink-0 text-xs"
+                                  >
+                                    {providerGroup.sessions.length}
+                                  </Badge>
+                                </button>
+                              </CollapsibleTrigger>
+                              <CollapsibleContent className="mt-1 space-y-1 pl-2">
+                                {providerGroup.directories.map(
+                                  (directoryGroup) => {
+                                    const directoryOpen =
+                                      expandedDirectoryGroups.has(
+                                        directoryGroup.key,
+                                      );
+
+                                    return (
+                                      <Collapsible
+                                        key={directoryGroup.key}
+                                        open={directoryOpen}
+                                        onOpenChange={() =>
+                                          toggleDirectoryGroup(
+                                            directoryGroup.key,
+                                          )
+                                        }
+                                      >
+                                        <CollapsibleTrigger asChild>
+                                          <button
+                                            type="button"
+                                            className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                                            aria-label={t(
+                                              "sessionManager.toggleDirectoryGroup",
+                                              {
+                                                defaultValue:
+                                                  "展开或折叠 {{directory}} 目录分组",
+                                                directory: directoryGroup.label,
+                                              },
+                                            )}
+                                          >
+                                            {directoryOpen ? (
+                                              <ChevronDown className="size-3.5 shrink-0" />
+                                            ) : (
+                                              <ChevronRight className="size-3.5 shrink-0" />
+                                            )}
+                                            <FolderOpen className="size-3.5 shrink-0" />
+                                            <Tooltip>
+                                              <TooltipTrigger asChild>
+                                                <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                                                  {directoryGroup.label}
+                                                </span>
+                                              </TooltipTrigger>
+                                              <TooltipContent
+                                                side="bottom"
+                                                className="max-w-xs"
+                                              >
+                                                <p className="font-mono text-xs break-all">
+                                                  {directoryGroup.projectDir ??
+                                                    t(
+                                                      "sessionManager.unknownDirectory",
+                                                      {
+                                                        defaultValue:
+                                                          "未知目录",
+                                                      },
+                                                    )}
+                                                </p>
+                                              </TooltipContent>
+                                            </Tooltip>
+                                            <Badge
+                                              variant="outline"
+                                              className="shrink-0 text-xs"
+                                            >
+                                              {directoryGroup.sessions.length}
+                                            </Badge>
+                                          </button>
+                                        </CollapsibleTrigger>
+                                        <CollapsibleContent className="mt-1 space-y-1 pl-3">
+                                          {directoryGroup.sessions.map(
+                                            (session) =>
+                                              renderSessionItem(session),
+                                          )}
+                                        </CollapsibleContent>
+                                      </Collapsible>
+                                    );
+                                  },
+                                )}
+                              </CollapsibleContent>
+                            </Collapsible>
                           );
                         })}
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        {filteredSessions.map((session) =>
+                          renderSessionItem(session),
+                        )}
                       </div>
                     )}
                   </div>
