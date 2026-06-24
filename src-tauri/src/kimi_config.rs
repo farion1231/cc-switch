@@ -207,9 +207,8 @@ fn remove_models_for_provider(doc: &mut DocumentMut, provider_id: &str) {
 
     let to_remove: Vec<String> = models
         .iter()
-        .filter_map(|(alias, model)| {
-            (model_provider_id(model).as_deref() == Some(provider_id)).then(|| alias.to_string())
-        })
+        .filter(|&(_, model)| model_provider_id(model).as_deref() == Some(provider_id))
+        .map(|(alias, _)| alias.to_string())
         .collect();
 
     for alias in to_remove {
