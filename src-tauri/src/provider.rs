@@ -69,7 +69,9 @@ impl Provider {
 
     pub fn is_codex_oauth(&self) -> bool {
         self.provider_type() == Some("codex_oauth")
-            || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
+            || self
+                .claude_base_url()
+                .is_some_and(codex_oauth_base_url_matches)
     }
 
     pub fn is_github_copilot(&self) -> bool {
@@ -317,6 +319,18 @@ fn claude_openrouter_compat_mode_enabled(value: Option<&Value>) -> bool {
         }
         _ => false,
     }
+}
+
+fn codex_oauth_base_url_matches(base_url: &str) -> bool {
+    let Ok(url) = url::Url::parse(base_url.trim()) else {
+        return false;
+    };
+
+    url.scheme() == "https"
+        && url
+            .host_str()
+            .is_some_and(|host| host.eq_ignore_ascii_case("chatgpt.com"))
+        && url.path().trim_end_matches('/') == "/backend-api/codex"
 }
 
 fn claude_base_url_is_official_equivalent(base_url: &str) -> bool {
@@ -1229,6 +1243,37 @@ mod tests {
         );
         assert!(codex_endpoint.is_codex_oauth());
         assert!(codex_endpoint.uses_managed_account_auth());
+
+        let relay_with_codex_path_in_query = Provider::with_id(
+            "codex-relay".to_string(),
+            "Codex Relay".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://relay.example/v1?upstream=https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            None,
+        );
+        assert!(
+            !relay_with_codex_path_in_query.is_codex_oauth(),
+            "relay URLs that only mention the Codex OAuth endpoint must not be treated as managed Codex OAuth"
+        );
+        assert!(!relay_with_codex_path_in_query.uses_managed_account_auth());
+
+        let relay_with_codex_path_segment = Provider::with_id(
+            "codex-relay-path".to_string(),
+            "Codex Relay Path".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://relay.example/chatgpt.com/backend-api/codex"
+                }
+            }),
+            None,
+        );
+        assert!(
+            !relay_with_codex_path_segment.is_codex_oauth(),
+            "relay URLs that include the Codex OAuth path on another host must not be treated as managed Codex OAuth"
+        );
 
         copilot.meta = Some(ProviderMeta {
             provider_type: Some("github_copilot".to_string()),
