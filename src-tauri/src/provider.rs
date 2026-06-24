@@ -105,16 +105,9 @@ impl Provider {
 
                 !custom_base_url
             }
-            crate::app_config::AppType::Gemini => {
-                let base_url = self.settings_config.pointer("/env/GOOGLE_GEMINI_BASE_URL");
-
-                base_url.is_none_or(|base_url| {
-                    value_is_null_or_blank_string(base_url)
-                        || base_url
-                            .as_str()
-                            .is_some_and(gemini_base_url_is_official_equivalent)
-                })
-            }
+            crate::app_config::AppType::Gemini => self.gemini_base_url().is_none_or(|base_url| {
+                base_url.trim().is_empty() || gemini_base_url_is_official_equivalent(base_url)
+            }),
             _ => false,
         }
     }
@@ -181,6 +174,14 @@ impl Provider {
         self.claude_base_url()
             .map(|base_url| base_url.contains(needle))
             .unwrap_or(false)
+    }
+
+    fn gemini_base_url(&self) -> Option<&str> {
+        self.settings_config
+            .pointer("/env/GOOGLE_GEMINI_BASE_URL")
+            .and_then(Value::as_str)
+            .or_else(|| self.settings_config.get("base_url").and_then(Value::as_str))
+            .or_else(|| self.settings_config.get("baseURL").and_then(Value::as_str))
     }
 
     pub fn codex_fast_mode_enabled(&self) -> bool {
@@ -295,10 +296,6 @@ impl Provider {
         // and `{{baseUrl}}/path` concatenation never produces a double slash.
         (base_url.trim_end_matches('/').to_string(), api_key)
     }
-}
-
-fn value_is_null_or_blank_string(value: &Value) -> bool {
-    value.is_null() || value.as_str().is_some_and(|value| value.trim().is_empty())
 }
 
 fn normalize_claude_api_format(api_format: &str) -> &'static str {
@@ -1599,6 +1596,36 @@ model = "gpt-5.4""#
                     "GEMINI_API_KEY": "gemini-key",
                     "GOOGLE_GEMINI_BASE_URL": "https://www.packyapi.com"
                 }
+            }),
+            None,
+        );
+
+        assert!(!provider.is_official_equivalent_for_app(&crate::app_config::AppType::Gemini));
+    }
+
+    #[test]
+    fn gemini_top_level_custom_base_url_is_not_official_equivalent() {
+        let provider = Provider::with_id(
+            "legacy-packy-gemini".to_string(),
+            "Legacy Packy Gemini".to_string(),
+            json!({
+                "env": { "GEMINI_API_KEY": "gemini-key" },
+                "base_url": "https://www.packyapi.com"
+            }),
+            None,
+        );
+
+        assert!(!provider.is_official_equivalent_for_app(&crate::app_config::AppType::Gemini));
+    }
+
+    #[test]
+    fn gemini_top_level_base_url_alias_is_not_official_equivalent() {
+        let provider = Provider::with_id(
+            "legacy-packy-gemini-alias".to_string(),
+            "Legacy Packy Gemini Alias".to_string(),
+            json!({
+                "env": { "GEMINI_API_KEY": "gemini-key" },
+                "baseURL": "https://www.packyapi.com"
             }),
             None,
         );
