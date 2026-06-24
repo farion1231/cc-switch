@@ -142,15 +142,22 @@ export function useSettingsForm(): UseSettingsFormResult {
     // 用 ref 保证只读取一次，防止 data refetch 时重复触发
     if (!hasSyncedTranscriptProtectionRef.current) {
       hasSyncedTranscriptProtectionRef.current = true;
-      settingsApi.getTranscriptProtection().then((isProtected) => {
-        if (userTouchedTranscriptRef.current) return;
-        setSettingsState((prev) => {
-          if (!prev || prev.keepConversationHistory === isProtected) return prev;
-          return { ...prev, keepConversationHistory: isProtected };
+      settingsApi
+        .getTranscriptProtection()
+        .then((isProtected) => {
+          if (userTouchedTranscriptRef.current) return;
+          setSettingsState((prev) => {
+            if (!prev || prev.keepConversationHistory === isProtected)
+              return prev;
+            return { ...prev, keepConversationHistory: isProtected };
+          });
+        })
+        .catch((err) => {
+          console.warn(
+            "[useSettingsForm] Failed to read transcript protection state",
+            err,
+          );
         });
-      }).catch((err) => {
-        console.warn("[useSettingsForm] Failed to read transcript protection state", err);
-      });
     }
   }, [data, readPersistedLanguage, syncLanguage]);
 

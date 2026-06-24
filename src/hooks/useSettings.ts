@@ -130,15 +130,13 @@ export function useSettings(): UseSettingsResult {
     data?.keepConversationHistory,
   );
   useEffect(() => {
-    lastSyncedKeepConversationHistoryRef.current = data?.keepConversationHistory;
+    lastSyncedKeepConversationHistoryRef.current =
+      data?.keepConversationHistory;
   }, [data?.keepConversationHistory]);
 
   // 同步 Claude Code 对话记录保护状态到 ~/.claude/settings.json
   const syncTranscriptProtection = useCallback(
-    async (
-      nextValue: boolean,
-      persistedValue?: boolean,
-    ): Promise<void> => {
+    async (nextValue: boolean, persistedValue?: boolean): Promise<void> => {
       const baseline =
         lastSyncedKeepConversationHistoryRef.current ?? persistedValue;
       if (baseline === nextValue) return;
@@ -454,7 +452,8 @@ export function useSettings(): UseSettingsResult {
         );
 
         // Claude Code 对话记录保护：开=写入 cleanupPeriodDays=99999；关=删除该字段
-        const nextKeepConversationHistory = payload.keepConversationHistory ?? false;
+        const nextKeepConversationHistory =
+          payload.keepConversationHistory ?? false;
         await syncTranscriptProtection(
           nextKeepConversationHistory,
           data?.keepConversationHistory ?? false,

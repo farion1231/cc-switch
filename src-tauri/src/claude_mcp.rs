@@ -208,10 +208,7 @@ pub fn set_cleanup_period_days() -> Result<bool, AppError> {
         .as_object_mut()
         .ok_or_else(|| AppError::Config("~/.claude/settings.json 根必须是对象".into()))?;
 
-    let already = obj
-        .get("cleanupPeriodDays")
-        .and_then(|v| v.as_u64())
-        == Some(99999);
+    let already = obj.get("cleanupPeriodDays").and_then(|v| v.as_u64()) == Some(99999);
     if already {
         return Ok(false);
     }
