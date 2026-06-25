@@ -36,6 +36,7 @@ export interface InstalledSkill {
   installedAt: number;
   contentHash?: string;
   updatedAt: number;
+  globalEnabled?: boolean;
 }
 
 export interface SkillUninstallResult {
@@ -175,6 +176,11 @@ export const skillsApi = {
   /** 切换 Skill 的应用启用状态 */
   async toggleApp(id: string, app: AppId, enabled: boolean): Promise<boolean> {
     return await invoke("toggle_skill_app", { id, app, enabled });
+  },
+
+  /** 切换 Skill 的全局启用状态（CcSwitch 模式） */
+  async toggleGlobal(id: string, enabled: boolean): Promise<boolean> {
+    return await invoke("toggle_skill_global", { id, enabled });
   },
 
   /** 扫描未管理的 Skills */

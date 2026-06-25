@@ -705,7 +705,7 @@
       "ccSwitch": "CC Switch",
       "unified": "~/.agents/skills",
       "ccSwitchHint": "技能儲存在 ~/.cc-switch/skills/，由 CC Switch 統一管理並同步至各應用程式。",
-      "unifiedHint": "技能儲存在 ~/.agents/skills/，遵循 Agent Skills 開放標準。相容的工具（Claude Code、Codex、Gemini CLI 等）可直接發現此目錄中的技能。",
+      "unifiedHint": "技能儲存在 ~/.agents/skills/，遵循 Agent Skills 開放標準。相容的工具（OpenCode、Codex、Gemini CLI、OpenClaw 等）可直接發現此目錄中的技能。",
       "confirmTitle": "遷移技能儲存位置",
       "confirmMessage": "將移動 {{count}} 個技能至新位置，是否繼續？",
       "migrationSuccess": "已成功遷移 {{count}} 個技能",
