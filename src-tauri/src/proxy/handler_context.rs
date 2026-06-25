@@ -111,7 +111,7 @@ impl RequestContext {
             crate::settings::get_current_provider(&app_type).unwrap_or_default();
 
         // 从请求体提取模型名称
-        let request_model = body
+        let mut request_model = body
             .get("model")
             .and_then(|m| m.as_str())
             .unwrap_or("unknown")
@@ -147,6 +147,20 @@ impl RequestContext {
             .first()
             .cloned()
             .ok_or(ProxyError::NoAvailableProvider)?;
+
+        // Fallback: when the requested model is not in the selected provider's
+        // model list (e.g. gpt-5.4-mini used by Codex for memory processing),
+        // override it to the provider's selected model to avoid upstream rejection.
+        let provider_models = provider.get_models();
+        if !provider_models.is_empty() && !provider_models.iter().any(|m| m.id == request_model) {
+            if let Some(selected) = provider_models.iter().find(|m| m.selected) {
+                log::info!(
+                    "[{}] Model '{}' not in provider list, overriding to selected model '{}'",
+                    tag, request_model, selected.id
+                );
+                request_model = selected.id.clone();
+            }
+        }
 
         log::debug!(
             "[{}] Provider: {}, model: {}, failover chain: {} providers, session: {}",
@@ -241,6 +255,7 @@ impl RequestContext {
             self.optimizer_config.clone(),
             self.copilot_optimizer_config.clone(),
             max_retries,
+            Some(self.request_model.clone()),
         )
     }
 
