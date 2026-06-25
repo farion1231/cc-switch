@@ -826,6 +826,18 @@ pub fn run() {
 
             // 启动阶段不再无条件保存,避免意外覆盖用户配置。
 
+            // 启动时自愈同步 Skills（全量重整两个候选 SSOT 目录）
+            {
+                let db = app_state.db.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Err(e) = crate::services::skill::SkillService::sync_to_agents_dir(&db) {
+                        log::warn!("启动时 Skill 自愈同步失败: {e}");
+                    } else {
+                        log::info!("✓ 启动时 Skill 自愈同步完成");
+                    }
+                });
+            }
+
             // 注册 deep-link URL 处理器（使用正确的 DeepLinkExt API）
             log::info!("=== Registering deep-link URL handler ===");
 
@@ -1322,6 +1334,7 @@ pub fn run() {
             commands::uninstall_skill_unified,
             commands::restore_skill_backup,
             commands::toggle_skill_app,
+            commands::toggle_skill_global,
             commands::scan_unmanaged_skills,
             commands::import_skills_from_apps,
             commands::discover_available_skills,
