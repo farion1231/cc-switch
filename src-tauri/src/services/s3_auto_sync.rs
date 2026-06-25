@@ -52,6 +52,7 @@ pub fn should_trigger_for_table(table: &str) -> bool {
             | "skill_repos"
             | "settings"
             | "proxy_config"
+            | "model_routes"
     )
 }
 
@@ -204,6 +205,7 @@ mod tests {
     fn should_trigger_sync_for_config_tables_only() {
         assert!(should_trigger_for_table("providers"));
         assert!(should_trigger_for_table("settings"));
+        assert!(should_trigger_for_table("model_routes"));
         assert!(!should_trigger_for_table("proxy_request_logs"));
         assert!(!should_trigger_for_table("provider_health"));
     }

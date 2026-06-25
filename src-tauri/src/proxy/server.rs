@@ -12,6 +12,7 @@ use super::{
     failover_switch::FailoverSwitchManager,
     handlers,
     log_codes::srv as log_srv,
+    model_router::ModelRouter,
     provider_router::ProviderRouter,
     providers::{codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore},
     types::*,
@@ -40,6 +41,8 @@ pub struct ProxyState {
     pub current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
     /// 共享的 ProviderRouter（持有熔断器状态，跨请求保持）
     pub provider_router: Arc<ProviderRouter>,
+    /// 模型路由器（按请求模型选择 provider，未匹配时回退 ProviderRouter）
+    pub model_router: Arc<ModelRouter>,
     /// Gemini Native shadow state，用于 thoughtSignature / tool call 回放
     pub gemini_shadow: Arc<GeminiShadowStore>,
     /// Codex Chat bridge history，用于恢复 previous_response_id 指向的 tool call
@@ -67,6 +70,7 @@ impl ProxyServer {
     ) -> Self {
         // 创建共享的 ProviderRouter（熔断器状态将跨所有请求保持）
         let provider_router = Arc::new(ProviderRouter::new(db.clone()));
+        let model_router = Arc::new(ModelRouter::new(db.clone()));
         // 创建故障转移切换管理器
         let failover_manager = Arc::new(FailoverSwitchManager::new(db.clone()));
 
@@ -77,6 +81,7 @@ impl ProxyServer {
             start_time: Arc::new(RwLock::new(None)),
             current_providers: Arc::new(RwLock::new(std::collections::HashMap::new())),
             provider_router,
+            model_router,
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             app_handle,

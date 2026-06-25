@@ -2557,7 +2557,26 @@
       "startFailed": "Failed to start routing service: {{detail}}"
     },
     "stoppedWithRestore": "Routing service stopped, all routing configs restored",
-    "stopWithRestoreFailed": "Stop failed: {{detail}}"
+    "stopWithRestoreFailed": "Stop failed: {{detail}}",
+    "modelRoutes": {
+      "title": "Model Routes",
+      "description": "Select an existing Provider by the model field in Claude Code requests. Unmatched models use default routing.",
+      "pattern": "Pattern",
+      "provider": "Provider",
+      "priority": "Priority",
+      "enabled": "Enabled",
+      "selectProvider": "Select Provider",
+      "conflict": "Pattern and Priority cannot both duplicate an enabled route.",
+      "empty": "No model routes yet. Add a rule to send matching models to a specific Provider.",
+      "toast": {
+        "created": "Model route created",
+        "createFailed": "Failed to create model route: {{error}}",
+        "updated": "Model route updated",
+        "updateFailed": "Failed to update model route: {{error}}",
+        "deleted": "Model route deleted",
+        "deleteFailed": "Failed to delete model route: {{error}}"
+      }
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} is reachable ({{responseTimeMs}}ms)",

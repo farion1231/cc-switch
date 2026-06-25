@@ -2529,7 +2529,26 @@
       "startFailed": "啟動路由服務失敗：{{detail}}"
     },
     "stoppedWithRestore": "路由服務已關閉，已還原所有路由設定",
-    "stopWithRestoreFailed": "停止失敗：{{detail}}"
+    "stopWithRestoreFailed": "停止失敗：{{detail}}",
+    "modelRoutes": {
+      "title": "模型路由",
+      "description": "依 Claude Code 請求中的 model 欄位選擇既有 Provider；未匹配時維持預設路由。",
+      "pattern": "Pattern",
+      "provider": "Provider",
+      "priority": "優先順序",
+      "enabled": "啟用",
+      "selectProvider": "選擇 Provider",
+      "conflict": "Pattern 與 Priority 不能同時重複。",
+      "empty": "尚無模型路由。新增規則後，匹配的模型會走指定 Provider。",
+      "toast": {
+        "created": "模型路由已建立",
+        "createFailed": "建立模型路由失敗: {{error}}",
+        "updated": "模型路由已更新",
+        "updateFailed": "更新模型路由失敗: {{error}}",
+        "deleted": "模型路由已刪除",
+        "deleteFailed": "刪除模型路由失敗: {{error}}"
+      }
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} 連通正常 ({{responseTimeMs}}ms)",

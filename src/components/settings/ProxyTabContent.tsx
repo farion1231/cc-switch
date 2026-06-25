@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Server, Activity, Zap, Globe, ShieldAlert } from "lucide-react";
+import { Server, Activity, Zap, Globe, ShieldAlert, Route } from "lucide-react";
 import { motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import {
@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/accordion";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { ProxyPanel } from "@/components/proxy";
+import { ModelRouteTable, ProxyPanel } from "@/components/proxy";
 import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPanel";
 import { FailoverQueueManager } from "@/components/proxy/FailoverQueueManager";
 import { RectifierConfigPanel } from "@/components/settings/RectifierConfigPanel";
@@ -128,6 +128,34 @@ export function ProxyTabContent({
               onToggleProxy={handleToggleProxy}
               isProxyPending={isProxyPending}
             />
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* Model Routes */}
+        <AccordionItem
+          value="modelRoutes"
+          className="rounded-xl glass-card overflow-hidden"
+        >
+          <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+            <div className="flex items-center gap-3">
+              <Route className="h-5 w-5 text-blue-500" />
+              <div className="text-left">
+                <h3 className="text-base font-semibold">
+                  {t("proxy.modelRoutes.title", {
+                    defaultValue: "模型路由",
+                  })}
+                </h3>
+                <p className="text-sm text-muted-foreground font-normal">
+                  {t("proxy.modelRoutes.description", {
+                    defaultValue:
+                      "按 Claude Code 请求中的 model 字段选择现有 Provider；未匹配时保持默认路由。",
+                  })}
+                </p>
+              </div>
+            </div>
+          </AccordionTrigger>
+          <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+            <ModelRouteTable />
           </AccordionContent>
         </AccordionItem>
 
