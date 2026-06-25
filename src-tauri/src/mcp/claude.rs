@@ -201,6 +201,11 @@ pub fn remove_server_from_active_claude(id: &str) -> Result<(), AppError> {
     crate::claude_mcp::set_mcp_servers_map_at_path(&mcp_path, &current)
 }
 
+pub fn remove_server_from_active_and_configured_claude(id: &str) -> Result<(), AppError> {
+    remove_server_from_active_claude(id)?;
+    remove_server_from_claude(id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

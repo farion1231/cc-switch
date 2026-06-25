@@ -167,7 +167,7 @@ impl McpService {
         match app {
             AppType::Claude => {
                 if Self::current_claude_provider_is_profile_and_config(state)? {
-                    mcp::remove_server_from_active_claude(id)?;
+                    mcp::remove_server_from_active_and_configured_claude(id)?;
                 } else {
                     mcp::remove_server_from_claude(id)?;
                 }
@@ -495,5 +495,157 @@ impl McpService {
         }
 
         Ok(new_count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app_config::McpApps;
+    use crate::database::Database;
+    use crate::provider::{Provider, ProviderMeta};
+    use serde_json::json;
+    use serial_test::serial;
+    use std::path::Path;
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    fn test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+    }
+
+    fn with_test_home<T>(test: impl FnOnce(&AppState, &Path) -> T) -> T {
+        let _guard = test_guard();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        crate::settings::update_settings(crate::settings::AppSettings::default())
+            .expect("reset settings");
+
+        let db = Arc::new(Database::memory().expect("in-memory database"));
+        let state = AppState::new(db);
+        let result = test(&state, temp.path());
+
+        let _ = crate::settings::update_settings(crate::settings::AppSettings::default());
+        match old_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        let _ = crate::settings::reload_settings();
+
+        result
+    }
+
+    fn claude_provider(id: &str, profile_dir: &Path) -> Provider {
+        Provider {
+            id: id.to_string(),
+            name: "Profile And Config".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "test-token",
+                    "ANTHROPIC_BASE_URL": "https://claude.example/v1"
+                }
+            }),
+            website_url: None,
+            category: Some("custom".to_string()),
+            created_at: Some(1),
+            sort_index: Some(0),
+            notes: None,
+            meta: Some(ProviderMeta {
+                claude_profile_dir: Some(profile_dir.to_string_lossy().into_owned()),
+                claude_activation_mode: Some(ClaudeActivationMode::ProfileAndConfig),
+                ..ProviderMeta::default()
+            }),
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
+
+    fn seed_claude_mcp_file(path: &Path) {
+        std::fs::create_dir_all(path.parent().expect("mcp parent")).expect("create mcp parent");
+        std::fs::write(
+            path,
+            r#"{
+  "mcpServers": {
+    "stale": { "type": "stdio", "command": "stale-tool" },
+    "kept": { "type": "stdio", "command": "kept-tool" }
+  }
+}"#,
+        )
+        .expect("seed mcp file");
+    }
+
+    fn mcp_server_ids(path: &Path) -> Vec<String> {
+        let text = std::fs::read_to_string(path).expect("read mcp file");
+        let value: serde_json::Value = serde_json::from_str(&text).expect("parse mcp file");
+        let mut ids: Vec<String> = value
+            .get("mcpServers")
+            .and_then(|servers| servers.as_object())
+            .expect("mcpServers object")
+            .keys()
+            .cloned()
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    #[test]
+    #[serial]
+    fn delete_claude_mcp_server_in_profile_and_config_removes_default_copy_too() {
+        with_test_home(|state, home| {
+            let profile_dir = home.join("work-profile").join(".claude");
+            crate::settings::update_settings(crate::settings::AppSettings {
+                claude_provider_config_dir: Some(profile_dir.to_string_lossy().into_owned()),
+                ..Default::default()
+            })
+            .expect("set active profile override");
+
+            let active_mcp_path = crate::config::get_claude_mcp_path();
+            let default_mcp_path = crate::config::get_claude_configured_mcp_path();
+            assert_ne!(active_mcp_path, default_mcp_path);
+            seed_claude_mcp_file(&active_mcp_path);
+            seed_claude_mcp_file(&default_mcp_path);
+
+            let provider = claude_provider("profile-and-config", &profile_dir);
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &provider)
+                .expect("save provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "profile-and-config")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("profile-and-config"))
+                .expect("set local current provider");
+
+            state
+                .db
+                .save_mcp_server(&McpServer {
+                    id: "stale".to_string(),
+                    name: "Stale".to_string(),
+                    server: json!({ "type": "stdio", "command": "stale-tool" }),
+                    apps: McpApps {
+                        claude: true,
+                        ..Default::default()
+                    },
+                    description: None,
+                    homepage: None,
+                    docs: None,
+                    tags: Vec::new(),
+                })
+                .expect("save mcp server");
+
+            assert!(McpService::delete_server(state, "stale").expect("delete server"));
+
+            assert_eq!(mcp_server_ids(&active_mcp_path), vec!["kept"]);
+            assert_eq!(
+                mcp_server_ids(&default_mcp_path),
+                vec!["kept"],
+                "profile-and-config deletion must also remove stale default Claude MCP copies"
+            );
+        });
     }
 }
