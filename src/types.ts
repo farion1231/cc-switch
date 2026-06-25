@@ -171,6 +171,11 @@ export interface CodexChatReasoning {
   outputFormat?: CodexChatReasoningOutputFormat;
 }
 
+export interface LocalProxyRequestOverrides {
+  headers?: Record<string, string>;
+  body?: Record<string, unknown>;
+}
+
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
@@ -219,6 +224,8 @@ export interface ProviderMeta {
   codexChatReasoning?: CodexChatReasoning;
   // Custom User-Agent for local proxy routing. Only applied by the local proxy.
   customUserAgent?: string;
+  // Local proxy request overrides. Only applied by the local proxy after route transforms.
+  localProxyRequestOverrides?: LocalProxyRequestOverrides;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
