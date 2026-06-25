@@ -187,7 +187,6 @@ describe("useProviderActions", () => {
 
   it("does not disable Claude proxy takeover when updating an inactive text-only provider", async () => {
     updateProviderMutateAsync.mockResolvedValueOnce(undefined);
-    providersApiGetCurrentMock.mockResolvedValueOnce("active-provider");
     providersApiUpdateTrayMenuMock.mockResolvedValueOnce(true);
     const { wrapper } = createWrapper();
     const provider = createProvider({
@@ -207,7 +206,7 @@ describe("useProviderActions", () => {
       await result.current.updateProvider(provider);
     });
 
-    expect(providersApiGetCurrentMock).toHaveBeenCalledWith("claude");
+    expect(providersApiGetCurrentMock).not.toHaveBeenCalled();
     expect(proxyApiSetProxyTakeoverForAppMock).not.toHaveBeenCalled();
   });
 

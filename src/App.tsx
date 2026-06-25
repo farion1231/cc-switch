@@ -277,7 +277,8 @@ function App() {
   const shouldShowProxyToggle =
     activeApp === "claude"
       ? Boolean(
-          isCurrentAppTakeoverActive ||
+          settingsData?.enableLocalProxy ||
+            isCurrentAppTakeoverActive ||
             currentProvider?.meta?.imageModel?.trim(),
         )
       : Boolean(settingsData?.enableLocalProxy || isCurrentAppTakeoverActive);

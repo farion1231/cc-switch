@@ -1002,7 +1002,7 @@ mod tests {
         );
         assert!(value.get("image_model").is_none());
     }
-  
+
     #[test]
     fn provider_meta_roundtrips_local_proxy_request_overrides() {
         let meta = ProviderMeta {

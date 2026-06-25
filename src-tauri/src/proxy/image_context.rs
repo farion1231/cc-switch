@@ -1,5 +1,6 @@
 use regex::Regex;
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 const IMAGE_ANALYSIS_PROMPT: &str = "You are an image content extractor. Do not answer the user's final question.\n\
@@ -55,6 +56,77 @@ pub fn count_image_blocks(body: &Value) -> usize {
                 .sum()
         })
         .unwrap_or(0)
+}
+
+pub fn image_context_cache_key(
+    body: &Value,
+    provider_id: &str,
+    image_model: &str,
+) -> Option<String> {
+    let mut image_blocks = Vec::new();
+    collect_image_values(body.get("messages")?, &mut image_blocks);
+    if image_blocks.is_empty() {
+        return None;
+    }
+
+    let mut hasher = Sha256::new();
+    hasher.update(provider_id.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(image_model.as_bytes());
+    hasher.update(b"\0");
+    for block in image_blocks {
+        let bytes = serde_json::to_vec(block).ok()?;
+        hasher.update((bytes.len() as u64).to_be_bytes());
+        hasher.update(&bytes);
+    }
+    Some(format!("{:x}", hasher.finalize()))
+}
+
+pub fn image_context_image_cache_keys(
+    body: &Value,
+    provider_id: &str,
+    image_model: &str,
+) -> Option<Vec<String>> {
+    let mut image_blocks = Vec::new();
+    collect_image_values(body.get("messages")?, &mut image_blocks);
+    if image_blocks.is_empty() {
+        return None;
+    }
+
+    let mut keys = Vec::with_capacity(image_blocks.len());
+    for block in image_blocks {
+        let normalized = normalize_image_block_for_analysis(block);
+        let bytes = serde_json::to_vec(&normalized).ok()?;
+        let mut hasher = Sha256::new();
+        hasher.update(provider_id.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(image_model.as_bytes());
+        hasher.update(b"\0");
+        hasher.update((bytes.len() as u64).to_be_bytes());
+        hasher.update(&bytes);
+        keys.push(format!("{:x}", hasher.finalize()));
+    }
+    Some(keys)
+}
+
+fn collect_image_values<'a>(value: &'a Value, images: &mut Vec<&'a Value>) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_image_values(item, images);
+            }
+        }
+        Value::Object(map) => {
+            if is_image_block(value) {
+                images.push(value);
+                return;
+            }
+            for item in map.values() {
+                collect_image_values(item, images);
+            }
+        }
+        _ => {}
+    }
 }
 
 pub fn create_image_analysis_request(original_body: &Value, image_model: &str) -> Value {
@@ -763,5 +835,56 @@ mod tests {
         assert_eq!(content[1]["text"], "Image 1:");
         assert_eq!(content[2]["type"], "image");
         assert_eq!(content[2]["source"]["media_type"], "image/jpeg");
+    }
+
+    #[test]
+    fn image_cache_keys_are_stable_for_the_same_image_content() {
+        let anthropic_body = json!({
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "first question" },
+                    { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "abc123" } }
+                ]
+            }]
+        });
+        let openai_body = json!({
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "second question" },
+                    { "type": "input_image", "image_url": "data:image/png;base64,abc123" }
+                ]
+            }]
+        });
+
+        let first = image_context_image_cache_keys(&anthropic_body, "provider-a", "vision")
+            .expect("image cache key");
+        let second = image_context_image_cache_keys(&openai_body, "provider-a", "vision")
+            .expect("image cache key");
+
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn image_cache_keys_are_scoped_by_provider_and_image_model() {
+        let body = json!({
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "abc123" } }
+                ]
+            }]
+        });
+
+        let base =
+            image_context_image_cache_keys(&body, "provider-a", "vision").expect("image cache key");
+        let other_provider =
+            image_context_image_cache_keys(&body, "provider-b", "vision").expect("image cache key");
+        let other_model = image_context_image_cache_keys(&body, "provider-a", "other-vision")
+            .expect("image cache key");
+
+        assert_ne!(base, other_provider);
+        assert_ne!(base, other_model);
     }
 }

@@ -175,18 +175,6 @@ export function useProviderActions(
         ) {
           await ensureClaudeProxyTakeover(provider);
         }
-      } else if (activeApp === "claude" && isProxyTakeover) {
-        const currentProviderId = await providersApi.getCurrent(activeApp);
-        if (
-          currentProviderId === provider.id ||
-          (originalId && currentProviderId === originalId)
-        ) {
-          await proxyApi.setProxyTakeoverForApp("claude", false);
-          await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
-          await queryClient.invalidateQueries({
-            queryKey: ["proxyTakeoverStatus"],
-          });
-        }
       }
 
       // 更新托盘菜单（失败不影响主操作）
@@ -203,8 +191,6 @@ export function useProviderActions(
       activeApp,
       claudeProviderNeedsProxy,
       ensureClaudeProxyTakeover,
-      isProxyTakeover,
-      queryClient,
       updateProviderMutation,
     ],
   );
@@ -294,18 +280,6 @@ export function useProviderActions(
         const result = await switchProviderMutation.mutateAsync(provider.id);
         if (claudeProviderNeedsProxy(provider)) {
           await ensureClaudeProxyTakeover(provider);
-        } else if (activeApp === "claude" && isProxyTakeover) {
-          await proxyApi.setProxyTakeoverForApp("claude", false);
-          await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
-          await queryClient.invalidateQueries({
-            queryKey: ["proxyTakeoverStatus"],
-          });
-          toast.success(
-            t("notifications.claudeProxyTakeoverDisabled", {
-              defaultValue: "已恢复 Claude Code 配置",
-            }),
-            { closeButton: true },
-          );
         }
         await syncClaudePlugin(provider);
 
