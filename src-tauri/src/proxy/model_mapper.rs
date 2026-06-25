@@ -580,6 +580,7 @@ mod tests {
             provider_id: provider_id.to_string(),
             model: model.to_string(),
             display_name: String::new(),
+            ..Default::default()
         }
     }
 

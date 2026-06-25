@@ -751,7 +751,7 @@ fn desktop_tier_routing_model_specs(
         specs.push(InferenceModelSpec {
             name: route_id.to_string(),
             label_override,
-            supports_1m: model_has_one_m_marker(model),
+            supports_1m: route.supports_1m || model_has_one_m_marker(model),
         });
     }
     Ok(specs)
@@ -1717,6 +1717,7 @@ mod tests {
                 provider_id: "zhipu".to_string(),
                 model: "glm-5.2[1m]".to_string(),
                 display_name: "GLM-5.2".to_string(),
+                ..Default::default()
             },
         );
         claude_desktop_routes.insert(
@@ -1725,6 +1726,7 @@ mod tests {
                 provider_id: "missing".to_string(),
                 model: "should-not-appear".to_string(),
                 display_name: "Missing".to_string(),
+                ..Default::default()
             },
         );
         let mut routes = std::collections::HashMap::new();
@@ -1756,6 +1758,58 @@ mod tests {
             .expect("model list response")
             .expect("tier response present");
         assert_eq!(list["data"][0]["id"], json!(CURRENT_OPUS_ROUTE_ID));
+        assert_eq!(list["data"][0]["supports1m"], json!(true));
+    }
+
+    #[test]
+    fn claude_desktop_tier_routing_supports1m_flag_from_field() {
+        // supports_1m=true 且 model 名干净（无 [1m] 后缀）→ profile 仍标 supports1m=true。
+        // 字段为真相源；上一用例用 model="glm-5.2[1m]" 靠后缀回退，本用例验证显式字段路径。
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let current_provider = direct_provider("direct-current");
+        let mut routed_provider = proxy_provider("zhipu");
+        routed_provider.category = Some("cn_official".to_string());
+        let db = test_db();
+        set_proxy_port(&db, 15721);
+        db.save_provider(MODEL_TIER_ROUTING_APP, &routed_provider)
+            .expect("save routed provider");
+
+        let mut enabled_apps = std::collections::HashMap::new();
+        enabled_apps.insert(MODEL_TIER_ROUTING_APP.to_string(), true);
+        let mut claude_desktop_routes = std::collections::HashMap::new();
+        claude_desktop_routes.insert(
+            "opus".to_string(),
+            crate::proxy::types::TierRoute {
+                provider_id: "zhipu".to_string(),
+                model: "glm-5.2".to_string(),
+                display_name: "GLM-5.2".to_string(),
+                supports_1m: true,
+            },
+        );
+        let mut routes = std::collections::HashMap::new();
+        routes.insert(MODEL_TIER_ROUTING_APP.to_string(), claude_desktop_routes);
+        db.set_model_tier_routing_config(&crate::proxy::types::ModelTierRoutingConfig {
+            enabled: true,
+            enabled_apps,
+            routes,
+        })
+        .expect("set tier config");
+
+        apply_provider_to_paths(&db, &current_provider, &paths)
+            .expect("apply tier routing profile");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        let models = profile["inferenceModels"]
+            .as_array()
+            .expect("inferenceModels array");
+        assert_eq!(models.len(), 1);
+        // model 名无后缀，但 supports_1m=true → supports1m 由字段派生
+        assert_eq!(models[0]["supports1m"], json!(true));
+
+        let list = model_list_response_for_tier_routing(&db)
+            .expect("model list response")
+            .expect("tier response present");
         assert_eq!(list["data"][0]["supports1m"], json!(true));
     }
 

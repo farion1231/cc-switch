@@ -306,7 +306,8 @@ impl ProxyService {
     /// 模型层级路由模式的接管字段：遍历路由表中已配置的层级，
     /// `*_MODEL` 写稳定别名（与 provider 接管一致，让 proxy 按层级子串分类），
     /// `*_MODEL_NAME` 写路由表里的 `display_name`（空则不写，由上游移除）。
-    /// `route.model` 仅用于判断是否带 `[1M]` 标记；真实模型改写由 proxy 在转发时完成。
+    /// `route.supports_1m`（兼容回退：`route.model` 带 `[1M]` 标记）决定是否给别名补标记；
+    /// 真实模型改写由 proxy 在转发时完成。
     fn build_claude_takeover_model_fields_for_tier_routing(
         config: &ModelTierRoutingConfig,
     ) -> Vec<(&'static str, String)> {
@@ -314,40 +315,36 @@ impl ProxyService {
             return Vec::new();
         };
 
-        // (tier_key, model_env_key, name_env_key, 别名, supports_one_m)
-        const TIERS: &[(&str, &str, &str, &str, bool)] = &[
+        // (tier_key, model_env_key, name_env_key, 别名)
+        const TIERS: &[(&str, &str, &str, &str)] = &[
             (
                 "haiku",
                 "ANTHROPIC_DEFAULT_HAIKU_MODEL",
                 "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
                 CLAUDE_TAKEOVER_HAIKU_MODEL,
-                false,
             ),
             (
                 "sonnet",
                 "ANTHROPIC_DEFAULT_SONNET_MODEL",
                 "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
                 CLAUDE_TAKEOVER_SONNET_MODEL,
-                true,
             ),
             (
                 "opus",
                 "ANTHROPIC_DEFAULT_OPUS_MODEL",
                 "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
                 CLAUDE_TAKEOVER_OPUS_MODEL,
-                true,
             ),
             (
                 "fable",
                 "ANTHROPIC_DEFAULT_FABLE_MODEL",
                 "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
                 CLAUDE_TAKEOVER_FABLE_MODEL,
-                false,
             ),
         ];
 
         let mut fields = Vec::new();
-        for &(tier, model_key, name_key, alias, supports_one_m) in TIERS {
+        for &(tier, model_key, name_key, alias) in TIERS {
             let Some(route) = claude_routes.get(tier) else {
                 continue;
             };
@@ -357,9 +354,10 @@ impl ProxyService {
             if route.model.trim().is_empty() {
                 continue;
             }
-            // `_MODEL` = 别名；route.model 带 [1M] 标记时给 opus/sonnet 别名补上。
+            // `_MODEL` = 别名；显式 supports_1m 或兼容后缀 `[1m]` 时给别名补 [1M]。
+            // 任意 tier 均可声明（旧版仅 opus/sonnet 硬编码允许，现统一交给用户）。
             let mut client_model = alias.to_string();
-            if supports_one_m && Self::has_claude_one_m_marker(&route.model) {
+            if route.supports_1m || Self::has_claude_one_m_marker(&route.model) {
                 client_model.push_str(CLAUDE_ONE_M_MARKER_FOR_CLIENT);
             }
             fields.push((model_key, client_model));
@@ -3062,6 +3060,7 @@ mod tests {
                 provider_id: "zhipu".to_string(),
                 model: "glm-5.2".to_string(),
                 display_name: "GLM-5.2".to_string(),
+                ..Default::default()
             },
         );
         // fable 配了但 display_name 为空 → 写 _MODEL 别名但不写 _NAME
@@ -3071,6 +3070,7 @@ mod tests {
                 provider_id: "zhipu".to_string(),
                 model: "glm-5.2".to_string(),
                 display_name: String::new(),
+                ..Default::default()
             },
         );
         let mut routes = std::collections::HashMap::new();
@@ -3117,6 +3117,51 @@ mod tests {
         // 未配置的 tier（sonnet/haiku）→ 不写
         assert!(env.get("ANTHROPIC_DEFAULT_SONNET_MODEL").is_none());
         assert!(env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL").is_none());
+    }
+
+    #[test]
+    fn tier_routing_supports1m_appends_marker_to_alias() {
+        // supports_1m=true 且 model 名干净（无 [1m] 后缀）→ 给别名补 [1M]。
+        // 字段是单一真相源，取代旧版「在 model 名手敲后缀」；任意 tier 均可声明。
+        let provider = Provider::with_id(
+            "zhipu".to_string(),
+            "Zhipu".to_string(),
+            json!({"env":{"ANTHROPIC_BASE_URL":"https://api.zhipu.ai","ANTHROPIC_AUTH_TOKEN":"sk-x"}}),
+            None,
+        );
+        let mut claude = std::collections::HashMap::new();
+        claude.insert(
+            "opus".to_string(),
+            TierRoute {
+                provider_id: "zhipu".to_string(),
+                model: "glm-5.2".to_string(),
+                display_name: "GLM-5.2".to_string(),
+                supports_1m: true,
+            },
+        );
+        let mut routes = std::collections::HashMap::new();
+        routes.insert("claude".to_string(), claude);
+        let routing = ModelTierRoutingConfig {
+            enabled: true,
+            routes,
+            ..Default::default()
+        };
+
+        let mut live = provider.settings_config.clone();
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live,
+            "http://127.0.0.1:15721",
+            &provider,
+            &routing,
+        );
+
+        let env = live.get("env").and_then(|v| v.as_object()).unwrap();
+        // 别名补 [1M]，向 Claude Code 声明该层级支持 100 万上下文
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_OPUS_MODEL")
+                .and_then(|v| v.as_str()),
+            Some("claude-opus-4-8[1M]")
+        );
     }
 
     #[test]
@@ -3196,6 +3241,7 @@ mod tests {
                 provider_id: "p1".to_string(),
                 model: "tier-opus-model".to_string(),
                 display_name: "TierRoutedOpus".to_string(),
+                ..Default::default()
             },
         );
         let mut routes = std::collections::HashMap::new();
@@ -3266,6 +3312,7 @@ mod tests {
                 provider_id: "p".to_string(),
                 model: String::new(),
                 display_name: "Should Not Appear".to_string(),
+                ..Default::default()
             },
         );
         // sonnet 正常配置 → 写入
@@ -3275,6 +3322,7 @@ mod tests {
                 provider_id: "p".to_string(),
                 model: "glm-5.2".to_string(),
                 display_name: "GLM-5.2".to_string(),
+                ..Default::default()
             },
         );
         let mut routes = std::collections::HashMap::new();
@@ -3344,6 +3392,7 @@ mod tests {
                 provider_id: "official-acct".to_string(),
                 model: "claude-opus-4-8".to_string(),
                 display_name: "Official".to_string(),
+                ..Default::default()
             },
         );
         claude_routes.insert(
@@ -3352,6 +3401,7 @@ mod tests {
                 provider_id: "zhipu".to_string(),
                 model: "glm-5.2".to_string(),
                 display_name: "GLM-5.2".to_string(),
+                ..Default::default()
             },
         );
         let mut routes = std::collections::HashMap::new();

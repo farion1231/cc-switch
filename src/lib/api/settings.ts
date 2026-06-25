@@ -355,6 +355,8 @@ export interface TierRoute {
   providerId: string;
   model: string;
   displayName?: string;
+  /** 是否向 Claude 声明该层级支持 1M 上下文（与供应商编辑页 supports1m 同义）。 */
+  supports1m?: boolean;
 }
 
 /**

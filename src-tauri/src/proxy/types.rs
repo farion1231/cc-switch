@@ -246,6 +246,14 @@ pub struct TierRoute {
     /// 模型选择菜单显示（如 `GLM-5.2`）。空字符串表示不写该 `_NAME` 变量。
     #[serde(default)]
     pub display_name: String,
+    /// 是否向 Claude 声明该层级支持 1M 上下文。
+    ///
+    /// 勾选 → Claude Code 接管时给 `*_MODEL` 别名补 `[1M]`；Claude Desktop profile
+    /// 标 `supports1m=true`。与 `ClaudeDesktopModelRoute.supports_1m` 同义，是 1M
+    /// 能力声明的单一真相源（取代旧版「在 model 名后手敲 `[1m]` 后缀」的隐式约定）。
+    /// 兼容旧数据：未勾选但 `model` 带 `[1m]` 后缀时，各派生点仍按后缀回退生效。
+    #[serde(default)]
+    pub supports_1m: bool,
 }
 
 /// 整流器配置

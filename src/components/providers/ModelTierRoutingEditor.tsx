@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import type { Provider } from "@/types";
 import { supportsRouting } from "@/utils/providerRouting";
 
@@ -27,16 +28,32 @@ type TierKey = (typeof TIERS)[number];
 // Radix Select 不允许 value=""（空串），用哨兵值代表「未配置/使用默认」。
 const NONE_PROVIDER = "__none__";
 
+// 1M 能力声明的旧式后缀；新版改用显式 supports1m 字段，这里仅用于回退读取/迁移写入。
+const ONE_M_SUFFIX = /\s*\[1m\]$/i;
+
+function stripOneMSuffix(model: string): string {
+  return model.replace(ONE_M_SUFFIX, "").trimEnd();
+}
+
 function readRoute(
   config: ModelTierRoutingConfig,
   appId: ModelTierRoutingApp,
   tier: TierKey,
-): { providerId: string; model: string; displayName: string } {
+): {
+  providerId: string;
+  model: string;
+  displayName: string;
+  supports1m: boolean;
+} {
   const route = config.routes?.[appId]?.[tier];
+  const rawModel = route?.model ?? "";
   return {
     providerId: route?.providerId ?? "",
-    model: route?.model ?? "",
+    // 剥离旧式 [1m] 后缀：model 名只承载真实上游模型，1M 能力改由 supports1m 表达。
+    model: stripOneMSuffix(rawModel),
     displayName: route?.displayName ?? "",
+    // 显式字段优先；旧数据未带字段但 model 名有后缀时回退显示为勾选。
+    supports1m: route?.supports1m ?? ONE_M_SUFFIX.test(rawModel),
   };
 }
 
@@ -44,16 +61,23 @@ function writeRoute(
   config: ModelTierRoutingConfig,
   appId: ModelTierRoutingApp,
   tier: TierKey,
-  next: { providerId: string; model: string; displayName: string },
+  next: {
+    providerId: string;
+    model: string;
+    displayName: string;
+    supports1m: boolean;
+  },
 ): ModelTierRoutingConfig {
   const appRoutes = { ...(config.routes?.[appId] ?? {}) };
   if (!next.providerId) {
     delete appRoutes[tier];
   } else {
+    // 1M 能力走显式字段；剥离 model 名里残留的 [1m] 后缀，让字段成为唯一真相。
     const route: TierRoute = {
       providerId: next.providerId,
-      model: next.model.trim(),
+      model: stripOneMSuffix(next.model.trim()),
       displayName: next.displayName.trim(),
+      supports1m: next.supports1m,
     };
     appRoutes[tier] = route;
   }
@@ -86,7 +110,12 @@ export function ModelTierRoutingEditor({ appId, config, onChange }: Props) {
 
   const handleTierChange = (
     tier: TierKey,
-    patch: Partial<{ providerId: string; model: string; displayName: string }>,
+    patch: Partial<{
+      providerId: string;
+      model: string;
+      displayName: string;
+      supports1m: boolean;
+    }>,
   ) => {
     onChange(
       writeRoute(config, appId, tier, {
@@ -109,11 +138,16 @@ export function ModelTierRoutingEditor({ appId, config, onChange }: Props) {
         </div>
 
         {/* 表头 */}
-        <div className="hidden sm:grid grid-cols-[5rem_1fr_1fr_1fr] gap-3 px-1 text-xs font-medium text-muted-foreground">
+        <div className="hidden sm:grid grid-cols-[5rem_1fr_1fr_1fr_116px] gap-3 px-1 text-xs font-medium text-muted-foreground">
           <span>{t("home.modelTierRouting.tier")}</span>
           <span>{t("home.modelTierRouting.provider")}</span>
           <span>{t("home.modelTierRouting.modelName")}</span>
           <span>{t("home.modelTierRouting.displayName")}</span>
+          <span>
+            {t("claudeDesktop.supports1mLabel", {
+              defaultValue: "声明支持 1M",
+            })}
+          </span>
         </div>
 
         {TIERS.map((tier) => {
@@ -128,7 +162,7 @@ export function ModelTierRoutingEditor({ appId, config, onChange }: Props) {
           return (
             <div
               key={tier}
-              className="grid grid-cols-1 sm:grid-cols-[5rem_1fr_1fr_1fr] gap-2 sm:gap-3 items-center"
+              className="grid grid-cols-1 sm:grid-cols-[5rem_1fr_1fr_1fr_116px] gap-2 sm:gap-3 items-center"
             >
               <span className="capitalize text-sm font-medium px-1">
                 {t(`settings.advanced.modelTierRouting.tier.${tier}`)}
@@ -185,6 +219,16 @@ export function ModelTierRoutingEditor({ appId, config, onChange }: Props) {
                   handleTierChange(tier, { displayName: e.target.value })
                 }
               />
+              <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
+                <Checkbox
+                  checked={route.supports1m}
+                  disabled={!route.providerId}
+                  onCheckedChange={(checked) =>
+                    handleTierChange(tier, { supports1m: checked === true })
+                  }
+                />
+                {t("claudeDesktop.supports1mShort", { defaultValue: "1M" })}
+              </label>
             </div>
           );
         })}
