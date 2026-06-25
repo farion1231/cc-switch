@@ -400,7 +400,7 @@ export const hasTomlCommonConfigSnippet = (
 
 const TOML_SECTION_HEADER_PATTERN = /^\s*\[([^\]\r\n]+)\]\s*$/;
 const TOML_BASE_URL_PATTERN =
-  /^\s*base_url\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
+  /^\s*base_url\s*=\s*(?:"((?:\\.|[^"\\\r\n])*)"|'([^'\r\n]*)')\s*(?:#.*)?$/;
 const TOML_EXPERIMENTAL_BEARER_TOKEN_PATTERN =
   /^\s*experimental_bearer_token\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
 const TOML_EXPERIMENTAL_BEARER_TOKEN_REPLACE_PATTERN =
@@ -553,16 +553,37 @@ const findTomlAssignmentInRange = (
 ): TomlAssignmentMatch | undefined => {
   for (let index = startIndex; index < endIndex; index += 1) {
     const match = lines[index].match(pattern);
-    if (match?.[2]) {
+    const value = match?.[2] ?? match?.[1];
+    if (value) {
       return {
         index,
         sectionName,
-        value: match[2],
+        value,
       };
     }
   }
 
   return undefined;
+};
+
+const findTomlAssignmentsInRange = (
+  lines: string[],
+  pattern: RegExp,
+  startIndex: number,
+  endIndex: number,
+  sectionName?: string,
+): TomlAssignmentMatch[] => {
+  const matches: TomlAssignmentMatch[] = [];
+
+  for (let index = startIndex; index < endIndex; index += 1) {
+    const match = lines[index].match(pattern);
+    const value = match?.[2] ?? match?.[1];
+    if (value) {
+      matches.push({ index, sectionName, value });
+    }
+  }
+
+  return matches;
 };
 
 const findTomlLineInRange = (
@@ -595,14 +616,15 @@ const findTomlAssignments = (
     }
 
     const match = line.match(pattern);
-    if (!match?.[2]) {
+    const value = match?.[2] ?? match?.[1];
+    if (!value) {
       return;
     }
 
     assignments.push({
       index,
       sectionName: currentSectionName,
-      value: match[2],
+      value,
     });
   });
 
@@ -1228,18 +1250,20 @@ export const setCodexBaseUrl = (
 
     if (targetSectionName) {
       const sectionRange = getTomlSectionRange(lines, targetSectionName);
-      const targetMatch = sectionRange
-        ? findTomlAssignmentInRange(
+      const targetMatches = sectionRange
+        ? findTomlAssignmentsInRange(
             lines,
             TOML_BASE_URL_PATTERN,
             sectionRange.bodyStartIndex,
             sectionRange.bodyEndIndex,
             targetSectionName,
           )
-        : undefined;
+        : [];
 
-      if (targetMatch) {
-        lines.splice(targetMatch.index, 1);
+      if (targetMatches.length > 0) {
+        for (const match of [...targetMatches].reverse()) {
+          lines.splice(match.index, 1);
+        }
         return finalizeTomlText(lines);
       }
     }
@@ -1257,18 +1281,22 @@ export const setCodexBaseUrl = (
 
   if (targetSectionName) {
     let targetSectionRange = getTomlSectionRange(lines, targetSectionName);
-    const targetMatch = targetSectionRange
-      ? findTomlAssignmentInRange(
+    const targetMatches = targetSectionRange
+      ? findTomlAssignmentsInRange(
           lines,
           TOML_BASE_URL_PATTERN,
           targetSectionRange.bodyStartIndex,
           targetSectionRange.bodyEndIndex,
           targetSectionName,
         )
-      : undefined;
+      : [];
 
-    if (targetMatch) {
-      lines[targetMatch.index] = replacementLine;
+    if (targetMatches.length > 0) {
+      const [firstMatch, ...duplicateMatches] = targetMatches;
+      lines[firstMatch.index] = replacementLine;
+      for (const match of [...duplicateMatches].reverse()) {
+        lines.splice(match.index, 1);
+      }
       return finalizeTomlText(lines);
     }
 
@@ -1291,14 +1319,18 @@ export const setCodexBaseUrl = (
   }
 
   const topLevelEndIndex = getTopLevelEndIndex(lines);
-  const topLevelMatch = findTomlAssignmentInRange(
+  const topLevelMatches = findTomlAssignmentsInRange(
     lines,
     TOML_BASE_URL_PATTERN,
     0,
     topLevelEndIndex,
   );
-  if (topLevelMatch) {
-    lines[topLevelMatch.index] = replacementLine;
+  if (topLevelMatches.length > 0) {
+    const [firstMatch, ...duplicateMatches] = topLevelMatches;
+    lines[firstMatch.index] = replacementLine;
+    for (const match of [...duplicateMatches].reverse()) {
+      lines.splice(match.index, 1);
+    }
     return finalizeTomlText(lines);
   }
 
