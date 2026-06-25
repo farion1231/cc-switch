@@ -123,6 +123,17 @@ fn find_in_catalog<'a>(
     if let Some(pricing) = catalog.get(&normalized) {
         return Some(pricing);
     }
+    if let Some(path_tail) = model.rsplit('/').next().filter(|tail| *tail != model) {
+        let normalized_tail = normalize(path_tail);
+        if let Some(pricing) = catalog.get(&normalized_tail) {
+            return Some(pricing);
+        }
+        if let Some(base_tail) = path_tail.split(':').next() {
+            if let Some(pricing) = catalog.get(&normalize(base_tail)) {
+                return Some(pricing);
+            }
+        }
+    }
     let mut matching = catalog
         .iter()
         .filter(|(key, _)| normalized.starts_with(key.as_str()) || key.starts_with(&normalized))
@@ -132,8 +143,6 @@ fn find_in_catalog<'a>(
 }
 
 fn normalize(model: &str) -> String {
-    let model = model.rsplit('/').next().unwrap_or(model);
-    let model = model.split(':').next().unwrap_or(model);
     model
         .trim()
         .replace(['.', '@', '_'], "-")
@@ -159,6 +168,42 @@ mod tests {
         assert_eq!(
             catalog["claude"].input_cost_above_200k_per_million,
             Some(Decimal::from(6))
+        );
+    }
+
+    #[test]
+    fn preserves_provider_qualified_pricing_keys() {
+        let catalog = parse_catalog(
+            r#"{
+                "anthropic.claude-haiku-4-5-20251001-v1:0":{
+                    "input_cost_per_token":0.000001,
+                    "output_cost_per_token":0.000002
+                },
+                "bedrock/us-gov-west-1/anthropic.claude-haiku-4-5-20251001-v1:0":{
+                    "input_cost_per_token":0.000003,
+                    "output_cost_per_token":0.000004
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let standard = find_in_catalog(&catalog, "anthropic.claude-haiku-4-5-20251001-v1:0")
+            .expect("standard Anthropic price");
+        let gov = find_in_catalog(
+            &catalog,
+            "bedrock/us-gov-west-1/anthropic.claude-haiku-4-5-20251001-v1:0",
+        )
+        .expect("gov Bedrock price");
+
+        assert_eq!(standard.input_cost_per_million, Decimal::from(1));
+        assert_eq!(gov.input_cost_per_million, Decimal::from(3));
+    }
+
+    #[test]
+    fn preserves_fine_tune_model_suffixes() {
+        assert_eq!(
+            normalize("ft:gpt-4o-mini:org:job"),
+            "ft:gpt-4o-mini:org:job"
         );
     }
 }
