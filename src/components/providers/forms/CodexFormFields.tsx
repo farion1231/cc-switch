@@ -19,7 +19,12 @@ import {
   Trash2,
 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
-import { ApiKeySection, EndpointField, ModelDropdown, ApiKeyHeaderSection } from "./shared";
+import {
+  ApiKeySection,
+  EndpointField,
+  ModelDropdown,
+  ApiKeyHeaderSection,
+} from "./shared";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
