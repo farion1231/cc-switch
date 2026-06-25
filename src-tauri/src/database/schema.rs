@@ -99,7 +99,8 @@ impl Database {
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
-            updated_at INTEGER NOT NULL DEFAULT 0
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            global_enabled BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -505,6 +506,11 @@ impl Database {
                         log::info!("迁移数据库从 v14 到 v15（Skills/MCP 添加 Grok Build 支持）");
                         Self::migrate_v14_to_v15(conn)?;
                         Self::set_user_version(conn, 15)?;
+                    }
+                    15 => {
+                        log::info!("迁移数据库从 v15 到 v16（添加 Skills 全局开关）");
+                        Self::migrate_v15_to_v16(conn)?;
+                        Self::set_user_version(conn, 16)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1036,7 +1042,8 @@ impl Database {
                 enabled_claude BOOLEAN NOT NULL DEFAULT 0,
                 enabled_codex BOOLEAN NOT NULL DEFAULT 0,
                 enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
-                installed_at INTEGER NOT NULL DEFAULT 0
+                installed_at INTEGER NOT NULL DEFAULT 0,
+                global_enabled BOOLEAN NOT NULL DEFAULT 0
             )",
             [],
         )
@@ -1507,6 +1514,15 @@ impl Database {
                 "BOOLEAN NOT NULL DEFAULT 0",
             )?;
         }
+        Ok(())
+    }
+
+    /// v15 -> v16 迁移：添加 global_enabled 列
+    fn migrate_v15_to_v16(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(conn, "skills", "global_enabled", "BOOLEAN NOT NULL DEFAULT 0")?;
+        }
+        log::info!("v15 -> v16 迁移完成：已添加 global_enabled 列");
         Ok(())
     }
 
