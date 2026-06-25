@@ -77,7 +77,8 @@ export function CommonConfigEditor({
           config?.attribution?.commit === "" && config?.attribution?.pr === "",
         teammates:
           config?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === "1" ||
-          config?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === 1,
+          config?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === 1 ||
+          config?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === "true",
         enableToolSearch:
           config?.env?.ENABLE_TOOL_SEARCH === "true" ||
           config?.env?.ENABLE_TOOL_SEARCH === "1",
