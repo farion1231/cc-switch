@@ -1526,7 +1526,12 @@ impl Database {
         let codex_dir = crate::codex_config::get_codex_config_dir();
         crate::services::session_usage_codex::reset_codex_usage_on_conn(conn, &codex_dir)?;
         if Self::table_exists(conn, "skills")? {
-            Self::add_column_if_missing(conn, "skills", "global_enabled", "BOOLEAN NOT NULL DEFAULT 0")?;
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "global_enabled",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
         }
         log::info!("v15 -> v16 迁移完成：已添加 global_enabled 列");
         Ok(())
