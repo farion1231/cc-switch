@@ -28,7 +28,7 @@ const expectedChatPresets = new Map<
     "DouBaoSeed",
     {
       baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
-      contextWindows: { "doubao-seed-2-0-code-preview-latest": 256000 },
+      contextWindows: { "doubao-seed-2-1-pro": 256000 },
     },
   ],
   [

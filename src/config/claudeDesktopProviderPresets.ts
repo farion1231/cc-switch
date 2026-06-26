@@ -235,9 +235,9 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: brandedRoutes(
-      "doubao-seed-2-0-code-preview-latest",
-      "doubao-seed-2-0-code-preview-latest",
-      "doubao-seed-2-0-code-preview-latest",
+      "doubao-seed-2-1-pro",
+      "doubao-seed-2-1-pro",
+      "doubao-seed-2-1-pro",
     ),
     isPartner: true,
     partnerPromotionKey: "doubaoseed",

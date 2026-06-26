@@ -390,8 +390,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "doubao-seed-2-0-code-preview-latest": {
-          name: "Doubao Seed Code Preview",
+        "doubao-seed-2-1-pro": {
+          name: "Doubao Seed 2.1 Pro",
         },
       },
     },

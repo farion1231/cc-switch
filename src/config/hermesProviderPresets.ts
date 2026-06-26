@@ -222,8 +222,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "anthropic_messages",
       models: [
         {
-          id: "doubao-seed-2-0-code-preview-latest",
-          name: "Doubao Seed 2.0 Code Preview",
+          id: "doubao-seed-2-1-pro",
+          name: "Doubao Seed 2.1 Pro",
         },
       ],
     },
@@ -234,7 +234,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#3370FF",
     suggestedDefaults: {
       model: {
-        default: "doubao-seed-2-0-code-preview-latest",
+        default: "doubao-seed-2-1-pro",
         provider: "doubao_seed",
       },
     },
