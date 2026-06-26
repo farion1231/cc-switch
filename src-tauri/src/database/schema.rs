@@ -1280,7 +1280,12 @@ impl Database {
     /// v11 -> v12: 添加 global_enabled 列支持全局开关
     fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
         if Self::table_exists(conn, "skills")? {
-            Self::add_column_if_missing(conn, "skills", "global_enabled", "BOOLEAN NOT NULL DEFAULT 0")?;
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "global_enabled",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
         }
         log::info!("v11 -> v12 迁移完成：已添加 global_enabled 列");
         Ok(())

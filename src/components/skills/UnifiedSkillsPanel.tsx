@@ -623,9 +623,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
             skill.globalEnabled &&
             dualScanApps.includes(app as AppId);
           if (isLocked || isLockedInCcSwitch) {
-            toast.info(
-              t("skills.lockedInUnified", { app: app.toUpperCase() }),
-            );
+            toast.info(t("skills.lockedInUnified", { app: app.toUpperCase() }));
             return;
           }
           onToggleApp(skill.id, app, enabled);
