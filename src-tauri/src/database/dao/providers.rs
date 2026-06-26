@@ -236,6 +236,12 @@ impl Database {
                 ],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
+
+            tx.execute(
+                "DELETE FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2",
+                params![provider.id, app_type],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
         } else {
             tx.execute(
                 "INSERT INTO providers (
@@ -262,15 +268,15 @@ impl Database {
                 ],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
+        }
 
-            for (url, endpoint) in endpoints {
-                tx.execute(
-                    "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at)
-                     VALUES (?1, ?2, ?3, ?4)",
-                    params![provider.id, app_type, url, endpoint.added_at],
-                )
-                .map_err(|e| AppError::Database(e.to_string()))?;
-            }
+        for (url, endpoint) in endpoints {
+            tx.execute(
+                "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![provider.id, app_type, url, endpoint.added_at],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
         }
 
         tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
@@ -711,6 +717,43 @@ impl Database {
 mod ensure_official_seed_tests {
     use crate::app_config::AppType;
     use crate::database::{Database, CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID};
+    use crate::error::AppError;
+    use crate::provider::{Provider, ProviderMeta};
+    use crate::settings::CustomEndpoint;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    fn provider_with_endpoints(id: &str, endpoints: &[(&str, i64)]) -> Provider {
+        let mut custom_endpoints = HashMap::new();
+        for (url, added_at) in endpoints {
+            custom_endpoints.insert(
+                (*url).to_string(),
+                CustomEndpoint {
+                    url: (*url).to_string(),
+                    added_at: *added_at,
+                    last_used: None,
+                },
+            );
+        }
+
+        Provider {
+            id: id.to_string(),
+            name: format!("Provider {id}"),
+            settings_config: json!({"api_key":"secret"}),
+            website_url: Some("https://example.com".to_string()),
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: Some(ProviderMeta {
+                custom_endpoints,
+                ..Default::default()
+            }),
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
 
     #[test]
     fn ensure_inserts_when_missing() {
@@ -782,5 +825,33 @@ mod ensure_official_seed_tests {
         let result =
             db.ensure_official_seed_by_id(CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID, AppType::Claude);
         assert!(result.is_err(), "(id, app_type) mismatch should be Err");
+    }
+
+    #[test]
+    fn save_provider_update_replaces_custom_endpoints() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let original = provider_with_endpoints(
+            "provider-1",
+            &[
+                ("https://old.example.com", 1),
+                ("https://stale.example.com", 2),
+            ],
+        );
+        db.save_provider(AppType::Claude.as_str(), &original)?;
+
+        let updated = provider_with_endpoints("provider-1", &[("https://new.example.com", 3)]);
+        db.save_provider(AppType::Claude.as_str(), &updated)?;
+
+        let stored = db
+            .get_provider_by_id("provider-1", AppType::Claude.as_str())?
+            .expect("provider exists");
+        let endpoints = stored.meta.unwrap_or_default().custom_endpoints;
+
+        assert_eq!(endpoints.len(), 1);
+        assert!(endpoints.contains_key("https://new.example.com"));
+        assert!(!endpoints.contains_key("https://old.example.com"));
+        assert!(!endpoints.contains_key("https://stale.example.com"));
+
+        Ok(())
     }
 }

@@ -1764,17 +1764,15 @@ impl ProviderService {
             }
         }
 
-        // Additive mode apps skip setting is_current (no such concept)
-        if !app_type.is_additive_mode() {
-            // Update local settings (device-level, takes priority)
-            crate::settings::set_current_provider(&app_type, Some(id))?;
-
-            // Update database is_current (as default for new devices)
-            state.db.set_current_provider(app_type.as_str(), id)?;
-        }
-
         // Sync to live (write_gemini_live handles security flag internally for Gemini)
         write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
+
+        // Additive mode apps skip setting is_current (no such concept)
+        if !app_type.is_additive_mode() {
+            // Only update the current-provider pointers after the live write succeeds.
+            crate::settings::set_current_provider(&app_type, Some(id))?;
+            state.db.set_current_provider(app_type.as_str(), id)?;
+        }
 
         // Hermes is additive, so "switching" doesn't overwrite a live config file
         // — we instead update the top-level `model:` section to point at this

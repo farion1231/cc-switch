@@ -208,8 +208,8 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
         String::new()
     };
 
-    // Determine enabled state: explicit param > has code > false
-    let enabled = request.usage_enabled.unwrap_or(!code.is_empty());
+    // Determine enabled state: explicit param > false
+    let enabled = request.usage_enabled.unwrap_or(false);
 
     // Build UsageScript - use provider's API key and endpoint as defaults
     // Note: use primary endpoint only (first one if comma-separated)

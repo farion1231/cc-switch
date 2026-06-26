@@ -6,7 +6,7 @@ use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::ModelPricing;
 use crate::services::sql_helpers::fresh_input_sql;
-use chrono::{Local, NaiveDate, TimeZone, Timelike};
+use chrono::{Local, NaiveDate, TimeZone};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -431,13 +431,7 @@ fn compute_rollup_date_bounds(
     let start = match start_ts {
         Some(ts) => {
             let local = local_datetime_from_timestamp(ts)?;
-            let day = local.date_naive();
-            if local.time().num_seconds_from_midnight() == 0 {
-                Some(day.format("%Y-%m-%d").to_string())
-            } else {
-                day.succ_opt()
-                    .map(|next| next.format("%Y-%m-%d").to_string())
-            }
+            Some(local.date_naive().format("%Y-%m-%d").to_string())
         }
         None => None,
     };
@@ -445,13 +439,7 @@ fn compute_rollup_date_bounds(
     let end = match end_ts {
         Some(ts) => {
             let local = local_datetime_from_timestamp(ts)?;
-            let day = local.date_naive();
-            if local.time().hour() == 23 && local.time().minute() == 59 {
-                Some(day.format("%Y-%m-%d").to_string())
-            } else {
-                day.pred_opt()
-                    .map(|prev| prev.format("%Y-%m-%d").to_string())
-            }
+            Some(local.date_naive().format("%Y-%m-%d").to_string())
         }
         None => None,
     };
@@ -2252,6 +2240,20 @@ mod tests {
             chrono::LocalResult::Ambiguous(earliest, _) => earliest.timestamp(),
             chrono::LocalResult::None => panic!("valid local datetime"),
         }
+    }
+
+    #[test]
+    fn test_compute_rollup_date_bounds_uses_local_day_inclusively() -> Result<(), AppError> {
+        let start = local_ts(2026, 1, 2, 12, 34, 56);
+        let end = local_ts(2026, 1, 2, 12, 35, 1);
+
+        let bounds = compute_rollup_date_bounds(Some(start), Some(end))?;
+
+        assert_eq!(bounds.start.as_deref(), Some("2026-01-02"));
+        assert_eq!(bounds.end.as_deref(), Some("2026-01-02"));
+        assert!(!bounds.is_empty);
+
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]

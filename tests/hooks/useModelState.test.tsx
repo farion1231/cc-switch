@@ -1,4 +1,4 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
   hasClaudeOneMMarker,
@@ -106,5 +106,50 @@ describe("useModelState", () => {
     expect(setClaudeOneMMarker("deepseek-v4-pro", true)).toBe(
       "deepseek-v4-pro[1M]",
     );
+  });
+
+  it("does not skip the next external sync after a no-op edit", async () => {
+    let latestConfig = JSON.stringify({
+      env: {
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-pro",
+      },
+    });
+    const onConfigChange = vi.fn((config: string) => {
+      latestConfig = config;
+    });
+
+    const { result, rerender } = renderHook(
+      ({ settingsConfig }) =>
+        useModelState({
+          settingsConfig,
+          onConfigChange,
+        }),
+      {
+        initialProps: { settingsConfig: latestConfig },
+      },
+    );
+
+    act(() => {
+      result.current.handleModelChange(
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "deepseek-v4-pro",
+      );
+    });
+
+    const externalConfig = JSON.stringify({
+      env: {
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k2",
+        ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Kimi K2",
+      },
+    });
+
+    act(() => {
+      rerender({ settingsConfig: externalConfig });
+    });
+
+    await waitFor(() => {
+      expect(result.current.defaultSonnetModel).toBe("kimi-k2");
+      expect(result.current.defaultSonnetModelName).toBe("Kimi K2");
+    });
   });
 });

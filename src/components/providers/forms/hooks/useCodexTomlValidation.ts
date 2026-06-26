@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import TOML from "smol-toml";
+import { normalizeTomlText } from "@/utils/textNormalization";
 
 /**
  * Codex config.toml 格式校验 Hook
@@ -15,14 +16,16 @@ export function useCodexTomlValidation() {
    * @returns 是否校验通过
    */
   const validateToml = useCallback((tomlText: string): boolean => {
+    const normalizedTomlText = normalizeTomlText(tomlText);
+
     // 空字符串视为合法（允许为空）
-    if (!tomlText.trim()) {
+    if (!normalizedTomlText.trim()) {
       setConfigError("");
       return true;
     }
 
     try {
-      TOML.parse(tomlText);
+      TOML.parse(normalizedTomlText);
       setConfigError("");
       return true;
     } catch (error) {

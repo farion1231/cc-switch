@@ -71,20 +71,48 @@ pub async fn upload(
     ensure_remote_directories(&settings.base_url, &dir_segs, &auth).await?;
 
     let snapshot = build_local_snapshot(db)?;
+    let manifest_url = remote_file_url(settings, RemoteLayout::Current, REMOTE_MANIFEST)?;
+    let remote_manifest_etag = head_etag(&manifest_url, &auth).await?;
+
+    if let (Some(last_remote_etag), Some(current_remote_etag)) = (
+        settings.status.last_remote_etag.as_deref(),
+        remote_manifest_etag.as_deref(),
+    ) {
+        if !etag_matches(last_remote_etag, current_remote_etag) {
+            return Err(sync_conflict_error());
+        }
+    }
 
     // Upload order: artifacts first, manifest last (best-effort consistency)
     let db_url = remote_file_url(settings, RemoteLayout::Current, REMOTE_DB_SQL)?;
-    put_bytes(&db_url, &auth, snapshot.db_sql, "application/sql").await?;
+    put_bytes(
+        &db_url,
+        &auth,
+        snapshot.db_sql,
+        "application/sql",
+        None,
+        false,
+    )
+    .await?;
 
     let skills_url = remote_file_url(settings, RemoteLayout::Current, REMOTE_SKILLS_ZIP)?;
-    put_bytes(&skills_url, &auth, snapshot.skills_zip, "application/zip").await?;
+    put_bytes(
+        &skills_url,
+        &auth,
+        snapshot.skills_zip,
+        "application/zip",
+        None,
+        false,
+    )
+    .await?;
 
-    let manifest_url = remote_file_url(settings, RemoteLayout::Current, REMOTE_MANIFEST)?;
     put_bytes(
         &manifest_url,
         &auth,
         snapshot.manifest_bytes,
         "application/json",
+        remote_manifest_etag.as_deref(),
+        remote_manifest_etag.is_none(),
     )
     .await?;
 
@@ -203,6 +231,19 @@ fn persist_sync_success(
     };
     settings.status = status.clone();
     update_webdav_sync_status(status)
+}
+
+fn etag_matches(left: &str, right: &str) -> bool {
+    let normalize = |etag: &str| etag.trim().trim_start_matches("W/").trim_matches('"');
+    normalize(left) == normalize(right)
+}
+
+fn sync_conflict_error() -> AppError {
+    AppError::localized(
+        "sync.conflict",
+        "远端数据已被其他设备更新，请先下载或强制上传",
+        "Remote data was updated by another device. Download first or force upload.",
+    )
 }
 
 async fn find_remote_snapshot(
