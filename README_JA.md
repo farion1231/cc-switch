@@ -24,7 +24,7 @@
 <details open>
 <summary>クリックで折りたたむ</summary>
 
-[![Kimi K2.6](https://kimi-file.moonshot.cn/prod-chat-kimi/kfs/4/2/2026-06-08/1d8j61pt3v89kkekm5mbg)](https://platform.moonshot.cn/console?aff=cc-switch)
+[![Kimi K2.6](assets/partners/banners/kimi-banner-en.png)](https://platform.moonshot.cn/console?aff=cc-switch)
 
 Kimi K2.6 は Moonshot AI によるオープンソースのネイティブマルチモーダル・エージェントモデルで、長期的なコーディング、コード駆動設計、スウォーム（群）型タスクオーケストレーションのために構築されています。フロントエンド、DevOps、パフォーマンス最適化、フルスタックワークフローにわたる複雑なエンドツーエンドのエンジニアリング作業に対応できるよう設計されており、多数の専門エージェントを協調させて、実際のコーディングタスクの計画・実装・テスト・反復を行います。**[ここをクリックして Kimi を体験する](https://platform.moonshot.cn/console?aff=cc-switch)**
 
