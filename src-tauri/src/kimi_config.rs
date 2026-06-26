@@ -129,6 +129,15 @@ fn config_doc_from_settings(settings: &Value) -> Result<DocumentMut, AppError> {
     parse_config_text(config_text)
 }
 
+const KIMI_TOP_LEVEL_SETTINGS: &[&str] = &[
+    "default_thinking",
+    "thinking",
+    "loop_control",
+    "background",
+    "experimental",
+    "extra_skill_dirs",
+];
+
 fn provider_item_from_fragment(
     provider_id: &str,
     fragment_doc: &DocumentMut,
@@ -152,13 +161,22 @@ fn provider_item_from_fragment(
         if matches!(
             key,
             "providers" | "models" | "default_model" | "model" | "max_context_size"
-        ) {
+        ) || KIMI_TOP_LEVEL_SETTINGS.contains(&key)
+        {
             continue;
         }
         table.insert(key, item.clone());
     }
 
     Ok(Item::Table(table))
+}
+
+fn merge_top_level_settings_from_fragment(doc: &mut DocumentMut, fragment_doc: &DocumentMut) {
+    for key in KIMI_TOP_LEVEL_SETTINGS {
+        if let Some(item) = fragment_doc.get(key) {
+            doc[key] = item.clone();
+        }
+    }
 }
 
 fn ensure_providers_table(doc: &mut DocumentMut) -> Result<(), AppError> {
@@ -281,6 +299,7 @@ pub fn set_provider(id: &str, settings: Value) -> Result<(), AppError> {
     {
         doc["default_model"] = value(default_model);
     }
+    merge_top_level_settings_from_fragment(&mut doc, &fragment_doc);
 
     write_text_file(&get_kimi_config_path(), &doc.to_string())
 }
@@ -694,6 +713,165 @@ max_context_size = 262144
         restore_kimi_model_env(previous_env.0, previous_env.1, previous_env.2);
         assert_eq!(base_url, "https://api.kimi.com/coding/v1");
         assert_eq!(api_key, "sk-test");
+    }
+
+    #[test]
+    fn set_provider_persists_top_level_settings_from_full_config() {
+        let _guard = test_mutex().lock().expect("acquire test mutex");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let previous_home = std::env::var_os("KIMI_CODE_HOME");
+        std::env::set_var("KIMI_CODE_HOME", temp.path());
+
+        let settings = json!({
+            "config": r#"
+default_model = "kimi-code/kimi-for-coding"
+default_thinking = true
+extra_skill_dirs = ["~/team-skills", ".agents/team-skills"]
+
+[thinking]
+type = "enabled"
+budget_tokens = 4096
+
+[loop_control]
+max_tool_calls = 64
+
+[background]
+enabled = true
+
+[experimental]
+enable_foo = true
+
+[providers."managed:kimi-code"]
+type = "kimi"
+api_key = "sk-test"
+base_url = "https://api.kimi.com/coding/v1"
+
+[models."kimi-code/kimi-for-coding"]
+provider = "managed:kimi-code"
+model = "kimi-for-coding"
+max_context_size = 262144
+"#
+        });
+
+        set_provider("managed:kimi-code", settings).expect("set official provider");
+        let written = read_kimi_config_text().expect("read written config");
+
+        match previous_home {
+            Some(value) => std::env::set_var("KIMI_CODE_HOME", value),
+            None => std::env::remove_var("KIMI_CODE_HOME"),
+        }
+
+        let doc = parse_config_text(&written).expect("written config should parse");
+        assert_eq!(doc["default_thinking"].as_bool(), Some(true));
+        assert_eq!(
+            doc["extra_skill_dirs"].as_array().map(|items| items.len()),
+            Some(2)
+        );
+        assert_eq!(doc["thinking"]["type"].as_str(), Some("enabled"));
+        assert_eq!(doc["thinking"]["budget_tokens"].as_integer(), Some(4096));
+        assert_eq!(doc["loop_control"]["max_tool_calls"].as_integer(), Some(64));
+        assert_eq!(doc["background"]["enabled"].as_bool(), Some(true));
+        assert_eq!(doc["experimental"]["enable_foo"].as_bool(), Some(true));
+        assert_eq!(
+            doc["providers"]["managed:kimi-code"]["base_url"].as_str(),
+            Some("https://api.kimi.com/coding/v1")
+        );
+        assert_eq!(
+            doc["models"]["kimi-code/kimi-for-coding"]["provider"].as_str(),
+            Some("managed:kimi-code")
+        );
+    }
+
+    #[test]
+    fn set_provider_updates_existing_top_level_settings_from_full_config() {
+        let _guard = test_mutex().lock().expect("acquire test mutex");
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let previous_home = std::env::var_os("KIMI_CODE_HOME");
+        std::env::set_var("KIMI_CODE_HOME", temp.path());
+
+        write_text_file(
+            &get_kimi_config_path(),
+            r#"
+default_model = "old"
+default_thinking = false
+extra_skill_dirs = ["old-skills"]
+
+[thinking]
+type = "disabled"
+budget_tokens = 1024
+
+[loop_control]
+max_tool_calls = 8
+
+[background]
+enabled = false
+
+[experimental]
+enable_foo = false
+
+[providers.old]
+type = "kimi"
+api_key = "old"
+base_url = "https://old.example.com"
+
+[models.old]
+provider = "old"
+model = "old-model"
+"#,
+        )
+        .expect("write existing config");
+
+        let settings = json!({
+            "config": r#"
+default_model = "kimi-code/kimi-for-coding"
+default_thinking = true
+extra_skill_dirs = ["new-skills"]
+
+[thinking]
+type = "enabled"
+budget_tokens = 8192
+
+[loop_control]
+max_tool_calls = 32
+
+[background]
+enabled = true
+
+[experimental]
+enable_foo = true
+
+[providers."managed:kimi-code"]
+type = "kimi"
+api_key = "sk-test"
+base_url = "https://api.kimi.com/coding/v1"
+
+[models."kimi-code/kimi-for-coding"]
+provider = "managed:kimi-code"
+model = "kimi-for-coding"
+max_context_size = 262144
+"#
+        });
+
+        set_provider("managed:kimi-code", settings).expect("set official provider");
+        let written = read_kimi_config_text().expect("read written config");
+
+        match previous_home {
+            Some(value) => std::env::set_var("KIMI_CODE_HOME", value),
+            None => std::env::remove_var("KIMI_CODE_HOME"),
+        }
+
+        let doc = parse_config_text(&written).expect("written config should parse");
+        assert_eq!(doc["default_thinking"].as_bool(), Some(true));
+        assert_eq!(doc["extra_skill_dirs"][0].as_str(), Some("new-skills"));
+        assert_eq!(doc["thinking"]["type"].as_str(), Some("enabled"));
+        assert_eq!(doc["thinking"]["budget_tokens"].as_integer(), Some(8192));
+        assert_eq!(doc["loop_control"]["max_tool_calls"].as_integer(), Some(32));
+        assert_eq!(doc["background"]["enabled"].as_bool(), Some(true));
+        assert_eq!(doc["experimental"]["enable_foo"].as_bool(), Some(true));
+        assert_eq!(
+            doc["providers"]["managed:kimi-code"]["base_url"].as_str(),
+            Some("https://api.kimi.com/coding/v1")
+        );
     }
 
     #[test]
