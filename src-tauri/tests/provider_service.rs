@@ -246,6 +246,130 @@ command = "say"
 }
 
 #[test]
+fn provider_service_switch_codex_preserves_live_ui_settings() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let _home = ensure_test_home();
+
+    let legacy_auth = json!({ "OPENAI_API_KEY": "legacy-key" });
+    let legacy_config = r##"model_provider = "legacy"
+model = "gpt-5.4"
+personality = "pragmatic"
+experimental_bearer_token = "stale-live-token"
+
+[desktop]
+appearanceLightCodeThemeId = "raycast"
+accentColor = "#ff6363"
+
+[mcp_servers.codegraph]
+type = "stdio"
+command = "codegraph"
+
+[model_providers.legacy]
+name = "legacy"
+base_url = "https://legacy.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"##;
+    write_codex_live_atomic(&legacy_auth, Some(legacy_config))
+        .expect("seed existing codex live config");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "old-provider".to_string();
+        manager.providers.insert(
+            "old-provider".to_string(),
+            Provider::with_id(
+                "old-provider".to_string(),
+                "Legacy".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "legacy-key"},
+                    "config": legacy_config
+                }),
+                None,
+            ),
+        );
+        let mut new_provider = Provider::with_id(
+            "new-provider".to_string(),
+            "Latest".to_string(),
+            json!({
+                "auth": {},
+                "config": r#"model_provider = "latest"
+model = "gpt-5.5"
+
+[model_providers.latest]
+name = "latest"
+base_url = "https://latest.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+            }),
+            None,
+        );
+        new_provider.category = Some("official".to_string());
+        manager
+            .providers
+            .insert("new-provider".to_string(), new_provider);
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "new-provider")
+        .expect("switch provider should succeed");
+
+    let config_text =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    let parsed: toml::Value = toml::from_str(&config_text).expect("parse config.toml");
+
+    assert_eq!(
+        parsed.get("model_provider").and_then(|v| v.as_str()),
+        Some("latest"),
+        "provider-specific routing should still switch to the selected provider"
+    );
+    assert_eq!(
+        parsed.get("personality").and_then(|v| v.as_str()),
+        Some("pragmatic"),
+        "live Codex UI personality should survive provider writes"
+    );
+    assert_eq!(
+        parsed
+            .get("desktop")
+            .and_then(|v| v.get("appearanceLightCodeThemeId"))
+            .and_then(|v| v.as_str()),
+        Some("raycast"),
+        "live Codex desktop theme should survive provider writes"
+    );
+    assert!(
+        parsed
+            .get("mcp_servers")
+            .and_then(|v| v.get("codegraph"))
+            .is_some(),
+        "live Codex MCP entries should survive provider writes"
+    );
+    assert_eq!(
+        parsed
+            .get("model_providers")
+            .and_then(|v| v.get("latest"))
+            .and_then(|v| v.get("base_url"))
+            .and_then(|v| v.as_str()),
+        Some("https://latest.example/v1"),
+        "provider-specific endpoint should come from the selected provider"
+    );
+    assert!(
+        !config_text.contains("stale-live-token"),
+        "stale top-level bearer tokens from live config should not be preserved as common config"
+    );
+    assert!(
+        !config_text.contains("experimental_bearer_token"),
+        "official provider writes without auth material should not inherit stale live bearer tokens"
+    );
+}
+
+#[test]
 fn provider_service_switch_codex_preserves_user_model_provider_id_after_migration() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
