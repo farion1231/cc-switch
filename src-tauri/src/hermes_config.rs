@@ -83,10 +83,12 @@ fn default_hermes_dir() -> PathBuf {
 }
 
 /// Windows `%LOCALAPPDATA%\hermes` 路径计算(纯函数,便于跨平台单测)。
-/// `LOCALAPPDATA` 缺失或为空时回退 `<home>\AppData\Local\hermes`,与 Hermes 自身一致。
+/// 对齐 Hermes 的 `os.environ.get("LOCALAPPDATA", "").strip()`:trim 后为空
+/// (缺失/空/纯空白)则回退 `<home>\AppData\Local\hermes`。
 #[cfg(any(target_os = "windows", test))]
 fn windows_local_hermes_dir(localappdata: Option<&std::ffi::OsStr>, home: &Path) -> PathBuf {
     localappdata
+        .map(|value| value.to_string_lossy().trim().to_string())
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join("AppData").join("Local"))
@@ -2382,6 +2384,24 @@ user_profile_enabled: false
         assert_eq!(
             windows_local_hermes_dir(Some(empty.as_os_str()), home),
             expected,
+        );
+    }
+
+    #[test]
+    fn windows_local_hermes_dir_trims_localappdata() {
+        // Mirror Hermes' `os.environ.get("LOCALAPPDATA", "").strip()`.
+        let home = Path::new("C:\\Users\\tester");
+        // Whitespace-only -> treated as unset, fall back to <home>\AppData\Local.
+        let blank = std::ffi::OsString::from("   ");
+        assert_eq!(
+            windows_local_hermes_dir(Some(blank.as_os_str()), home),
+            home.join("AppData").join("Local").join("hermes"),
+        );
+        // Padded value -> trimmed before use.
+        let padded = std::ffi::OsString::from("  C:\\Custom\\Local  ");
+        assert_eq!(
+            windows_local_hermes_dir(Some(padded.as_os_str()), home),
+            PathBuf::from("C:\\Custom\\Local").join("hermes"),
         );
     }
 
