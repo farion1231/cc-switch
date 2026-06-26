@@ -2792,7 +2792,8 @@ fn launch_macos_terminal(
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
-    let provider_command = build_provider_command_line(&shell, &config_path, cwd, parsed_custom_args);
+    let provider_command =
+        build_provider_command_line(&shell, &config_path, cwd, parsed_custom_args);
 
     // Write the shell script to a temp file
     // 脚本使用 POSIX sh 语法确保可移植性，exec 行切换到用户交互式 shell
@@ -3128,7 +3129,8 @@ fn launch_linux_terminal(
     let temp_dir = std::env::temp_dir();
     let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
-    let provider_command = build_provider_command_line(&shell, &config_path, cwd, parsed_custom_args);
+    let provider_command =
+        build_provider_command_line(&shell, &config_path, cwd, parsed_custom_args);
 
     let script_content = format!(
         r#"#!/usr/bin/env sh
@@ -5389,4 +5391,3 @@ mod tests {
         );
     }
 }
-
