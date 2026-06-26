@@ -1546,11 +1546,14 @@ impl SkillService {
                 let is_skill_dir = path.join("SKILL.md").exists() && path.is_dir();
                 let is_ssot_symlink = path.is_symlink() && Self::is_symlink_to_ssot(&path, ssot_dir);
 
-                // 真实 skill 目录：如果不在数据库中或 global_enabled=false，删除
+                // 真实 skill 目录：如果在 DB 中但 global_enabled=false，删除
+                // 不在 DB 中的不删除（可能是用户手动放置、尚未导入的 skill）
                 if is_skill_dir {
-                    if !is_global_enabled {
-                        log::info!("reconcile: 删除 agents_dir 中不应存在的真实 skill 目录: {}", path.display());
-                        let _ = Self::remove_path(&path);
+                    if let Some(_s) = skill {
+                        if !is_global_enabled {
+                            log::info!("reconcile: 删除 agents_dir 中 global_enabled=false 的真实 skill 目录: {}", path.display());
+                            let _ = Self::remove_path(&path);
+                        }
                     }
                 }
                 // SSOT symlink：如果 skill 不存在或 global_enabled=false，删除
@@ -1802,7 +1805,7 @@ impl SkillService {
 
             // 原子导入到 SSOT：先写入临时目录，再 rename 到目标位置
             let dest = ssot_dir.join(&dir_name);
-            if !dest.exists() {
+            let did_import = if !dest.exists() {
                 // 同文件系统尝试 rename（原子操作），否则 temp copy + rename
                 if source.parent().map(|p| p.starts_with(&ssot_dir)).unwrap_or(false) {
                     // 同一目录树：可直接 rename（原子操作）
@@ -1827,7 +1830,10 @@ impl SkillService {
 
                 // 成功后清理原文件（与 rename 同文件系统时原文件已消失，此处只处理跨文件系统残留）
                 let _ = Self::remove_path(&source);
-            }
+                true
+            } else {
+                false
+            };
 
             // 解析元数据
             let skill_md = dest.join("SKILL.md");
@@ -1863,6 +1869,15 @@ impl SkillService {
 
             // 保存到数据库
             db.save_skill(&skill)?;
+
+            // 立即同步到 per-app 目录（跳过源所在目录，仅当本次真正写入 SSOT 时）
+            if did_import {
+                for app in AppType::all() {
+                    if skill.apps.is_enabled_for(&app) {
+                        let _ = Self::sync_to_app_dir(&skill.directory, &app);
+                    }
+                }
+            }
 
             imported.push(skill);
         }
