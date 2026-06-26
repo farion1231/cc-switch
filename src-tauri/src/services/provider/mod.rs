@@ -101,9 +101,9 @@ mod tests {
     use crate::claude_desktop_config::PROFILE_ID;
     use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
     use crate::database::Database;
-    use crate::provider::ProviderMeta;
     #[cfg(any(target_os = "macos", windows))]
     use crate::provider::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
+    use crate::provider::{ProviderMeta, UsageScript};
     use crate::proxy::types::ProxyConfig;
     use crate::store::AppState;
     use serde_json::json;
@@ -226,6 +226,68 @@ mod tests {
         result
     }
 
+    fn codex_settings(base_url: &str, api_key: &str) -> Value {
+        json!({
+            "auth": {
+                "OPENAI_API_KEY": api_key
+            },
+            "config": format!(
+                "model_provider = \"custom\"\n\
+                 [model_providers.custom]\n\
+                 name = \"custom\"\n\
+                 base_url = \"{base_url}\"\n\
+                 wire_api = \"chat\"\n"
+            )
+        })
+    }
+
+    fn usage_script_with_credentials(
+        api_key: Option<&str>,
+        base_url: Option<&str>,
+        template_type: Option<&str>,
+    ) -> UsageScript {
+        UsageScript {
+            enabled: true,
+            language: "javascript".to_string(),
+            code: "return { remaining: 1, unit: 'USD' };".to_string(),
+            timeout: Some(10),
+            api_key: api_key.map(str::to_string),
+            base_url: base_url.map(str::to_string),
+            access_token: None,
+            user_id: None,
+            template_type: template_type.map(str::to_string),
+            auto_query_interval: None,
+            coding_plan_provider: None,
+            access_key_id: Some("ak-test".to_string()),
+            secret_access_key: Some("sk-test".to_string()),
+        }
+    }
+
+    fn codex_provider_with_usage(
+        id: &str,
+        base_url: &str,
+        api_key: &str,
+        usage_api_key: Option<&str>,
+        usage_base_url: Option<&str>,
+        template_type: Option<&str>,
+    ) -> Provider {
+        let mut provider = Provider::with_id(
+            id.to_string(),
+            format!("Provider {id}"),
+            codex_settings(base_url, api_key),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            usage_script: Some(usage_script_with_credentials(
+                usage_api_key,
+                usage_base_url,
+                template_type,
+            )),
+            ..Default::default()
+        });
+        provider
+    }
+
     fn openclaw_provider(id: &str) -> Provider {
         Provider {
             id: id.to_string(),
@@ -324,6 +386,150 @@ mod tests {
             "omo-slim" => crate::services::omo::SLIM.preferred_filename,
             other => panic!("unexpected OMO category in test: {other}"),
         })
+    }
+
+    #[test]
+    #[serial]
+    fn add_clears_usage_credentials_that_match_provider_config() {
+        with_test_home(|state, _| {
+            let provider = codex_provider_with_usage(
+                "codex-a",
+                "https://api.a.example/v1/",
+                "sk-a",
+                Some(" sk-a "),
+                Some(" https://api.a.example/v1/ "),
+                None,
+            );
+
+            ProviderService::add(state, AppType::Codex, provider, false).expect("add provider");
+
+            let saved = state
+                .db
+                .get_provider_by_id("codex-a", AppType::Codex.as_str())
+                .expect("query saved provider")
+                .expect("saved provider should exist");
+            let script = saved
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+
+            assert_eq!(script.api_key, None);
+            assert_eq!(script.base_url, None);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn update_clears_copied_usage_credentials_that_match_previous_config() {
+        with_test_home(|state, _| {
+            let stale_copy = codex_provider_with_usage(
+                "codex-copy",
+                "https://api.a.example/v1/",
+                "sk-a",
+                Some("sk-a"),
+                Some("https://api.a.example/v1/"),
+                None,
+            );
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &stale_copy)
+                .expect("seed stale copied provider");
+
+            let mut updated = stale_copy.clone();
+            updated.settings_config = codex_settings("https://api.b.example/v1/", "sk-b");
+
+            ProviderService::update(state, AppType::Codex, None, updated)
+                .expect("update copied provider");
+
+            let saved = state
+                .db
+                .get_provider_by_id("codex-copy", AppType::Codex.as_str())
+                .expect("query updated provider")
+                .expect("updated provider should exist");
+            let script = saved
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+
+            assert_eq!(script.api_key, None);
+            assert_eq!(script.base_url, None);
+            assert_eq!(
+                saved.resolve_usage_credentials(&AppType::Codex),
+                ("https://api.b.example/v1".to_string(), "sk-b".to_string())
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn add_preserves_distinct_usage_credentials() {
+        with_test_home(|state, _| {
+            let provider = codex_provider_with_usage(
+                "codex-distinct",
+                "https://api.main.example/v1",
+                "sk-main",
+                Some("sk-usage"),
+                Some("https://usage.example/api"),
+                None,
+            );
+
+            ProviderService::add(state, AppType::Codex, provider, false).expect("add provider");
+
+            let saved = state
+                .db
+                .get_provider_by_id("codex-distinct", AppType::Codex.as_str())
+                .expect("query saved provider")
+                .expect("saved provider should exist");
+            let script = saved
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+
+            assert_eq!(script.api_key.as_deref(), Some("sk-usage"));
+            assert_eq!(
+                script.base_url.as_deref(),
+                Some("https://usage.example/api")
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn add_does_not_clear_token_plan_credentials() {
+        with_test_home(|state, _| {
+            let provider = codex_provider_with_usage(
+                "codex-token-plan",
+                "https://api.plan.example/v1",
+                "sk-plan",
+                Some("sk-plan"),
+                Some("https://api.plan.example/v1"),
+                Some("token_plan"),
+            );
+
+            ProviderService::add(state, AppType::Codex, provider, false).expect("add provider");
+
+            let saved = state
+                .db
+                .get_provider_by_id("codex-token-plan", AppType::Codex.as_str())
+                .expect("query saved provider")
+                .expect("saved provider should exist");
+            let script = saved
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+
+            assert_eq!(script.api_key.as_deref(), Some("sk-plan"));
+            assert_eq!(
+                script.base_url.as_deref(),
+                Some("https://api.plan.example/v1")
+            );
+            assert_eq!(script.access_key_id.as_deref(), Some("ak-test"));
+            assert_eq!(script.secret_access_key.as_deref(), Some("sk-test"));
+        });
     }
 
     #[test]
@@ -1196,6 +1402,94 @@ impl ProviderService {
             .live_config_managed = Some(managed);
     }
 
+    fn normalize_usage_script_credential_overrides(
+        app_type: &AppType,
+        previous_provider: Option<&Provider>,
+        provider: &mut Provider,
+    ) {
+        let previous_credentials =
+            previous_provider.map(|provider| provider.resolve_usage_credentials(app_type));
+        let current_credentials = provider.resolve_usage_credentials(app_type);
+
+        let Some(usage_script) = provider
+            .meta
+            .as_mut()
+            .and_then(|meta| meta.usage_script.as_mut())
+        else {
+            return;
+        };
+
+        if usage_script.template_type.as_deref() == Some("token_plan") {
+            return;
+        }
+
+        if usage_script.api_key.as_deref().is_some_and(|api_key| {
+            Self::should_clear_usage_api_key_override(
+                api_key,
+                previous_credentials.as_ref(),
+                &current_credentials,
+            )
+        }) {
+            usage_script.api_key = None;
+        }
+
+        if usage_script.base_url.as_deref().is_some_and(|base_url| {
+            Self::should_clear_usage_base_url_override(
+                base_url,
+                previous_credentials.as_ref(),
+                &current_credentials,
+            )
+        }) {
+            usage_script.base_url = None;
+        }
+    }
+
+    fn should_clear_usage_api_key_override(
+        script_api_key: &str,
+        previous_credentials: Option<&(String, String)>,
+        current_credentials: &(String, String),
+    ) -> bool {
+        let candidate = script_api_key.trim();
+        if candidate.is_empty() {
+            return true;
+        }
+
+        let matches_provider_key = |api_key: &str| {
+            let api_key = api_key.trim();
+            !api_key.is_empty() && api_key == candidate
+        };
+
+        previous_credentials
+            .map(|(_, api_key)| matches_provider_key(api_key))
+            .unwrap_or(false)
+            || matches_provider_key(&current_credentials.1)
+    }
+
+    fn should_clear_usage_base_url_override(
+        script_base_url: &str,
+        previous_credentials: Option<&(String, String)>,
+        current_credentials: &(String, String),
+    ) -> bool {
+        let candidate = Self::normalize_usage_base_url_for_compare(script_base_url);
+        if candidate.is_empty() {
+            return true;
+        }
+
+        let matches_provider_base_url = |base_url: &str| {
+            let base_url = Self::normalize_usage_base_url_for_compare(base_url);
+            !base_url.is_empty() && base_url == candidate
+        };
+
+        previous_credentials
+            .map(|(base_url, _)| matches_provider_base_url(base_url))
+            .unwrap_or(false)
+            || matches_provider_base_url(&current_credentials.0)
+    }
+
+    fn normalize_usage_base_url_for_compare(base_url: &str) -> String {
+        base_url.trim().trim_end_matches('/').to_string()
+    }
+
     /// List all providers for an app type
     pub fn list(
         state: &AppState,
@@ -1232,6 +1526,7 @@ impl ProviderService {
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
+        Self::normalize_usage_script_credential_overrides(&app_type, None, &mut provider);
         if app_type.is_additive_mode() {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
         }
@@ -1286,6 +1581,11 @@ impl ProviderService {
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
+        Self::normalize_usage_script_credential_overrides(
+            &app_type,
+            existing_provider.as_ref(),
+            &mut provider,
+        );
 
         if provider_id_changed {
             if !app_type.is_additive_mode() {

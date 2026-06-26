@@ -261,6 +261,154 @@ fn test_build_gemini_provider_without_model() {
 }
 
 #[test]
+fn test_deeplink_usage_script_does_not_copy_provider_credentials() {
+    use super::provider::build_provider_from_request;
+
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("claude".to_string()),
+        name: Some("Test Claude".to_string()),
+        homepage: Some("https://example.com".to_string()),
+        endpoint: Some("https://api.example.com/v1/".to_string()),
+        api_key: Some("sk-main".to_string()),
+        icon: None,
+        model: None,
+        notes: None,
+        haiku_model: None,
+        sonnet_model: None,
+        opus_model: None,
+        config: None,
+        config_format: None,
+        config_url: None,
+        apps: None,
+        repo: None,
+        directory: None,
+        branch: None,
+        content: None,
+        description: None,
+        enabled: None,
+        usage_enabled: Some(true),
+        usage_script: None,
+        usage_api_key: None,
+        usage_base_url: None,
+        usage_access_token: None,
+        usage_user_id: None,
+        usage_auto_interval: None,
+    };
+
+    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
+    let script = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.usage_script.as_ref())
+        .expect("usage script should be created");
+
+    assert!(script.enabled);
+    assert_eq!(script.api_key, None);
+    assert_eq!(script.base_url, None);
+}
+
+#[test]
+fn test_deeplink_usage_script_omits_explicit_credentials_that_match_provider() {
+    use super::provider::build_provider_from_request;
+
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("claude".to_string()),
+        name: Some("Test Claude".to_string()),
+        homepage: Some("https://example.com".to_string()),
+        endpoint: Some("https://api.example.com/v1/".to_string()),
+        api_key: Some("sk-main".to_string()),
+        icon: None,
+        model: None,
+        notes: None,
+        haiku_model: None,
+        sonnet_model: None,
+        opus_model: None,
+        config: None,
+        config_format: None,
+        config_url: None,
+        apps: None,
+        repo: None,
+        directory: None,
+        branch: None,
+        content: None,
+        description: None,
+        enabled: None,
+        usage_enabled: Some(true),
+        usage_script: None,
+        usage_api_key: Some(" sk-main ".to_string()),
+        usage_base_url: Some(" https://api.example.com/v1/ ".to_string()),
+        usage_access_token: None,
+        usage_user_id: None,
+        usage_auto_interval: None,
+    };
+
+    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
+    let script = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.usage_script.as_ref())
+        .expect("usage script should be created");
+
+    assert_eq!(script.api_key, None);
+    assert_eq!(script.base_url, None);
+}
+
+#[test]
+fn test_deeplink_usage_script_preserves_distinct_usage_credentials() {
+    use super::provider::build_provider_from_request;
+
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("claude".to_string()),
+        name: Some("Test Claude".to_string()),
+        homepage: Some("https://example.com".to_string()),
+        endpoint: Some("https://api.example.com/v1".to_string()),
+        api_key: Some("sk-main".to_string()),
+        icon: None,
+        model: None,
+        notes: None,
+        haiku_model: None,
+        sonnet_model: None,
+        opus_model: None,
+        config: None,
+        config_format: None,
+        config_url: None,
+        apps: None,
+        repo: None,
+        directory: None,
+        branch: None,
+        content: None,
+        description: None,
+        enabled: None,
+        usage_enabled: Some(true),
+        usage_script: None,
+        usage_api_key: Some(" sk-usage ".to_string()),
+        usage_base_url: Some(" https://usage.example/api/ ".to_string()),
+        usage_access_token: None,
+        usage_user_id: None,
+        usage_auto_interval: None,
+    };
+
+    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
+    let script = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.usage_script.as_ref())
+        .expect("usage script should be created");
+
+    assert_eq!(script.api_key.as_deref(), Some("sk-usage"));
+    assert_eq!(
+        script.base_url.as_deref(),
+        Some("https://usage.example/api")
+    );
+}
+
+#[test]
 fn test_parse_and_merge_config_claude() {
     // Prepare Base64 encoded Claude config
     let config_json = r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-ant-xxx","ANTHROPIC_BASE_URL":"https://api.anthropic.com/v1","ANTHROPIC_MODEL":"claude-sonnet-4.5"}}"#;
