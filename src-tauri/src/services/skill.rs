@@ -7,9 +7,9 @@
 
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use indexmap::IndexMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -1423,14 +1423,13 @@ impl SkillService {
             let ssot_dir = Self::get_ssot_dir()?;
             let source = ssot_dir.join(&skill.directory);
             if !source.exists() {
-                return Err(anyhow!("Skill source directory not found: {}", source.display()));
+                return Err(anyhow!(
+                    "Skill source directory not found: {}",
+                    source.display()
+                ));
             }
             Self::sync_skill_to_dir(&skill.directory, &dest)?;
-            log::info!(
-                "Skill {} 全局启用：同步到 {}",
-                skill.name,
-                dest.display()
-            );
+            log::info!("Skill {} 全局启用：同步到 {}", skill.name, dest.display());
         } else {
             if dest.exists() || Self::is_symlink(&dest) {
                 Self::remove_path(&dest)?;
@@ -1456,20 +1455,17 @@ impl SkillService {
     pub fn reconcile_ssot_directories(db: &Arc<Database>) -> Result<()> {
         let location = crate::settings::get_skill_storage_location();
         let ssot_dir = Self::get_ssot_dir()?;
-        
+
         let agents_dir = match dirs::home_dir() {
             Some(h) => h.join(".agents").join("skills"),
             None => return Ok(()),
         };
 
         let skills = db.get_all_installed_skills()?;
-        let managed_dirs: HashSet<String> = skills
-            .values()
-            .map(|s| s.directory.clone())
-            .collect();
+        let managed_dirs: HashSet<String> = skills.values().map(|s| s.directory.clone()).collect();
 
         let ccswitch_dir = get_app_config_dir().join("skills");
-        
+
         // 确保两个目录都存在
         fs::create_dir_all(&ccswitch_dir)?;
         fs::create_dir_all(&agents_dir)?;
@@ -1479,12 +1475,24 @@ impl SkillService {
             SkillStorageLocation::CcSwitch => {
                 // CcSwitch 模式：~/.cc-switch/skills/ 是 SSOT
                 // ~/.agents/skills/ 应该只保留 global_enabled=true 的 symlink
-                Self::reconcile_ccswitch_mode(&ccswitch_dir, &agents_dir, &ssot_dir, &skills, &managed_dirs)?;
+                Self::reconcile_ccswitch_mode(
+                    &ccswitch_dir,
+                    &agents_dir,
+                    &ssot_dir,
+                    &skills,
+                    &managed_dirs,
+                )?;
             }
             SkillStorageLocation::Unified => {
                 // Unified 模式：~/.agents/skills/ 是 SSOT
                 // ~/.cc-switch/skills/ 不应残留与当前状态冲突的 skill 目录或 symlink
-                Self::reconcile_unified_mode(&ccswitch_dir, &agents_dir, &ssot_dir, &skills, &managed_dirs)?;
+                Self::reconcile_unified_mode(
+                    &ccswitch_dir,
+                    &agents_dir,
+                    &ssot_dir,
+                    &skills,
+                    &managed_dirs,
+                )?;
             }
         }
 
@@ -1511,20 +1519,27 @@ impl SkillService {
                 if dir_name.starts_with('.') {
                     continue;
                 }
-                
+
                 let is_managed = managed_dirs.contains(&dir_name);
                 let has_skill_md = path.join("SKILL.md").exists();
                 let is_skill_dir = has_skill_md && path.is_dir();
-                let is_ssot_symlink = path.is_symlink() && Self::is_symlink_to_ssot(&path, ssot_dir);
+                let is_ssot_symlink =
+                    path.is_symlink() && Self::is_symlink_to_ssot(&path, ssot_dir);
 
                 // 如果是 skill 目录但不在数据库中，删除
                 if is_skill_dir && !is_managed {
-                    log::info!("reconcile: 删除 SSOT 中未管理的 skill 目录: {}", path.display());
+                    log::info!(
+                        "reconcile: 删除 SSOT 中未管理的 skill 目录: {}",
+                        path.display()
+                    );
                     let _ = Self::remove_path(&path);
                 }
                 // 如果是指向 SSOT 的 symlink 但不在数据库中，删除
                 else if is_ssot_symlink && !is_managed {
-                    log::info!("reconcile: 删除 SSOT 中未管理的 symlink: {}", path.display());
+                    log::info!(
+                        "reconcile: 删除 SSOT 中未管理的 symlink: {}",
+                        path.display()
+                    );
                     let _ = Self::remove_path(&path);
                 }
             }
@@ -1544,7 +1559,8 @@ impl SkillService {
                 let skill = skills.values().find(|s| s.directory == dir_name);
                 let is_global_enabled = skill.map(|s| s.global_enabled).unwrap_or(false);
                 let is_skill_dir = path.join("SKILL.md").exists() && path.is_dir();
-                let is_ssot_symlink = path.is_symlink() && Self::is_symlink_to_ssot(&path, ssot_dir);
+                let is_ssot_symlink =
+                    path.is_symlink() && Self::is_symlink_to_ssot(&path, ssot_dir);
 
                 // 真实 skill 目录：如果在 DB 中但 global_enabled=false，删除
                 // 不在 DB 中的不删除（可能是用户手动放置、尚未导入的 skill）
@@ -1557,11 +1573,13 @@ impl SkillService {
                     }
                 }
                 // SSOT symlink：如果 skill 不存在或 global_enabled=false，删除
-                else if is_ssot_symlink
-                    && !is_global_enabled {
-                        log::info!("reconcile: 删除 agents_dir 中 global_enabled=false 的 symlink: {}", path.display());
-                        let _ = Self::remove_path(&path);
-                    }
+                else if is_ssot_symlink && !is_global_enabled {
+                    log::info!(
+                        "reconcile: 删除 agents_dir 中 global_enabled=false 的 symlink: {}",
+                        path.display()
+                    );
+                    let _ = Self::remove_path(&path);
+                }
                 // 其他文件/symlink：不处理，避免误删用户文件
             }
         }
@@ -1601,18 +1619,24 @@ impl SkillService {
                 if dir_name.starts_with('.') {
                     continue;
                 }
-                
+
                 let is_managed = managed_dirs.contains(&dir_name);
                 let has_skill_md = path.join("SKILL.md").exists();
                 let is_skill_dir = has_skill_md && path.is_dir();
-                let is_ssot_symlink = path.is_symlink() && Self::is_symlink_to_ssot(&path, ssot_dir);
+                let is_ssot_symlink =
+                    path.is_symlink() && Self::is_symlink_to_ssot(&path, ssot_dir);
 
                 if is_skill_dir && !is_managed {
-                    log::info!("reconcile: 删除 SSOT 中未管理的 skill 目录: {}", path.display());
+                    log::info!(
+                        "reconcile: 删除 SSOT 中未管理的 skill 目录: {}",
+                        path.display()
+                    );
                     let _ = Self::remove_path(&path);
-                }
-                else if is_ssot_symlink && !is_managed {
-                    log::info!("reconcile: 删除 SSOT 中未管理的 symlink: {}", path.display());
+                } else if is_ssot_symlink && !is_managed {
+                    log::info!(
+                        "reconcile: 删除 SSOT 中未管理的 symlink: {}",
+                        path.display()
+                    );
                     let _ = Self::remove_path(&path);
                 }
             }
@@ -1627,17 +1651,19 @@ impl SkillService {
                 if dir_name.starts_with('.') {
                     continue;
                 }
-                
+
                 let has_skill_md = path.join("SKILL.md").exists();
                 let is_skill_dir = has_skill_md && path.is_dir();
-                let is_ssot_symlink = path.is_symlink() && (
-                    Self::is_symlink_to_ssot(&path, ccswitch_dir) ||
-                    Self::is_symlink_to_ssot(&path, agents_dir)
-                );
+                let is_ssot_symlink = path.is_symlink()
+                    && (Self::is_symlink_to_ssot(&path, ccswitch_dir)
+                        || Self::is_symlink_to_ssot(&path, agents_dir));
 
                 // 所有 skill 目录和指向 SSOT 的 symlink 都清理
                 if is_skill_dir || is_ssot_symlink {
-                    log::info!("reconcile: 删除 ccswitch_dir 中冲突的条目: {}", path.display());
+                    log::info!(
+                        "reconcile: 删除 ccswitch_dir 中冲突的条目: {}",
+                        path.display()
+                    );
                     let _ = Self::remove_path(&path);
                 }
             }
@@ -1688,7 +1714,9 @@ impl SkillService {
         }
         if let Ok(ssot_dir) = Self::get_ssot_dir() {
             // 去重：如果 SSOT 已存在于 scan_sources 中，跳过重复添加
-            let already_has_ssot = scan_sources.iter().any(|(d, _)| Self::same_path(d, &ssot_dir));
+            let already_has_ssot = scan_sources
+                .iter()
+                .any(|(d, _)| Self::same_path(d, &ssot_dir));
             if !already_has_ssot {
                 scan_sources.push((ssot_dir, "cc-switch".to_string()));
             }
@@ -1770,7 +1798,9 @@ impl SkillService {
             }
         }
         // 去重：如果 SSOT 已存在于 search_sources 中，跳过重复添加
-        let already_has_ssot = search_sources.iter().any(|(d, _)| Self::same_path(d, &ssot_dir));
+        let already_has_ssot = search_sources
+            .iter()
+            .any(|(d, _)| Self::same_path(d, &ssot_dir));
         if !already_has_ssot {
             search_sources.push((ssot_dir.clone(), "cc-switch".to_string()));
         }
@@ -1807,7 +1837,11 @@ impl SkillService {
             let dest = ssot_dir.join(&dir_name);
             let did_import = if !dest.exists() {
                 // 同文件系统尝试 rename（原子操作），否则 temp copy + rename
-                if source.parent().map(|p| p.starts_with(&ssot_dir)).unwrap_or(false) {
+                if source
+                    .parent()
+                    .map(|p| p.starts_with(&ssot_dir))
+                    .unwrap_or(false)
+                {
                     // 同一目录树：可直接 rename（原子操作）
                     let _ = Self::remove_path(&dest);
                     fs::rename(&source, &dest)?;

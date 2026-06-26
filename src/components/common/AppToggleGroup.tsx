@@ -39,8 +39,8 @@ export const AppToggleGroup: React.FC<AppToggleGroupProps> = ({
                   isLocked
                     ? "cursor-not-allowed"
                     : isVisuallyEnabled
-                    ? activeClass
-                    : "opacity-35 hover:opacity-70"
+                      ? activeClass
+                      : "opacity-35 hover:opacity-70"
                 } ${isVisuallyEnabled ? activeClass : ""}`}
               >
                 {icon}

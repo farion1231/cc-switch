@@ -188,7 +188,11 @@ impl Database {
     }
 
     /// 更新 Skill 的全局启用状态
-    pub fn update_skill_global_enabled(&self, id: &str, global_enabled: bool) -> Result<bool, AppError> {
+    pub fn update_skill_global_enabled(
+        &self,
+        id: &str,
+        global_enabled: bool,
+    ) -> Result<bool, AppError> {
         let conn = lock_conn!(self.conn);
         let affected = conn
             .execute(
