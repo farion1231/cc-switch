@@ -104,7 +104,7 @@ describe("useModelState", () => {
       "deepseek-v4-pro",
     );
     expect(setClaudeOneMMarker("deepseek-v4-pro", true)).toBe(
-      "deepseek-v4-pro[1M]",
+      "deepseek-v4-pro[1m]",
     );
   });
 });

@@ -957,12 +957,38 @@ export function ClaudeFormFields({
                   defaultValue: "默认兜底模型",
                 })}
               </FormLabel>
-              {renderModelInput(
-                "claudeModel",
-                claudeModel,
-                "ANTHROPIC_MODEL",
-                t("providerForm.modelPlaceholder", { defaultValue: "" }),
-              )}
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_104px]">
+                {renderModelInput(
+                  "claudeModel",
+                  stripClaudeOneMMarker(claudeModel),
+                  "ANTHROPIC_MODEL",
+                  t("providerForm.modelPlaceholder", { defaultValue: "" }),
+                  (value) => {
+                    const fallbackUsesOneM = hasClaudeOneMMarker(claudeModel);
+                    onModelChange(
+                      "ANTHROPIC_MODEL",
+                      fallbackUsesOneM
+                        ? setClaudeOneMMarker(value, true)
+                        : value,
+                    );
+                  },
+                )}
+                <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
+                  <Checkbox
+                    checked={hasClaudeOneMMarker(claudeModel)}
+                    onCheckedChange={(checked) => {
+                      const enabled = checked === true;
+                      onModelChange(
+                        "ANTHROPIC_MODEL",
+                        setClaudeOneMMarker(claudeModel, enabled),
+                      );
+                    }}
+                  />
+                  {t("providerForm.modelOneMLabel", {
+                    defaultValue: "1M",
+                  })}
+                </label>
+              </div>
               <p className="text-xs text-muted-foreground">
                 {t("providerForm.fallbackModelHint", {
                   defaultValue:
