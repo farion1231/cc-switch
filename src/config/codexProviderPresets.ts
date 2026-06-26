@@ -227,6 +227,22 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     icon: "ccsub",
   },
   {
+    name: "SubRouter",
+    websiteUrl: "https://subrouter.ai",
+    apiKeyUrl: "https://subrouter.ai/console/token",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "subrouter",
+      "https://subrouter.ai/v1",
+      "gpt-5.5",
+    ),
+    endpointCandidates: ["https://subrouter.ai/v1"],
+    isPartner: true,
+    partnerPromotionKey: "subrouter",
+    icon: "subrouter",
+  },
+  {
     name: "Unity2.ai",
     websiteUrl: "https://unity2.ai",
     apiKeyUrl: "https://unity2.ai/register?source=ccs",

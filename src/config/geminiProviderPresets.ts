@@ -89,6 +89,25 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "unity2",
   },
   {
+    name: "SubRouter",
+    websiteUrl: "https://subrouter.ai",
+    apiKeyUrl: "https://subrouter.ai/console/token",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://subrouter.ai/v1beta",
+        GEMINI_MODEL: "gemini-3.5-flash",
+      },
+    },
+    baseURL: "https://subrouter.ai/v1beta",
+    model: "gemini-3.5-flash",
+    description: "SubRouter",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "subrouter",
+    endpointCandidates: ["https://subrouter.ai/v1beta"],
+    icon: "subrouter",
+  },
+  {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.com",
     apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",

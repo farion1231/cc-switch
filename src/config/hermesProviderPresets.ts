@@ -265,6 +265,31 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "SubRouter",
+    websiteUrl: "https://subrouter.ai",
+    apiKeyUrl: "https://subrouter.ai/console/token",
+    settingsConfig: {
+      name: "subrouter",
+      base_url: "https://subrouter.ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          context_length: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "subrouter",
+    icon: "subrouter",
+    suggestedDefaults: {
+      model: { default: "gpt-5.5", provider: "subrouter" },
+    },
+  },
+  {
     name: "Unity2.ai",
     websiteUrl: "https://unity2.ai",
     apiKeyUrl: "https://unity2.ai/register?source=ccs",
