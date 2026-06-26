@@ -212,7 +212,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "SubRouter",
     websiteUrl: "https://subrouter.ai",
-    apiKeyUrl: "https://subrouter.ai/console/token",
+    apiKeyUrl: "https://subrouter.ai/register?aff=l3ri",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://subrouter.ai",

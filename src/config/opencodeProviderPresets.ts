@@ -439,7 +439,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "SubRouter",
     websiteUrl: "https://subrouter.ai",
-    apiKeyUrl: "https://subrouter.ai/console/token",
+    apiKeyUrl: "https://subrouter.ai/register?aff=l3ri",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "SubRouter",

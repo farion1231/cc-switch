@@ -267,7 +267,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "SubRouter",
     websiteUrl: "https://subrouter.ai",
-    apiKeyUrl: "https://subrouter.ai/console/token",
+    apiKeyUrl: "https://subrouter.ai/register?aff=l3ri",
     settingsConfig: {
       name: "subrouter",
       base_url: "https://subrouter.ai/v1",

@@ -297,7 +297,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   {
     name: "SubRouter",
     websiteUrl: "https://subrouter.ai",
-    apiKeyUrl: "https://subrouter.ai/console/token",
+    apiKeyUrl: "https://subrouter.ai/register?aff=l3ri",
     settingsConfig: {
       baseUrl: "https://subrouter.ai/v1",
       apiKey: "",
