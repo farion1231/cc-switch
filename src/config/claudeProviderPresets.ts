@@ -282,7 +282,8 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "OpenCode Go",
     websiteUrl: "https://opencode.ai/go",
-    apiKeyUrl: "https://opencode.ai/auth",
+    apiKeyUrl: "https://opencode.ai/go?ref=2YTRG2NGTX",
+    partnerPromotionKey: "opencode_go",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
