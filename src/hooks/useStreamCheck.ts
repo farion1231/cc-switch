@@ -76,7 +76,7 @@ export function useStreamCheck(appId: AppId) {
             t("streamCheck.failed", {
               providerName: providerName,
               message: result.message,
-              defaultValue: `${providerName} 检查失败: ${result.message}`,
+              defaultValue: `${providerName} check failed: ${result.message}`,
             }),
             {
               description: getFailureDescription(result),

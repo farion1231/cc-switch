@@ -239,11 +239,9 @@ fn etag_matches(left: &str, right: &str) -> bool {
 }
 
 fn sync_conflict_error() -> AppError {
-    AppError::localized(
-        "sync.conflict",
-        "远端数据已被其他设备更新，请先下载或强制上传",
-        "Remote data was updated by another device. Download first or force upload.",
-    )
+    let message =
+        "Remote data was updated by another device. Download first or force upload.".to_string();
+    AppError::localized("sync.conflict", message.clone(), message)
 }
 
 async fn find_remote_snapshot(

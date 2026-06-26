@@ -50,7 +50,7 @@ pub struct CircuitBreakerConfig {
     pub error_rate_threshold: f64,
     /// 最小请求数 - 计算错误率前的最小请求数
     pub min_requests: u32,
-    /// 错误率统计窗口（秒）
+    /// Error-rate sliding window length (seconds)
     #[serde(default = "default_window_seconds")]
     pub window_seconds: u64,
 }
@@ -93,7 +93,7 @@ pub struct CircuitBreaker {
     total_requests: Arc<AtomicU32>,
     /// 失败请求计数
     failed_requests: Arc<AtomicU32>,
-    /// 错误率窗口起始时间
+    /// Error-rate window start time
     window_started_at: Arc<RwLock<Instant>>,
     /// 上次打开时间
     last_opened_at: Arc<RwLock<Option<Instant>>>,
@@ -103,10 +103,10 @@ pub struct CircuitBreaker {
     half_open_requests: Arc<AtomicU32>,
 }
 
-/// HalfOpen 探测 permit 的 RAII guard。
+/// RAII guard for a HalfOpen probe permit.
 ///
-/// 若请求在成功/失败统计前提前结束（例如客户端断开），Drop 会自动归还 permit，
-/// 避免 HalfOpen 永久卡死。
+/// If the request ends before success/failure is recorded (for example, client disconnect),
+/// Drop releases the permit automatically so HalfOpen cannot wedge permanently.
 pub struct HalfOpenPermitGuard {
     breaker: Arc<CircuitBreaker>,
     active: bool,
@@ -143,8 +143,8 @@ impl Drop for HalfOpenPermitGuard {
 
 /// 熔断器放行结果
 ///
-/// `used_half_open_permit` 表示本次放行是否占用了 HalfOpen 探测名额；
-/// `permit_guard` 会把该名额的生命周期绑定到请求作用域。
+/// `used_half_open_permit` indicates whether this allow consumed a HalfOpen probe slot.
+/// `permit_guard` binds that slot lifetime to the request scope.
 pub struct AllowResult {
     pub allowed: bool,
     pub used_half_open_permit: bool,

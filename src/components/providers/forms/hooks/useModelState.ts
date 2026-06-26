@@ -142,7 +142,7 @@ export function useModelState({
   latestConfigRef.current = settingsConfig;
 
   // 仅在 settingsConfig 外部变化时同步（表单加载 / 切换预设）；
-  // 仅跳过当前 hook 自己刚写回的那一次 echo，避免把本地输入又同步回来。
+  // Only skip the echo from this hook's own write-back to avoid syncing local input back in.
   useEffect(() => {
     if (lastConfigRef.current === settingsConfig) {
       return;

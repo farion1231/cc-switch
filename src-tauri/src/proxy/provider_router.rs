@@ -180,7 +180,7 @@ impl ProviderRouter {
     /// 仅释放 HalfOpen permit，不影响健康统计（neutral 接口）
     ///
     /// 用于整流器等场景：请求结果不应计入 Provider 健康度，
-    /// 直接 drop guard 即可释放占用的探测名额。
+    /// Drop the guard to release the occupied probe slot.
     pub async fn release_permit_neutral(&self, permit_guard: Option<HalfOpenPermitGuard>) {
         drop(permit_guard);
     }

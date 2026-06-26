@@ -666,7 +666,7 @@ export function DeepLinkImportDialog() {
                         <div className="grid grid-cols-3 items-start gap-4">
                           <div className="font-medium text-sm text-muted-foreground">
                             {t("deeplink.usageScriptCode", {
-                              defaultValue: "脚本内容",
+                              defaultValue: "Script content",
                             })}
                           </div>
                           <div className="col-span-2">

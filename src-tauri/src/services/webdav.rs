@@ -242,7 +242,7 @@ pub async fn put_bytes(
         request = request.header("If-None-Match", "*");
     }
     let resp = apply_auth(request, auth).send().await.map_err(|e| {
-        webdav_transport_error("webdav.put_failed", "PUT 请求", "PUT request", url, &e)
+        webdav_transport_error("webdav.put_failed", "PUT request", "PUT request", url, &e)
     })?;
 
     if resp.status() == StatusCode::PRECONDITION_FAILED {
@@ -409,13 +409,10 @@ pub fn webdav_status_error(op: &str, status: StatusCode, url: &str) -> AppError 
 
 fn sync_conflict_error(url: &str) -> AppError {
     let safe_url = redact_url(url);
-    AppError::localized(
-        "sync.conflict",
-        format!("远端数据已被其他设备更新，请先下载或强制上传: {safe_url}"),
-        format!(
-            "Remote data was updated by another device. Download first or force upload: {safe_url}"
-        ),
-    )
+    let message = format!(
+        "Remote data was updated by another device. Download first or force upload: {safe_url}"
+    );
+    AppError::localized("sync.conflict", message.clone(), message)
 }
 
 fn redact_url(raw: &str) -> String {

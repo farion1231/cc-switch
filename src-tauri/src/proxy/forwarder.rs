@@ -129,7 +129,7 @@ pub struct RequestForwarder {
     /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
     /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
     max_attempts: usize,
-    /// 是否启用自动故障转移。
+    /// Whether automatic failover is enabled.
     auto_failover_enabled: bool,
 }
 
@@ -393,7 +393,7 @@ impl RequestForwarder {
         let mut last_provider = None;
         let mut attempted_providers = 0usize;
 
-        // 故障转移关闭时跳过熔断器检查，避免单路由模式下把唯一供应商完全拦住。
+        // Skip circuit breaker checks when failover is disabled to avoid blocking the sole route.
         let bypass_circuit_breaker = !self.auto_failover_enabled;
 
         // 依次尝试每个供应商
@@ -998,8 +998,8 @@ impl RequestForwarder {
                             continue;
                         }
                         ErrorCategory::NonRetryable | ErrorCategory::ClientAbort => {
-                            // 不可重试：客户端层错误或客户端断连 → 不污染健康度；
-                            // HalfOpen permit 由 RAII guard 在离开当前作用域时自动释放。
+                            // Non-retryable client errors must not pollute health stats.
+                            // HalfOpen permit is released by the RAII guard when this scope ends.
                             {
                                 let mut status = self.status.write().await;
                                 status.failed_requests += 1;

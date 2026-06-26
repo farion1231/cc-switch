@@ -288,13 +288,10 @@ fn s3_status_error(op: &str, status: StatusCode, url: &str) -> AppError {
 
 fn sync_conflict_error(url: &str) -> AppError {
     let safe_url = redact_url(url);
-    AppError::localized(
-        "sync.conflict",
-        format!("远端数据已被其他设备更新，请先下载或强制上传: {safe_url}"),
-        format!(
-            "Remote data was updated by another device. Download first or force upload: {safe_url}"
-        ),
-    )
+    let message = format!(
+        "Remote data was updated by another device. Download first or force upload: {safe_url}"
+    );
+    AppError::localized("sync.conflict", message.clone(), message)
 }
 
 fn response_too_large_error(url: &str, max_bytes: usize) -> AppError {

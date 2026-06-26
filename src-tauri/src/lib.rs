@@ -433,12 +433,12 @@ pub fn run() {
                     let providers_empty = match db.is_providers_empty() {
                         Ok(is_empty) => is_empty,
                         Err(e) => {
-                            log::error!("检查 providers 表是否为空失败: {e}");
+                            log::error!("Failed to check whether providers table is empty: {e}");
                             if !show_migration_error_dialog(app.handle(), &e.to_string()) {
-                                log::info!("用户选择退出程序");
+                                log::info!("User chose to exit");
                                 std::process::exit(1);
                             }
-                            log::info!("用户选择重试读取迁移前置状态");
+                            log::info!("User chose to retry migration pre-check");
                             continue;
                         }
                     };
@@ -447,39 +447,39 @@ pub fn run() {
                         break;
                     }
 
-                    log::info!("开始执行数据迁移...");
+                    log::info!("Starting data migration...");
                     let config = match crate::app_config::MultiAppConfig::load() {
                         Ok(config) => config,
                         Err(e) => {
-                            log::error!("加载旧配置失败: {e}");
+                            log::error!("Failed to load legacy config: {e}");
                             if !show_migration_error_dialog(app.handle(), &e.to_string()) {
-                                log::info!("用户选择退出程序");
+                                log::info!("User chose to exit");
                                 std::process::exit(1);
                             }
-                            log::info!("用户选择重试加载旧配置");
+                            log::info!("User chose to retry loading legacy config");
                             continue;
                         }
                     };
 
                     match db.migrate_from_json(&config) {
                         Ok(_) => {
-                            log::info!("✓ 配置迁移成功");
+                            log::info!("Configuration migration succeeded");
                             crate::init_status::set_migration_success();
                             let archive_path = json_path.with_extension("json.migrated");
                             if let Err(e) = std::fs::rename(&json_path, &archive_path) {
-                                log::warn!("归档旧配置文件失败: {e}");
+                                log::warn!("Failed to archive legacy config file: {e}");
                             } else {
-                                log::info!("✓ 旧配置已归档为 config.json.migrated");
+                                log::info!("Legacy config archived as config.json.migrated");
                             }
                             break;
                         }
                         Err(e) => {
-                            log::error!("配置迁移失败: {e}");
+                            log::error!("Configuration migration failed: {e}");
                             if !show_migration_error_dialog(app.handle(), &e.to_string()) {
-                                log::info!("用户选择退出程序");
+                                log::info!("User chose to exit");
                                 std::process::exit(1);
                             }
-                            log::info!("用户选择重试配置迁移");
+                            log::info!("User chose to retry configuration migration");
                         }
                     }
                 }
