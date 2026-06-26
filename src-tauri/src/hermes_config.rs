@@ -1157,7 +1157,22 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
         std::env::set_var("CC_SWITCH_TEST_HOME", tmp.path());
+        // Neutralize the env vars get_hermes_dir() consults, so an ambient
+        // HERMES_HOME / LOCALAPPDATA (e.g. set by a Hermes install) can't make
+        // tests escape the temp home. Restored below.
+        let old_hermes_home = std::env::var_os("HERMES_HOME");
+        let old_local_appdata = std::env::var_os("LOCALAPPDATA");
+        std::env::remove_var("HERMES_HOME");
+        std::env::remove_var("LOCALAPPDATA");
         let result = test_fn();
+        match old_local_appdata {
+            Some(value) => std::env::set_var("LOCALAPPDATA", value),
+            None => std::env::remove_var("LOCALAPPDATA"),
+        }
+        match old_hermes_home {
+            Some(value) => std::env::set_var("HERMES_HOME", value),
+            None => std::env::remove_var("HERMES_HOME"),
+        }
         match old_test_home {
             Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
             None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
@@ -2367,6 +2382,43 @@ user_profile_enabled: false
         assert_eq!(
             windows_local_hermes_dir(Some(empty.as_os_str()), home),
             expected,
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn with_test_home_neutralizes_hermes_env_vars() {
+        // An ambient HERMES_HOME / LOCALAPPDATA (e.g. set by a Hermes install)
+        // must not leak into the test home — otherwise other tests in this
+        // module would read/write a real Hermes config via get_hermes_config_path().
+        let saved_hh = std::env::var_os("HERMES_HOME");
+        let saved_la = std::env::var_os("LOCALAPPDATA");
+        std::env::set_var("HERMES_HOME", "/ambient/hermes-home");
+        std::env::set_var("LOCALAPPDATA", "/ambient/local-appdata");
+
+        let inside = with_test_home(|| {
+            (
+                std::env::var_os("HERMES_HOME"),
+                std::env::var_os("LOCALAPPDATA"),
+            )
+        });
+
+        match saved_hh {
+            Some(v) => std::env::set_var("HERMES_HOME", v),
+            None => std::env::remove_var("HERMES_HOME"),
+        }
+        match saved_la {
+            Some(v) => std::env::set_var("LOCALAPPDATA", v),
+            None => std::env::remove_var("LOCALAPPDATA"),
+        }
+
+        assert_eq!(
+            inside.0, None,
+            "with_test_home must clear ambient HERMES_HOME"
+        );
+        assert_eq!(
+            inside.1, None,
+            "with_test_home must clear ambient LOCALAPPDATA"
         );
     }
 }
