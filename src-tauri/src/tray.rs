@@ -78,6 +78,14 @@ impl TrayTexts {
                 quit: "退出",
                 _auto_label: "自動 (故障轉移)",
             },
+            "ko" => Self {
+                show_main: "메인 창 열기",
+                open_website: "공식 웹사이트 열기",
+                no_providers_label: "(공급자 없음)",
+                lightweight_mode: "경량 모드",
+                quit: "종료",
+                _auto_label: "자동 (장애 조치)",
+            },
             _ => Self {
                 show_main: "打开主界面",
                 open_website: "打开官方网站",
