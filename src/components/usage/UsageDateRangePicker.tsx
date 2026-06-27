@@ -99,7 +99,9 @@ export function UsageDateRangePicker({
     ],
   );
   const [draftStart, setDraftStart] = useState(() =>
-    normalizePickerStart(resolvedRange.startDate),
+    selection.preset === "custom" && selection.customStartDate != null
+      ? selection.customStartDate
+      : normalizePickerStart(resolvedRange.startDate),
   );
   const [draftEnd, setDraftEnd] = useState(() =>
     selection.preset === "custom" && selection.customEndDate != null && !selection.liveEndTime
@@ -127,7 +129,11 @@ export function UsageDateRangePicker({
     if (!open) return;
     const currentNow = Date.now();
     const r = resolveUsageRange(selection, currentNow);
-    setDraftStart(normalizePickerStart(r.startDate));
+    setDraftStart(
+      selection.preset === "custom" && selection.customStartDate != null
+        ? selection.customStartDate
+        : normalizePickerStart(r.startDate),
+    );
     setDraftEnd(
       selection.preset === "custom" && selection.customEndDate != null && !selection.liveEndTime
         ? selection.customEndDate
