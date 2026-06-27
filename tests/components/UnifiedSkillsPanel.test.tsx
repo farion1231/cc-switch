@@ -8,6 +8,7 @@ import UnifiedSkillsPanel, {
 
 const scanUnmanagedMock = vi.fn();
 const toggleSkillAppMock = vi.fn();
+const toggleSkillGlobalMock = vi.fn();
 const uninstallSkillMock = vi.fn();
 const importSkillsMock = vi.fn();
 const installFromZipMock = vi.fn();
@@ -38,6 +39,9 @@ vi.mock("@/hooks/useSkills", () => ({
   }),
   useToggleSkillApp: () => ({
     mutateAsync: toggleSkillAppMock,
+  }),
+  useToggleSkillGlobal: () => ({
+    mutateAsync: toggleSkillGlobalMock,
   }),
   useRestoreSkillBackup: () => ({
     mutateAsync: restoreSkillBackupMock,
