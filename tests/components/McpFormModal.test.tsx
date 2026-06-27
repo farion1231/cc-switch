@@ -433,6 +433,7 @@ type = "stdio"
       codex: false,
       gemini: false,
       opencode: false,
+      kimi: false,
       openclaw: false,
       hermes: false,
     });

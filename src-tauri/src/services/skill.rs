@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 
 use crate::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
-use crate::config::get_app_config_dir;
+use crate::config::{get_app_config_dir, get_home_dir};
 use crate::database::Database;
 use crate::error::format_skill_error;
 
@@ -374,20 +374,13 @@ fn parse_branch_from_source_url(source_url: Option<&str>) -> Option<String> {
 
 /// 获取 `~/.agents/skills/` 目录（存在时返回）
 fn get_agents_skills_dir() -> Option<PathBuf> {
-    dirs::home_dir()
-        .map(|h| h.join(".agents").join("skills"))
-        .filter(|p| p.exists())
+    let path = get_home_dir().join(".agents").join("skills");
+    path.exists().then_some(path)
 }
 
 /// 解析 `~/.agents/.skill-lock.json`，返回 skill_name -> 仓库信息
 fn parse_agents_lock() -> HashMap<String, LockRepoInfo> {
-    let path = match dirs::home_dir() {
-        Some(h) => h.join(".agents").join(".skill-lock.json"),
-        None => {
-            log::warn!("无法获取 HOME 目录，跳过解析 agents lock 文件");
-            return HashMap::new();
-        }
-    };
+    let path = get_home_dir().join(".agents").join(".skill-lock.json");
     let content = match fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) => {
@@ -482,11 +475,7 @@ impl SkillService {
         let dir = match location {
             SkillStorageLocation::CcSwitch => get_app_config_dir().join("skills"),
             SkillStorageLocation::Unified => {
-                let home = dirs::home_dir().context(format_skill_error(
-                    "GET_HOME_DIR_FAILED",
-                    &[],
-                    Some("checkPermission"),
-                ))?;
+                let home = get_home_dir();
                 home.join(".agents").join("skills")
             }
         };
@@ -526,6 +515,11 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
+            AppType::Kimi => {
+                if let Some(custom) = crate::settings::get_kimi_override_dir() {
+                    return Ok(custom.join("skills"));
+                }
+            }
             AppType::OpenClaw => {
                 if let Some(custom) = crate::settings::get_openclaw_override_dir() {
                     return Ok(custom.join("skills"));
@@ -539,11 +533,7 @@ impl SkillService {
         }
 
         // 默认路径：回退到用户主目录下的标准位置
-        let home = dirs::home_dir().context(format_skill_error(
-            "GET_HOME_DIR_FAILED",
-            &[],
-            Some("checkPermission"),
-        ))?;
+        let home = get_home_dir();
 
         Ok(match app {
             AppType::Claude => home.join(".claude").join("skills"),
@@ -551,6 +541,7 @@ impl SkillService {
             AppType::Codex => home.join(".codex").join("skills"),
             AppType::Gemini => home.join(".gemini").join("skills"),
             AppType::OpenCode => home.join(".config").join("opencode").join("skills"),
+            AppType::Kimi => crate::kimi_config::get_kimi_dir().join("skills"),
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
         })
@@ -1167,7 +1158,7 @@ impl SkillService {
         let new_dir = match target {
             SkillStorageLocation::CcSwitch => get_app_config_dir().join("skills"),
             SkillStorageLocation::Unified => {
-                let home = dirs::home_dir().context("Cannot determine home directory")?;
+                let home = get_home_dir();
                 home.join(".agents").join("skills")
             }
         };
@@ -1395,6 +1386,11 @@ impl SkillService {
                 scan_sources.push((d, app.as_str().to_string()));
             }
         }
+        scan_sources.extend(
+            Self::get_kimi_extra_skill_dirs()
+                .into_iter()
+                .map(|dir| (dir, "kimi-extra".to_string())),
+        );
         if let Some(agents_dir) = get_agents_skills_dir() {
             scan_sources.push((agents_dir, "agents".to_string()));
         }
@@ -1411,15 +1407,15 @@ impl SkillService {
             };
             for entry in entries.flatten() {
                 let path = entry.path();
-                if !path.is_dir() {
+                let Some((dir_name, skill_md)) =
+                    Self::skill_entry_metadata_path(scan_dir, &entry, label)
+                else {
                     continue;
-                }
-                let dir_name = entry.file_name().to_string_lossy().to_string();
+                };
                 if dir_name.starts_with('.') || managed_dirs.contains(&dir_name) {
                     continue;
                 }
 
-                let skill_md = path.join("SKILL.md");
                 if !skill_md.exists() {
                     continue;
                 }
@@ -1466,6 +1462,11 @@ impl SkillService {
                 search_sources.push((d, app.as_str().to_string()));
             }
         }
+        search_sources.extend(
+            Self::get_kimi_extra_skill_dirs()
+                .into_iter()
+                .map(|dir| (dir, "kimi-extra".to_string())),
+        );
         if let Some(agents_dir) = get_agents_skills_dir() {
             search_sources.push((agents_dir, "agents".to_string()));
         }
@@ -1478,11 +1479,20 @@ impl SkillService {
 
             for (base, label) in &search_sources {
                 let skill_path = base.join(&dir_name);
-                if skill_path.exists() {
+                if skill_path.join("SKILL.md").exists() {
                     if source_path.is_none() {
                         source_path = Some(skill_path);
                     }
                     log::debug!("Skill '{dir_name}' found in source '{label}'");
+                    continue;
+                }
+
+                let flat_skill_path = base.join(format!("{dir_name}.md"));
+                if Self::supports_kimi_flat_skills(label) && flat_skill_path.is_file() {
+                    if source_path.is_none() {
+                        source_path = Some(flat_skill_path);
+                    }
+                    log::debug!("Flat skill '{dir_name}' found in source '{label}'");
                 }
             }
 
@@ -1490,19 +1500,23 @@ impl SkillService {
                 Some(p) => p,
                 None => continue,
             };
-            if !source.join("SKILL.md").exists() {
+            let dest = ssot_dir.join(&dir_name);
+            if source.is_file() {
+                if !dest.exists() {
+                    fs::create_dir_all(&dest)?;
+                    fs::copy(&source, dest.join("SKILL.md"))?;
+                }
+            } else if source.join("SKILL.md").exists() {
+                if !dest.exists() {
+                    Self::copy_dir_recursive(&source, &dest)?;
+                }
+            } else {
                 log::warn!(
                     "Skip importing '{}' because source '{}' has no SKILL.md",
                     dir_name,
                     source.display()
                 );
                 continue;
-            }
-
-            // 复制到 SSOT
-            let dest = ssot_dir.join(&dir_name);
-            if !dest.exists() {
-                Self::copy_dir_recursive(&source, &dest)?;
             }
 
             // 解析元数据
@@ -1545,6 +1559,52 @@ impl SkillService {
         log::info!("成功导入 {} 个 Skills", imported.len());
 
         Ok(imported)
+    }
+
+    fn get_kimi_extra_skill_dirs() -> Vec<PathBuf> {
+        match crate::kimi_config::get_kimi_extra_skill_dirs() {
+            Ok(dirs) => dirs,
+            Err(err) => {
+                log::warn!("读取 Kimi extra_skill_dirs 失败: {err}");
+                Vec::new()
+            }
+        }
+    }
+
+    fn skill_entry_metadata_path(
+        scan_dir: &Path,
+        entry: &fs::DirEntry,
+        label: &str,
+    ) -> Option<(String, PathBuf)> {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if path.is_dir() {
+            return Some((name, path.join("SKILL.md")));
+        }
+
+        if !Self::supports_kimi_flat_skills(label) {
+            return None;
+        }
+
+        if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+            return None;
+        }
+
+        let stem = path.file_stem()?.to_string_lossy().to_string();
+        if stem.eq_ignore_ascii_case("SKILL") {
+            return None;
+        }
+
+        let directory_form = scan_dir.join(&stem).join("SKILL.md");
+        if directory_form.exists() {
+            return None;
+        }
+
+        Some((stem, path))
+    }
+
+    fn supports_kimi_flat_skills(label: &str) -> bool {
+        matches!(label, "kimi" | "kimi-extra" | "agents")
     }
 
     // ========== 文件同步方法 ==========

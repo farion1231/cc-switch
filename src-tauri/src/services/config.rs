@@ -129,6 +129,9 @@ impl ConfigService {
                 // OpenCode uses additive mode, no live sync needed
                 // OpenCode providers are managed directly in the config file
             }
+            AppType::Kimi => {
+                // Kimi uses additive mode, no live sync needed here
+            }
             AppType::OpenClaw => {
                 // OpenClaw uses additive mode, no live sync needed
                 // OpenClaw providers are managed directly in the config file

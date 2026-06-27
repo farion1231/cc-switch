@@ -182,6 +182,13 @@ impl Provider {
                     str_at(options.and_then(|o| o.get("apiKey"))),
                 )
             }
+            AppType::Kimi => {
+                let config = settings
+                    .get("config")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                crate::kimi_config::extract_credentials_from_config(config, Some(&self.id))
+            }
             // Claude and Claude Desktop both use the Anthropic-style env map, keeping
             // the OpenRouter/Google key fallbacks the JS-script path relies on.
             // Listed explicitly (not `_`) so a new AppType fails to compile here.

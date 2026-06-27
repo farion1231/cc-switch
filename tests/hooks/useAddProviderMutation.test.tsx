@@ -133,4 +133,32 @@ describe("useAddProviderMutation", () => {
     expect(apiMocks.add).not.toHaveBeenCalled();
     expect(persistedProvider).toEqual(seedProvider);
   });
+
+  it("uses the Kimi providerKey as provider id", async () => {
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useAddProviderMutation("kimi"), {
+      wrapper,
+    });
+
+    const provider = await act(async () =>
+      result.current.mutateAsync({
+        name: "Kimi Code",
+        providerKey: "managed:kimi-code",
+        settingsConfig: {
+          config: 'default_model = "kimi-code/kimi-for-coding"',
+        },
+      }),
+    );
+
+    expect(apiMocks.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "managed:kimi-code",
+        name: "Kimi Code",
+      }),
+      "kimi",
+      undefined,
+    );
+    expect(apiMocks.add.mock.calls[0][0]).not.toHaveProperty("providerKey");
+    expect(provider.id).toBe("managed:kimi-code");
+  });
 });

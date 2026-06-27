@@ -73,6 +73,170 @@ fn import_from_apps_respects_explicit_app_selection() {
 }
 
 #[test]
+fn scan_unmanaged_discovers_kimi_and_agents_skills() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    write_skill(
+        &home.join(".kimi-code").join("skills").join("kimi-skill"),
+        "Kimi Skill",
+    );
+    write_skill(
+        &home.join(".agents").join("skills").join("agents-skill"),
+        "Agents Skill",
+    );
+
+    let state = create_test_state().expect("create test state");
+    let unmanaged = SkillService::scan_unmanaged(&state.db).expect("scan unmanaged skills");
+
+    let kimi = unmanaged
+        .iter()
+        .find(|skill| skill.directory == "kimi-skill")
+        .expect("Kimi skill should be discovered");
+    assert!(
+        kimi.found_in.iter().any(|source| source == "kimi"),
+        "Kimi skill should be labeled with the Kimi source"
+    );
+
+    let agents = unmanaged
+        .iter()
+        .find(|skill| skill.directory == "agents-skill")
+        .expect("Agents skill should be discovered");
+    assert!(
+        agents.found_in.iter().any(|source| source == "agents"),
+        "Agents skill should be labeled with the shared Agents source"
+    );
+}
+
+#[test]
+fn scan_unmanaged_discovers_kimi_extra_and_flat_skills() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let kimi_dir = home.join(".kimi-code");
+    fs::create_dir_all(&kimi_dir).expect("create kimi dir");
+    fs::write(
+        kimi_dir.join("config.toml"),
+        r#"extra_skill_dirs = ["~/team-skills"]"#,
+    )
+    .expect("write kimi config");
+
+    write_skill(&home.join("team-skills").join("extra-skill"), "Extra Skill");
+    fs::write(
+        home.join("team-skills").join("flat-skill.md"),
+        "---\nname: Flat Skill\ndescription: Flat test\n---\n",
+    )
+    .expect("write flat skill");
+
+    let state = create_test_state().expect("create test state");
+    let unmanaged = SkillService::scan_unmanaged(&state.db).expect("scan unmanaged skills");
+
+    let extra = unmanaged
+        .iter()
+        .find(|skill| skill.directory == "extra-skill")
+        .expect("extra skill should be discovered");
+    assert!(
+        extra.found_in.iter().any(|source| source == "kimi-extra"),
+        "extra skill should be labeled with the Kimi extra source"
+    );
+
+    let flat = unmanaged
+        .iter()
+        .find(|skill| skill.directory == "flat-skill")
+        .expect("flat skill should be discovered");
+    assert_eq!(flat.name, "Flat Skill");
+    assert!(
+        flat.found_in.iter().any(|source| source == "kimi-extra"),
+        "flat skill should be labeled with the Kimi extra source"
+    );
+}
+
+#[test]
+fn import_from_apps_converts_kimi_flat_skill_to_ssot_directory() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    fs::create_dir_all(home.join(".kimi-code").join("skills")).expect("create kimi skills dir");
+    fs::write(
+        home.join(".kimi-code")
+            .join("skills")
+            .join("flat-import.md"),
+        "---\nname: Flat Import\ndescription: Flat import test\n---\n",
+    )
+    .expect("write flat skill");
+
+    let state = create_test_state().expect("create test state");
+    let imported = SkillService::import_from_apps(
+        &state.db,
+        vec![ImportSkillSelection {
+            directory: "flat-import".to_string(),
+            apps: SkillApps {
+                kimi: true,
+                ..Default::default()
+            },
+        }],
+    )
+    .expect("import flat skill");
+
+    assert_eq!(imported.len(), 1, "expected one imported flat skill");
+    assert_eq!(imported[0].name, "Flat Import");
+    assert!(
+        home.join(".cc-switch")
+            .join("skills")
+            .join("flat-import")
+            .join("SKILL.md")
+            .exists(),
+        "flat Kimi skill should be converted to SSOT directory form"
+    );
+}
+
+#[test]
+fn sync_to_kimi_writes_user_level_skills_dir() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let ssot_skill_dir = home.join(".cc-switch").join("skills").join("kimi-sync");
+    write_skill(&ssot_skill_dir, "Kimi Sync");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_skill(&InstalledSkill {
+            id: "local:kimi-sync".to_string(),
+            name: "Kimi Sync".to_string(),
+            description: Some("Sync to Kimi".to_string()),
+            directory: "kimi-sync".to_string(),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            apps: SkillApps {
+                kimi: true,
+                ..Default::default()
+            },
+            installed_at: 0,
+            content_hash: None,
+            updated_at: 0,
+        })
+        .expect("save kimi skill");
+
+    SkillService::sync_to_app(&state.db, &AppType::Kimi).expect("sync to Kimi");
+
+    assert!(
+        home.join(".kimi-code")
+            .join("skills")
+            .join("kimi-sync")
+            .join("SKILL.md")
+            .exists(),
+        "enabled Kimi skill should be synced to KIMI_CODE_HOME/skills"
+    );
+}
+
+#[test]
 fn import_from_apps_does_not_rewrite_selected_app_directory() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();

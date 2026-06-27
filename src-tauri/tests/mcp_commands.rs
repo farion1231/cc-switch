@@ -152,6 +152,133 @@ fn import_mcp_from_claude_creates_config_and_enables_servers() {
 }
 
 #[test]
+fn import_mcp_from_kimi_enables_user_level_servers() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let kimi_dir = home.join(".kimi-code");
+    fs::create_dir_all(&kimi_dir).expect("create kimi dir");
+    fs::write(
+        kimi_dir.join("mcp.json"),
+        serde_json::to_string_pretty(&json!({
+            "mcpServers": {
+                "kimi-echo": {
+                    "type": "stdio",
+                    "command": "echo"
+                }
+            }
+        }))
+        .expect("serialize kimi mcp"),
+    )
+    .expect("seed kimi mcp");
+
+    let state = create_test_state().expect("create test state");
+    let changed = McpService::import_from_kimi(&state).expect("import mcp from kimi");
+    assert_eq!(changed, 1, "expected one Kimi MCP server to import");
+
+    let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
+    let entry = servers.get("kimi-echo").expect("server imported from Kimi");
+    assert!(entry.apps.kimi, "imported server should enable Kimi");
+    assert!(
+        !entry.apps.claude && !entry.apps.codex && !entry.apps.gemini && !entry.apps.opencode,
+        "import should not infer unrelated app enablement"
+    );
+}
+
+#[test]
+fn enabling_kimi_mcp_writes_user_level_mcp_json_when_kimi_dir_exists() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let kimi_dir = home.join(".kimi-code");
+    fs::create_dir_all(&kimi_dir).expect("create kimi dir");
+
+    let state = create_test_state().expect("create test state");
+    McpService::upsert_server(
+        &state,
+        McpServer {
+            id: "kimi-managed".to_string(),
+            name: "Kimi Managed".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: false,
+                gemini: false,
+                opencode: false,
+                kimi: true,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    )
+    .expect("upsert kimi mcp server");
+
+    let value: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(kimi_dir.join("mcp.json")).expect("read kimi mcp"),
+    )
+    .expect("parse kimi mcp");
+    assert_eq!(
+        value["mcpServers"]["kimi-managed"]["command"],
+        json!("echo"),
+        "enabled Kimi MCP server should be written to user-level mcp.json"
+    );
+}
+
+#[test]
+fn enabling_kimi_mcp_skips_when_kimi_dir_absent() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    assert!(
+        !home.join(".kimi-code").exists(),
+        "~/.kimi-code should not exist in fresh test environment"
+    );
+
+    let state = create_test_state().expect("create test state");
+    McpService::upsert_server(
+        &state,
+        McpServer {
+            id: "kimi-server".to_string(),
+            name: "Kimi Server".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: false,
+                gemini: false,
+                opencode: false,
+                kimi: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    )
+    .expect("insert server without syncing");
+
+    McpService::toggle_app(&state, "kimi-server", AppType::Kimi, true)
+        .expect("toggle Kimi should succeed even when ~/.kimi-code is missing");
+
+    assert!(
+        !home.join(".kimi-code").exists(),
+        "~/.kimi-code should still not exist after skipped sync"
+    );
+}
+
+#[test]
 fn import_mcp_from_codex_does_not_rewrite_codex_config() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
@@ -228,6 +355,7 @@ command = "echo"
                 codex: true,
                 gemini: false,
                 opencode: false,
+                kimi: false,
                 hermes: false,
             },
             description: None,
@@ -322,6 +450,7 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
                 codex: false, // 初始未启用
                 gemini: false,
                 opencode: false,
+                kimi: false,
                 hermes: false,
             },
             description: None,
@@ -387,6 +516,7 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
                 codex: false,
                 gemini: false,
                 opencode: false,
+                kimi: false,
                 hermes: false,
             },
             description: None,
@@ -432,6 +562,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 codex: false,
                 gemini: false,
                 opencode: false,
+                kimi: false,
                 hermes: false,
             },
             description: None,
@@ -466,6 +597,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 codex: false,
                 gemini: false,
                 opencode: false,
+                kimi: false,
                 hermes: false,
             },
             description: None,
@@ -599,6 +731,7 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
                 codex: false,
                 gemini: false,
                 opencode: false,
+                kimi: false,
                 hermes: false,
             },
             description: None,
@@ -654,6 +787,7 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
                 codex: false,
                 gemini: false,
                 opencode: false,
+                kimi: false,
                 hermes: false,
             },
             description: None,
@@ -709,6 +843,7 @@ fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
                 codex: false,
                 gemini: false,
                 opencode: false,
+                kimi: false,
                 hermes: false,
             },
             description: None,
@@ -765,6 +900,7 @@ fn custom_claude_dir_writes_mcp_inside_config_dir() {
                 codex: false,
                 gemini: false,
                 opencode: false,
+                kimi: false,
                 hermes: false,
             },
             description: None,
@@ -844,6 +980,7 @@ fn custom_claude_dir_sync_does_not_copy_default_profile() {
                 codex: false,
                 gemini: false,
                 opencode: false,
+                kimi: false,
                 hermes: false,
             },
             description: None,
@@ -983,6 +1120,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 codex: false,
                 gemini: false,
                 opencode: false,
+                kimi: false,
                 hermes: false,
             },
             description: None,
@@ -1005,6 +1143,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 codex: false,
                 gemini: false,
                 opencode: false,
+                kimi: false,
                 hermes: false,
             },
             description: None,

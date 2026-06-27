@@ -18,6 +18,7 @@ interface DirectorySettingsProps {
   codexDir?: string;
   geminiDir?: string;
   opencodeDir?: string;
+  kimiDir?: string;
   openclawDir?: string;
   hermesDir?: string;
   onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
@@ -35,6 +36,7 @@ export function DirectorySettings({
   codexDir,
   geminiDir,
   opencodeDir,
+  kimiDir,
   openclawDir,
   hermesDir,
   onDirectoryChange,
@@ -135,6 +137,17 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("opencode", val)}
           onBrowse={() => onBrowseDirectory("opencode")}
           onReset={() => onResetDirectory("opencode")}
+        />
+
+        <DirectoryInput
+          label={t("settings.kimiConfigDir")}
+          description={undefined}
+          value={kimiDir}
+          resolvedValue={resolvedDirs.kimi}
+          placeholder={t("settings.browsePlaceholderKimi")}
+          onChange={(val) => onDirectoryChange("kimi", val)}
+          onBrowse={() => onBrowseDirectory("kimi")}
+          onReset={() => onResetDirectory("kimi")}
         />
 
         <DirectoryInput

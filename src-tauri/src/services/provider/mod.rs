@@ -22,8 +22,8 @@ use crate::store::AppState;
 
 // Re-export sub-module functions for external access
 pub use live::{
-    import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, read_live_settings,
+    import_default_config, import_hermes_providers_from_live, import_kimi_providers_from_live,
+    import_openclaw_providers_from_live, import_opencode_providers_from_live, read_live_settings,
     should_import_default_config_on_startup, sync_current_to_live,
 };
 
@@ -37,8 +37,8 @@ pub(crate) use live::{
 
 // Internal re-exports
 use live::{
-    remove_hermes_provider_from_live, remove_openclaw_provider_from_live,
-    remove_opencode_provider_from_live, write_gemini_live,
+    remove_hermes_provider_from_live, remove_kimi_provider_from_live,
+    remove_openclaw_provider_from_live, remove_opencode_provider_from_live, write_gemini_live,
 };
 use usage::validate_usage_script;
 
@@ -1518,6 +1518,7 @@ impl ProviderService {
             if Self::check_live_config_exists(&app_type, id, live_managed)? {
                 match app_type {
                     AppType::OpenCode => remove_opencode_provider_from_live(id)?,
+                    AppType::Kimi => remove_kimi_provider_from_live(id)?,
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
                     _ => {}
@@ -1578,6 +1579,9 @@ impl ProviderService {
                 } else {
                     remove_opencode_provider_from_live(id)?;
                 }
+            }
+            AppType::Kimi => {
+                remove_kimi_provider_from_live(id)?;
             }
             AppType::OpenClaw => {
                 remove_openclaw_provider_from_live(id)?;
@@ -1808,6 +1812,7 @@ impl ProviderService {
             if let Err(e) = state.db.save_provider(app_type.as_str(), &updated) {
                 let rollback_result = match app_type {
                     AppType::OpenCode => remove_opencode_provider_from_live(&provider.id),
+                    AppType::Kimi => remove_kimi_provider_from_live(&provider.id),
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
                     _ => Ok(()),
@@ -1988,6 +1993,7 @@ impl ProviderService {
             AppType::Codex => Self::extract_codex_common_config(&provider.settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
+            AppType::Kimi => Ok(String::new()),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
         }
@@ -2004,6 +2010,7 @@ impl ProviderService {
             AppType::Codex => Self::extract_codex_common_config(settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
+            AppType::Kimi => Ok(String::new()),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
         }
@@ -2373,6 +2380,28 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::Kimi => {
+                let settings = provider.settings_config.as_object().ok_or_else(|| {
+                    AppError::localized(
+                        "provider.kimi.settings.not_object",
+                        "Kimi 配置必须是 JSON 对象",
+                        "Kimi configuration must be a JSON object",
+                    )
+                })?;
+
+                if let Some(config_value) = settings.get("config") {
+                    if !(config_value.is_string() || config_value.is_null()) {
+                        return Err(AppError::localized(
+                            "provider.kimi.config.invalid_type",
+                            "Kimi config 字段必须是字符串",
+                            "Kimi config field must be a string",
+                        ));
+                    }
+                    if let Some(cfg_text) = config_value.as_str() {
+                        crate::kimi_config::validate_config_toml(cfg_text)?;
+                    }
+                }
+            }
             AppType::OpenClaw => {
                 // OpenClaw uses config structure: { baseUrl, apiKey, api, models }
                 // Basic validation - must be an object
@@ -2573,6 +2602,17 @@ impl ProviderService {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
+
+                Ok((api_key, base_url))
+            }
+            AppType::Kimi => {
+                let config = provider
+                    .settings_config
+                    .get("config")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let (base_url, api_key) =
+                    crate::kimi_config::extract_credentials_from_config(config, Some(&provider.id));
 
                 Ok((api_key, base_url))
             }

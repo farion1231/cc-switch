@@ -761,6 +761,8 @@
     "geminiConfigDirDescription": "Override Gemini configuration directory (.env).",
     "opencodeConfigDir": "OpenCode Configuration Directory",
     "opencodeConfigDirDescription": "Override OpenCode configuration directory (opencode.json).",
+    "kimiConfigDir": "Kimi Code Configuration Directory",
+    "kimiConfigDirDescription": "Override Kimi Code configuration directory (config.toml).",
     "openclawConfigDir": "OpenClaw Configuration Directory",
     "openclawConfigDirDescription": "Override OpenClaw configuration directory (openclaw.json).",
     "hermesConfigDir": "Hermes Configuration Directory",
@@ -769,6 +771,7 @@
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
     "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
+    "browsePlaceholderKimi": "e.g., /home/<your-username>/.kimi-code",
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
     "browseDirectory": "Browse Directory",
@@ -879,6 +882,7 @@
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode",
+    "kimi": "Kimi Code",
     "openclaw": "OpenClaw",
     "hermes": "Hermes"
   },
@@ -1356,6 +1360,15 @@
     "modelOptionKeyPlaceholder": "provider",
     "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
   },
+  "kimi": {
+    "providerKey": "Provider Key",
+    "providerKeyPlaceholder": "managed:kimi-code",
+    "providerKeyHint": "For example, managed:kimi-code. Used as the provider name in config.toml.",
+    "providerKeyLockedHint": "This provider is in Kimi config, so its key is locked.",
+    "providerKeyRequired": "Provider key is required",
+    "providerKeyDuplicate": "This provider key already exists",
+    "providerKeyInvalid": "Provider key cannot contain brackets or line breaks"
+  },
   "providerPreset": {
     "label": "Provider Preset",
     "custom": "Custom Configuration",
@@ -1421,7 +1434,8 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "kimi": "Kimi Code"
     },
     "rawInputLabel": "Raw",
     "dataSources": "Data Sources",
@@ -1431,7 +1445,8 @@
       "codex_db": "Codex DB",
       "codex_session": "Codex Session",
       "gemini_session": "Gemini Session",
-      "opencode_session": "OpenCode Session"
+      "opencode_session": "OpenCode Session",
+      "kimi_session": "Kimi Code Session"
     },
     "sessionSync": {
       "trigger": "Sync session logs",
@@ -1676,6 +1691,7 @@
         "codex": "Codex",
         "gemini": "Gemini",
         "opencode": "OpenCode",
+        "kimi": "Kimi Code",
         "openclaw": "OpenClaw",
         "hermes": "Hermes"
       }

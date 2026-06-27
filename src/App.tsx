@@ -127,6 +127,7 @@ const VALID_APPS: AppId[] = [
   "codex",
   "gemini",
   "opencode",
+  "kimi",
   "openclaw",
   "hermes",
 ];
@@ -194,6 +195,7 @@ function App() {
     codex: true,
     gemini: true,
     opencode: true,
+    kimi: true,
     openclaw: true,
     hermes: true,
   };
@@ -204,6 +206,7 @@ function App() {
     if (visibleApps.codex) return "codex";
     if (visibleApps.gemini) return "gemini";
     if (visibleApps.opencode) return "opencode";
+    if (visibleApps.kimi) return "kimi";
     if (visibleApps.openclaw) return "openclaw";
     if (visibleApps.hermes) return "hermes";
     return "claude"; // fallback
@@ -658,6 +661,10 @@ function App() {
         await queryClient.invalidateQueries({
           queryKey: hermesKeys.liveProviderIds,
         });
+      } else if (activeApp === "kimi") {
+        await queryClient.invalidateQueries({
+          queryKey: ["kimiLiveProviderIds"],
+        });
       }
       toast.success(
         t("notifications.removeFromConfigSuccess", {
@@ -708,6 +715,7 @@ function App() {
 
     if (
       activeApp === "opencode" ||
+      activeApp === "kimi" ||
       activeApp === "openclaw" ||
       activeApp === "hermes"
     ) {
@@ -719,15 +727,20 @@ function App() {
                 queryKey: ["opencodeLiveProviderIds"],
                 queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
               })
-            : activeApp === "openclaw"
+            : activeApp === "kimi"
               ? await queryClient.ensureQueryData({
-                  queryKey: openclawKeys.liveProviderIds,
-                  queryFn: () => providersApi.getOpenClawLiveProviderIds(),
+                  queryKey: ["kimiLiveProviderIds"],
+                  queryFn: () => providersApi.getKimiLiveProviderIds(),
                 })
-              : await queryClient.ensureQueryData({
-                  queryKey: hermesKeys.liveProviderIds,
-                  queryFn: () => providersApi.getHermesLiveProviderIds(),
-                });
+              : activeApp === "openclaw"
+                ? await queryClient.ensureQueryData({
+                    queryKey: openclawKeys.liveProviderIds,
+                    queryFn: () => providersApi.getOpenClawLiveProviderIds(),
+                  })
+                : await queryClient.ensureQueryData({
+                    queryKey: hermesKeys.liveProviderIds,
+                    queryFn: () => providersApi.getHermesLiveProviderIds(),
+                  });
       } catch (error) {
         console.error(
           "[App] Failed to load live provider IDs for duplication",
@@ -980,6 +993,7 @@ function App() {
                       }
                       onRemoveFromConfig={
                         activeApp === "opencode" ||
+                        activeApp === "kimi" ||
                         activeApp === "openclaw" ||
                         activeApp === "hermes"
                           ? (provider) =>
@@ -1230,6 +1244,7 @@ function App() {
           <div className="flex flex-1 min-w-0 items-center justify-end gap-1.5">
             {currentView === "providers" &&
               activeApp !== "opencode" &&
+              activeApp !== "kimi" &&
               activeApp !== "openclaw" &&
               activeApp !== "hermes" && (
                 <div

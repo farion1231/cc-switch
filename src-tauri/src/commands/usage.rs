@@ -320,6 +320,19 @@ pub fn sync_session_usage(
         }
     }
 
+    // 同步 Kimi Code 使用数据
+    match crate::services::session_usage_kimi::sync_kimi_usage(&state.db) {
+        Ok(kimi_result) => {
+            result.imported += kimi_result.imported;
+            result.skipped += kimi_result.skipped;
+            result.files_scanned += kimi_result.files_scanned;
+            result.errors.extend(kimi_result.errors);
+        }
+        Err(e) => {
+            result.errors.push(format!("Kimi Code 同步失败: {e}"));
+        }
+    }
+
     Ok(result)
 }
 

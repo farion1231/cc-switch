@@ -761,6 +761,8 @@
     "geminiConfigDirDescription": "覆盖 Gemini 配置目录 (.env)。",
     "opencodeConfigDir": "OpenCode 配置目录",
     "opencodeConfigDirDescription": "覆盖 OpenCode 配置目录 (opencode.json)。",
+    "kimiConfigDir": "Kimi Code 配置目录",
+    "kimiConfigDirDescription": "覆盖 Kimi Code 配置目录 (config.toml)。",
     "openclawConfigDir": "OpenClaw 配置目录",
     "openclawConfigDirDescription": "覆盖 OpenClaw 配置目录 (openclaw.json)。",
     "hermesConfigDir": "Hermes 配置目录",
@@ -769,6 +771,7 @@
     "browsePlaceholderCodex": "例如：/home/<你的用户名>/.codex",
     "browsePlaceholderGemini": "例如：/home/<你的用户名>/.gemini",
     "browsePlaceholderOpencode": "例如：/home/<你的用户名>/.config/opencode",
+    "browsePlaceholderKimi": "例如：/home/<你的用户名>/.kimi-code",
     "browsePlaceholderOpenclaw": "例如：/home/<你的用户名>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<你的用户名>/.hermes",
     "browseDirectory": "浏览目录",
@@ -879,6 +882,7 @@
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode",
+    "kimi": "Kimi Code",
     "openclaw": "OpenClaw",
     "hermes": "Hermes"
   },
@@ -1356,6 +1360,15 @@
     "modelOptionKeyPlaceholder": "provider",
     "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
   },
+  "kimi": {
+    "providerKey": "供应商标识",
+    "providerKeyPlaceholder": "managed:kimi-code",
+    "providerKeyHint": "例如 managed:kimi-code；会作为 config.toml 中的 provider 名称。",
+    "providerKeyLockedHint": "该供应商已添加到 Kimi 配置中，供应商标识不可修改",
+    "providerKeyRequired": "请填写供应商标识",
+    "providerKeyDuplicate": "供应商标识已存在",
+    "providerKeyInvalid": "供应商标识不能包含方括号或换行符"
+  },
   "providerPreset": {
     "label": "预设供应商",
     "custom": "自定义配置",
@@ -1421,7 +1434,8 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "kimi": "Kimi Code"
     },
     "rawInputLabel": "原始",
     "dataSources": "数据来源",
@@ -1431,7 +1445,8 @@
       "codex_db": "Codex 数据库",
       "codex_session": "Codex 会话日志",
       "gemini_session": "Gemini 会话日志",
-      "opencode_session": "OpenCode 会话日志"
+      "opencode_session": "OpenCode 会话日志",
+      "kimi_session": "Kimi Code 会话日志"
     },
     "sessionSync": {
       "trigger": "同步会话日志",
@@ -1676,6 +1691,7 @@
         "codex": "Codex",
         "gemini": "Gemini",
         "opencode": "OpenCode",
+        "kimi": "Kimi Code",
         "openclaw": "OpenClaw",
         "hermes": "Hermes"
       }

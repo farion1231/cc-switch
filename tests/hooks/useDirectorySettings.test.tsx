@@ -69,6 +69,7 @@ describe("useDirectorySettings", () => {
       if (app === "codex") return "/remote/codex";
       if (app === "gemini") return "/remote/gemini";
       if (app === "opencode") return "/remote/opencode";
+      if (app === "kimi") return "/remote/kimi";
       if (app === "openclaw") return "/remote/openclaw";
       return "/remote/hermes";
     });
@@ -91,6 +92,7 @@ describe("useDirectorySettings", () => {
       codex: "/remote/codex",
       gemini: "/remote/gemini",
       opencode: "/remote/opencode",
+      kimi: "/remote/kimi",
       openclaw: "/remote/openclaw",
       hermes: "/remote/hermes",
     });
@@ -250,6 +252,7 @@ describe("useDirectorySettings", () => {
         codex: "/server/codex",
         gemini: "/server/gemini",
         opencode: "/server/opencode",
+        kimi: "/server/kimi",
         openclaw: "/server/openclaw",
       });
     });
@@ -258,6 +261,7 @@ describe("useDirectorySettings", () => {
     expect(result.current.resolvedDirs.codex).toBe("/server/codex");
     expect(result.current.resolvedDirs.gemini).toBe("/server/gemini");
     expect(result.current.resolvedDirs.opencode).toBe("/server/opencode");
+    expect(result.current.resolvedDirs.kimi).toBe("/server/kimi");
     expect(result.current.resolvedDirs.openclaw).toBe("/server/openclaw");
   });
 });

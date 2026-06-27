@@ -761,6 +761,8 @@
     "geminiConfigDirDescription": "覆寫 Gemini 設定目錄 (.env)。",
     "opencodeConfigDir": "OpenCode 設定目錄",
     "opencodeConfigDirDescription": "覆寫 OpenCode 設定目錄 (opencode.json)。",
+    "kimiConfigDir": "Kimi Code 設定目錄",
+    "kimiConfigDirDescription": "覆寫 Kimi Code 設定目錄 (config.toml)。",
     "openclawConfigDir": "OpenClaw 設定目錄",
     "openclawConfigDirDescription": "覆寫 OpenClaw 設定目錄 (openclaw.json)。",
     "hermesConfigDir": "Hermes 設定目錄",
@@ -769,6 +771,7 @@
     "browsePlaceholderCodex": "例如：/home/<您的帳號>/.codex",
     "browsePlaceholderGemini": "例如：/home/<您的帳號>/.gemini",
     "browsePlaceholderOpencode": "例如：/home/<您的帳號>/.config/opencode",
+    "browsePlaceholderKimi": "例如：/home/<您的帳號>/.kimi-code",
     "browsePlaceholderOpenclaw": "例如：/home/<您的帳號>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<您的帳號>/.hermes",
     "browseDirectory": "瀏覽目錄",
@@ -850,6 +853,7 @@
     "codex": "Codex",
     "gemini": "Gemini",
     "opencode": "OpenCode",
+    "kimi": "Kimi Code",
     "openclaw": "OpenClaw",
     "hermes": "Hermes"
   },
@@ -1328,6 +1332,15 @@
     "modelOptionKeyPlaceholder": "provider",
     "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
   },
+  "kimi": {
+    "providerKey": "供應商標識",
+    "providerKeyPlaceholder": "managed:kimi-code",
+    "providerKeyHint": "例如 managed:kimi-code；會作為 config.toml 中的 provider 名稱。",
+    "providerKeyLockedHint": "該供應商已新增至 Kimi 設定中，供應商標識不可修改",
+    "providerKeyRequired": "請填寫供應商標識",
+    "providerKeyDuplicate": "供應商標識已存在",
+    "providerKeyInvalid": "供應商標識不能包含方括號或換行符"
+  },
   "providerPreset": {
     "label": "預設供應商",
     "custom": "自訂設定",
@@ -1393,7 +1406,8 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "kimi": "Kimi Code"
     },
     "rawInputLabel": "原始",
     "dataSources": "資料來源",
@@ -1403,7 +1417,8 @@
       "codex_db": "Codex 資料庫",
       "codex_session": "Codex 工作階段日誌",
       "gemini_session": "Gemini 工作階段日誌",
-      "opencode_session": "OpenCode 工作階段日誌"
+      "opencode_session": "OpenCode 工作階段日誌",
+      "kimi_session": "Kimi Code 工作階段日誌"
     },
     "sessionSync": {
       "trigger": "同步工作階段日誌",
@@ -1648,6 +1663,7 @@
         "codex": "Codex",
         "gemini": "Gemini",
         "opencode": "OpenCode",
+        "kimi": "Kimi Code",
         "openclaw": "OpenClaw",
         "hermes": "Hermes"
       }

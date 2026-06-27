@@ -16,6 +16,7 @@ pub fn ensure_test_home() -> &'static Path {
         // 用 CC_SWITCH_TEST_HOME 显式覆盖，以确保测试不会污染真实用户目录。
         std::env::set_var("CC_SWITCH_TEST_HOME", &base);
         std::env::set_var("HOME", &base);
+        std::env::set_var("KIMI_CODE_HOME", base.join(".kimi-code"));
         #[cfg(windows)]
         std::env::set_var("USERPROFILE", &base);
         base
@@ -31,6 +32,8 @@ pub fn reset_test_fs() {
         ".codex",
         ".cc-switch",
         ".gemini",
+        ".kimi-code",
+        ".agents",
         ".config",
         ".openclaw",
         "profiles",
