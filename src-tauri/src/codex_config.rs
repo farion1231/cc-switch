@@ -13,6 +13,83 @@ use toml_edit::DocumentMut;
 
 pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
+
+/// Top-level `config.toml` key that controls Codex's built-in web-search tool.
+const CODEX_WEB_SEARCH_FIELD: &str = "web_search";
+/// Value that disables the web-search tool. Some native `/responses` gateways
+/// reject a `web_search` tool with `responses_feature_not_supported` ("tool type
+/// 'web_search' is not supported by this gateway phase"), so for those we write
+/// this per the vendors' official Codex docs. Also doubles as cc-switch's
+/// ownership sentinel: we only ever remove a `web_search` key whose value equals
+/// this string, never a user's own setting.
+const CODEX_WEB_SEARCH_DISABLED: &str = "disabled";
+
+/// Native `/responses` gateways whose first-party models do NOT support the Codex
+/// `web_search` hosted tool. A BLACKLIST (default-on): everything not listed keeps
+/// Codex's default, so relays/aggregators fronting real GPT — and any unknown
+/// provider — are never touched. This avoids a whitelist's dangerous failure mode
+/// (a fragile "is this GPT?" heuristic wrongly keeping web_search ON → hard 400);
+/// the blacklist's failure mode is the safe, recoverable one (a not-yet-listed
+/// broken gateway errors once → add it here).
+///
+/// Matched two ways so an aggregator (e.g. SiliconFlow) fronting these vendors'
+/// models is also caught:
+/// - `base_url` host substring, and
+/// - the model id's brand prefix (after stripping any `vendor/` path segment).
+///
+/// Verified 2026-06-27 doc audit — reject: MiMo (hard 400), LongCat (official
+/// config ships `web_search = "disabled"`), MiniMax (tool-type enum `['function']`
+/// only). Deliberately NOT listed (they support it): 火山方舟豆包, 阿里百炼 Qwen,
+/// and all GPT-native relays.
+const CODEX_WEB_SEARCH_REJECT_HOSTS: &[&str] = &[
+    "xiaomimimo.com", // Xiaomi MiMo (api.xiaomimimo.com, token-plan-cn.xiaomimimo.com)
+    "longcat.chat",   // Meituan LongCat (api.longcat.chat)
+    "minimax.io",     // MiniMax global (api.minimax.io)
+    "minimaxi.com",   // MiniMax CN (api.minimaxi.com)
+];
+
+/// Brand prefixes of models whose native gateways reject `web_search`, matched
+/// against the model id's last `/`-segment so aggregator ids like
+/// `MiniMaxAI/MiniMax-M3` are caught. Exact brand names (not a fuzzy heuristic),
+/// so a supporting gateway is never wrongly matched.
+const CODEX_WEB_SEARCH_REJECT_MODEL_PREFIXES: &[&str] = &["mimo", "longcat", "minimax"];
+
+/// Top-level `model` id from a Codex `config.toml`.
+fn codex_top_level_model(config_text: &str) -> Option<String> {
+    let doc = config_text.parse::<toml::Value>().ok()?;
+    doc.get("model")
+        .and_then(|value| value.as_str())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+/// Whether a native `/responses` provider's gateway is known to reject the Codex
+/// `web_search` hosted tool — by `base_url` host OR by the active model's brand
+/// (so an aggregator fronting a reject vendor's model is caught too). Driven by
+/// the live `config.toml`, so it applies to existing providers without a re-save.
+fn codex_native_gateway_rejects_web_search(config_text: &str) -> bool {
+    if let Some(base_url) = extract_codex_base_url(config_text) {
+        let base_url = base_url.to_ascii_lowercase();
+        if CODEX_WEB_SEARCH_REJECT_HOSTS
+            .iter()
+            .any(|host| base_url.contains(host))
+        {
+            return true;
+        }
+    }
+    if let Some(model) = codex_top_level_model(config_text) {
+        let model = model.to_ascii_lowercase();
+        // Strip any aggregator "vendor/" prefix, e.g. "MiniMaxAI/MiniMax-M3".
+        let model = model.rsplit('/').next().unwrap_or(model.as_str());
+        if CODEX_WEB_SEARCH_REJECT_MODEL_PREFIXES
+            .iter()
+            .any(|prefix| model.starts_with(prefix))
+        {
+            return true;
+        }
+    }
+    false
+}
 const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
 
 /// Which Codex tool surface the generated model catalog should target.
@@ -828,6 +905,37 @@ fn set_codex_model_catalog_json_field(
     Ok(doc.to_string())
 }
 
+/// Pure toggle for the top-level `web_search` field that turns Codex's built-in
+/// web-search tool off. When `disable` is true we write `web_search = "disabled"`
+/// (the catalog's `supports_search_tool` does NOT gate this — the request-time
+/// tool comes from the config, defaulting on). When false we *remove* the field,
+/// but only when it carries cc-switch's own `"disabled"` sentinel, so switching
+/// back to a web-search-capable provider re-enables it without clobbering a
+/// user's manual setting.
+///
+/// The caller decides `disable` (see `codex_native_gateway_rejects_web_search`);
+/// lifecycle is bound to the cc-switch catalog pointer so the field is set/cleaned
+/// up wherever the native catalog is written/removed.
+fn set_codex_native_web_search_field(config_text: &str, disable: bool) -> Result<String, AppError> {
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+
+    if disable {
+        doc[CODEX_WEB_SEARCH_FIELD] = toml_edit::value(CODEX_WEB_SEARCH_DISABLED);
+    } else {
+        let owned = doc
+            .get(CODEX_WEB_SEARCH_FIELD)
+            .and_then(|item| item.as_str())
+            == Some(CODEX_WEB_SEARCH_DISABLED);
+        if owned {
+            doc.as_table_mut().remove(CODEX_WEB_SEARCH_FIELD);
+        }
+    }
+
+    Ok(doc.to_string())
+}
+
 /// Generate Codex `model_catalog_json` from provider settings and inject/remove
 /// the top-level TOML field that points Codex to the generated file.
 pub fn prepare_codex_config_text_with_model_catalog(
@@ -839,10 +947,17 @@ pub fn prepare_codex_config_text_with_model_catalog(
 
     if let Some(catalog) = codex_model_catalog_from_settings(settings, config_text, profile)? {
         let config_text = set_codex_model_catalog_json_field(config_text, Some(&catalog_path))?;
+        // Disable web_search only for native gateways on the reject blacklist
+        // (MiMo/LongCat/MiniMax, by host or model brand). Everything else —
+        // relays, DouBao/Qwen, unknown providers — keeps Codex's default.
+        let disable_web_search = profile == CodexCatalogToolProfile::NativeResponses
+            && codex_native_gateway_rejects_web_search(&config_text);
+        let config_text = set_codex_native_web_search_field(&config_text, disable_web_search)?;
         write_json_file(&catalog_path, &catalog)?;
         Ok(config_text)
     } else {
-        set_codex_model_catalog_json_field(config_text, None)
+        let config_text = set_codex_model_catalog_json_field(config_text, None)?;
+        set_codex_native_web_search_field(&config_text, false)
     }
 }
 
@@ -2421,6 +2536,119 @@ name = "any"
                 .is_none(),
             "model_catalog_json should stay top-level"
         );
+    }
+
+    #[test]
+    fn native_web_search_field_disables_at_top_level() {
+        // Native `/responses` gateways reject the web_search tool, so the
+        // NativeResponses profile must write the top-level disable line even
+        // when sections are present (it must NOT land inside a section).
+        let input = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "xiaomi_mimo"
+"#;
+        let result = set_codex_native_web_search_field(input, true).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert_eq!(
+            parsed.get("web_search").and_then(|value| value.as_str()),
+            Some("disabled")
+        );
+        assert!(
+            parsed
+                .get("model_providers")
+                .and_then(|value| value.get("custom"))
+                .and_then(|value| value.get("web_search"))
+                .is_none(),
+            "web_search should stay top-level"
+        );
+    }
+
+    #[test]
+    fn native_web_search_field_removes_own_sentinel_when_not_disabled() {
+        // Switching away from a native provider must re-enable web search by
+        // removing cc-switch's own "disabled" sentinel.
+        let input = r#"model = "gpt-5.5"
+web_search = "disabled"
+"#;
+        let result = set_codex_native_web_search_field(input, false).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert!(
+            parsed.get("web_search").is_none(),
+            "cc-switch's disabled sentinel should be removed when not native"
+        );
+    }
+
+    #[test]
+    fn native_web_search_field_preserves_user_value() {
+        // A user's own web_search value must never be clobbered by cleanup,
+        // only cc-switch's "disabled" sentinel is owned/removable.
+        let input = r#"web_search = "enabled"
+"#;
+        let result = set_codex_native_web_search_field(input, false).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert_eq!(
+            parsed.get("web_search").and_then(|value| value.as_str()),
+            Some("enabled"),
+            "a user-set web_search value must be preserved"
+        );
+    }
+
+    #[test]
+    fn web_search_blacklist_disables_only_known_reject_gateways() {
+        let cfg = |model: &str, base_url: &str| {
+            format!(
+                "model_provider = \"custom\"\nmodel = \"{model}\"\n\n[model_providers.custom]\nname = \"x\"\nbase_url = \"{base_url}\"\nwire_api = \"responses\"\n"
+            )
+        };
+
+        // Blacklisted by host (first-party reject gateways) → disable.
+        for (model, host) in [
+            ("mimo-v2.5-pro", "https://api.xiaomimimo.com/v1"),
+            ("mimo-v2.5", "https://token-plan-cn.xiaomimimo.com/v1"),
+            ("LongCat-2.0-Preview", "https://api.longcat.chat/openai/v1"),
+            ("MiniMax-M3", "https://api.minimax.io/v1"),
+            ("MiniMax-M3", "https://api.minimaxi.com/v1"),
+        ] {
+            assert!(
+                codex_native_gateway_rejects_web_search(&cfg(model, host)),
+                "{host} should be blacklisted"
+            );
+        }
+
+        // Blacklisted by MODEL brand even on an aggregator host (SiliconFlow
+        // fronting a reject vendor's model) → disable.
+        for (model, host) in [
+            ("MiniMax-M3", "https://api.siliconflow.cn/v1"),
+            ("MiniMaxAI/MiniMax-M3", "https://api.siliconflow.cn/v1"),
+            ("mimo-v2.5-pro", "https://some-aggregator.example/v1"),
+        ] {
+            assert!(
+                codex_native_gateway_rejects_web_search(&cfg(model, host)),
+                "{model} @ {host} should be blacklisted by model brand"
+            );
+        }
+
+        // NOT blacklisted → keep Codex default (relays/GPT, DouBao, Qwen, and any
+        // unknown provider incl. an aggregator serving a non-reject model).
+        for (model, host) in [
+            ("gpt-5.5", "https://www.packyapi.com/v1"),
+            ("gpt-5-codex", "https://aihubmix.com/v1"),
+            (
+                "doubao-seed-2-1-pro",
+                "https://ark.cn-beijing.volces.com/api/v3",
+            ),
+            (
+                "qwen3-coder-plus",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            ),
+            ("Pro/moonshotai/Kimi-K2.6", "https://api.siliconflow.cn/v1"),
+        ] {
+            assert!(
+                !codex_native_gateway_rejects_web_search(&cfg(model, host)),
+                "{model} @ {host} should NOT be blacklisted"
+            );
+        }
     }
 
     #[test]
