@@ -5,22 +5,20 @@ import {
   normalizePickerEnd,
 } from "@/lib/usageRange";
 
-// normalizePickerEnd 内部依赖 Date.now(); 测试时通过注入 now 不可行,
-// 但因为它只判断 end 是不是"当天", 我们用伪"now"构造不同日期来间接覆盖两种分支。
-// 这里把 normalizePickerEnd 直接当作受测 API 来用, 不再重复实现一份.
+// normalizePickerEnd 内部默认取 Date.now(), 但同时接受显式 nowMs 注入;
+// 测试用显式 nowMs 取代 wall-clock 容差断言, 消除跨时区/跨秒的 flake。
 
 describe("normalizePickerStart", () => {
   it("把任意 ts 归一到当地日期 00:00:00", () => {
-    const d = new Date("2026-06-10T11:35:42");
+    const d = new Date("2026-06-10T11:35:42Z");
     const ts = Math.floor(d.getTime() / 1000);
     const normalized = normalizePickerStart(ts);
     const result = new Date(normalized * 1000);
-    expect(result.getFullYear()).toBe(2026);
-    expect(result.getMonth()).toBe(5); // June (0-indexed)
-    expect(result.getDate()).toBe(10);
     expect(result.getHours()).toBe(0);
     expect(result.getMinutes()).toBe(0);
     expect(result.getSeconds()).toBe(0);
+    // 日期部分用 toDateString 比较, 避免时区差异导致 getDate() 漂移
+    expect(result.toDateString()).toBe(d.toDateString());
   });
 
   it("9:00 输入 → 归一到 00:00", () => {
@@ -35,17 +33,14 @@ describe("normalizePickerStart", () => {
 });
 
 describe("normalizePickerEnd", () => {
-  it("end 是当天 → 总是返回当前时刻 (Math.floor(Date.now()/1000))", () => {
-    // 构造一个'今天'的 ts
-    const today = new Date();
+  it("end 是当天 → 总是返回 nowMs 对应的秒", () => {
+    const fixedNow = new Date("2026-06-28T11:35:42Z").getTime();
+    // 构造一个"今天"的 ts: 任意时分都行, 只要跟 fixedNow 同一天
+    const today = new Date(fixedNow);
     today.setHours(11, 35, 42, 0);
     const todayTs = Math.floor(today.getTime() / 1000);
-    const before = Math.floor(Date.now() / 1000);
-    const normalized = normalizePickerEnd(todayTs);
-    const after = Math.floor(Date.now() / 1000);
-    // 返回值应该是 'now 时刻', 在 before..after 之间
-    expect(normalized).toBeGreaterThanOrEqual(before);
-    expect(normalized).toBeLessThanOrEqual(after);
+    const normalized = normalizePickerEnd(todayTs, fixedNow);
+    expect(normalized).toBe(Math.floor(fixedNow / 1000));
   });
 
   it("end 是过去日期 → 归一到当天 23:59:59.999", () => {
@@ -61,8 +56,6 @@ describe("normalizePickerEnd", () => {
   });
 
   it("end 输入 18:00 (非 23:59) 也会被归一, 不让它逃逸到后端", () => {
-    // 用户在 time 框输入 18:00, 真实 input box 后端用 normalizeField 包装,
-    // 但 normalizePickerEnd 单独调用也应正确处理 18:00 输入 (非 23:59 也非 0:00).
     const past = new Date();
     past.setDate(past.getDate() - 3);
     past.setHours(18, 0, 0, 0);
@@ -74,15 +67,13 @@ describe("normalizePickerEnd", () => {
     expect(result.getMinutes()).toBe(59);
   });
 
-  it("end 输入当天 18:00 → 归一到 now 时刻 (不保持 18:00)", () => {
-    const today = new Date();
+  it("end 输入当天 18:00 → 归一到 nowMs 时刻 (不保持 18:00)", () => {
+    const fixedNow = new Date("2026-06-28T18:00:00Z").getTime();
+    const today = new Date(fixedNow);
     today.setHours(18, 0, 0, 0);
     const ts = Math.floor(today.getTime() / 1000);
-    const before = Math.floor(Date.now() / 1000);
-    const normalized = normalizePickerEnd(ts);
-    const after = Math.floor(Date.now() / 1000);
-    expect(normalized).toBeGreaterThanOrEqual(before);
-    expect(normalized).toBeLessThanOrEqual(after);
+    const normalized = normalizePickerEnd(ts, fixedNow);
+    expect(normalized).toBe(Math.floor(fixedNow / 1000));
   });
 });
 

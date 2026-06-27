@@ -16,13 +16,13 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
-  getEndOfLocalDayDate,
   getStartOfLocalDayDate,
   getUsageRangePresetLabel,
   isSameDay,
   normalizePickerEnd,
   normalizePickerStart,
   resolveUsageRange,
+  tsToDate,
 } from "@/lib/usageRange";
 import { getLocaleFromLanguage } from "./format";
 import type { UsageRangePreset, UsageRangeSelection } from "@/types/usage";
@@ -44,7 +44,7 @@ function toTs(d: Date): number {
 }
 
 function fromTs(ts: number): Date {
-  return new Date(ts * 1000);
+  return tsToDate(ts);
 }
 
 function fmtDate(ts: number): string {
@@ -85,16 +85,6 @@ function getCalendarDays(month: Date): Date[] {
   });
 }
 
-/**
- * 归一化 helper:
- *   - start → 00:00
- *   - end → 23:59 (整天结束, 不走 '今天→now' 分支)
- */
-function normalizeField(field: DraftField, ts: number): number {
-  if (field === "start") return normalizePickerStart(ts);
-  return Math.floor(getEndOfLocalDayDate(ts * 1000).getTime() / 1000);
-}
-
 /* ── component ── */
 
 export function UsageDateRangePicker({
@@ -104,17 +94,15 @@ export function UsageDateRangePicker({
 }: UsageDateRangePickerProps) {
   const { t, i18n } = useTranslation();
   const [open, setOpen] = useState(false);
-  const [nowMs, setNowMs] = useState(() => Date.now());
   const [activeField, setActiveField] = useState<DraftField>("start");
-  const resolvedRange = useMemo(
-    () => resolveUsageRange(selection, nowMs),
-    [selection, nowMs],
-  );
+  // resolveUsageRange 内部默认取 Date.now(), 不需要外部维护一个 nowMs state
+  // 触发 memo 重算;hook 自身的 dep 比较开销大于函数体本身。
+  const resolvedRange = resolveUsageRange(selection);
   const [draftStart, setDraftStart] = useState(() =>
     normalizePickerStart(resolvedRange.startDate),
   );
   const [draftEnd, setDraftEnd] = useState(() =>
-    normalizePickerEnd(resolvedRange.endDate, nowMs),
+    normalizePickerEnd(resolvedRange.endDate),
   );
   const [draftLiveEnd, setDraftLiveEnd] = useState(
     selection.preset === "custom" ? (selection.liveEndTime ?? false) : false,
@@ -132,14 +120,11 @@ export function UsageDateRangePicker({
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const locale = getLocaleFromLanguage(language);
 
-  // Reset draft when popover opens
+  // Reset draft when popover opens. 依赖稳定标量,避免父组件 selection 引用变化时无谓重置。
   useEffect(() => {
     if (!open) return;
     const currentNow = Date.now();
-    setNowMs(currentNow);
     const r = resolveUsageRange(selection, currentNow);
-    // 打开 picker 时 reset: start→00:00, end→当天→now / 非当天→23:59.
-    // 用户在 picker 内改的时间由 setDraftStart/setDraftEnd 维护, 不被本次 reset 覆盖。
     setDraftStart(normalizePickerStart(r.startDate));
     setDraftEnd(normalizePickerEnd(r.endDate, currentNow));
     setDraftLiveEnd(
@@ -154,12 +139,24 @@ export function UsageDateRangePicker({
     );
     setActiveField("start");
     setError(null);
-  }, [open, selection]);
+  }, [
+    open,
+    selection.preset,
+    selection.customStartDate,
+    selection.customEndDate,
+    selection.liveEndTime,
+    // selection 对象引用兜底: 父组件在传 selection 但标量未变时也会重置
+    selection,
+  ]);
 
   // Keep draftEnd ticking when live mode is active and popover is open
   useEffect(() => {
     if (!open || !draftLiveEnd) return;
-    const tick = () => setDraftEnd(Math.floor(Date.now() / 1000));
+    const tick = () => {
+      const next = Math.floor(Date.now() / 1000);
+      // 同秒内 setState 会触发不必要的重渲染,值未变则跳过
+      setDraftEnd((prev) => (prev === next ? prev : next));
+    };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
@@ -190,24 +187,24 @@ export function UsageDateRangePicker({
   /* Pick a date from the calendar */
   const handleDatePick = (day: Date) => {
     setError(null);
+    const dayTs = toTs(day);
     // When live end time is active, calendar only controls start date
     if (draftLiveEnd) {
-      const nextStartTs = normalizePickerStart(toTs(day));
-      setDraftStart(nextStartTs);
+      setDraftStart(normalizePickerStart(dayTs));
     } else if (activeField === "start") {
-      const nextStartTs = normalizePickerStart(toTs(day));
+      const nextStartTs = normalizePickerStart(dayTs);
       setDraftStart(nextStartTs);
       // Auto-swap if start > end
       if (nextStartTs > draftEnd) {
-        setDraftEnd(normalizePickerEnd(nextStartTs, nowMs));
+        setDraftEnd(normalizePickerEnd(nextStartTs));
       }
       // Auto-advance to end field
       setActiveField("end");
     } else {
-      const nextEndTs = normalizePickerEnd(toTs(day), nowMs);
+      const nextEndTs = normalizePickerEnd(dayTs);
       // If picked end < start, treat as new start and stay on start field
       if (nextEndTs < draftStart) {
-        setDraftStart(normalizePickerStart(toTs(day)));
+        setDraftStart(normalizePickerStart(dayTs));
         setActiveField("start");
       } else {
         setDraftEnd(nextEndTs);
@@ -252,6 +249,10 @@ export function UsageDateRangePicker({
       field === "start"
         ? t("usage.startTime", "开始时间")
         : t("usage.endTime", "结束时间");
+    // 复用与日历/reset 完全相同的归一化路径, 保证 end 框输入也走
+    // "end 是当天→now" 语义, 不再单独走 23:59 分支
+    const normalize = (raw: number) =>
+      field === "start" ? normalizePickerStart(raw) : normalizePickerEnd(raw);
 
     return (
       <div
@@ -280,10 +281,7 @@ export function UsageDateRangePicker({
             value={fmtDate(ts)}
             onChange={(e) => {
               if (isEndLive) return;
-              const next = normalizeField(
-                field,
-                parseDateInput(ts, e.target.value),
-              );
+              const next = normalize(parseDateInput(ts, e.target.value));
               setTs(next);
               const d = fromTs(next);
               setDisplayMonth(new Date(d.getFullYear(), d.getMonth(), 1));
@@ -304,7 +302,7 @@ export function UsageDateRangePicker({
             value={fmtTime(ts)}
             onChange={(e) => {
               if (isEndLive) return;
-              setTs(normalizeField(field, parseTimeInput(ts, e.target.value)));
+              setTs(normalize(parseTimeInput(ts, e.target.value)));
               setError(null);
             }}
             onFocus={() => {
