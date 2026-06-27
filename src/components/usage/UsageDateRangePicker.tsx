@@ -102,7 +102,9 @@ export function UsageDateRangePicker({
     normalizePickerStart(resolvedRange.startDate),
   );
   const [draftEnd, setDraftEnd] = useState(() =>
-    normalizePickerEnd(resolvedRange.endDate),
+    selection.preset === "custom" && selection.customEndDate != null && !selection.liveEndTime
+      ? selection.customEndDate
+      : normalizePickerEnd(resolvedRange.endDate),
   );
   const [draftLiveEnd, setDraftLiveEnd] = useState(
     selection.preset === "custom" ? (selection.liveEndTime ?? false) : false,
@@ -126,7 +128,11 @@ export function UsageDateRangePicker({
     const currentNow = Date.now();
     const r = resolveUsageRange(selection, currentNow);
     setDraftStart(normalizePickerStart(r.startDate));
-    setDraftEnd(normalizePickerEnd(r.endDate, currentNow));
+    setDraftEnd(
+      selection.preset === "custom" && selection.customEndDate != null && !selection.liveEndTime
+        ? selection.customEndDate
+        : normalizePickerEnd(r.endDate, currentNow),
+    );
     setDraftLiveEnd(
       selection.preset === "custom" ? (selection.liveEndTime ?? false) : false,
     );
@@ -301,9 +307,8 @@ export function UsageDateRangePicker({
             onChange={(e) => {
               if (isEndLive) return;
               const raw = parseTimeInput(ts, e.target.value);
-              // time input 是用户的精确意图, 不经过 normalizePickerEnd
-              // (日历点选和 popover reset 仍走 normalize 路径)
-              setTs(field === "start" ? normalizePickerStart(raw) : raw);
+              // time input 是用户的精确意图, 不经过任何归一化，保留起止时间的手动精确设置
+              setTs(raw);
               setError(null);
             }}
             onFocus={() => {

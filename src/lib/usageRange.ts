@@ -97,9 +97,8 @@ export function resolveUsageRange(
         endDate,
       };
     case "custom": {
-      const startDate = selection.customStartDate
-        ? normalizePickerStart(selection.customStartDate)
-        : dateToTs(getStartOfLocalDayDate(nowMs));
+      const startDate =
+        selection.customStartDate ?? dateToTs(getStartOfLocalDayDate(nowMs));
       const customEndDate = selection.liveEndTime
         ? endDate
         : (selection.customEndDate ?? dateToTs(getEndOfLocalDayDate(nowMs)));
