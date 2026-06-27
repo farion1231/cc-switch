@@ -317,6 +317,7 @@ impl Database {
     ) -> Result<crate::proxy::types::ModelTierRoutingConfig, AppError> {
         match self.get_setting("model_tier_routing_config")? {
             Some(json) => serde_json::from_str(&json)
+                .map(crate::proxy::types::ModelTierRoutingConfig::normalized)
                 .map_err(|e| AppError::Database(format!("解析模型层级路由配置失败: {e}"))),
             None => Ok(crate::proxy::types::ModelTierRoutingConfig::default()),
         }
@@ -327,7 +328,7 @@ impl Database {
         &self,
         config: &crate::proxy::types::ModelTierRoutingConfig,
     ) -> Result<(), AppError> {
-        let json = serde_json::to_string(config)
+        let json = serde_json::to_string(&config.clone().normalized())
             .map_err(|e| AppError::Database(format!("序列化模型层级路由配置失败: {e}")))?;
         self.set_setting("model_tier_routing_config", &json)
     }

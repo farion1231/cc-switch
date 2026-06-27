@@ -725,7 +725,7 @@ fn desktop_tier_routing_model_specs(
         return Ok(Vec::new());
     }
 
-    let Some(routes) = config.routes.get(MODEL_TIER_ROUTING_APP) else {
+    let Some(routes) = config.active_routes_for_app(MODEL_TIER_ROUTING_APP) else {
         return Ok(Vec::new());
     };
 
@@ -1735,6 +1735,7 @@ mod tests {
             enabled: true,
             enabled_apps,
             routes,
+            ..Default::default()
         })
         .expect("set tier config");
 
@@ -1793,6 +1794,7 @@ mod tests {
             enabled: true,
             enabled_apps,
             routes,
+            ..Default::default()
         })
         .expect("set tier config");
 

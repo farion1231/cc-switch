@@ -473,20 +473,6 @@ impl RequestForwarder {
                     body.clone()
                 };
 
-            // 模型层级路由覆写：仅对被路由命中的目标 Provider 把请求体模型名改写为
-            // 路由表指定的上游模型（如 opus→glm-5.2）。其余 provider（含故障转移目标）
-            // 拿原始客户端别名，保留各自的模型映射。forward 内的 apply_model_mapping 对
-            // 改写后的非层级名原样放行，outbound_model/计费会落到这个真值。
-            if let (Some(rid), Some(m)) = (
-                self.routed_provider_id.as_deref(),
-                self.routing_model_override.as_deref(),
-            ) {
-                if !m.is_empty() && provider.id == rid {
-                    log::debug!("[{app_type_str}] 模型层级路由: provider {rid} model → {m}");
-                    provider_body["model"] = serde_json::json!(m);
-                }
-            }
-
             attempted_providers += 1;
 
             // 更新状态中的当前 Provider 信息（per-attempt 维度的标识）
@@ -1193,8 +1179,14 @@ impl RequestForwarder {
                 .is_some_and(|model| !model.is_empty());
         let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
             if desktop_tier_routed_provider {
-                crate::claude_desktop_config::prepare_proxy_request_with_upstream_model(
+                let routed_body = apply_tier_routing_model_override(
                     body.clone(),
+                    provider.id.as_str(),
+                    self.routed_provider_id.as_deref(),
+                    self.routing_model_override.as_deref(),
+                );
+                crate::claude_desktop_config::prepare_proxy_request_with_upstream_model(
+                    routed_body,
                     provider,
                 )
             } else {
@@ -1202,8 +1194,14 @@ impl RequestForwarder {
                     .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
             }
         } else {
-            let (mapped_body, _original_model, _mapped_model) =
+            let (mut mapped_body, _original_model, _mapped_model) =
                 super::model_mapper::apply_model_mapping(body.clone(), provider);
+            mapped_body = apply_tier_routing_model_override(
+                mapped_body,
+                provider.id.as_str(),
+                self.routed_provider_id.as_deref(),
+                self.routing_model_override.as_deref(),
+            );
             mapped_body
         };
 
@@ -3491,6 +3489,26 @@ fn value_for_log(value: &Value) -> String {
     }
 }
 
+fn apply_tier_routing_model_override(
+    mut body: Value,
+    provider_id: &str,
+    routed_provider_id: Option<&str>,
+    model_override: Option<&str>,
+) -> Value {
+    let Some(model) = model_override
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    else {
+        return body;
+    };
+    if routed_provider_id != Some(provider_id) {
+        return body;
+    }
+
+    body["model"] = serde_json::json!(model);
+    body
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3577,6 +3595,28 @@ mod tests {
         assert_eq!(code, log_fwd::PROVIDER_FAILED_RETRY);
         assert!(message.contains("继续尝试下一个 (1/3)"));
         assert!(message.contains("请求超时"));
+    }
+
+    #[test]
+    fn tier_routing_override_wins_over_provider_default_model_mapping() {
+        let mut provider = test_provider_with_type(None);
+        provider.settings_config = json!({
+            "env": {
+                "ANTHROPIC_MODEL": "provider-default-model"
+            }
+        });
+
+        let body = json!({"model": "claude-opus-4-8", "messages": []});
+        let (mapped_body, _, _) = crate::proxy::model_mapper::apply_model_mapping(body, &provider);
+        assert_eq!(mapped_body["model"], json!("provider-default-model"));
+
+        let routed_body = apply_tier_routing_model_override(
+            mapped_body,
+            "provider-1",
+            Some("provider-1"),
+            Some("glm-5.2"),
+        );
+        assert_eq!(routed_body["model"], json!("glm-5.2"));
     }
 
     #[test]

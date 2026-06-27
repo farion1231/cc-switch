@@ -130,6 +130,29 @@ impl ProxyService {
     /// 视为不可路由（与请求路径一致）。返回前端的命令/请求路径仍读原始 config。
     fn claude_tier_routing_for_takeover(&self) -> ModelTierRoutingConfig {
         let mut config = self.db.get_model_tier_routing_config().unwrap_or_default();
+        let active_profile_id = config
+            .active_profile_id_for_app("claude")
+            .map(str::to_string);
+        if let Some(profile_id) = active_profile_id {
+            if let Some(profile) = config
+                .profiles
+                .iter_mut()
+                .find(|profile| profile.id == profile_id)
+            {
+                if let Some(claude_routes) = profile.routes.get_mut("claude") {
+                    claude_routes.retain(|_tier, route| {
+                        self.db
+                            .get_provider_by_id(&route.provider_id, "claude")
+                            .ok()
+                            .flatten()
+                            .map(|p| p.supports_routing())
+                            .unwrap_or(false)
+                    });
+                }
+                return config;
+            }
+        }
+
         if let Some(claude_routes) = config.routes.get_mut("claude") {
             claude_routes.retain(|_tier, route| {
                 self.db
@@ -311,7 +334,7 @@ impl ProxyService {
     fn build_claude_takeover_model_fields_for_tier_routing(
         config: &ModelTierRoutingConfig,
     ) -> Vec<(&'static str, String)> {
-        let Some(claude_routes) = config.routes.get("claude") else {
+        let Some(claude_routes) = config.active_routes_for_app("claude") else {
             return Vec::new();
         };
 
@@ -3193,6 +3216,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn normal_takeover_rebuilds_fable_model_fields() {
+        let provider = Provider::with_id(
+            "p".to_string(),
+            "P".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://x",
+                    "ANTHROPIC_AUTH_TOKEN": "sk",
+                    "ANTHROPIC_DEFAULT_FABLE_MODEL": "upstream-fable[1m]",
+                    "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME": "Upstream Fable"
+                }
+            }),
+            None,
+        );
+        let mut live = provider.settings_config.clone();
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live,
+            "http://127.0.0.1:15721",
+            &provider,
+            &ModelTierRoutingConfig::default(),
+        );
+        let env = live.get("env").and_then(|v| v.as_object()).unwrap();
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_FABLE_MODEL")
+                .and_then(|v| v.as_str()),
+            Some("claude-fable-5[1M]")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_FABLE_MODEL_NAME")
+                .and_then(|v| v.as_str()),
+            Some("Upstream Fable")
+        );
+    }
+
     #[tokio::test]
     #[serial]
     async fn refresh_takeover_after_tier_disabled_restores_provider_model_name() {
@@ -3416,8 +3474,7 @@ mod tests {
         let filtered = service.claude_tier_routing_for_takeover();
         assert!(filtered.enabled, "enabled 标志保留");
         let claude = filtered
-            .routes
-            .get("claude")
+            .active_routes_for_app("claude")
             .expect("claude routes present");
         assert!(
             claude.get("opus").is_none(),
@@ -3538,6 +3595,7 @@ mod tests {
             &mut live_config,
             "http://127.0.0.1:15721",
             &provider,
+            &ModelTierRoutingConfig::default(),
         );
 
         let env = live_config
@@ -3712,6 +3770,7 @@ mod tests {
             &mut live_config,
             "http://127.0.0.1:15721",
             &provider,
+            &ModelTierRoutingConfig::default(),
         );
 
         let env = live_config

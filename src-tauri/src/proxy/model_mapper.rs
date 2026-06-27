@@ -261,9 +261,7 @@ pub fn apply_tier_routing(
     let TierRoute {
         provider_id, model, ..
     } = config
-        .routes
-        .get(app_type)
-        .and_then(|tiers| tiers.get(tier.as_str()))
+        .active_route_for_tier(app_type, tier.as_str())
         .cloned()
         .unwrap_or_default();
 
@@ -320,6 +318,7 @@ pub fn apply_tier_routing(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proxy::types::ModelTierRoutingProfile;
     use serde_json::json;
     use std::collections::HashMap;
 
@@ -690,6 +689,47 @@ mod tests {
         assert_eq!(out.providers.len(), 3, "目标 provider 加入链首，原链保留");
         assert_eq!(out.routed_provider_id.as_deref(), Some("zhipu"));
         assert_eq!(out.model_override.as_deref(), Some("glm-5.2"));
+    }
+
+    #[test]
+    fn tier_routing_uses_active_profile_for_app() {
+        let selected = vec![provider_with_id("current")];
+        let mut cost_routes: HashMap<String, HashMap<String, TierRoute>> = HashMap::new();
+        cost_routes
+            .entry("claude".to_string())
+            .or_default()
+            .insert("opus".to_string(), route("cheap", "cheap-opus"));
+        let mut quality_routes: HashMap<String, HashMap<String, TierRoute>> = HashMap::new();
+        quality_routes
+            .entry("claude".to_string())
+            .or_default()
+            .insert("opus".to_string(), route("quality", "quality-opus"));
+
+        let mut active_profile_by_app = HashMap::new();
+        active_profile_by_app.insert("claude".to_string(), "quality".to_string());
+        let cfg = ModelTierRoutingConfig {
+            enabled: true,
+            profiles: vec![
+                ModelTierRoutingProfile {
+                    id: "cost".to_string(),
+                    name: "Cost".to_string(),
+                    routes: cost_routes,
+                },
+                ModelTierRoutingProfile {
+                    id: "quality".to_string(),
+                    name: "Quality".to_string(),
+                    routes: quality_routes,
+                },
+            ],
+            active_profile_by_app,
+            ..Default::default()
+        };
+
+        let out = apply_tier_routing("claude-opus-4-8", "claude", &cfg, &selected, |id| {
+            Some(provider_with_id(id))
+        });
+        assert_eq!(out.providers[0].id, "quality");
+        assert_eq!(out.model_override.as_deref(), Some("quality-opus"));
     }
 
     #[test]

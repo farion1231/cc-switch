@@ -217,9 +217,18 @@ pub struct ModelTierRoutingConfig {
     #[serde(default)]
     pub enabled_apps: HashMap<String, bool>,
     /// per app_type → tier（"opus"/"sonnet"/"haiku"/"fable"）→ 路由项。
-    /// 缺失的 app_type / tier 视为未配置，回退到既有选择逻辑。
+    ///
+    /// Legacy 字段：单方案版本直接读写此字段。新版本保存到 `profiles`，运行时仍把
+    /// 该字段作为兼容回退，避免旧配置升级后丢失路由。
     #[serde(default)]
     pub routes: HashMap<String, HashMap<String, TierRoute>>,
+    /// 多套路由方案。每套方案自包含 app_type → tier → route 的完整映射。
+    #[serde(default)]
+    pub profiles: Vec<ModelTierRoutingProfile>,
+    /// per app_type → 当前使用的 profile id。缺失时回退到第一套 profile；若没有
+    /// profiles，则回退到 legacy `routes`。
+    #[serde(default)]
+    pub active_profile_by_app: HashMap<String, String>,
 }
 
 impl ModelTierRoutingConfig {
@@ -232,6 +241,105 @@ impl ModelTierRoutingConfig {
             .copied()
             .unwrap_or(app_type == "claude")
     }
+
+    pub fn active_profile_id_for_app(&self, app_type: &str) -> Option<&str> {
+        self.active_profile_by_app
+            .get(app_type)
+            .map(String::as_str)
+            .filter(|id| !id.trim().is_empty())
+            .or_else(|| self.profiles.first().map(|profile| profile.id.as_str()))
+    }
+
+    pub fn active_routes_for_app(&self, app_type: &str) -> Option<&HashMap<String, TierRoute>> {
+        if let Some(profile_id) = self.active_profile_id_for_app(app_type) {
+            if let Some(profile) = self
+                .profiles
+                .iter()
+                .find(|profile| profile.id == profile_id)
+            {
+                if let Some(routes) = profile.routes.get(app_type) {
+                    return Some(routes);
+                }
+            }
+        }
+        if !self.profiles.is_empty() {
+            return None;
+        }
+        self.routes.get(app_type)
+    }
+
+    pub fn active_route_for_tier(&self, app_type: &str, tier: &str) -> Option<&TierRoute> {
+        self.active_routes_for_app(app_type)
+            .and_then(|routes| routes.get(tier))
+    }
+
+    /// Normalize a config before persisting/returning it: migrate legacy `routes`
+    /// into a default profile, repair blank/duplicate profile ids, and ensure
+    /// active profile ids point at an existing profile when possible.
+    pub fn normalized(mut self) -> Self {
+        if self.profiles.is_empty() && !self.routes.is_empty() {
+            self.profiles.push(ModelTierRoutingProfile {
+                id: "default".to_string(),
+                name: "Default".to_string(),
+                routes: self.routes.clone(),
+            });
+            self.routes.clear();
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        for (idx, profile) in self.profiles.iter_mut().enumerate() {
+            let id = profile.id.trim();
+            let mut repaired_id = if id.is_empty() {
+                format!("profile-{}", idx + 1)
+            } else {
+                id.to_string()
+            };
+            if !seen.insert(repaired_id.clone()) {
+                let base = repaired_id;
+                let mut suffix = 2;
+                loop {
+                    repaired_id = format!("{base}-{suffix}");
+                    if seen.insert(repaired_id.clone()) {
+                        break;
+                    }
+                    suffix += 1;
+                }
+            }
+            profile.id = repaired_id;
+            if profile.name.trim().is_empty() {
+                profile.name = format!("Profile {}", idx + 1);
+            }
+        }
+
+        if let Some(first_id) = self.profiles.first().map(|profile| profile.id.clone()) {
+            let valid_profile_ids: std::collections::HashSet<String> = self
+                .profiles
+                .iter()
+                .map(|profile| profile.id.clone())
+                .collect();
+            self.active_profile_by_app
+                .retain(|_, profile_id| valid_profile_ids.contains(profile_id));
+            for app in ["claude", "claude-desktop"] {
+                self.active_profile_by_app
+                    .entry(app.to_string())
+                    .or_insert_with(|| first_id.clone());
+            }
+            self.routes.clear();
+        }
+
+        self
+    }
+}
+
+/// 一套路由方案。方案本身可以同时保存 Claude Code / Claude Desktop 的映射，
+/// 当前生效方案由 `active_profile_by_app` 按 app_type 选择。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelTierRoutingProfile {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub routes: HashMap<String, HashMap<String, TierRoute>>,
 }
 
 /// 单条层级路由：目标 Provider + 要改写成的上游模型名。

@@ -286,7 +286,7 @@ function App() {
     : null;
   const isTierRoutingTransportActive =
     activeApp === "claude"
-      ? isCurrentAppTakeoverActive
+      ? isCurrentAppTakeoverActive && isProxyRunning
       : activeApp === "claude-desktop"
         ? isProxyRunning
         : false;
@@ -312,6 +312,9 @@ function App() {
       // 先打开对应的本地路由能力；成功后再开 tier 模式。前置步骤失败则不设 enabled，
       // 避免留下「enabled=true 但实际不可路由」的脏状态。
       if (activeTierRoutingApp === "claude") {
+        if (!isProxyRunning) {
+          await startProxyServer();
+        }
         await setTakeoverForApp({ appType: "claude", enabled: true });
       } else {
         await startProxyServer();
