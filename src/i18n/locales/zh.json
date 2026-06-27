@@ -3001,6 +3001,7 @@
       "addProfile": "新增方案",
       "copyProfile": "复制方案",
       "deleteProfile": "删除方案",
+      "deleteProfileTitle": "删除路由方案",
       "deleteProfileConfirm": "删除路由方案“{{name}}”？",
       "backToProfiles": "返回方案列表",
       "configuredTiers": "已配置 {{count}}/{{total}} 个层级",

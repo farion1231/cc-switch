@@ -3001,6 +3001,7 @@
       "addProfile": "プロファイルを追加",
       "copyProfile": "プロファイルをコピー",
       "deleteProfile": "プロファイルを削除",
+      "deleteProfileTitle": "ルーティングプロファイルを削除",
       "deleteProfileConfirm": "ルーティングプロファイル「{{name}}」を削除しますか？",
       "backToProfiles": "プロファイル一覧へ戻る",
       "configuredTiers": "{{count}}/{{total}} ティア設定済み",

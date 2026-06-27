@@ -2973,6 +2973,7 @@
       "addProfile": "新增方案",
       "copyProfile": "複製方案",
       "deleteProfile": "刪除方案",
+      "deleteProfileTitle": "刪除路由方案",
       "deleteProfileConfirm": "刪除路由方案「{{name}}」？",
       "backToProfiles": "返回方案列表",
       "configuredTiers": "已配置 {{count}}/{{total}} 個層級",

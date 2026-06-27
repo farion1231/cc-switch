@@ -3001,6 +3001,7 @@
       "addProfile": "Add profile",
       "copyProfile": "Copy profile",
       "deleteProfile": "Delete profile",
+      "deleteProfileTitle": "Delete routing profile",
       "deleteProfileConfirm": "Delete routing profile \"{{name}}\"?",
       "backToProfiles": "Back to profiles",
       "configuredTiers": "{{count}}/{{total}} tiers configured",

@@ -37,6 +37,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import type { Provider } from "@/types";
 import { supportsRouting } from "@/utils/providerRouting";
 import { cn } from "@/lib/utils";
@@ -122,6 +123,8 @@ export function ModelTierRoutingEditor({ appId, config, onChange }: Props) {
   const { t } = useTranslation();
   const [providers, setProviders] = useState<Record<string, Provider>>({});
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] =
+    useState<ModelTierRoutingProfile | null>(null);
 
   const normalizedConfig = normalizeModelTierRoutingConfig(config);
   const profiles = getModelTierRoutingProfiles(normalizedConfig);
@@ -219,13 +222,13 @@ export function ModelTierRoutingEditor({ appId, config, onChange }: Props) {
 
   const deleteProfile = (profile: ModelTierRoutingProfile) => {
     if (profiles.length <= 1) return;
-    const confirmed = window.confirm(
-      t("home.modelTierRouting.deleteProfileConfirm", {
-        name: profileDisplayName(profile),
-        defaultValue: `Delete routing profile "${profileDisplayName(profile)}"?`,
-      }),
-    );
-    if (!confirmed) return;
+    setPendingDelete(profile);
+  };
+
+  const confirmDeleteProfile = () => {
+    const profile = pendingDelete;
+    setPendingDelete(null);
+    if (!profile) return;
 
     const remaining = profiles.filter((item) => item.id !== profile.id);
     const fallbackId = remaining[0]?.id;
@@ -267,204 +270,200 @@ export function ModelTierRoutingEditor({ appId, config, onChange }: Props) {
     );
   };
 
-  if (editingProfile) {
-    return (
-      <div className="space-y-3">
-        <div className="rounded-xl glass-card p-5 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-3">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                title={t("home.modelTierRouting.backToProfiles", {
-                  defaultValue: "Back to profiles",
-                })}
-                onClick={() => setEditingProfileId(null)}
-              >
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <h3 className="truncate text-base font-semibold">
-                    {profileDisplayName(editingProfile)}
-                  </h3>
-                  {editingProfile.id === activeProfile.id && (
-                    <span className="inline-flex shrink-0 items-center rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
-                      {t("home.modelTierRouting.activeProfile", {
-                        defaultValue: "Active",
-                      })}
-                    </span>
-                  )}
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  {t("home.modelTierRouting.editorDescription")}
-                </p>
+  const editorView = editingProfile ? (
+    <div className="space-y-3">
+      <div className="rounded-xl glass-card p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              title={t("home.modelTierRouting.backToProfiles", {
+                defaultValue: "Back to profiles",
+              })}
+              onClick={() => setEditingProfileId(null)}
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h3 className="truncate text-base font-semibold">
+                  {profileDisplayName(editingProfile)}
+                </h3>
+                {editingProfile.id === activeProfile.id && (
+                  <span className="inline-flex shrink-0 items-center rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
+                    {t("home.modelTierRouting.activeProfile", {
+                      defaultValue: "Active",
+                    })}
+                  </span>
+                )}
               </div>
+              <p className="text-sm text-muted-foreground">
+                {t("home.modelTierRouting.editorDescription")}
+              </p>
             </div>
-            <div className="flex gap-2">
-              {editingProfile.id !== activeProfile.id && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => activateProfile(editingProfile.id)}
-                >
-                  <CheckCircle2 className="h-4 w-4" />
-                  {t("home.modelTierRouting.useProfile", {
-                    defaultValue: "Use",
-                  })}
-                </Button>
-              )}
+          </div>
+          <div className="flex gap-2">
+            {editingProfile.id !== activeProfile.id && (
               <Button
                 type="button"
                 variant="outline"
-                size="icon"
-                title={t("home.modelTierRouting.copyProfile", {
-                  defaultValue: "Copy profile",
+                size="sm"
+                onClick={() => activateProfile(editingProfile.id)}
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                {t("home.modelTierRouting.useProfile", {
+                  defaultValue: "Use",
                 })}
-                onClick={() => duplicateProfile(editingProfile)}
-              >
-                <Copy className="h-4 w-4" />
               </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                title={t("home.modelTierRouting.deleteProfile", {
-                  defaultValue: "Delete profile",
-                })}
-                disabled={profiles.length <= 1}
-                onClick={() => deleteProfile(editingProfile)}
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="px-1 text-xs font-medium text-muted-foreground">
-              {t("home.modelTierRouting.profileName", {
-                defaultValue: "Profile Name",
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              title={t("home.modelTierRouting.copyProfile", {
+                defaultValue: "Copy profile",
               })}
-            </label>
-            <Input
-              className="min-w-0"
-              value={editingProfile.name}
-              onChange={(e) => renameProfile(editingProfile.id, e.target.value)}
-            />
-          </div>
-
-          <div className="hidden sm:grid grid-cols-[5rem_1fr_1fr_1fr_116px] gap-3 px-1 text-xs font-medium text-muted-foreground">
-            <span>{t("home.modelTierRouting.tier")}</span>
-            <span>{t("home.modelTierRouting.provider")}</span>
-            <span>{t("home.modelTierRouting.modelName")}</span>
-            <span>{t("home.modelTierRouting.displayName")}</span>
-            <span>
-              {t("claudeDesktop.supports1mLabel", {
-                defaultValue: "声明支持 1M",
+              onClick={() => duplicateProfile(editingProfile)}
+            >
+              <Copy className="h-4 w-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              title={t("home.modelTierRouting.deleteProfile", {
+                defaultValue: "Delete profile",
               })}
-            </span>
+              disabled={profiles.length <= 1}
+              onClick={() => deleteProfile(editingProfile)}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
           </div>
-
-          {TIERS.map((tier) => {
-            const route = readRoute(editingProfile, appId, tier);
-            const selectedProvider = route.providerId
-              ? providerList.find((p) => p.id === route.providerId)
-              : undefined;
-            const isSelectedNonRoutable =
-              !!selectedProvider && !supportsRouting(selectedProvider);
-            return (
-              <div
-                key={tier}
-                className="grid grid-cols-1 sm:grid-cols-[5rem_1fr_1fr_1fr_116px] gap-2 sm:gap-3 items-center"
-              >
-                <span className="capitalize text-sm font-medium px-1">
-                  {t(`settings.advanced.modelTierRouting.tier.${tier}`)}
-                </span>
-                <Select
-                  value={route.providerId || NONE_PROVIDER}
-                  onValueChange={(v) =>
-                    handleTierChange(editingProfile, tier, {
-                      providerId: v === NONE_PROVIDER ? "" : v,
-                    })
-                  }
-                >
-                  <SelectTrigger className="h-9 w-full min-w-0 text-sm font-normal">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NONE_PROVIDER}>
-                      {t("settings.advanced.modelTierRouting.noProvider")}
-                    </SelectItem>
-                    {isSelectedNonRoutable && selectedProvider && (
-                      <SelectItem
-                        key={selectedProvider.id}
-                        value={selectedProvider.id}
-                        disabled
-                      >
-                        {selectedProvider.name}（
-                        {t("claudeCode.noRoutingSupport")}）
-                      </SelectItem>
-                    )}
-                    {routableProviders.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Input
-                  className="min-w-0"
-                  value={route.model}
-                  disabled={!route.providerId}
-                  placeholder={t(
-                    "settings.advanced.modelTierRouting.modelPlaceholder",
-                  )}
-                  onChange={(e) =>
-                    handleTierChange(editingProfile, tier, {
-                      model: e.target.value,
-                    })
-                  }
-                />
-                <Input
-                  className="min-w-0"
-                  value={route.displayName}
-                  disabled={!route.providerId}
-                  placeholder={t(
-                    "home.modelTierRouting.displayNamePlaceholder",
-                  )}
-                  onChange={(e) =>
-                    handleTierChange(editingProfile, tier, {
-                      displayName: e.target.value,
-                    })
-                  }
-                />
-                <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
-                  <Checkbox
-                    checked={route.supports1m}
-                    disabled={!route.providerId}
-                    onCheckedChange={(checked) =>
-                      handleTierChange(editingProfile, tier, {
-                        supports1m: checked === true,
-                      })
-                    }
-                  />
-                  {t("claudeDesktop.supports1mShort", { defaultValue: "1M" })}
-                </label>
-              </div>
-            );
-          })}
-
-          <p className="text-xs text-muted-foreground">
-            {t("settings.advanced.modelTierRouting.hint")}
-          </p>
         </div>
-      </div>
-    );
-  }
 
-  return (
+        <div className="space-y-1.5">
+          <label className="px-1 text-xs font-medium text-muted-foreground">
+            {t("home.modelTierRouting.profileName", {
+              defaultValue: "Profile Name",
+            })}
+          </label>
+          <Input
+            className="min-w-0"
+            value={editingProfile.name}
+            onChange={(e) => renameProfile(editingProfile.id, e.target.value)}
+          />
+        </div>
+
+        <div className="hidden sm:grid grid-cols-[5rem_1fr_1fr_1fr_116px] gap-3 px-1 text-xs font-medium text-muted-foreground">
+          <span>{t("home.modelTierRouting.tier")}</span>
+          <span>{t("home.modelTierRouting.provider")}</span>
+          <span>{t("home.modelTierRouting.modelName")}</span>
+          <span>{t("home.modelTierRouting.displayName")}</span>
+          <span>
+            {t("claudeDesktop.supports1mLabel", {
+              defaultValue: "声明支持 1M",
+            })}
+          </span>
+        </div>
+
+        {TIERS.map((tier) => {
+          const route = readRoute(editingProfile, appId, tier);
+          const selectedProvider = route.providerId
+            ? providerList.find((p) => p.id === route.providerId)
+            : undefined;
+          const isSelectedNonRoutable =
+            !!selectedProvider && !supportsRouting(selectedProvider);
+          return (
+            <div
+              key={tier}
+              className="grid grid-cols-1 sm:grid-cols-[5rem_1fr_1fr_1fr_116px] gap-2 sm:gap-3 items-center"
+            >
+              <span className="capitalize text-sm font-medium px-1">
+                {t(`settings.advanced.modelTierRouting.tier.${tier}`)}
+              </span>
+              <Select
+                value={route.providerId || NONE_PROVIDER}
+                onValueChange={(v) =>
+                  handleTierChange(editingProfile, tier, {
+                    providerId: v === NONE_PROVIDER ? "" : v,
+                  })
+                }
+              >
+                <SelectTrigger className="h-9 w-full min-w-0 text-sm font-normal">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NONE_PROVIDER}>
+                    {t("settings.advanced.modelTierRouting.noProvider")}
+                  </SelectItem>
+                  {isSelectedNonRoutable && selectedProvider && (
+                    <SelectItem
+                      key={selectedProvider.id}
+                      value={selectedProvider.id}
+                      disabled
+                    >
+                      {selectedProvider.name}（
+                      {t("claudeCode.noRoutingSupport")}）
+                    </SelectItem>
+                  )}
+                  {routableProviders.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                className="min-w-0"
+                value={route.model}
+                disabled={!route.providerId}
+                placeholder={t(
+                  "settings.advanced.modelTierRouting.modelPlaceholder",
+                )}
+                onChange={(e) =>
+                  handleTierChange(editingProfile, tier, {
+                    model: e.target.value,
+                  })
+                }
+              />
+              <Input
+                className="min-w-0"
+                value={route.displayName}
+                disabled={!route.providerId}
+                placeholder={t("home.modelTierRouting.displayNamePlaceholder")}
+                onChange={(e) =>
+                  handleTierChange(editingProfile, tier, {
+                    displayName: e.target.value,
+                  })
+                }
+              />
+              <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
+                <Checkbox
+                  checked={route.supports1m}
+                  disabled={!route.providerId}
+                  onCheckedChange={(checked) =>
+                    handleTierChange(editingProfile, tier, {
+                      supports1m: checked === true,
+                    })
+                  }
+                />
+                {t("claudeDesktop.supports1mShort", { defaultValue: "1M" })}
+              </label>
+            </div>
+          );
+        })}
+
+        <p className="text-xs text-muted-foreground">
+          {t("settings.advanced.modelTierRouting.hint")}
+        </p>
+      </div>
+    </div>
+  ) : null;
+
+  const listView = !editingProfile ? (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3 px-1">
         <div className="min-w-0">
@@ -626,5 +625,26 @@ export function ModelTierRoutingEditor({ appId, config, onChange }: Props) {
         })}
       </div>
     </div>
+  ) : null;
+
+  return (
+    <>
+      {editorView}
+      {listView}
+      <ConfirmDialog
+        isOpen={Boolean(pendingDelete)}
+        title={t("home.modelTierRouting.deleteProfileTitle", {
+          defaultValue: "Delete routing profile",
+        })}
+        message={t("home.modelTierRouting.deleteProfileConfirm", {
+          name: pendingDelete ? profileDisplayName(pendingDelete) : "",
+          defaultValue: "Delete routing profile?",
+        })}
+        confirmText={t("common.delete")}
+        variant="destructive"
+        onConfirm={confirmDeleteProfile}
+        onCancel={() => setPendingDelete(null)}
+      />
+    </>
   );
 }
