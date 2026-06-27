@@ -2001,6 +2001,14 @@ impl Database {
                 "0",
             ),
             ("grok-build-0.1", "Grok Build 0.1", "1", "2", "0.20", "0"),
+            (
+                "grok-composer-2.5-fast",
+                "Grok Composer 2.5 Fast",
+                "3",
+                "15",
+                "0.20",
+                "0",
+            ),
             ("grok-3", "Grok 3", "3", "15", "0.75", "0"),
             ("grok-3-mini", "Grok 3 Mini", "0.25", "0.50", "0.075", "0"),
             // Mistral 系列

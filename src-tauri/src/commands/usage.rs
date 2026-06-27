@@ -320,6 +320,19 @@ pub fn sync_session_usage(
         }
     }
 
+    // 同步 Grok Build 使用数据
+    match crate::services::session_usage_grok::sync_grok_usage(&state.db) {
+        Ok(grok_result) => {
+            result.imported += grok_result.imported;
+            result.skipped += grok_result.skipped;
+            result.files_scanned += grok_result.files_scanned;
+            result.errors.extend(grok_result.errors);
+        }
+        Err(e) => {
+            result.errors.push(format!("Grok 同步失败: {e}"));
+        }
+    }
+
     Ok(result)
 }
 
