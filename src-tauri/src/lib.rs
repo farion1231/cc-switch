@@ -144,6 +144,8 @@ fn handle_deeplink_url(
                 request.name
             );
 
+            crate::commands::cache_pending_deeplink(request.clone());
+
             if let Err(e) = app.emit("deeplink-import", &request) {
                 log::error!("✗ Failed to emit deeplink-import event: {e}");
             } else {
@@ -1313,6 +1315,7 @@ pub fn run() {
             // Deep link import
             commands::parse_deeplink,
             commands::merge_deeplink_config,
+            commands::take_pending_deeplink,
             commands::import_from_deeplink,
             commands::import_from_deeplink_unified,
             update_tray_menu,
@@ -1595,47 +1598,19 @@ pub fn run() {
 
                         if url_str.starts_with("ccswitch://") {
                             if crate::lightweight::is_lightweight_mode() {
-                                if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle)
+                                if let Err(e) =
+                                    crate::lightweight::exit_lightweight_mode(app_handle)
                                 {
                                     log::error!("退出轻量模式重建窗口失败: {e}");
                                 }
                             }
 
-                            // 解析并广播深链接事件，复用与 single_instance 相同的逻辑
-                            match crate::deeplink::parse_deeplink_url(&url_str) {
-                                Ok(request) => {
-                                    log::info!(
-                                        "Successfully parsed deep link from RunEvent::Opened: resource={}, app={:?}",
-                                        request.resource,
-                                        request.app
-                                    );
-
-                                    if let Err(e) =
-                                        app_handle.emit("deeplink-import", &request)
-                                    {
-                                        log::error!(
-                                            "Failed to emit deep link event from RunEvent::Opened: {e}"
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    log::error!(
-                                        "Failed to parse deep link URL from RunEvent::Opened: {e}"
-                                    );
-
-                                    if let Err(emit_err) = app_handle.emit(
-                                        "deeplink-error",
-                                        serde_json::json!({
-                                            "url": url_str,
-                                            "error": e.to_string()
-                                        }),
-                                    ) {
-                                        log::error!(
-                                            "Failed to emit deep link error event from RunEvent::Opened: {emit_err}"
-                                        );
-                                    }
-                                }
-                            }
+                            let _ = handle_deeplink_url(
+                                app_handle,
+                                &url_str,
+                                false,
+                                "RunEvent::Opened",
+                            );
 
                             // 确保主窗口可见
                             if let Some(window) = app_handle.get_webview_window("main") {
