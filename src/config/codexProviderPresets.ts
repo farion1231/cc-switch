@@ -71,7 +71,20 @@ requires_openai_auth = true`;
 
 function modelCatalog(
   models: Array<
-    string | { model: string; displayName?: string; contextWindow?: number }
+    | string
+    | {
+        model: string;
+        displayName?: string;
+        contextWindow?: number;
+        // Native Responses (direct) overrides for the generated
+        // model-catalogs.json; omit to inherit the native template defaults
+        // (supports_parallel_tool_calls=false, input_modalities=["text"]).
+        supportsParallelToolCalls?: boolean;
+        inputModalities?: string[];
+        // Vendor's OFFICIAL base_instructions; omit to inherit the neutral
+        // template default. Required by Codex, so the backend always emits one.
+        baseInstructions?: string;
+      }
   >,
 ): CodexCatalogModel[] {
   return models.map((entry) =>
@@ -81,6 +94,9 @@ function modelCatalog(
           model: entry.model,
           displayName: entry.displayName,
           contextWindow: entry.contextWindow,
+          supportsParallelToolCalls: entry.supportsParallelToolCalls,
+          inputModalities: entry.inputModalities,
+          baseInstructions: entry.baseInstructions,
         },
   );
 }
@@ -204,6 +220,15 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     endpointCandidates: ["https://ark.cn-beijing.volces.com/api/v3"],
     // 火山方舟主数据面 /api/v3 原生支持 Responses API（/api/v3/responses），无需路由接管转换
     apiFormat: "openai_responses",
+    // 无官方 catalog：合成 MiMo 式（shell_command 编辑、不发 freeform apply_patch），
+    // 让 Codex 直连显示模型并避免 custom 工具被网关拒绝
+    modelCatalog: modelCatalog([
+      {
+        model: "doubao-seed-2-1-pro",
+        displayName: "Doubao Seed 2.1 Pro",
+        contextWindow: 262144,
+      },
+    ]),
     category: "cn_official",
     isPartner: true,
     partnerPromotionKey: "doubaoseed",
@@ -411,6 +436,14 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://dashscope.aliyuncs.com/compatible-mode/v1"],
     // 阿里百炼 DashScope 原生支持 OpenAI Responses API（/compatible-mode/v1/responses，同一 base_url），无需路由接管转换
     apiFormat: "openai_responses",
+    // 无官方 catalog：合成 MiMo 式（shell_command 编辑、不发 freeform apply_patch）
+    modelCatalog: modelCatalog([
+      {
+        model: "qwen3-coder-plus",
+        displayName: "Qwen3 Coder Plus",
+        contextWindow: 1048576,
+      },
+    ]),
     category: "cn_official",
     icon: "bailian",
     iconColor: "#624AFF",
@@ -586,6 +619,15 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://api.longcat.chat/openai/v1"],
     // 美团 LongCat 官方 Codex 文档用 wire_api=responses 对自家 base_url，原生 Responses，无需路由接管转换
     apiFormat: "openai_responses",
+    // 无官方 catalog：合成 MiMo 式（shell_command 编辑、不发 freeform apply_patch）。
+    // 注：LongCat 的 /responses 工具类型契约文档化程度最低，建议真机冒烟一次
+    modelCatalog: modelCatalog([
+      {
+        model: "LongCat-2.0-Preview",
+        displayName: "LongCat 2.0 Preview",
+        contextWindow: 131072,
+      },
+    ]),
     category: "cn_official",
     icon: "longcat",
     iconColor: "#29E154",
@@ -603,6 +645,19 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://api.minimaxi.com/v1"],
     // MiniMax 官方 API 参考已列 /v1/responses 为正式端点（CN/intl 双区，POST /v1/responses），原生 Responses，无需路由接管转换
     apiFormat: "openai_responses",
+    // 官方 Codex catalog（platform.minimaxi.com/docs/token-plan/codex-cli）：
+    // shell_command 编辑、并行工具、文本+图像，不声明 freeform apply_patch
+    modelCatalog: modelCatalog([
+      {
+        model: "MiniMax-M3",
+        displayName: "MiniMax-M3",
+        contextWindow: 1000000,
+        supportsParallelToolCalls: true,
+        inputModalities: ["text", "image"],
+        baseInstructions:
+          "You are Codex, a coding agent based on MiniMax-M3. You and the user share the same workspace and collaborate to achieve the user's goals.",
+      },
+    ]),
     category: "cn_official",
     partnerPromotionKey: "minimax_cn",
     theme: {
@@ -625,6 +680,19 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://api.minimax.io/v1"],
     // MiniMax 官方 API 参考已列 /v1/responses 为正式端点（CN/intl 双区，POST /v1/responses），原生 Responses，无需路由接管转换
     apiFormat: "openai_responses",
+    // 官方 Codex catalog（platform.minimax.io/docs/token-plan/codex）：
+    // shell_command 编辑、并行工具、文本+图像，不声明 freeform apply_patch
+    modelCatalog: modelCatalog([
+      {
+        model: "MiniMax-M3",
+        displayName: "MiniMax-M3",
+        contextWindow: 1000000,
+        supportsParallelToolCalls: true,
+        inputModalities: ["text", "image"],
+        baseInstructions:
+          "You are Codex, a coding agent based on MiniMax-M3. You and the user share the same workspace and collaborate to achieve the user's goals.",
+      },
+    ]),
     category: "cn_official",
     partnerPromotionKey: "minimax_en",
     theme: {
@@ -668,6 +736,26 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://api.xiaomimimo.com/v1"],
     // 小米 MiMo 官方 Codex 文档已声明原生支持 Responses API（wire_api=responses 对自家 base_url），无需路由接管转换
     apiFormat: "openai_responses",
+    // 官方 Codex catalog（mimo.mi.com/.../codex-configuration）：
+    // shell_command 编辑、不声明 freeform apply_patch
+    modelCatalog: modelCatalog([
+      {
+        model: "mimo-v2.5-pro",
+        displayName: "MiMo V2.5 Pro",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        baseInstructions:
+          "You are MiMo, an AI assistant developed by Xiaomi. Today's date: {date} {week}. Your knowledge cutoff date is December 2024.",
+      },
+      {
+        model: "mimo-v2.5",
+        displayName: "MiMo V2.5",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        baseInstructions:
+          "You are MiMo, an AI assistant developed by Xiaomi. Today's date: {date} {week}. Your knowledge cutoff date is December 2024.",
+      },
+    ]),
     category: "cn_official",
     icon: "xiaomimimo",
     iconColor: "#000000",
@@ -685,6 +773,26 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://token-plan-cn.xiaomimimo.com/v1"],
     // 小米 MiMo 官方 Codex 文档已声明原生支持 Responses API（wire_api=responses 对自家 base_url），无需路由接管转换
     apiFormat: "openai_responses",
+    // 官方 Codex catalog（mimo.mi.com/.../codex-configuration）：
+    // shell_command 编辑、不声明 freeform apply_patch
+    modelCatalog: modelCatalog([
+      {
+        model: "mimo-v2.5-pro",
+        displayName: "MiMo V2.5 Pro",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        baseInstructions:
+          "You are MiMo, an AI assistant developed by Xiaomi. Today's date: {date} {week}. Your knowledge cutoff date is December 2024.",
+      },
+      {
+        model: "mimo-v2.5",
+        displayName: "MiMo V2.5",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        baseInstructions:
+          "You are MiMo, an AI assistant developed by Xiaomi. Today's date: {date} {week}. Your knowledge cutoff date is December 2024.",
+      },
+    ]),
     category: "cn_official",
     icon: "xiaomimimo",
     iconColor: "#000000",

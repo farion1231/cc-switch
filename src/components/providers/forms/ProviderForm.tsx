@@ -180,10 +180,24 @@ export const normalizeCodexCatalogModelsForSave = (
       ? Number.parseInt(rawContextWindow, 10)
       : undefined;
 
+    const inputModalities = item.inputModalities?.filter(
+      (m) => typeof m === "string" && m.trim(),
+    );
+
+    const baseInstructions = item.baseInstructions?.trim();
+
     normalized.push({
       model,
       ...(displayName ? { displayName } : {}),
       ...(contextWindow && contextWindow > 0 ? { contextWindow } : {}),
+      // Native Responses profile overrides (ignored by the chat/proxy profile).
+      ...(typeof item.supportsParallelToolCalls === "boolean"
+        ? { supportsParallelToolCalls: item.supportsParallelToolCalls }
+        : {}),
+      ...(inputModalities && inputModalities.length > 0
+        ? { inputModalities }
+        : {}),
+      ...(baseInstructions ? { baseInstructions } : {}),
     });
   }
 
@@ -599,7 +613,12 @@ function ProviderFormFull({
   // 接管已开）。只在 useState 初始化与预设重置点设置，跟 localCodexApiFormat
   // 对称，避免漂移。
   const [codexTakeoverEnabled, setCodexTakeoverEnabled] = useState<boolean>(
-    () => codexCatalogCountFromSettings(initialData?.settingsConfig) > 0,
+    () =>
+      // Native (openai_responses) providers run DIRECT (no proxy takeover) yet
+      // still carry a modelCatalog so cc-switch can generate model-catalogs.json.
+      // So a catalog must NOT auto-enable takeover for native providers.
+      initialCodexApiFormat !== "openai_responses" &&
+      codexCatalogCountFromSettings(initialData?.settingsConfig) > 0,
   );
 
   const { configError: codexConfigError, debouncedValidate } =
@@ -1277,8 +1296,13 @@ function ProviderFormFull({
           category !== "official" && (codexConfig ?? "").trim()
             ? setCodexWireApi(codexConfig ?? "", "responses")
             : (codexConfig ?? "");
+        // Persist the catalog for proxy-takeover (Mode A) OR native-direct
+        // (Mode B, apiFormat=openai_responses). Native providers run without the
+        // proxy but still need cc-switch to generate model-catalogs.json, so the
+        // catalog must survive even when the takeover toggle is off.
         const normalizedCatalogModels =
-          category !== "official" && codexTakeoverEnabled
+          category !== "official" &&
+          (codexTakeoverEnabled || localCodexApiFormat === "openai_responses")
             ? normalizeCodexCatalogModelsForSave(codexCatalogModels)
             : [];
         // Sync first catalog row's model into config.toml so Codex uses it as default
@@ -1671,8 +1695,12 @@ function ProviderFormFull({
           codexApiFormatFromWireApi(extractCodexWireApi(config)) ??
           "openai_responses",
       );
-      // 路由开关与格式无关，仅按预设是否带模型映射决定
-      setCodexTakeoverEnabled((preset.modelCatalog?.length ?? 0) > 0);
+      // 接管开关：原生（openai_responses）预设走直连、不开接管，即便带 catalog
+      //（catalog 用于生成 model-catalogs.json）；只有 chat 预设按是否带映射开启。
+      setCodexTakeoverEnabled(
+        (preset.apiFormat ?? "openai_responses") !== "openai_responses" &&
+          (preset.modelCatalog?.length ?? 0) > 0,
+      );
 
       form.reset({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,

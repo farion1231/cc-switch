@@ -169,8 +169,12 @@ describe("Codex Chat provider presets", () => {
 
       expect(preset, `${name} preset`).toBeDefined();
       expect(preset?.apiFormat).toBe("openai_responses");
-      // 原生 Responses 预设必须不带 modelCatalog，否则“本地路由映射”开关会默认勾选
-      expect(preset?.modelCatalog ?? []).toHaveLength(0);
+      // 原生 Responses 预设现在带 modelCatalog：cc-switch 直连时据此生成
+      // ~/.codex 的 model-catalogs.json（shell_command 编辑、不发 freeform
+      // apply_patch）。带 catalog 不再强制开“本地路由映射”——前端已按
+      // apiFormat 解耦（openai_responses 默认不开接管）。
+      expect((preset?.modelCatalog ?? []).length).toBeGreaterThan(0);
+      // 原生（直连）不走 Chat 转换，因此不需要 codexChatReasoning。
       expect(preset?.codexChatReasoning).toBeUndefined();
     }
   });

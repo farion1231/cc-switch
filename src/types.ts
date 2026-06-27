@@ -258,6 +258,15 @@ export interface CodexCatalogModel {
   model: string;
   displayName?: string;
   contextWindow?: string | number;
+  // Native Responses (direct) profile overrides for the generated
+  // model-catalogs.json. Ignored by the chat/proxy profile.
+  // e.g. MiniMax: supportsParallelToolCalls=true, inputModalities=["text","image"].
+  supportsParallelToolCalls?: boolean;
+  inputModalities?: string[];
+  // Vendor's OFFICIAL base_instructions (model identity / system preamble).
+  // Codex requires this field in every catalog entry; when omitted the backend
+  // falls back to a neutral default. e.g. MiMo "developed by Xiaomi".
+  baseInstructions?: string;
 }
 
 // Claude 认证字段类型

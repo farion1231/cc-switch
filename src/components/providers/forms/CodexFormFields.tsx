@@ -107,6 +107,15 @@ function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
     model: seed?.model ?? "",
     displayName: seed?.displayName ?? "",
     contextWindow: seed?.contextWindow ?? "",
+    // Carry native-profile overrides verbatim (not user-editable in the row UI,
+    // but must survive load->save so the official catalog fidelity is kept).
+    ...(seed?.supportsParallelToolCalls !== undefined
+      ? { supportsParallelToolCalls: seed.supportsParallelToolCalls }
+      : {}),
+    ...(seed?.inputModalities ? { inputModalities: seed.inputModalities } : {}),
+    ...(seed?.baseInstructions
+      ? { baseInstructions: seed.baseInstructions }
+      : {}),
   };
 }
 
@@ -571,148 +580,149 @@ export function CodexFormFields({
               </div>
             </div>
 
-            {/* 模型映射 —— 仅在本地路由开启 + 可编辑时显示（与上游格式解耦，
-                Responses 原生供应商同样可配置）；上方恒有 UA 字段，分隔线无需条件 */}
-            {takeoverEnabled && canEditCatalog && (
-              <div className="space-y-4 border-t border-border-default pt-3">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between gap-3">
-                    <FormLabel>
-                      {t("codexConfig.modelMappingTitle", {
-                        defaultValue: "模型映射",
-                      })}
-                    </FormLabel>
-                    {renderCatalogActionButtons(
-                      handleAddCatalogRow,
-                      t("codexConfig.addCatalogModel", {
-                        defaultValue: "添加模型",
-                      }),
-                    )}
-                  </div>
-                  <p className="text-xs leading-relaxed text-muted-foreground">
-                    {t("codexConfig.modelMappingHint", {
-                      defaultValue:
-                        "选择模型角色后，CC Switch 会自动生成 Codex 兼容路由；菜单显示名可以填 DeepSeek、Kimi 等品牌模型，实际请求模型按右侧填写内容发送。",
-                    })}
-                  </p>
-                </div>
-
-                {catalogRows.length > 0 && (
-                  <div className="space-y-2">
-                    {/* 列头：md+ 显示 */}
-                    <div className="hidden grid-cols-[1fr_1fr_140px_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
-                      <span>
-                        {t("codexConfig.catalogColumnDisplay", {
-                          defaultValue: "菜单显示名",
+            {/* 模型映射 / 模型目录 —— 接管开启（Chat 模式生成兼容路由）或
+                原生 Responses 模式（生成 model-catalogs.json）时显示；可编辑即渲染。 */}
+            {(takeoverEnabled || apiFormat === "openai_responses") &&
+              canEditCatalog && (
+                <div className="space-y-4 border-t border-border-default pt-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between gap-3">
+                      <FormLabel>
+                        {t("codexConfig.modelMappingTitle", {
+                          defaultValue: "模型映射",
                         })}
-                      </span>
-                      <span>
-                        {t("codexConfig.catalogColumnModel", {
-                          defaultValue: "实际请求模型",
-                        })}
-                      </span>
-                      <span>
-                        {t("codexConfig.catalogColumnContext", {
-                          defaultValue: "上下文窗口",
-                        })}
-                      </span>
-                      <span />
+                      </FormLabel>
+                      {renderCatalogActionButtons(
+                        handleAddCatalogRow,
+                        t("codexConfig.addCatalogModel", {
+                          defaultValue: "添加模型",
+                        }),
+                      )}
                     </div>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {t("codexConfig.modelMappingHint", {
+                        defaultValue:
+                          "选择模型角色后，CC Switch 会自动生成 Codex 兼容路由；菜单显示名可以填 DeepSeek、Kimi 等品牌模型，实际请求模型按右侧填写内容发送。",
+                      })}
+                    </p>
+                  </div>
 
-                    {catalogRows.map((row, index) => (
-                      <div
-                        key={row.rowId}
-                        className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_140px_36px]"
-                      >
-                        <Input
-                          value={row.displayName ?? ""}
-                          onChange={(event) =>
-                            handleUpdateCatalogRow(index, {
-                              displayName: event.target.value,
-                            })
-                          }
-                          placeholder={t(
-                            "codexConfig.catalogDisplayNamePlaceholder",
-                            {
-                              defaultValue: "例如: DeepSeek V4 Flash",
-                            },
-                          )}
-                          aria-label={t("codexConfig.catalogColumnDisplay", {
+                  {catalogRows.length > 0 && (
+                    <div className="space-y-2">
+                      {/* 列头：md+ 显示 */}
+                      <div className="hidden grid-cols-[1fr_1fr_140px_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
+                        <span>
+                          {t("codexConfig.catalogColumnDisplay", {
                             defaultValue: "菜单显示名",
                           })}
-                        />
-                        <div className="flex gap-1">
+                        </span>
+                        <span>
+                          {t("codexConfig.catalogColumnModel", {
+                            defaultValue: "实际请求模型",
+                          })}
+                        </span>
+                        <span>
+                          {t("codexConfig.catalogColumnContext", {
+                            defaultValue: "上下文窗口",
+                          })}
+                        </span>
+                        <span />
+                      </div>
+
+                      {catalogRows.map((row, index) => (
+                        <div
+                          key={row.rowId}
+                          className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_140px_36px]"
+                        >
                           <Input
-                            value={row.model}
+                            value={row.displayName ?? ""}
                             onChange={(event) =>
                               handleUpdateCatalogRow(index, {
-                                model: event.target.value,
+                                displayName: event.target.value,
                               })
                             }
                             placeholder={t(
-                              "codexConfig.catalogModelPlaceholder",
+                              "codexConfig.catalogDisplayNamePlaceholder",
                               {
-                                defaultValue: "例如: deepseek-v4-flash",
+                                defaultValue: "例如: DeepSeek V4 Flash",
                               },
                             )}
-                            aria-label={t("codexConfig.catalogColumnModel", {
-                              defaultValue: "实际请求模型",
+                            aria-label={t("codexConfig.catalogColumnDisplay", {
+                              defaultValue: "菜单显示名",
                             })}
-                            className="flex-1"
                           />
-                          {fetchedModels.length > 0 && (
-                            <ModelDropdown
-                              models={fetchedModels}
-                              onSelect={(id) =>
+                          <div className="flex gap-1">
+                            <Input
+                              value={row.model}
+                              onChange={(event) =>
                                 handleUpdateCatalogRow(index, {
-                                  model: id,
-                                  displayName: row.displayName?.trim()
-                                    ? row.displayName
-                                    : id,
+                                  model: event.target.value,
                                 })
                               }
+                              placeholder={t(
+                                "codexConfig.catalogModelPlaceholder",
+                                {
+                                  defaultValue: "例如: deepseek-v4-flash",
+                                },
+                              )}
+                              aria-label={t("codexConfig.catalogColumnModel", {
+                                defaultValue: "实际请求模型",
+                              })}
+                              className="flex-1"
                             />
-                          )}
+                            {fetchedModels.length > 0 && (
+                              <ModelDropdown
+                                models={fetchedModels}
+                                onSelect={(id) =>
+                                  handleUpdateCatalogRow(index, {
+                                    model: id,
+                                    displayName: row.displayName?.trim()
+                                      ? row.displayName
+                                      : id,
+                                  })
+                                }
+                              />
+                            )}
+                          </div>
+                          <Input
+                            type="number"
+                            min={1}
+                            inputMode="numeric"
+                            value={row.contextWindow ?? ""}
+                            onChange={(event) =>
+                              handleUpdateCatalogRow(index, {
+                                contextWindow: event.target.value.replace(
+                                  /[^\d]/g,
+                                  "",
+                                ),
+                              })
+                            }
+                            placeholder={t(
+                              "codexConfig.contextWindowPlaceholder",
+                              {
+                                defaultValue: "例如: 128000",
+                              },
+                            )}
+                            aria-label={t("codexConfig.catalogColumnContext", {
+                              defaultValue: "上下文窗口",
+                            })}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                            onClick={() => handleRemoveCatalogRow(index)}
+                            title={t("common.delete", { defaultValue: "删除" })}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </div>
-                        <Input
-                          type="number"
-                          min={1}
-                          inputMode="numeric"
-                          value={row.contextWindow ?? ""}
-                          onChange={(event) =>
-                            handleUpdateCatalogRow(index, {
-                              contextWindow: event.target.value.replace(
-                                /[^\d]/g,
-                                "",
-                              ),
-                            })
-                          }
-                          placeholder={t(
-                            "codexConfig.contextWindowPlaceholder",
-                            {
-                              defaultValue: "例如: 128000",
-                            },
-                          )}
-                          aria-label={t("codexConfig.catalogColumnContext", {
-                            defaultValue: "上下文窗口",
-                          })}
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-9 w-9 text-muted-foreground hover:text-destructive"
-                          onClick={() => handleRemoveCatalogRow(index)}
-                          title={t("common.delete", { defaultValue: "删除" })}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
           </CollapsibleContent>
         </Collapsible>
       )}
