@@ -744,6 +744,7 @@ fn desktop_tier_routing_model_specs(
         if !provider.supports_routing() {
             continue;
         }
+        validate_tier_routing_target_provider(&provider)?;
 
         let model = route.model.trim();
         let display_name = route.display_name.trim();
@@ -755,6 +756,41 @@ fn desktop_tier_routing_model_specs(
         });
     }
     Ok(specs)
+}
+
+fn validate_tier_routing_target_provider(provider: &Provider) -> Result<(), AppError> {
+    if !provider.settings_config.is_object() {
+        return Err(AppError::localized(
+            "claude_desktop.provider.settings_not_object",
+            "Claude Desktop 本地路由供应商配置必须是 JSON 对象",
+            "Claude Desktop proxy provider configuration must be a JSON object",
+        ));
+    }
+
+    if let Some(meta) = provider.meta.as_ref() {
+        if let Some(api_format) = meta.api_format.as_deref() {
+            if !matches!(
+                api_format,
+                "" | "anthropic" | "openai_chat" | "openai_responses" | "gemini_native"
+            ) {
+                return Err(AppError::localized(
+                    "claude_desktop.provider.api_format_unsupported",
+                    format!("Claude Desktop 本地路由模式不支持 API 格式: {api_format}"),
+                    format!("Claude Desktop proxy mode does not support API format: {api_format}"),
+                ));
+            }
+        }
+    }
+
+    if !has_proxy_base_url_and_key(provider) {
+        return Err(AppError::localized(
+            "claude_desktop.provider.credentials_missing",
+            "Claude Desktop 本地路由供应商缺少 Base URL 或 API Key",
+            "Claude Desktop proxy provider is missing Base URL or API key",
+        ));
+    }
+
+    Ok(())
 }
 
 fn has_desktop_tier_routing_profile(db: &Database) -> Result<bool, AppError> {
@@ -1813,6 +1849,67 @@ mod tests {
             .expect("model list response")
             .expect("tier response present");
         assert_eq!(list["data"][0]["supports1m"], json!(true));
+    }
+
+    #[test]
+    fn claude_desktop_tier_routing_rejects_target_provider_without_credentials() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let current_provider = direct_provider("direct-current");
+        let mut broken_provider = Provider::with_id(
+            "broken".to_string(),
+            "Broken".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://gateway.example.com"
+                }
+            }),
+            Some("https://example.com".to_string()),
+        );
+        broken_provider.category = Some("cn_official".to_string());
+        broken_provider.meta = Some(ProviderMeta {
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            api_format: Some("openai_chat".to_string()),
+            ..Default::default()
+        });
+
+        let db = test_db();
+        set_proxy_port(&db, 15721);
+        db.save_provider(MODEL_TIER_ROUTING_APP, &broken_provider)
+            .expect("save broken provider");
+
+        let mut enabled_apps = std::collections::HashMap::new();
+        enabled_apps.insert(MODEL_TIER_ROUTING_APP.to_string(), true);
+        let mut claude_desktop_routes = std::collections::HashMap::new();
+        claude_desktop_routes.insert(
+            "opus".to_string(),
+            crate::proxy::types::TierRoute {
+                provider_id: "broken".to_string(),
+                model: "glm-5.2".to_string(),
+                display_name: "Broken Opus".to_string(),
+                ..Default::default()
+            },
+        );
+        let mut routes = std::collections::HashMap::new();
+        routes.insert(MODEL_TIER_ROUTING_APP.to_string(), claude_desktop_routes);
+        db.set_model_tier_routing_config(&crate::proxy::types::ModelTierRoutingConfig {
+            enabled: true,
+            enabled_apps,
+            routes,
+            ..Default::default()
+        })
+        .expect("set tier config");
+
+        let err = apply_provider_to_paths(&db, &current_provider, &paths)
+            .expect_err("broken tier target provider should be rejected before writing profile");
+        assert!(
+            err.to_string().contains("Base URL 或 API Key"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            !paths.profile_path.exists(),
+            "profile should not be written when tier target validation fails"
+        );
     }
 
     #[test]
