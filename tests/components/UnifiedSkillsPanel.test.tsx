@@ -1,14 +1,41 @@
 import { createRef } from "react";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  act,
+  fireEvent,
+  within,
+} from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import UnifiedSkillsPanel, {
   type UnifiedSkillsPanelHandle,
 } from "@/components/skills/UnifiedSkillsPanel";
 
+const installedSkillsDataMock: Array<{
+  id: string;
+  name: string;
+  description?: string;
+  directory: string;
+  repoOwner?: string;
+  repoName?: string;
+  repoBranch?: string;
+  readmeUrl?: string;
+  apps: {
+    claude: boolean;
+    codex: boolean;
+    gemini: boolean;
+    opencode: boolean;
+    openclaw: boolean;
+  };
+  installedAt: number;
+}> = [];
 const scanUnmanagedMock = vi.fn();
 const toggleSkillAppMock = vi.fn();
 const uninstallSkillMock = vi.fn();
+const batchToggleSkillAppMock = vi.fn();
+const batchUninstallSkillMock = vi.fn();
 const importSkillsMock = vi.fn();
 const installFromZipMock = vi.fn();
 const deleteSkillBackupMock = vi.fn();
@@ -24,7 +51,7 @@ vi.mock("sonner", () => ({
 
 vi.mock("@/hooks/useSkills", () => ({
   useInstalledSkills: () => ({
-    data: [],
+    data: installedSkillsDataMock,
     isLoading: false,
   }),
   useSkillBackups: () => ({
@@ -39,12 +66,20 @@ vi.mock("@/hooks/useSkills", () => ({
   useToggleSkillApp: () => ({
     mutateAsync: toggleSkillAppMock,
   }),
+  useBatchToggleSkillApp: () => ({
+    mutateAsync: batchToggleSkillAppMock,
+    isPending: false,
+  }),
   useRestoreSkillBackup: () => ({
     mutateAsync: restoreSkillBackupMock,
     isPending: false,
   }),
   useUninstallSkill: () => ({
     mutateAsync: uninstallSkillMock,
+  }),
+  useBatchUninstallSkill: () => ({
+    mutateAsync: batchUninstallSkillMock,
+    isPending: false,
   }),
   useScanUnmanagedSkills: () => ({
     data: [
@@ -77,6 +112,7 @@ vi.mock("@/hooks/useSkills", () => ({
 
 describe("UnifiedSkillsPanel", () => {
   beforeEach(() => {
+    installedSkillsDataMock.splice(0, installedSkillsDataMock.length);
     scanUnmanagedMock.mockResolvedValue({
       data: [
         {
@@ -90,6 +126,14 @@ describe("UnifiedSkillsPanel", () => {
     });
     toggleSkillAppMock.mockReset();
     uninstallSkillMock.mockReset();
+    batchToggleSkillAppMock.mockResolvedValue({
+      successIds: [],
+      failed: [],
+    });
+    batchUninstallSkillMock.mockResolvedValue({
+      successIds: [],
+      failed: [],
+    });
     importSkillsMock.mockReset();
     installFromZipMock.mockReset();
     deleteSkillBackupMock.mockReset();
@@ -115,6 +159,179 @@ describe("UnifiedSkillsPanel", () => {
       expect(screen.getByText("skills.import")).toBeInTheDocument();
       expect(screen.getByText("Shared Skill")).toBeInTheDocument();
       expect(screen.getByText("/tmp/shared-skill")).toBeInTheDocument();
+    });
+  });
+
+  it("filters installed skills by search query", async () => {
+    installedSkillsDataMock.push(
+      {
+        id: "owner/repo:alpha",
+        name: "Alpha Skill",
+        description: "Handle alpha workflow",
+        directory: "alpha-skill",
+        repoOwner: "owner",
+        repoName: "repo",
+        repoBranch: "main",
+        apps: {
+          claude: true,
+          codex: false,
+          gemini: false,
+          opencode: false,
+          openclaw: false,
+        },
+        installedAt: Date.now(),
+      },
+      {
+        id: "local:beta",
+        name: "Beta Toolkit",
+        description: "Local beta helper",
+        directory: "beta-toolkit",
+        apps: {
+          claude: false,
+          codex: true,
+          gemini: false,
+          opencode: false,
+          openclaw: false,
+        },
+        installedAt: Date.now(),
+      },
+    );
+
+    render(
+      <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="claude" />,
+    );
+
+    expect(screen.getByText("Alpha Skill")).toBeInTheDocument();
+    expect(screen.getByText("Beta Toolkit")).toBeInTheDocument();
+
+    fireEvent.change(
+      screen.getByPlaceholderText("skills.batch.searchInstalledPlaceholder"),
+      {
+        target: { value: "beta-toolkit" },
+      },
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("Alpha Skill")).not.toBeInTheDocument();
+      expect(screen.getByText("Beta Toolkit")).toBeInTheDocument();
+    });
+  });
+
+  it("selects only filtered skills in batch mode", async () => {
+    installedSkillsDataMock.push(
+      {
+        id: "owner/repo:alpha",
+        name: "Alpha Skill",
+        description: "Handle alpha workflow",
+        directory: "alpha-skill",
+        repoOwner: "owner",
+        repoName: "repo",
+        repoBranch: "main",
+        apps: {
+          claude: true,
+          codex: false,
+          gemini: false,
+          opencode: false,
+          openclaw: false,
+        },
+        installedAt: Date.now(),
+      },
+      {
+        id: "owner/repo:beta",
+        name: "Beta Skill",
+        description: "Handle beta workflow",
+        directory: "beta-skill",
+        repoOwner: "owner",
+        repoName: "repo",
+        repoBranch: "main",
+        apps: {
+          claude: false,
+          codex: true,
+          gemini: false,
+          opencode: false,
+          openclaw: false,
+        },
+        installedAt: Date.now(),
+      },
+    );
+
+    render(
+      <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="claude" />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "skills.batch.enterMode" }),
+    );
+
+    fireEvent.change(
+      screen.getByPlaceholderText("skills.batch.searchInstalledPlaceholder"),
+      {
+        target: { value: "beta" },
+      },
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("Alpha Skill")).not.toBeInTheDocument();
+      expect(screen.getByText("Beta Skill")).toBeInTheDocument();
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "skills.batch.selectAllFiltered" }),
+    );
+
+    expect(screen.getByText("skills.batch.selectedCount")).toBeInTheDocument();
+
+    const listContainer = screen.getByText("Beta Skill").closest(".group");
+    expect(listContainer).not.toBeNull();
+    const checkbox = within(listContainer as HTMLElement).getByRole("checkbox");
+    expect(checkbox).toHaveAttribute("data-state", "checked");
+  });
+
+  it("applies batch toggle to the selected target app instead of defaulting to claude", async () => {
+    installedSkillsDataMock.push({
+      id: "owner/repo:alpha",
+      name: "Alpha Skill",
+      description: "Handle alpha workflow",
+      directory: "alpha-skill",
+      repoOwner: "owner",
+      repoName: "repo",
+      repoBranch: "main",
+      apps: {
+        claude: false,
+        codex: false,
+        gemini: false,
+        opencode: false,
+        openclaw: false,
+      },
+      installedAt: Date.now(),
+    });
+
+    render(
+      <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="openclaw" />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "skills.batch.enterMode" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "skills.batch.selectAllFiltered" }),
+    );
+
+    fireEvent.click(screen.getByTestId("skills-batch-target-opencode"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "skills.batch.enableSelectedFor" }),
+    );
+
+    await waitFor(() => {
+      expect(batchToggleSkillAppMock).toHaveBeenCalledWith({
+        items: [
+          {
+            id: "owner/repo:alpha",
+            app: "opencode",
+            enabled: true,
+          },
+        ],
+      });
     });
   });
 });
