@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
+  dateToTs,
   getStartOfLocalDayDate,
   getUsageRangePresetLabel,
   isSameDay,
@@ -39,21 +40,13 @@ interface UsageDateRangePickerProps {
 
 /* ── helpers ── */
 
-function toTs(d: Date): number {
-  return Math.floor(d.getTime() / 1000);
-}
-
-function fromTs(ts: number): Date {
-  return tsToDate(ts);
-}
-
 function fmtDate(ts: number): string {
-  const d = fromTs(ts);
+  const d = tsToDate(ts);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function fmtTime(ts: number): string {
-  const d = fromTs(ts);
+  const d = tsToDate(ts);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
@@ -61,15 +54,15 @@ function parseDateInput(ts: number, value: string): number {
   const [y, m, d] = value.split("-").map(Number);
   if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d))
     return ts;
-  const base = fromTs(ts);
-  return toTs(new Date(y, m - 1, d, base.getHours(), base.getMinutes()));
+  const base = tsToDate(ts);
+  return dateToTs(new Date(y, m - 1, d, base.getHours(), base.getMinutes()));
 }
 
 function parseTimeInput(ts: number, value: string): number {
   const [h, min] = value.split(":").map(Number);
   if (!Number.isFinite(h) || !Number.isFinite(min)) return ts;
-  const base = fromTs(ts);
-  return toTs(
+  const base = tsToDate(ts);
+  return dateToTs(
     new Date(base.getFullYear(), base.getMonth(), base.getDate(), h, min),
   );
 }
@@ -95,9 +88,16 @@ export function UsageDateRangePicker({
   const { t, i18n } = useTranslation();
   const [open, setOpen] = useState(false);
   const [activeField, setActiveField] = useState<DraftField>("start");
-  // resolveUsageRange 内部默认取 Date.now(), 不需要外部维护一个 nowMs state
-  // 触发 memo 重算;hook 自身的 dep 比较开销大于函数体本身。
-  const resolvedRange = resolveUsageRange(selection);
+  // resolveUsageRange 内部默认取 Date.now(), 用 useMemo 缓存
+  const resolvedRange = useMemo(
+    () => resolveUsageRange(selection),
+    [
+      selection.preset,
+      selection.customStartDate,
+      selection.customEndDate,
+      selection.liveEndTime,
+    ],
+  );
   const [draftStart, setDraftStart] = useState(() =>
     normalizePickerStart(resolvedRange.startDate),
   );
@@ -110,8 +110,8 @@ export function UsageDateRangePicker({
   const [displayMonth, setDisplayMonth] = useState(
     () =>
       new Date(
-        fromTs(resolvedRange.startDate).getFullYear(),
-        fromTs(resolvedRange.startDate).getMonth(),
+        tsToDate(resolvedRange.startDate).getFullYear(),
+        tsToDate(resolvedRange.startDate).getMonth(),
         1,
       ),
   );
@@ -132,8 +132,8 @@ export function UsageDateRangePicker({
     );
     setDisplayMonth(
       new Date(
-        fromTs(r.startDate).getFullYear(),
-        fromTs(r.startDate).getMonth(),
+        tsToDate(r.startDate).getFullYear(),
+        tsToDate(r.startDate).getMonth(),
         1,
       ),
     );
@@ -145,8 +145,6 @@ export function UsageDateRangePicker({
     selection.customStartDate,
     selection.customEndDate,
     selection.liveEndTime,
-    // selection 对象引用兜底: 父组件在传 selection 但标量未变时也会重置
-    selection,
   ]);
 
   // Keep draftEnd ticking when live mode is active and popover is open
@@ -177,8 +175,8 @@ export function UsageDateRangePicker({
     [locale],
   );
 
-  const startDay = fromTs(draftStart);
-  const endDay = fromTs(draftEnd);
+  const startDay = tsToDate(draftStart);
+  const endDay = tsToDate(draftEnd);
   const today = new Date();
   // day grid 内 inRange 比较用的边界, 提到循环外避免 42 次重建 Date
   const startBoundary = getStartOfLocalDayDate(draftStart * 1000);
@@ -187,7 +185,7 @@ export function UsageDateRangePicker({
   /* Pick a date from the calendar */
   const handleDatePick = (day: Date) => {
     setError(null);
-    const dayTs = toTs(day);
+    const dayTs = dateToTs(day);
     // When live end time is active, calendar only controls start date
     if (draftLiveEnd) {
       setDraftStart(normalizePickerStart(dayTs));
@@ -247,8 +245,8 @@ export function UsageDateRangePicker({
     const setTs = field === "start" ? setDraftStart : setDraftEnd;
     const label =
       field === "start"
-        ? t("usage.startTime", "开始时间")
-        : t("usage.endTime", "结束时间");
+          ? t("usage.startTime", "开始时间")
+          : t("usage.endTime", "结束时间");
     // 复用与日历/reset 完全相同的归一化路径, 保证 end 框输入也走
     // "end 是当天→now" 语义, 不再单独走 23:59 分支
     const normalize = (raw: number) =>
@@ -283,7 +281,7 @@ export function UsageDateRangePicker({
               if (isEndLive) return;
               const next = normalize(parseDateInput(ts, e.target.value));
               setTs(next);
-              const d = fromTs(next);
+              const d = tsToDate(next);
               setDisplayMonth(new Date(d.getFullYear(), d.getMonth(), 1));
               setError(null);
             }}
@@ -302,7 +300,10 @@ export function UsageDateRangePicker({
             value={fmtTime(ts)}
             onChange={(e) => {
               if (isEndLive) return;
-              setTs(normalize(parseTimeInput(ts, e.target.value)));
+              const raw = parseTimeInput(ts, e.target.value);
+              // time input 是用户的精确意图, 不经过 normalizePickerEnd
+              // (日历点选和 popover reset 仍走 normalize 路径)
+              setTs(field === "start" ? normalizePickerStart(raw) : raw);
               setError(null);
             }}
             onFocus={() => {

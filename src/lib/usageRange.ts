@@ -1,7 +1,6 @@
 import type { UsageRangePreset, UsageRangeSelection } from "@/types/usage";
 
 const DAY_SECONDS = 24 * 60 * 60;
-const DAY_MS = DAY_SECONDS * 1000;
 
 export interface ResolvedUsageRange {
   startDate: number;
@@ -33,11 +32,15 @@ export function isSameDay(a: Date, b: Date): boolean {
   );
 }
 
-/** 把任意时间戳归到本地当天 23:59:59.999 的 Date 对象。 */
-export function getEndOfLocalDayDate(nowMs: number): Date {
+/**
+ * 把任意时间戳归到本地当天 23:59:59.999 的 Date 对象。
+ * 用 "次日 00:00 − 1ms" 模式，自动适配 DST 缩短/拉长那一天。
+ */
+function getEndOfLocalDayDate(nowMs: number): Date {
   const d = new Date(nowMs);
-  d.setHours(23, 59, 59, 999);
-  return d;
+  d.setDate(d.getDate() + 1);
+  d.setHours(0, 0, 0, 0);
+  return new Date(d.getTime() - 1);
 }
 
 /**
@@ -64,7 +67,9 @@ function getPresetLookbackStart(
   nowMs: number,
 ): number {
   const dayCount = preset === "7d" ? 7 : preset === "14d" ? 14 : 30;
-  return dateToTs(getStartOfLocalDayDate(nowMs - (dayCount - 1) * DAY_MS));
+  const start = getStartOfLocalDayDate(nowMs);
+  start.setDate(start.getDate() - (dayCount - 1));
+  return dateToTs(start);
 }
 
 export function resolveUsageRange(
@@ -92,8 +97,9 @@ export function resolveUsageRange(
         endDate,
       };
     case "custom": {
-      const startDate =
-        selection.customStartDate ?? dateToTs(getStartOfLocalDayDate(nowMs));
+      const startDate = selection.customStartDate
+        ? normalizePickerStart(selection.customStartDate)
+        : dateToTs(getStartOfLocalDayDate(nowMs));
       const customEndDate = selection.liveEndTime
         ? endDate
         : (selection.customEndDate ?? dateToTs(getEndOfLocalDayDate(nowMs)));

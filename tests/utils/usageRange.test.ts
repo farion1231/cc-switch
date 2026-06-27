@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   resolveUsageRange,
   normalizePickerStart,
@@ -6,7 +6,7 @@ import {
 } from "@/lib/usageRange";
 
 // normalizePickerEnd 内部默认取 Date.now(), 但同时接受显式 nowMs 注入;
-// 测试用显式 nowMs 取代 wall-clock 容差断言, 消除跨时区/跨秒的 flake。
+// 测试用 fake timers 固定本地时钟与 nowMs, 消除跨时区/跨秒的 flake。
 
 describe("normalizePickerStart", () => {
   it("把任意 ts 归一到当地日期 00:00:00", () => {
@@ -33,47 +33,56 @@ describe("normalizePickerStart", () => {
 });
 
 describe("normalizePickerEnd", () => {
-  it("end 是当天 → 总是返回 nowMs 对应的秒", () => {
-    const fixedNow = new Date("2026-06-28T11:35:42Z").getTime();
-    // 构造一个"今天"的 ts: 任意时分都行, 只要跟 fixedNow 同一天
-    const today = new Date(fixedNow);
-    today.setHours(11, 35, 42, 0);
-    const todayTs = Math.floor(today.getTime() / 1000);
-    const normalized = normalizePickerEnd(todayTs, fixedNow);
-    expect(normalized).toBe(Math.floor(fixedNow / 1000));
+  beforeEach(() => {
+    vi.useFakeTimers();
+    // 固定到一个固定的时刻, 避免跨日竞态
+    vi.setSystemTime(new Date(2026, 5, 28, 14, 0, 0, 0)); // 本地 6/28 14:00
+  });
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
-  it("end 是过去日期 → 归一到当天 23:59:59.999", () => {
+  it("end 是当天 → 总是返回 nowMs 对应的秒", () => {
+    const now = Date.now();
+    const today = new Date();
+    today.setHours(10, 0, 0, 0);
+    const todayTs = Math.floor(today.getTime() / 1000);
+    const normalized = normalizePickerEnd(todayTs, now);
+    expect(normalized).toBe(Math.floor(now / 1000));
+  });
+
+  it("end 是过去日期 → 归一到当天 23:59:59", () => {
+    const now = Date.now();
     const past = new Date();
     past.setDate(past.getDate() - 5);
     past.setHours(0, 0, 0, 0);
     const pastTs = Math.floor(past.getTime() / 1000);
-    const normalized = normalizePickerEnd(pastTs);
+    const normalized = normalizePickerEnd(pastTs, now);
     const result = new Date(normalized * 1000);
     expect(result.getHours()).toBe(23);
     expect(result.getMinutes()).toBe(59);
     expect(result.getSeconds()).toBe(59);
   });
 
-  it("end 输入 18:00 (非 23:59) 也会被归一, 不让它逃逸到后端", () => {
+  it("end 输入过去日期 18:00 → 归一到 23:59", () => {
+    const now = Date.now();
     const past = new Date();
     past.setDate(past.getDate() - 3);
     past.setHours(18, 0, 0, 0);
     const pastTs = Math.floor(past.getTime() / 1000);
-    const normalized = normalizePickerEnd(pastTs);
+    const normalized = normalizePickerEnd(pastTs, now);
     const result = new Date(normalized * 1000);
-    // 非当天 → 归一到 23:59
     expect(result.getHours()).toBe(23);
     expect(result.getMinutes()).toBe(59);
   });
 
-  it("end 输入当天 18:00 → 归一到 nowMs 时刻 (不保持 18:00)", () => {
-    const fixedNow = new Date("2026-06-28T18:00:00Z").getTime();
-    const today = new Date(fixedNow);
+  it("end 输入当天任意时刻 → 归一到 now", () => {
+    const now = Date.now();
+    const today = new Date();
     today.setHours(18, 0, 0, 0);
     const ts = Math.floor(today.getTime() / 1000);
-    const normalized = normalizePickerEnd(ts, fixedNow);
-    expect(normalized).toBe(Math.floor(fixedNow / 1000));
+    const normalized = normalizePickerEnd(ts, now);
+    expect(normalized).toBe(Math.floor(now / 1000));
   });
 });
 
