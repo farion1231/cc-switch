@@ -16,6 +16,7 @@ import {
   ScrollText,
   HardDriveDownload,
   FlaskConical,
+  RefreshCcwDot,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -52,6 +53,7 @@ import { UsageDashboard } from "@/components/usage/UsageDashboard";
 import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
 import { CodexAuthSettings } from "@/components/settings/CodexAuthSettings";
+import { ToggleRow } from "@/components/ui/toggle-row";
 import { useInstalledSkills } from "@/hooks/useSkills";
 import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
@@ -274,6 +276,27 @@ export function SettingsPage({
                         handleAutoSave({ skillSyncMethod: method })
                       }
                     />
+                    <section className="space-y-4">
+                      <div className="flex items-center gap-2 pb-2 border-b border-border/40">
+                        <RefreshCcwDot className="h-4 w-4 text-primary" />
+                        <h3 className="text-sm font-medium">
+                          {t("settings.mcpLiveSync")}
+                        </h3>
+                      </div>
+                      <div className="space-y-3">
+                        <ToggleRow
+                          icon={
+                            <RefreshCcwDot className="h-4 w-4 text-emerald-500" />
+                          }
+                          title={t("settings.mcpLiveSync")}
+                          description={t("settings.mcpLiveSyncDescription")}
+                          checked={settings.mcpLiveSyncEnabled ?? true}
+                          onCheckedChange={(value) =>
+                            handleAutoSave({ mcpLiveSyncEnabled: value })
+                          }
+                        />
+                      </div>
+                    </section>
                     <CodexAuthSettings
                       settings={settings}
                       onChange={handleAutoSave}

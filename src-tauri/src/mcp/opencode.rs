@@ -27,6 +27,9 @@ use super::validation::validate_server_spec;
 
 /// Check if OpenCode MCP sync should proceed
 fn should_sync_opencode_mcp() -> bool {
+    if !crate::settings::mcp_live_sync_enabled() {
+        return false;
+    }
     // Skip if OpenCode config directory doesn't exist
     opencode_config::get_opencode_dir().exists()
 }

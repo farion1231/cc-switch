@@ -682,6 +682,8 @@
     "enableClaudePluginIntegrationDescription": "When enabled, the VS Code Claude Code extension provider will switch with this app",
     "skipClaudeOnboarding": "Skip Claude Code first-run confirmation",
     "skipClaudeOnboardingDescription": "When enabled, Claude Code will skip the first-run confirmation",
+    "mcpLiveSync": "MCP Live Sync",
+    "mcpLiveSyncDescription": "Automatically sync MCP server definitions to live tool configs. Disable if you manage MCP servers manually or with another sync tool.",
     "codexAuth": "Codex App Enhancements",
     "preserveCodexOfficialAuthOnSwitch": "Keep official login when switching third-party providers",
     "preserveCodexOfficialAuthOnSwitchDescription": "When enabled, you can use the Codex app's official plugins, mobile remote control, and other features while using third-party APIs.",

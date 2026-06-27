@@ -450,6 +450,33 @@ describe("SettingsPage Component", () => {
     expect(toastErrorMock).not.toHaveBeenCalled();
   });
 
+  it("renders MCP live sync toggle with default checked when mcpLiveSyncEnabled omitted", async () => {
+    settingsMock = createSettingsMock({
+      settings: {
+        showInTray: true,
+        minimizeToTrayOnClose: true,
+        enableClaudePluginIntegration: false,
+        language: "zh",
+        claudeConfigDir: "/claude",
+        codexConfigDir: "/codex",
+      },
+    });
+    renderSettingsPage();
+
+    const labelMatches = screen.getAllByText("settings.mcpLiveSync");
+    expect(labelMatches.length).toBeGreaterThanOrEqual(2);
+
+    expect(
+      screen.getByText("settings.mcpLiveSyncDescription"),
+    ).toBeInTheDocument();
+
+    const toggle = screen.getByRole("switch", {
+      name: "settings.mcpLiveSync",
+    });
+    expect(toggle).toBeInTheDocument();
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+  });
+
   it("should trigger directory management callbacks inside advanced tab", () => {
     renderSettingsPage();
 

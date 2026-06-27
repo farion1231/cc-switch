@@ -45,6 +45,9 @@ const HERMES_EXTRA_FIELDS: &[&str] = &[
 
 /// Check if Hermes MCP sync should proceed
 fn should_sync_hermes_mcp() -> bool {
+    if !crate::settings::mcp_live_sync_enabled() {
+        return false;
+    }
     hermes_config::get_hermes_dir().exists()
 }
 

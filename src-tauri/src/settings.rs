@@ -376,6 +376,9 @@ pub struct AppSettings {
     /// Opt-in: defaults to false so third-party switches cleanly overwrite auth.json.
     #[serde(default)]
     pub preserve_codex_official_auth_on_switch: bool,
+    /// 是否同步 MCP 服务到各工具 live 配置文件（默认 true）
+    #[serde(default = "default_true")]
+    pub mcp_live_sync_enabled: bool,
     /// Run official Codex providers under the shared "custom" model_provider id
     /// so official sessions share one resume-history bucket with third-party
     /// providers. Opt-in: defaults to false.
@@ -504,6 +507,7 @@ impl Default for AppSettings {
             stream_check_confirmed: None,
             enable_failover_toggle: false,
             preserve_codex_official_auth_on_switch: false,
+            mcp_live_sync_enabled: true,
             unify_codex_session_history: false,
             unify_codex_migrate_existing: None,
             failover_confirmed: None,
@@ -908,6 +912,16 @@ pub fn preserve_codex_official_auth_on_switch() -> bool {
             e.into_inner()
         })
         .preserve_codex_official_auth_on_switch
+}
+
+pub fn mcp_live_sync_enabled() -> bool {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .mcp_live_sync_enabled
 }
 
 pub fn unify_codex_session_history() -> bool {

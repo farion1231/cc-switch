@@ -1036,3 +1036,102 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
         "live entries unknown to DB should be preserved"
     );
 }
+
+#[test]
+fn sync_all_enabled_skips_when_mcp_live_sync_disabled() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    // Seed a Claude MCP config with an existing server
+    let mcp_path = get_claude_mcp_path();
+    if let Some(parent) = mcp_path.parent() {
+        fs::create_dir_all(parent).expect("create claude mcp dir");
+    }
+    let original_config = json!({
+        "mcpServers": {
+            "user-managed": {
+                "type": "stdio",
+                "command": "user-tool"
+            }
+        }
+    });
+    fs::write(
+        &mcp_path,
+        serde_json::to_string_pretty(&original_config).expect("serialize"),
+    )
+    .expect("seed claude mcp");
+
+    // Disable MCP live sync
+    update_settings(AppSettings {
+        mcp_live_sync_enabled: false,
+        ..Default::default()
+    })
+    .expect("disable mcp live sync");
+
+    let state = create_test_state().expect("create test state");
+
+    // Save a server that is enabled for Claude — normally this would be written to live config
+    state
+        .db
+        .save_mcp_server(&McpServer {
+            id: "db-server".to_string(),
+            name: "DB Server".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "db-tool"
+            }),
+            apps: McpApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        })
+        .expect("save enabled server");
+
+    // Sync — should be a no-op because mcp_live_sync_enabled is false
+    McpService::sync_all_enabled(&state).expect("sync mcp");
+
+    // Verify: live config should be unchanged
+    let text = fs::read_to_string(&mcp_path).expect("read claude mcp");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("parse claude mcp");
+    let servers = value
+        .get("mcpServers")
+        .and_then(|entry| entry.as_object())
+        .expect("mcpServers object");
+
+    assert!(
+        servers.contains_key("user-managed"),
+        "user-managed server should still be present"
+    );
+    assert!(
+        !servers.contains_key("db-server"),
+        "db-server should NOT have been written because mcp live sync is disabled"
+    );
+}
+
+#[test]
+fn settings_without_mcp_live_sync_field_defaults_to_true() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    // Simulate old settings JSON without the field
+    let old_settings_json = json!({
+        "show_in_tray": true,
+        "minimize_to_tray_on_close": true
+    });
+    let parsed: AppSettings =
+        serde_json::from_value(old_settings_json).expect("deserialize old settings");
+
+    assert!(
+        parsed.mcp_live_sync_enabled,
+        "missing mcp_live_sync_enabled should default to true"
+    );
+}
