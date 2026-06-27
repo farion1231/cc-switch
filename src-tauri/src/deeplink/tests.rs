@@ -88,6 +88,15 @@ fn test_parse_deeplink_with_notes() {
 }
 
 #[test]
+fn test_parse_deeplink_with_api_format() {
+    let url = "ccswitch://v1/import?resource=provider&app=codex&name=Codex&homepage=https%3A%2F%2Fcodex.com&endpoint=https%3A%2F%2Fapi.codex.com&apiKey=key123&apiFormat=openai_responses";
+
+    let request = parse_deeplink_url(url).unwrap();
+
+    assert_eq!(request.api_format, Some("openai_responses".to_string()));
+}
+
+#[test]
 fn test_parse_invalid_scheme() {
     let url = "https://v1/import?resource=provider&app=claude&name=Test";
 
@@ -175,6 +184,7 @@ fn test_build_gemini_provider_with_model() {
         api_key: Some("test-api-key".to_string()),
         icon: None,
         model: Some("gemini-2.0-flash".to_string()),
+        api_format: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -228,6 +238,7 @@ fn test_build_gemini_provider_without_model() {
         api_key: Some("test-api-key".to_string()),
         icon: None,
         model: None,
+        api_format: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -276,6 +287,7 @@ fn test_parse_and_merge_config_claude() {
         api_key: None,
         icon: None,
         model: None,
+        api_format: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -367,6 +379,7 @@ fn test_parse_and_merge_config_url_override() {
         api_key: Some("sk-new".to_string()), // URL param should override
         icon: None,
         model: None,
+        api_format: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -430,6 +443,7 @@ fn test_build_claude_provider_preserves_custom_env_fields() {
         icon: None,
         // URL param: must win over the same key in config (haiku-from-config)
         model: Some("main-model".to_string()),
+        api_format: None,
         notes: None,
         haiku_model: Some("haiku-from-url".to_string()),
         sonnet_model: None,
@@ -485,6 +499,7 @@ fn test_build_claude_provider_without_config_unchanged() {
         api_key: Some("sk".to_string()),
         icon: None,
         model: None,
+        api_format: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,

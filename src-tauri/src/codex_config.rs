@@ -1,5 +1,10 @@
+use std::cmp::Ordering;
 use std::collections::HashSet;
+use std::io::{ErrorKind, Read, Write};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::config::{
     atomic_write, delete_file, get_home_dir, read_json_file, sanitize_provider_name,
@@ -10,10 +15,50 @@ use serde_json::{json, Value};
 use std::fs;
 use std::process::Command;
 use toml_edit::DocumentMut;
+use tungstenite::Message;
 
 pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
 const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
+// Codex Desktop currently filters catalog entries through this Statsig dynamic
+// config before rendering the model picker.
+const CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID: &str = "107580212";
+const CODEX_DESKTOP_STATSIG_CACHE_KEY_MARKER: &str = "statsig.cached.evaluations";
+const CODEX_DESKTOP_STATSIG_LAST_MODIFIED_KEY_MARKER: &str =
+    "statsig.last_modified_time.evaluations";
+const CODEX_DESKTOP_MODEL_WHITELIST_RETRY_INTERVAL: Duration = Duration::from_secs(5);
+// Codex Desktop may refresh Statsig with a newer default-only Network cache.
+// Keep patched caches preferred long enough for the active CC Switch provider.
+const CODEX_DESKTOP_STATSIG_PIN_HORIZON: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+const CODEX_DESKTOP_STATSIG_PIN_REFRESH_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+const CODEX_DESKTOP_REMOTE_DEBUGGING_PORT: u16 = 8315;
+const CODEX_DESKTOP_DEVTOOLS_TIMEOUT: Duration = Duration::from_millis(900);
+
+#[derive(Debug, Default)]
+struct CodexDesktopModelWhitelistSyncState {
+    model_ids: Vec<String>,
+    generation: u64,
+}
+
+type CodexDesktopModelWhitelistSyncHandle =
+    Arc<(Mutex<CodexDesktopModelWhitelistSyncState>, Condvar)>;
+
+static CODEX_DESKTOP_MODEL_WHITELIST_SYNC: OnceLock<CodexDesktopModelWhitelistSyncHandle> =
+    OnceLock::new();
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexDesktopStatsigWrapperEncoding {
+    Utf8,
+    Utf16Le,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CodexDesktopRuntimeWhitelistPatchResult {
+    changed: bool,
+    active_model_count: usize,
+    patched_value_count: usize,
+    storage_cache_count: usize,
+}
 
 /// Reserved built-in provider IDs from OpenAI Codex's config/model-provider
 /// catalog. Keep in sync with Codex `RESERVED_MODEL_PROVIDER_IDS` and legacy
@@ -313,6 +358,7 @@ fn extract_codex_top_level_u64(config_text: &str, field: &str) -> Option<u64> {
 
 fn codex_catalog_model_entry(
     template: &Value,
+    provider_id: &str,
     model: &str,
     display_name: &str,
     context_window: u64,
@@ -324,10 +370,20 @@ fn codex_catalog_model_entry(
     };
 
     entry_obj.insert("slug".to_string(), json!(model));
+    entry_obj.insert("model".to_string(), json!(model));
+    entry_obj.insert("provider".to_string(), json!(provider_id));
+    entry_obj.insert("backend_provider".to_string(), json!(provider_id));
     entry_obj.insert("display_name".to_string(), json!(display_name));
     entry_obj.insert("description".to_string(), json!(display_name));
     entry_obj.insert("context_window".to_string(), json!(context_window));
     entry_obj.insert("max_context_window".to_string(), json!(context_window));
+    entry_obj.insert("minimal_client_version".to_string(), json!("0.0.1"));
+    entry_obj.insert(
+        "available_in_plans".to_string(),
+        json!(["free", "plus", "pro", "team", "business", "enterprise"]),
+    );
+    entry_obj.insert("visibility".to_string(), json!("list"));
+    entry_obj.insert("supported_in_api".to_string(), json!(true));
     entry_obj.insert("priority".to_string(), json!(1000 + priority));
     entry_obj.insert("additional_speed_tiers".to_string(), json!([]));
     entry_obj.insert("service_tiers".to_string(), json!([]));
@@ -339,9 +395,19 @@ fn codex_catalog_model_entry(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CodexCatalogModelSpec {
+    provider_id: String,
     model: String,
     display_name: String,
     context_window: u64,
+}
+
+fn codex_catalog_provider_id(config_text: &str) -> String {
+    config_text
+        .parse::<DocumentMut>()
+        .ok()
+        .and_then(|doc| active_codex_model_provider_id(&doc))
+        .filter(|id| is_custom_codex_model_provider_id(id))
+        .unwrap_or_else(|| CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string())
 }
 
 fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCatalogModelSpec> {
@@ -355,7 +421,8 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
 
     let default_context_window =
         extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
-    let mut seen = std::collections::HashSet::new();
+    let provider_id = codex_catalog_provider_id(config_text);
+    let mut seen = HashSet::new();
     let mut specs = Vec::new();
 
     for model_config in models {
@@ -387,6 +454,7 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
         .unwrap_or(default_context_window);
 
         specs.push(CodexCatalogModelSpec {
+            provider_id: provider_id.clone(),
             model: model.to_string(),
             display_name: display_name.to_string(),
             context_window,
@@ -394,6 +462,1177 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
     }
 
     specs
+}
+
+fn codex_model_ids_from_settings(settings: &Value) -> Vec<String> {
+    let Some(models) = settings
+        .get("modelCatalog")
+        .and_then(|catalog| catalog.get("models"))
+        .and_then(|models| models.as_array())
+    else {
+        return Vec::new();
+    };
+
+    let mut seen = HashSet::new();
+    let mut model_ids = Vec::new();
+    for model_config in models {
+        let Some(model) = model_config
+            .get("model")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+        else {
+            continue;
+        };
+
+        if seen.insert(model.to_string()) {
+            model_ids.push(model.to_string());
+        }
+    }
+
+    model_ids
+}
+
+fn decode_codex_desktop_statsig_wrapper(
+    bytes: &[u8],
+) -> Option<(Option<u8>, CodexDesktopStatsigWrapperEncoding, Value)> {
+    // Chromium localStorage LevelDB values can carry a one-byte type prefix and
+    // may store strings as either UTF-8 or UTF-16LE. Preserve the original form.
+    let (prefix, json_bytes) = if matches!(bytes.first(), Some(0) | Some(1)) {
+        (bytes.first().copied(), &bytes[1..])
+    } else {
+        (None, bytes)
+    };
+
+    if let Ok(text) = std::str::from_utf8(json_bytes) {
+        if let Ok(wrapper) = serde_json::from_str(text) {
+            return Some((prefix, CodexDesktopStatsigWrapperEncoding::Utf8, wrapper));
+        }
+    }
+
+    if json_bytes.len() % 2 == 0 {
+        let units = json_bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        if let Ok(text) = String::from_utf16(&units) {
+            if let Ok(wrapper) = serde_json::from_str(&text) {
+                return Some((prefix, CodexDesktopStatsigWrapperEncoding::Utf16Le, wrapper));
+            }
+        }
+    }
+
+    None
+}
+
+fn encode_codex_desktop_statsig_wrapper(
+    prefix: Option<u8>,
+    encoding: CodexDesktopStatsigWrapperEncoding,
+    wrapper: &Value,
+) -> Option<Vec<u8>> {
+    let text = serde_json::to_string(wrapper).ok()?;
+    let payload_capacity = match encoding {
+        CodexDesktopStatsigWrapperEncoding::Utf8 => text.len(),
+        CodexDesktopStatsigWrapperEncoding::Utf16Le => text.len() * 2,
+    };
+    let mut encoded = Vec::with_capacity(payload_capacity + usize::from(prefix.is_some()));
+    if let Some(prefix) = prefix {
+        encoded.push(prefix);
+    }
+    match encoding {
+        CodexDesktopStatsigWrapperEncoding::Utf8 => encoded.extend_from_slice(text.as_bytes()),
+        CodexDesktopStatsigWrapperEncoding::Utf16Le => {
+            for unit in text.encode_utf16() {
+                encoded.extend_from_slice(&unit.to_le_bytes());
+            }
+        }
+    }
+    Some(encoded)
+}
+
+fn codex_desktop_statsig_available_model_ids(wrapper: &Value) -> Option<HashSet<String>> {
+    let data_text = wrapper.get("data").and_then(|value| value.as_str())?;
+    let data = serde_json::from_str::<Value>(data_text).ok()?;
+    data.get("dynamic_configs")
+        .and_then(|value| value.get(CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID))
+        .and_then(|value| value.get("value"))
+        .and_then(|value| value.get("available_models"))
+        .and_then(|value| value.as_array())
+        .map(|models| {
+            models
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_string))
+                .collect::<HashSet<_>>()
+        })
+}
+
+fn codex_desktop_statsig_has_all_models(wrapper: &Value, model_ids: &[String]) -> bool {
+    let Some(available_models) = codex_desktop_statsig_available_model_ids(wrapper) else {
+        return false;
+    };
+    model_ids
+        .iter()
+        .all(|model_id| available_models.contains(model_id))
+}
+
+fn merge_codex_desktop_statsig_available_models(wrapper: &mut Value, model_ids: &[String]) -> bool {
+    if model_ids.is_empty() {
+        return false;
+    }
+
+    let Some(data_text) = wrapper.get("data").and_then(|value| value.as_str()) else {
+        return false;
+    };
+    let Ok(mut data) = serde_json::from_str::<Value>(data_text) else {
+        return false;
+    };
+
+    let Some(data_obj) = data.as_object_mut() else {
+        return false;
+    };
+    let dynamic_configs = data_obj
+        .entry("dynamic_configs")
+        .or_insert_with(|| json!({}));
+    let Some(dynamic_configs_obj) = dynamic_configs.as_object_mut() else {
+        return false;
+    };
+    let config = dynamic_configs_obj
+        .entry(CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID)
+        .or_insert_with(|| json!({ "value": {} }));
+    let Some(config_obj) = config.as_object_mut() else {
+        return false;
+    };
+    let value = config_obj.entry("value").or_insert_with(|| json!({}));
+    let Some(value_obj) = value.as_object_mut() else {
+        return false;
+    };
+    let available_models = value_obj
+        .entry("available_models")
+        .or_insert_with(|| json!([]));
+    let Some(available_models) = available_models.as_array_mut() else {
+        return false;
+    };
+
+    let mut seen = available_models
+        .iter()
+        .filter_map(|value| value.as_str().map(str::to_string))
+        .collect::<HashSet<_>>();
+    let mut changed = false;
+
+    for model_id in model_ids {
+        if seen.insert(model_id.clone()) {
+            available_models.push(json!(model_id));
+            changed = true;
+        }
+    }
+
+    if !changed {
+        return false;
+    }
+
+    let Ok(updated_data_text) = serde_json::to_string(&data) else {
+        return false;
+    };
+    if let Some(wrapper_obj) = wrapper.as_object_mut() {
+        wrapper_obj.insert("data".to_string(), json!(updated_data_text));
+        true
+    } else {
+        false
+    }
+}
+
+fn codex_desktop_statsig_cache_key_from_leveldb_key(key_text: &str) -> Option<String> {
+    let marker_start = key_text.find(CODEX_DESKTOP_STATSIG_CACHE_KEY_MARKER)?;
+    Some(
+        key_text[marker_start..]
+            .trim_matches(char::from(0))
+            .to_string(),
+    )
+}
+
+fn codex_desktop_statsig_timestamp_millis(value: &Value) -> Option<i64> {
+    if let Some(value) = value.as_i64() {
+        return Some(value);
+    }
+    if let Some(value) = value.as_u64() {
+        return i64::try_from(value).ok();
+    }
+    value.as_f64().and_then(|value| {
+        if value.is_finite() && value >= 0.0 && value <= i64::MAX as f64 {
+            Some(value as i64)
+        } else {
+            None
+        }
+    })
+}
+
+fn codex_desktop_active_statsig_cache_keys(last_modified: &Value) -> Vec<String> {
+    let Some(entries) = last_modified.as_object() else {
+        return Vec::new();
+    };
+
+    let mut cache_keys = entries
+        .iter()
+        .filter(|(key, _)| key.contains(CODEX_DESKTOP_STATSIG_CACHE_KEY_MARKER))
+        .filter_map(|(key, value)| {
+            codex_desktop_statsig_timestamp_millis(value).map(|timestamp| (key.clone(), timestamp))
+        })
+        .collect::<Vec<_>>();
+
+    cache_keys.sort_by(|(left_key, left_time), (right_key, right_time)| {
+        right_time
+            .cmp(left_time)
+            .then_with(|| left_key.cmp(right_key))
+    });
+
+    cache_keys.into_iter().map(|(key, _)| key).collect()
+}
+
+fn codex_desktop_statsig_active_rank(
+    key_text: &str,
+    active_cache_keys: &[String],
+) -> Option<usize> {
+    active_cache_keys
+        .iter()
+        .position(|cache_key| key_text.contains(cache_key))
+}
+
+fn codex_desktop_now_millis() -> i64 {
+    let Ok(elapsed) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+        return 0;
+    };
+    elapsed.as_millis().min(i64::MAX as u128) as i64
+}
+
+fn codex_desktop_saturating_add_duration_millis(base: i64, duration: Duration) -> i64 {
+    let millis = duration.as_millis().min(i64::MAX as u128) as i64;
+    base.saturating_add(millis)
+}
+
+fn pin_codex_desktop_statsig_last_modified_cache_keys(
+    last_modified: &mut Value,
+    cache_keys: &HashSet<String>,
+    now_millis: i64,
+) -> bool {
+    if cache_keys.is_empty() {
+        return false;
+    }
+
+    let Some(entries) = last_modified.as_object_mut() else {
+        return false;
+    };
+
+    let refresh_after = codex_desktop_saturating_add_duration_millis(
+        now_millis,
+        CODEX_DESKTOP_STATSIG_PIN_REFRESH_AFTER,
+    );
+    let pinned_until =
+        codex_desktop_saturating_add_duration_millis(now_millis, CODEX_DESKTOP_STATSIG_PIN_HORIZON);
+    let mut changed = false;
+
+    for cache_key in cache_keys {
+        if let Some(value) = entries.get_mut(cache_key) {
+            let current_timestamp =
+                codex_desktop_statsig_timestamp_millis(value).unwrap_or_default();
+            if current_timestamp < refresh_after {
+                *value = json!(pinned_until);
+                changed = true;
+            }
+        } else {
+            entries.insert(cache_key.clone(), json!(pinned_until));
+            changed = true;
+        }
+    }
+
+    changed
+}
+
+fn codex_desktop_local_storage_leveldb_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    #[cfg(target_os = "macos")]
+    {
+        let codex_support_dir = get_home_dir()
+            .join("Library")
+            .join("Application Support")
+            .join("Codex");
+        candidates.push(
+            codex_support_dir
+                .join("Default")
+                .join("Local Storage")
+                .join("leveldb"),
+        );
+        candidates.push(codex_support_dir.join("Local Storage").join("leveldb"));
+        candidates.push(
+            codex_support_dir
+                .join("Default")
+                .join("Partitions")
+                .join("codex-browser-app")
+                .join("Local Storage")
+                .join("leveldb"),
+        );
+        candidates.push(
+            codex_support_dir
+                .join("Partitions")
+                .join("codex-browser-app")
+                .join("Local Storage")
+                .join("leveldb"),
+        );
+        candidates.push(
+            codex_support_dir
+                .join("codex-browser-app")
+                .join("Local Storage")
+                .join("leveldb"),
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            let codex_support_dir = PathBuf::from(appdata).join("Codex");
+            candidates.push(
+                codex_support_dir
+                    .join("Default")
+                    .join("Local Storage")
+                    .join("leveldb"),
+            );
+            candidates.push(codex_support_dir.join("Local Storage").join("leveldb"));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(config_home) = std::env::var_os("XDG_CONFIG_HOME") {
+            let codex_support_dir = PathBuf::from(config_home).join("Codex");
+            candidates.push(
+                codex_support_dir
+                    .join("Default")
+                    .join("Local Storage")
+                    .join("leveldb"),
+            );
+            candidates.push(codex_support_dir.join("Local Storage").join("leveldb"));
+        }
+        let codex_support_dir = get_home_dir().join(".config").join("Codex");
+        candidates.push(
+            codex_support_dir
+                .join("Default")
+                .join("Local Storage")
+                .join("leveldb"),
+        );
+        candidates.push(codex_support_dir.join("Local Storage").join("leveldb"));
+    }
+
+    candidates
+}
+
+fn sync_codex_desktop_available_models_cache_path(
+    leveldb_path: &Path,
+    model_ids: &[String],
+) -> Result<usize, String> {
+    let options = rusty_leveldb::Options {
+        create_if_missing: false,
+        ..Default::default()
+    };
+    let mut db = rusty_leveldb::DB::open(leveldb_path, options).map_err(|err| match err.code {
+        rusty_leveldb::StatusCode::LockError => {
+            format!("Codex Desktop localStorage LevelDB is locked: {leveldb_path:?}")
+        }
+        _ => format!("Failed to open Codex Desktop localStorage LevelDB {leveldb_path:?}: {err}"),
+    })?;
+
+    let mut cache_entries = Vec::new();
+    let mut last_modified_entries = Vec::new();
+    {
+        use rusty_leveldb::LdbIterator;
+
+        let mut iter = db.new_iter().map_err(|err| {
+            format!("Failed to iterate Codex Desktop localStorage LevelDB: {err}")
+        })?;
+        while iter.advance() {
+            let Some((key, value)) = iter.current() else {
+                continue;
+            };
+
+            let key_text = String::from_utf8_lossy(&key).to_string();
+            if key_text.contains(CODEX_DESKTOP_STATSIG_LAST_MODIFIED_KEY_MARKER) {
+                if let Some((prefix, encoding, last_modified)) =
+                    decode_codex_desktop_statsig_wrapper(&value)
+                {
+                    last_modified_entries.push((key.to_vec(), prefix, encoding, last_modified));
+                }
+            }
+
+            if key_text.contains(CODEX_DESKTOP_STATSIG_CACHE_KEY_MARKER) {
+                cache_entries.push((key.to_vec(), key_text, value.to_vec()));
+            }
+        }
+    }
+
+    let mut active_cache_keys = Vec::new();
+    let mut seen_active_cache_keys = HashSet::new();
+    for (_, _, _, last_modified) in &last_modified_entries {
+        for cache_key in codex_desktop_active_statsig_cache_keys(last_modified) {
+            if seen_active_cache_keys.insert(cache_key.clone()) {
+                active_cache_keys.push(cache_key);
+            }
+        }
+    }
+
+    cache_entries.sort_by(|(_, left_key_text, _), (_, right_key_text, _)| {
+        let left_rank = codex_desktop_statsig_active_rank(left_key_text, &active_cache_keys);
+        let right_rank = codex_desktop_statsig_active_rank(right_key_text, &active_cache_keys);
+        match (left_rank, right_rank) {
+            (Some(left), Some(right)) => left.cmp(&right),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => left_key_text.cmp(right_key_text),
+        }
+    });
+
+    let mut updates = Vec::new();
+    let mut pinned_cache_keys = HashSet::new();
+    let mut active_update_count = 0usize;
+
+    for (key, key_text, value) in cache_entries {
+        let Some(cache_key) = codex_desktop_statsig_cache_key_from_leveldb_key(&key_text) else {
+            continue;
+        };
+        let is_active = codex_desktop_statsig_active_rank(&key_text, &active_cache_keys).is_some();
+
+        let Some((prefix, encoding, mut wrapper)) = decode_codex_desktop_statsig_wrapper(&value)
+        else {
+            continue;
+        };
+
+        let had_all_models = codex_desktop_statsig_has_all_models(&wrapper, model_ids);
+        let changed = !had_all_models
+            && merge_codex_desktop_statsig_available_models(&mut wrapper, model_ids);
+        if codex_desktop_statsig_has_all_models(&wrapper, model_ids) {
+            pinned_cache_keys.insert(cache_key);
+        }
+
+        if !changed {
+            continue;
+        }
+
+        let Some(updated_value) = encode_codex_desktop_statsig_wrapper(prefix, encoding, &wrapper)
+        else {
+            continue;
+        };
+        if is_active {
+            active_update_count += 1;
+        }
+        updates.push((key, updated_value));
+    }
+
+    let now_millis = codex_desktop_now_millis();
+    for (key, prefix, encoding, mut last_modified) in last_modified_entries {
+        if !pin_codex_desktop_statsig_last_modified_cache_keys(
+            &mut last_modified,
+            &pinned_cache_keys,
+            now_millis,
+        ) {
+            continue;
+        }
+        let Some(updated_value) =
+            encode_codex_desktop_statsig_wrapper(prefix, encoding, &last_modified)
+        else {
+            continue;
+        };
+        updates.push((key, updated_value));
+    }
+
+    let updated_count = updates.len();
+    for (key, value) in updates {
+        db.put(&key, &value)
+            .map_err(|err| format!("Failed to update Codex Desktop localStorage LevelDB: {err}"))?;
+    }
+    db.close()
+        .map_err(|err| format!("Failed to close Codex Desktop localStorage LevelDB: {err}"))?;
+
+    if updated_count > 0 {
+        log::info!(
+            "Synced Codex Desktop Statsig LevelDB path {leveldb_path:?}: updated {updated_count} entries, active cache updates: {active_update_count}, pinned cache keys: {}",
+            pinned_cache_keys.len()
+        );
+    } else if !active_cache_keys.is_empty() {
+        log::debug!(
+            "Codex Desktop Statsig LevelDB path {leveldb_path:?} already has {} pinned cache keys; active cache candidates: {}",
+            pinned_cache_keys.len(),
+            active_cache_keys.len()
+        );
+    }
+
+    Ok(updated_count)
+}
+
+fn sync_codex_desktop_available_models_cache(model_ids: &[String]) -> Result<usize, String> {
+    if model_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let mut seen_paths = HashSet::new();
+    let leveldb_paths = codex_desktop_local_storage_leveldb_candidates()
+        .into_iter()
+        .filter(|path| path.exists())
+        .filter(|path| seen_paths.insert(path.clone()))
+        .collect::<Vec<_>>();
+    if leveldb_paths.is_empty() {
+        return Ok(0);
+    }
+
+    let mut updated_count = 0;
+    let mut errors = Vec::new();
+
+    for leveldb_path in leveldb_paths {
+        match sync_codex_desktop_available_models_cache_path(&leveldb_path, model_ids) {
+            Ok(count) => updated_count += count,
+            Err(err) => errors.push(err),
+        }
+    }
+
+    if updated_count == 0 && !errors.is_empty() {
+        Err(errors.join("; "))
+    } else {
+        if !errors.is_empty() {
+            log::warn!(
+                "Some Codex Desktop model whitelist cache paths could not be synced: {}",
+                errors.join("; ")
+            );
+        }
+        Ok(updated_count)
+    }
+}
+
+fn log_codex_desktop_available_models_cache_sync_result(
+    model_ids: &[String],
+    result: Result<usize, String>,
+    is_retry: bool,
+) {
+    match result {
+        Ok(updated_count) if updated_count > 0 => {
+            log::info!(
+                "Synced {} Codex model ids into {} Codex Desktop Statsig cache entries{}",
+                model_ids.len(),
+                updated_count,
+                if is_retry { " during retry" } else { "" }
+            );
+        }
+        Ok(_) => {
+            log::debug!(
+                "No Codex Desktop Statsig cache entry needed model whitelist updates for {} model ids{}",
+                model_ids.len(),
+                if is_retry { " during retry" } else { "" }
+            );
+        }
+        Err(err) if is_retry => {
+            log::debug!(
+                "Codex Desktop model whitelist cache retry is pending for {} model ids: {err}",
+                model_ids.len()
+            );
+        }
+        Err(err) => {
+            log::warn!(
+                "Failed to sync Codex Desktop model whitelist cache; CC Switch will keep retrying while this Codex provider is active: {err}"
+            );
+        }
+    }
+}
+
+fn codex_desktop_runtime_patch_expression(model_ids: &[String]) -> Result<String, String> {
+    let model_ids_json = serde_json::to_string(model_ids)
+        .map_err(|err| format!("Failed to serialize Codex model ids for runtime patch: {err}"))?;
+    Ok(format!(
+        r#"
+(() => {{
+  const MODEL_IDS = {model_ids_json};
+  const CONFIG_ID = "{CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID}";
+  const CACHE_PREFIX = "{CODEX_DESKTOP_STATSIG_CACHE_KEY_MARKER}";
+  const LAST_MODIFIED_KEY = "{CODEX_DESKTOP_STATSIG_LAST_MODIFIED_KEY_MARKER}";
+  const PIN_UNTIL = Date.now() + 30 * 24 * 60 * 60 * 1000;
+  let changed = false;
+  let patchedValueCount = 0;
+  let storageCacheCount = 0;
+
+  const hasAllModels = (value) => {{
+    const list = value && Array.isArray(value.available_models) ? value.available_models : [];
+    return MODEL_IDS.every((modelId) => list.includes(modelId));
+  }};
+
+  const patchValue = (value) => {{
+    if (!value || typeof value !== "object") return false;
+    if (!Array.isArray(value.available_models)) value.available_models = [];
+    const seen = new Set(value.available_models);
+    let valueChanged = false;
+    for (const modelId of MODEL_IDS) {{
+      if (!seen.has(modelId)) {{
+        value.available_models.push(modelId);
+        seen.add(modelId);
+        valueChanged = true;
+      }}
+    }}
+    if (valueChanged) {{
+      changed = true;
+      patchedValueCount += 1;
+    }}
+    return valueChanged;
+  }};
+
+  const patchConfig = (config) => {{
+    if (!config || typeof config !== "object") return false;
+    let configChanged = false;
+    configChanged = patchValue(config.value) || configChanged;
+    configChanged = patchValue(config.__evaluation && config.__evaluation.value) || configChanged;
+    return configChanged;
+  }};
+
+  const patchStatsigTree = (root, depth = 0, seen = new WeakSet()) => {{
+    if (!root || typeof root !== "object" || depth > 5 || seen.has(root)) return false;
+    seen.add(root);
+    let treeChanged = false;
+    if (root.dynamic_configs && root.dynamic_configs[CONFIG_ID]) {{
+      treeChanged = patchConfig(root.dynamic_configs[CONFIG_ID]) || treeChanged;
+    }}
+    if (root[CONFIG_ID]) {{
+      treeChanged = patchConfig(root[CONFIG_ID]) || treeChanged;
+    }}
+    for (const key of Object.keys(root)) {{
+      const value = root[key];
+      if (value && typeof value === "object") {{
+        treeChanged = patchStatsigTree(value, depth + 1, seen) || treeChanged;
+      }}
+    }}
+    return treeChanged;
+  }};
+
+  const readStoredJson = (key) => {{
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const wrapper = JSON.parse(raw);
+    if (wrapper && typeof wrapper.data === "string") {{
+      return {{ wrapper, data: JSON.parse(wrapper.data), wrapped: true }};
+    }}
+    return {{ wrapper: null, data: wrapper, wrapped: false }};
+  }};
+
+  const writeStoredJson = (key, stored) => {{
+    if (stored.wrapped) {{
+      stored.wrapper.data = JSON.stringify(stored.data);
+      localStorage.setItem(key, JSON.stringify(stored.wrapper));
+    }} else {{
+      localStorage.setItem(key, JSON.stringify(stored.data));
+    }}
+  }};
+
+  const patchedStorageKeys = [];
+  for (const key of Object.keys(localStorage)) {{
+    if (!key.startsWith(CACHE_PREFIX)) continue;
+    try {{
+      const stored = readStoredJson(key);
+      const config = stored && stored.data && stored.data.dynamic_configs && stored.data.dynamic_configs[CONFIG_ID];
+      const beforeHasAll = config && config.value && hasAllModels(config.value);
+      const storageChanged = patchConfig(config);
+      const afterHasAll = config && config.value && hasAllModels(config.value);
+      if (storageChanged) {{
+        writeStoredJson(key, stored);
+        storageCacheCount += 1;
+      }}
+      if (beforeHasAll || afterHasAll) {{
+        patchedStorageKeys.push(key);
+      }}
+    }} catch (_) {{}}
+  }}
+
+  try {{
+    const stored = readStoredJson(LAST_MODIFIED_KEY);
+    if (stored && stored.data && typeof stored.data === "object") {{
+      let lastModifiedChanged = false;
+      for (const key of patchedStorageKeys) {{
+        const current = Number(stored.data[key] || 0);
+        if (!Number.isFinite(current) || current < PIN_UNTIL) {{
+          stored.data[key] = PIN_UNTIL;
+          lastModifiedChanged = true;
+        }}
+      }}
+      if (lastModifiedChanged) {{
+        writeStoredJson(LAST_MODIFIED_KEY, stored);
+      }}
+    }}
+  }} catch (_) {{}}
+
+  const client = window.__STATSIG__ && window.__STATSIG__.firstInstance;
+  const storePatched = patchStatsigTree(client && client._store);
+  patchConfig(client && client.getDynamicConfig && client.getDynamicConfig(CONFIG_ID));
+  patchConfig(client && client._memoCache && client._memoCache["c|" + CONFIG_ID]);
+
+  if (client && changed) {{
+    try {{
+      if (storePatched && typeof client._setStatus === "function") {{
+        const values = client._store && client._store._values && client._store._values._values;
+        client._setStatus(client.loadingStatus || "Ready", values || null);
+      }} else if (typeof client.$emt === "function") {{
+        client.$emt({{ name: "values_updated", status: client.loadingStatus || "Ready", values: null }});
+      }}
+    }} catch (_) {{}}
+  }}
+
+  const activeModels = client && client.getDynamicConfig
+    ? (client.getDynamicConfig(CONFIG_ID).value || {{}}).available_models
+    : null;
+  return {{
+    changed,
+    activeModelCount: Array.isArray(activeModels) ? activeModels.length : 0,
+    patchedValueCount,
+    storageCacheCount
+  }};
+}})()
+"#
+    ))
+}
+
+fn codex_desktop_devtools_page_websocket_url() -> Result<Option<String>, String> {
+    let address = SocketAddr::from(([127, 0, 0, 1], CODEX_DESKTOP_REMOTE_DEBUGGING_PORT));
+    let mut stream = match TcpStream::connect_timeout(&address, CODEX_DESKTOP_DEVTOOLS_TIMEOUT) {
+        Ok(stream) => stream,
+        Err(err)
+            if matches!(
+                err.kind(),
+                ErrorKind::ConnectionRefused | ErrorKind::NotFound | ErrorKind::TimedOut
+            ) =>
+        {
+            return Ok(None);
+        }
+        Err(err) => {
+            return Err(format!(
+                "Failed to connect to Codex Desktop DevTools target list: {err}"
+            ));
+        }
+    };
+    stream
+        .set_read_timeout(Some(CODEX_DESKTOP_DEVTOOLS_TIMEOUT))
+        .map_err(|err| format!("Failed to set Codex Desktop DevTools read timeout: {err}"))?;
+    stream
+        .set_write_timeout(Some(CODEX_DESKTOP_DEVTOOLS_TIMEOUT))
+        .map_err(|err| format!("Failed to set Codex Desktop DevTools write timeout: {err}"))?;
+
+    let request = format!(
+        "GET /json/list HTTP/1.1\r\nHost: 127.0.0.1:{CODEX_DESKTOP_REMOTE_DEBUGGING_PORT}\r\nAccept: application/json\r\nConnection: close\r\n\r\n"
+    );
+    match stream.write_all(request.as_bytes()) {
+        Ok(()) => {}
+        Err(err)
+            if matches!(
+                err.kind(),
+                ErrorKind::BrokenPipe | ErrorKind::ConnectionReset | ErrorKind::TimedOut
+            ) =>
+        {
+            return Ok(None);
+        }
+        Err(err) => {
+            return Err(format!(
+                "Failed to query Codex Desktop DevTools target list: {err}"
+            ));
+        }
+    }
+
+    let mut response_bytes = Vec::new();
+    let mut buffer = [0; 4096];
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(bytes_read) => response_bytes.extend_from_slice(&buffer[..bytes_read]),
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::ConnectionReset
+                ) =>
+            {
+                if response_bytes.is_empty() {
+                    return Ok(None);
+                }
+                break;
+            }
+            Err(err) => {
+                return Err(format!(
+                    "Failed to read Codex Desktop DevTools target list: {err}"
+                ));
+            }
+        }
+    }
+
+    let response = String::from_utf8(response_bytes)
+        .map_err(|err| format!("Codex Desktop DevTools target list was not UTF-8: {err}"))?;
+    let (headers, body) = response
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| "Codex Desktop DevTools target list response had no body".to_string())?;
+    let status_ok = headers
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .is_some_and(|status| status == "200");
+    if !status_ok {
+        return Ok(None);
+    }
+
+    let targets = serde_json::from_str::<Value>(body)
+        .map_err(|err| format!("Failed to parse Codex Desktop DevTools target list: {err}"))?;
+    let Some(targets) = targets.as_array() else {
+        return Ok(None);
+    };
+
+    let page = targets
+        .iter()
+        .find(|target| {
+            target.get("type").and_then(Value::as_str) == Some("page")
+                && target
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .is_some_and(|url| url == "app://-/index.html")
+        })
+        .or_else(|| {
+            targets.iter().find(|target| {
+                target.get("type").and_then(Value::as_str) == Some("page")
+                    && target
+                        .get("url")
+                        .and_then(Value::as_str)
+                        .is_some_and(|url| url.starts_with("app://-"))
+            })
+        });
+
+    Ok(page
+        .and_then(|target| target.get("webSocketDebuggerUrl"))
+        .and_then(Value::as_str)
+        .map(str::to_string))
+}
+
+fn connect_codex_desktop_devtools_websocket(
+    websocket_url: &str,
+) -> Result<tungstenite::WebSocket<TcpStream>, String> {
+    let parsed_url = url::Url::parse(websocket_url)
+        .map_err(|err| format!("Invalid Codex Desktop DevTools websocket URL: {err}"))?;
+    if parsed_url.scheme() != "ws" {
+        return Err(format!(
+            "Unsupported Codex Desktop DevTools websocket scheme `{}`",
+            parsed_url.scheme()
+        ));
+    }
+    let host = parsed_url
+        .host_str()
+        .ok_or_else(|| "Codex Desktop DevTools websocket URL has no host".to_string())?;
+    let port = parsed_url.port_or_known_default().ok_or_else(|| {
+        "Codex Desktop DevTools websocket URL has no explicit or known port".to_string()
+    })?;
+
+    let mut last_error = None;
+    for address in (host, port)
+        .to_socket_addrs()
+        .map_err(|err| format!("Failed to resolve Codex Desktop DevTools address: {err}"))?
+    {
+        match TcpStream::connect_timeout(&address, CODEX_DESKTOP_DEVTOOLS_TIMEOUT) {
+            Ok(stream) => {
+                stream
+                    .set_read_timeout(Some(CODEX_DESKTOP_DEVTOOLS_TIMEOUT))
+                    .map_err(|err| {
+                        format!("Failed to set Codex Desktop DevTools read timeout: {err}")
+                    })?;
+                stream
+                    .set_write_timeout(Some(CODEX_DESKTOP_DEVTOOLS_TIMEOUT))
+                    .map_err(|err| {
+                        format!("Failed to set Codex Desktop DevTools write timeout: {err}")
+                    })?;
+
+                let (socket, _) = tungstenite::client(websocket_url, stream).map_err(|err| {
+                    format!("Failed to connect Codex Desktop DevTools websocket: {err}")
+                })?;
+                return Ok(socket);
+            }
+            Err(err) => {
+                last_error = Some(err);
+            }
+        }
+    }
+
+    Err(match last_error {
+        Some(err) => format!("Failed to connect Codex Desktop DevTools websocket: {err}"),
+        None => "Codex Desktop DevTools websocket host resolved no addresses".to_string(),
+    })
+}
+
+fn read_codex_desktop_cdp_response<Stream>(
+    socket: &mut tungstenite::WebSocket<Stream>,
+    request_id: i64,
+) -> Result<Value, String>
+where
+    Stream: Read + Write,
+{
+    loop {
+        let message = socket
+            .read()
+            .map_err(|err| format!("Failed to read Codex Desktop CDP response: {err}"))?;
+        let text = match message {
+            Message::Text(text) => text,
+            Message::Binary(bytes) => String::from_utf8(bytes)
+                .map_err(|err| format!("Codex Desktop CDP response was not UTF-8: {err}"))?,
+            Message::Close(_) => {
+                return Err("Codex Desktop CDP socket closed before response".to_string());
+            }
+            Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => continue,
+        };
+        let value: Value = serde_json::from_str(&text)
+            .map_err(|err| format!("Failed to parse Codex Desktop CDP response: {err}"))?;
+        if value.get("id").and_then(Value::as_i64) == Some(request_id) {
+            return Ok(value);
+        }
+    }
+}
+
+fn send_codex_desktop_cdp_request<Stream>(
+    socket: &mut tungstenite::WebSocket<Stream>,
+    request_id: i64,
+    method: &str,
+    params: Value,
+) -> Result<Value, String>
+where
+    Stream: Read + Write,
+{
+    let request = json!({
+        "id": request_id,
+        "method": method,
+        "params": params,
+    });
+    socket
+        .send(Message::Text(request.to_string()))
+        .map_err(|err| format!("Failed to send Codex Desktop CDP request: {err}"))?;
+    read_codex_desktop_cdp_response(socket, request_id)
+}
+
+fn sync_codex_desktop_available_models_runtime(
+    model_ids: &[String],
+) -> Result<Option<CodexDesktopRuntimeWhitelistPatchResult>, String> {
+    if model_ids.is_empty() {
+        return Ok(None);
+    }
+
+    let Some(websocket_url) = codex_desktop_devtools_page_websocket_url()? else {
+        return Ok(None);
+    };
+    let mut socket = connect_codex_desktop_devtools_websocket(websocket_url.as_str())?;
+
+    send_codex_desktop_cdp_request(&mut socket, 1, "Runtime.enable", json!({}))?;
+    let expression = codex_desktop_runtime_patch_expression(model_ids)?;
+    let response = send_codex_desktop_cdp_request(
+        &mut socket,
+        2,
+        "Runtime.evaluate",
+        json!({
+            "expression": expression,
+            "returnByValue": true,
+            "awaitPromise": true,
+        }),
+    )?;
+    let _ = socket.close(None);
+
+    if let Some(exception) = response
+        .get("result")
+        .and_then(|result| result.get("exceptionDetails"))
+    {
+        return Err(format!(
+            "Codex Desktop runtime patch threw an exception: {exception}"
+        ));
+    }
+    let Some(value) = response
+        .get("result")
+        .and_then(|result| result.get("result"))
+        .and_then(|result| result.get("value"))
+    else {
+        return Err("Codex Desktop runtime patch returned no value".to_string());
+    };
+
+    Ok(Some(CodexDesktopRuntimeWhitelistPatchResult {
+        changed: value
+            .get("changed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        active_model_count: value
+            .get("activeModelCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize,
+        patched_value_count: value
+            .get("patchedValueCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize,
+        storage_cache_count: value
+            .get("storageCacheCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize,
+    }))
+}
+
+fn log_codex_desktop_available_models_runtime_sync_result(
+    model_ids: &[String],
+    result: Result<Option<CodexDesktopRuntimeWhitelistPatchResult>, String>,
+    is_retry: bool,
+) {
+    match result {
+        Ok(Some(result)) if result.changed => {
+            log::info!(
+                "Synced {} Codex model ids into Codex Desktop renderer Statsig state{}; active models: {}, patched values: {}, storage caches: {}",
+                model_ids.len(),
+                if is_retry { " during retry" } else { "" },
+                result.active_model_count,
+                result.patched_value_count,
+                result.storage_cache_count
+            );
+        }
+        Ok(Some(result)) => {
+            log::debug!(
+                "Codex Desktop renderer Statsig state already includes {} model ids{}; active models: {}",
+                model_ids.len(),
+                if is_retry { " during retry" } else { "" },
+                result.active_model_count
+            );
+        }
+        Ok(None) => {
+            log::debug!(
+                "Codex Desktop DevTools target is not available for renderer model whitelist sync{}",
+                if is_retry { " during retry" } else { "" }
+            );
+        }
+        Err(err) if is_retry => {
+            log::debug!(
+                "Codex Desktop renderer model whitelist retry is pending for {} model ids: {err}",
+                model_ids.len()
+            );
+        }
+        Err(err) => {
+            log::warn!(
+                "Failed to sync Codex Desktop renderer model whitelist; CC Switch will keep retrying while this Codex provider is active: {err}"
+            );
+        }
+    }
+}
+
+fn sync_codex_desktop_available_models_everywhere(model_ids: &[String], is_retry: bool) {
+    log_codex_desktop_available_models_cache_sync_result(
+        model_ids,
+        sync_codex_desktop_available_models_cache(model_ids),
+        is_retry,
+    );
+    log_codex_desktop_available_models_runtime_sync_result(
+        model_ids,
+        sync_codex_desktop_available_models_runtime(model_ids),
+        is_retry,
+    );
+}
+
+fn codex_desktop_model_whitelist_sync_handle() -> CodexDesktopModelWhitelistSyncHandle {
+    CODEX_DESKTOP_MODEL_WHITELIST_SYNC
+        .get_or_init(|| {
+            let handle = Arc::new((
+                Mutex::new(CodexDesktopModelWhitelistSyncState::default()),
+                Condvar::new(),
+            ));
+            let worker_handle = Arc::clone(&handle);
+            if let Err(err) = std::thread::Builder::new()
+                .name("codex-desktop-model-whitelist-sync".to_string())
+                .spawn(move || codex_desktop_model_whitelist_sync_worker(worker_handle))
+            {
+                log::warn!("Failed to start Codex Desktop model whitelist sync worker: {err}");
+            }
+            handle
+        })
+        .clone()
+}
+
+fn codex_desktop_model_whitelist_sync_worker(handle: CodexDesktopModelWhitelistSyncHandle) {
+    let (lock, cvar) = &*handle;
+    let mut seen_generation = 0;
+
+    loop {
+        let model_ids = {
+            let mut state = match lock.lock() {
+                Ok(state) => state,
+                Err(err) => {
+                    log::warn!("Codex Desktop model whitelist sync state was poisoned; continuing");
+                    err.into_inner()
+                }
+            };
+            while state.generation == seen_generation {
+                state = match cvar.wait(state) {
+                    Ok(state) => state,
+                    Err(err) => {
+                        log::warn!(
+                            "Codex Desktop model whitelist sync state was poisoned; continuing"
+                        );
+                        err.into_inner()
+                    }
+                };
+            }
+            seen_generation = state.generation;
+            state.model_ids.clone()
+        };
+
+        if model_ids.is_empty() {
+            continue;
+        }
+
+        // Codex Desktop can lock or refresh its Statsig localStorage after a
+        // provider switch, so keep reconciling the active provider's model IDs.
+        loop {
+            let mut state = match lock.lock() {
+                Ok(state) => state,
+                Err(err) => {
+                    log::warn!("Codex Desktop model whitelist sync state was poisoned; continuing");
+                    err.into_inner()
+                }
+            };
+            let wait_result = cvar.wait_timeout_while(
+                state,
+                CODEX_DESKTOP_MODEL_WHITELIST_RETRY_INTERVAL,
+                |state| state.generation == seen_generation,
+            );
+            state = match wait_result {
+                Ok((state, _)) => state,
+                Err(err) => {
+                    log::warn!("Codex Desktop model whitelist sync state was poisoned; continuing");
+                    err.into_inner().0
+                }
+            };
+
+            if state.generation != seen_generation {
+                break;
+            }
+            drop(state);
+
+            sync_codex_desktop_available_models_everywhere(&model_ids, true);
+        }
+    }
+}
+
+fn monitor_codex_desktop_available_models_cache(model_ids: Vec<String>) {
+    let handle = codex_desktop_model_whitelist_sync_handle();
+    let (lock, cvar) = &*handle;
+    let mut state = match lock.lock() {
+        Ok(state) => state,
+        Err(err) => {
+            log::warn!("Codex Desktop model whitelist sync state was poisoned; continuing");
+            err.into_inner()
+        }
+    };
+    state.model_ids = model_ids;
+    state.generation = state.generation.wrapping_add(1);
+    cvar.notify_one();
+}
+
+fn sync_codex_desktop_available_models_cache_from_settings(settings: &Value) {
+    let model_ids = codex_model_ids_from_settings(settings);
+    if model_ids.is_empty() {
+        monitor_codex_desktop_available_models_cache(Vec::new());
+        return;
+    }
+
+    sync_codex_desktop_available_models_everywhere(&model_ids, false);
+    monitor_codex_desktop_available_models_cache(model_ids);
 }
 
 fn find_codex_model_template(catalog: &Value) -> Option<Value> {
@@ -654,6 +1893,7 @@ fn codex_model_catalog_from_specs(specs: &[CodexCatalogModelSpec], template: &Va
         .map(|(index, spec)| {
             codex_catalog_model_entry(
                 template,
+                &spec.provider_id,
                 &spec.model,
                 &spec.display_name,
                 spec.context_window,
@@ -708,6 +1948,26 @@ fn set_codex_model_catalog_json_field(
     Ok(doc.to_string())
 }
 
+fn set_codex_openai_base_url_field(
+    config_text: &str,
+    base_url: Option<&str>,
+) -> Result<String, AppError> {
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+
+    match base_url.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(base_url) => {
+            doc["openai_base_url"] = toml_edit::value(base_url);
+        }
+        None => {
+            doc.as_table_mut().remove("openai_base_url");
+        }
+    }
+
+    Ok(doc.to_string())
+}
+
 /// Generate Codex `model_catalog_json` from provider settings and inject/remove
 /// the top-level TOML field that points Codex to the generated file.
 pub fn prepare_codex_config_text_with_model_catalog(
@@ -718,6 +1978,10 @@ pub fn prepare_codex_config_text_with_model_catalog(
 
     if let Some(catalog) = codex_model_catalog_from_settings(settings, config_text)? {
         let config_text = set_codex_model_catalog_json_field(config_text, Some(&catalog_path))?;
+        let config_text = set_codex_openai_base_url_field(
+            &config_text,
+            extract_codex_base_url(&config_text).as_deref(),
+        )?;
         write_json_file(&catalog_path, &catalog)?;
         Ok(config_text)
     } else {
@@ -894,7 +2158,10 @@ pub fn write_codex_provider_live_with_catalog(
         .map(|text| prepare_codex_config_text_with_model_catalog(settings, text))
         .transpose()?;
 
-    write_codex_live_for_provider(category, auth, prepared_config.as_deref())
+    write_codex_live_for_provider(category, auth, prepared_config.as_deref())?;
+    sync_codex_desktop_available_models_cache_from_settings(settings);
+
+    Ok(())
 }
 
 /// Extract a provider-scoped `experimental_bearer_token` from Codex `config.toml`.
@@ -2069,7 +3336,12 @@ base_url = "https://production.api/v1"
                 ]
             }
         });
-        let specs = codex_catalog_model_specs(&settings, r#"model_context_window = 128000"#);
+        let specs = codex_catalog_model_specs(
+            &settings,
+            r#"model_provider = "custom"
+model_context_window = 128000
+"#,
+        );
         let catalog = codex_model_catalog_from_specs(&specs, &template);
         let models = catalog
             .get("models")
@@ -2080,6 +3352,33 @@ base_url = "https://production.api/v1"
         assert_eq!(
             models[0].get("slug").and_then(|value| value.as_str()),
             Some("deepseek-v4-flash")
+        );
+        assert_eq!(
+            models[0].get("model").and_then(|value| value.as_str()),
+            Some("deepseek-v4-flash")
+        );
+        assert_eq!(
+            models[0].get("provider").and_then(|value| value.as_str()),
+            Some("custom")
+        );
+        assert_eq!(
+            models[0]
+                .get("backend_provider")
+                .and_then(|value| value.as_str()),
+            Some("custom")
+        );
+        assert_eq!(
+            models[0]
+                .get("minimal_client_version")
+                .and_then(|value| value.as_str()),
+            Some("0.0.1")
+        );
+        assert_eq!(
+            models[0]
+                .get("available_in_plans")
+                .and_then(|value| value.as_array())
+                .map(Vec::len),
+            Some(6)
         );
         assert_eq!(
             models[0]
@@ -2122,6 +3421,324 @@ base_url = "https://production.api/v1"
     }
 
     #[test]
+    fn codex_desktop_statsig_merge_appends_models_without_duplicates() {
+        let data = json!({
+            "dynamic_configs": {
+                CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID: {
+                    "value": {
+                        "available_models": [
+                            "gpt-5.1-codex-max",
+                            "gpt-5.1-codex",
+                            "deepseek-v4-flash"
+                        ]
+                    }
+                }
+            }
+        });
+        let mut wrapper = json!({
+            "source": "NetworkNotModified",
+            "data": data.to_string()
+        });
+        let models = vec![
+            "deepseek-v4-flash".to_string(),
+            "kimi-k2".to_string(),
+            "glm-4.6".to_string(),
+        ];
+
+        assert!(merge_codex_desktop_statsig_available_models(
+            &mut wrapper,
+            &models
+        ));
+
+        let data_text = wrapper
+            .get("data")
+            .and_then(|value| value.as_str())
+            .unwrap();
+        let updated_data: Value = serde_json::from_str(data_text).unwrap();
+        let available_models = updated_data
+            .get("dynamic_configs")
+            .and_then(|value| value.get(CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID))
+            .and_then(|value| value.get("value"))
+            .and_then(|value| value.get("available_models"))
+            .and_then(|value| value.as_array())
+            .unwrap();
+
+        assert_eq!(
+            available_models,
+            &vec![
+                json!("gpt-5.1-codex-max"),
+                json!("gpt-5.1-codex"),
+                json!("deepseek-v4-flash"),
+                json!("kimi-k2"),
+                json!("glm-4.6"),
+            ]
+        );
+    }
+
+    #[test]
+    fn codex_model_ids_from_settings_trims_and_deduplicates() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": " deepseek-v4-flash " },
+                    { "model": "deepseek-v4-flash" },
+                    { "model": "" },
+                    { "model": "kimi-k2" },
+                    { "displayName": "Missing model id" }
+                ]
+            }
+        });
+
+        assert_eq!(
+            codex_model_ids_from_settings(&settings),
+            vec!["deepseek-v4-flash".to_string(), "kimi-k2".to_string()]
+        );
+    }
+
+    #[test]
+    fn codex_desktop_statsig_merge_creates_missing_config_path() {
+        let mut wrapper = json!({
+            "source": "NetworkNotModified",
+            "data": "{}"
+        });
+        let models = vec!["deepseek-v4-flash".to_string()];
+
+        assert!(merge_codex_desktop_statsig_available_models(
+            &mut wrapper,
+            &models
+        ));
+
+        let data_text = wrapper
+            .get("data")
+            .and_then(|value| value.as_str())
+            .unwrap();
+        let updated_data: Value = serde_json::from_str(data_text).unwrap();
+        assert_eq!(
+            updated_data
+                .get("dynamic_configs")
+                .and_then(|value| value.get(CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID))
+                .and_then(|value| value.get("value"))
+                .and_then(|value| value.get("available_models")),
+            Some(&json!(["deepseek-v4-flash"]))
+        );
+    }
+
+    #[test]
+    fn codex_desktop_statsig_wrapper_round_trips_chromium_prefix() {
+        let wrapper = json!({
+            "source": "NetworkNotModified",
+            "data": "{}"
+        });
+        let mut encoded = vec![1];
+        encoded.extend_from_slice(serde_json::to_string(&wrapper).unwrap().as_bytes());
+
+        let (prefix, encoding, decoded) = decode_codex_desktop_statsig_wrapper(&encoded).unwrap();
+        assert_eq!(prefix, Some(1));
+        assert_eq!(encoding, CodexDesktopStatsigWrapperEncoding::Utf8);
+        assert_eq!(decoded, wrapper);
+        assert_eq!(
+            encode_codex_desktop_statsig_wrapper(prefix, encoding, &decoded).unwrap(),
+            encoded
+        );
+    }
+
+    #[test]
+    fn codex_desktop_statsig_wrapper_round_trips_utf16le_values() {
+        let wrapper = json!({
+            "source": "NetworkNotModified",
+            "data": "{}"
+        });
+        let text = serde_json::to_string(&wrapper).unwrap();
+        let mut encoded = vec![1];
+        for unit in text.encode_utf16() {
+            encoded.extend_from_slice(&unit.to_le_bytes());
+        }
+
+        let (prefix, encoding, decoded) = decode_codex_desktop_statsig_wrapper(&encoded).unwrap();
+        assert_eq!(prefix, Some(1));
+        assert_eq!(encoding, CodexDesktopStatsigWrapperEncoding::Utf16Le);
+        assert_eq!(decoded, wrapper);
+        assert_eq!(
+            encode_codex_desktop_statsig_wrapper(prefix, encoding, &decoded).unwrap(),
+            encoded
+        );
+    }
+
+    #[test]
+    fn codex_desktop_statsig_merge_ignores_unparseable_data() {
+        let mut wrapper = json!({
+            "source": "NetworkNotModified",
+            "data": "{not json"
+        });
+        let models = vec!["deepseek-v4-flash".to_string()];
+
+        assert!(!merge_codex_desktop_statsig_available_models(
+            &mut wrapper,
+            &models
+        ));
+    }
+
+    #[test]
+    fn codex_desktop_runtime_patch_expression_uses_json_model_ids() {
+        let expression = codex_desktop_runtime_patch_expression(&[
+            "deepseek-v4-flash".to_string(),
+            "quote\"model".to_string(),
+        ])
+        .unwrap();
+
+        assert!(expression.contains(r#"const MODEL_IDS = ["deepseek-v4-flash","quote\"model"];"#));
+        assert!(expression.contains(CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID));
+        assert!(expression.contains(CODEX_DESKTOP_STATSIG_CACHE_KEY_MARKER));
+    }
+
+    #[test]
+    fn codex_desktop_statsig_last_modified_keys_sort_newest_first() {
+        let last_modified = json!({
+            "statsig.cached.evaluations.old": 1000,
+            "statsig.cached.evaluations.new": 3000,
+            "statsig.cached.evaluations.middle": 2000,
+            "unrelated": 9999
+        });
+
+        assert_eq!(
+            codex_desktop_active_statsig_cache_keys(&last_modified),
+            vec![
+                "statsig.cached.evaluations.new".to_string(),
+                "statsig.cached.evaluations.middle".to_string(),
+                "statsig.cached.evaluations.old".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn codex_desktop_statsig_last_modified_pin_prefers_custom_cache_keys() {
+        let mut last_modified = json!({
+            "statsig.cached.evaluations.custom": 1000,
+            "statsig.cached.evaluations.default": 2000,
+        });
+        let cache_keys = HashSet::from(["statsig.cached.evaluations.custom".to_string()]);
+
+        assert!(pin_codex_desktop_statsig_last_modified_cache_keys(
+            &mut last_modified,
+            &cache_keys,
+            10_000
+        ));
+
+        let custom_timestamp = last_modified
+            .get("statsig.cached.evaluations.custom")
+            .and_then(codex_desktop_statsig_timestamp_millis)
+            .unwrap();
+        let default_timestamp = last_modified
+            .get("statsig.cached.evaluations.default")
+            .and_then(codex_desktop_statsig_timestamp_millis)
+            .unwrap();
+
+        assert!(custom_timestamp > default_timestamp);
+    }
+
+    fn test_codex_desktop_statsig_wrapper(models: &[&str]) -> Value {
+        let data = json!({
+            "dynamic_configs": {
+                CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID: {
+                    "value": {
+                        "available_models": models
+                    }
+                }
+            }
+        });
+        json!({
+            "source": "Network",
+            "data": data.to_string()
+        })
+    }
+
+    #[test]
+    fn codex_desktop_statsig_leveldb_sync_updates_active_and_pins_custom_cache() {
+        let temp_dir = tempfile::tempdir().expect("create temp leveldb");
+        let options = rusty_leveldb::Options {
+            create_if_missing: true,
+            ..Default::default()
+        };
+        let mut db = rusty_leveldb::DB::open(temp_dir.path(), options).expect("open temp leveldb");
+
+        let active_key = b"_https://codex\x00statsig.cached.evaluations.active".to_vec();
+        let custom_key = b"_https://codex\x00statsig.cached.evaluations.custom".to_vec();
+        let last_modified_key =
+            b"_https://codex\x00statsig.last_modified_time.evaluations".to_vec();
+
+        let active_value = encode_codex_desktop_statsig_wrapper(
+            Some(1),
+            CodexDesktopStatsigWrapperEncoding::Utf8,
+            &test_codex_desktop_statsig_wrapper(&["gpt-5.1-codex"]),
+        )
+        .unwrap();
+        let custom_value = encode_codex_desktop_statsig_wrapper(
+            Some(1),
+            CodexDesktopStatsigWrapperEncoding::Utf8,
+            &test_codex_desktop_statsig_wrapper(&["gpt-5.1-codex", "deepseek-v4-flash"]),
+        )
+        .unwrap();
+        let last_modified_value = encode_codex_desktop_statsig_wrapper(
+            Some(1),
+            CodexDesktopStatsigWrapperEncoding::Utf8,
+            &json!({
+                "statsig.cached.evaluations.active": 2000,
+                "statsig.cached.evaluations.custom": 1000,
+            }),
+        )
+        .unwrap();
+
+        db.put(&active_key, &active_value)
+            .expect("write active cache");
+        db.put(&custom_key, &custom_value)
+            .expect("write custom cache");
+        db.put(&last_modified_key, &last_modified_value)
+            .expect("write last modified");
+        db.close().expect("close seeded leveldb");
+
+        let updated_count = sync_codex_desktop_available_models_cache_path(
+            temp_dir.path(),
+            &["deepseek-v4-flash".to_string()],
+        )
+        .expect("sync temp leveldb");
+        assert_eq!(
+            updated_count, 2,
+            "sync should update the active cache and pin last_modified"
+        );
+
+        let options = rusty_leveldb::Options {
+            create_if_missing: false,
+            ..Default::default()
+        };
+        let mut db =
+            rusty_leveldb::DB::open(temp_dir.path(), options).expect("reopen temp leveldb");
+
+        let active_value = db.get(&active_key).expect("read active cache");
+        let (_, _, active_wrapper) =
+            decode_codex_desktop_statsig_wrapper(&active_value).expect("decode active cache");
+        assert!(codex_desktop_statsig_has_all_models(
+            &active_wrapper,
+            &["deepseek-v4-flash".to_string()]
+        ));
+
+        let last_modified_value = db
+            .get(&last_modified_key)
+            .expect("read last_modified cache");
+        let (_, _, last_modified) = decode_codex_desktop_statsig_wrapper(&last_modified_value)
+            .expect("decode last_modified cache");
+        let active_keys = codex_desktop_active_statsig_cache_keys(&last_modified);
+        assert!(
+            matches!(
+                active_keys.first().map(String::as_str),
+                Some("statsig.cached.evaluations.active" | "statsig.cached.evaluations.custom")
+            ),
+            "a cache containing custom models should remain preferred after Desktop refreshes default cache"
+        );
+
+        db.close().expect("close temp leveldb");
+    }
+
+    #[test]
     fn model_catalog_json_field_writes_relative_filename() {
         let input = r#"model_provider = "any"
 
@@ -2146,6 +3763,47 @@ name = "any"
                 .is_none(),
             "model_catalog_json should stay top-level"
         );
+    }
+
+    #[test]
+    fn openai_base_url_field_writes_active_provider_base_url_at_top_level() {
+        let input = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Relay"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+"#;
+
+        let base_url = extract_codex_base_url(input);
+        let result = set_codex_openai_base_url_field(input, base_url.as_deref()).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed
+                .get("openai_base_url")
+                .and_then(|value| value.as_str()),
+            Some("http://127.0.0.1:15721/v1")
+        );
+        assert!(
+            parsed
+                .get("model_providers")
+                .and_then(|value| value.get("custom"))
+                .and_then(|value| value.get("openai_base_url"))
+                .is_none(),
+            "openai_base_url must stay top-level for Codex Desktop"
+        );
+    }
+
+    #[test]
+    fn openai_base_url_field_removes_only_when_requested() {
+        let input = r#"openai_base_url = "http://127.0.0.1:15721/v1"
+"#;
+
+        let result = set_codex_openai_base_url_field(input, None).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert!(parsed.get("openai_base_url").is_none());
     }
 
     #[test]
