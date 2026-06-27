@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Development since v3.16.3 focuses on tightening the Codex proxy path — native OpenAI Responses migration for the major Chinese providers, a decoupled upstream-format selector, zstd request/error-body decompression, and a run of tool-call and OAuth-over-proxy fixes — alongside richer usage and pricing tooling (models.dev pricing import, Volcengine Ark coding/agent-plan quotas, live-tracking date ranges, GLM-5.2/Doubao Seed 2.1 pricing), new proxy and resilience capabilities (custom request header/body overrides, an in-app recovery screen for too-new databases, native Windows ARM64 builds), and a broad wave of preset and branding updates (the SubRouter and OpenCode Go subscriptions, the CTok→ETok rename, Kimi rebranding and prime-partner badges, and a Kimi K2.7 Code sponsor banner).
 
-**Stats**: 51 commits | 124 files changed | +8,146 insertions | -1,008 deletions
+**Stats**: 53 commits | 126 files changed | +8,149 insertions | -1,016 deletions
 
 ### Added
 
@@ -37,6 +37,7 @@ Development since v3.16.3 focuses on tightening the Codex proxy path — native 
 - **Dark Mode for JSON Editors**: The CodeMirror `JsonEditor` in the usage-script modal, provider form, and universal provider form now follows the app theme via `useDarkMode()`, switching to the `oneDark` editor theme instead of staying light while the rest of the app is dark. (#4556)
 - **Tighter Add Provider Header With Footer Hint**: The Add Provider dialog reduces the title-to-tabs and tabs-to-card vertical gaps from 24px to 12px and adds an always-visible pinned footer hint guiding users to fill in the fields below after choosing a preset. `FullScreenPanel` gains an optional `contentClassName` prop so the padding override is scoped to this panel without affecting others that share it.
 - **Theme-Adaptive Kimi Logo**: The inline Kimi placeholder mark is replaced with the vendor's refreshed logo. The K glyph uses `currentColor` so it follows the theme text color (dark in light mode, white in dark mode), while the brand accent dot is pinned to the new `#1783FF`, with the metadata fallback color aligned accordingly.
+- **Fable 5 Verified Banner Removed**: The Settings About page no longer shows the Fable 5 Verified commemorative banner that 3.16.3 added beside the app name to mark the special build; the banner image and its markup are dropped, returning the About panel to its standard version-badge layout.
 
 ### Fixed
 
