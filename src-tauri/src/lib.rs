@@ -35,6 +35,8 @@ mod store;
 mod tray;
 mod usage_events;
 mod usage_script;
+mod web;
+mod web_server;
 
 #[cfg(test)]
 pub mod testing;

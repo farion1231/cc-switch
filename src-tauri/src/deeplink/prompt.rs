@@ -63,6 +63,7 @@ pub fn import_prompt_from_deeplink(
     // Create Prompt (initially disabled)
     let prompt = Prompt {
         id: id.clone(),
+        app_type: app_type.as_str().to_string(),
         name: name.clone(),
         content,
         description: request.description,
