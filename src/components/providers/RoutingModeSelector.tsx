@@ -8,7 +8,7 @@
  * - 路由模式关闭：模型层级卡是「锁定态」（灰底 + 锁图标 + 提示），但保持可点击 ——
  *   点击直接触发开路由流程（由 App 的 onSelectTier 桥接到确认弹窗）。
  */
-import { CheckCircle2, Circle, Lock } from "lucide-react";
+import { CheckCircle2, Circle, Lock, Pencil } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +19,7 @@ interface Props {
   routingEnabled: boolean;
   onSelectProvider: () => void;
   onSelectTier: () => void;
+  onEditTier?: () => void;
 }
 
 export function RoutingModeSelector({
@@ -26,6 +27,7 @@ export function RoutingModeSelector({
   routingEnabled,
   onSelectProvider,
   onSelectTier,
+  onEditTier,
 }: Props) {
   const { t } = useTranslation();
 
@@ -44,6 +46,10 @@ export function RoutingModeSelector({
         <RoutingCard
           selected={value === "tier"}
           onClick={onSelectTier}
+          onEdit={onEditTier}
+          editLabel={t("home.routingMode.editTier", {
+            defaultValue: "Edit tier mappings",
+          })}
           title={t("home.routingMode.modelTier")}
           description={t("home.routingMode.modelTierDesc")}
           locked={!routingEnabled}
@@ -61,6 +67,8 @@ interface CardProps {
   description: string;
   locked?: boolean;
   lockedHint?: string;
+  onEdit?: () => void;
+  editLabel?: string;
 }
 
 function RoutingCard({
@@ -70,39 +78,78 @@ function RoutingCard({
   description,
   locked,
   lockedHint,
+  onEdit,
+  editLabel,
 }: CardProps) {
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      onClick={onClick}
-      className={cn(
-        "relative rounded-xl glass-card p-4 text-left transition-all",
-        "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        selected && "glass-card-active",
-        locked && "opacity-60",
+  // 外层是 <button role="radio">，不能再内嵌 <button>，所以 edit 按钮做成兄弟节点：
+  // 用 relative 包裹层承载卡片 button + 绝对定位的 edit 按钮，点击靠 stopPropagation 隔离。
+  const buttonClass = cn(
+    "relative h-full w-full rounded-xl glass-card p-4 text-left transition-all",
+    "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+    selected && "glass-card-active",
+    locked && "opacity-60",
+    onEdit && "pr-14",
+  );
+
+  const inner = (
+    <div className="flex items-start gap-3">
+      {selected ? (
+        <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+      ) : (
+        <Circle className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
       )}
-    >
-      {locked && (
-        <Lock className="absolute right-3 top-3 h-4 w-4 text-muted-foreground" />
-      )}
-      <div className="flex items-start gap-3">
-        {selected ? (
-          <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
-        ) : (
-          <Circle className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 space-y-1">
+        <div className="text-sm font-semibold">{title}</div>
+        <div className="text-xs text-muted-foreground">{description}</div>
+        {locked && lockedHint && (
+          <div className="pt-1 text-xs text-muted-foreground/80">
+            {lockedHint}
+          </div>
         )}
-        <div className="min-w-0 space-y-1">
-          <div className="text-sm font-semibold">{title}</div>
-          <div className="text-xs text-muted-foreground">{description}</div>
-          {locked && lockedHint && (
-            <div className="pt-1 text-xs text-muted-foreground/80">
-              {lockedHint}
-            </div>
-          )}
-        </div>
       </div>
-    </button>
+    </div>
+  );
+
+  if (!onEdit) {
+    return (
+      <button
+        type="button"
+        role="radio"
+        aria-checked={selected}
+        onClick={onClick}
+        className={buttonClass}
+      >
+        {inner}
+      </button>
+    );
+  }
+
+  return (
+    <div className="relative h-full">
+      <button
+        type="button"
+        role="radio"
+        aria-checked={selected}
+        onClick={onClick}
+        className={buttonClass}
+      >
+        {inner}
+      </button>
+      <div className="absolute right-2 top-2 z-10 flex items-center gap-1">
+        {locked && <Lock className="h-4 w-4 text-muted-foreground" />}
+        <button
+          type="button"
+          title={editLabel}
+          aria-label={editLabel}
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-foreground/10 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={(e) => {
+            e.stopPropagation();
+            onEdit();
+          }}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
   );
 }

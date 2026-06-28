@@ -70,6 +70,13 @@ import { RoutingModeSelector } from "@/components/providers/RoutingModeSelector"
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import { UpdateBadge } from "@/components/UpdateBadge";
 import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
@@ -295,6 +302,8 @@ function App() {
     isModelTierRoutingEnabledForApp(tierRoutingConfig, activeTierRoutingApp) &&
     isTierRoutingTransportActive;
   const [showTierProxyConfirm, setShowTierProxyConfirm] = useState(false);
+  // 「模型层级路由」卡的 edit 按钮：未激活时打开预览弹窗（只编辑、不切换、不开代理）。
+  const [tierEditorOpen, setTierEditorOpen] = useState(false);
 
   const handleSwitchToModelTier = () => {
     if (!activeTierRoutingApp) return;
@@ -342,6 +351,11 @@ function App() {
     // 仅由接管状态翻转驱动；其余值读取最新即可。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCurrentAppTakeoverActive]);
+
+  // 激活后主区已有 inline editor，预览弹窗冗余；切 app / 离开可路由 app 时不残留预览态。
+  useEffect(() => {
+    if (isModelTierMode || !activeTierRoutingApp) setTierEditorOpen(false);
+  }, [isModelTierMode, activeTierRoutingApp]);
 
   // Claude Desktop 的层级路由依赖本地代理服务。服务被关闭时同步关闭 tier 模式，
   // 并触发后端把 Desktop profile 刷回当前 provider 的普通路由。
@@ -1081,6 +1095,11 @@ function App() {
                           )
                         }
                         onSelectTier={handleSwitchToModelTier}
+                        onEditTier={
+                          isModelTierMode
+                            ? undefined
+                            : () => setTierEditorOpen(true)
+                        }
                       />
                     )}
                     {isModelTierMode ? (
@@ -1088,6 +1107,7 @@ function App() {
                         appId={activeTierRoutingApp!}
                         config={tierRoutingConfig}
                         onChange={persistTierRouting}
+                        isActive
                       />
                     ) : (
                       <ProviderList
@@ -1790,6 +1810,36 @@ function App() {
         onConfirm={() => void handleConfirmTierProxy()}
         onCancel={() => setShowTierProxyConfirm(false)}
       />
+
+      <Dialog
+        open={tierEditorOpen && !isModelTierMode && !!activeTierRoutingApp}
+        onOpenChange={setTierEditorOpen}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>
+              {t("home.modelTierRouting.previewTitle", {
+                defaultValue: "Model-tier routing (preview)",
+              })}
+            </DialogTitle>
+            <DialogDescription className="sr-only">
+              {t("home.modelTierRouting.previewBanner", {
+                defaultValue:
+                  "Preview mode: changes are saved, but routing stays off until you enable it",
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="overflow-y-auto px-6 py-4">
+            <ModelTierRoutingEditor
+              appId={activeTierRoutingApp!}
+              config={tierRoutingConfig}
+              onChange={persistTierRouting}
+              onActivate={handleSwitchToModelTier}
+              onClose={() => setTierEditorOpen(false)}
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <DeepLinkImportDialog />
       <FirstRunNoticeDialog />

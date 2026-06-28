@@ -2985,11 +2985,16 @@
       "confirmTitle": "Enable Local Proxy",
       "confirmMessage": "Model tier routing requires the local proxy to distribute each tier to its target provider. Enable proxy takeover for Claude now?",
       "confirmMessageClaudeDesktop": "Model tier routing for Claude Desktop requires the local routing service. Start it now and switch to model tier routing?",
-      "confirmAction": "Enable & Switch"
+      "confirmAction": "Enable & Switch",
+      "editTier": "Edit tier mappings"
     },
     "modelTierRouting": {
       "editorDescription": "Route each Claude tier to a different provider. The proxy rewrites the tier alias to the real upstream model; the display name is written to the model menu.",
       "listDescription": "Click a profile to switch routing. Use the edit button to change tier mappings.",
+      "previewTitle": "Model-tier routing (preview)",
+      "previewBanner": "Preview mode: changes are saved, but routing stays off until you enable it",
+      "enableRouting": "Enable model-tier routing",
+      "closePreview": "Close",
       "profile": "Routing Profile",
       "profileName": "Profile Name",
       "profileFallbackName": "Profile {{index}}",
