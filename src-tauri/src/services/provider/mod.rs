@@ -421,10 +421,10 @@ mod tests {
 
     #[test]
     #[serial]
-    fn update_clears_copied_usage_credentials_that_match_previous_config() {
+    fn update_preserves_usage_credentials_that_only_match_previous_config() {
         with_test_home(|state, _| {
-            let stale_copy = codex_provider_with_usage(
-                "codex-copy",
+            let provider = codex_provider_with_usage(
+                "codex-usage-old",
                 "https://api.a.example/v1/",
                 "sk-a",
                 Some("sk-a"),
@@ -433,18 +433,127 @@ mod tests {
             );
             state
                 .db
-                .save_provider(AppType::Codex.as_str(), &stale_copy)
-                .expect("seed stale copied provider");
+                .save_provider(AppType::Codex.as_str(), &provider)
+                .expect("seed provider with explicit usage credentials");
 
-            let mut updated = stale_copy.clone();
+            let mut updated = provider.clone();
             updated.settings_config = codex_settings("https://api.b.example/v1/", "sk-b");
 
             ProviderService::update(state, AppType::Codex, None, updated)
-                .expect("update copied provider");
+                .expect("update provider main credentials");
 
             let saved = state
                 .db
+                .get_provider_by_id("codex-usage-old", AppType::Codex.as_str())
+                .expect("query updated provider")
+                .expect("updated provider should exist");
+            let script = saved
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+
+            assert_eq!(script.api_key.as_deref(), Some("sk-a"));
+            assert_eq!(
+                script.base_url.as_deref(),
+                Some("https://api.a.example/v1/")
+            );
+            assert_eq!(
+                saved.resolve_usage_credentials(&AppType::Codex),
+                ("https://api.b.example/v1".to_string(), "sk-b".to_string())
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn copied_provider_uses_edited_credentials_after_add_clears_mirrored_usage_credentials() {
+        with_test_home(|state, _| {
+            let copied_provider = codex_provider_with_usage(
+                "codex-copy",
+                "https://api.a.example/v1/",
+                "sk-a",
+                Some("sk-a"),
+                Some("https://api.a.example/v1/"),
+                None,
+            );
+
+            ProviderService::add(state, AppType::Codex, copied_provider, false)
+                .expect("add copied provider");
+
+            let saved_after_add = state
+                .db
                 .get_provider_by_id("codex-copy", AppType::Codex.as_str())
+                .expect("query copied provider")
+                .expect("copied provider should exist");
+            let script_after_add = saved_after_add
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+            assert_eq!(script_after_add.api_key, None);
+            assert_eq!(script_after_add.base_url, None);
+
+            let mut edited_provider = saved_after_add.clone();
+            edited_provider.settings_config = codex_settings("https://api.b.example/v1/", "sk-b");
+
+            ProviderService::update(state, AppType::Codex, None, edited_provider)
+                .expect("edit copied provider credentials");
+
+            let saved_after_update = state
+                .db
+                .get_provider_by_id("codex-copy", AppType::Codex.as_str())
+                .expect("query edited provider")
+                .expect("edited provider should exist");
+            let script_after_update = saved_after_update
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+
+            assert_eq!(script_after_update.api_key, None);
+            assert_eq!(script_after_update.base_url, None);
+            assert_eq!(
+                saved_after_update.resolve_usage_credentials(&AppType::Codex),
+                ("https://api.b.example/v1".to_string(), "sk-b".to_string())
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn update_clears_usage_credentials_that_match_current_config() {
+        with_test_home(|state, _| {
+            let provider = codex_provider_with_usage(
+                "codex-current",
+                "https://api.a.example/v1",
+                "sk-a",
+                Some("sk-usage"),
+                Some("https://usage.example/api"),
+                None,
+            );
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &provider)
+                .expect("seed provider with distinct usage credentials");
+
+            let mut updated = provider.clone();
+            updated.settings_config = codex_settings("https://api.b.example/v1/", "sk-b");
+            updated.meta = Some(ProviderMeta {
+                usage_script: Some(usage_script_with_credentials(
+                    Some(" sk-b "),
+                    Some(" https://api.b.example/v1/ "),
+                    None,
+                )),
+                ..Default::default()
+            });
+
+            ProviderService::update(state, AppType::Codex, None, updated)
+                .expect("update provider with redundant usage credentials");
+
+            let saved = state
+                .db
+                .get_provider_by_id("codex-current", AppType::Codex.as_str())
                 .expect("query updated provider")
                 .expect("updated provider should exist");
             let script = saved
@@ -455,10 +564,6 @@ mod tests {
 
             assert_eq!(script.api_key, None);
             assert_eq!(script.base_url, None);
-            assert_eq!(
-                saved.resolve_usage_credentials(&AppType::Codex),
-                ("https://api.b.example/v1".to_string(), "sk-b".to_string())
-            );
         });
     }
 
@@ -1402,13 +1507,7 @@ impl ProviderService {
             .live_config_managed = Some(managed);
     }
 
-    fn normalize_usage_script_credential_overrides(
-        app_type: &AppType,
-        previous_provider: Option<&Provider>,
-        provider: &mut Provider,
-    ) {
-        let previous_credentials =
-            previous_provider.map(|provider| provider.resolve_usage_credentials(app_type));
+    fn normalize_usage_script_credential_overrides(app_type: &AppType, provider: &mut Provider) {
         let current_credentials = provider.resolve_usage_credentials(app_type);
 
         let Some(usage_script) = provider
@@ -1424,21 +1523,13 @@ impl ProviderService {
         }
 
         if usage_script.api_key.as_deref().is_some_and(|api_key| {
-            Self::should_clear_usage_api_key_override(
-                api_key,
-                previous_credentials.as_ref(),
-                &current_credentials,
-            )
+            Self::should_clear_usage_api_key_override(api_key, &current_credentials)
         }) {
             usage_script.api_key = None;
         }
 
         if usage_script.base_url.as_deref().is_some_and(|base_url| {
-            Self::should_clear_usage_base_url_override(
-                base_url,
-                previous_credentials.as_ref(),
-                &current_credentials,
-            )
+            Self::should_clear_usage_base_url_override(base_url, &current_credentials)
         }) {
             usage_script.base_url = None;
         }
@@ -1446,7 +1537,6 @@ impl ProviderService {
 
     fn should_clear_usage_api_key_override(
         script_api_key: &str,
-        previous_credentials: Option<&(String, String)>,
         current_credentials: &(String, String),
     ) -> bool {
         let candidate = script_api_key.trim();
@@ -1459,15 +1549,11 @@ impl ProviderService {
             !api_key.is_empty() && api_key == candidate
         };
 
-        previous_credentials
-            .map(|(_, api_key)| matches_provider_key(api_key))
-            .unwrap_or(false)
-            || matches_provider_key(&current_credentials.1)
+        matches_provider_key(&current_credentials.1)
     }
 
     fn should_clear_usage_base_url_override(
         script_base_url: &str,
-        previous_credentials: Option<&(String, String)>,
         current_credentials: &(String, String),
     ) -> bool {
         let candidate = Self::normalize_usage_base_url_for_compare(script_base_url);
@@ -1480,10 +1566,7 @@ impl ProviderService {
             !base_url.is_empty() && base_url == candidate
         };
 
-        previous_credentials
-            .map(|(base_url, _)| matches_provider_base_url(base_url))
-            .unwrap_or(false)
-            || matches_provider_base_url(&current_credentials.0)
+        matches_provider_base_url(&current_credentials.0)
     }
 
     fn normalize_usage_base_url_for_compare(base_url: &str) -> String {
@@ -1526,7 +1609,7 @@ impl ProviderService {
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
-        Self::normalize_usage_script_credential_overrides(&app_type, None, &mut provider);
+        Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
         if app_type.is_additive_mode() {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
         }
@@ -1581,11 +1664,7 @@ impl ProviderService {
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
-        Self::normalize_usage_script_credential_overrides(
-            &app_type,
-            existing_provider.as_ref(),
-            &mut provider,
-        );
+        Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
         if provider_id_changed {
             if !app_type.is_additive_mode() {
