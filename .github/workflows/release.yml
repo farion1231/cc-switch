@@ -273,6 +273,82 @@ jobs:
         if: runner.os == 'Linux'
         run: pnpm tauri build --bundles appimage,deb,rpm
 
+      - name: Fix AppImage .DirIcon symlink
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Workaround for tauri-apps/tauri#15110:
+          # The bundler creates .DirIcon as an absolute symlink pointing to the
+          # build-machine path. Replace it with a correct relative symlink.
+          # Safe to keep after upstream fix — overwrites an already-correct link with the same target.
+          APPIMAGE=$(find src-tauri/target/release/bundle -name "*.AppImage" | head -1 || true)
+          if [ -z "$APPIMAGE" ]; then
+            echo "No AppImage found, skipping .DirIcon fix"
+            exit 0
+          fi
+          echo "=== Fixing .DirIcon symlink in: $APPIMAGE ==="
+
+          chmod +x "$APPIMAGE"
+          WORK_DIR=$(mktemp -d)
+          trap "rm -rf '$WORK_DIR'" EXIT
+
+          # Extract the AppImage filesystem (no FUSE needed)
+          ("$APPIMAGE" --appimage-extract) > /dev/null 2>&1 || true
+
+          if [ -d squashfs-root ]; then
+            mv squashfs-root "$WORK_DIR/AppDir"
+          elif [ -d AppDir ]; then
+            mv AppDir "$WORK_DIR/AppDir"
+          else
+            echo "WARNING: Could not locate extracted AppDir, skipping fix"
+            exit 0
+          fi
+
+          # Check and fix broken .DirIcon symlink
+          DIRICON="$WORK_DIR/AppDir/.DirIcon"
+          if [ -L "$DIRICON" ]; then
+            if [ ! -e "$DIRICON" ]; then
+              ICON_NAME=$(basename "$WORK_DIR/AppDir/usr/share/icons/hicolor/128x128/apps/"*.png 2>/dev/null | head -1)
+              if [ -n "$ICON_NAME" ]; then
+                ln -sf "$ICON_NAME" "$DIRICON"
+                echo "Fixed .DirIcon -> $ICON_NAME (relative symlink)"
+              else
+                rm "$DIRICON"
+                echo "WARNING: No icon found to fix .DirIcon"
+              fi
+            else
+              echo ".DirIcon already resolves, no fix needed"
+            fi
+          else
+            echo ".DirIcon is not a symlink, no fix needed"
+          fi
+
+          # Download appimagetool for rebuilding (extract to avoid FUSE requirement)
+          APPIMAGETOOL=$(find /usr/local/bin /usr/bin "$HOME/.local/bin" -name "appimagetool" -type f 2>/dev/null | head -1 || true)
+          if [ -z "$APPIMAGETOOL" ]; then
+            curl -fsSL -o /tmp/appimagetool-x86_64.AppImage \
+              "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+            chmod +x /tmp/appimagetool-x86_64.AppImage
+            /tmp/appimagetool-x86_64.AppImage --appimage-extract > /dev/null 2>&1 || true
+            APPIMAGETOOL="$HOME/.local/bin/appimagetool"
+            mkdir -p "$HOME/.local/bin"
+            mv squashfs-root/usr/bin/appimagetool "$APPIMAGETOOL" 2>/dev/null \
+              || mv squashfs-root/AppRun "$APPIMAGETOOL" 2>/dev/null \
+              || { echo "ERROR: Failed to extract appimagetool"; exit 1; }
+            chmod +x "$APPIMAGETOOL"
+            rm -rf squashfs-root
+          fi
+
+          # Rebuild AppImage
+          ARCH="${ARCH:-x86_64}" "$APPIMAGETOOL" \
+            --no-appstream \
+            "$WORK_DIR/AppDir" \
+            "$APPIMAGE"
+
+          echo "=== AppImage rebuilt successfully ==="
+          ls -lh "$APPIMAGE"
+
       - name: Prepare macOS Assets
         if: runner.os == 'macOS'
         shell: bash
