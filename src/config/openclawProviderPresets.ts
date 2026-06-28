@@ -228,7 +228,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "doubao-seed-2-1-pro",
+          id: "doubao-seed-2-1-pro-260628",
           name: "DouBao Seed 2.1 Pro",
           contextWindow: 128000,
           cost: { input: 0.84, output: 4.2 },
@@ -248,9 +248,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "doubaoseed/doubao-seed-2-1-pro" },
+      model: { primary: "doubaoseed/doubao-seed-2-1-pro-260628" },
       modelCatalog: {
-        "doubaoseed/doubao-seed-2-1-pro": { alias: "DouBao" },
+        "doubaoseed/doubao-seed-2-1-pro-260628": { alias: "DouBao" },
       },
     },
   },

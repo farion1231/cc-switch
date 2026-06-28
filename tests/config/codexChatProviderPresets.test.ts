@@ -158,7 +158,10 @@ describe("Codex Chat provider presets", () => {
       string,
       { contextWindows: Record<string, number> }
     >([
-      ["DouBaoSeed", { contextWindows: { "doubao-seed-2-1-pro": 262144 } }],
+      [
+        "DouBaoSeed",
+        { contextWindows: { "doubao-seed-2-1-pro-260628": 262144 } },
+      ],
       ["Bailian", { contextWindows: { "qwen3-coder-plus": 1048576 } }],
       ["Longcat", { contextWindows: { "LongCat-2.0-Preview": 1048576 } }],
       ["MiniMax", { contextWindows: { "MiniMax-M3": 1000000 } }],

@@ -2655,7 +2655,7 @@ web_search = "disabled"
             ("gpt-5.5", "https://www.packyapi.com/v1"),
             ("gpt-5-codex", "https://aihubmix.com/v1"),
             (
-                "doubao-seed-2-1-pro",
+                "doubao-seed-2-1-pro-260628",
                 "https://ark.cn-beijing.volces.com/api/v3",
             ),
             ("Pro/moonshotai/Kimi-K2.6", "https://api.siliconflow.cn/v1"),

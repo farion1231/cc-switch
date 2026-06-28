@@ -212,7 +212,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     config: generateThirdPartyConfig(
       "doubaoseed",
       "https://ark.cn-beijing.volces.com/api/v3",
-      "doubao-seed-2-1-pro",
+      "doubao-seed-2-1-pro-260628",
     ),
     endpointCandidates: ["https://ark.cn-beijing.volces.com/api/v3"],
     // 火山方舟主数据面 /api/v3 原生支持 Responses API（/api/v3/responses），无需路由接管转换
@@ -221,7 +221,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     // 让 Codex 直连显示模型并避免 custom 工具被网关拒绝
     modelCatalog: modelCatalog([
       {
-        model: "doubao-seed-2-1-pro",
+        model: "doubao-seed-2-1-pro-260628",
         displayName: "Doubao Seed 2.1 Pro",
         contextWindow: 262144,
       },
