@@ -215,6 +215,219 @@ pub async fn test_usage_script(
     .await
 }
 
+/// Resolve `(base_url, api_key)` for native (non-script) usage paths.
+fn resolve_native_credentials(
+    app_type: &AppType,
+    provider: Option<&crate::provider::Provider>,
+) -> (String, String) {
+    provider
+        .map(|p| p.resolve_usage_credentials(app_type))
+        .unwrap_or_default()
+}
+
+/// Resolve coding-plan credentials: ZenMux uses the script's own base_url/api_key;
+/// everything else falls back to the provider's stored credentials.
+fn resolve_coding_plan_credentials(
+    app_type: &AppType,
+    provider: Option<&crate::provider::Provider>,
+    usage_script: Option<&UsageScript>,
+) -> (String, String) {
+    let is_zenmux = usage_script
+        .and_then(|s| s.coding_plan_provider.as_deref())
+        .map(|p| p.eq_ignore_ascii_case("zenmux"))
+        .unwrap_or(false);
+
+    if !is_zenmux {
+        return resolve_native_credentials(app_type, provider);
+    }
+
+    let script_base_url = usage_script
+        .and_then(|s| s.base_url.as_deref())
+        .unwrap_or("")
+        .trim_end_matches('/')
+        .to_string();
+    let script_api_key = usage_script
+        .and_then(|s| s.api_key.as_deref())
+        .unwrap_or("")
+        .to_string();
+
+    if !script_base_url.is_empty() && !script_api_key.is_empty() {
+        return (script_base_url, script_api_key);
+    }
+
+    let native = resolve_native_credentials(app_type, provider);
+    if !native.0.is_empty() && !native.1.is_empty() {
+        native
+    } else {
+        (script_base_url, script_api_key)
+    }
+}
+
+fn coding_plan_quota_to_usage_result(
+    quota: crate::services::subscription::SubscriptionQuota,
+) -> UsageResult {
+    if !quota.success {
+        return UsageResult {
+            success: false,
+            data: None,
+            error: quota.error,
+        };
+    }
+
+    let has_usd = quota
+        .tiers
+        .first()
+        .map(|t| t.used_value_usd.is_some())
+        .unwrap_or(false);
+    let plan_label = quota
+        .credential_message
+        .as_deref()
+        .and_then(|msg| msg.split(' ').next())
+        .map(|tier| format!("ZenMux·{}", tier.to_uppercase()));
+    let mut first_tier = true;
+
+    let data: Vec<UsageData> = quota
+        .tiers
+        .iter()
+        .map(|tier| {
+            let total = 100.0;
+            let used = tier.utilization;
+            let remaining = total - used;
+            let extra = if has_usd {
+                let mut extra_json = serde_json::json!({ "resetsAt": tier.resets_at });
+                if let Some(v) = tier.used_value_usd {
+                    extra_json["usedValueUsd"] = serde_json::json!(v);
+                }
+                if let Some(v) = tier.max_value_usd {
+                    extra_json["maxValueUsd"] = serde_json::json!(v);
+                }
+                if first_tier {
+                    if let Some(ref label) = plan_label {
+                        extra_json["planLabel"] = serde_json::json!(label);
+                    }
+                    first_tier = false;
+                }
+                Some(extra_json.to_string())
+            } else {
+                tier.resets_at.clone()
+            };
+            UsageData {
+                plan_name: Some(tier.name.clone()),
+                remaining: Some(remaining),
+                total: Some(total),
+                used: Some(used),
+                unit: Some("%".to_string()),
+                is_valid: Some(true),
+                invalid_message: None,
+                extra,
+            }
+        })
+        .collect();
+
+    UsageResult {
+        success: true,
+        data: if data.is_empty() { None } else { Some(data) },
+        error: None,
+    }
+}
+
+fn subscription_quota_to_usage_result(
+    quota: crate::services::subscription::SubscriptionQuota,
+) -> UsageResult {
+    if !quota.success {
+        return UsageResult {
+            success: false,
+            data: None,
+            error: quota.error.or(quota.credential_message),
+        };
+    }
+    let data: Vec<UsageData> = quota
+        .tiers
+        .iter()
+        .map(|tier| UsageData {
+            plan_name: Some(tier.name.clone()),
+            remaining: Some(100.0 - tier.utilization),
+            total: Some(100.0),
+            used: Some(tier.utilization),
+            unit: Some("%".to_string()),
+            is_valid: Some(true),
+            invalid_message: None,
+            extra: tier.resets_at.clone(),
+        })
+        .collect();
+    UsageResult {
+        success: true,
+        data: if data.is_empty() { None } else { Some(data) },
+        error: None,
+    }
+}
+
+/// Query provider usage, dispatching on the saved template type.
+///
+/// Handles the native (non-script) templates that the desktop main page
+/// supports — `token_plan` (coding-plan quota), `balance`, and
+/// `official_subscription` — plus the generic JS-script path. The
+/// `github_copilot` template is intentionally NOT handled here because it
+/// requires the desktop-only `CopilotAuthState`; callers that have it (the
+/// Tauri command) handle Copilot before delegating here, and web callers get a
+/// clear error.
+pub async fn query_usage_with_templates(
+    state: &AppState,
+    app_type: AppType,
+    provider_id: &str,
+) -> Result<UsageResult, AppError> {
+    let providers = state.db.get_all_providers(app_type.as_str())?;
+    let provider = providers.get(provider_id);
+    let usage_script = provider
+        .and_then(|p| p.meta.as_ref())
+        .and_then(|m| m.usage_script.as_ref());
+    let template_type = usage_script
+        .and_then(|s| s.template_type.as_deref())
+        .unwrap_or("");
+
+    match template_type {
+        "github_copilot" => Err(AppError::localized(
+            "provider.usage.copilot_web_unsupported",
+            "GitHub Copilot 用量查询在 Web 模式下不可用",
+            "GitHub Copilot usage query is not available in web mode",
+        )),
+        "token_plan" => {
+            let (base_url, api_key) =
+                resolve_coding_plan_credentials(&app_type, provider, usage_script);
+            let quota = crate::services::coding_plan::get_coding_plan_quota(
+                &base_url,
+                &api_key,
+                None,
+                None,
+            )
+            .await
+            .map_err(AppError::Config)?;
+            Ok(coding_plan_quota_to_usage_result(quota))
+        }
+        "balance" => {
+            let (base_url, api_key) = resolve_native_credentials(&app_type, provider);
+            let result = crate::services::balance::get_balance(&base_url, &api_key)
+                .await
+                .map_err(AppError::Config)?;
+            Ok(result)
+        }
+        "official_subscription" => {
+            if !usage_script.map(|s| s.enabled).unwrap_or(false) {
+                return Ok(UsageResult {
+                    success: false,
+                    data: None,
+                    error: Some("Usage query is disabled".to_string()),
+                });
+            }
+            let quota = crate::services::subscription::get_subscription_quota(app_type.as_str())
+                .await
+                .map_err(AppError::Config)?;
+            Ok(subscription_quota_to_usage_result(quota))
+        }
+        _ => query_usage(state, app_type, provider_id).await,
+    }
+}
+
 /// Validate UsageScript configuration (boundary checks)
 pub(crate) fn validate_usage_script(script: &UsageScript) -> Result<(), AppError> {
     // Validate auto query interval (0-1440 minutes, max 24 hours)

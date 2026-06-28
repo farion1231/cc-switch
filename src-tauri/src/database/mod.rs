@@ -49,7 +49,7 @@ use std::sync::Mutex;
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
-pub(crate) const SCHEMA_VERSION: i32 = 11;
+pub(crate) const SCHEMA_VERSION: i32 = 12;
 
 /// 安全地序列化 JSON，避免 unwrap panic
 pub(crate) fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError> {
@@ -95,6 +95,15 @@ impl Database {
     /// 数据库文件位于 `~/.cc-switch/cc-switch.db`
     pub fn init() -> Result<Self, AppError> {
         let db_path = get_app_config_dir().join("cc-switch.db");
+        Self::init_at_path(&db_path)
+    }
+
+    /// 初始化指定路径的数据库连接并创建表
+    ///
+    /// 与 [`Database::init`] 行为一致，但允许调用方显式指定数据库文件位置。
+    /// 嵌入式 Web 服务器（与桌面端共享同一 SQLite 文件）通过此入口构建一个
+    /// 功能完整、已迁移的 `Database`，从而复用全部 DAO / Service 逻辑。
+    pub fn init_at_path(db_path: &std::path::Path) -> Result<Self, AppError> {
         let db_exists = db_path.exists();
 
         // 确保父目录存在
@@ -102,7 +111,7 @@ impl Database {
             std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
         }
 
-        let conn = Connection::open(&db_path).map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = Connection::open(db_path).map_err(|e| AppError::Database(e.to_string()))?;
 
         // 启用外键约束
         conn.execute("PRAGMA foreign_keys = ON;", [])

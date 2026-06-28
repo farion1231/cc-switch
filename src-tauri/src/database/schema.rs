@@ -444,6 +444,11 @@ impl Database {
                         Self::migrate_v10_to_v11(conn)?;
                         Self::set_user_version(conn, 11)?;
                     }
+                    11 => {
+                        log::info!("迁移数据库从 v11 到 v12（provider_endpoints 增加 last_used 字段）");
+                        Self::migrate_v11_to_v12(conn)?;
+                        Self::set_user_version(conn, 12)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -902,7 +907,34 @@ impl Database {
             return Ok(());
         }
 
-        log::info!("开始迁移 skills 表到 v3 结构（统一管理架构）...");
+        // Web 模式的 AppState 创建的 skills 表使用 id 主键但没有 enabled_* 标志，
+        // 也没有 directory 列。此时无法按旧 v2 结构迁移，直接重建为 v3 结构。
+        if !Self::has_column(conn, "skills", "directory")? {
+            log::info!("skills 表不是 v2 结构（无 directory 列），直接重建为 v3 结构");
+            conn.execute("DROP TABLE IF EXISTS skills", [])
+                .map_err(|e| AppError::Database(format!("删除旧 skills 表失败: {e}")))?;
+            conn.execute(
+                "CREATE TABLE skills (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                directory TEXT NOT NULL,
+                repo_owner TEXT,
+                repo_name TEXT,
+                repo_branch TEXT DEFAULT 'main',
+                readme_url TEXT,
+                enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+                enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+                enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+                enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+                enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+                installed_at INTEGER NOT NULL DEFAULT 0
+            )",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("创建 v3 skills 表失败: {e}")))?;
+            return Ok(());
+        }
 
         // 1. 备份旧数据（用于日志和后续启动迁移）
         let old_count: i64 = conn
@@ -1267,6 +1299,15 @@ impl Database {
         log::info!(
             "v10 -> v11 迁移完成：usage_daily_rollups 已保留 request_model/pricing_model 维度"
         );
+        Ok(())
+    }
+
+    /// v11 -> v12: provider_endpoints 增加 last_used 字段
+    fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "provider_endpoints")? {
+            Self::add_column_if_missing(conn, "provider_endpoints", "last_used", "INTEGER")?;
+        }
+        log::info!("v11 -> v12 迁移完成：provider_endpoints 已添加 last_used 列");
         Ok(())
     }
 

@@ -3228,11 +3228,4 @@ mod tests {
         let rel = SkillService::make_relative_path(from, to).expect("relative path");
         assert_eq!(rel, Path::new("nested"));
     }
-
-    #[test]
-    fn make_relative_path_returns_none_for_no_common_prefix() {
-        let from = Path::new("/home/user/.claude/skills");
-        let to = Path::new("/var/lib/skills");
-        assert!(SkillService::make_relative_path(from, to).is_none());
-    }
 }

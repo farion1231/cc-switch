@@ -55,6 +55,36 @@ impl Database {
         Ok(prompts)
     }
 
+    /// 根据 id 查找提示词（任意 app_type 下的唯一一条）
+    pub fn get_prompt_by_id(&self, id: &str) -> Result<Option<Prompt>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, app_type, name, content, description, enabled, created_at, updated_at
+             FROM prompts WHERE id = ?1
+             LIMIT 1",
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let mut rows = stmt
+            .query_map(params![id], |row| {
+                Ok(Prompt {
+                    id: row.get(0)?,
+                    app_type: row.get(1)?,
+                    name: row.get(2)?,
+                    content: row.get(3)?,
+                    description: row.get(4)?,
+                    enabled: row.get(5)?,
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
+                })
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        match rows.next() {
+            Some(row_res) => row_res.map(Some).map_err(|e| AppError::Database(e.to_string())),
+            None => Ok(None),
+        }
+    }
+
     /// 保存提示词
     pub fn save_prompt(&self, app_type: &str, prompt: &Prompt) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);

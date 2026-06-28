@@ -98,7 +98,14 @@ async fn query_coding_plan_quota(
     State((_state, _ws_state)): State<(Arc<AppState>, Arc<WsState>)>,
     Json(req): Json<CredentialQuotaRequest>,
 ) -> Json<ApiResponse<crate::services::subscription::SubscriptionQuota>> {
-    match crate::services::coding_plan::get_coding_plan_quota(&req.base_url, &req.api_key).await {
+    match crate::services::coding_plan::get_coding_plan_quota(
+        &req.base_url,
+        &req.api_key,
+        None,
+        None,
+    )
+    .await
+    {
         Ok(quota) => Json(ApiResponse::success(quota)),
         Err(e) => Json(ApiResponse::error(e)),
     }
