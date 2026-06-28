@@ -24,6 +24,7 @@ export default defineConfig(({ command }) => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "@tauri-icons": path.resolve(__dirname, "./src-tauri/icons"),
     },
   },
   clearScreen: false,
