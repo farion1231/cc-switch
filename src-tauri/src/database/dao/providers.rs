@@ -73,19 +73,20 @@ impl Database {
             provider.id = id.clone();
 
             let mut stmt_endpoints = conn.prepare(
-                "SELECT url, added_at FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2 ORDER BY added_at ASC, url ASC"
+                "SELECT url, added_at, last_used FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2 ORDER BY added_at ASC, url ASC"
             ).map_err(|e| AppError::Database(e.to_string()))?;
 
             let endpoints_iter = stmt_endpoints
                 .query_map(params![id, app_type], |row| {
                     let url: String = row.get(0)?;
                     let added_at: Option<i64> = row.get(1)?;
+                    let last_used: Option<i64> = row.get(2)?;
                     Ok((
                         url,
                         crate::settings::CustomEndpoint {
                             url: "".to_string(),
                             added_at: added_at.unwrap_or(0),
-                            last_used: None,
+                            last_used,
                         },
                     ))
                 })
@@ -263,14 +264,29 @@ impl Database {
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-            for (url, endpoint) in endpoints {
-                tx.execute(
-                    "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at)
-                     VALUES (?1, ?2, ?3, ?4)",
-                    params![provider.id, app_type, url, endpoint.added_at],
-                )
-                .map_err(|e| AppError::Database(e.to_string()))?;
-            }
+        }
+
+        // Sync custom endpoints from provider meta to the dedicated endpoints table.
+        // This must run for both inserts and updates so that in-memory mutations
+        // (e.g. update_endpoint_last_used) are persisted.
+        tx.execute(
+            "DELETE FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2",
+            params![provider.id, app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        for (url, endpoint) in endpoints {
+            tx.execute(
+                "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at, last_used)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    provider.id,
+                    app_type,
+                    url,
+                    endpoint.added_at,
+                    endpoint.last_used
+                ],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
         }
 
         tx.commit().map_err(|e| AppError::Database(e.to_string()))?;

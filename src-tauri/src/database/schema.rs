@@ -53,6 +53,7 @@ impl Database {
                 app_type TEXT NOT NULL,
                 url TEXT NOT NULL,
                 added_at INTEGER,
+                last_used INTEGER,
                 FOREIGN KEY (provider_id, app_type) REFERENCES providers(id, app_type) ON DELETE CASCADE
             )",
             [],

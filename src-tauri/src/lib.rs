@@ -26,7 +26,7 @@ mod prompt;
 mod prompt_files;
 mod provider;
 mod provider_defaults;
-mod proxy;
+pub mod proxy;
 mod services;
 mod session_manager;
 mod settings;
@@ -57,6 +57,8 @@ pub use mcp::{
 };
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
+    env_checker::EnvConflict,
+    env_manager::BackupInfo,
     skill::{migrate_skills_to_ssot, ImportSkillSelection},
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
     SkillService, SpeedtestService,
