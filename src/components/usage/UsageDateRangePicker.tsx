@@ -104,7 +104,9 @@ export function UsageDateRangePicker({
       : normalizePickerStart(resolvedRange.startDate),
   );
   const [draftEnd, setDraftEnd] = useState(() =>
-    selection.preset === "custom" && selection.customEndDate != null && !selection.liveEndTime
+    selection.preset === "custom" &&
+    selection.customEndDate != null &&
+    !selection.liveEndTime
       ? selection.customEndDate
       : normalizePickerEnd(resolvedRange.endDate),
   );
@@ -135,7 +137,9 @@ export function UsageDateRangePicker({
         : normalizePickerStart(r.startDate),
     );
     setDraftEnd(
-      selection.preset === "custom" && selection.customEndDate != null && !selection.liveEndTime
+      selection.preset === "custom" &&
+        selection.customEndDate != null &&
+        !selection.liveEndTime
         ? selection.customEndDate
         : normalizePickerEnd(r.endDate, currentNow),
     );
@@ -257,8 +261,8 @@ export function UsageDateRangePicker({
     const setTs = field === "start" ? setDraftStart : setDraftEnd;
     const label =
       field === "start"
-          ? t("usage.startTime", "开始时间")
-          : t("usage.endTime", "结束时间");
+        ? t("usage.startTime", "开始时间")
+        : t("usage.endTime", "结束时间");
     // 复用与日历/reset 完全相同的归一化路径, 保证 end 框输入也走
     // "end 是当天→now" 语义, 不再单独走 23:59 分支
     const normalize = (raw: number) =>
