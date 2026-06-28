@@ -784,6 +784,7 @@ impl MultiAppConfig {
         let id = format!("auto-imported-{timestamp}");
         let prompt = crate::prompt::Prompt {
             id: id.clone(),
+            app_type: app.as_str().to_string(),
             name: format!(
                 "Auto-imported Prompt {}",
                 chrono::Local::now().format("%Y-%m-%d %H:%M")

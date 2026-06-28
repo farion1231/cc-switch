@@ -14,7 +14,7 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, content, description, enabled, created_at, updated_at
+                "SELECT id, app_type, name, content, description, enabled, created_at, updated_at
              FROM prompts WHERE app_type = ?1
              ORDER BY created_at ASC, id ASC",
             )
@@ -23,17 +23,19 @@ impl Database {
         let prompt_iter = stmt
             .query_map(params![app_type], |row| {
                 let id: String = row.get(0)?;
-                let name: String = row.get(1)?;
-                let content: String = row.get(2)?;
-                let description: Option<String> = row.get(3)?;
-                let enabled: bool = row.get(4)?;
-                let created_at: Option<i64> = row.get(5)?;
-                let updated_at: Option<i64> = row.get(6)?;
+                let app_type: String = row.get(1)?;
+                let name: String = row.get(2)?;
+                let content: String = row.get(3)?;
+                let description: Option<String> = row.get(4)?;
+                let enabled: bool = row.get(5)?;
+                let created_at: Option<i64> = row.get(6)?;
+                let updated_at: Option<i64> = row.get(7)?;
 
                 Ok((
                     id.clone(),
                     Prompt {
                         id,
+                        app_type,
                         name,
                         content,
                         description,

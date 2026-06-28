@@ -28,6 +28,7 @@ pub mod usage_stats;
 pub mod webdav;
 pub mod webdav_auto_sync;
 pub mod webdav_sync;
+pub mod workspace;
 
 pub use config::ConfigService;
 pub use mcp::McpService;
@@ -44,3 +45,5 @@ pub use usage_stats::{
     DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderLimitStatus, ProviderStats,
     RequestLogDetail, UsageSummary, UsageSummaryByApp,
 };
+#[allow(unused_imports)]
+pub use workspace::WorkspaceService;

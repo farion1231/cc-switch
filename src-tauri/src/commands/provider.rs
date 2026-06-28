@@ -170,6 +170,14 @@ pub fn get_claude_desktop_default_routes(
 pub fn import_claude_desktop_providers_from_claude(
     state: State<'_, AppState>,
 ) -> Result<usize, String> {
+    import_claude_desktop_providers_from_claude_impl(state.inner())
+}
+
+/// Core logic for importing Claude Desktop providers from the Claude app table.
+/// Shared by the Tauri command and the embedded web server route.
+pub(crate) fn import_claude_desktop_providers_from_claude_impl(
+    state: &AppState,
+) -> Result<usize, String> {
     let claude_providers = state
         .db
         .get_all_providers(AppType::Claude.as_str())

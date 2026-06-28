@@ -102,6 +102,7 @@ impl PromptService {
                             let backup_id = format!("backup-{timestamp}");
                             let backup_prompt = Prompt {
                                 id: backup_id.clone(),
+                                app_type: app.as_str().to_string(),
                                 name: format!(
                                     "原始提示词 {}",
                                     chrono::Local::now().format("%Y-%m-%d %H:%M")
@@ -157,6 +158,7 @@ impl PromptService {
         let id = format!("imported-{timestamp}");
         let prompt = Prompt {
             id: id.clone(),
+            app_type: app.as_str().to_string(),
             name: format!(
                 "导入的提示词 {}",
                 chrono::Local::now().format("%Y-%m-%d %H:%M")
@@ -222,6 +224,7 @@ impl PromptService {
         let id = format!("auto-imported-{timestamp}");
         let prompt = Prompt {
             id: id.clone(),
+            app_type: app.as_str().to_string(),
             name: format!(
                 "Auto-imported Prompt {}",
                 chrono::Local::now().format("%Y-%m-%d %H:%M")

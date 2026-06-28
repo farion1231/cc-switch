@@ -1153,8 +1153,52 @@ impl SkillService {
         db: &Arc<Database>,
         target: SkillStorageLocation,
     ) -> Result<MigrationResult> {
+        // web/Docker 模式下设置存储在 SQLite 的 app_settings 记录中，
+        // 需要同步更新 skillStorageLocation，否则前端刷新后仍显示旧值。
+        // 桌面端使用文件设置，DB 中可能没有 app_settings，此时同步逻辑静默跳过。
+        let sync_db_skill_storage_location = |target: SkillStorageLocation| {
+            let location_str = match target {
+                SkillStorageLocation::CcSwitch => "cc_switch",
+                SkillStorageLocation::Unified => "unified",
+            };
+            if let Ok(conn) = db.conn.lock() {
+                let stored: Option<String> = conn
+                    .prepare("SELECT value FROM settings WHERE key = ?1")
+                    .ok()
+                    .and_then(|mut stmt| {
+                        stmt.query_row(["app_settings"], |row| row.get::<usize, String>(0))
+                            .ok()
+                    });
+                if let Some(json_str) = stored {
+                    if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                        value["skillStorageLocation"] =
+                            serde_json::Value::String(location_str.to_string());
+                        match serde_json::to_string(&value) {
+                            Ok(new_json) => {
+                                if let Err(e) = conn.execute(
+                                    "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+                                    rusqlite::params!["app_settings", new_json],
+                                ) {
+                                    log::warn!(
+                                        "[migrate_storage] 无法同步 web settings 中的 skillStorageLocation: {e}"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                log::warn!("[migrate_storage] 序列化 settings 失败: {e}")
+                            }
+                        }
+                    }
+                }
+            } else {
+                log::warn!("[migrate_storage] 无法获取数据库锁以同步 web settings");
+            }
+        };
+
         let current = crate::settings::get_skill_storage_location();
         if current == target {
+            // 即使文件设置已是指定值，仍补偿同步 DB，修复已处于不一致状态的数据
+            sync_db_skill_storage_location(target);
             return Ok(MigrationResult {
                 migrated_count: 0,
                 skipped_count: 0,
@@ -1211,6 +1255,7 @@ impl SkillService {
 
         // 3. 文件移动完成后才持久化设置
         crate::settings::set_skill_storage_location(target)?;
+        sync_db_skill_storage_location(target);
 
         // 4. 刷新所有应用目录的 symlink（指向新 SSOT）
         for app in AppType::all() {
@@ -1598,6 +1643,13 @@ impl SkillService {
 
         let dest = app_dir.join(directory);
 
+        // 优先使用相对路径作为 symlink 目标，这样在 HOME 路径变化的环境
+        // （如 Docker）中仍然有效。无法计算相对路径时回退到绝对路径。
+        let symlink_source = dest
+            .parent()
+            .and_then(|parent| Self::make_relative_path(parent, &source))
+            .unwrap_or_else(|| source.clone());
+
         let sync_method = Self::get_sync_method();
 
         match sync_method {
@@ -1613,7 +1665,7 @@ impl SkillService {
                 }
 
                 // 优先尝试 symlink
-                match Self::create_symlink(&source, &dest) {
+                match Self::create_symlink(&symlink_source, &dest) {
                     Ok(()) => {
                         log::debug!("Skill {directory} 已通过 symlink 同步到 {app:?}");
                         return Ok(());
@@ -1634,7 +1686,7 @@ impl SkillService {
                 if dest.exists() || Self::is_symlink(&dest) {
                     Self::remove_path(&dest)?;
                 }
-                Self::create_symlink(&source, &dest)?;
+                Self::create_symlink(&symlink_source, &dest)?;
                 log::debug!("Skill {directory} 已通过 symlink 同步到 {app:?}");
             }
             SyncMethod::Copy => {
@@ -1752,6 +1804,42 @@ impl SkillService {
         let canonical_target = resolved.canonicalize().unwrap_or(resolved);
 
         canonical_target.starts_with(&canonical_ssot)
+    }
+
+    /// 计算从 `from` 到 `to` 的相对路径。
+    ///
+    /// 当 `from` 和 `to` 没有共同前缀时返回 `None`（例如 Windows 下不同驱动器）。
+    /// 结果使用 `..` 向上回溯，使生成的路径在 `from` 目录下可解析。
+    fn make_relative_path(from: &Path, to: &Path) -> Option<PathBuf> {
+        let from_components: Vec<_> = from.components().collect();
+        let to_components: Vec<_> = to.components().collect();
+
+        // 找到共同前缀长度
+        let mut common = 0;
+        while common < from_components.len() && common < to_components.len() {
+            if from_components[common] != to_components[common] {
+                break;
+            }
+            common += 1;
+        }
+
+        // 没有共同前缀，无法构造相对路径
+        if common == 0 {
+            return None;
+        }
+
+        // 从 `from` 剩余的每一层都需要 `..` 向上回溯
+        let mut result = PathBuf::new();
+        for _ in common..from_components.len() {
+            result.push("..");
+        }
+
+        // 追加 `to` 的剩余部分
+        for comp in &to_components[common..] {
+            result.push(comp.as_os_str());
+        }
+
+        Some(result)
     }
 
     /// 从应用目录删除 Skill（支持 symlink 和真实目录）
@@ -3123,5 +3211,28 @@ mod tests {
             dest.join("SKILL.md").is_file(),
             "existing destination skill should be preserved"
         );
+    }
+
+    #[test]
+    fn make_relative_path_computes_sibling_dirs() {
+        let from = Path::new("/home/user/.claude/skills");
+        let to = Path::new("/home/user/.cc-switch/skills/my-skill");
+        let rel = SkillService::make_relative_path(from, to).expect("relative path");
+        assert_eq!(rel, Path::new("../../.cc-switch/skills/my-skill"));
+    }
+
+    #[test]
+    fn make_relative_path_computes_child_dir() {
+        let from = Path::new("/home/user/.claude/skills");
+        let to = Path::new("/home/user/.claude/skills/nested");
+        let rel = SkillService::make_relative_path(from, to).expect("relative path");
+        assert_eq!(rel, Path::new("nested"));
+    }
+
+    #[test]
+    fn make_relative_path_returns_none_for_no_common_prefix() {
+        let from = Path::new("/home/user/.claude/skills");
+        let to = Path::new("/var/lib/skills");
+        assert!(SkillService::make_relative_path(from, to).is_none());
     }
 }

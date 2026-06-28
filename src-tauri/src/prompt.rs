@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Prompt {
     pub id: String,
+    #[serde(default)]
+    pub app_type: String,
     pub name: String,
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
