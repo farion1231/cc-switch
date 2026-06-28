@@ -4,6 +4,7 @@ import { Plus, Trash2, Save, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { useOpenClawTools, useSaveOpenClawTools } from "@/hooks/useOpenClaw";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { generateUUID } from "@/utils/uuid";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -42,13 +43,13 @@ const ToolsPanel: React.FC = () => {
       setConfig(toolsData);
       setAllowList(
         (toolsData.allow ?? []).map((value) => ({
-          id: crypto.randomUUID(),
+          id: generateUUID(),
           value,
         })),
       );
       setDenyList(
         (toolsData.deny ?? []).map((value) => ({
-          id: crypto.randomUUID(),
+          id: generateUUID(),
           value,
         })),
       );
@@ -56,6 +57,12 @@ const ToolsPanel: React.FC = () => {
   }, [toolsData]);
 
   const unsupportedProfile = getOpenClawUnsupportedProfile(config.profile);
+
+  const isToolsEmpty =
+    toolsData &&
+    !toolsData.profile &&
+    !toolsData.allow?.length &&
+    !toolsData.deny?.length;
 
   const profileLabels = useMemo<Record<OpenClawToolsProfile, string>>(
     () => ({
@@ -127,6 +134,15 @@ const ToolsPanel: React.FC = () => {
       <p className="text-sm text-muted-foreground mb-6">
         {t("openclaw.tools.description")}
       </p>
+
+      {isToolsEmpty && (
+        <div className="rounded-xl border border-border bg-card p-5 text-sm text-muted-foreground mb-6">
+          {t("openclaw.tools.emptyState", {
+            defaultValue:
+              "No tools configuration found. Choose a profile or add allow/deny patterns to create the tools section.",
+          })}
+        </div>
+      )}
 
       {unsupportedProfile && (
         <Alert className="mb-6 border-amber-500/30 bg-amber-500/5">
@@ -217,7 +233,7 @@ const ToolsPanel: React.FC = () => {
             onClick={() =>
               setAllowList((prev) => [
                 ...prev,
-                { id: crypto.randomUUID(), value: "" },
+                { id: generateUUID(), value: "" },
               ])
             }
           >
@@ -256,7 +272,7 @@ const ToolsPanel: React.FC = () => {
             onClick={() =>
               setDenyList((prev) => [
                 ...prev,
-                { id: crypto.randomUUID(), value: "" },
+                { id: generateUUID(), value: "" },
               ])
             }
           >

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { mcpApi } from "@/lib/api/mcp";
+import { mcpApi } from "@/lib/api";
 import type { McpServer } from "@/types";
 import type { AppId } from "@/lib/api/types";
 

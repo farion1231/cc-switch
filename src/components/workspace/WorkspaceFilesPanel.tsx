@@ -17,7 +17,7 @@ import {
   FolderOpen,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { workspaceApi } from "@/lib/api/workspace";
+import { workspaceApi } from "@/lib/api";
 import WorkspaceFileEditor from "./WorkspaceFileEditor";
 import DailyMemoryPanel from "./DailyMemoryPanel";
 

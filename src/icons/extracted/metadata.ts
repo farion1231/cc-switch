@@ -140,22 +140,6 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["ccsub", "aggregator", "relay", "claude", "codex", "gateway"],
     defaultColor: "#1E88E5",
   },
-  subrouter: {
-    name: "subrouter",
-    displayName: "SubRouter",
-    category: "ai-provider",
-    keywords: [
-      "subrouter",
-      "subrouter.ai",
-      "aggregator",
-      "relay",
-      "claude",
-      "codex",
-      "gemini",
-      "gateway",
-    ],
-    defaultColor: "#0D9488",
-  },
   chatglm: {
     name: "chatglm",
     displayName: "chatglm",
@@ -218,12 +202,12 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: [],
     defaultColor: "currentColor",
   },
-  etok: {
-    name: "etok",
-    displayName: "ETok",
+  ctok: {
+    name: "ctok",
+    displayName: "CTok",
     category: "ai-provider",
-    keywords: ["etok", "ai", "programming"],
-    defaultColor: "#F97316",
+    keywords: ["ctok", "ai", "programming"],
+    defaultColor: "#3B82F6",
   },
   cubence: {
     name: "cubence",
@@ -321,7 +305,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     displayName: "Kimi",
     category: "ai-provider",
     keywords: ["moonshot"],
-    defaultColor: "#1783FF",
+    defaultColor: "#6366F1",
   },
   meta: {
     name: "meta",

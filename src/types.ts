@@ -62,8 +62,6 @@ export interface UsageScript {
   baseUrl?: string; // 用量查询专用的 Base URL（通用和 NewAPI 模板使用）
   accessToken?: string; // 访问令牌（NewAPI 模板使用）
   userId?: string; // 用户ID（NewAPI 模板使用）
-  accessKeyId?: string; // 火山方舟 AccessKey ID（用量查询签名用，与推理 Key 分离）
-  secretAccessKey?: string; // 火山方舟 SecretAccessKey
   codingPlanProvider?: string; // Coding Plan 供应商标识（如 "kimi", "zhipu", "minimax"）
   autoQueryInterval?: number; // 自动查询间隔（单位：分钟，0 表示禁用）
   autoIntervalMinutes?: number; // 自动查询间隔（分钟）- 别名字段
@@ -135,6 +133,11 @@ export interface ClaudeDesktopModelRoute {
   supports1m?: boolean;
 }
 
+export interface LocalProxyRequestOverrides {
+  headers?: Record<string, string>;
+  body?: Record<string, unknown>;
+}
+
 export type CodexChatThinkingParam =
   | "none"
   | "thinking"
@@ -169,11 +172,6 @@ export interface CodexChatReasoning {
   effortValueMode?: CodexChatEffortValueMode;
   // 声明性字段：标注上游 reasoning 回传位置。当前提取靠穷举字段，未读取此值（think_tags 尚未接线）。
   outputFormat?: CodexChatReasoningOutputFormat;
-}
-
-export interface LocalProxyRequestOverrides {
-  headers?: Record<string, string>;
-  body?: Record<string, unknown>;
 }
 
 // 供应商元数据（字段名与后端一致，保持 snake_case）
@@ -224,8 +222,6 @@ export interface ProviderMeta {
   codexChatReasoning?: CodexChatReasoning;
   // Custom User-Agent for local proxy routing. Only applied by the local proxy.
   customUserAgent?: string;
-  // Local proxy request overrides. Only applied by the local proxy after route transforms.
-  localProxyRequestOverrides?: LocalProxyRequestOverrides;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）

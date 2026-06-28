@@ -8,6 +8,7 @@ import { UniversalProviderFormModal } from "./UniversalProviderFormModal";
 import { universalProvidersApi } from "@/lib/api";
 import type { UniversalProvider, UniversalProvidersMap } from "@/types";
 import { deepClone } from "@/utils/deepClone";
+import { generateUUID } from "@/utils/uuid";
 
 export function UniversalProviderPanel() {
   const { t } = useTranslation();
@@ -171,7 +172,7 @@ export function UniversalProviderPanel() {
     async (provider: UniversalProvider) => {
       const duplicated: UniversalProvider = {
         ...deepClone(provider),
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         name: `${provider.name} copy`,
         createdAt: Date.now(),
       };

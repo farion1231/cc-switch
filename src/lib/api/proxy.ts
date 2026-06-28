@@ -16,6 +16,11 @@ export const proxyApi = {
     return invoke("start_proxy_server");
   },
 
+  // 停止代理服务器
+  async stopProxyServer(): Promise<void> {
+    return invoke("stop_proxy_server");
+  },
+
   // 停止代理服务器并恢复配置
   async stopProxyWithRestore(): Promise<void> {
     return invoke("stop_proxy_with_restore");

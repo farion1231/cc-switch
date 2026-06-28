@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/select";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { getVersion } from "@tauri-apps/api/app";
+import { getCurrentVersion } from "@/lib/updater";
 import { settingsApi } from "@/lib/api";
 import type {
   ToolInstallation,
@@ -35,6 +35,7 @@ import { useUpdate } from "@/contexts/UpdateContext";
 import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
 import appIcon from "@/assets/icons/app-icon.png";
+import fable5VerifiedBanner from "@/assets/fable5-verified.png";
 import { APP_ICON_MAP } from "@/config/appConfig";
 import type { AppId } from "@/lib/api/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -389,7 +390,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     // 拆成两条独立链路：应用版本一拿到就立刻显示，工具探测各自渐进刷新，互不阻塞。
     const loadAppVersion = async () => {
       try {
-        const appVersion = await getVersion();
+        const appVersion = await getCurrentVersion();
         appVersionCache = appVersion;
         if (active) {
           setVersion(appVersion);
@@ -853,6 +854,12 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                 )}
               </div>
             </div>
+            <img
+              src={fable5VerifiedBanner}
+              alt="Fable 5 Verified"
+              className="h-16 w-auto shrink-0 select-none"
+              draggable={false}
+            />
           </div>
 
           <div className="flex items-center gap-2">

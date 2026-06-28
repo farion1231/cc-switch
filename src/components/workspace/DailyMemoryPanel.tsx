@@ -14,10 +14,10 @@ import { Input } from "@/components/ui/input";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import MarkdownEditor from "@/components/MarkdownEditor";
-import {
-  workspaceApi,
-  type DailyMemoryFileInfo,
-  type DailyMemorySearchResult,
+import { workspaceApi } from "@/lib/api";
+import type {
+  DailyMemoryFileInfo,
+  DailyMemorySearchResult,
 } from "@/lib/api/workspace";
 
 interface DailyMemoryPanelProps {

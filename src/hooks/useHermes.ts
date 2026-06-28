@@ -7,8 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { hermesApi } from "@/lib/api/hermes";
-import { providersApi } from "@/lib/api/providers";
+import { hermesApi, providersApi } from "@/lib/api";
 import type { HermesMemoryKind } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
 

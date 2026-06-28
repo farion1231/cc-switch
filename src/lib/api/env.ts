@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isTauri } from "@/lib/environment";
 import type { EnvConflict, BackupInfo } from "@/types/env";
 
 /**
@@ -13,6 +14,9 @@ import type { EnvConflict, BackupInfo } from "@/types/env";
 export async function checkEnvConflicts(
   appType: string,
 ): Promise<EnvConflict[]> {
+  if (!isTauri()) {
+    return [];
+  }
   return invoke<EnvConflict[]>("check_env_conflicts", { app: appType });
 }
 
@@ -24,6 +28,11 @@ export async function checkEnvConflicts(
 export async function deleteEnvVars(
   conflicts: EnvConflict[],
 ): Promise<BackupInfo> {
+  if (!isTauri()) {
+    throw new Error(
+      "Environment variable cleanup is only available in desktop mode",
+    );
+  }
   return invoke<BackupInfo>("delete_env_vars", { conflicts });
 }
 
@@ -32,6 +41,11 @@ export async function deleteEnvVars(
  * @param backupPath 备份文件路径
  */
 export async function restoreEnvBackup(backupPath: string): Promise<void> {
+  if (!isTauri()) {
+    throw new Error(
+      "Environment variable restore is only available in desktop mode",
+    );
+  }
   return invoke<void>("restore_env_backup", { backupPath });
 }
 

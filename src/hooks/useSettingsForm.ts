@@ -78,6 +78,7 @@ export function useSettingsForm(): UseSettingsFormResult {
   );
 
   const initialLanguageRef = useRef<Language>("zh");
+  const hasInitializedRef = useRef(false);
 
   const readPersistedLanguage = useCallback((): Language => {
     if (typeof window !== "undefined") {
@@ -101,7 +102,7 @@ export function useSettingsForm(): UseSettingsFormResult {
 
   // 初始化设置数据
   useEffect(() => {
-    if (!data) return;
+    if (!data || hasInitializedRef.current) return;
 
     const normalizedLanguage = normalizeLanguage(
       data.language ?? readPersistedLanguage(),
@@ -128,9 +129,21 @@ export function useSettingsForm(): UseSettingsFormResult {
     };
 
     setSettingsState(normalized);
+    hasInitializedRef.current = true;
     initialLanguageRef.current = normalizedLanguage;
     syncLanguage(normalizedLanguage);
   }, [data, readPersistedLanguage, syncLanguage]);
+
+  // skillStorageLocation 由迁移 API 修改，不是通过表单直接编辑，
+  // 因此当后端 query 数据变化时需要同步回表单状态，避免 UI 显示旧值。
+  useEffect(() => {
+    if (!data) return;
+    const location = data.skillStorageLocation ?? "cc_switch";
+    setSettingsState((prev) => {
+      if (!prev || prev.skillStorageLocation === location) return prev;
+      return { ...prev, skillStorageLocation: location };
+    });
+  }, [data?.skillStorageLocation]);
 
   const updateSettings = useCallback(
     (updates: Partial<SettingsFormState>) => {

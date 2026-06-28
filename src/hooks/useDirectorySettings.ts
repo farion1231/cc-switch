@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { homeDir, join } from "@tauri-apps/api/path";
 import { settingsApi, type AppId } from "@/lib/api";
+import { isTauri } from "@/lib/environment";
 import type { SettingsFormState } from "./useSettingsForm";
 
 export type DirectoryAppId = Exclude<AppId, "claude-desktop">;
@@ -57,6 +58,10 @@ const sanitizeDir = (value?: string | null): string | undefined => {
 };
 
 const computeDefaultAppConfigDir = async (): Promise<string | undefined> => {
+  if (!isTauri()) {
+    return "/host-home/.cc-switch";
+  }
+
   try {
     const home = await homeDir();
     return await join(home, ".cc-switch");
@@ -72,6 +77,12 @@ const computeDefaultAppConfigDir = async (): Promise<string | undefined> => {
 const computeDefaultConfigDir = async (
   app: DirectoryAppId,
 ): Promise<string | undefined> => {
+  if (!isTauri()) {
+    return app === "opencode"
+      ? "/host-home/.config/opencode"
+      : `/host-home/.${app}`;
+  }
+
   try {
     const home = await homeDir();
     return await join(home, APP_DIRECTORY_META[app].defaultFolder);

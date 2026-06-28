@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { TFunction } from "i18next";
 import { toast } from "sonner";
+import { isTauri } from "@/lib/environment";
+import { post } from "@/lib/api/web-client";
 
 export interface FetchedModel {
   id: string;
@@ -12,6 +14,8 @@ export interface FetchedModel {
  *
  * 使用 OpenAI 兼容的 GET /v1/models 端点。优先用 `modelsUrl` 精确覆写；
  * 否则后端会对 baseURL 生成候选列表并按序尝试（含"剥离 /anthropic 等兼容子路径"兜底）。
+ *
+ * 桌面端走 Tauri 命令；Web 端走嵌入式 HTTP 服务的 `/providers/fetch-models`。
  */
 export async function fetchModelsForConfig(
   baseUrl: string,
@@ -20,6 +24,15 @@ export async function fetchModelsForConfig(
   modelsUrl?: string,
   customUserAgent?: string,
 ): Promise<FetchedModel[]> {
+  if (!isTauri()) {
+    return post<FetchedModel[]>("/providers/fetch-models", {
+      baseUrl,
+      apiKey,
+      isFullUrl,
+      modelsUrl,
+      customUserAgent,
+    });
+  }
   return invoke("fetch_models_for_config", {
     baseUrl,
     apiKey,
@@ -33,10 +46,14 @@ export async function fetchModelsForConfig(
  * 获取 Codex OAuth (ChatGPT Plus/Pro 反代) 可用模型列表
  *
  * Codex OAuth 使用 ChatGPT 的 backend-api/codex 端点，不兼容普通 /v1/models。
+ * 该路径依赖桌面端托管的 OAuth 凭证，Web 端不可用。
  */
 export async function fetchCodexOauthModels(
   accountId?: string | null,
 ): Promise<FetchedModel[]> {
+  if (!isTauri()) {
+    throw new Error("Codex OAuth model list is not available in web mode");
+  }
   return invoke("get_codex_oauth_models", {
     accountId: accountId || null,
   });

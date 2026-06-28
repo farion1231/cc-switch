@@ -3,9 +3,9 @@
  */
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
+import { proxyApi } from "@/lib/api";
 import type { ProxyConfig } from "@/types/proxy";
 
 /**
@@ -18,13 +18,13 @@ export function useProxyConfig() {
   // 查询配置
   const { data: config, isLoading } = useQuery({
     queryKey: ["proxyConfig"],
-    queryFn: () => invoke<ProxyConfig>("get_proxy_config"),
+    queryFn: () => proxyApi.getProxyConfig(),
   });
 
   // 更新配置
   const updateMutation = useMutation({
     mutationFn: (newConfig: ProxyConfig) =>
-      invoke("update_proxy_config", { config: newConfig }),
+      proxyApi.updateProxyConfig(newConfig),
     onSuccess: () => {
       toast.success(t("proxy.settings.toast.saved"), { closeButton: true });
       queryClient.invalidateQueries({ queryKey: ["proxyConfig"] });

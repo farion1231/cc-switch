@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { proxyApi } from "@/lib/api/proxy";
+import { proxyApi } from "@/lib/api";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import type { GlobalProxyConfig, AppProxyConfig } from "@/types/proxy";

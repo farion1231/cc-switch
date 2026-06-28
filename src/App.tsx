@@ -15,6 +15,7 @@ import {
   Book,
   Brain,
   Wrench,
+  RefreshCw,
   History,
   BarChart2,
   Download,
@@ -25,6 +26,7 @@ import {
   Shield,
   Cpu,
   LayoutDashboard,
+  LogOut,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -33,6 +35,7 @@ import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
   providersApi,
   settingsApi,
+  authApi,
   type AppId,
   type ProviderSwitchEvent,
 } from "@/lib/api";
@@ -40,13 +43,12 @@ import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
 import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
-import { hermesApi } from "@/lib/api/hermes";
+import { hermesApi } from "@/lib/api";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useAutoCompact } from "@/hooks/useAutoCompact";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
-import { useScanUnmanagedSkills } from "@/hooks/useSkills";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { deepClone } from "@/utils/deepClone";
@@ -71,11 +73,7 @@ import { FailoverToggle } from "@/components/proxy/FailoverToggle";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
 import PromptPanel from "@/components/prompts/PromptPanel";
-import {
-  SkillsPage,
-  getSkillsPageHeaderActions,
-  type SkillsPageSource,
-} from "@/components/skills/SkillsPage";
+import { SkillsPage } from "@/components/skills/SkillsPage";
 import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
@@ -94,6 +92,12 @@ import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
+import { ThemeProvider } from "@/components/theme-provider";
+import { getAuthToken, clearAuthToken } from "@/lib/api/web-client";
+import { useWebAuthSync } from "@/hooks/useWebAuthSync";
+import { LoginPage } from "@/components/auth/LoginPage";
+import { TerminalModal } from "@/components/terminal";
+import { isTauri, isWebMode } from "@/lib/environment";
 
 type View =
   | "providers"
@@ -168,22 +172,53 @@ const getInitialView = (): View => {
 function App() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  // Web mode auth state - token auth for web, auto-authenticated for Tauri
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    if (isTauri()) return true; // Always authenticated in Tauri mode
+    return !!getAuthToken();
+  });
+
+  useWebAuthSync(isAuthenticated, setIsAuthenticated);
+
+  const handleLogin = () => {
+    setIsAuthenticated(true);
+    // Cached empty/401 data from before login must be removed so queries refetch
+    // with the new token instead of briefly showing the empty provider page.
+    queryClient.clear();
+  };
+
+  const handleLogout = async () => {
+    setLogoutConfirmOpen(false);
+    try {
+      await authApi.logout();
+    } catch (error) {
+      toast.warning(
+        t("logout.serverInvalidationWarning", {
+          defaultValue:
+            "Logged out locally, but server session invalidation may have failed.",
+        }),
+      );
+    } finally {
+      clearAuthToken();
+      queryClient.clear();
+      setIsAuthenticated(false);
+    }
+  };
 
   const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
   const sharedFeatureApp: AppId =
     activeApp === "claude-desktop" ? "claude" : activeApp;
   const [currentView, setCurrentView] = useState<View>(getInitialView);
-  const [skillsDiscoverySource, setSkillsDiscoverySource] =
-    useState<SkillsPageSource>("repos");
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
 
   useEffect(() => {
     localStorage.setItem(VIEW_STORAGE_KEY, currentView);
   }, [currentView]);
 
-  const { data: settingsData } = useSettingsQuery();
+  const { data: settingsData } = useSettingsQuery({ enabled: isAuthenticated });
   const useAppWindowControls =
     isLinux() && (settingsData?.useAppWindowControls ?? false);
   const dragBarHeight = useAppWindowControls ? 32 : DEFAULT_DRAG_BAR_HEIGHT;
@@ -232,6 +267,9 @@ function App() {
 
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
+  const [terminalProvider, setTerminalProvider] = useState<Provider | null>(
+    null,
+  );
   const [confirmAction, setConfirmAction] = useState<{
     provider: Provider;
     action: "remove" | "delete";
@@ -251,10 +289,6 @@ function App() {
   const mcpPanelRef = useRef<any>(null);
   const skillsPageRef = useRef<any>(null);
   const unifiedSkillsPanelRef = useRef<any>(null);
-  // 订阅未管理 Skill 的共享缓存（实际扫描由 UnifiedSkillsPanel 进入页面时触发）。
-  // 这里 enabled 默认 false，仅用于「导入」按钮的绿点提示，不主动发起扫描。
-  const { data: unmanagedSkills } = useScanUnmanagedSkills();
-  const hasUnmanagedSkills = (unmanagedSkills?.length ?? 0) > 0;
   const addActionButtonClass =
     "bg-orange-500 hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 dark:shadow-orange-500/40 rounded-full w-8 h-8";
 
@@ -271,9 +305,27 @@ function App() {
     return target?.provider_id;
   }, [proxyStatus?.active_targets, activeApp]);
 
-  const { data, isLoading, refetch } = useProvidersQuery(activeApp, {
+  const {
+    data,
+    isLoading,
+    refetch,
+    error: providersError,
+  } = useProvidersQuery(activeApp, {
     isProxyRunning,
   });
+
+  useEffect(() => {
+    // In Tauri mode there's no auth redirect, so surface provider load failures
+    // explicitly. Web mode relies on the auth:expired handler to switch to login.
+    if (providersError && isTauri()) {
+      toast.error(
+        t("providers.loadError", {
+          defaultValue: "Failed to load providers: {{error}}",
+          error: providersError.message,
+        }),
+      );
+    }
+  }, [providersError, t, isTauri]);
   const providers = useMemo(() => data?.providers ?? {}, [data]);
   const currentProviderId = data?.currentProviderId ?? "";
   const isOpenClawView =
@@ -427,6 +479,7 @@ function App() {
   );
 
   useEffect(() => {
+    if (!isTauri()) return;
     let active = true;
     let unlistenResize: (() => void) | undefined;
 
@@ -457,6 +510,7 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!isTauri()) return;
     // settingsData 未加载时跳过，避免用 fallback false 覆盖 Rust 侧已设好的装饰状态
     if (!settingsData) return;
 
@@ -497,6 +551,7 @@ function App() {
 
   useEffect(() => {
     const checkMigration = async () => {
+      if (!isTauri()) return;
       try {
         const migrated = await invoke<boolean>("get_migration_result");
         if (migrated) {
@@ -515,6 +570,7 @@ function App() {
 
   useEffect(() => {
     const checkSkillsMigration = async () => {
+      if (!isTauri()) return;
       try {
         const result = await invoke<{ count: number; error?: string } | null>(
           "get_skills_migration_result",
@@ -783,32 +839,50 @@ function App() {
   };
 
   const handleOpenTerminal = async (provider: Provider) => {
-    try {
-      const selectedDir = await settingsApi.pickDirectory();
-      if (!selectedDir) {
-        return;
-      }
+    if (!isTauri()) {
+      // Web mode: show terminal modal
+      setTerminalProvider(provider);
+    } else {
+      // Desktop mode: open native terminal
+      try {
+        const selectedDir = await settingsApi.pickDirectory();
+        if (!selectedDir) {
+          return;
+        }
 
-      await providersApi.openTerminal(provider.id, activeApp, {
-        cwd: selectedDir,
-      });
-      toast.success(
-        t("provider.terminalOpened", {
-          defaultValue: "终端已打开",
-        }),
-      );
-    } catch (error) {
-      console.error("[App] Failed to open terminal", error);
-      const errorMessage = extractErrorMessage(error);
-      toast.error(
-        t("provider.terminalOpenFailed", {
-          defaultValue: "打开终端失败",
-        }) + (errorMessage ? `: ${errorMessage}` : ""),
-      );
+        await providersApi.openTerminal(provider.id, activeApp, {
+          cwd: selectedDir,
+        });
+        toast.success(
+          t("provider.terminalOpened", {
+            defaultValue: "终端已打开",
+          }),
+        );
+      } catch (error) {
+        console.error("[App] Failed to open terminal", error);
+        const errorMessage = extractErrorMessage(error);
+        toast.error(
+          t("provider.terminalOpenFailed", {
+            defaultValue: "打开终端失败",
+          }) + (errorMessage ? `: ${errorMessage}` : ""),
+        );
+      }
     }
   };
 
   const handleImportSuccess = async () => {
+    try {
+      await queryClient.invalidateQueries({
+        queryKey: ["settings"],
+        refetchType: "all",
+      });
+      await queryClient.refetchQueries({
+        queryKey: ["settings"],
+        type: "all",
+      });
+    } catch (error) {
+      console.error("[App] Failed to refresh settings after import", error);
+    }
     try {
       await queryClient.invalidateQueries({
         queryKey: ["providers"],
@@ -839,6 +913,7 @@ function App() {
   };
 
   const handleWindowMinimize = async () => {
+    if (!isTauri()) return;
     try {
       await getCurrentWindow().minimize();
     } catch (error) {
@@ -848,6 +923,7 @@ function App() {
   };
 
   const handleWindowToggleMaximize = async () => {
+    if (!isTauri()) return;
     try {
       const currentWindow = getCurrentWindow();
       await currentWindow.toggleMaximize();
@@ -859,17 +935,13 @@ function App() {
   };
 
   const handleWindowClose = async () => {
+    if (!isTauri()) return;
     try {
       await getCurrentWindow().close();
     } catch (error) {
       console.error("[App] Failed to close window", error);
       notifyWindowControlError(error);
     }
-  };
-
-  const handleOpenSkillsDiscovery = () => {
-    setSkillsDiscoverySource("repos");
-    setCurrentView("skillsDiscovery");
   };
 
   const renderContent = () => {
@@ -899,7 +971,7 @@ function App() {
           return (
             <UnifiedSkillsPanel
               ref={unifiedSkillsPanelRef}
-              onOpenDiscovery={handleOpenSkillsDiscovery}
+              onOpenDiscovery={() => setCurrentView("skillsDiscovery")}
               currentApp={
                 sharedFeatureApp === "openclaw" ? "claude" : sharedFeatureApp
               }
@@ -912,7 +984,6 @@ function App() {
               initialApp={
                 sharedFeatureApp === "openclaw" ? "claude" : sharedFeatureApp
               }
-              onSourceChange={setSkillsDiscoverySource}
             />
           );
         case "mcp":
@@ -1033,6 +1104,15 @@ function App() {
     );
   };
 
+  // Web mode: Show login page if not authenticated
+  if (!isTauri() && !isAuthenticated) {
+    return (
+      <ThemeProvider defaultTheme="system" storageKey="cc-switch-theme">
+        <LoginPage onLogin={handleLogin} />
+      </ThemeProvider>
+    );
+  }
+
   return (
     <div
       className="flex flex-col h-screen overflow-hidden bg-background text-foreground selection:bg-primary/30 pb-4"
@@ -1125,7 +1205,7 @@ function App() {
         }
       >
         <div
-          className="flex h-full items-center justify-between gap-2 px-6"
+          className="flex h-full w-full items-center justify-between gap-2 px-6"
           {...DRAG_REGION_ATTR}
           style={{ ...DRAG_REGION_STYLE } as any}
         >
@@ -1201,6 +1281,17 @@ function App() {
                 >
                   <Settings className="w-4 h-4" />
                 </Button>
+                {isWebMode() && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setLogoutConfirmOpen(true)}
+                    title={t("common.logout")}
+                    className="hover:bg-black/5 dark:hover:bg-white/5"
+                  >
+                    <LogOut className="w-4 h-4" />
+                  </Button>
+                )}
                 <UpdateBadge
                   onClick={() => {
                     setSettingsDefaultTab("about");
@@ -1320,26 +1411,15 @@ function App() {
                       onClick={() =>
                         unifiedSkillsPanelRef.current?.openImport()
                       }
-                      className="relative hover:bg-black/5 dark:hover:bg-white/5"
-                      title={
-                        hasUnmanagedSkills
-                          ? t("skills.unmanagedAvailable")
-                          : undefined
-                      }
+                      className="hover:bg-black/5 dark:hover:bg-white/5"
                     >
                       <Download className="w-4 h-4 mr-2" />
                       {t("skills.import")}
-                      {hasUnmanagedSkills && (
-                        <span
-                          className="absolute top-1 right-1 h-2 w-2 rounded-full bg-green-500"
-                          aria-hidden="true"
-                        />
-                      )}
                     </Button>
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={handleOpenSkillsDiscovery}
+                      onClick={() => setCurrentView("skillsDiscovery")}
                       className="hover:bg-black/5 dark:hover:bg-white/5"
                     >
                       <Search className="w-4 h-4 mr-2" />
@@ -1349,20 +1429,24 @@ function App() {
                 )}
                 {currentView === "skillsDiscovery" && (
                   <>
-                    {getSkillsPageHeaderActions(skillsDiscoverySource).map(
-                      ({ key, labelKey, Icon, execute }) => (
-                        <Button
-                          key={key}
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => execute(skillsPageRef.current)}
-                          className="hover:bg-black/5 dark:hover:bg-white/5"
-                        >
-                          <Icon className="w-4 h-4 mr-2" />
-                          {t(labelKey)}
-                        </Button>
-                      ),
-                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => skillsPageRef.current?.refresh()}
+                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <RefreshCw className="w-4 h-4 mr-2" />
+                      {t("skills.refresh")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => skillsPageRef.current?.openRepoManager()}
+                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <Settings className="w-4 h-4 mr-2" />
+                      {t("skills.repoManager")}
+                    </Button>
                   </>
                 )}
                 {currentView === "providers" && (
@@ -1548,7 +1632,7 @@ function App() {
         </div>
       </header>
 
-      <main className="flex-1 min-h-0 flex flex-col overflow-y-auto animate-fade-in">
+      <main className="flex-1 min-h-0 w-full flex flex-col overflow-y-auto animate-fade-in">
         {isOpenClawView && openclawHealthWarnings.length > 0 && (
           <OpenClawHealthBanner warnings={openclawHealthWarnings} />
         )}
@@ -1589,6 +1673,13 @@ function App() {
           }}
         />
       )}
+
+      <TerminalModal
+        provider={terminalProvider}
+        appId={activeApp}
+        isOpen={Boolean(terminalProvider)}
+        onClose={() => setTerminalProvider(null)}
+      />
 
       <ConfirmDialog
         isOpen={Boolean(confirmAction)}
@@ -1632,6 +1723,19 @@ function App() {
           })();
         }}
         onCancel={() => setLaunchDashboardOpen(false)}
+      />
+
+      <ConfirmDialog
+        isOpen={logoutConfirmOpen}
+        title={t("logout.confirmTitle", { defaultValue: "Log out?" })}
+        message={t("logout.confirmMessage", {
+          defaultValue:
+            "This will invalidate your current session and return you to the login page.",
+        })}
+        confirmText={t("logout.confirmAction", { defaultValue: "Log out" })}
+        variant="info"
+        onConfirm={() => void handleLogout()}
+        onCancel={() => setLogoutConfirmOpen(false)}
       />
 
       <DeepLinkImportDialog />

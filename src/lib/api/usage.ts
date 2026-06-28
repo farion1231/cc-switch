@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isTauri } from "@/lib/environment";
+import { post } from "@/lib/api/web-client";
 import type {
   UsageSummary,
   UsageSummaryByApp,
@@ -20,6 +22,12 @@ import type { TemplateType } from "@/config/constants";
 export const usageApi = {
   // Provider usage script methods
   query: async (providerId: string, appId: AppId): Promise<UsageResult> => {
+    if (!isTauri()) {
+      return post<UsageResult>("/providers/usage/query", {
+        providerId,
+        app: appId,
+      });
+    }
     return invoke("queryProviderUsage", { providerId, app: appId });
   },
 
@@ -34,6 +42,19 @@ export const usageApi = {
     userId?: string,
     templateType?: TemplateType,
   ): Promise<UsageResult> => {
+    if (!isTauri()) {
+      return post<UsageResult>("/providers/usage/test", {
+        providerId,
+        app: appId,
+        scriptCode,
+        timeout,
+        apiKey,
+        baseUrl,
+        accessToken,
+        userId,
+        templateType,
+      });
+    }
     return invoke("testUsageScript", {
       providerId,
       app: appId,

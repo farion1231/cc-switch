@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import MarkdownEditor from "@/components/MarkdownEditor";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
-import { workspaceApi } from "@/lib/api/workspace";
+import { workspaceApi } from "@/lib/api";
 
 interface WorkspaceFileEditorProps {
   filename: string;

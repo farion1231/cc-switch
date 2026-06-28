@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isTauri } from "@/lib/environment";
+import { webAuthApi } from "./web/auth";
 
 export type ManagedAuthProvider = "github_copilot" | "codex_oauth";
 
@@ -95,6 +97,21 @@ export async function authLogout(
   });
 }
 
+export async function login(token: string): Promise<string> {
+  if (isTauri()) {
+    throw new Error("Login is only available in web mode");
+  }
+  const { token: jwt } = await webAuthApi.login(token);
+  return jwt;
+}
+
+export async function logout(): Promise<void> {
+  if (isTauri()) {
+    return;
+  }
+  return webAuthApi.logout();
+}
+
 export const authApi = {
   authStartLogin,
   authPollForAccount,
@@ -103,4 +120,6 @@ export const authApi = {
   authRemoveAccount,
   authSetDefaultAccount,
   authLogout,
+  login,
+  logout,
 };

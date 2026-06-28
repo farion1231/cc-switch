@@ -26,7 +26,6 @@ export interface OpenClawProviderPreset {
   settingsConfig: OpenClawProviderConfig;
   isOfficial?: boolean;
   isPartner?: boolean;
-  primePartner?: boolean; // 置顶合作伙伴（顶级）：徽章显示为心形
   partnerPromotionKey?: string;
   category?: ProviderCategory;
   /** Template variable definitions */
@@ -231,10 +230,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "doubao-seed-2-1-pro",
-          name: "DouBao Seed 2.1 Pro",
+          id: "doubao-seed-2-0-code-preview-latest",
+          name: "DouBao Seed Code Preview",
           contextWindow: 128000,
-          cost: { input: 0.84, output: 4.2 },
+          cost: { input: 0.002, output: 0.006 },
         },
       ],
     },
@@ -251,9 +250,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "doubaoseed/doubao-seed-2-1-pro" },
+      model: { primary: "doubaoseed/doubao-seed-2-0-code-preview-latest" },
       modelCatalog: {
-        "doubaoseed/doubao-seed-2-1-pro": { alias: "DouBao" },
+        "doubaoseed/doubao-seed-2-0-code-preview-latest": { alias: "DouBao" },
       },
     },
   },
@@ -291,42 +290,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
       modelCatalog: {
         "ccsub/gpt-5.5": { alias: "GPT-5.5" },
-      },
-    },
-  },
-  {
-    name: "SubRouter",
-    websiteUrl: "https://subrouter.ai",
-    apiKeyUrl: "https://subrouter.ai/register?aff=l3ri",
-    settingsConfig: {
-      baseUrl: "https://subrouter.ai/v1",
-      apiKey: "",
-      api: "openai-completions",
-      models: [
-        {
-          id: "gpt-5.5",
-          name: "GPT-5.5",
-          contextWindow: 400000,
-        },
-      ],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "subrouter",
-    icon: "subrouter",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: {
-        primary: "subrouter/gpt-5.5",
-      },
-      modelCatalog: {
-        "subrouter/gpt-5.5": { alias: "GPT-5.5" },
       },
     },
   },
@@ -527,8 +490,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: "Kimi",
-    primePartner: true,
+    name: "Kimi K2.7 Code",
     websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
     apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
     settingsConfig: {
@@ -567,7 +529,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "Kimi For Coding",
-    primePartner: true,
     websiteUrl: "https://www.kimi.com/code/docs/?aff=cc-switch",
     apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
     settingsConfig: {
@@ -2113,11 +2074,11 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: "ETok.ai",
-    websiteUrl: "https://etok.ai",
-    apiKeyUrl: "https://etok.ai",
+    name: "CTok.ai",
+    websiteUrl: "https://ctok.ai",
+    apiKeyUrl: "https://ctok.ai",
     settingsConfig: {
-      baseUrl: "https://api.etok.ai",
+      baseUrl: "https://api.ctok.ai",
       apiKey: "",
       api: "anthropic-messages",
       models: [
@@ -2131,8 +2092,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     category: "third_party",
     isPartner: true,
-    partnerPromotionKey: "etok",
-    icon: "etok",
+    partnerPromotionKey: "ctok",
+    icon: "ctok",
     iconColor: "#000000",
     templateValues: {
       apiKey: {
@@ -2143,10 +2104,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "etok/claude-opus-4-8",
+        primary: "ctok/claude-opus-4-8",
       },
       modelCatalog: {
-        "etok/claude-opus-4-8": { alias: "Opus" },
+        "ctok/claude-opus-4-8": { alias: "Opus" },
       },
     },
   },

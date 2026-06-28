@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { DeepLinkImportRequest, deeplinkApi } from "@/lib/api/deeplink";
+import { isTauri } from "@/lib/environment";
 import {
   Dialog,
   DialogContent,
@@ -49,6 +50,10 @@ export function DeepLinkImportDialog() {
   };
 
   useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+
     // Listen for deep link import events
     const unlistenImport = listen<DeepLinkImportRequest>(
       "deeplink-import",

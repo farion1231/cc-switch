@@ -10,7 +10,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { settingsApi, type LogConfig } from "@/lib/api/settings";
+import { settingsApi } from "@/lib/api";
+import type { LogConfig } from "@/lib/api/settings";
 
 const LOG_LEVELS = ["error", "warn", "info", "debug", "trace"] as const;
 

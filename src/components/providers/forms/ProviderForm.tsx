@@ -8,12 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Form, FormField, FormItem, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
-import {
-  buildLocalProxyRequestOverrides,
-  formatRequestOverrideObject,
-} from "@/lib/requestOverrides";
 import { providersApi, settingsApi, type AppId } from "@/lib/api";
-import { useDarkMode } from "@/hooks/useDarkMode";
 import type {
   ProviderCategory,
   ProviderMeta,
@@ -65,6 +60,7 @@ import {
   setCodexModelName as setCodexModelNameInConfig,
 } from "@/utils/providerConfigUtils";
 import { isNonNegativeDecimalString } from "@/types/usage";
+import { generateUUID } from "@/utils/uuid";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
 import CodexConfigEditor from "./CodexConfigEditor";
 import { CommonConfigEditor } from "./CommonConfigEditor";
@@ -75,6 +71,7 @@ import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
 import { ClaudeDesktopProviderForm } from "./ClaudeDesktopProviderForm";
+import { ErrorBoundary } from "@/components/common/ErrorBoundary";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
 import { OmoFormFields } from "./OmoFormFields";
@@ -150,16 +147,6 @@ const codexApiFormatFromWireApi = (
   }
 };
 
-// 从已保存的 settingsConfig 推断 Codex 模型映射条目数（用于决定本地路由初始开关）。
-const codexCatalogCountFromSettings = (settingsConfig: unknown): number => {
-  if (settingsConfig && typeof settingsConfig === "object") {
-    const models = (settingsConfig as { modelCatalog?: { models?: unknown } })
-      .modelCatalog?.models;
-    return Array.isArray(models) ? models.length : 0;
-  }
-  return 0;
-};
-
 export const normalizeCodexCatalogModelsForSave = (
   models: CodexCatalogModel[],
 ): CodexCatalogModel[] => {
@@ -225,10 +212,6 @@ const normalizeCodexChatReasoningForSave = (
   };
 };
 
-type LocalProxyRequestOverridesBuildResult = ReturnType<
-  typeof buildLocalProxyRequestOverrides
->;
-
 export interface ProviderFormProps {
   appId: AppId;
   providerId?: string;
@@ -281,11 +264,27 @@ function ProviderFormFull({
   const isEditMode = Boolean(initialData);
   const queryClient = useQueryClient();
   const { data: settingsData } = useSettingsQuery();
+  const COMMON_CONFIG_NOTICE_DISMISSED_KEY =
+    "cc-switch-common-config-notice-dismissed";
+  const [commonConfigNoticeDismissed, setCommonConfigNoticeDismissed] =
+    useState<boolean>(() => {
+      if (typeof window === "undefined") return false;
+      return (
+        localStorage.getItem(COMMON_CONFIG_NOTICE_DISMISSED_KEY) === "true"
+      );
+    });
+
   const showCommonConfigNotice =
-    settingsData != null && settingsData.commonConfigConfirmed !== true;
-  const isDarkMode = useDarkMode();
+    settingsData != null &&
+    settingsData.commonConfigConfirmed !== true &&
+    !commonConfigNoticeDismissed;
 
   const handleCommonConfigConfirm = async () => {
+    setCommonConfigNoticeDismissed(true);
+    if (typeof window !== "undefined") {
+      localStorage.setItem(COMMON_CONFIG_NOTICE_DISMISSED_KEY, "true");
+    }
+
     try {
       if (settingsData) {
         const { webdavSync: _, ...rest } = settingsData;
@@ -376,16 +375,6 @@ function ProviderFormFull({
     });
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
-    setLocalProxyHeadersOverride(
-      formatRequestOverrideObject(
-        initialData?.meta?.localProxyRequestOverrides?.headers,
-      ),
-    );
-    setLocalProxyBodyOverride(
-      formatRequestOverrideObject(
-        initialData?.meta?.localProxyRequestOverrides?.body,
-      ),
-    );
   }, [appId, initialData, supportsFullUrl]);
 
   const defaultValues: ProviderFormData = useMemo(
@@ -442,10 +431,6 @@ function ProviderFormFull({
   const [softIssues, setSoftIssues] = useState<string[] | null>(null);
   const [pendingFormValues, setPendingFormValues] =
     useState<ProviderFormData | null>(null);
-  const [
-    pendingLocalProxyRequestOverridesResult,
-    setPendingLocalProxyRequestOverridesResult,
-  ] = useState<LocalProxyRequestOverridesBuildResult | null>(null);
   // 确认框走的提交路径绕过了 react-hook-form 的 isSubmitting，单独追踪
   const [isConfirmSubmitting, setIsConfirmSubmitting] = useState(false);
 
@@ -549,18 +534,6 @@ function ProviderFormFull({
   const [customUserAgent, setCustomUserAgent] = useState<string>(
     () => initialData?.meta?.customUserAgent ?? "",
   );
-  const [localProxyHeadersOverride, setLocalProxyHeadersOverride] =
-    useState<string>(() =>
-      formatRequestOverrideObject(
-        initialData?.meta?.localProxyRequestOverrides?.headers,
-      ),
-    );
-  const [localProxyBodyOverride, setLocalProxyBodyOverride] = useState<string>(
-    () =>
-      formatRequestOverrideObject(
-        initialData?.meta?.localProxyRequestOverrides?.body,
-      ),
-  );
 
   const {
     codexAuth,
@@ -578,29 +551,24 @@ function ProviderFormFull({
     resetCodexConfig,
   } = useCodexConfigState({ initialData });
 
-  const initialCodexApiFormat: CodexApiFormat =
-    initialData?.meta?.apiFormat === "openai_chat"
-      ? "openai_chat"
-      : initialData?.meta?.apiFormat === "openai_responses"
-        ? "openai_responses"
-        : (codexApiFormatFromWireApi(
-            extractCodexWireApi(
-              typeof initialData?.settingsConfig?.config === "string"
-                ? initialData.settingsConfig.config
-                : "",
-            ),
-          ) ?? "openai_responses");
-
   const [localCodexApiFormat, setLocalCodexApiFormat] =
-    useState<CodexApiFormat>(initialCodexApiFormat);
-
-  // 本地路由（接管）开关 —— 纯模型映射门控，与上游格式完全独立。
-  // 没有独立持久化字段，初值仅按「是否已配置模型映射」推断（有 catalog 即视为
-  // 接管已开）。只在 useState 初始化与预设重置点设置，跟 localCodexApiFormat
-  // 对称，避免漂移。
-  const [codexTakeoverEnabled, setCodexTakeoverEnabled] = useState<boolean>(
-    () => codexCatalogCountFromSettings(initialData?.settingsConfig) > 0,
-  );
+    useState<CodexApiFormat>(() => {
+      if (initialData?.meta?.apiFormat === "openai_chat") {
+        return "openai_chat";
+      }
+      if (initialData?.meta?.apiFormat === "openai_responses") {
+        return "openai_responses";
+      }
+      return (
+        codexApiFormatFromWireApi(
+          extractCodexWireApi(
+            typeof initialData?.settingsConfig?.config === "string"
+              ? initialData.settingsConfig.config
+              : "",
+          ),
+        ) ?? "openai_responses"
+      );
+    });
 
   const { configError: codexConfigError, debouncedValidate } =
     useCodexTomlValidation();
@@ -631,7 +599,6 @@ function ProviderFormFull({
       const template = getCodexCustomTemplate();
       resetCodexConfig(template.auth, template.config);
       setCodexChatReasoning({});
-      setCodexTakeoverEnabled(false);
     }
   }, [appId, initialData, selectedPresetId, resetCodexConfig]);
 
@@ -981,26 +948,7 @@ function ProviderFormFull({
 
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 
-  const shouldApplyLocalProxyRequestOverrides =
-    (appId === "claude" || appId === "codex") && category !== "official";
-
   const handleSubmit = async (values: ProviderFormData) => {
-    const overridesResult = shouldApplyLocalProxyRequestOverrides
-      ? buildLocalProxyRequestOverrides(
-          localProxyHeadersOverride,
-          localProxyBodyOverride,
-        )
-      : {};
-    if (overridesResult.error) {
-      toast.error(
-        t("providerForm.localProxyRequestOverridesInvalid", {
-          defaultValue: `本地代理请求覆盖格式错误：${overridesResult.error}`,
-          error: overridesResult.error,
-        }),
-      );
-      return;
-    }
-
     // 软性问题（业务约束，用户可选择仍要保存）
     const issues: string[] = [];
 
@@ -1238,27 +1186,13 @@ function ProviderFormFull({
       // 弹确认框让用户决定是否仍要保存
       setSoftIssues(issues);
       setPendingFormValues(values);
-      setPendingLocalProxyRequestOverridesResult(overridesResult);
       return;
     }
 
-    await performSubmit(values, overridesResult);
+    await performSubmit(values);
   };
 
-  const performSubmit = async (
-    values: ProviderFormData,
-    overridesResult: LocalProxyRequestOverridesBuildResult,
-  ) => {
-    if (overridesResult.error) {
-      toast.error(
-        t("providerForm.localProxyRequestOverridesInvalid", {
-          defaultValue: `本地代理请求覆盖格式错误：${overridesResult.error}`,
-          error: overridesResult.error,
-        }),
-      );
-      return;
-    }
-
+  const performSubmit = async (values: ProviderFormData) => {
     // OAuth / 其它身份识别（与 handleSubmit 保持一致）
     const isCopilotProvider =
       templatePreset?.providerType === "github_copilot" ||
@@ -1278,7 +1212,7 @@ function ProviderFormFull({
             ? setCodexWireApi(codexConfig ?? "", "responses")
             : (codexConfig ?? "");
         const normalizedCatalogModels =
-          category !== "official" && codexTakeoverEnabled
+          category !== "official" && localCodexApiFormat === "openai_chat"
             ? normalizeCodexCatalogModelsForSave(codexCatalogModels)
             : [];
         // Sync first catalog row's model into config.toml so Codex uses it as default
@@ -1354,7 +1288,7 @@ function ProviderFormFull({
       if (isAnyOmoCategory) {
         if (!isEditMode) {
           const prefix = category === "omo" ? "omo" : "omo-slim";
-          payload.providerKey = `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
+          payload.providerKey = `${prefix}-${generateUUID().slice(0, 8)}`;
         }
       } else {
         payload.providerKey = opencodeForm.opencodeProviderKey;
@@ -1474,7 +1408,6 @@ function ProviderFormFull({
       codexChatReasoning:
         appId === "codex" &&
         category !== "official" &&
-        codexTakeoverEnabled &&
         localCodexApiFormat === "openai_chat"
           ? normalizeCodexChatReasoningForSave(codexChatReasoning)
           : undefined,
@@ -1482,9 +1415,6 @@ function ProviderFormFull({
         (appId === "claude" || appId === "codex") && category !== "official"
           ? customUserAgent.trim() || undefined
           : undefined,
-      localProxyRequestOverrides: shouldApplyLocalProxyRequestOverrides
-        ? overridesResult.overrides
-        : undefined,
       testConfig: testConfig.enabled ? testConfig : undefined,
       costMultiplier: pricingConfig.enabled
         ? pricingConfig.costMultiplier
@@ -1627,8 +1557,6 @@ function ProviderFormFull({
           codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
             "openai_responses",
         );
-        // 自定义模板无模型映射，路由默认关闭
-        setCodexTakeoverEnabled(false);
       }
       if (appId === "gemini") {
         resetGeminiConfig({}, {});
@@ -1671,8 +1599,6 @@ function ProviderFormFull({
           codexApiFormatFromWireApi(extractCodexWireApi(config)) ??
           "openai_responses",
       );
-      // 路由开关与格式无关，仅按预设是否带模型映射决定
-      setCodexTakeoverEnabled((preset.modelCatalog?.length ?? 0) > 0);
 
       form.reset({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -2042,240 +1968,247 @@ function ProviderFormFull({
           />
 
           {appId === "claude" && (
-            <ClaudeFormFields
-              providerId={providerId}
-              shouldShowApiKey={
-                (category !== "cloud_provider" ||
-                  hasApiKeyField(form.getValues("settingsConfig"), "claude")) &&
-                shouldShowApiKey(form.getValues("settingsConfig"), isEditMode)
-              }
-              apiKey={apiKey}
-              onApiKeyChange={handleApiKeyChange}
-              category={category}
-              shouldShowApiKeyLink={shouldShowClaudeApiKeyLink}
-              websiteUrl={claudeWebsiteUrl}
-              isPartner={isClaudePartner}
-              partnerPromotionKey={claudePartnerPromotionKey}
-              isCopilotPreset={
-                templatePreset?.providerType === "github_copilot" ||
-                initialData?.meta?.providerType === "github_copilot" ||
-                baseUrl.includes("githubcopilot.com")
-              }
-              isCodexOauthPreset={
-                templatePreset?.providerType === "codex_oauth" ||
-                initialData?.meta?.providerType === "codex_oauth"
-              }
-              usesOAuth={
-                templatePreset?.requiresOAuth === true ||
-                templatePreset?.providerType === "github_copilot" ||
-                initialData?.meta?.providerType === "github_copilot" ||
-                baseUrl.includes("githubcopilot.com") ||
-                templatePreset?.providerType === "codex_oauth" ||
-                initialData?.meta?.providerType === "codex_oauth"
-              }
-              isCopilotAuthenticated={isCopilotAuthenticated}
-              selectedGitHubAccountId={selectedGitHubAccountId}
-              onGitHubAccountSelect={setSelectedGitHubAccountId}
-              isCodexOauthAuthenticated={isCodexOauthAuthenticated}
-              selectedCodexAccountId={selectedCodexAccountId}
-              onCodexAccountSelect={setSelectedCodexAccountId}
-              codexFastMode={codexFastMode}
-              onCodexFastModeChange={setCodexFastMode}
-              templateValueEntries={templateValueEntries}
-              templateValues={templateValues}
-              templatePresetName={templatePreset?.name || ""}
-              onTemplateValueChange={handleTemplateValueChange}
-              shouldShowSpeedTest={shouldShowSpeedTest}
-              baseUrl={baseUrl}
-              onBaseUrlChange={handleClaudeBaseUrlChange}
-              isEndpointModalOpen={isEndpointModalOpen}
-              onEndpointModalToggle={setIsEndpointModalOpen}
-              onCustomEndpointsChange={
-                isEditMode ? undefined : setDraftCustomEndpoints
-              }
-              autoSelect={endpointAutoSelect}
-              onAutoSelectChange={setEndpointAutoSelect}
-              showEndpointTools
-              shouldShowModelSelector={category !== "official"}
-              claudeModel={claudeModel}
-              defaultHaikuModel={defaultHaikuModel}
-              defaultHaikuModelName={defaultHaikuModelName}
-              defaultSonnetModel={defaultSonnetModel}
-              defaultSonnetModelName={defaultSonnetModelName}
-              defaultOpusModel={defaultOpusModel}
-              defaultOpusModelName={defaultOpusModelName}
-              defaultFableModel={defaultFableModel}
-              defaultFableModelName={defaultFableModelName}
-              onModelChange={handleModelChange}
-              speedTestEndpoints={speedTestEndpoints}
-              apiFormat={localApiFormat}
-              onApiFormatChange={handleApiFormatChange}
-              apiKeyField={localApiKeyField}
-              onApiKeyFieldChange={handleApiKeyFieldChange}
-              isFullUrl={localIsFullUrl}
-              onFullUrlChange={setLocalIsFullUrl}
-              customUserAgent={customUserAgent}
-              onCustomUserAgentChange={setCustomUserAgent}
-              localProxyHeadersOverride={localProxyHeadersOverride}
-              onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
-              localProxyBodyOverride={localProxyBodyOverride}
-              onLocalProxyBodyOverrideChange={setLocalProxyBodyOverride}
-            />
+            <ErrorBoundary>
+              <ClaudeFormFields
+                providerId={providerId}
+                shouldShowApiKey={
+                  (category !== "cloud_provider" ||
+                    hasApiKeyField(
+                      form.getValues("settingsConfig"),
+                      "claude",
+                    )) &&
+                  shouldShowApiKey(form.getValues("settingsConfig"), isEditMode)
+                }
+                apiKey={apiKey}
+                onApiKeyChange={handleApiKeyChange}
+                category={category}
+                shouldShowApiKeyLink={shouldShowClaudeApiKeyLink}
+                websiteUrl={claudeWebsiteUrl}
+                isPartner={isClaudePartner}
+                partnerPromotionKey={claudePartnerPromotionKey}
+                isCopilotPreset={
+                  templatePreset?.providerType === "github_copilot" ||
+                  initialData?.meta?.providerType === "github_copilot" ||
+                  baseUrl.includes("githubcopilot.com")
+                }
+                isCodexOauthPreset={
+                  templatePreset?.providerType === "codex_oauth" ||
+                  initialData?.meta?.providerType === "codex_oauth"
+                }
+                usesOAuth={
+                  templatePreset?.requiresOAuth === true ||
+                  templatePreset?.providerType === "github_copilot" ||
+                  initialData?.meta?.providerType === "github_copilot" ||
+                  baseUrl.includes("githubcopilot.com") ||
+                  templatePreset?.providerType === "codex_oauth" ||
+                  initialData?.meta?.providerType === "codex_oauth"
+                }
+                isCopilotAuthenticated={isCopilotAuthenticated}
+                selectedGitHubAccountId={selectedGitHubAccountId}
+                onGitHubAccountSelect={setSelectedGitHubAccountId}
+                isCodexOauthAuthenticated={isCodexOauthAuthenticated}
+                selectedCodexAccountId={selectedCodexAccountId}
+                onCodexAccountSelect={setSelectedCodexAccountId}
+                codexFastMode={codexFastMode}
+                onCodexFastModeChange={setCodexFastMode}
+                templateValueEntries={templateValueEntries}
+                templateValues={templateValues}
+                templatePresetName={templatePreset?.name || ""}
+                onTemplateValueChange={handleTemplateValueChange}
+                shouldShowSpeedTest={shouldShowSpeedTest}
+                baseUrl={baseUrl}
+                onBaseUrlChange={handleClaudeBaseUrlChange}
+                isEndpointModalOpen={isEndpointModalOpen}
+                onEndpointModalToggle={setIsEndpointModalOpen}
+                onCustomEndpointsChange={
+                  isEditMode ? undefined : setDraftCustomEndpoints
+                }
+                autoSelect={endpointAutoSelect}
+                onAutoSelectChange={setEndpointAutoSelect}
+                showEndpointTools
+                shouldShowModelSelector={category !== "official"}
+                claudeModel={claudeModel}
+                defaultHaikuModel={defaultHaikuModel}
+                defaultHaikuModelName={defaultHaikuModelName}
+                defaultSonnetModel={defaultSonnetModel}
+                defaultSonnetModelName={defaultSonnetModelName}
+                defaultOpusModel={defaultOpusModel}
+                defaultOpusModelName={defaultOpusModelName}
+                defaultFableModel={defaultFableModel}
+                defaultFableModelName={defaultFableModelName}
+                onModelChange={handleModelChange}
+                speedTestEndpoints={speedTestEndpoints}
+                apiFormat={localApiFormat}
+                onApiFormatChange={handleApiFormatChange}
+                apiKeyField={localApiKeyField}
+                onApiKeyFieldChange={handleApiKeyFieldChange}
+                isFullUrl={localIsFullUrl}
+                onFullUrlChange={setLocalIsFullUrl}
+                customUserAgent={customUserAgent}
+                onCustomUserAgentChange={setCustomUserAgent}
+              />
+            </ErrorBoundary>
           )}
 
           {appId === "codex" && (
-            <CodexFormFields
-              providerId={providerId}
-              codexApiKey={codexApiKey}
-              onApiKeyChange={handleCodexApiKeyChange}
-              category={category}
-              shouldShowApiKeyLink={shouldShowCodexApiKeyLink}
-              websiteUrl={codexWebsiteUrl}
-              isPartner={isCodexPartner}
-              partnerPromotionKey={codexPartnerPromotionKey}
-              shouldShowSpeedTest={shouldShowSpeedTest}
-              codexBaseUrl={codexBaseUrl}
-              onBaseUrlChange={handleCodexBaseUrlChange}
-              isFullUrl={localIsFullUrl}
-              onFullUrlChange={setLocalIsFullUrl}
-              isEndpointModalOpen={isCodexEndpointModalOpen}
-              onEndpointModalToggle={setIsCodexEndpointModalOpen}
-              onCustomEndpointsChange={
-                isEditMode ? undefined : setDraftCustomEndpoints
-              }
-              autoSelect={endpointAutoSelect}
-              onAutoSelectChange={setEndpointAutoSelect}
-              takeoverEnabled={codexTakeoverEnabled}
-              onTakeoverEnabledChange={setCodexTakeoverEnabled}
-              apiFormat={localCodexApiFormat}
-              onApiFormatChange={handleCodexApiFormatChange}
-              codexChatReasoning={codexChatReasoning}
-              onCodexChatReasoningChange={setCodexChatReasoning}
-              catalogModels={codexCatalogModels}
-              onCatalogModelsChange={setCodexCatalogModels}
-              speedTestEndpoints={speedTestEndpoints}
-              customUserAgent={customUserAgent}
-              onCustomUserAgentChange={setCustomUserAgent}
-              localProxyHeadersOverride={localProxyHeadersOverride}
-              onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
-              localProxyBodyOverride={localProxyBodyOverride}
-              onLocalProxyBodyOverrideChange={setLocalProxyBodyOverride}
-            />
+            <ErrorBoundary>
+              <CodexFormFields
+                providerId={providerId}
+                codexApiKey={codexApiKey}
+                onApiKeyChange={handleCodexApiKeyChange}
+                category={category}
+                shouldShowApiKeyLink={shouldShowCodexApiKeyLink}
+                websiteUrl={codexWebsiteUrl}
+                isPartner={isCodexPartner}
+                partnerPromotionKey={codexPartnerPromotionKey}
+                shouldShowSpeedTest={shouldShowSpeedTest}
+                codexBaseUrl={codexBaseUrl}
+                onBaseUrlChange={handleCodexBaseUrlChange}
+                isFullUrl={localIsFullUrl}
+                onFullUrlChange={setLocalIsFullUrl}
+                isEndpointModalOpen={isCodexEndpointModalOpen}
+                onEndpointModalToggle={setIsCodexEndpointModalOpen}
+                onCustomEndpointsChange={
+                  isEditMode ? undefined : setDraftCustomEndpoints
+                }
+                autoSelect={endpointAutoSelect}
+                onAutoSelectChange={setEndpointAutoSelect}
+                apiFormat={localCodexApiFormat}
+                onApiFormatChange={handleCodexApiFormatChange}
+                codexChatReasoning={codexChatReasoning}
+                onCodexChatReasoningChange={setCodexChatReasoning}
+                catalogModels={codexCatalogModels}
+                onCatalogModelsChange={setCodexCatalogModels}
+                speedTestEndpoints={speedTestEndpoints}
+                customUserAgent={customUserAgent}
+                onCustomUserAgentChange={setCustomUserAgent}
+              />
+            </ErrorBoundary>
           )}
 
           {appId === "gemini" && (
-            <GeminiFormFields
-              providerId={providerId}
-              shouldShowApiKey={shouldShowApiKey(
-                form.getValues("settingsConfig"),
-                isEditMode,
-              )}
-              apiKey={geminiApiKey}
-              onApiKeyChange={handleGeminiApiKeyChange}
-              category={category}
-              shouldShowApiKeyLink={shouldShowGeminiApiKeyLink}
-              websiteUrl={geminiWebsiteUrl}
-              isPartner={isGeminiPartner}
-              partnerPromotionKey={geminiPartnerPromotionKey}
-              shouldShowSpeedTest={shouldShowSpeedTest}
-              baseUrl={geminiBaseUrl}
-              onBaseUrlChange={handleGeminiBaseUrlChange}
-              isEndpointModalOpen={isEndpointModalOpen}
-              onEndpointModalToggle={setIsEndpointModalOpen}
-              onCustomEndpointsChange={setDraftCustomEndpoints}
-              autoSelect={endpointAutoSelect}
-              onAutoSelectChange={setEndpointAutoSelect}
-              shouldShowModelField={true}
-              model={geminiModel}
-              onModelChange={handleGeminiModelChange}
-              speedTestEndpoints={speedTestEndpoints}
-            />
+            <ErrorBoundary>
+              <GeminiFormFields
+                providerId={providerId}
+                shouldShowApiKey={shouldShowApiKey(
+                  form.getValues("settingsConfig"),
+                  isEditMode,
+                )}
+                apiKey={geminiApiKey}
+                onApiKeyChange={handleGeminiApiKeyChange}
+                category={category}
+                shouldShowApiKeyLink={shouldShowGeminiApiKeyLink}
+                websiteUrl={geminiWebsiteUrl}
+                isPartner={isGeminiPartner}
+                partnerPromotionKey={geminiPartnerPromotionKey}
+                shouldShowSpeedTest={shouldShowSpeedTest}
+                baseUrl={geminiBaseUrl}
+                onBaseUrlChange={handleGeminiBaseUrlChange}
+                isEndpointModalOpen={isEndpointModalOpen}
+                onEndpointModalToggle={setIsEndpointModalOpen}
+                onCustomEndpointsChange={setDraftCustomEndpoints}
+                autoSelect={endpointAutoSelect}
+                onAutoSelectChange={setEndpointAutoSelect}
+                shouldShowModelField={true}
+                model={geminiModel}
+                onModelChange={handleGeminiModelChange}
+                speedTestEndpoints={speedTestEndpoints}
+              />
+            </ErrorBoundary>
           )}
 
           {appId === "opencode" && !isAnyOmoCategory && (
-            <OpenCodeFormFields
-              npm={opencodeForm.opencodeNpm}
-              onNpmChange={opencodeForm.handleOpencodeNpmChange}
-              apiKey={opencodeForm.opencodeApiKey}
-              onApiKeyChange={opencodeForm.handleOpencodeApiKeyChange}
-              category={category}
-              shouldShowApiKeyLink={shouldShowOpencodeApiKeyLink}
-              websiteUrl={opencodeWebsiteUrl}
-              isPartner={isOpencodePartner}
-              partnerPromotionKey={opencodePartnerPromotionKey}
-              baseUrl={opencodeForm.opencodeBaseUrl}
-              onBaseUrlChange={opencodeForm.handleOpencodeBaseUrlChange}
-              models={opencodeForm.opencodeModels}
-              onModelsChange={opencodeForm.handleOpencodeModelsChange}
-              extraOptions={opencodeForm.opencodeExtraOptions}
-              onExtraOptionsChange={
-                opencodeForm.handleOpencodeExtraOptionsChange
-              }
-            />
+            <ErrorBoundary>
+              <OpenCodeFormFields
+                npm={opencodeForm.opencodeNpm}
+                onNpmChange={opencodeForm.handleOpencodeNpmChange}
+                apiKey={opencodeForm.opencodeApiKey}
+                onApiKeyChange={opencodeForm.handleOpencodeApiKeyChange}
+                category={category}
+                shouldShowApiKeyLink={shouldShowOpencodeApiKeyLink}
+                websiteUrl={opencodeWebsiteUrl}
+                isPartner={isOpencodePartner}
+                partnerPromotionKey={opencodePartnerPromotionKey}
+                baseUrl={opencodeForm.opencodeBaseUrl}
+                onBaseUrlChange={opencodeForm.handleOpencodeBaseUrlChange}
+                models={opencodeForm.opencodeModels}
+                onModelsChange={opencodeForm.handleOpencodeModelsChange}
+                extraOptions={opencodeForm.opencodeExtraOptions}
+                onExtraOptionsChange={
+                  opencodeForm.handleOpencodeExtraOptionsChange
+                }
+              />
+            </ErrorBoundary>
           )}
 
           {appId === "opencode" &&
             (category === "omo" || category === "omo-slim") && (
-              <OmoFormFields
-                modelOptions={omoModelOptions}
-                modelVariantsMap={omoModelVariantsMap}
-                presetMetaMap={omoPresetMetaMap}
-                agents={omoDraft.omoAgents}
-                onAgentsChange={omoDraft.setOmoAgents}
-                categories={
-                  category === "omo" ? omoDraft.omoCategories : undefined
-                }
-                onCategoriesChange={
-                  category === "omo" ? omoDraft.setOmoCategories : undefined
-                }
-                otherFieldsStr={omoDraft.omoOtherFieldsStr}
-                onOtherFieldsStrChange={omoDraft.setOmoOtherFieldsStr}
-                isSlim={category === "omo-slim"}
-              />
+              <ErrorBoundary>
+                <OmoFormFields
+                  modelOptions={omoModelOptions}
+                  modelVariantsMap={omoModelVariantsMap}
+                  presetMetaMap={omoPresetMetaMap}
+                  agents={omoDraft.omoAgents}
+                  onAgentsChange={omoDraft.setOmoAgents}
+                  categories={
+                    category === "omo" ? omoDraft.omoCategories : undefined
+                  }
+                  onCategoriesChange={
+                    category === "omo" ? omoDraft.setOmoCategories : undefined
+                  }
+                  otherFieldsStr={omoDraft.omoOtherFieldsStr}
+                  onOtherFieldsStrChange={omoDraft.setOmoOtherFieldsStr}
+                  isSlim={category === "omo-slim"}
+                />
+              </ErrorBoundary>
             )}
 
           {/* OpenClaw 专属字段 */}
           {appId === "openclaw" && (
-            <OpenClawFormFields
-              baseUrl={openclawForm.openclawBaseUrl}
-              onBaseUrlChange={openclawForm.handleOpenclawBaseUrlChange}
-              apiKey={openclawForm.openclawApiKey}
-              onApiKeyChange={openclawForm.handleOpenclawApiKeyChange}
-              category={category}
-              shouldShowApiKeyLink={shouldShowOpenclawApiKeyLink}
-              websiteUrl={openclawWebsiteUrl}
-              isPartner={isOpenclawPartner}
-              partnerPromotionKey={openclawPartnerPromotionKey}
-              api={openclawForm.openclawApi}
-              onApiChange={openclawForm.handleOpenclawApiChange}
-              models={openclawForm.openclawModels}
-              onModelsChange={openclawForm.handleOpenclawModelsChange}
-              userAgent={openclawForm.openclawUserAgent}
-              onUserAgentChange={openclawForm.handleOpenclawUserAgentChange}
-            />
+            <ErrorBoundary>
+              <OpenClawFormFields
+                baseUrl={openclawForm.openclawBaseUrl}
+                onBaseUrlChange={openclawForm.handleOpenclawBaseUrlChange}
+                apiKey={openclawForm.openclawApiKey}
+                onApiKeyChange={openclawForm.handleOpenclawApiKeyChange}
+                category={category}
+                shouldShowApiKeyLink={shouldShowOpenclawApiKeyLink}
+                websiteUrl={openclawWebsiteUrl}
+                isPartner={isOpenclawPartner}
+                partnerPromotionKey={openclawPartnerPromotionKey}
+                api={openclawForm.openclawApi}
+                onApiChange={openclawForm.handleOpenclawApiChange}
+                models={openclawForm.openclawModels}
+                onModelsChange={openclawForm.handleOpenclawModelsChange}
+                userAgent={openclawForm.openclawUserAgent}
+                onUserAgentChange={openclawForm.handleOpenclawUserAgentChange}
+              />
+            </ErrorBoundary>
           )}
 
           {/* Hermes 专属字段 */}
           {appId === "hermes" && (
-            <HermesFormFields
-              baseUrl={hermesForm.hermesBaseUrl}
-              onBaseUrlChange={hermesForm.handleHermesBaseUrlChange}
-              apiKey={hermesForm.hermesApiKey}
-              onApiKeyChange={hermesForm.handleHermesApiKeyChange}
-              category={category}
-              shouldShowApiKeyLink={shouldShowHermesApiKeyLink}
-              websiteUrl={hermesWebsiteUrl}
-              isPartner={isHermesPartner}
-              partnerPromotionKey={hermesPartnerPromotionKey}
-              apiMode={hermesForm.hermesApiMode}
-              onApiModeChange={hermesForm.handleHermesApiModeChange}
-              models={hermesForm.hermesModels}
-              onModelsChange={hermesForm.handleHermesModelsChange}
-              rateLimitDelay={hermesForm.hermesRateLimitDelay}
-              onRateLimitDelayChange={
-                hermesForm.handleHermesRateLimitDelayChange
-              }
-            />
+            <ErrorBoundary>
+              <HermesFormFields
+                baseUrl={hermesForm.hermesBaseUrl}
+                onBaseUrlChange={hermesForm.handleHermesBaseUrlChange}
+                apiKey={hermesForm.hermesApiKey}
+                onApiKeyChange={hermesForm.handleHermesApiKeyChange}
+                category={category}
+                shouldShowApiKeyLink={shouldShowHermesApiKeyLink}
+                websiteUrl={hermesWebsiteUrl}
+                isPartner={isHermesPartner}
+                partnerPromotionKey={hermesPartnerPromotionKey}
+                apiMode={hermesForm.hermesApiMode}
+                onApiModeChange={hermesForm.handleHermesApiModeChange}
+                models={hermesForm.hermesModels}
+                onModelsChange={hermesForm.handleHermesModelsChange}
+                rateLimitDelay={hermesForm.hermesRateLimitDelay}
+                onRateLimitDelayChange={
+                  hermesForm.handleHermesRateLimitDelayChange
+                }
+              />
+            </ErrorBoundary>
           )}
 
           {/* 配置编辑器：Codex、Claude、Gemini 分别使用不同的编辑器 */}
@@ -2336,7 +2269,6 @@ function ProviderFormFull({
                 rows={14}
                 showValidation={false}
                 language="json"
-                darkMode={isDarkMode}
               />
             </div>
           ) : appId === "opencode" &&
@@ -2361,7 +2293,6 @@ function ProviderFormFull({
                   rows={14}
                   showValidation={true}
                   language="json"
-                  darkMode={isDarkMode}
                 />
               </div>
               {settingsConfigErrorField}
@@ -2392,7 +2323,6 @@ function ProviderFormFull({
                   rows={14}
                   showValidation={true}
                   language="json"
-                  darkMode={isDarkMode}
                 />
               </div>
               <FormField
@@ -2484,19 +2414,15 @@ function ProviderFormFull({
         onConfirm={async () => {
           if (isConfirmSubmitting) return;
           const values = pendingFormValues;
-          const overridesResult = pendingLocalProxyRequestOverridesResult;
-          if (!values || !overridesResult) {
+          if (!values) {
             setSoftIssues(null);
-            setPendingFormValues(null);
-            setPendingLocalProxyRequestOverridesResult(null);
             return;
           }
           setIsConfirmSubmitting(true);
           try {
-            await performSubmit(values, overridesResult);
+            await performSubmit(values);
             setSoftIssues(null);
             setPendingFormValues(null);
-            setPendingLocalProxyRequestOverridesResult(null);
           } catch (error) {
             console.error("[ProviderForm] soft-confirm submit failed:", error);
             // 保留确认框和 pending values，让用户可以重试或取消
@@ -2508,7 +2434,6 @@ function ProviderFormFull({
           if (isConfirmSubmitting) return;
           setSoftIssues(null);
           setPendingFormValues(null);
-          setPendingLocalProxyRequestOverridesResult(null);
         }}
       />
     </>

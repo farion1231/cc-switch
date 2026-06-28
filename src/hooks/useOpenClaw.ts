@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { openclawApi } from "@/lib/api/openclaw";
-import { providersApi } from "@/lib/api/providers";
+import { openclawApi, providersApi } from "@/lib/api";
 import type {
   OpenClawEnvConfig,
   OpenClawToolsConfig,

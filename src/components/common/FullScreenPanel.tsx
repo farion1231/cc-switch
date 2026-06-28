@@ -10,7 +10,6 @@ import {
   DRAG_REGION_STYLE,
 } from "@/lib/platform";
 import { isTextEditableTarget } from "@/utils/domUtils";
-import { cn } from "@/lib/utils";
 
 interface FullScreenPanelProps {
   isOpen: boolean;
@@ -18,11 +17,6 @@ interface FullScreenPanelProps {
   onClose: () => void;
   children: React.ReactNode;
   footer?: React.ReactNode;
-  /**
-   * 覆盖内容区滚动容器的内边距/间距类。默认 `px-6 py-6 space-y-6`。
-   * 通过 `cn`(twMerge) 合并，传入如 `pt-3` 只覆盖顶部内边距，其余保持默认。
-   */
-  contentClassName?: string;
 }
 
 const DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px - match App.tsx
@@ -39,7 +33,6 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   onClose,
   children,
   footer,
-  contentClassName,
 }) => {
   React.useEffect(() => {
     if (isOpen) {
@@ -143,9 +136,7 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
 
           {/* Content */}
           <div className="flex-1 overflow-y-auto scroll-overlay">
-            <div className={cn("px-6 py-6 space-y-6 w-full", contentClassName)}>
-              {children}
-            </div>
+            <div className="px-6 py-6 space-y-6 w-full">{children}</div>
           </div>
 
           {/* Footer */}

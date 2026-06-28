@@ -189,6 +189,35 @@ const AgentsDefaultsPanel: React.FC = () => {
     );
   }
 
+  if (agentsData === null) {
+    return (
+      <div className="px-6 pt-4 pb-8">
+        <p className="text-sm text-muted-foreground mb-6">
+          {t("openclaw.agents.description")}
+        </p>
+        <div className="rounded-xl border border-border bg-card p-5 text-sm text-muted-foreground mb-4">
+          {t("openclaw.agents.emptyState", {
+            defaultValue:
+              "No agents.defaults configuration found. Fill in the fields below and save to create it.",
+          })}
+        </div>
+        {/* rest of form */}
+        <div className="flex justify-end">
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={saveAgentsMutation.isPending}
+          >
+            <Save className="w-4 h-4 mr-1" />
+            {saveAgentsMutation.isPending
+              ? t("common.saving")
+              : t("common.save")}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   const noModels = modelOptions.length === 0 && !modelsLoading;
   const hasLegacyTimeout =
     agentsData !== undefined &&

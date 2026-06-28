@@ -6,6 +6,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { isTauri } from "@/lib/environment";
 
 /**
  * GitHub 设备码响应
@@ -164,6 +165,9 @@ export interface CopilotUsageResponse {
  * @returns 使用量信息，包含计划类型、重置日期和配额快照
  */
 export async function copilotGetUsage(): Promise<CopilotUsageResponse> {
+  if (!isTauri()) {
+    throw new Error("Copilot usage is not available in web mode");
+  }
   return invoke<CopilotUsageResponse>("copilot_get_usage");
 }
 
@@ -252,6 +256,9 @@ export async function copilotGetModelsForAccount(
 export async function copilotGetUsageForAccount(
   accountId: string,
 ): Promise<CopilotUsageResponse> {
+  if (!isTauri()) {
+    throw new Error("Copilot usage is not available in web mode");
+  }
   return invoke<CopilotUsageResponse>("copilot_get_usage_for_account", {
     accountId,
   });

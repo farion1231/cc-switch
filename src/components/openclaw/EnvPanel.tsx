@@ -81,6 +81,16 @@ const EnvPanel: React.FC = () => {
       <p className="text-sm text-muted-foreground mb-4">
         {t("openclaw.env.description")}
       </p>
+
+      {envData && Object.keys(envData).length === 0 && (
+        <div className="rounded-xl border border-border bg-card p-5 text-sm text-muted-foreground mb-4">
+          {t("openclaw.env.emptyState", {
+            defaultValue:
+              "No env configuration found. Save a value here to create the env section in openclaw.json.",
+          })}
+        </div>
+      )}
+
       <p className="text-xs text-muted-foreground mb-4">
         {t("openclaw.env.editorHint", {
           defaultValue:

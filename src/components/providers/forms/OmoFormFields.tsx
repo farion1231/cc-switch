@@ -10,6 +10,7 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import {
   Popover,
@@ -39,6 +40,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isTauri } from "@/lib/environment";
 import { toast } from "sonner";
 import { useReadOmoLocalFile, useReadOmoSlimLocalFile } from "@/lib/query/omo";
 import {
@@ -470,19 +472,6 @@ export function OmoFormFields({
     const firstIsUnavailable =
       Boolean(currentVariant) &&
       !(modelVariantsMap[currentModel] || []).includes(currentVariant);
-    const defaultVariantLabel = t("omo.defaultWrapped", {
-      defaultValue: "(Default)",
-    });
-    const getVariantLabel = (variant: string, index: number) =>
-      firstIsUnavailable && index === 0
-        ? t("omo.currentValueUnavailable", {
-            value: variant,
-            defaultValue: "{{value}} (current value, unavailable)",
-          })
-        : variant;
-    const selectedVariantLabel = currentVariant
-      ? getVariantLabel(currentVariant, 0)
-      : defaultVariantLabel;
 
     return (
       <Select
@@ -491,21 +480,25 @@ export function OmoFormFields({
           onChange(value === EMPTY_VARIANT_VALUE ? "" : value)
         }
       >
-        <SelectTrigger
-          className="w-28 min-w-0 h-8 overflow-hidden text-xs shrink-0"
-          title={selectedVariantLabel}
-        >
-          <span className="min-w-0 flex-1 truncate text-left">
-            {selectedVariantLabel}
-          </span>
+        <SelectTrigger className="w-28 h-8 text-xs shrink-0">
+          <SelectValue
+            placeholder={t("omo.variantPlaceholder", {
+              defaultValue: "variant",
+            })}
+          />
         </SelectTrigger>
         <SelectContent className="max-h-72">
           <SelectItem value={EMPTY_VARIANT_VALUE}>
-            {defaultVariantLabel}
+            {t("omo.defaultWrapped", { defaultValue: "(Default)" })}
           </SelectItem>
           {variantOptions.map((variant, index) => (
             <SelectItem key={`${variant}-${index}`} value={variant}>
-              {getVariantLabel(variant, index)}
+              {firstIsUnavailable && index === 0
+                ? t("omo.currentValueUnavailable", {
+                    value: variant,
+                    defaultValue: "{{value}} (current value, unavailable)",
+                  })
+                : variant}
             </SelectItem>
           ))}
         </SelectContent>
@@ -835,6 +828,7 @@ export function OmoFormFields({
   const readLocalFile = useReadOmoLocalFile();
   const readSlimLocalFile = useReadOmoSlimLocalFile();
   const [localFilePath, setLocalFilePath] = useState<string | null>(null);
+  const desktopOnlyImport = !isTauri();
 
   const handleImportFromLocal = useCallback(async () => {
     try {
@@ -1176,8 +1170,16 @@ export function OmoFormFields({
             variant="outline"
             size="sm"
             className="h-7 text-xs"
-            disabled={readLocalFile.isPending}
+            disabled={readLocalFile.isPending || desktopOnlyImport}
             onClick={handleImportFromLocal}
+            title={
+              desktopOnlyImport
+                ? t("omo.importLocalDesktopOnly", {
+                    defaultValue:
+                      "Local import is only available in desktop mode",
+                  })
+                : undefined
+            }
           >
             {readLocalFile.isPending ? (
               <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />

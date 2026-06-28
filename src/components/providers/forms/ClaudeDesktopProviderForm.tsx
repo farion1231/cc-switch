@@ -61,11 +61,10 @@ import {
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
-import {
-  providersApi,
-  type ClaudeDesktopDefaultRoute,
-} from "@/lib/api/providers";
+import { providersApi } from "@/lib/api";
+import type { ClaudeDesktopDefaultRoute } from "@/lib/api/providers";
 import { resolveManagedAccountId } from "@/lib/authBinding";
+import { generateUUID } from "@/utils/uuid";
 
 export type ClaudeDesktopProviderFormValues = ProviderFormData & {
   presetId?: string;
@@ -166,7 +165,7 @@ function fallbackCatalogRouteId(usedRoutes: Set<string>) {
 
 function createRouteRow(row: RouteRowValues): RouteRow {
   return {
-    rowId: crypto.randomUUID(),
+    rowId: generateUUID(),
     ...row,
   };
 }

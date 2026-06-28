@@ -50,7 +50,7 @@ export const workspaceApi = {
     });
   },
 
-  async openDirectory(subdir: "workspace" | "memory"): Promise<void> {
-    await invoke("open_workspace_directory", { subdir });
+  async openDirectory(subdir: "workspace" | "memory"): Promise<string> {
+    return invoke<string>("open_workspace_directory", { subdir });
   },
 };
