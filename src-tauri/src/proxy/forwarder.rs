@@ -1709,6 +1709,13 @@ impl RequestForwarder {
                 continue;
             }
 
+            // Codex Desktop 会给本地后端发送内部协商头。CC Switch 是上游反代，
+            // 不能把这些客户端私有信号继续透传，否则会让官方或第三方上游误入
+            // Responses-Lite 路径并拒绝部分模型。
+            if should_strip_codex_private_header_for_upstream(&url, key) {
+                continue;
+            }
+
             // --- 认证类 — 用 adapter 提供的认证头替换（在原始位置） ---
             if key_str.eq_ignore_ascii_case("authorization")
                 || key_str.eq_ignore_ascii_case("x-api-key")
@@ -2503,6 +2510,21 @@ fn is_managed_account_upstream_url(url: &str) -> bool {
         || (host == "chatgpt.com" && uri.path().starts_with("/backend-api/codex"))
 }
 
+/// 判断某个 Codex 客户端私有头是否应该在转发到上游前移除。
+///
+/// `x-openai-internal-codex-responses-lite` 是 Codex Desktop 与本地后端之间的内部
+/// 能力开关，不是公开 upstream API 契约。无论目标是官方 ChatGPT Codex 后端还是
+/// 第三方 OpenAI-compatible 服务，都不应由 CC Switch 继续转发。
+fn should_strip_codex_private_header_for_upstream(_url: &str, name: &http::HeaderName) -> bool {
+    is_codex_responses_lite_header(name)
+}
+
+/// 识别会触发上游 Responses-Lite 分支的 Codex 内部请求头。
+fn is_codex_responses_lite_header(name: &http::HeaderName) -> bool {
+    name.as_str()
+        .eq_ignore_ascii_case("x-openai-internal-codex-responses-lite")
+}
+
 fn headers_contain_proxy_placeholder(headers: &http::HeaderMap) -> bool {
     headers.values().any(|value| {
         value
@@ -2845,6 +2867,39 @@ mod tests {
             streaming_first_byte_timeout,
             max_attempts: 1,
         }
+    }
+
+    // 验证官方 Codex upstream 不会收到 Codex Desktop 的 Responses-Lite 内部开关。
+    #[test]
+    fn codex_responses_lite_header_is_stripped_for_official_upstream() {
+        let header = http::HeaderName::from_static("x-openai-internal-codex-responses-lite");
+
+        assert!(should_strip_codex_private_header_for_upstream(
+            "https://chatgpt.com/backend-api/codex/responses",
+            &header
+        ));
+    }
+
+    // 验证第三方 OpenAI-compatible upstream 也不会收到官方客户端私有 header。
+    #[test]
+    fn codex_responses_lite_header_is_stripped_for_third_party_upstream() {
+        let header = http::HeaderName::from_static("x-openai-internal-codex-responses-lite");
+
+        assert!(should_strip_codex_private_header_for_upstream(
+            "https://api.example.com/v1/responses",
+            &header
+        ));
+    }
+
+    // 验证过滤策略只移除已知 Codex 私有头，不影响普通自定义 header 透传。
+    #[test]
+    fn ordinary_headers_are_preserved_for_upstream() {
+        let header = http::HeaderName::from_static("x-custom-feature");
+
+        assert!(!should_strip_codex_private_header_for_upstream(
+            "https://chatgpt.com/backend-api/codex/responses",
+            &header
+        ));
     }
 
     #[test]
