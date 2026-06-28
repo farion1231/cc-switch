@@ -273,6 +273,28 @@ jobs:
         if: runner.os == 'Linux'
         run: pnpm tauri build --bundles appimage,deb,rpm
 
+      - name: Fix AppImage .DirIcon symlink
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Workaround for tauri-apps/tauri#15110
+          ARCH=$(uname -m)
+          wget -q "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${ARCH}.AppImage" \
+            -O appimagetool
+          chmod +x appimagetool
+
+          for appimage in src-tauri/target/release/bundle/appimage/*.AppImage; do
+            [ -f "$appimage" ] || continue
+            echo "Fixing $appimage..."
+            "$appimage" --appimage-extract
+            ln -sf CC\ Switch.png squashfs-root/.DirIcon
+            APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool --no-appstream squashfs-root "$appimage"
+            rm -rf squashfs-root
+          done
+
+          rm -f appimagetool
+
       - name: Prepare macOS Assets
         if: runner.os == 'macOS'
         shell: bash
