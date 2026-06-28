@@ -13,11 +13,13 @@ import { usageApi } from "./usage";
 import { vscodeApi } from "./vscode";
 import { proxyApi as tauriProxyApi } from "./proxy";
 import { openclawApi as tauriOpenclawApi } from "./openclaw";
+import { hermesApi as tauriHermesApi } from "./hermes";
 import { sessionsApi as tauriSessionsApi } from "./sessions";
 import { workspaceApi as tauriWorkspaceApi } from "./workspace";
 import { workspaceApi as webWorkspaceApi } from "./web/workspace";
 import * as tauriConfigApi from "./config";
 import { authApi } from "./auth";
+import { subscriptionApi } from "./subscription";
 
 import {
   providersApi as webProvidersApi,
@@ -32,6 +34,7 @@ import { skillsApi as webSkillsApi } from "./web/skills";
 import { proxyApi as webProxyApi } from "./web/proxy";
 import { sessionsApi as webSessionsApi } from "./web/sessions";
 import { openclawApi as webOpenclawApi } from "./web/openclaw";
+import { hermesApi as webHermesApi } from "./web/hermes";
 
 export type { AppId } from "./types";
 export type { ProviderSwitchEvent } from "./providers";
@@ -58,7 +61,10 @@ export const skillsApi = isTauri() ? tauriSkillsApi : webSkillsApi;
 export const proxyApi = isTauri() ? tauriProxyApi : webProxyApi;
 export const sessionsApi = isTauri() ? tauriSessionsApi : webSessionsApi;
 export const openclawApi = isTauri() ? tauriOpenclawApi : webOpenclawApi;
+export const hermesApi = isTauri() ? tauriHermesApi : webHermesApi;
 export { usageApi };
 export { vscodeApi };
 export const workspaceApi = isTauri() ? tauriWorkspaceApi : webWorkspaceApi;
 export { authApi };
+export * as copilotApi from "./copilot";
+export { subscriptionApi };

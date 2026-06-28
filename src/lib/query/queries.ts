@@ -45,7 +45,7 @@ const sortProviders = (
 
 export interface ProvidersQueryData {
   providers: Record<string, Provider>;
-  currentProviderId: string;
+  currentProviderId: string | null;
 }
 
 export interface UseProvidersQueryOptions {
@@ -66,7 +66,7 @@ export const useProvidersQuery = (
     refetchInterval: isProxyRunning ? 10000 : false,
     queryFn: async () => {
       let providers: Record<string, Provider> = {};
-      let currentProviderId = "";
+      let currentProviderId: string | null = "";
 
       try {
         providers = await providersApi.getAll(appId);
