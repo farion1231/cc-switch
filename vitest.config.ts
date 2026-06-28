@@ -7,12 +7,14 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "@tauri-icons": path.resolve(__dirname, "./src-tauri/icons"),
     },
   },
   test: {
     environment: "jsdom",
     setupFiles: ["./tests/setupGlobals.ts", "./tests/setupTests.ts"],
     globals: true,
+    exclude: ["**/node_modules/**", "**/tests/e2e/**", "**/tests/api/**"],
     coverage: {
       reporter: ["text", "lcov"],
     },
