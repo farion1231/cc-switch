@@ -37,10 +37,11 @@ const CODEX_WEB_SEARCH_DISABLED: &str = "disabled";
 /// - `base_url` host substring, and
 /// - the model id's brand prefix (after stripping any `vendor/` path segment).
 ///
-/// Verified 2026-06-27 doc audit — reject: MiMo (hard 400), LongCat (official
+/// Verified 2026-06-28 doc audit — reject: MiMo (hard 400), LongCat (official
 /// config ships `web_search = "disabled"`), MiniMax (tool-type enum `['function']`
-/// only). Deliberately NOT listed (they support it): 火山方舟豆包, 阿里百炼 Qwen,
-/// and all GPT-native relays.
+/// only), and Qwen3-Coder models (百炼 marks built-in tools unsupported for
+/// the coder series). Deliberately NOT listed by host: 火山方舟豆包, general
+/// 阿里百炼 Qwen models that support built-in web_search, and GPT-native relays.
 const CODEX_WEB_SEARCH_REJECT_HOSTS: &[&str] = &[
     "xiaomimimo.com", // Xiaomi MiMo (api.xiaomimimo.com, token-plan-cn.xiaomimimo.com)
     "longcat.chat",   // Meituan LongCat (api.longcat.chat)
@@ -52,7 +53,8 @@ const CODEX_WEB_SEARCH_REJECT_HOSTS: &[&str] = &[
 /// against the model id's last `/`-segment so aggregator ids like
 /// `MiniMaxAI/MiniMax-M3` are caught. Exact brand names (not a fuzzy heuristic),
 /// so a supporting gateway is never wrongly matched.
-const CODEX_WEB_SEARCH_REJECT_MODEL_PREFIXES: &[&str] = &["mimo", "longcat", "minimax"];
+const CODEX_WEB_SEARCH_REJECT_MODEL_PREFIXES: &[&str] =
+    &["mimo", "longcat", "minimax", "qwen3-coder"];
 
 /// Top-level `model` id from a Codex `config.toml`.
 fn codex_top_level_model(config_text: &str) -> Option<String> {
@@ -79,7 +81,8 @@ fn codex_native_gateway_rejects_web_search(config_text: &str) -> bool {
     }
     if let Some(model) = codex_top_level_model(config_text) {
         let model = model.to_ascii_lowercase();
-        // Strip any aggregator "vendor/" prefix, e.g. "MiniMaxAI/MiniMax-M3".
+        // Strip any aggregator "vendor/" prefix, e.g. "MiniMaxAI/MiniMax-M3"
+        // or "qwen/qwen3-coder-plus".
         let model = model.rsplit('/').next().unwrap_or(model.as_str());
         if CODEX_WEB_SEARCH_REJECT_MODEL_PREFIXES
             .iter()
@@ -948,8 +951,9 @@ pub fn prepare_codex_config_text_with_model_catalog(
     if let Some(catalog) = codex_model_catalog_from_settings(settings, config_text, profile)? {
         let config_text = set_codex_model_catalog_json_field(config_text, Some(&catalog_path))?;
         // Disable web_search only for native gateways on the reject blacklist
-        // (MiMo/LongCat/MiniMax, by host or model brand). Everything else —
-        // relays, DouBao/Qwen, unknown providers — keeps Codex's default.
+        // (MiMo/LongCat/MiniMax by host or model brand; Qwen3-Coder by model).
+        // Everything else — relays, DouBao, web-search-capable Qwen models,
+        // unknown providers — keeps Codex's default.
         let disable_web_search = profile == CodexCatalogToolProfile::NativeResponses
             && codex_native_gateway_rejects_web_search(&config_text);
         let config_text = set_codex_native_web_search_field(&config_text, disable_web_search)?;
@@ -2622,6 +2626,10 @@ web_search = "disabled"
             ("MiniMax-M3", "https://api.siliconflow.cn/v1"),
             ("MiniMaxAI/MiniMax-M3", "https://api.siliconflow.cn/v1"),
             ("mimo-v2.5-pro", "https://some-aggregator.example/v1"),
+            (
+                "qwen/qwen3-coder-plus",
+                "https://some-aggregator.example/v1",
+            ),
         ] {
             assert!(
                 codex_native_gateway_rejects_web_search(&cfg(model, host)),
@@ -2629,18 +2637,26 @@ web_search = "disabled"
             );
         }
 
-        // NOT blacklisted → keep Codex default (relays/GPT, DouBao, Qwen, and any
-        // unknown provider incl. an aggregator serving a non-reject model).
+        // Qwen3-Coder is blacklisted by model, not by DashScope host. This keeps
+        // general Qwen models that support built-in web_search on the same host
+        // enabled while protecting the native qwen3-coder-plus preset.
+        assert!(codex_native_gateway_rejects_web_search(&cfg(
+            "qwen3-coder-plus",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        )));
+        assert!(!codex_native_gateway_rejects_web_search(&cfg(
+            "qwen3.7-plus",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        )));
+
+        // NOT blacklisted → keep Codex default (relays/GPT, DouBao, general Qwen,
+        // and any unknown provider incl. an aggregator serving a non-reject model).
         for (model, host) in [
             ("gpt-5.5", "https://www.packyapi.com/v1"),
             ("gpt-5-codex", "https://aihubmix.com/v1"),
             (
                 "doubao-seed-2-1-pro",
                 "https://ark.cn-beijing.volces.com/api/v3",
-            ),
-            (
-                "qwen3-coder-plus",
-                "https://dashscope.aliyuncs.com/compatible-mode/v1",
             ),
             ("Pro/moonshotai/Kimi-K2.6", "https://api.siliconflow.cn/v1"),
         ] {

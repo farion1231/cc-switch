@@ -154,17 +154,36 @@ describe("Codex Chat provider presets", () => {
   });
 
   it("uses native Responses API for migrated CN providers without local route mapping", () => {
-    const nativeResponsesPresets = [
-      "DouBaoSeed",
-      "Bailian",
-      "Longcat",
-      "MiniMax",
-      "MiniMax en",
-      "Xiaomi MiMo",
-      "Xiaomi MiMo Token Plan (China)",
-    ];
+    const nativeResponsesPresets = new Map<
+      string,
+      { contextWindows: Record<string, number> }
+    >([
+      ["DouBaoSeed", { contextWindows: { "doubao-seed-2-1-pro": 262144 } }],
+      ["Bailian", { contextWindows: { "qwen3-coder-plus": 1048576 } }],
+      ["Longcat", { contextWindows: { "LongCat-2.0-Preview": 1048576 } }],
+      ["MiniMax", { contextWindows: { "MiniMax-M3": 1000000 } }],
+      ["MiniMax en", { contextWindows: { "MiniMax-M3": 1000000 } }],
+      [
+        "Xiaomi MiMo",
+        {
+          contextWindows: {
+            "mimo-v2.5-pro": 1048576,
+            "mimo-v2.5": 1048576,
+          },
+        },
+      ],
+      [
+        "Xiaomi MiMo Token Plan (China)",
+        {
+          contextWindows: {
+            "mimo-v2.5-pro": 1048576,
+            "mimo-v2.5": 1048576,
+          },
+        },
+      ],
+    ]);
 
-    for (const name of nativeResponsesPresets) {
+    for (const [name, expected] of nativeResponsesPresets) {
       const preset = codexProviderPresets.find((item) => item.name === name);
 
       expect(preset, `${name} preset`).toBeDefined();
@@ -174,6 +193,14 @@ describe("Codex Chat provider presets", () => {
       // apply_patch）。带 catalog 不再强制开“本地路由映射”——前端已按
       // apiFormat 解耦（openai_responses 默认不开接管）。
       expect((preset?.modelCatalog ?? []).length).toBeGreaterThan(0);
+      expect(
+        Object.fromEntries(
+          (preset?.modelCatalog ?? []).map((model) => [
+            model.model,
+            model.contextWindow,
+          ]),
+        ),
+      ).toEqual(expected.contextWindows);
       // 原生（直连）不走 Chat 转换，因此不需要 codexChatReasoning。
       expect(preset?.codexChatReasoning).toBeUndefined();
     }

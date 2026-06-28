@@ -625,7 +625,7 @@ requires_openai_auth = true`,
       {
         model: "LongCat-2.0-Preview",
         displayName: "LongCat 2.0 Preview",
-        contextWindow: 131072,
+        contextWindow: 1048576,
       },
     ]),
     category: "cn_official",
