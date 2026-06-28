@@ -185,6 +185,48 @@ fn get_primary_endpoint(request: &DeepLinkImportRequest) -> String {
         .unwrap_or_default()
 }
 
+fn normalize_deeplink_api_key(api_key: &str) -> String {
+    api_key.trim().to_string()
+}
+
+fn normalize_deeplink_base_url(base_url: &str) -> String {
+    base_url.trim().trim_end_matches('/').to_string()
+}
+
+fn usage_api_key_override(request: &DeepLinkImportRequest) -> Option<String> {
+    let usage_api_key = normalize_deeplink_api_key(request.usage_api_key.as_deref()?);
+    if usage_api_key.is_empty() {
+        return None;
+    }
+
+    let provider_api_key = request
+        .api_key
+        .as_deref()
+        .map(normalize_deeplink_api_key)
+        .unwrap_or_default();
+
+    if !provider_api_key.is_empty() && usage_api_key == provider_api_key {
+        None
+    } else {
+        Some(usage_api_key)
+    }
+}
+
+fn usage_base_url_override(request: &DeepLinkImportRequest) -> Option<String> {
+    let usage_base_url = normalize_deeplink_base_url(request.usage_base_url.as_deref()?);
+    if usage_base_url.is_empty() {
+        return None;
+    }
+
+    let provider_base_url = normalize_deeplink_base_url(&get_primary_endpoint(request));
+
+    if !provider_base_url.is_empty() && usage_base_url == provider_base_url {
+        None
+    } else {
+        Some(usage_base_url)
+    }
+}
+
 /// Build provider meta with usage script configuration
 fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<ProviderMeta>, AppError> {
     // Check if any usage script fields are provided
@@ -211,25 +253,13 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
     // Determine enabled state: explicit param > has code > false
     let enabled = request.usage_enabled.unwrap_or(!code.is_empty());
 
-    // Build UsageScript - use provider's API key and endpoint as defaults
-    // Note: use primary endpoint only (first one if comma-separated)
     let usage_script = UsageScript {
         enabled,
         language: "javascript".to_string(),
         code,
         timeout: Some(10),
-        api_key: request
-            .usage_api_key
-            .clone()
-            .or_else(|| request.api_key.clone()),
-        base_url: request.usage_base_url.clone().or_else(|| {
-            let primary = get_primary_endpoint(request);
-            if primary.is_empty() {
-                None
-            } else {
-                Some(primary)
-            }
-        }),
+        api_key: usage_api_key_override(request),
+        base_url: usage_base_url_override(request),
         access_token: request.usage_access_token.clone(),
         user_id: request.usage_user_id.clone(),
         template_type: None, // Deeplink providers don't specify template type (will use backward compatibility logic)
