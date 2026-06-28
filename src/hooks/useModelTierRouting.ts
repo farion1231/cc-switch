@@ -175,7 +175,9 @@ export function useModelTierRouting() {
     saveQueueRef.current = saveQueueRef.current
       .catch(() => undefined)
       .then(async () => {
-        await settingsApi.setModelTierRoutingConfig(latestConfigRef.current);
+        // 用入参快照而非 latestConfigRef.current：后者会被失败保存的回滚覆写，
+        // 导致排在后面的保存把回滚后的旧值写回，丢失用户连续编辑。
+        await settingsApi.setModelTierRoutingConfig(normalized);
       })
       .catch(async (e) => {
         console.error("Failed to save model tier routing:", e);

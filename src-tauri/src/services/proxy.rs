@@ -1785,6 +1785,9 @@ impl ProxyService {
             // tier 开/关都对）。不动 apply_... 的 uses_managed_account_auth 分支。
             AppType::Claude => {
                 let provider = self.require_current_provider_for_app(&AppType::Claude)?;
+                // 与 switch/takeover 路径串行：重建 live 会重写 settings.json，
+                // 不持锁会与并发 provider 切换互相覆盖（lost update）。
+                let _guard = self.switch_locks.lock_for_app(app_type.as_str()).await;
                 self.sync_claude_live_from_provider_while_proxy_active(&provider)
                     .await
             }
