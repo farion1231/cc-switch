@@ -9,6 +9,7 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
+import { usageKeys } from "@/lib/query/usage";
 
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
@@ -141,8 +142,17 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       await providersApi.update(provider, appId, originalId);
       return provider;
     },
-    onSuccess: async () => {
+    onSuccess: async (_data, variables) => {
+      const { provider, originalId } = variables;
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      await queryClient.invalidateQueries({
+        queryKey: usageKeys.script(provider.id, appId),
+      });
+      if (originalId) {
+        await queryClient.invalidateQueries({
+          queryKey: usageKeys.script(originalId, appId),
+        });
+      }
       if (appId === "openclaw") {
         await queryClient.invalidateQueries({
           queryKey: openclawKeys.health,

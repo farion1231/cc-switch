@@ -17,6 +17,7 @@ import _pipellm from "./pipellm.png";
 import _relaxcode from "./relaxcode.png";
 import _runapi from "./runapi.jpg";
 import _shengsuanyun from "./shengsuanyun.svg?url";
+import _subrouter from "./subrouter.svg?url";
 import _sudocode from "./sudocode.png";
 import _unity2 from "./unity2.png";
 
@@ -111,6 +112,7 @@ export const iconUrls: Record<string, string> = {
   runapi: _runapi,
   shengsuanyun: _shengsuanyun,
   sudocode: _sudocode,
+  subrouter: _subrouter,
   unity2: _unity2,
 };
 
