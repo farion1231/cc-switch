@@ -160,12 +160,12 @@ describe("Provider CRUD", () => {
     expect(body.data).not.toBeNull();
   });
 
-  // NOTE: GET/PUT/DELETE /api/v1/providers/{id} currently return 404 due to a
-  // known routing defect where Axum path-param routes in nested protected_routes
-  // fall through to the ServeFile fallback. These tests document that behaviour.
-  it("GET /{id} returns 404 (known routing defect)", async () => {
+  it("GET /{id} returns the created provider", async () => {
     const res = await apiGet(`/api/v1/providers/${createdId}`, token);
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.data).toHaveProperty("id", createdId);
   });
 });
 

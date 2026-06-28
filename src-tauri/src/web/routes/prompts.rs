@@ -26,7 +26,7 @@ struct ImportBody {
 /// Query parameters for app-scoped endpoints.
 #[derive(Deserialize)]
 struct AppQuery {
-    app: String,
+    app: Option<String>,
 }
 
 pub fn routes() -> Router<(Arc<AppState>, Arc<WsState>)> {
@@ -43,6 +43,11 @@ pub fn routes() -> Router<(Arc<AppState>, Arc<WsState>)> {
 
 fn parse_app(app: &str) -> Result<AppType, String> {
     AppType::from_str(app).map_err(|e| e.to_string())
+}
+
+fn resolve_app(query: &AppQuery) -> Result<AppType, String> {
+    let app = query.app.as_deref().unwrap_or("claude");
+    parse_app(app)
 }
 
 fn desktop_state(state: &AppState) -> Result<Arc<crate::store::AppState>, String> {
@@ -89,7 +94,7 @@ async fn list_prompts(
     State((state, _)): State<(Arc<AppState>, Arc<WsState>)>,
     Query(query): Query<AppQuery>,
 ) -> Json<ApiResponse<Vec<WebPrompt>>> {
-    let app = match parse_app(&query.app) {
+    let app = match resolve_app(&query) {
         Ok(a) => a,
         Err(e) => return Json(ApiResponse::error(e)),
     };
@@ -244,7 +249,7 @@ async fn import_prompt(
 }
 
 async fn get_current_content(Query(query): Query<AppQuery>) -> Json<ApiResponse<Option<String>>> {
-    let app = match parse_app(&query.app) {
+    let app = match resolve_app(&query) {
         Ok(a) => a,
         Err(e) => return Json(ApiResponse::error(e)),
     };

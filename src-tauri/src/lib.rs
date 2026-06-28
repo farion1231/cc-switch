@@ -1,5 +1,6 @@
 mod app_config;
 mod app_store;
+pub mod api_only;
 mod auto_launch;
 mod claude_desktop_config;
 mod claude_mcp;
@@ -65,6 +66,7 @@ pub use services::{
 };
 pub use settings::{update_settings, AppSettings};
 pub use store::AppState;
+pub use web::middleware::auth::rotate_auth_token;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 

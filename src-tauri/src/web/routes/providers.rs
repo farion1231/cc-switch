@@ -14,9 +14,13 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 #[derive(Deserialize)]
-struct CreateProviderRequest {
-    provider: Provider,
-    app: Option<String>,
+#[serde(untagged)]
+enum CreateProviderRequest {
+    Nested {
+        provider: Provider,
+        app: Option<String>,
+    },
+    Flat(Provider),
 }
 
 #[derive(Deserialize)]
@@ -932,8 +936,11 @@ async fn create_provider(
     State((state, ws_state)): State<(Arc<AppState>, Arc<WsState>)>,
     Json(req): Json<CreateProviderRequest>,
 ) -> Json<ApiResponse<String>> {
-    let app_type = req.app.as_deref().unwrap_or(DEFAULT_APP_TYPE).to_string();
-    let provider = req.provider;
+    let (provider, app) = match req {
+        CreateProviderRequest::Nested { provider, app } => (provider, app),
+        CreateProviderRequest::Flat(provider) => (provider, None),
+    };
+    let app_type = app.as_deref().unwrap_or(DEFAULT_APP_TYPE).to_string();
     let result: Result<(), String> = state.with_db(|db: &Connection| {
         let created_at = provider.created_at.unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
         let sort_index = provider.sort_index;

@@ -38,7 +38,7 @@ export async function generateToken(subject = "test-user"): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const header = base64UrlEncode(JSON.stringify({ alg: "HS256", typ: "JWT" }));
   const payload = base64UrlEncode(
-    JSON.stringify({ sub: subject, iat: now, exp: now + 3600 }),
+    JSON.stringify({ sub: subject, iat: now, exp: now + 3600, jti: `test-${now}` }),
   );
   const signingInput = `${header}.${payload}`;
   const signature = createHmac("sha256", JWT_SECRET)

@@ -1,5 +1,5 @@
 use crate::web::{
-    middleware::auth::{generate_token, get_auth_token, revoke_token},
+    middleware::auth::{generate_token, get_auth_token, revoke_token, validate_token},
     models::ApiResponse,
 };
 use axum::{extract::Request, routing::post, Json, Router};
@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
-    pub token: String,
+    pub token: Option<String>,
+    pub username: Option<String>,
+    pub password: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -15,16 +17,38 @@ pub struct LoginResponse {
     pub token: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct VerifyRequest {
+    pub token: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct VerifyResponse {
+    pub valid: bool,
+}
+
 pub fn routes() -> Router {
     Router::new()
         .route("/login", post(login_route))
         .route("/logout", post(logout_route))
+        .route("/verify", post(verify_route))
 }
 
 async fn login_route(Json(req): Json<LoginRequest>) -> Json<ApiResponse<LoginResponse>> {
-    let expected = get_auth_token();
+    // Password-based login was removed; only token exchange is supported.
+    if req.username.is_some() || req.password.is_some() {
+        return Json(ApiResponse::error(
+            "Password login is no longer supported. Use token login instead.".to_string(),
+        ));
+    }
 
-    if !constant_time_eq(req.token.as_bytes(), expected.as_bytes()) {
+    let provided = match req.token {
+        Some(t) => t,
+        None => return Json(ApiResponse::error("Missing auth token".to_string())),
+    };
+
+    let expected = get_auth_token();
+    if !constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
         return Json(ApiResponse::error("Invalid auth token".to_string()));
     }
 
@@ -35,6 +59,14 @@ async fn login_route(Json(req): Json<LoginRequest>) -> Json<ApiResponse<LoginRes
             e
         ))),
     }
+}
+
+async fn verify_route(Json(req): Json<VerifyRequest>) -> Json<ApiResponse<VerifyResponse>> {
+    if req.token.trim().is_empty() {
+        return Json(ApiResponse::error("Token is required".to_string()));
+    }
+    let valid = validate_token(&req.token).is_ok();
+    Json(ApiResponse::success(VerifyResponse { valid }))
 }
 
 async fn logout_route(request: Request) -> Json<ApiResponse<()>> {
@@ -83,7 +115,9 @@ mod tests {
         unsafe { env::set_var("AUTH_TOKEN", "test-login-secret") };
 
         let response = login_route(Json(LoginRequest {
-            token: "test-login-secret".to_string(),
+            token: Some("test-login-secret".to_string()),
+            username: None,
+            password: None,
         }))
         .await;
 
@@ -100,7 +134,9 @@ mod tests {
         unsafe { env::set_var("AUTH_TOKEN", "correct-secret") };
 
         let response = login_route(Json(LoginRequest {
-            token: "wrong-secret".to_string(),
+            token: Some("wrong-secret".to_string()),
+            username: None,
+            password: None,
         }))
         .await;
 
