@@ -1,0 +1,9 @@
+node_modules
+.git
+.gitignore
+.vscode
+.idea
+src-tauri/target
+dist
+release
+**/*.log

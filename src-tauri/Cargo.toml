@@ -18,12 +18,14 @@ doctest = false
 [features]
 default = []
 test-hooks = []
+api-only = ["dep:env_logger"]
 
 [build-dependencies]
 tauri-build = { version = "2.4.0", features = [] }
 
 [dependencies]
 serde_json = { version = "1.0", features = ["preserve_order"] }
+env_logger = { version = "0.11", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
@@ -44,13 +46,13 @@ arboard = "3.6"
 flate2 = "1"
 brotli = "7"
 zstd = "0.13"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "process"] }
 futures = "0.3"
 async-stream = "0.3"
 bytes = "1.5"
-axum = "0.7"
+axum = { version = "0.7", features = ["ws", "multipart"] }
 tower = "0.4"
-tower-http = { version = "0.5", features = ["cors"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
 hyper = { version = "1.0", features = ["full"] }
 hyper-util = { version = "0.1", features = ["tokio", "http1", "client-legacy"] }
 hyper-rustls = { version = "0.27", features = ["http1", "tls12", "ring", "webpki-tokio"] }
@@ -81,6 +83,8 @@ sha2 = "0.10"
 hmac = "0.12"
 json5 = "0.4"
 json-five = "0.3.1"
+tracing = "0.1"
+jsonwebtoken = "9"
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"
@@ -107,6 +111,14 @@ opt-level = "s"
 # 使用 unwind 以便 panic hook 能捕获 backtrace（abort 会直接终止无法捕获）
 panic = "unwind"
 strip = "symbols"
+
+# Docker builds: optimize for compilation speed over binary size
+# Uses parallel codegen (16 units), no LTO, and opt-level=2 instead of "s"
+[profile.docker]
+inherits = "release"
+codegen-units = 16
+lto = false
+opt-level = 2
 
 [dev-dependencies]
 serial_test = "3"

@@ -7,7 +7,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:3000",
     "beforeDevCommand": "pnpm run dev:renderer",
-    "beforeBuildCommand": "pnpm run build:renderer"
+    "beforeBuildCommand": "pnpm run build:renderer && pnpm run build:web:embedded"
   },
   "app": {
     "windows": [
@@ -44,6 +44,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": {
+      "web-dist": "./web-dist"
+    },
     "windows": {
       "wix": {
         "template": "wix/per-user-main.wxs"
