@@ -1097,9 +1097,10 @@ fn serialize_tool_definition_for_description(tool: &Value) -> String {
 /// Some Responses tools carry `parameters: null` or `parameters: {"type": null}`,
 /// but OpenAI Chat Completions strictly requires `{"type": "object", "properties": {...}}`.
 fn normalize_function_parameters(params: Option<&Value>) -> Value {
-    let mut params = params
-        .cloned()
-        .unwrap_or_else(|| json!({"type": "object", "properties": {}}));
+    let mut params = match params {
+        Some(Value::Object(obj)) => Value::Object(obj.clone()),
+        _ => json!({"type": "object", "properties": {}}),
+    };
     if let Some(obj) = params.as_object_mut() {
         match obj.get("type").and_then(|v| v.as_str()) {
             Some("object") => {}
