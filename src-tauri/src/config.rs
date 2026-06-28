@@ -215,6 +215,70 @@ pub fn get_app_config_dir() -> PathBuf {
     default_dir
 }
 
+/// 创建应用私有目录，Unix 下限制为仅当前用户可访问。
+pub fn create_private_dir_all(path: &Path) -> Result<(), AppError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700) // 421 000 000 仅当前用户可访问
+            .create(path)
+            .map_err(|e| AppError::io(path, e))?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+            .map_err(|e| AppError::io(path, e))?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        fs::create_dir_all(path).map_err(|e| AppError::io(path, e))?;
+    }
+
+    Ok(())
+}
+
+/// 将应用私有文件权限收紧为仅当前用户可读写。
+pub fn set_private_file_permissions(path: &Path) -> Result<(), AppError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .map_err(|e| AppError::io(path, e))?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+
+    Ok(())
+}
+
+/// 确保应用配置目录存在，并在 Unix 下收紧为 0o700。
+pub fn ensure_app_config_dir() -> Result<PathBuf, AppError> {
+    let dir = get_app_config_dir();
+    create_private_dir_all(&dir)?;
+    Ok(dir)
+}
+
+fn create_parent_dir_all(path: &Path) -> Result<(), AppError> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+
+    let app_config_dir = get_app_config_dir();
+    if parent.starts_with(&app_config_dir) {
+        create_private_dir_all(&app_config_dir)?;
+        create_private_dir_all(parent)?;
+    } else {
+        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+    }
+
+    Ok(())
+}
+
 /// 获取应用配置文件路径
 pub fn get_app_config_path() -> PathBuf {
     get_app_config_dir().join("config.json")
@@ -272,10 +336,7 @@ fn sort_json_keys(value: &Value) -> Value {
 
 /// 写入 JSON 配置文件（键按字母排序，确保确定性输出）
 pub fn write_json_file<T: Serialize>(path: &Path, data: &T) -> Result<(), AppError> {
-    // 确保目录存在
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
-    }
+    create_parent_dir_all(path)?;
 
     let value = serde_json::to_value(data).map_err(|e| AppError::JsonSerialize { source: e })?;
     let sorted_value = sort_json_keys(&value);
@@ -287,17 +348,13 @@ pub fn write_json_file<T: Serialize>(path: &Path, data: &T) -> Result<(), AppErr
 
 /// 原子写入文本文件（用于 TOML/纯文本）
 pub fn write_text_file(path: &Path, data: &str) -> Result<(), AppError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
-    }
+    create_parent_dir_all(path)?;
     atomic_write(path, data.as_bytes())
 }
 
 /// 原子写入：写入临时文件后 rename 替换，避免半写状态
 pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
-    }
+    create_parent_dir_all(path)?;
 
     let parent = path
         .parent()
@@ -314,19 +371,40 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
         .as_nanos();
     tmp.push(format!("{file_name}.tmp.{ts}"));
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+        let existing_mode = match fs::metadata(path) {
+            Ok(metadata) => Some(metadata.permissions().mode() & 0o777),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(AppError::io(path, error)),
+        };
+        let is_new_private_app_file =
+            existing_mode.is_none() && path.starts_with(get_app_config_dir());
+
+        let mut options = fs::OpenOptions::new();
+        options.create_new(true).write(true);
+        if existing_mode.is_some() || is_new_private_app_file {
+            options.mode(0o600);
+        }
+
+        let mut f = options.open(&tmp).map_err(|e| AppError::io(&tmp, e))?;
+        f.write_all(data).map_err(|e| AppError::io(&tmp, e))?;
+        f.flush().map_err(|e| AppError::io(&tmp, e))?;
+        drop(f);
+
+        if let Some(mode) = existing_mode {
+            fs::set_permissions(&tmp, fs::Permissions::from_mode(mode))
+                .map_err(|e| AppError::io(&tmp, e))?;
+        }
+    }
+
+    #[cfg(not(unix))]
     {
         let mut f = fs::File::create(&tmp).map_err(|e| AppError::io(&tmp, e))?;
         f.write_all(data).map_err(|e| AppError::io(&tmp, e))?;
         f.flush().map_err(|e| AppError::io(&tmp, e))?;
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = fs::metadata(path) {
-            let perm = meta.permissions().mode();
-            let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(perm));
-        }
     }
 
     #[cfg(windows)]
@@ -354,6 +432,7 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn derive_mcp_path_from_override_uses_config_dir_for_custom_path() {
@@ -423,6 +502,92 @@ mod tests {
             derive_mcp_path_from_override(&override_dir),
             PathBuf::from(r"\\wsl$\Ubuntu\opt\claude\.claude\.claude.json")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_private_dir_all_sets_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let private_dir = temp.path().join(".cc-switch");
+
+        create_private_dir_all(&private_dir).expect("create private dir");
+
+        let mode = fs::metadata(&private_dir)
+            .expect("private dir metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_private_dir_all_repairs_existing_directory_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let private_dir = temp.path().join(".cc-switch");
+        fs::create_dir_all(&private_dir).expect("create dir");
+        fs::set_permissions(&private_dir, fs::Permissions::from_mode(0o755))
+            .expect("widen dir permissions");
+
+        create_private_dir_all(&private_dir).expect("repair private dir");
+
+        let mode = fs::metadata(&private_dir)
+            .expect("private dir metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial]
+    fn atomic_write_creates_private_app_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let previous_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        let path = temp.path().join(".cc-switch").join("config.json");
+
+        atomic_write(&path, b"{}").expect("atomic write");
+
+        match previous_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+
+        let mode = fs::metadata(&path)
+            .expect("file metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_preserves_existing_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("config.json");
+        fs::write(&path, "{}").expect("write existing file");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644))
+            .expect("widen file permissions");
+
+        atomic_write(&path, b"{\"ok\":true}").expect("atomic write");
+
+        let mode = fs::metadata(&path)
+            .expect("file metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o644);
     }
 
     #[test]
