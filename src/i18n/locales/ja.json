@@ -1263,12 +1263,9 @@
     "saveFailed": "保存に失敗しました: {{error}}",
     "modelNameHint": "使用するモデルを指定します。config.toml に自動更新されます",
     "modelName": "モデル名",
-    "localRoutingToggle": "ローカルルーティングが必要",
-    "localRoutingOffHint": "プロバイダーのモデル名を書き換える必要がなく、/model メニューにカスタム名を表示する必要もない場合はオフのままで構いません。モデルマッピングが必要なときにオンにしてください。",
-    "localRoutingOnHint": "オンにすると下でモデルマッピングを設定できます。Codex の /model メニューにカスタムモデル名を表示し、リクエストを実際の上流モデルにマッピングします。",
     "upstreamFormatLabel": "上流フォーマット",
-    "upstreamFormatHint": "プロバイダーがネイティブ Responses API なら Responses を選択（直結、フォーマット変換なし）。Chat Completions プロトコルなら Chat を選択（Chat Completions へ変換）。",
-    "upstreamFormatChat": "Chat Completions（変換）",
+    "upstreamFormatHint": "プロバイダーがネイティブ Responses API なら Responses を選択（直結、フォーマット変換なし）。Chat Completions プロトコルなら Chat を選択（Chat Completions へ変換するにはルーティング引き継ぎを有効化する必要があります）。",
+    "upstreamFormatChat": "Chat Completions（ルーティング必須）",
     "upstreamFormatResponses": "Responses（ネイティブ）",
     "upstreamModelName": "上流モデル名",
     "upstreamModelNameHint": "Chat 形式ではここに実際の上流モデルを入力します。ルーティングで Codex の Responses リクエストを Chat Completions に変換し、このモデルを維持します。",
@@ -1297,7 +1294,7 @@
     "reasoningEffortHint": "上流が low/high/max などの思考の深さの制御に対応している場合に有効化します。有効にすると思考モードも自動的にオンになり、Codex の reasoning.effort を上流の Chat パラメータに変換します。",
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "プリセットの供給元は自動的に設定され、カスタム供給元は名前/URL から自動推論されます。自動識別が正しくない場合のみ手動で上書きしてください。",
-    "advancedSectionHint": "ローカルルーティング、上流フォーマット、モデルマッピング、思考能力、カスタム User-Agent の設定を含みます。供給元が Chat Completions プロトコルまたは GPT 以外のモデルを使用する場合は、ここでローカルルーティングを有効にしてください。"
+    "advancedSectionHint": "上流フォーマット、モデルマッピング、思考能力、カスタム User-Agent の設定を含みます。Chat Completions プロトコルを使用するプロバイダーはルーティング引き継ぎの有効化が必要です。"
   },
   "geminiConfig": {
     "envFile": "環境変数 (.env)",

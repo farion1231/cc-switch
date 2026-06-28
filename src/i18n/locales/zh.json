@@ -1263,12 +1263,9 @@
     "saveFailed": "保存失败: {{error}}",
     "modelNameHint": "指定使用的模型，将自动更新到 config.toml 中",
     "modelName": "模型名称",
-    "localRoutingToggle": "需要本地路由映射",
-    "localRoutingOffHint": "供应商模型名无需改写、也无需在 /model 菜单展示自定义名称时，可保持关闭；需要模型映射时打开。",
-    "localRoutingOnHint": "打开后可在下方配置模型映射：让 Codex 的 /model 菜单显示自定义模型名，并把请求映射到真实上游模型。",
     "upstreamFormatLabel": "上游格式",
-    "upstreamFormatHint": "供应商原生为 Responses API 就选 Responses（直连，不转换格式）；使用 Chat Completions 协议就选 Chat（转换为 Chat Completions）。",
-    "upstreamFormatChat": "Chat Completions（转换）",
+    "upstreamFormatHint": "供应商原生为 Responses API 就选 Responses（直连，不转换格式）；使用 Chat Completions 协议就选 Chat（需开启路由接管才能转换为 Chat Completions）。",
+    "upstreamFormatChat": "Chat Completions（需开启路由）",
     "upstreamFormatResponses": "Responses（原生）",
     "upstreamModelName": "上游模型名称",
     "upstreamModelNameHint": "Chat 格式下这里填写真实上游模型；路由会把 Codex 的 Responses 请求转换为 Chat Completions 并保持该模型。",
@@ -1297,7 +1294,7 @@
     "reasoningEffortHint": "上游支持 low/high/max 等思考深度控制时启用。启用后会自动启用思考模式，并把 Codex 的 reasoning.effort 转成上游 Chat 参数。",
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "预设供应商已自动配置；自定义供应商会按名称/地址自动推断。仅当自动识别不准时才需手动覆盖。",
-    "advancedSectionHint": "包含本地路由映射、上游格式、模型映射、思考能力与自定义 User-Agent。供应商使用 Chat Completions 协议或非 GPT 模型时，需在此开启本地路由映射。"
+    "advancedSectionHint": "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。"
   },
   "geminiConfig": {
     "envFile": "环境变量 (.env)",

@@ -1263,12 +1263,9 @@
     "saveFailed": "Save failed: {{error}}",
     "modelNameHint": "Specify the model to use, will be auto-updated in config.toml",
     "modelName": "Model Name",
-    "localRoutingToggle": "Needs Local Routing",
-    "localRoutingOffHint": "Keep off when the provider's model names need no rewriting and you don't need custom names shown in the /model menu; enable it when you need model mapping.",
-    "localRoutingOnHint": "When on, configure model mapping below: show custom model names in Codex's /model menu and map requests to the real upstream model.",
     "upstreamFormatLabel": "Upstream Format",
-    "upstreamFormatHint": "Pick Responses when your provider is natively a Responses API (direct, no format conversion); pick Chat when it uses the Chat Completions protocol (converts to Chat Completions).",
-    "upstreamFormatChat": "Chat Completions (convert)",
+    "upstreamFormatHint": "Pick Responses when your provider is natively a Responses API (direct, no format conversion); pick Chat when it uses the Chat Completions protocol (requires routing takeover to convert to Chat Completions).",
+    "upstreamFormatChat": "Chat Completions (routing required)",
     "upstreamFormatResponses": "Responses (native)",
     "upstreamModelName": "Upstream Model Name",
     "upstreamModelNameHint": "For Chat format, enter the real upstream model here; routing converts Codex Responses requests to Chat Completions while keeping this model.",
@@ -1297,7 +1294,7 @@
     "reasoningEffortHint": "Enable when the upstream supports thinking-depth control such as low/high/max. Enabling this also turns on thinking mode and converts Codex's reasoning.effort into the upstream Chat parameter.",
     "reasoningGroupTitle": "Reasoning Capability",
     "reasoningSectionHint": "Preset providers are configured automatically; custom providers are inferred from name/URL. Override manually only when auto-detection is wrong.",
-    "advancedSectionHint": "Includes local routing, upstream format, model mapping, reasoning overrides and custom User-Agent. Enable local routing here when your provider uses the Chat Completions protocol or non-GPT models."
+    "advancedSectionHint": "Includes upstream format, model mapping, reasoning overrides and custom User-Agent. Providers using the Chat Completions protocol require routing takeover to be enabled."
   },
   "geminiConfig": {
     "envFile": "Environment Variables (.env)",

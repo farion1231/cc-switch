@@ -150,16 +150,6 @@ const codexApiFormatFromWireApi = (
   }
 };
 
-// 从已保存的 settingsConfig 推断 Codex 模型映射条目数（用于决定本地路由初始开关）。
-const codexCatalogCountFromSettings = (settingsConfig: unknown): number => {
-  if (settingsConfig && typeof settingsConfig === "object") {
-    const models = (settingsConfig as { modelCatalog?: { models?: unknown } })
-      .modelCatalog?.models;
-    return Array.isArray(models) ? models.length : 0;
-  }
-  return 0;
-};
-
 export const normalizeCodexCatalogModelsForSave = (
   models: CodexCatalogModel[],
 ): CodexCatalogModel[] => {
@@ -608,19 +598,6 @@ function ProviderFormFull({
   const [localCodexApiFormat, setLocalCodexApiFormat] =
     useState<CodexApiFormat>(initialCodexApiFormat);
 
-  // 本地路由（接管）开关 —— 纯模型映射门控，与上游格式完全独立。
-  // 没有独立持久化字段，初值仅按「是否已配置模型映射」推断（有 catalog 即视为
-  // 接管已开）。只在 useState 初始化与预设重置点设置，跟 localCodexApiFormat
-  // 对称，避免漂移。
-  const [codexTakeoverEnabled, setCodexTakeoverEnabled] = useState<boolean>(
-    () =>
-      // Native (openai_responses) providers run DIRECT (no proxy takeover) yet
-      // still carry a modelCatalog so cc-switch can generate model-catalogs.json.
-      // So a catalog must NOT auto-enable takeover for native providers.
-      initialCodexApiFormat !== "openai_responses" &&
-      codexCatalogCountFromSettings(initialData?.settingsConfig) > 0,
-  );
-
   const { configError: codexConfigError, debouncedValidate } =
     useCodexTomlValidation();
 
@@ -650,7 +627,6 @@ function ProviderFormFull({
       const template = getCodexCustomTemplate();
       resetCodexConfig(template.auth, template.config);
       setCodexChatReasoning({});
-      setCodexTakeoverEnabled(false);
     }
   }, [appId, initialData, selectedPresetId, resetCodexConfig]);
 
@@ -1296,13 +1272,11 @@ function ProviderFormFull({
           category !== "official" && (codexConfig ?? "").trim()
             ? setCodexWireApi(codexConfig ?? "", "responses")
             : (codexConfig ?? "");
-        // Persist the catalog for proxy-takeover (Mode A) OR native-direct
-        // (Mode B, apiFormat=openai_responses). Native providers run without the
-        // proxy but still need cc-switch to generate model-catalogs.json, so the
-        // catalog must survive even when the takeover toggle is off.
+        // 模型映射与「路由接管」解耦：对所有非官方供应商，填了就持久化
+        //（Chat 生成兼容路由、原生 Responses 生成 model-catalogs.json），
+        // 留空归一化为 [] 即不写。后端只看 modelCatalog.models 是否非空。
         const normalizedCatalogModels =
-          category !== "official" &&
-          (codexTakeoverEnabled || localCodexApiFormat === "openai_responses")
+          category !== "official"
             ? normalizeCodexCatalogModelsForSave(codexCatalogModels)
             : [];
         // Sync first catalog row's model into config.toml so Codex uses it as default
@@ -1498,7 +1472,6 @@ function ProviderFormFull({
       codexChatReasoning:
         appId === "codex" &&
         category !== "official" &&
-        codexTakeoverEnabled &&
         localCodexApiFormat === "openai_chat"
           ? normalizeCodexChatReasoningForSave(codexChatReasoning)
           : undefined,
@@ -1651,8 +1624,6 @@ function ProviderFormFull({
           codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
             "openai_responses",
         );
-        // 自定义模板无模型映射，路由默认关闭
-        setCodexTakeoverEnabled(false);
       }
       if (appId === "gemini") {
         resetGeminiConfig({}, {});
@@ -1694,12 +1665,6 @@ function ProviderFormFull({
         preset.apiFormat ??
           codexApiFormatFromWireApi(extractCodexWireApi(config)) ??
           "openai_responses",
-      );
-      // 接管开关：原生（openai_responses）预设走直连、不开接管，即便带 catalog
-      //（catalog 用于生成 model-catalogs.json）；只有 chat 预设按是否带映射开启。
-      setCodexTakeoverEnabled(
-        (preset.apiFormat ?? "openai_responses") !== "openai_responses" &&
-          (preset.modelCatalog?.length ?? 0) > 0,
       );
 
       form.reset({
@@ -2173,8 +2138,6 @@ function ProviderFormFull({
               }
               autoSelect={endpointAutoSelect}
               onAutoSelectChange={setEndpointAutoSelect}
-              takeoverEnabled={codexTakeoverEnabled}
-              onTakeoverEnabledChange={setCodexTakeoverEnabled}
               apiFormat={localCodexApiFormat}
               onApiFormatChange={handleCodexApiFormatChange}
               codexChatReasoning={codexChatReasoning}

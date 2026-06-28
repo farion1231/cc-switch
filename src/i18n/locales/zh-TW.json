@@ -1240,12 +1240,9 @@
     "autoCompactLimit": "壓縮閾值",
     "autoCompactLimitHint": "上下文 token 數達到此閾值時自動壓縮歷史",
     "autoCompactLimitPlaceholder": "例如: 90000",
-    "localRoutingToggle": "需要本地路由映射",
-    "localRoutingOnHint": "打開後可在下方設定模型映射：讓 Codex 的 /model 選單顯示自訂模型名，並把請求映射到真實上游模型。",
-    "localRoutingOffHint": "供應商模型名無需改寫、也無需在 /model 選單顯示自訂名稱時，可保持關閉；需要模型映射時打開。",
     "upstreamFormatLabel": "上游格式",
-    "upstreamFormatHint": "供應商原生為 Responses API 就選 Responses（直連，不轉換格式）；使用 Chat Completions 協定就選 Chat（轉換為 Chat Completions）。",
-    "upstreamFormatChat": "Chat Completions（轉換）",
+    "upstreamFormatHint": "供應商原生為 Responses API 就選 Responses（直連，不轉換格式）；使用 Chat Completions 協定就選 Chat（需開啟路由接管才能轉換為 Chat Completions）。",
+    "upstreamFormatChat": "Chat Completions（需開啟路由）",
     "upstreamFormatResponses": "Responses（原生）",
     "modelMappingTitle": "模型映射",
     "modelMappingHint": "產生 Codex model_catalog_json，讓 /model 指令顯示這些第三方模型名；表中條目按填寫內容原樣儲存。修改後需要重新啟動 Codex 才能重新整理模型清單。",
@@ -1269,7 +1266,7 @@
     "reasoningEffortHint": "上游支援 low/high/max 等思考深度控制時啟用。啟用後會自動啟用思考模式，並把 Codex 的 reasoning.effort 轉成上游 Chat 參數。",
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "預設供應商已自動設定；自訂供應商會按名稱/位址自動推斷。僅當自動識別不準時才需手動覆寫。",
-    "advancedSectionHint": "包含本地路由映射、上游格式、模型映射、思考能力與自訂 User-Agent。供應商使用 Chat Completions 協定或非 GPT 模型時，需在此開啟本地路由映射。"
+    "advancedSectionHint": "包含上游格式、模型映射、思考能力與自訂 User-Agent。使用 Chat Completions 協定的供應商需開啟路由接管才能使用。"
   },
   "geminiConfig": {
     "envFile": "環境變數 (.env)",
