@@ -168,6 +168,77 @@ fn sync_to_app_removes_disabled_and_orphaned_ssot_symlinks() {
 }
 
 #[test]
+fn sync_all_to_supported_apps_enables_and_copies_every_installed_skill() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let ssot_skill_dir = home.join(".cc-switch").join("skills").join("bulk-skill");
+    write_skill(&ssot_skill_dir, "Bulk Skill");
+    fs::write(ssot_skill_dir.join("prompt.md"), "sync everywhere").expect("write prompt.md");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_skill(&InstalledSkill {
+            id: "local:bulk-skill".to_string(),
+            name: "Bulk Skill".to_string(),
+            description: None,
+            directory: "bulk-skill".to_string(),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            apps: SkillApps {
+                claude: true,
+                ..Default::default()
+            },
+            installed_at: 0,
+            content_hash: None,
+            updated_at: 0,
+        })
+        .expect("save skill");
+
+    let result =
+        SkillService::sync_all_to_supported_apps(&state.db).expect("sync all installed skills");
+
+    assert_eq!(result.skill_count, 1);
+    assert_eq!(result.app_count, 5);
+    assert_eq!(result.failures.len(), 0);
+    assert_eq!(result.skipped_count, 1);
+
+    let updated = state
+        .db
+        .get_installed_skill("local:bulk-skill")
+        .expect("query skill")
+        .expect("skill should remain installed");
+    assert!(updated.apps.claude);
+    assert!(updated.apps.codex);
+    assert!(updated.apps.gemini);
+    assert!(updated.apps.opencode);
+    assert!(updated.apps.hermes);
+
+    let expected_paths = [
+        home.join(".claude").join("skills").join("bulk-skill"),
+        home.join(".codex").join("skills").join("bulk-skill"),
+        home.join(".gemini").join("skills").join("bulk-skill"),
+        home.join(".config")
+            .join("opencode")
+            .join("skills")
+            .join("bulk-skill"),
+        home.join(".hermes").join("skills").join("bulk-skill"),
+    ];
+
+    for path in expected_paths {
+        assert!(
+            path.join("SKILL.md").exists(),
+            "{} should contain synced skill files",
+            path.display()
+        );
+    }
+}
+
+#[test]
 fn uninstall_skill_creates_backup_before_removing_ssot() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
