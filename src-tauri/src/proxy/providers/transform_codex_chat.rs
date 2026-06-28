@@ -586,6 +586,20 @@ fn append_responses_input_as_chat_messages(
     Ok(())
 }
 
+/// Whether a Responses content array carries any multimodal parts
+/// (image / file / audio). Used to decide whether a `function_call_output`
+/// array should be converted via the content transformer (so images become
+/// `image_url` blocks) or serialized as a canonical JSON string (the
+/// legacy behavior for plain string arrays like `["main.rs","lib.rs"]`).
+fn array_has_multimodal_parts(parts: &[Value]) -> bool {
+    parts.iter().any(|part| {
+        matches!(
+            part.get("type").and_then(|v| v.as_str()),
+            Some("input_image" | "input_file" | "input_audio" | "image" | "image_url")
+        )
+    })
+}
+
 fn append_responses_item_as_chat_message(
     item: &Value,
     messages: &mut Vec<Value>,
@@ -619,10 +633,23 @@ fn append_responses_item_as_chat_message(
                 last_assistant_index,
             );
             let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
-            let output = match item.get("output") {
-                Some(Value::String(s)) => canonicalize_json_string_if_parseable(s),
-                Some(v) => canonical_json_string(v),
-                None => String::new(),
+            // A function_call_output `output` may be a structured array
+            // carrying multimodal parts (e.g. Codex `view_image` returns
+            // `input_image`). Serializing such an array to a JSON string
+            // would inline the base64 data as plain text, inflating token
+            // usage ~9000x per image and tripping context-length 400s on
+            // vision-capable upstreams (#4465). When the array contains
+            // multimodal parts, route it through the shared content
+            // transformer so `input_image` becomes a proper `image_url`
+            // block; plain string arrays keep the canonical-JSON-string
+            // behavior for backwards compatibility.
+            let output: Value = match item.get("output") {
+                Some(Value::String(s)) => Value::String(canonicalize_json_string_if_parseable(s)),
+                Some(Value::Array(parts)) if array_has_multimodal_parts(parts) => {
+                    responses_content_to_chat_content("tool", item.get("output").unwrap_or(&Value::Null))
+                }
+                Some(v) => Value::String(canonical_json_string(v)),
+                None => Value::String(String::new()),
             };
             messages.push(json!({
                 "role": "tool",
@@ -1827,6 +1854,46 @@ mod tests {
         assert_eq!(content[1]["file"]["filename"], "spec.pdf");
         assert_eq!(content[2]["type"], "input_audio");
         assert_eq!(content[2]["input_audio"]["format"], "wav");
+    }
+
+    #[test]
+    fn function_call_output_with_image_array_becomes_image_url_not_text() {
+        // Regression test for #4465: a function_call_output whose `output`
+        // is a structured array carrying an `input_image` part must be
+        // converted to a proper `image_url` content block, not serialized
+        // to a base64-laden JSON string (which inflates token usage ~9000x).
+        let input = json!({
+            "model": "kimi-k2.7-code",
+            "input": [
+                {"type": "function_call", "name": "view_image", "arguments": "{}", "call_id": "c1"},
+                {"type": "function_call_output", "call_id": "c1", "output": [
+                    {"type": "input_image", "image_url": "data:image/png;base64,iVBORw0KGgo="},
+                    {"type": "input_text", "text": "screenshot"}
+                ]},
+                {"role": "user", "content": [{"type": "input_text", "text": "what is it?"}]}
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // The tool message must carry multimodal content (array), not a
+        // JSON-serialized string that inlines the base64 data.
+        let tool_msg = messages
+            .iter()
+            .find(|m| m["role"] == "tool")
+            .expect("tool message should exist");
+        let content = tool_msg["content"].as_array()
+            .expect("tool content should be a multimodal array, not a string");
+
+        let image_part = content
+            .iter()
+            .find(|p| p["type"] == "image_url")
+            .expect("an image_url block should be present");
+        assert_eq!(
+            image_part["image_url"]["url"],
+            "data:image/png;base64,iVBORw0KGgo="
+        );
     }
 
     #[test]
