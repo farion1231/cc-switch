@@ -9,6 +9,7 @@ vi.mock("@/lib/api/providers", () => ({
   providersApi: {
     getClaudeDesktopDefaultRoutes: () => Promise.resolve([]),
   },
+  universalProvidersApi: {},
 }));
 
 function renderForm(

@@ -1,7 +1,9 @@
 use std::fs;
+use std::path::PathBuf;
 
 use cc_switch_lib::{
-    migrate_skills_to_ssot, AppType, ImportSkillSelection, InstalledSkill, SkillApps, SkillService,
+    migrate_skills_to_ssot, update_settings, AppSettings, AppType, ImportSkillSelection,
+    InstalledSkill, SkillApps, SkillService,
 };
 
 #[path = "support.rs"]
@@ -164,6 +166,152 @@ fn sync_to_app_removes_disabled_and_orphaned_ssot_symlinks() {
     assert!(
         !opencode_skills_dir.join("orphan-skill").exists(),
         "orphaned symlink into SSOT should be cleaned up"
+    );
+}
+
+#[test]
+fn sync_to_app_dir_creates_relative_symlink() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let ssot_dir = home.join(".cc-switch").join("skills");
+    write_skill(&ssot_dir.join("rel-skill"), "Relative Skill");
+
+    SkillService::sync_to_app_dir("rel-skill", &AppType::OpenCode).expect("sync skill to OpenCode");
+
+    let opencode_skill = home
+        .join(".config")
+        .join("opencode")
+        .join("skills")
+        .join("rel-skill");
+    assert!(
+        fs::symlink_metadata(&opencode_skill)
+            .expect("read skill metadata")
+            .file_type()
+            .is_symlink(),
+        "skill should be synced as a symlink"
+    );
+
+    let target = fs::read_link(&opencode_skill).expect("read symlink target");
+    assert!(
+        !target.is_absolute(),
+        "symlink target should be relative, got {}",
+        target.display()
+    );
+
+    let resolved = opencode_skill
+        .parent()
+        .expect("skill parent")
+        .join(&target)
+        .canonicalize()
+        .expect("resolve relative symlink");
+    assert_eq!(
+        resolved,
+        ssot_dir
+            .join("rel-skill")
+            .canonicalize()
+            .expect("canonicalize source"),
+        "relative symlink should resolve to SSOT skill"
+    );
+}
+
+#[test]
+fn sync_to_app_dir_uses_resolvable_symlink_for_override_dir() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let override_dir = std::env::temp_dir().join("cc-switch-test-override");
+    if override_dir.exists() {
+        let _ = fs::remove_dir_all(&override_dir);
+    }
+
+    update_settings(AppSettings {
+        claude_config_dir: Some(override_dir.to_string_lossy().to_string()),
+        ..Default::default()
+    })
+    .expect("set claude override dir");
+
+    let ssot_dir = home.join(".cc-switch").join("skills");
+    write_skill(&ssot_dir.join("override-skill"), "Override Skill");
+
+    SkillService::sync_to_app_dir("override-skill", &AppType::Claude)
+        .expect("sync skill to override Claude dir");
+
+    let claude_skill = override_dir.join("skills").join("override-skill");
+    assert!(
+        fs::symlink_metadata(&claude_skill)
+            .expect("read skill metadata")
+            .file_type()
+            .is_symlink(),
+        "skill should be synced as a symlink"
+    );
+
+    let target = fs::read_link(&claude_skill).expect("read symlink target");
+    let resolved = claude_skill
+        .parent()
+        .expect("skill parent")
+        .join(&target)
+        .canonicalize()
+        .expect("resolve symlink target");
+    assert_eq!(
+        resolved,
+        ssot_dir
+            .join("override-skill")
+            .canonicalize()
+            .expect("canonicalize source"),
+        "symlink should resolve to SSOT skill even with override dir"
+    );
+}
+
+#[test]
+fn sync_to_app_removes_disabled_relative_symlink() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let ssot_dir = home.join(".cc-switch").join("skills");
+    let disabled_skill = ssot_dir.join("rel-disabled-skill");
+    write_skill(&disabled_skill, "Relative Disabled");
+
+    let opencode_skills_dir = home.join(".config").join("opencode").join("skills");
+    fs::create_dir_all(&opencode_skills_dir).expect("create opencode skills dir");
+
+    // Manually create a relative symlink (mimicking the new sync behavior)
+    let relative_target = PathBuf::from("../../..")
+        .join(".cc-switch")
+        .join("skills")
+        .join("rel-disabled-skill");
+    symlink_dir(
+        &relative_target,
+        &opencode_skills_dir.join("rel-disabled-skill"),
+    );
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_skill(&InstalledSkill {
+            id: "local:rel-disabled-skill".to_string(),
+            name: "Relative Disabled".to_string(),
+            description: None,
+            directory: "rel-disabled-skill".to_string(),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            apps: SkillApps::default(),
+            installed_at: 0,
+            content_hash: None,
+            updated_at: 0,
+        })
+        .expect("save disabled skill");
+
+    SkillService::sync_to_app(&state.db, &AppType::OpenCode).expect("reconcile skills");
+
+    assert!(
+        !opencode_skills_dir.join("rel-disabled-skill").exists(),
+        "relative symlink to disabled skill should be cleaned up"
     );
 }
 

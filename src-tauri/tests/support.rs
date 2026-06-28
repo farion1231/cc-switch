@@ -33,7 +33,6 @@ pub fn reset_test_fs() {
         ".gemini",
         ".config",
         ".openclaw",
-        "profiles",
     ] {
         let path = home.join(sub);
         if path.exists() {

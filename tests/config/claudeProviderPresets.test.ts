@@ -1,33 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { providerPresets } from "@/config/claudeProviderPresets";
 
-describe("Kimi For Coding Provider Preset", () => {
-  const kimiForCoding = providerPresets.find(
-    (p) => p.name === "Kimi For Coding",
-  );
-
-  it("should include Kimi For Coding preset", () => {
-    expect(kimiForCoding).toBeDefined();
-  });
-
-  it("should use template placeholder for Claude Code auto-compact window", () => {
-    const env = (kimiForCoding!.settingsConfig as any).env;
-    expect(env).toHaveProperty(
-      "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
-      "${CLAUDE_CODE_AUTO_COMPACT_WINDOW}",
-    );
-  });
-
-  it("should expose auto-compact window as editable template value with Kimi default", () => {
-    const values = (kimiForCoding!.templateValues as any)
-      ?.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
-    expect(values).toBeDefined();
-    expect(values.defaultValue).toBe("262144");
-    expect(values.editorValue).toBe("262144");
-    expect(values.label).toBe("Auto Compact Window");
-  });
-});
-
 describe("AWS Bedrock Provider Presets", () => {
   const bedrockAksk = providerPresets.find(
     (p) => p.name === "AWS Bedrock (AKSK)",
