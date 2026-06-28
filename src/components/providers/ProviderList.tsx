@@ -67,6 +67,7 @@ interface ProviderListProps {
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管）
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
   onSetAsDefault?: (provider: Provider) => void; // OpenClaw: set as default model
+  onOpenLauncher?: (provider: Provider) => void;
 }
 
 export function ProviderList({
@@ -89,6 +90,7 @@ export function ProviderList({
   isProxyTakeover = false,
   activeProviderId,
   onSetAsDefault,
+  onOpenLauncher,
 }: ProviderListProps) {
   const { t } = useTranslation();
   const { checkProvider, isChecking } = useStreamCheck(appId);
@@ -434,6 +436,11 @@ export function ProviderList({
                 onSetAsDefault={
                   onSetAsDefault ? () => onSetAsDefault(provider) : undefined
                 }
+                onOpenLauncher={
+                  onOpenLauncher && appId === "claude"
+                    ? () => onOpenLauncher(provider)
+                    : undefined
+                }
               />
             );
           })}
@@ -565,6 +572,7 @@ interface SortableProviderCardProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+  onOpenLauncher?: () => void;
 }
 
 function SortableProviderCard({
@@ -595,6 +603,7 @@ function SortableProviderCard({
   activeProviderId,
   isDefaultModel,
   onSetAsDefault,
+  onOpenLauncher,
 }: SortableProviderCardProps) {
   const {
     setNodeRef,
@@ -648,6 +657,7 @@ function SortableProviderCard({
         // OpenClaw: default model
         isDefaultModel={isDefaultModel}
         onSetAsDefault={onSetAsDefault}
+        onOpenLauncher={onOpenLauncher}
       />
     </div>
   );

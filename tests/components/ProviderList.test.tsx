@@ -23,6 +23,7 @@ vi.mock("@/components/providers/ProviderCard", () => ({
       onDelete,
       onDuplicate,
       onConfigureUsage,
+      onOpenLauncher,
     } = props;
 
     return (
@@ -57,6 +58,14 @@ vi.mock("@/components/providers/ProviderCard", () => ({
         >
           delete
         </button>
+        {onOpenLauncher && (
+          <button
+            data-testid={`launcher-${provider.id}`}
+            onClick={() => onOpenLauncher(provider)}
+          >
+            launcher
+          </button>
+        )}
         <span data-testid={`is-current-${provider.id}`}>
           {props.isCurrent ? "current" : "inactive"}
         </span>
@@ -235,12 +244,12 @@ describe("ProviderList Component", () => {
     // Drag attributes from useSortable
     expect(
       providerCardRenderSpy.mock.calls[0][0].dragHandleProps?.attributes[
-      "data-dnd-id"
+        "data-dnd-id"
       ],
     ).toBe("b");
     expect(
       providerCardRenderSpy.mock.calls[1][0].dragHandleProps?.attributes[
-      "data-dnd-id"
+        "data-dnd-id"
       ],
     ).toBe("a");
 
@@ -305,5 +314,65 @@ describe("ProviderList Component", () => {
     expect(
       screen.getByText("No providers match your search."),
     ).toBeInTheDocument();
+  });
+
+  it("shows launcher action only for Claude providers", () => {
+    const provider = createProvider({ id: "claude-provider", name: "Kimi" });
+    const handleOpenLauncher = vi.fn();
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    const { rerender } = renderWithQueryClient(
+      <ProviderList
+        providers={{ "claude-provider": provider }}
+        currentProviderId=""
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        onOpenLauncher={handleOpenLauncher}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("launcher-claude-provider"));
+    expect(handleOpenLauncher).toHaveBeenCalledWith(provider);
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    rerender(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: { queries: { retry: false } },
+          })
+        }
+      >
+        <ProviderList
+          providers={{ "claude-provider": provider }}
+          currentProviderId=""
+          appId="codex"
+          onSwitch={vi.fn()}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onDuplicate={vi.fn()}
+          onOpenWebsite={vi.fn()}
+          onOpenLauncher={handleOpenLauncher}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(
+      screen.queryByTestId("launcher-claude-provider"),
+    ).not.toBeInTheDocument();
   });
 });

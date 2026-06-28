@@ -35,6 +35,24 @@ pub async fn open_external(app: AppHandle, url: String) -> Result<bool, String> 
 }
 
 #[tauri::command]
+pub async fn open_path_in_finder(app: AppHandle, path: String) -> Result<bool, String> {
+    if path.contains('\n') || path.contains('\r') {
+        return Err("路径包含非法换行符".to_string());
+    }
+
+    let target = PathBuf::from(path.trim());
+    if !target.exists() {
+        return Err(format!("路径不存在: {}", target.display()));
+    }
+
+    app.opener()
+        .open_path(target.to_string_lossy().to_string(), None::<String>)
+        .map_err(|e| format!("打开路径失败: {e}"))?;
+
+    Ok(true)
+}
+
+#[tauri::command]
 pub async fn copy_text_to_clipboard(text: String) -> Result<bool, String> {
     // Use spawn_blocking to avoid blocking the async runtime
     // Clipboard access can block on some platforms and may have thread/loop constraints
@@ -1158,6 +1176,16 @@ fn provider_command_flag_for_shell(shell: &str) -> &'static str {
         "zsh" => "-lic",
         _ => "-ic",
     }
+}
+
+fn build_shell_cd_command(cwd: Option<&Path>) -> String {
+    cwd.map(|dir| {
+        format!(
+            "cd {} || exit 1\n",
+            shell_single_quote(&dir.to_string_lossy())
+        )
+    })
+    .unwrap_or_default()
 }
 
 fn build_final_shell_cd_command(shell: &str, cwd: Option<&Path>) -> String {
@@ -2582,6 +2610,36 @@ pub async fn open_provider_terminal(
         .get(&providerId)
         .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
 
+    if app_type == AppType::Claude {
+        let launcher_enabled = provider
+            .meta
+            .as_ref()
+            .map(|meta| meta.parallel_config_enabled())
+            .unwrap_or(false);
+
+        if launcher_enabled {
+            let (sync_result, provider) = crate::claude_profile::sync_profile_and_update_metadata(
+                state.db.as_ref(),
+                provider,
+            )
+            .map_err(|e| format!("同步 Claude 启动配置失败: {e}"))?;
+
+            if sync_result.status != crate::claude_profile::ProfileStatus::Ready {
+                return Err(sync_result
+                    .error
+                    .unwrap_or_else(|| "Claude 启动配置同步失败".to_string()));
+            }
+
+            let profile_dir = PathBuf::from(&sync_result.profile_dir);
+            let command = crate::claude_profile::terminal_launch_command(&provider, &profile_dir);
+
+            launch_terminal_running_in_cwd(&command, "claude_launcher", launch_cwd.as_deref())
+                .map_err(|e| format!("启动 Claude 快捷终端失败: {e}"))?;
+
+            return Ok(true);
+        }
+    }
+
     // 从提供商配置中提取环境变量
     let config = &provider.settings_config;
     let env_vars = extract_env_vars_from_config(config, &app_type);
@@ -3303,20 +3361,30 @@ fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), S
 /// 是刻意设计的——让命令退出后窗口不要瞬间关闭，用户才看得到 `command
 /// not found` / `ModuleNotFoundError` 这类诊断信息。
 ///
-/// **Security**：`command_line` 会被原样拼进 shell/batch 脚本，调用方必须
-/// 保证它是可信字符串（当前只由后端硬编码调用）。
+/// **Security**：`command_line` 会被原样拼进 shell/batch 脚本。调用方必须
+/// 保证它来自受信任的配置或用户显式编辑的启动命令。
 pub(crate) fn launch_terminal_running(command_line: &str, label: &str) -> Result<(), String> {
+    launch_terminal_running_in_cwd(command_line, label, None)
+}
+
+pub(crate) fn launch_terminal_running_in_cwd(
+    command_line: &str,
+    label: &str,
+    cwd: Option<&Path>,
+) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
     let pid = std::process::id();
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let (script_file, script_content) = {
         let file = temp_dir.join(format!("cc_switch_{}_{}.sh", label, pid));
+        let cd_command = build_shell_cd_command(cwd);
         let content = format!(
             r#"#!/usr/bin/env sh
 trap 'rm -f "{script_path}"' EXIT
 echo "[cc-switch] Starting: {label}"
 echo ""
+{cd_command}
 {cmd}
 echo ""
 echo "[cc-switch] Command exited. Press Enter to close."
@@ -3325,6 +3393,7 @@ read -r _
             script_path = file.display(),
             label = label,
             cmd = command_line,
+            cd_command = cd_command,
         );
         (file, content)
     };
@@ -3438,10 +3507,12 @@ read -r _
         let terminal = preferred.as_deref().unwrap_or("cmd");
 
         let bat_file = temp_dir.join(format!("cc_switch_{}_{}.bat", label, pid));
+        let cwd_command = build_windows_cwd_command(cwd);
         let content = format!(
-            "@echo off\r\necho [cc-switch] Starting: {label}\r\necho.\r\n{cmd}\r\necho.\r\necho [cc-switch] Command exited. Press any key to close.\r\npause >nul\r\ndel \"%~f0\" >nul 2>&1\r\n",
+            "@echo off\r\necho [cc-switch] Starting: {label}\r\necho.\r\n{cwd_command}{cmd}\r\necho.\r\necho [cc-switch] Command exited. Press any key to close.\r\npause >nul\r\ndel \"%~f0\" >nul 2>&1\r\n",
             label = label,
             cmd = command_line,
+            cwd_command = cwd_command,
         );
         std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
 
@@ -3565,6 +3636,15 @@ mod tests {
         );
         assert_eq!(
             build_final_shell_cd_command("/bin/bash", Some(Path::new("/tmp/project O'Brien"))),
+            "cd '/tmp/project O'\"'\"'Brien' || exit 1\n"
+        );
+    }
+
+    #[test]
+    fn test_build_shell_cd_command() {
+        assert_eq!(build_shell_cd_command(None), "");
+        assert_eq!(
+            build_shell_cd_command(Some(Path::new("/tmp/project O'Brien"))),
             "cd '/tmp/project O'\"'\"'Brien' || exit 1\n"
         );
     }
