@@ -1409,11 +1409,10 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
             }
         };
 
-        let display_name = config.name.clone().unwrap_or_else(|| id.clone());
-
         if existing_ids.contains(&id) {
             match state.db.get_provider_by_id(&id, "opencode") {
                 Ok(Some(existing)) => {
+                    let display_name = config.name.clone().unwrap_or_else(|| existing.name.clone());
                     if existing.settings_config != settings_config || existing.name != display_name
                     {
                         let mut provider = existing;
@@ -1438,6 +1437,7 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
         }
 
         // Create provider
+        let display_name = config.name.clone().unwrap_or_else(|| id.clone());
         let mut provider = Provider::with_id(id.clone(), display_name, settings_config, None);
         provider.meta = Some(crate::provider::ProviderMeta {
             live_config_managed: Some(true),

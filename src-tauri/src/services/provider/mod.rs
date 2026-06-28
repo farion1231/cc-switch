@@ -913,6 +913,7 @@ base_url = "http://localhost:8080"
                 .expect("seed existing opencode provider");
 
             let mut live_settings = provider.settings_config.clone();
+            live_settings.as_object_mut().unwrap().remove("name");
             live_settings["npm"] = Value::String("@ai-sdk/anthropic".to_string());
             live_settings["models"]["gpt-4o"]["name"] = Value::String("Claude Sonnet".to_string());
             crate::opencode_config::set_provider(&provider.id, live_settings)
@@ -927,6 +928,7 @@ base_url = "http://localhost:8080"
                 .get_provider_by_id(&provider.id, AppType::OpenCode.as_str())
                 .expect("query updated opencode provider")
                 .expect("opencode provider should exist");
+            assert_eq!(saved.name, provider.name);
             assert_eq!(saved.settings_config["npm"], json!("@ai-sdk/anthropic"));
             assert_eq!(
                 saved.settings_config["models"]["gpt-4o"]["name"],
