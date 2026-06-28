@@ -1,0 +1,145 @@
+name: Verify AppImage Fix
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify-appimage:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system deps
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config curl file patchelf libssl-dev \
+            libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev \
+            || sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.0-dev
+          sudo apt-get install -y --no-install-recommends libsoup-3.0-dev \
+            || sudo apt-get install -y --no-install-recommends libsoup2.4-dev
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.12.3
+          run_install: false
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build AppImage only
+        run: pnpm tauri build --bundles appimage || true
+
+      - name: Locate AppImage
+        run: |
+          APPIMAGE=$(find src-tauri/target/release/bundle -name "*.AppImage" | head -1)
+          if [ -z "$APPIMAGE" ]; then
+            echo "❌ AppImage not found — build may have failed"
+            exit 1
+          fi
+          echo "APPIMAGE=$APPIMAGE" >> $GITHUB_ENV
+          echo "✅ AppImage built: $APPIMAGE"
+          ls -lh "$APPIMAGE"
+
+      - name: Fix & repack AppImage .DirIcon symlink
+        run: |
+          set -euo pipefail
+          echo "AppImage: $APPIMAGE"
+          chmod +x "$APPIMAGE"
+          WORK_DIR=$(mktemp -d)
+
+          # 1. 提取
+          ("$APPIMAGE" --appimage-extract) > /dev/null 2>&1 || true
+          [ -d squashfs-root ] && mv squashfs-root "$WORK_DIR/AppDir"
+
+          echo "=== Before fix ==="
+          ls -la "$WORK_DIR/AppDir/.DirIcon"
+          echo "Target: $(readlink "$WORK_DIR/AppDir/.DirIcon")"
+
+          # 2. 修复 .DirIcon
+          DIRICON="$WORK_DIR/AppDir/.DirIcon"
+          if [ -L "$DIRICON" ]; then
+            TARGET=$(readlink "$DIRICON")
+            case "$TARGET" in
+              /*)
+                ICON_NAME=$(basename "$WORK_DIR/AppDir/usr/share/icons/hicolor/128x128/apps/"*.png 2>/dev/null | head -1)
+                if [ -n "$ICON_NAME" ]; then
+                  ln -sf "$ICON_NAME" "$DIRICON"
+                  echo "Fixed .DirIcon -> $ICON_NAME (was absolute: $TARGET)"
+                fi
+                ;;
+              *)
+                echo ".DirIcon already relative, no fix needed"
+                ;;
+            esac
+          fi
+
+          echo "=== After fix ==="
+          ls -la "$WORK_DIR/AppDir/.DirIcon"
+          NEW_TARGET=$(readlink "$DIRICON")
+          echo "New target: $NEW_TARGET"
+          case "$NEW_TARGET" in
+            /*) echo "❌ Still absolute path"; rm -rf "$WORK_DIR"; exit 1 ;;
+            *)  echo "✅ .DirIcon now uses relative path" ;;
+          esac
+
+          # 3. 下载 appimagetool（提取运行，避免 FUSE 依赖）
+          APPIMAGETOOL=$(find /usr/local/bin /usr/bin "$HOME/.local/bin" -name "appimagetool" -type f 2>/dev/null | head -1 || true)
+          if [ -z "$APPIMAGETOOL" ]; then
+            curl -fsSL -o /tmp/appimagetool-x86_64.AppImage \
+              "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+            chmod +x /tmp/appimagetool-x86_64.AppImage
+            /tmp/appimagetool-x86_64.AppImage --appimage-extract > /dev/null 2>&1 || true
+            APPIMAGETOOL="$HOME/.local/bin/appimagetool"
+            mkdir -p "$HOME/.local/bin"
+            mv squashfs-root/usr/bin/appimagetool "$APPIMAGETOOL" 2>/dev/null \
+              || mv squashfs-root/AppRun "$APPIMAGETOOL" 2>/dev/null \
+              || { echo "ERROR: Failed to extract appimagetool"; rm -rf "$WORK_DIR"; exit 1; }
+            chmod +x "$APPIMAGETOOL"
+            rm -rf squashfs-root
+          fi
+
+          # 4. 重打包
+          echo "=== Repacking AppImage ==="
+          ARCH=x86_64 "$APPIMAGETOOL" --no-appstream "$WORK_DIR/AppDir" "$APPIMAGE"
+          echo "✅ AppImage repacked"
+          ls -lh "$APPIMAGE"
+          rm -rf "$WORK_DIR"
+
+      - name: Verify AppImage .DirIcon is fixed
+        run: |
+          set -euo pipefail
+          WORK_DIR=$(mktemp -d)
+          ("$APPIMAGE" --appimage-extract) > /dev/null 2>&1 || true
+          [ -d squashfs-root ] && mv squashfs-root "$WORK_DIR/AppDir"
+
+          echo "=== Symlinks in final AppImage ==="
+          find "$WORK_DIR/AppDir" -maxdepth 1 -type l -exec sh -c 'TARGET=$(readlink "{}"); case "$TARGET" in /*) STATUS="❌ absolute";; *) STATUS="✅ relative";; esac; echo "{} -> $TARGET [$STATUS]"' \;
+
+          DIRICON="$WORK_DIR/AppDir/.DirIcon"
+          NEW_TARGET=$(readlink "$DIRICON")
+          case "$NEW_TARGET" in
+            /*) echo "❌ .DirIcon still absolute in final AppImage"; rm -rf "$WORK_DIR"; exit 1 ;;
+            *)  echo "✅ .DirIcon is relative in final AppImage: $NEW_TARGET" ;;
+          esac
+          rm -rf "$WORK_DIR"
+
+      - name: Upload AppImage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: CC-Switch-verify-appimage
+          path: src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: warn
