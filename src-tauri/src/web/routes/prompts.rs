@@ -327,7 +327,7 @@ mod tests {
         let list = list_prompts(
             State((state.clone(), ws.clone())),
             Query(AppQuery {
-                app: "claude".to_string(),
+                app: Some("claude".to_string()),
             }),
         )
         .await;
@@ -371,7 +371,7 @@ mod tests {
         );
 
         let content = get_current_content(Query(AppQuery {
-            app: "claude".to_string(),
+            app: Some("claude".to_string()),
         }))
         .await;
         assert_eq!(content.0.data.unwrap(), Some("# New Prompt".to_string()));

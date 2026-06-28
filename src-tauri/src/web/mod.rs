@@ -16,33 +16,49 @@ use tower_http::{
 use handlers::ws::WsState;
 use models::app_state::AppState;
 
-/// Get the path to the web assets directory
-/// In development: uses ../dist (desktop build)
-/// In production: uses the bundled resource path
+/// Get the path to the web assets directory.
+///
+/// Tries, in order:
+/// 1. The `TAURI_RESOURCE_DIR/web-dist` path used by bundled Tauri apps.
+/// 2. `current_dir/web-dist` (convenient when running from `src-tauri`).
+/// 3. `current_dir/src-tauri/web-dist` (convenient when running from the repo root).
+/// 4. The `web-dist` directory next to the executable (`src-tauri/web-dist`
+///    for debug builds in the standard layout).
+/// 5. `../dist` for Vite development builds.
 fn get_web_assets_path() -> PathBuf {
-    // Try to get the resource directory from Tauri
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
     if let Ok(resource_dir) = std::env::var("TAURI_RESOURCE_DIR") {
-        let web_dist = PathBuf::from(&resource_dir).join("web-dist");
-        if web_dist.exists() {
-            return web_dist;
+        candidates.push(PathBuf::from(resource_dir).join("web-dist"));
+    }
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.push(current_dir.join("web-dist"));
+        candidates.push(current_dir.join("src-tauri").join("web-dist"));
+    }
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        // exe: .../src-tauri/target/{debug,release}/cc-switch
+        // web-dist sibling: .../src-tauri/web-dist
+        if let Some(exe_dir) = exe_path.parent() {
+            if let Some(target_dir) = exe_dir.parent() {
+                if let Some(src_tauri_dir) = target_dir.parent() {
+                    candidates.push(src_tauri_dir.join("web-dist"));
+                }
+            }
         }
     }
 
-    // Fallback: check if we're in development mode
-    let dev_path = PathBuf::from("../dist");
-    if dev_path.exists() {
-        return dev_path;
+    candidates.push(PathBuf::from("../dist"));
+
+    for candidate in &candidates {
+        if candidate.exists() {
+            return candidate.clone();
+        }
     }
 
-    // Final fallback: check current directory
-    let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let web_dist = current_dir.join("web-dist");
-    if web_dist.exists() {
-        return web_dist;
-    }
-
-    // Last resort: return the path anyway, it will 404 if not found
-    PathBuf::from("web-dist")
+    // Last resort: return a deterministic path so the failure mode is obvious.
+    candidates.last().cloned().unwrap_or_else(|| PathBuf::from("web-dist"))
 }
 
 pub fn create_router(state: Arc<AppState>, ws_state: Arc<WsState>) -> Router {
@@ -78,6 +94,13 @@ pub fn create_router(state: Arc<AppState>, ws_state: Arc<WsState>) -> Router {
     // Get the web assets path
     let assets_path = get_web_assets_path();
     let index_path = assets_path.join("index.html");
+
+    tracing::info!(
+        "serving web assets from {:?} (index: {:?}, exists: {})",
+        assets_path,
+        index_path,
+        index_path.exists()
+    );
 
     Router::new()
         .nest("/api/v1", api_routes)

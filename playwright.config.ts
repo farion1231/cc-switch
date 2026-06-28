@@ -8,7 +8,7 @@ export default defineConfig({
   workers: 1,
   reporter: "list",
   use: {
-    baseURL: "http://localhost:13001",
+    baseURL: "http://localhost:13002",
     trace: "on-first-retry",
   },
   projects: [
@@ -18,8 +18,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "pnpm headless:debug:web",
-    url: "http://localhost:13001/health",
+    command: "CC_SWITCH_WEB_PORT=13002 CC_SWITCH_DB_PATH=/tmp/cc-switch-e2e.db pnpm headless:debug:web",
+    url: "http://localhost:13002/health",
     timeout: 60 * 1000,
     reuseExistingServer: !process.env.CI,
   },

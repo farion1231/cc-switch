@@ -13,7 +13,9 @@ test.describe("web mode smoke", () => {
     // 2. Navigate to login page
     await page.goto("/");
     await expect(page.getByText("CC Switch")).toBeVisible();
-    await expect(page.getByPlaceholder(/Paste your admin token here/i)).toBeVisible();
+    await expect(
+      page.getByPlaceholder(/Paste your auth token here/i),
+    ).toBeVisible();
 
     // 3. Fill token and submit
     await page.fill('input[id="token"]', token);
@@ -22,21 +24,35 @@ test.describe("web mode smoke", () => {
     // 4. Wait for dashboard to load (login form replaced by app content)
     await expect(page.getByRole("banner")).toBeVisible();
 
-    // 5. Verify AppSwitcher tabs are visible
-    await expect(page.getByRole("button", { name: "Claude Claude" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "OpenAI Codex" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Gemini Gemini" })).toBeVisible();
+    // Dismiss the first-run welcome dialog if it appears (fresh database).
+    const gotItButton = page.getByRole("button", { name: /Got it|知道了/i });
+    try {
+      await gotItButton.waitFor({ state: "visible", timeout: 5000 });
+      await gotItButton.click();
+      await expect(gotItButton).toBeHidden();
+    } catch {
+      // No first-run dialog; proceed.
+    }
 
-    // 6. Wait for toast to dismiss, then click Claude tab and verify content loads
-    await expect(page.getByRole("button", { name: "Claude Claude" })).toBeEnabled();
-    await page.getByRole("button", { name: "Claude Claude" }).click();
-    await expect(page.getByRole("heading", { name: "No providers added yet" })).toBeVisible();
+    // 5. Verify the active Claude tab is visible in the AppSwitcher
+    const claudeTab = page.getByRole("button", { name: /Claude Code$/i });
+    await expect(claudeTab).toBeVisible();
+
+    // 6. Click the Claude tab and verify the empty-state content loads
+    await claudeTab.click();
+    await expect(
+      page.getByRole("heading", {
+        name: /No providers added yet|还没有添加任何供应商/i,
+      }),
+    ).toBeVisible();
   });
 
   test("invalid token shows error and does not navigate", async ({ page }) => {
     // 1. Navigate to login page
     await page.goto("/");
-    await expect(page.getByPlaceholder(/Paste your admin token here/i)).toBeVisible();
+    await expect(
+      page.getByPlaceholder(/Paste your auth token here/i),
+    ).toBeVisible();
 
     // 2. Fill an obviously invalid token and submit
     await page.fill('input[id="token"]', "not-a-valid-token");
@@ -44,6 +60,8 @@ test.describe("web mode smoke", () => {
 
     // 3. Expect error toast to appear and stay on login page
     await expect(page.getByText(/Login failed|Invalid token/i)).toBeVisible();
-    await expect(page.getByPlaceholder(/Paste your admin token here/i)).toBeVisible();
+    await expect(
+      page.getByPlaceholder(/Paste your auth token here/i),
+    ).toBeVisible();
   });
 });

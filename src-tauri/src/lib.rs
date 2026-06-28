@@ -1,5 +1,6 @@
 mod app_config;
 mod app_store;
+#[cfg(feature = "api-only")]
 pub mod api_only;
 mod auto_launch;
 mod claude_desktop_config;
@@ -14,6 +15,7 @@ mod deeplink;
 mod error;
 mod gemini_config;
 mod gemini_mcp;
+mod headless;
 pub mod hermes_config;
 mod init_status;
 mod lightweight;
@@ -227,6 +229,13 @@ fn macos_tray_icon() -> Option<Image<'static>> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Headless mode: start the embedded web server directly and skip Tauri/GTK.
+    // This is used by the e2e test suite and by server deployments that do not
+    // have a display server available.
+    if std::env::args().any(|a| a == "--headless") {
+        return crate::headless::run_headless();
+    }
+
     // 设置 panic hook，在应用崩溃时记录日志到 <app_config_dir>/crash.log（默认 ~/.cc-switch/crash.log）
     panic_hook::setup_panic_hook();
 
