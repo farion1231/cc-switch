@@ -754,8 +754,10 @@ pub fn run() {
                 log::warn!("Sync preferences migration failed: {e}");
             }
 
-            // 3. 导入 MCP 服务器配置（表空时触发）
-            if app_state.db.is_mcp_table_empty().unwrap_or(false) {
+            // 3. 导入 MCP 服务器配置（设置开启且表空时触发）
+            if !crate::settings::get_settings().auto_import_mcp_on_startup {
+                log::info!("MCP auto-import disabled by settings, skipping startup import");
+            } else if app_state.db.is_mcp_table_empty().unwrap_or(false) {
                 log::info!("MCP table empty, importing from live configurations...");
 
                 match crate::services::mcp::McpService::import_from_claude(&app_state) {
@@ -799,8 +801,10 @@ pub fn run() {
                 }
             }
 
-            // 4. 导入提示词文件（表空时触发）
-            if app_state.db.is_prompts_table_empty().unwrap_or(false) {
+            // 4. 导入提示词文件（设置开启且表空时触发）
+            if !crate::settings::get_settings().auto_import_prompts_on_startup {
+                log::info!("Prompt auto-import disabled by settings, skipping startup import");
+            } else if app_state.db.is_prompts_table_empty().unwrap_or(false) {
                 log::info!("Prompts table empty, importing from live configurations...");
 
                 for app in [
