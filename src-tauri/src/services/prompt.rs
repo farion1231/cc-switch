@@ -36,6 +36,15 @@ impl PromptService {
 
         state.db.save_prompt(app.as_str(), &prompt)?;
 
+        let live_sync = crate::settings::get_settings().prompt_live_sync_enabled;
+        if !live_sync {
+            log::debug!(
+                "Prompt live sync disabled, skipping file write for {}",
+                app.as_str()
+            );
+            return Ok(());
+        }
+
         if is_enabled {
             // 启用提示词：写入内容到文件
             let target_path = prompt_file_path(&app)?;
@@ -129,7 +138,15 @@ impl PromptService {
 
         if let Some(prompt) = prompts.get_mut(id) {
             prompt.enabled = true;
-            write_text_file(&target_path, &prompt.content)?; // 原子写入
+            let live_sync = crate::settings::get_settings().prompt_live_sync_enabled;
+            if live_sync {
+                write_text_file(&target_path, &prompt.content)?; // 原子写入
+            } else {
+                log::debug!(
+                    "Prompt live sync disabled, skipping file write for {}",
+                    app.as_str()
+                );
+            }
             state.db.save_prompt(app.as_str(), prompt)?;
         } else {
             return Err(AppError::InvalidInput(format!("提示词 {id} 不存在")));
