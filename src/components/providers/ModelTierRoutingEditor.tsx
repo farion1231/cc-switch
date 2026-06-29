@@ -1,7 +1,7 @@
 /**
  * 首页「模型层级路由」编辑器。
  *
- * 默认展示路由方案列表；点击方案切换生效，点击编辑按钮进入详情后编辑每个 Claude 层级
+ * 默认展示路由方案列表；点击方案设为当前方案，点击编辑按钮进入详情后编辑每个 Claude 层级
  * （Opus/Sonnet/Haiku/Fable）的 provider、真实上游模型名、展示名和 1M 声明。
  */
 import { useEffect, useState } from "react";
@@ -117,21 +117,9 @@ interface Props {
   appId: ModelTierRoutingApp;
   config: ModelTierRoutingConfig;
   onChange: (next: ModelTierRoutingConfig) => void;
-  // true = 已激活（主区 inline），不显示预览 banner；
-  // false = 预览/编辑态（弹窗内），顶部提示未启用并提供启用入口。
-  isActive?: boolean;
-  onActivate?: () => void;
-  onClose?: () => void;
 }
 
-export function ModelTierRoutingEditor({
-  appId,
-  config,
-  onChange,
-  isActive = false,
-  onActivate,
-  onClose,
-}: Props) {
+export function ModelTierRoutingEditor({ appId, config, onChange }: Props) {
   const { t } = useTranslation();
   const [providers, setProviders] = useState<Record<string, Provider>>({});
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
@@ -641,38 +629,6 @@ export function ModelTierRoutingEditor({
 
   return (
     <>
-      {!isActive && (
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
-          <div className="min-w-0 text-sm text-amber-800 dark:text-amber-200">
-            {t("home.modelTierRouting.previewBanner", {
-              defaultValue:
-                "Preview mode: changes are saved, but routing stays off until you enable it",
-            })}
-          </div>
-          <div className="flex shrink-0 gap-2">
-            {onActivate && (
-              <Button type="button" size="sm" onClick={onActivate}>
-                <CheckCircle2 className="h-4 w-4" />
-                {t("home.modelTierRouting.enableRouting", {
-                  defaultValue: "Enable model-tier routing",
-                })}
-              </Button>
-            )}
-            {onClose && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={onClose}
-              >
-                {t("home.modelTierRouting.closePreview", {
-                  defaultValue: "Close",
-                })}
-              </Button>
-            )}
-          </div>
-        </div>
-      )}
       {editorView}
       {listView}
       <ConfirmDialog

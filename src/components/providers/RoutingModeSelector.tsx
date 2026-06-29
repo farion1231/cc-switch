@@ -1,14 +1,10 @@
 /**
- * 首页「路由模式」二选一选择器（Provider 路由 / 模型层级路由）。
+ * 首页「路由模式」详情页选择器（Provider 路由 / 模型层级路由）。
  *
  * 只要当前 app 是 Claude 就渲染（无论路由模式是否开启）—— 这是可发现性的关键：
  * 从未开过路由模式的用户也能看到「模型层级路由」这张卡。
- *
- * - 路由模式开启：两张卡都正常可点，选谁谁生效。
- * - 路由模式关闭：模型层级卡是「锁定态」（灰底 + 锁图标 + 提示），但保持可点击 ——
- *   点击直接触发开路由流程（由 App 的 onSelectTier 桥接到确认弹窗）。
+ * 点击卡片只切换当前查看/编辑的详情页；真实启用由详情页里的启用按钮处理。
  */
-import { CheckCircle2, Circle, Lock, Pencil } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 
@@ -16,44 +12,55 @@ export type RoutingMode = "provider" | "tier";
 
 interface Props {
   value: RoutingMode;
-  routingEnabled: boolean;
+  activeValue: RoutingMode;
   onSelectProvider: () => void;
   onSelectTier: () => void;
-  onEditTier?: () => void;
+  onEnableProvider: () => void;
+  onEnableTier: () => void;
 }
 
 export function RoutingModeSelector({
   value,
-  routingEnabled,
+  activeValue,
   onSelectProvider,
   onSelectTier,
-  onEditTier,
+  onEnableProvider,
+  onEnableTier,
 }: Props) {
   const { t } = useTranslation();
+  const activeLabel = t("home.routingMode.active", {
+    defaultValue: "Enabled",
+  });
 
   return (
     <div className="space-y-2">
       <span className="px-1 text-sm font-medium text-muted-foreground">
         {t("home.routingMode.label")}
       </span>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div role="tablist" className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <RoutingCard
           selected={value === "provider"}
+          active={activeValue === "provider"}
           onClick={onSelectProvider}
           title={t("home.routingMode.provider")}
           description={t("home.routingMode.providerDesc")}
+          activeLabel={activeLabel}
+          enableLabel={t("home.routingMode.enableProvider", {
+            defaultValue: "Enable provider routing",
+          })}
+          onEnable={onEnableProvider}
         />
         <RoutingCard
           selected={value === "tier"}
+          active={activeValue === "tier"}
           onClick={onSelectTier}
-          onEdit={onEditTier}
-          editLabel={t("home.routingMode.editTier", {
-            defaultValue: "Edit tier mappings",
-          })}
           title={t("home.routingMode.modelTier")}
           description={t("home.routingMode.modelTierDesc")}
-          locked={!routingEnabled}
-          lockedHint={t("home.routingMode.tierLockedHint")}
+          activeLabel={activeLabel}
+          enableLabel={t("home.routingMode.enableTier", {
+            defaultValue: "Enable model-tier routing",
+          })}
+          onEnable={onEnableTier}
         />
       </div>
     </div>
@@ -62,94 +69,59 @@ export function RoutingModeSelector({
 
 interface CardProps {
   selected: boolean;
+  active: boolean;
   onClick: () => void;
   title: string;
   description: string;
-  locked?: boolean;
-  lockedHint?: string;
-  onEdit?: () => void;
-  editLabel?: string;
+  activeLabel: string;
+  enableLabel: string;
+  onEnable: () => void;
 }
 
 function RoutingCard({
   selected,
+  active,
   onClick,
   title,
   description,
-  locked,
-  lockedHint,
-  onEdit,
-  editLabel,
+  activeLabel,
+  enableLabel,
+  onEnable,
 }: CardProps) {
-  // 外层是 <button role="radio">，不能再内嵌 <button>，所以 edit 按钮做成兄弟节点：
-  // 用 relative 包裹层承载卡片 button + 绝对定位的 edit 按钮，点击靠 stopPropagation 隔离。
-  const buttonClass = cn(
-    "relative h-full w-full rounded-xl glass-card p-4 text-left transition-all",
-    "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-    selected && "glass-card-active",
-    locked && "opacity-60",
-    onEdit && "pr-14",
-  );
-
-  const inner = (
-    <div className="flex items-start gap-3">
-      {selected ? (
-        <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
-      ) : (
-        <Circle className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
-      )}
-      <div className="min-w-0 space-y-1">
-        <div className="text-sm font-semibold">{title}</div>
-        <div className="text-xs text-muted-foreground">{description}</div>
-        {locked && lockedHint && (
-          <div className="pt-1 text-xs text-muted-foreground/80">
-            {lockedHint}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-
-  if (!onEdit) {
-    return (
-      <button
-        type="button"
-        role="radio"
-        aria-checked={selected}
-        onClick={onClick}
-        className={buttonClass}
-      >
-        {inner}
-      </button>
-    );
-  }
-
   return (
-    <div className="relative h-full">
+    <div
+      className={cn(
+        "flex h-full w-full items-center gap-3 rounded-xl glass-card p-4 transition-all",
+        selected && "glass-card-active",
+      )}
+    >
       <button
         type="button"
-        role="radio"
-        aria-checked={selected}
+        role="tab"
+        aria-selected={selected}
         onClick={onClick}
-        className={buttonClass}
+        className="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        {inner}
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold">{title}</span>
+            {active && (
+              <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                {activeLabel}
+              </span>
+            )}
+          </div>
+          <div className="text-xs text-muted-foreground">{description}</div>
+        </div>
       </button>
-      <div className="absolute right-2 top-2 z-10 flex items-center gap-1">
-        {locked && <Lock className="h-4 w-4 text-muted-foreground" />}
-        <button
-          type="button"
-          title={editLabel}
-          aria-label={editLabel}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-foreground/10 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={(e) => {
-            e.stopPropagation();
-            onEdit();
-          }}
-        >
-          <Pencil className="h-3.5 w-3.5" />
-        </button>
-      </div>
+      <button
+        type="button"
+        className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary"
+        onClick={onEnable}
+        disabled={active}
+      >
+        {enableLabel}
+      </button>
     </div>
   );
 }

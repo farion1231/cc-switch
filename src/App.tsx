@@ -66,17 +66,13 @@ import { AppSwitcher } from "@/components/AppSwitcher";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { ModelTierRoutingEditor } from "@/components/providers/ModelTierRoutingEditor";
-import { RoutingModeSelector } from "@/components/providers/RoutingModeSelector";
+import {
+  RoutingModeSelector,
+  type RoutingMode,
+} from "@/components/providers/RoutingModeSelector";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import { UpdateBadge } from "@/components/UpdateBadge";
 import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
@@ -301,9 +297,12 @@ function App() {
     !!activeTierRoutingApp &&
     isModelTierRoutingEnabledForApp(tierRoutingConfig, activeTierRoutingApp) &&
     isTierRoutingTransportActive;
+  const activeRoutingMode: RoutingMode = isModelTierMode ? "tier" : "provider";
   const [showTierProxyConfirm, setShowTierProxyConfirm] = useState(false);
-  // 「模型层级路由」卡的 edit 按钮：未激活时打开预览弹窗（只编辑、不切换、不开代理）。
-  const [tierEditorOpen, setTierEditorOpen] = useState(false);
+  // 当前详情页。和 activeRoutingMode 分离：点击卡片只进入详情，不直接启用。
+  const [viewRoutingMode, setViewRoutingMode] =
+    useState<RoutingMode>(activeRoutingMode);
+  const [routingViewTouched, setRoutingViewTouched] = useState(false);
 
   const handleSwitchToModelTier = () => {
     if (!activeTierRoutingApp) return;
@@ -312,6 +311,16 @@ function App() {
     } else {
       setShowTierProxyConfirm(true);
     }
+  };
+
+  const handleEnableProviderRouting = () => {
+    if (!activeTierRoutingApp) return;
+    void setTierRoutingEnabled(activeTierRoutingApp, false);
+  };
+
+  const handleSelectRoutingView = (mode: RoutingMode) => {
+    setRoutingViewTouched(true);
+    setViewRoutingMode(mode);
   };
 
   const handleConfirmTierProxy = async () => {
@@ -352,10 +361,16 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCurrentAppTakeoverActive]);
 
-  // 激活后主区已有 inline editor，预览弹窗冗余；切 app / 离开可路由 app 时不残留预览态。
+  // 切换应用后，默认展示当前实际启用的模式；之后用户点击卡片只改变详情页。
   useEffect(() => {
-    if (isModelTierMode || !activeTierRoutingApp) setTierEditorOpen(false);
-  }, [isModelTierMode, activeTierRoutingApp]);
+    setRoutingViewTouched(false);
+  }, [activeTierRoutingApp]);
+
+  useEffect(() => {
+    if (!routingViewTouched || !activeTierRoutingApp) {
+      setViewRoutingMode(activeRoutingMode);
+    }
+  }, [activeRoutingMode, activeTierRoutingApp, routingViewTouched]);
 
   // Claude Desktop 的层级路由依赖本地代理服务。服务被关闭时同步关闭 tier 模式，
   // 并触发后端把 Desktop profile 刷回当前 provider 的普通路由。
@@ -995,6 +1010,46 @@ function App() {
     setCurrentView("skillsDiscovery");
   };
 
+  const renderProviderList = () => (
+    <ProviderList
+      providers={providers}
+      currentProviderId={currentProviderId}
+      appId={activeApp}
+      isLoading={isLoading}
+      isProxyRunning={isProxyRunning}
+      isProxyTakeover={isProxyRunning && isCurrentAppTakeoverActive}
+      activeProviderId={activeProviderId}
+      onSwitch={switchProvider}
+      onEdit={(provider) => {
+        setEditingProvider(provider);
+      }}
+      onDelete={(provider) => setConfirmAction({ provider, action: "delete" })}
+      onRemoveFromConfig={
+        activeApp === "opencode" ||
+        activeApp === "openclaw" ||
+        activeApp === "hermes"
+          ? (provider) => setConfirmAction({ provider, action: "remove" })
+          : undefined
+      }
+      onDisableOmo={activeApp === "opencode" ? handleDisableOmo : undefined}
+      onDisableOmoSlim={
+        activeApp === "opencode" ? handleDisableOmoSlim : undefined
+      }
+      onDuplicate={handleDuplicateProvider}
+      onConfigureUsage={setUsageProvider}
+      onOpenWebsite={handleOpenWebsite}
+      onOpenTerminal={activeApp === "claude" ? handleOpenTerminal : undefined}
+      onCreate={() => setIsAddOpen(true)}
+      onSetAsDefault={
+        activeApp === "openclaw"
+          ? setAsDefaultModel
+          : activeApp === "hermes"
+            ? switchProvider
+            : undefined
+      }
+    />
+  );
+
   const renderContent = () => {
     const content = (() => {
       switch (currentView) {
@@ -1086,82 +1141,24 @@ function App() {
                   >
                     {activeTierRoutingApp && (
                       <RoutingModeSelector
-                        value={isModelTierMode ? "tier" : "provider"}
-                        routingEnabled={isTierRoutingTransportActive}
+                        value={viewRoutingMode}
+                        activeValue={activeRoutingMode}
                         onSelectProvider={() =>
-                          void setTierRoutingEnabled(
-                            activeTierRoutingApp,
-                            false,
-                          )
+                          handleSelectRoutingView("provider")
                         }
-                        onSelectTier={handleSwitchToModelTier}
-                        onEditTier={
-                          isModelTierMode
-                            ? undefined
-                            : () => setTierEditorOpen(true)
-                        }
+                        onSelectTier={() => handleSelectRoutingView("tier")}
+                        onEnableProvider={handleEnableProviderRouting}
+                        onEnableTier={handleSwitchToModelTier}
                       />
                     )}
-                    {isModelTierMode ? (
+                    {activeTierRoutingApp && viewRoutingMode === "tier" ? (
                       <ModelTierRoutingEditor
                         appId={activeTierRoutingApp!}
                         config={tierRoutingConfig}
                         onChange={persistTierRouting}
-                        isActive
                       />
                     ) : (
-                      <ProviderList
-                        providers={providers}
-                        currentProviderId={currentProviderId}
-                        appId={activeApp}
-                        isLoading={isLoading}
-                        isProxyRunning={isProxyRunning}
-                        isProxyTakeover={
-                          isProxyRunning && isCurrentAppTakeoverActive
-                        }
-                        activeProviderId={activeProviderId}
-                        onSwitch={switchProvider}
-                        onEdit={(provider) => {
-                          setEditingProvider(provider);
-                        }}
-                        onDelete={(provider) =>
-                          setConfirmAction({ provider, action: "delete" })
-                        }
-                        onRemoveFromConfig={
-                          activeApp === "opencode" ||
-                          activeApp === "openclaw" ||
-                          activeApp === "hermes"
-                            ? (provider) =>
-                                setConfirmAction({ provider, action: "remove" })
-                            : undefined
-                        }
-                        onDisableOmo={
-                          activeApp === "opencode"
-                            ? handleDisableOmo
-                            : undefined
-                        }
-                        onDisableOmoSlim={
-                          activeApp === "opencode"
-                            ? handleDisableOmoSlim
-                            : undefined
-                        }
-                        onDuplicate={handleDuplicateProvider}
-                        onConfigureUsage={setUsageProvider}
-                        onOpenWebsite={handleOpenWebsite}
-                        onOpenTerminal={
-                          activeApp === "claude"
-                            ? handleOpenTerminal
-                            : undefined
-                        }
-                        onCreate={() => setIsAddOpen(true)}
-                        onSetAsDefault={
-                          activeApp === "openclaw"
-                            ? setAsDefaultModel
-                            : activeApp === "hermes"
-                              ? switchProvider
-                              : undefined
-                        }
-                      />
+                      renderProviderList()
                     )}
                   </motion.div>
                 </AnimatePresence>
@@ -1810,36 +1807,6 @@ function App() {
         onConfirm={() => void handleConfirmTierProxy()}
         onCancel={() => setShowTierProxyConfirm(false)}
       />
-
-      <Dialog
-        open={tierEditorOpen && !isModelTierMode && !!activeTierRoutingApp}
-        onOpenChange={setTierEditorOpen}
-      >
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>
-              {t("home.modelTierRouting.previewTitle", {
-                defaultValue: "Model-tier routing (preview)",
-              })}
-            </DialogTitle>
-            <DialogDescription className="sr-only">
-              {t("home.modelTierRouting.previewBanner", {
-                defaultValue:
-                  "Preview mode: changes are saved, but routing stays off until you enable it",
-              })}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="overflow-y-auto px-6 py-4">
-            <ModelTierRoutingEditor
-              appId={activeTierRoutingApp!}
-              config={tierRoutingConfig}
-              onChange={persistTierRouting}
-              onActivate={handleSwitchToModelTier}
-              onClose={() => setTierEditorOpen(false)}
-            />
-          </div>
-        </DialogContent>
-      </Dialog>
 
       <DeepLinkImportDialog />
       <FirstRunNoticeDialog />
