@@ -600,7 +600,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                         >
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <SelectTrigger className="size-7 p-0 justify-center border-0 bg-transparent hover:bg-muted">
+                              <SelectTrigger className="h-7 w-10 justify-center gap-0.5 border-0 bg-transparent px-1 py-0 shadow-none hover:bg-muted">
                                 <ProviderIcon
                                   icon={
                                     providerFilter === "all"
