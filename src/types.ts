@@ -443,6 +443,19 @@ export interface Settings {
       migratedStateRows?: number;
     };
   };
+
+  // ===== Sync & Automation preferences =====
+  mcpLiveSyncEnabled?: boolean;
+  autoImportMcpOnStartup?: boolean;
+  autoImportPromptsOnStartup?: boolean;
+  promptLiveSyncEnabled?: boolean;
+  sessionUsageSyncEnabled?: boolean;
+  sessionUsageSyncIntervalSecs?: number;
+  sessionUsageSyncClaude?: boolean;
+  sessionUsageSyncCodex?: boolean;
+  sessionUsageSyncGemini?: boolean;
+  sessionUsageSyncOpencode?: boolean;
+  skillLiveSyncEnabled?: boolean;
 }
 
 export interface SessionMeta {
