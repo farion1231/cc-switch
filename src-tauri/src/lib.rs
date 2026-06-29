@@ -749,6 +749,11 @@ pub fn run() {
                 }
             }
 
+            // Run sync preferences migration for existing users
+            if let Err(e) = crate::settings::run_sync_preferences_defaults_migration() {
+                log::warn!("Sync preferences migration failed: {e}");
+            }
+
             // 3. 导入 MCP 服务器配置（表空时触发）
             if app_state.db.is_mcp_table_empty().unwrap_or(false) {
                 log::info!("MCP table empty, importing from live configurations...");
