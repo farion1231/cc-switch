@@ -19,6 +19,7 @@ export interface CodexProviderPreset {
   config: string; // 将写入 ~/.codex/config.toml（TOML 字符串）
   isOfficial?: boolean; // 标识是否为官方预设
   isPartner?: boolean; // 标识是否为商业合作伙伴
+  primePartner?: boolean; // 置顶合作伙伴（顶级）：徽章显示为心形
   partnerPromotionKey?: string; // 合作伙伴促销信息的 i18n key
   category?: ProviderCategory; // 新增：分类
   isCustomTemplate?: boolean; // 标识是否为自定义模板
@@ -198,17 +199,11 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     config: generateThirdPartyConfig(
       "doubaoseed",
       "https://ark.cn-beijing.volces.com/api/v3",
-      "doubao-seed-2-0-code-preview-latest",
+      "doubao-seed-2-1-pro",
     ),
     endpointCandidates: ["https://ark.cn-beijing.volces.com/api/v3"],
-    apiFormat: "openai_chat",
-    modelCatalog: modelCatalog([
-      {
-        model: "doubao-seed-2-0-code-preview-latest",
-        displayName: "Doubao Seed Code Preview",
-        contextWindow: 256000,
-      },
-    ]),
+    // 火山方舟主数据面 /api/v3 原生支持 Responses API（/api/v3/responses），无需路由接管转换
+    apiFormat: "openai_responses",
     category: "cn_official",
     isPartner: true,
     partnerPromotionKey: "doubaoseed",
@@ -230,6 +225,22 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "ccsub",
     icon: "ccsub",
+  },
+  {
+    name: "SubRouter",
+    websiteUrl: "https://subrouter.ai",
+    apiKeyUrl: "https://subrouter.ai/register?aff=l3ri",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "subrouter",
+      "https://subrouter.ai/v1",
+      "gpt-5.5",
+    ),
+    endpointCandidates: ["https://subrouter.ai/v1"],
+    isPartner: true,
+    partnerPromotionKey: "subrouter",
+    icon: "subrouter",
   },
   {
     name: "Unity2.ai",
@@ -319,12 +330,12 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "zhipu_glm",
       "https://open.bigmodel.cn/api/coding/paas/v4",
-      "glm-5.1",
+      "glm-5.2",
     ),
     endpointCandidates: ["https://open.bigmodel.cn/api/coding/paas/v4"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
-      { model: "glm-5.1", displayName: "GLM-5.1", contextWindow: 200000 },
+      { model: "glm-5.2", displayName: "GLM-5.2", contextWindow: 200000 },
     ]),
     codexChatReasoning: {
       supportsThinking: true,
@@ -345,12 +356,12 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "zhipu_glm_en",
       "https://api.z.ai/api/coding/paas/v4",
-      "glm-5.1",
+      "glm-5.2",
     ),
     endpointCandidates: ["https://api.z.ai/api/coding/paas/v4"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
-      { model: "glm-5.1", displayName: "GLM-5.1", contextWindow: 200000 },
+      { model: "glm-5.2", displayName: "GLM-5.2", contextWindow: 200000 },
     ]),
     codexChatReasoning: {
       supportsThinking: true,
@@ -398,28 +409,15 @@ requires_openai_auth = true`,
       "qwen3-coder-plus",
     ),
     endpointCandidates: ["https://dashscope.aliyuncs.com/compatible-mode/v1"],
-    apiFormat: "openai_chat",
-    modelCatalog: modelCatalog([
-      {
-        model: "qwen3-coder-plus",
-        displayName: "Qwen3 Coder Plus",
-        contextWindow: 1000000,
-      },
-      { model: "qwen3-max", displayName: "Qwen3 Max", contextWindow: 262144 },
-    ]),
-    codexChatReasoning: {
-      supportsThinking: true,
-      supportsEffort: false,
-      thinkingParam: "enable_thinking",
-      effortParam: "none",
-      outputFormat: "reasoning_content",
-    },
+    // 阿里百炼 DashScope 原生支持 OpenAI Responses API（/compatible-mode/v1/responses，同一 base_url），无需路由接管转换
+    apiFormat: "openai_responses",
     category: "cn_official",
     icon: "bailian",
     iconColor: "#624AFF",
   },
   {
     name: "Kimi",
+    primePartner: true,
     websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
     apiKeyUrl: "https://platform.moonshot.cn/console/api-keys?aff=cc-switch",
     auth: generateThirdPartyAuth(""),
@@ -450,6 +448,7 @@ requires_openai_auth = true`,
   },
   {
     name: "Kimi For Coding",
+    primePartner: true,
     websiteUrl: "https://www.kimi.com/code/docs/",
     apiKeyUrl: "https://www.kimi.com/code/",
     auth: generateThirdPartyAuth(""),
@@ -486,11 +485,16 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "stepfun",
       "https://api.stepfun.com/step_plan/v1",
-      "step-3.5-flash-2603",
+      "step-3.7-flash",
     ),
     endpointCandidates: ["https://api.stepfun.com/step_plan/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
+      {
+        model: "step-3.7-flash",
+        displayName: "Step 3.7 Flash",
+        contextWindow: 262144,
+      },
       {
         model: "step-3.5-flash-2603",
         displayName: "Step 3.5 Flash 2603",
@@ -514,11 +518,16 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "stepfun_en",
       "https://api.stepfun.ai/step_plan/v1",
-      "step-3.5-flash-2603",
+      "step-3.7-flash",
     ),
     endpointCandidates: ["https://api.stepfun.ai/step_plan/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
+      {
+        model: "step-3.7-flash",
+        displayName: "Step 3.7 Flash",
+        contextWindow: 262144,
+      },
       {
         model: "step-3.5-flash-2603",
         displayName: "Step 3.5 Flash 2603",
@@ -572,17 +581,11 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "longcat",
       "https://api.longcat.chat/openai/v1",
-      "LongCat-Flash-Chat",
+      "LongCat-2.0-Preview",
     ),
     endpointCandidates: ["https://api.longcat.chat/openai/v1"],
-    apiFormat: "openai_chat",
-    modelCatalog: modelCatalog([
-      {
-        model: "LongCat-Flash-Chat",
-        displayName: "LongCat Flash Chat",
-        contextWindow: 262144,
-      },
-    ]),
+    // 美团 LongCat 官方 Codex 文档用 wire_api=responses 对自家 base_url，原生 Responses，无需路由接管转换
+    apiFormat: "openai_responses",
     category: "cn_official",
     icon: "longcat",
     iconColor: "#29E154",
@@ -595,24 +598,11 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "minimax",
       "https://api.minimaxi.com/v1",
-      "MiniMax-M2.7",
+      "MiniMax-M3",
     ),
     endpointCandidates: ["https://api.minimaxi.com/v1"],
-    apiFormat: "openai_chat",
-    modelCatalog: modelCatalog([
-      {
-        model: "MiniMax-M2.7",
-        displayName: "MiniMax M2.7",
-        contextWindow: 200000,
-      },
-    ]),
-    codexChatReasoning: {
-      supportsThinking: true,
-      supportsEffort: false,
-      thinkingParam: "reasoning_split",
-      effortParam: "none",
-      outputFormat: "reasoning_details",
-    },
+    // MiniMax 官方 API 参考已列 /v1/responses 为正式端点（CN/intl 双区，POST /v1/responses），原生 Responses，无需路由接管转换
+    apiFormat: "openai_responses",
     category: "cn_official",
     partnerPromotionKey: "minimax_cn",
     theme: {
@@ -630,24 +620,11 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "minimax_en",
       "https://api.minimax.io/v1",
-      "MiniMax-M2.7",
+      "MiniMax-M3",
     ),
     endpointCandidates: ["https://api.minimax.io/v1"],
-    apiFormat: "openai_chat",
-    modelCatalog: modelCatalog([
-      {
-        model: "MiniMax-M2.7",
-        displayName: "MiniMax M2.7",
-        contextWindow: 200000,
-      },
-    ]),
-    codexChatReasoning: {
-      supportsThinking: true,
-      supportsEffort: false,
-      thinkingParam: "reasoning_split",
-      effortParam: "none",
-      outputFormat: "reasoning_details",
-    },
+    // MiniMax 官方 API 参考已列 /v1/responses 为正式端点（CN/intl 双区，POST /v1/responses），原生 Responses，无需路由接管转换
+    apiFormat: "openai_responses",
     category: "cn_official",
     partnerPromotionKey: "minimax_en",
     theme: {
@@ -665,15 +642,15 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "bailing",
       "https://api.tbox.cn/api/llm/v1",
-      "Ling-2.5-1T",
+      "Ling-2.6-1T",
     ),
     endpointCandidates: ["https://api.tbox.cn/api/llm/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
       {
-        model: "Ling-2.5-1T",
-        displayName: "Ling-2.5-1T",
-        contextWindow: 131072,
+        model: "Ling-2.6-1T",
+        displayName: "Ling-2.6-1T",
+        contextWindow: 262144,
       },
     ]),
     category: "cn_official",
@@ -689,21 +666,8 @@ requires_openai_auth = true`,
       "mimo-v2.5-pro",
     ),
     endpointCandidates: ["https://api.xiaomimimo.com/v1"],
-    apiFormat: "openai_chat",
-    modelCatalog: modelCatalog([
-      {
-        model: "mimo-v2.5-pro",
-        displayName: "MiMo V2.5 Pro",
-        contextWindow: 1048576,
-      },
-    ]),
-    codexChatReasoning: {
-      supportsThinking: true,
-      supportsEffort: false,
-      thinkingParam: "thinking",
-      effortParam: "none",
-      outputFormat: "reasoning_content",
-    },
+    // 小米 MiMo 官方 Codex 文档已声明原生支持 Responses API（wire_api=responses 对自家 base_url），无需路由接管转换
+    apiFormat: "openai_responses",
     category: "cn_official",
     icon: "xiaomimimo",
     iconColor: "#000000",
@@ -719,21 +683,8 @@ requires_openai_auth = true`,
       "mimo-v2.5-pro",
     ),
     endpointCandidates: ["https://token-plan-cn.xiaomimimo.com/v1"],
-    apiFormat: "openai_chat",
-    modelCatalog: modelCatalog([
-      {
-        model: "mimo-v2.5-pro",
-        displayName: "MiMo V2.5 Pro",
-        contextWindow: 1048576,
-      },
-    ]),
-    codexChatReasoning: {
-      supportsThinking: true,
-      supportsEffort: false,
-      thinkingParam: "thinking",
-      effortParam: "none",
-      outputFormat: "reasoning_content",
-    },
+    // 小米 MiMo 官方 Codex 文档已声明原生支持 Responses API（wire_api=responses 对自家 base_url），无需路由接管转换
+    apiFormat: "openai_responses",
     category: "cn_official",
     icon: "xiaomimimo",
     iconColor: "#000000",
@@ -847,6 +798,39 @@ requires_openai_auth = true`,
     category: "aggregator",
     icon: "nvidia",
     iconColor: "#000000",
+  },
+  {
+    name: "OpenCode Go",
+    websiteUrl: "https://opencode.ai/go",
+    apiKeyUrl: "https://opencode.ai/go?ref=2YTRG2NGTX",
+    partnerPromotionKey: "opencode_go",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "opencode_go",
+      "https://opencode.ai/zen/go/v1",
+      "glm-5.2",
+    ),
+    endpointCandidates: ["https://opencode.ai/zen/go/v1"],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      { model: "glm-5.2", displayName: "GLM 5.2", contextWindow: 204800 },
+      { model: "glm-5.1", displayName: "GLM 5.1", contextWindow: 204800 },
+      {
+        model: "kimi-k2.7-code",
+        displayName: "Kimi K2.7 Code",
+        contextWindow: 262144,
+      },
+      { model: "deepseek-v4-pro", displayName: "DeepSeek V4 Pro" },
+      { model: "deepseek-v4-flash", displayName: "DeepSeek V4 Flash" },
+      {
+        model: "mimo-v2.5-pro",
+        displayName: "MiMo V2.5 Pro",
+        contextWindow: 1048576,
+      },
+    ]),
+    category: "third_party",
+    icon: "opencode",
+    iconColor: "#211E1E",
   },
   {
     name: "AiHubMix",
@@ -1219,20 +1203,20 @@ requires_openai_auth = true`,
     iconColor: "#000000",
   },
   {
-    name: "CTok.ai",
-    websiteUrl: "https://ctok.ai",
-    apiKeyUrl: "https://ctok.ai",
+    name: "ETok.ai",
+    websiteUrl: "https://etok.ai",
+    apiKeyUrl: "https://etok.ai",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
-      "ctok",
-      "https://api.ctok.ai/v1",
+      "etok",
+      "https://api.etok.ai/v1",
       "gpt-5.5",
     ),
-    endpointCandidates: ["https://api.ctok.ai/v1"],
+    endpointCandidates: ["https://api.etok.ai/v1"],
     category: "third_party",
     isPartner: true, // 合作伙伴
-    partnerPromotionKey: "ctok", // 促销信息 i18n key
-    icon: "ctok",
+    partnerPromotionKey: "etok", // 促销信息 i18n key
+    icon: "etok",
     iconColor: "#000000",
   },
   {

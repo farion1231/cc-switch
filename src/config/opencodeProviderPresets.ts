@@ -9,6 +9,7 @@ export interface OpenCodeProviderPreset {
   settingsConfig: OpenCodeProviderConfig;
   isOfficial?: boolean;
   isPartner?: boolean;
+  primePartner?: boolean; // 置顶合作伙伴（顶级）：徽章显示为心形
   partnerPromotionKey?: string;
   category?: ProviderCategory;
   templateValues?: Record<string, TemplateValueConfig>;
@@ -389,8 +390,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "doubao-seed-2-0-code-preview-latest": {
-          name: "Doubao Seed Code Preview",
+        "doubao-seed-2-1-pro": {
+          name: "Doubao Seed 2.1 Pro",
         },
       },
     },
@@ -427,6 +428,34 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "ccsub",
     icon: "ccsub",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "SubRouter",
+    websiteUrl: "https://subrouter.ai",
+    apiKeyUrl: "https://subrouter.ai/register?aff=l3ri",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "SubRouter",
+      options: {
+        baseURL: "https://subrouter.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-5.5": { name: "GPT-5.5" },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "subrouter",
+    icon: "subrouter",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -588,12 +617,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "Kimi K2.7 Code",
+    name: "Kimi",
+    primePartner: true,
     websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
     apiKeyUrl: "https://platform.moonshot.cn/console/api-keys?aff=cc-switch",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "Kimi K2.7 Code",
+      name: "Kimi",
       options: {
         baseURL: "https://api.moonshot.cn/v1",
         apiKey: "",
@@ -622,6 +652,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "Kimi For Coding",
+    primePartner: true,
     websiteUrl: "https://www.kimi.com/code/docs/?aff=cc-switch",
     apiKeyUrl: "https://platform.moonshot.cn/console/api-keys?aff=cc-switch",
     settingsConfig: {
@@ -1015,6 +1046,38 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
 
+  {
+    name: "OpenCode Go",
+    websiteUrl: "https://opencode.ai/go",
+    apiKeyUrl: "https://opencode.ai/go?ref=2YTRG2NGTX",
+    partnerPromotionKey: "opencode_go",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "OpenCode Go",
+      options: {
+        baseURL: "https://opencode.ai/zen/go/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "glm-5.2": { name: "GLM 5.2" },
+        "kimi-k2.7-code": { name: "Kimi K2.7 Code" },
+        "deepseek-v4-pro": { name: "DeepSeek V4 Pro" },
+        "deepseek-v4-flash": { name: "DeepSeek V4 Flash" },
+        "mimo-v2.5-pro": { name: "MiMo V2.5 Pro" },
+      },
+    },
+    category: "third_party",
+    icon: "opencode",
+    iconColor: "#211E1E",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
   {
     name: "AiHubMix",
     websiteUrl: "https://aihubmix.com",
@@ -1651,14 +1714,14 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "CTok.ai",
-    websiteUrl: "https://ctok.ai",
-    apiKeyUrl: "https://ctok.ai",
+    name: "ETok.ai",
+    websiteUrl: "https://etok.ai",
+    apiKeyUrl: "https://etok.ai",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
-      name: "CTok",
+      name: "ETok",
       options: {
-        baseURL: "https://api.ctok.ai/v1",
+        baseURL: "https://api.etok.ai/v1",
         apiKey: "",
         setCacheKey: true,
       },
@@ -1669,8 +1732,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
     category: "third_party",
     isPartner: true,
-    partnerPromotionKey: "ctok",
-    icon: "ctok",
+    partnerPromotionKey: "etok",
+    icon: "etok",
     iconColor: "#000000",
     templateValues: {
       apiKey: {

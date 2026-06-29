@@ -47,6 +47,7 @@ export interface ClaudeDesktopProviderPreset {
   apiKeyUrl?: string;
   category?: ProviderCategory;
   isPartner?: boolean;
+  primePartner?: boolean; // 置顶合作伙伴（顶级）：徽章显示为心形
   partnerPromotionKey?: string;
 
   baseUrl: string;
@@ -234,9 +235,9 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: brandedRoutes(
-      "doubao-seed-2-0-code-preview-latest",
-      "doubao-seed-2-0-code-preview-latest",
-      "doubao-seed-2-0-code-preview-latest",
+      "doubao-seed-2-1-pro",
+      "doubao-seed-2-1-pro",
+      "doubao-seed-2-1-pro",
     ),
     isPartner: true,
     partnerPromotionKey: "doubaoseed",
@@ -255,6 +256,19 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "ccsub",
     icon: "ccsub",
+  },
+  {
+    name: "SubRouter",
+    websiteUrl: "https://subrouter.ai",
+    apiKeyUrl: "https://subrouter.ai/register?aff=l3ri",
+    category: "aggregator",
+    baseUrl: "https://subrouter.ai",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(true),
+    isPartner: true,
+    partnerPromotionKey: "subrouter",
+    icon: "subrouter",
   },
   {
     name: "Unity2.ai",
@@ -334,7 +348,9 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "OpenCode Go",
-    websiteUrl: "https://opencode.ai",
+    websiteUrl: "https://opencode.ai/go",
+    apiKeyUrl: "https://opencode.ai/go?ref=2YTRG2NGTX",
+    partnerPromotionKey: "opencode_go",
     category: "third_party",
     baseUrl: "https://opencode.ai/zen/go",
     mode: "proxy",
@@ -414,6 +430,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "Kimi",
+    primePartner: true,
     websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
     category: "cn_official",
     baseUrl: "https://api.moonshot.cn/anthropic",
@@ -429,6 +446,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "Kimi For Coding",
+    primePartner: true,
     websiteUrl: "https://www.kimi.com/code/docs/?aff=cc-switch",
     category: "cn_official",
     baseUrl: "https://api.kimi.com/coding/",
@@ -897,17 +915,17 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#000000",
   },
   {
-    name: "CTok.ai",
-    websiteUrl: "https://ctok.ai",
-    apiKeyUrl: "https://ctok.ai",
+    name: "ETok.ai",
+    websiteUrl: "https://etok.ai",
+    apiKeyUrl: "https://etok.ai",
     category: "third_party",
-    baseUrl: "https://api.ctok.ai",
+    baseUrl: "https://api.etok.ai",
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
     isPartner: true,
-    partnerPromotionKey: "ctok",
-    icon: "ctok",
+    partnerPromotionKey: "etok",
+    icon: "etok",
     iconColor: "#000000",
   },
   {

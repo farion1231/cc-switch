@@ -31,6 +31,7 @@ export interface ProviderPreset {
   settingsConfig: object;
   isOfficial?: boolean; // 标识是否为官方预设
   isPartner?: boolean; // 标识是否为商业合作伙伴
+  primePartner?: boolean; // 置顶合作伙伴（顶级）：徽章显示为心形
   partnerPromotionKey?: string; // 合作伙伴促销信息的 i18n key
   category?: ProviderCategory; // 新增：分类
   // 新增：指定该预设所使用的 API Key 字段名（默认 ANTHROPIC_AUTH_TOKEN）
@@ -181,10 +182,10 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_BASE_URL: "https://ark.cn-beijing.volces.com/api/compatible",
         ANTHROPIC_AUTH_TOKEN: "",
         API_TIMEOUT_MS: "3000000",
-        ANTHROPIC_MODEL: "doubao-seed-2-0-code-preview-latest",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "doubao-seed-2-0-code-preview-latest",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "doubao-seed-2-0-code-preview-latest",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "doubao-seed-2-0-code-preview-latest",
+        ANTHROPIC_MODEL: "doubao-seed-2-1-pro",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "doubao-seed-2-1-pro",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "doubao-seed-2-1-pro",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "doubao-seed-2-1-pro",
       },
     },
     category: "cn_official",
@@ -207,6 +208,21 @@ export const providerPresets: ProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "ccsub",
     icon: "ccsub",
+  },
+  {
+    name: "SubRouter",
+    websiteUrl: "https://subrouter.ai",
+    apiKeyUrl: "https://subrouter.ai/register?aff=l3ri",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://subrouter.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "subrouter",
+    icon: "subrouter",
   },
   {
     name: "Unity2.ai",
@@ -265,7 +281,9 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "OpenCode Go",
-    websiteUrl: "https://opencode.ai",
+    websiteUrl: "https://opencode.ai/go",
+    apiKeyUrl: "https://opencode.ai/go?ref=2YTRG2NGTX",
+    partnerPromotionKey: "opencode_go",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
@@ -367,6 +385,7 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "Kimi",
+    primePartner: true,
     websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
     settingsConfig: {
       env: {
@@ -384,11 +403,21 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "Kimi For Coding",
+    primePartner: true,
     websiteUrl: "https://www.kimi.com/code/docs/?aff=cc-switch",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://api.kimi.com/coding/",
         ANTHROPIC_AUTH_TOKEN: "",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "${CLAUDE_CODE_AUTO_COMPACT_WINDOW}",
+      },
+    },
+    templateValues: {
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: {
+        label: "Auto Compact Window",
+        placeholder: "262144",
+        defaultValue: "262144",
+        editorValue: "262144",
       },
     },
     category: "cn_official",
@@ -971,19 +1000,19 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#000000",
   },
   {
-    name: "CTok.ai",
-    websiteUrl: "https://ctok.ai",
-    apiKeyUrl: "https://ctok.ai",
+    name: "ETok.ai",
+    websiteUrl: "https://etok.ai",
+    apiKeyUrl: "https://etok.ai",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.ctok.ai",
+        ANTHROPIC_BASE_URL: "https://api.etok.ai",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
     category: "third_party",
     isPartner: true, // 合作伙伴
-    partnerPromotionKey: "ctok", // 促销信息 i18n key
-    icon: "ctok",
+    partnerPromotionKey: "etok", // 促销信息 i18n key
+    icon: "etok",
     iconColor: "#000000",
   },
   {

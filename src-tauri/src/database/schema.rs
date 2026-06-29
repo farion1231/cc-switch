@@ -1684,6 +1684,26 @@ impl Database {
             ),
             // ====== 国产模型 (USD/1M tokens) ======
             // Doubao (字节跳动)
+            // Seed 2.1 系列（2026-06 火山引擎官方 list 价，CNY 按 ~7.14 折算）：
+            //   pro   输入 6 元 / 输出 30 元 / 命中 1.2 元
+            //   turbo 输入 3 元 / 输出 15 元 / 命中 0.6 元
+            // 「缓存存储 0.017 元/M/小时」是按时长计费的存储费，与本表 cache_creation（按 token 写入价）口径不同，置 0。
+            (
+                "doubao-seed-2-1-pro",
+                "Doubao Seed 2.1 Pro",
+                "0.84",
+                "4.2",
+                "0.17",
+                "0",
+            ),
+            (
+                "doubao-seed-2-1-turbo",
+                "Doubao Seed 2.1 Turbo",
+                "0.42",
+                "2.1",
+                "0.08",
+                "0",
+            ),
             (
                 "doubao-seed-code",
                 "Doubao Seed Code",
@@ -1853,6 +1873,7 @@ impl Database {
             ("glm-4.6", "GLM-4.6", "0.6", "2.2", "0.11", "0"),
             ("glm-5", "GLM-5", "1", "3.2", "0.2", "0"),
             ("glm-5.1", "GLM-5.1", "1.4", "4.4", "0.26", "0"),
+            ("glm-5.2", "GLM-5.2", "1.4", "4.4", "0.26", "0"),
             // MiMo (小米)
             (
                 "mimo-v2-flash",

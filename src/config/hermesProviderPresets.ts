@@ -104,6 +104,7 @@ export interface HermesProviderPreset {
   settingsConfig: HermesProviderSettingsConfig;
   isOfficial?: boolean;
   isPartner?: boolean;
+  primePartner?: boolean; // 置顶合作伙伴（顶级）：徽章显示为心形
   partnerPromotionKey?: string;
   category?: ProviderCategory;
   templateValues?: Record<string, TemplateValueConfig>;
@@ -221,8 +222,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "anthropic_messages",
       models: [
         {
-          id: "doubao-seed-2-0-code-preview-latest",
-          name: "Doubao Seed 2.0 Code Preview",
+          id: "doubao-seed-2-1-pro",
+          name: "Doubao Seed 2.1 Pro",
         },
       ],
     },
@@ -233,7 +234,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#3370FF",
     suggestedDefaults: {
       model: {
-        default: "doubao-seed-2-0-code-preview-latest",
+        default: "doubao-seed-2-1-pro",
         provider: "doubao_seed",
       },
     },
@@ -261,6 +262,31 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "ccsub",
     suggestedDefaults: {
       model: { default: "gpt-5.5", provider: "ccsub" },
+    },
+  },
+  {
+    name: "SubRouter",
+    websiteUrl: "https://subrouter.ai",
+    apiKeyUrl: "https://subrouter.ai/register?aff=l3ri",
+    settingsConfig: {
+      name: "subrouter",
+      base_url: "https://subrouter.ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          context_length: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "subrouter",
+    icon: "subrouter",
+    suggestedDefaults: {
+      model: { default: "gpt-5.5", provider: "subrouter" },
     },
   },
   {
@@ -515,6 +541,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "Kimi",
+    primePartner: true,
     websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
     settingsConfig: {
       name: "kimi",
@@ -532,6 +559,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "Kimi For Coding",
+    primePartner: true,
     websiteUrl: "https://www.kimi.com/code/docs/?aff=cc-switch",
     settingsConfig: {
       name: "kimi_coding",
@@ -1192,12 +1220,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "CTok.ai",
-    websiteUrl: "https://ctok.ai",
-    apiKeyUrl: "https://ctok.ai",
+    name: "ETok.ai",
+    websiteUrl: "https://etok.ai",
+    apiKeyUrl: "https://etok.ai",
     settingsConfig: {
-      name: "ctok",
-      base_url: "https://api.ctok.ai",
+      name: "etok",
+      base_url: "https://api.etok.ai",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -1208,11 +1236,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
     category: "third_party",
     isPartner: true,
-    partnerPromotionKey: "ctok",
-    icon: "ctok",
+    partnerPromotionKey: "etok",
+    icon: "etok",
     iconColor: "#000000",
     suggestedDefaults: {
-      model: { default: "claude-opus-4-8", provider: "ctok" },
+      model: { default: "claude-opus-4-8", provider: "etok" },
     },
   },
   {

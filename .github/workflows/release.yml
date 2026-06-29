@@ -16,9 +16,12 @@ jobs:
   release:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: windows-2022
+          - os: windows-11-arm
+            arch: arm64
           - os: ubuntu-22.04
           - os: ubuntu-22.04-arm
             arch: arm64
@@ -35,6 +38,11 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Add Windows ARM64 target
+        if: runner.os == 'Windows' && matrix.arch == 'arm64'
+        shell: pwsh
+        run: rustup target add aarch64-pc-windows-msvc
 
       - name: Add macOS targets
         if: runner.os == 'macOS'
@@ -74,22 +82,49 @@ jobs:
             || sudo apt-get install -y --no-install-recommends libsoup2.4-dev
 
       - name: Setup pnpm
+        if: runner.os != 'Windows' || matrix.arch != 'arm64'
         uses: pnpm/action-setup@v6
         with:
           version: 10.12.3
           run_install: false
 
+      - name: Setup pnpm (Windows ARM64)
+        if: runner.os == 'Windows' && matrix.arch == 'arm64'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          corepack enable
+          corepack prepare pnpm@10.12.3 --activate
+          node --version
+          pnpm --version
+
       - name: Get pnpm store directory
+        if: runner.os != 'Windows' || matrix.arch != 'arm64'
         id: pnpm-store
         shell: bash
         run: echo "path=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
 
       - name: Setup pnpm cache
+        if: runner.os != 'Windows' || matrix.arch != 'arm64'
         uses: actions/cache@v5
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
           key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
+
+      - name: Setup LLVM for Windows ARM64
+        if: runner.os == 'Windows' && matrix.arch == 'arm64'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $llvmRoot = 'C:\Program Files\LLVM'
+          if (-not (Test-Path $llvmRoot)) {
+            throw "LLVM not found at $llvmRoot"
+          }
+          $llvmBin = Join-Path $llvmRoot 'bin'
+          "LIBCLANG_PATH=$llvmBin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CLANG_PATH=$(Join-Path $llvmBin 'clang.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
@@ -223,7 +258,16 @@ jobs:
 
       - name: Build Tauri App (Windows)
         if: runner.os == 'Windows'
-        run: pnpm tauri build
+        shell: pwsh
+        env:
+          WINDOWS_RELEASE_ARCH: ${{ matrix.arch || 'x86_64' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:WINDOWS_RELEASE_ARCH -eq 'arm64') {
+            pnpm tauri build --target aarch64-pc-windows-msvc --bundles msi
+          } else {
+            pnpm tauri build
+          }
 
       - name: Build Tauri App (Linux)
         if: runner.os == 'Linux'
@@ -394,50 +438,75 @@ jobs:
       - name: Prepare Windows Assets
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          WINDOWS_RELEASE_ARCH: ${{ matrix.arch || 'x86_64' }}
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
           $VERSION = $env:GITHUB_REF_NAME  # e.g., v3.5.0
+          $isArm64 = $env:WINDOWS_RELEASE_ARCH -eq 'arm64'
+          $targetRoot = if ($isArm64) { 'src-tauri/target/aarch64-pc-windows-msvc/release' } else { 'src-tauri/target/release' }
+          $assetSuffix = if ($isArm64) { '-arm64' } else { '' }
+
           # 仅打包 MSI 安装器 + .sig（用于 Updater）
-          $msi = Get-ChildItem -Path 'src-tauri/target/release/bundle/msi' -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+          $msi = Get-ChildItem -Path (Join-Path $targetRoot 'bundle/msi') -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($null -eq $msi) {
             # 兜底：全局搜索 .msi
-            $msi = Get-ChildItem -Path 'src-tauri/target/release/bundle' -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+            $msi = Get-ChildItem -Path (Join-Path $targetRoot 'bundle') -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
           }
           if ($null -ne $msi) {
-            $dest = "CC-Switch-$VERSION-Windows.msi"
+            $dest = "CC-Switch-$VERSION-Windows$assetSuffix.msi"
             Copy-Item $msi.FullName (Join-Path release-assets $dest)
             Write-Host "Installer copied: $dest"
             $sigPath = "$($msi.FullName).sig"
             if (Test-Path $sigPath) {
               Copy-Item $sigPath (Join-Path release-assets ("$dest.sig"))
               Write-Host "Signature copied: $dest.sig"
+            } elseif ($isArm64) {
+              throw "Signature not found for $($msi.Name)"
             } else {
               Write-Warning "Signature not found for $($msi.Name)"
             }
+          } elseif ($isArm64) {
+            throw 'No Windows ARM64 MSI installer found'
           } else {
             Write-Warning 'No Windows MSI installer found'
           }
+
           # 绿色版（portable）：仅可执行文件打 zip（不参与 Updater）
-          $exeCandidates = @(
-            'src-tauri/target/release/cc-switch.exe',
-            'src-tauri/target/x86_64-pc-windows-msvc/release/cc-switch.exe'
-          )
+          $exeCandidates = if ($isArm64) {
+            @('src-tauri/target/aarch64-pc-windows-msvc/release/cc-switch.exe')
+          } else {
+            @(
+              'src-tauri/target/release/cc-switch.exe',
+              'src-tauri/target/x86_64-pc-windows-msvc/release/cc-switch.exe'
+            )
+          }
           $exePath = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           if ($null -ne $exePath) {
             $portableDir = 'release-assets/CC-Switch-Portable'
             New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
             Copy-Item $exePath $portableDir
             $portableIniPath = Join-Path $portableDir 'portable.ini'
-            $portableContent = @(
-              '# CC Switch portable build marker',
-              'portable=true'
-            )
+            $portableContent = if ($isArm64) {
+              @(
+                '# CC Switch portable ARM64 build marker',
+                'portable=true',
+                'arch=arm64'
+              )
+            } else {
+              @(
+                '# CC Switch portable build marker',
+                'portable=true'
+              )
+            }
             $portableContent | Set-Content -Path $portableIniPath -Encoding UTF8
-            $portableZip = "release-assets/CC-Switch-$VERSION-Windows-Portable.zip"
+            $portableZip = "release-assets/CC-Switch-$VERSION-Windows$assetSuffix-Portable.zip"
             Compress-Archive -Path "$portableDir/*" -DestinationPath $portableZip -Force
             Remove-Item -Recurse -Force $portableDir
-            Write-Host "Windows portable zip created: CC-Switch-$VERSION-Windows-Portable.zip"
+            Write-Host "Windows portable zip created: CC-Switch-$VERSION-Windows$assetSuffix-Portable.zip"
+          } elseif ($isArm64) {
+            throw 'Portable ARM64 exe not found'
           } else {
             Write-Warning 'Portable exe not found'
           }
@@ -550,7 +619,8 @@ jobs:
             ### 下载
 
             - **macOS**: `CC-Switch-${{ github.ref_name }}-macOS.dmg`（推荐）或 `CC-Switch-${{ github.ref_name }}-macOS.zip`（解压即用）
-            - **Windows**: `CC-Switch-${{ github.ref_name }}-Windows.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
+            - **Windows (x86_64)**: `CC-Switch-${{ github.ref_name }}-Windows.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
+            - **Windows (ARM64)**: `CC-Switch-${{ github.ref_name }}-Windows-arm64.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-arm64-Portable.zip`（绿色版）
             - **Linux (x86_64)**: `CC-Switch-${{ github.ref_name }}-Linux-x86_64.AppImage` / `.deb` / `.rpm`
             - **Linux (ARM64)**: `CC-Switch-${{ github.ref_name }}-Linux-arm64.AppImage` / `.deb` / `.rpm`
 
@@ -594,7 +664,8 @@ jobs:
           base_url="https://github.com/$REPO/releases/download/$TAG"
           # 初始化空平台映射
           mac_url=""; mac_sig=""
-          win_url=""; win_sig=""
+          win_x64_url=""; win_x64_sig=""
+          win_arm64_url=""; win_arm64_sig=""
           linux_x64_url=""; linux_x64_sig=""
           linux_arm64_url=""; linux_arm64_sig=""
           shopt -s nullglob
@@ -607,12 +678,14 @@ jobs:
               *.tar.gz)
                 # 视为 macOS updater artifact
                 mac_url="$url"; mac_sig="$sig_content";;
+              *-Windows-arm64.msi)
+                win_arm64_url="$url"; win_arm64_sig="$sig_content";;
+              *-Windows.msi)
+                win_x64_url="$url"; win_x64_sig="$sig_content";;
               *-Linux-arm64.AppImage|*-Linux-arm64.appimage)
                 linux_arm64_url="$url"; linux_arm64_sig="$sig_content";;
               *-Linux-x86_64.AppImage|*-Linux-x86_64.appimage)
                 linux_x64_url="$url"; linux_x64_sig="$sig_content";;
-              *.msi|*.exe)
-                win_url="$url"; win_sig="$sig_content";;
             esac
           done
           # 构造 JSON（仅包含存在的目标）
@@ -632,9 +705,14 @@ jobs:
                 first=0
               done
             fi
-            if [ -n "$win_url" ] && [ -n "$win_sig" ]; then
+            if [ -n "$win_x64_url" ] && [ -n "$win_x64_sig" ]; then
               [ $first -eq 0 ] && echo ','
-              echo "    \"windows-x86_64\": {\"signature\": \"$win_sig\", \"url\": \"$win_url\"}"
+              echo "    \"windows-x86_64\": {\"signature\": \"$win_x64_sig\", \"url\": \"$win_x64_url\"}"
+              first=0
+            fi
+            if [ -n "$win_arm64_url" ] && [ -n "$win_arm64_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"windows-aarch64\": {\"signature\": \"$win_arm64_sig\", \"url\": \"$win_arm64_url\"}"
               first=0
             fi
             if [ -n "$linux_x64_url" ] && [ -n "$linux_x64_sig" ]; then
