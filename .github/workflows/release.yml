@@ -295,6 +295,27 @@ jobs:
 
           rm -f appimagetool
 
+      - name: Re-sign AppImage after repacking
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Re-sign the modified AppImage so updater .sig matches the new content
+          # See: https://github.com/tauri-apps/tauri/issues/15110
+          for appimage in src-tauri/target/release/bundle/appimage/*.AppImage; do
+            [ -f "$appimage" ] || continue
+            echo "Re-signing $appimage..."
+            # Remove old signature first
+            rm -f "${appimage}.sig"
+            # Re-sign using tauri signer
+            pnpm tauri signer sign \
+              -k "$TAURI_SIGNING_PRIVATE_KEY" \
+              ${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:+-p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"} \
+              "$appimage"
+            echo "✅ Re-signed: $appimage"
+            ls -la "${appimage}.sig" || echo "⚠️ No .sig file generated"
+          done
+
       - name: Prepare macOS Assets
         if: runner.os == 'macOS'
         shell: bash
