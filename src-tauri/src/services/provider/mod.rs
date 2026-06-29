@@ -1923,7 +1923,11 @@ impl ProviderService {
             } else {
                 write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
                 // Sync MCP
-                McpService::sync_all_enabled(state)?;
+                if crate::settings::get_settings().mcp_live_sync_enabled {
+                    McpService::sync_all_enabled(state)?;
+                } else {
+                    log::debug!("MCP live sync disabled, skipping write-back to tool configs");
+                }
             }
         }
 
@@ -2298,7 +2302,11 @@ impl ProviderService {
         }
 
         // Sync MCP
-        McpService::sync_all_enabled(state)?;
+        if crate::settings::get_settings().mcp_live_sync_enabled {
+            McpService::sync_all_enabled(state)?;
+        } else {
+            log::debug!("MCP live sync disabled, skipping write-back to tool configs");
+        }
 
         Ok(result)
     }

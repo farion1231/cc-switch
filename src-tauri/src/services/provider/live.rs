@@ -939,7 +939,11 @@ pub(crate) fn sync_current_provider_for_app_to_live(
         }
     }
 
-    McpService::sync_all_enabled(state)?;
+    if crate::settings::get_settings().mcp_live_sync_enabled {
+        McpService::sync_all_enabled(state)?;
+    } else {
+        log::debug!("MCP live sync disabled, skipping write-back to tool configs");
+    }
 
     Ok(())
 }
@@ -1008,14 +1012,22 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     }
 
     // MCP sync
-    McpService::sync_all_enabled(state)?;
+    if crate::settings::get_settings().mcp_live_sync_enabled {
+        McpService::sync_all_enabled(state)?;
+    } else {
+        log::debug!("MCP live sync disabled, skipping write-back to tool configs");
+    }
 
     // Skill sync
-    for app_type in AppType::all() {
-        if let Err(e) = crate::services::skill::SkillService::sync_to_app(&state.db, &app_type) {
-            log::warn!("同步 Skill 到 {app_type:?} 失败: {e}");
-            // Continue syncing other apps, don't abort
+    if crate::settings::get_settings().skill_live_sync_enabled {
+        for app_type in AppType::all() {
+            if let Err(e) = crate::services::skill::SkillService::sync_to_app(&state.db, &app_type) {
+                log::warn!("同步 Skill 到 {app_type:?} 失败: {e}");
+                // Continue syncing other apps, don't abort
+            }
         }
+    } else {
+        log::debug!("Skill live sync disabled, skipping auto-sync to app directories");
     }
 
     Ok(())
