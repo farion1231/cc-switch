@@ -2,9 +2,16 @@
 //!
 //! 用于自动修复 Anthropic API 中因签名校验失败导致的请求错误。
 //! 当上游 API 返回签名相关错误时，系统会自动移除有问题的签名字段并重试请求。
+//!
+//! 同时提供 **反应式 thinking 注入**：上游 API 要求回传 thinking 块时
+//! (DeepSeek / Kimi / Moonshot 等),整流器仅在 API 实际拒绝后注入占位
+//! thinking 块并重试,而非预注入——避免长上下文下的输出退化。
 
 use super::types::RectifierConfig;
-use serde_json::Value;
+use serde_json::{json, Value};
+
+/// Thinking 占位文本,用于反应式注入(仅在上游 API 拒绝时)。
+pub const REACTIVE_THINKING_PLACEHOLDER: &str = "tool call";
 
 /// 整流结果
 #[derive(Debug, Clone, Default)]
@@ -17,6 +24,8 @@ pub struct RectifyResult {
     pub removed_redacted_thinking_blocks: usize,
     /// 移除的 signature 字段数量
     pub removed_signature_fields: usize,
+    /// 注入的 thinking 占位块数量 (反应式,仅在上游 API 拒绝后)
+    pub injected_thinking_blocks: usize,
 }
 
 /// 检测是否需要触发 thinking 签名整流器
@@ -239,6 +248,111 @@ fn should_remove_top_level_thinking(body: &Value, messages: &[Value]) -> bool {
 /// 与 CCH 对齐：请求前不做 thinking type 主动改写。
 pub fn normalize_thinking_type(body: Value) -> Value {
     body
+}
+
+// ============================================================================
+// 反应式 thinking 注入
+// ============================================================================
+// 当上游 API (DeepSeek / Kimi / Moonshot 等) 要求回传 thinking 块时触发。
+// 仅在上游实际拒绝后注入占位 thinking 块并重试——避免了预注入在长上下文下
+// 的副作用 (输出退化、正文折叠到 thinking 块)。
+
+/// 检测是否需要触发反应式 thinking 注入
+///
+/// 匹配 DeepSeek / Kimi / Moonshot 等厂商的 thinking 回传要求错误。
+pub fn should_rectify_thinking_required(
+    error_message: Option<&str>,
+    config: &RectifierConfig,
+) -> bool {
+    if !config.enabled {
+        return false;
+    }
+    // 复用 thinking_signature 子开关 — 语义上同属 thinking 兼容整流。
+    if !config.request_thinking_signature {
+        return false;
+    }
+
+    let Some(msg) = error_message else {
+        return false;
+    };
+    let lower = msg.to_lowercase();
+
+    // "content[].thinking in the thinking mode must be passed back to the API"
+    // DeepSeek / Kimi / Moonshot 等 vendor 的典型错误消息。兼容
+    // 以 "thinking" 或 "reasoning_content" 表述的回传错误 (两者语义等价)。
+    (lower.contains("thinking") || lower.contains("reasoning_content"))
+        && (lower.contains("must be passed back")
+            || lower.contains("must start with a thinking block")
+            || lower.contains("must be"))
+}
+
+/// 反应式注入 thinking 占位块
+///
+/// 给所有有 tool_use 但无 (或空) thinking 的 assistant 历史消息注入占位
+/// thinking 块。仅在 `should_rectify_thinking_required` 返回 true 时调用。
+///
+/// 注入逻辑与已被移除的 claude.rs 预注入完全一致,但执行时机从「每个请求
+/// 预先注入」改为「上游拒绝后按需注入」。
+pub fn rectify_thinking_required(body: &mut Value) -> RectifyResult {
+    let mut result = RectifyResult::default();
+
+    let messages = match body.get_mut("messages").and_then(|m| m.as_array_mut()) {
+        Some(m) => m,
+        None => return result,
+    };
+
+    for message in messages {
+        if message.get("role").and_then(Value::as_str) != Some("assistant") {
+            continue;
+        }
+
+        let content = match message.get_mut("content").and_then(|c| c.as_array_mut()) {
+            Some(c) => c,
+            None => continue,
+        };
+
+        if !content
+            .iter()
+            .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"))
+        {
+            continue;
+        }
+
+        let mut has_thinking = false;
+        for block in content.iter_mut() {
+            if block.get("type").and_then(Value::as_str) == Some("thinking") {
+                let is_empty = block
+                    .get("thinking")
+                    .and_then(Value::as_str)
+                    .is_none_or(|text| text.trim().is_empty());
+                if is_empty {
+                    if let Some(obj) = block.as_object_mut() {
+                        obj.insert(
+                            "thinking".to_string(),
+                            Value::String(REACTIVE_THINKING_PLACEHOLDER.to_string()),
+                        );
+                        result.injected_thinking_blocks += 1;
+                        result.applied = true;
+                    }
+                }
+                has_thinking = true;
+            }
+        }
+
+        if !has_thinking {
+            content.insert(
+                0,
+                json!({
+                    "type": "thinking",
+                    "thinking": REACTIVE_THINKING_PLACEHOLDER
+                }),
+            );
+            result.injected_thinking_blocks += 1;
+            result.applied = true;
+        }
+    }
+
+    result
 }
 
 #[cfg(test)]
@@ -718,5 +832,153 @@ mod tests {
 
         assert_eq!(result["thinking"]["type"], "unexpected");
         assert_eq!(result["thinking"]["budget_tokens"], 100);
+    }
+
+    // ==================== should_rectify_thinking_required 测试 ====================
+
+    #[test]
+    fn test_detect_thinking_must_be_passed_back() {
+        assert!(should_rectify_thinking_required(
+            Some("content[0].thinking in the thinking mode must be passed back to the API"),
+            &enabled_config()
+        ));
+    }
+
+    #[test]
+    fn test_detect_reasoning_content_must_be_passed_back() {
+        // Some vendors phrase the error in terms of reasoning_content rather than thinking.
+        assert!(should_rectify_thinking_required(
+            Some("reasoning_content must be passed back to the API"),
+            &enabled_config()
+        ));
+    }
+
+    #[test]
+    fn test_detect_thinking_must_start_with_thinking_block() {
+        assert!(should_rectify_thinking_required(
+            Some("a final assistant message must start with a thinking block"),
+            &enabled_config()
+        ));
+    }
+
+    #[test]
+    fn test_thinking_required_no_trigger_for_unrelated_error() {
+        assert!(!should_rectify_thinking_required(
+            Some("Request timeout"),
+            &enabled_config()
+        ));
+        assert!(!should_rectify_thinking_required(None, &enabled_config()));
+    }
+
+    #[test]
+    fn test_disabled_config_should_not_rectify_thinking_required() {
+        assert!(!should_rectify_thinking_required(
+            Some("content[0].thinking in the thinking mode must be passed back to the API"),
+            &disabled_config()
+        ));
+    }
+
+    #[test]
+    fn test_master_disabled_config_should_not_rectify_thinking_required() {
+        assert!(!should_rectify_thinking_required(
+            Some("content[0].thinking in the thinking mode must be passed back to the API"),
+            &master_disabled_config()
+        ));
+    }
+
+    // ==================== rectify_thinking_required 测试 ====================
+
+    #[test]
+    fn test_rectify_thinking_required_injects_for_missing_thinking() {
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "I will inspect."},
+                    {"type": "tool_use", "id": "t1", "name": "read_file", "input": {}}
+                ]
+            }]
+        });
+
+        let result = rectify_thinking_required(&mut body);
+
+        assert!(result.applied);
+        assert_eq!(result.injected_thinking_blocks, 1);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(content[0]["thinking"], REACTIVE_THINKING_PLACEHOLDER);
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[2]["type"], "tool_use");
+    }
+
+    #[test]
+    fn test_rectify_thinking_required_fills_empty_thinking() {
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "", "signature": "sig"},
+                    {"type": "tool_use", "id": "t1", "name": "read_file", "input": {}}
+                ]
+            }]
+        });
+
+        let result = rectify_thinking_required(&mut body);
+
+        assert!(result.applied);
+        assert_eq!(result.injected_thinking_blocks, 1);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["thinking"], REACTIVE_THINKING_PLACEHOLDER);
+    }
+
+    #[test]
+    fn test_rectify_thinking_required_noop_when_thinking_exists() {
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "Real reasoning here."},
+                    {"type": "tool_use", "id": "t1", "name": "read_file", "input": {}}
+                ]
+            }]
+        });
+
+        let original = body.clone();
+        let result = rectify_thinking_required(&mut body);
+
+        assert!(!result.applied);
+        assert_eq!(result.injected_thinking_blocks, 0);
+        assert_eq!(body, original);
+    }
+
+    #[test]
+    fn test_rectify_thinking_required_skips_non_assistant_messages() {
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "t1", "name": "read_file", "input": {}}
+                ]}
+            ]
+        });
+
+        let result = rectify_thinking_required(&mut body);
+
+        assert!(result.applied);
+        // Only the assistant message gets injection, user message is untouched
+        let assistant_content = body["messages"][1]["content"].as_array().unwrap();
+        assert_eq!(assistant_content[0]["type"], "thinking");
+        assert_eq!(assistant_content[0]["thinking"], REACTIVE_THINKING_PLACEHOLDER);
+    }
+
+    #[test]
+    fn test_rectify_thinking_required_no_messages() {
+        let mut body = json!({"model": "deepseek-v4-pro"});
+        let result = rectify_thinking_required(&mut body);
+        assert!(!result.applied);
     }
 }
