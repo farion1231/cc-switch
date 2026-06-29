@@ -526,6 +526,12 @@ impl ProxyService {
 
         // 3. 在写入接管配置之前先落盘接管标志：
         //    这样即使在接管过程中断电/kill，下次启动也能检测到并自动恢复。
+        let configured_port = self
+            .db
+            .get_proxy_config()
+            .await
+            .map_err(|e| format!("获取代理配置失败: {e}"))?
+            .listen_port;
         if let Err(e) = self.db.set_live_takeover_active(true).await {
             if let Err(clean_err) = self.db.delete_all_live_backups().await {
                 log::warn!("清理 Live 备份失败: {clean_err}");
@@ -557,7 +563,20 @@ impl ProxyService {
 
         // 5. 启动代理服务器
         match self.start().await {
-            Ok(info) => Ok(info),
+            Ok(info) => {
+                // 端口 fallback 后，Live 配置仍指向旧端口，需重新接管
+                if info.port != configured_port && configured_port != 0 {
+                    log::warn!(
+                        "端口由 {} fallback 到 {}，重新接管 Live 配置",
+                        configured_port,
+                        info.port
+                    );
+                    if let Err(e) = self.takeover_live_configs().await {
+                        log::error!("fallback 后重新接管 Live 配置失败: {e}");
+                    }
+                }
+                Ok(info)
+            }
             Err(e) => {
                 // 启动失败，恢复原始配置
                 log::error!("代理启动失败，尝试恢复原始配置: {e}");
