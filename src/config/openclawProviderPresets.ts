@@ -1340,7 +1340,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   {
     name: "SiliconFlow",
     websiteUrl: "https://siliconflow.cn",
-    apiKeyUrl: "https://cloud.siliconflow.cn/i/drGuwc9k",
+    apiKeyUrl: "https://cloud.siliconflow.cn/i/YflgU2Ve",
     settingsConfig: {
       baseUrl: "https://api.siliconflow.cn/v1",
       apiKey: "",
@@ -1376,7 +1376,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   {
     name: "SiliconFlow en",
     websiteUrl: "https://siliconflow.com",
-    apiKeyUrl: "https://cloud.siliconflow.cn/i/drGuwc9k",
+    apiKeyUrl: "https://cloud.siliconflow.cn/i/YflgU2Ve",
     settingsConfig: {
       baseUrl: "https://api.siliconflow.com/v1",
       apiKey: "",

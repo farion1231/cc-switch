@@ -750,7 +750,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "SiliconFlow",
     websiteUrl: "https://siliconflow.cn",
-    apiKeyUrl: "https://cloud.siliconflow.cn/i/drGuwc9k",
+    apiKeyUrl: "https://cloud.siliconflow.cn/i/YflgU2Ve",
     settingsConfig: {
       name: "siliconflow",
       base_url: "https://api.siliconflow.cn/v1",
@@ -778,7 +778,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "SiliconFlow en",
     websiteUrl: "https://siliconflow.com",
-    apiKeyUrl: "https://cloud.siliconflow.cn/i/drGuwc9k",
+    apiKeyUrl: "https://cloud.siliconflow.cn/i/YflgU2Ve",
     settingsConfig: {
       name: "siliconflow_en",
       base_url: "https://api.siliconflow.com/v1",

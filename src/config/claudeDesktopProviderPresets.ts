@@ -594,7 +594,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
     name: "SiliconFlow",
     websiteUrl: "https://siliconflow.cn",
-    apiKeyUrl: "https://cloud.siliconflow.cn/i/drGuwc9k",
+    apiKeyUrl: "https://cloud.siliconflow.cn/i/YflgU2Ve",
     category: "aggregator",
     baseUrl: "https://api.siliconflow.cn",
     mode: "proxy",
@@ -612,7 +612,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
     name: "SiliconFlow en",
     websiteUrl: "https://siliconflow.com",
-    apiKeyUrl: "https://cloud.siliconflow.cn/i/drGuwc9k",
+    apiKeyUrl: "https://cloud.siliconflow.cn/i/YflgU2Ve",
     category: "aggregator",
     baseUrl: "https://api.siliconflow.com",
     mode: "proxy",
