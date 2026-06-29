@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Teal-cyan gradient for left triangle -->
+    <linearGradient id="gradLeft" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0ff5ce" />
+      <stop offset="100%" stop-color="#147a8a" />
+    </linearGradient>
+    <!-- Light blue-white gradient for right triangle -->
+    <linearGradient id="gradRight" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#d0e4f5" />
+      <stop offset="100%" stop-color="#6a9ec4" />
+    </linearGradient>
+    <!-- Top triangle gradient -->
+    <linearGradient id="gradTop" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#a0d8e8" />
+      <stop offset="100%" stop-color="#4aafbf" />
+    </linearGradient>
+    <!-- Text gradient -->
+    <linearGradient id="gradText" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0ff5ce" />
+      <stop offset="35%" stop-color="#4abfcf" />
+      <stop offset="65%" stop-color="#7badd4" />
+      <stop offset="100%" stop-color="#c0daf0" />
+    </linearGradient>
+    <!-- S letter gradient -->
+    <linearGradient id="gradS" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f0f8ff" />
+      <stop offset="100%" stop-color="#6cbfcf" />
+    </linearGradient>
+    <!-- Glow filter -->
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="4" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    <!-- Binary pattern left -->
+    <pattern id="binL" x="0" y="0" width="55" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(-3)">
+      <text x="0" y="11" font-family="monospace" font-size="8" fill="rgba(0,255,210,0.25)">1001 1101</text>
+    </pattern>
+    <!-- Binary pattern right -->
+    <pattern id="binR" x="0" y="0" width="55" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(3)">
+      <text x="0" y="11" font-family="monospace" font-size="8" fill="rgba(180,210,240,0.25)">0110 1011</text>
+    </pattern>
+    <!-- Binary pattern top -->
+    <pattern id="binT" x="0" y="0" width="50" height="16" patternUnits="userSpaceOnUse">
+      <text x="2" y="11" font-family="monospace" font-size="8" fill="rgba(120,200,220,0.2)">10 110</text>
+    </pattern>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" rx="72" fill="#08080e" />
+
+  <!-- Left triangle (bottom-left, overlapping center) -->
+  <polygon points="90,350 250,350 170,228" fill="url(#gradLeft)" opacity="0.8" />
+  <polygon points="90,350 250,350 170,228" fill="url(#binL)" />
+
+  <!-- Right triangle (bottom-right, overlapping center) -->
+  <polygon points="262,350 422,350 342,228" fill="url(#gradRight)" opacity="0.8" />
+  <polygon points="262,350 422,350 342,228" fill="url(#binR)" />
+
+  <!-- Top triangle (center, overlapping both) -->
+  <polygon points="176,290 336,290 256,168" fill="none" stroke="url(#gradTop)" stroke-width="2.5" opacity="0.85" />
+  <!-- Subtle inner triangle -->
+  <polygon points="192,280 320,280 256,184" fill="none" stroke="url(#gradTop)" stroke-width="0.8" opacity="0.35" />
+
+  <!-- Central "S" with glow -->
+  <text x="256" y="316" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="120" font-weight="bold" fill="url(#gradS)" filter="url(#glow)">S</text>
+
+  <!-- "SSSAiCode" text -->
+  <text x="256" y="425" text-anchor="middle" font-family="'Helvetica Neue', 'Segoe UI', Arial, sans-serif" font-size="40" font-weight="300" letter-spacing="5" fill="url(#gradText)">SSSAiCode</text>
+</svg>
