@@ -15,6 +15,7 @@ mod gemini_config;
 mod gemini_mcp;
 pub mod hermes_config;
 mod init_status;
+mod kilo_config;
 mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
@@ -697,6 +698,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No new Hermes providers to import"),
                 Err(e) => log::warn!("✗ Failed to import Hermes providers: {e}"),
             }
+            match crate::services::provider::import_kilo_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Imported {count} Kilo provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No new Kilo providers to import"),
+                Err(e) => log::warn!("✗ Failed to import Kilo providers: {e}"),
+            }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
@@ -791,6 +799,14 @@ pub fn run() {
                     }
                     Ok(_) => log::debug!("○ No Hermes MCP servers found to import"),
                     Err(e) => log::warn!("✗ Failed to import Hermes MCP: {e}"),
+                }
+
+                match crate::services::mcp::McpService::import_from_kilo(&app_state) {
+                    Ok(count) if count > 0 => {
+                        log::info!("✓ Imported {count} MCP server(s) from Kilo");
+                    }
+                    Ok(_) => log::debug!("○ No Kilo MCP servers found to import"),
+                    Err(e) => log::warn!("✗ Failed to import Kilo MCP: {e}"),
                 }
             }
 
@@ -1105,6 +1121,10 @@ pub fn run() {
                         "OpenCode usage initial sync",
                         crate::services::session_usage_opencode::sync_opencode_usage(db),
                     );
+                    run_step(
+                        "Kilo usage initial sync",
+                        crate::services::session_usage_kilo::sync_kilo_usage(db),
+                    );
 
                     // 定期同步
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
@@ -1128,6 +1148,10 @@ pub fn run() {
                         run_step(
                             "OpenCode usage periodic sync",
                             crate::services::session_usage_opencode::sync_opencode_usage(db),
+                        );
+                        run_step(
+                            "Kilo usage periodic sync",
+                            crate::services::session_usage_kilo::sync_kilo_usage(db),
                         );
                     }
                 });
@@ -1417,6 +1441,9 @@ pub fn run() {
             // OpenCode specific
             commands::import_opencode_providers_from_live,
             commands::get_opencode_live_provider_ids,
+            // Kilo specific
+            commands::import_kilo_providers_from_live,
+            commands::get_kilo_live_provider_ids,
             // OpenClaw specific
             commands::import_openclaw_providers_from_live,
             commands::get_openclaw_live_provider_ids,

@@ -67,7 +67,8 @@ type ProviderFilter =
   | "opencode"
   | "openclaw"
   | "gemini"
-  | "hermes";
+  | "hermes"
+  | "kilo";
 
 export function SessionManagerPage({ appId }: { appId: string }) {
   const { t } = useTranslation();
@@ -679,6 +680,16 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                   size={14}
                                 />
                                 <span>Gemini CLI</span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="kilo">
+                              <div className="flex items-center gap-2">
+                                <ProviderIcon
+                                  icon="kilo"
+                                  name="kilo"
+                                  size={14}
+                                />
+                                <span>Kilo</span>
                               </div>
                             </SelectItem>
                           </SelectContent>

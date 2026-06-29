@@ -111,8 +111,8 @@ pub struct ToolVersion {
     wsl_distro: Option<String>,
 }
 
-const VALID_TOOLS: [&str; 6] = [
-    "claude", "codex", "gemini", "opencode", "openclaw", "hermes",
+const VALID_TOOLS: [&str; 7] = [
+    "claude", "codex", "gemini", "opencode", "openclaw", "hermes", "kilo",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -427,6 +427,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "opencode" => "OpenCode",
         "openclaw" => "OpenClaw",
         "hermes" => "Hermes",
+        "kilo" => "Kilo",
         _ => "Unknown",
     }
 }
@@ -494,6 +495,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "gemini" => Some("npm i -g @google/gemini-cli@latest"),
         "opencode" => Some("npm i -g opencode-ai@latest"),
         "openclaw" => Some("npm i -g openclaw@latest"),
+        "kilo" => Some("npm i -g @kilocode/cli@latest"),
         _ => None,
     }
 }
@@ -502,7 +504,7 @@ fn official_update_args(tool: &str) -> Option<&'static str> {
     match tool {
         "claude" | "codex" | "hermes" => Some("update"),
         "openclaw" => Some("update --yes"),
-        "opencode" => Some("upgrade"),
+        "opencode" | "kilo" => Some("upgrade"),
         _ => None,
     }
 }
@@ -773,6 +775,15 @@ async fn get_single_tool_version_impl(
         }
         "openclaw" => fetch_npm_latest_for_tool(&client, "openclaw", tool, local).await,
         "hermes" => fetch_pypi_latest_version(&client, "hermes-agent").await,
+        "kilo" => {
+            if let Some(version) =
+                fetch_npm_latest_for_tool(&client, "@kilocode/cli", tool, local).await
+            {
+                Some(version)
+            } else {
+                fetch_github_latest_version(&client, "Kilo-Org/kilocode").await
+            }
+        }
         _ => None,
     };
 
@@ -1593,7 +1604,7 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
         }
     }
 
-    if tool == "opencode" {
+    if tool == "opencode" || tool == "kilo" {
         let extra_paths = opencode_extra_search_paths(
             &home,
             std::env::var_os("OPENCODE_INSTALL_DIR"),
@@ -1919,6 +1930,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "gemini" => Some("@google/gemini-cli"),
         "opencode" => Some("opencode-ai"),
         "openclaw" => Some("openclaw"),
+        "kilo" => Some("@kilocode/cli"),
         _ => None,
     }
 }
@@ -2102,7 +2114,7 @@ fn anchored_official_update_command(tool: &str, bin_path: &str) -> Option<String
 fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
     match shell {
         LifecycleCommandShell::Posix => {
-            matches!(tool, "claude" | "opencode" | "openclaw")
+            matches!(tool, "claude" | "opencode" | "openclaw" | "kilo")
         }
         LifecycleCommandShell::WindowsBatch => {
             matches!(
@@ -2111,7 +2123,7 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
                 // 安装方式探测失败弹交互 prompt（spawn npm.cmd 没传 shell:true）；静默
                 // lifecycle 没有 stdin 会挂死，Windows 先锚到包管理器路径，等上游修了
                 // 再把 opencode 加回这里。
-                "claude" | "openclaw"
+                "claude" | "openclaw" | "kilo"
             )
         }
     }
@@ -2528,6 +2540,7 @@ fn wsl_distro_for_tool(tool: &str) -> Option<String> {
         "opencode" => crate::settings::get_opencode_override_dir(),
         "openclaw" => crate::settings::get_openclaw_override_dir(),
         "hermes" => crate::settings::get_hermes_override_dir(),
+        "kilo" => crate::settings::get_kilo_override_dir(),
         _ => None,
     }?;
 

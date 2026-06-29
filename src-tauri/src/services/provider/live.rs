@@ -44,6 +44,9 @@ pub(crate) fn provider_exists_in_live_config(
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::Kilo => {
+            crate::kilo_config::get_providers().map(|providers| providers.contains_key(provider_id))
+        }
         _ => Ok(false),
     }
 }
@@ -347,7 +350,11 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
             }
             _ => false,
         },
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => false,
+        AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::Kilo
+        | AppType::ClaudeDesktop => false,
     }
 }
 
@@ -417,9 +424,11 @@ pub(crate) fn remove_common_config_from_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
-            Ok(settings.clone())
-        }
+        AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::Kilo
+        | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
 
@@ -474,9 +483,11 @@ fn apply_common_config_to_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
-            Ok(settings.clone())
-        }
+        AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::Kilo
+        | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
 
@@ -875,6 +886,58 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
+        AppType::Kilo => {
+            use crate::kilo_config;
+            use crate::provider::OpenCodeProviderConfig;
+
+            let config_to_write = if let Some(obj) = provider.settings_config.as_object() {
+                if obj.contains_key("$schema") || obj.contains_key("provider") {
+                    log::warn!(
+                        "Kilo provider '{}' has full config structure in settings_config, attempting to extract fragment",
+                        provider.id
+                    );
+                    obj.get("provider")
+                        .and_then(|p| p.get(&provider.id))
+                        .cloned()
+                        .unwrap_or_else(|| provider.settings_config.clone())
+                } else {
+                    provider.settings_config.clone()
+                }
+            } else {
+                provider.settings_config.clone()
+            };
+
+            let kilo_config_result =
+                serde_json::from_value::<OpenCodeProviderConfig>(config_to_write.clone());
+
+            match kilo_config_result {
+                Ok(config) => {
+                    kilo_config::set_typed_provider(&provider.id, &config)?;
+                    log::info!("Kilo provider '{}' written to live config", provider.id);
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Failed to parse Kilo provider config for '{}': {}",
+                        provider.id,
+                        e
+                    );
+                    if config_to_write.get("npm").is_some()
+                        || config_to_write.get("options").is_some()
+                    {
+                        kilo_config::set_provider(&provider.id, config_to_write)?;
+                        log::info!(
+                            "Kilo provider '{}' written as raw JSON to live config",
+                            provider.id
+                        );
+                    } else {
+                        return Err(AppError::Message(format!(
+                            "Kilo provider '{}' has invalid config structure for live config (must contain 'npm' or 'options')",
+                            provider.id
+                        )));
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -1124,6 +1187,21 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = crate::hermes_config::yaml_to_json(&yaml_config)?;
             Ok(config)
         }
+        AppType::Kilo => {
+            use crate::kilo_config::{get_kilo_config_path, read_kilo_config};
+
+            let config_path = get_kilo_config_path();
+            if !config_path.exists() {
+                return Err(AppError::localized(
+                    "kilo.config.missing",
+                    "Kilo 配置文件不存在",
+                    "Kilo configuration file not found",
+                ));
+            }
+
+            let config = read_kilo_config()?;
+            Ok(config)
+        }
     }
 }
 
@@ -1217,8 +1295,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
-        // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+        // OpenCode, OpenClaw, Hermes and Kilo use additive mode and are handled by early return above
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Kilo => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -1552,6 +1630,70 @@ pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppE
 
         imported += 1;
         log::info!("Imported Hermes provider '{name}' from live config");
+    }
+
+    Ok(imported)
+}
+
+/// Remove a Kilo provider from the live configuration
+pub(crate) fn remove_kilo_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+    use crate::kilo_config;
+
+    if !kilo_config::get_kilo_dir().exists() {
+        log::debug!("Kilo config directory doesn't exist, skipping removal of '{provider_id}'");
+        return Ok(());
+    }
+
+    kilo_config::remove_provider(provider_id)?;
+    log::info!("Kilo provider '{provider_id}' removed from live config");
+
+    Ok(())
+}
+
+/// Import all providers from Kilo live config to database
+pub fn import_kilo_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    use crate::kilo_config;
+
+    let providers = kilo_config::get_typed_providers()?;
+    if providers.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0;
+    let existing_ids = state.db.get_provider_ids("kilo")?;
+
+    for (id, config) in providers {
+        if existing_ids.contains(&id) {
+            log::debug!("Kilo provider '{id}' already exists in database, skipping");
+            continue;
+        }
+
+        let settings_config = match serde_json::to_value(&config) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("Failed to serialize Kilo provider '{id}': {e}");
+                continue;
+            }
+        };
+
+        let mut provider = Provider::with_id(
+            id.clone(),
+            config.name.clone().unwrap_or_else(|| id.clone()),
+            settings_config,
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+
+        if let Err(e) = state.db.save_provider("kilo", &provider) {
+            log::warn!("Failed to import Kilo provider '{id}': {e}");
+            continue;
+        }
+
+        imported += 1;
+        log::info!("Imported Kilo provider '{id}' from live config");
     }
 
     Ok(imported)

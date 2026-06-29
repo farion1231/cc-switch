@@ -791,7 +791,7 @@
     "officialWebsite": "公式サイト",
     "github": "GitHub",
     "manualInstallCommands": "手動インストールコマンド",
-    "oneClickInstallHint": "Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw / Hermes をインストールまたは更新",
+    "oneClickInstallHint": "Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw / Hermes / Kilo をインストールまたは更新",
     "localEnvCheck": "ローカル環境チェック",
     "updateAllTools": "すべて更新（{{count}}）",
     "currentVersion": "現在のバージョン",
@@ -880,7 +880,8 @@
     "gemini": "Gemini",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "kilo": "Kilo"
   },
   "sessionManager": {
     "title": "セッション管理",
@@ -1421,7 +1422,8 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "kilo": "Kilo"
     },
     "rawInputLabel": "原始",
     "dataSources": "データソース",
@@ -1431,7 +1433,8 @@
       "codex_db": "Codex DB",
       "codex_session": "Codex セッション",
       "gemini_session": "Gemini セッション",
-      "opencode_session": "OpenCode セッション"
+      "opencode_session": "OpenCode セッション",
+      "kilo_session": "Kilo セッション"
     },
     "sessionSync": {
       "trigger": "セッションログを同期",
@@ -1677,7 +1680,8 @@
         "gemini": "Gemini",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "kilo": "Kilo"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",

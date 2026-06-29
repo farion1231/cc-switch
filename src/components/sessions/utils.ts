@@ -102,6 +102,7 @@ export const getProviderIconName = (providerId: string) => {
   if (providerId === "claude") return "claude";
   if (providerId === "opencode") return "opencode";
   if (providerId === "openclaw") return "openclaw";
+  if (providerId === "kilo") return "kilo";
   return providerId;
 };
 

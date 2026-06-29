@@ -103,6 +103,13 @@ export function ProviderList({
     enabled: appId === "opencode",
   });
 
+  // Kilo: query live provider IDs for isInConfig check
+  const { data: kiloLiveIds } = useQuery({
+    queryKey: ["kiloLiveProviderIds"],
+    queryFn: () => providersApi.getKiloLiveProviderIds(),
+    enabled: appId === "kilo",
+  });
+
   // OpenClaw: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
   const { data: openclawLiveIds } = useOpenClawLiveProviderIds(
     appId === "openclaw",
@@ -115,7 +122,7 @@ export function ProviderList({
   const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
   const hermesCurrentProviderId = hermesModelConfig?.provider;
 
-  // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes）
+  // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes/Kilo）
   const isProviderInConfig = useCallback(
     (providerId: string): boolean => {
       if (appId === "opencode") {
@@ -127,9 +134,12 @@ export function ProviderList({
       if (appId === "hermes") {
         return hermesLiveIds?.includes(providerId) ?? false;
       }
+      if (appId === "kilo") {
+        return kiloLiveIds?.includes(providerId) ?? false;
+      }
       return true; // 其他应用始终返回 true
     },
-    [appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds],
+    [appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds, kiloLiveIds],
   );
 
   // OpenClaw: query default model to determine which provider is default
@@ -212,6 +222,10 @@ export function ProviderList({
     mutationFn: async (): Promise<boolean> => {
       if (appId === "opencode") {
         const count = await providersApi.importOpenCodeFromLive();
+        return count > 0;
+      }
+      if (appId === "kilo") {
+        const count = await providersApi.importKiloFromLive();
         return count > 0;
       }
       if (appId === "openclaw") {

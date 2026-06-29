@@ -42,29 +42,29 @@ export function useOpencodeFormState({
   getSettingsConfig,
 }: UseOpencodeFormStateParams): OpencodeFormState {
   const initialOpencodeConfig =
-    appId === "opencode"
+    appId === "opencode" || appId === "kilo"
       ? parseOpencodeConfig(initialData?.settingsConfig)
       : null;
   const initialOpencodeOptions = initialOpencodeConfig?.options || {};
 
   const [opencodeProviderKey, setOpencodeProviderKey] = useState<string>(() => {
-    if (appId !== "opencode") return "";
+    if (appId !== "opencode" && appId !== "kilo") return "";
     return providerId || "";
   });
 
   const [opencodeNpm, setOpencodeNpm] = useState<string>(() => {
-    if (appId !== "opencode") return OPENCODE_DEFAULT_NPM;
+    if (appId !== "opencode" && appId !== "kilo") return OPENCODE_DEFAULT_NPM;
     return initialOpencodeConfig?.npm || OPENCODE_DEFAULT_NPM;
   });
 
   const [opencodeApiKey, setOpencodeApiKey] = useState<string>(() => {
-    if (appId !== "opencode") return "";
+    if (appId !== "opencode" && appId !== "kilo") return "";
     const value = initialOpencodeOptions.apiKey;
     return typeof value === "string" ? value : "";
   });
 
   const [opencodeBaseUrl, setOpencodeBaseUrl] = useState<string>(() => {
-    if (appId !== "opencode") return "";
+    if (appId !== "opencode" && appId !== "kilo") return "";
     const value = initialOpencodeOptions.baseURL;
     return typeof value === "string" ? value : "";
   });
@@ -72,14 +72,14 @@ export function useOpencodeFormState({
   const [opencodeModels, setOpencodeModels] = useState<
     Record<string, OpenCodeModel>
   >(() => {
-    if (appId !== "opencode") return {};
+    if (appId !== "opencode" && appId !== "kilo") return {};
     return initialOpencodeConfig?.models || {};
   });
 
   const [opencodeExtraOptions, setOpencodeExtraOptions] = useState<
     Record<string, string>
   >(() => {
-    if (appId !== "opencode") return {};
+    if (appId !== "opencode" && appId !== "kilo") return {};
     return toOpencodeExtraOptions(initialOpencodeOptions);
   });
 
