@@ -896,6 +896,7 @@
     "unknownDirectory": "Unknown directory",
     "toggleProviderGroup": "Expand or collapse {{provider}} provider group",
     "toggleDirectoryGroup": "Expand or collapse {{directory}} directory group",
+    "collapseAllGroups": "Collapse all",
     "selectProviderGroupForBatch": "Select sessions in {{provider}} provider group",
     "selectDirectoryGroupForBatch": "Select sessions in {{directory}} directory group",
     "manageBatchTooltip": "Enter batch management",

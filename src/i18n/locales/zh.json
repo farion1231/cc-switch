@@ -896,6 +896,7 @@
     "unknownDirectory": "未知目录",
     "toggleProviderGroup": "展开或折叠 {{provider}} 供应商分组",
     "toggleDirectoryGroup": "展开或折叠 {{directory}} 目录分组",
+    "collapseAllGroups": "全部收起",
     "selectProviderGroupForBatch": "选择 {{provider}} 供应商分组内会话",
     "selectDirectoryGroupForBatch": "选择 {{directory}} 目录分组内会话",
     "manageBatchTooltip": "进入批量管理",

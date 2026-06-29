@@ -896,6 +896,7 @@
     "unknownDirectory": "不明なディレクトリ",
     "toggleProviderGroup": "{{provider}} プロバイダーグループを開閉",
     "toggleDirectoryGroup": "{{directory}} ディレクトリグループを開閉",
+    "collapseAllGroups": "すべて折りたたむ",
     "selectProviderGroupForBatch": "{{provider}} プロバイダーグループ内のセッションを選択",
     "selectDirectoryGroupForBatch": "{{directory}} ディレクトリグループ内のセッションを選択",
     "manageBatchTooltip": "一括管理に入る",

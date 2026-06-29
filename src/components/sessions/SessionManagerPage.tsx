@@ -20,6 +20,7 @@ import {
   List,
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
 } from "lucide-react";
 import {
   useDeleteSessionMutation,
@@ -66,6 +67,7 @@ import {
   getBaseName,
   getProviderIconName,
   getProviderLabel,
+  getSessionDirectoryGroupKey,
   getSessionKey,
   groupSessionsByProviderAndDirectory,
   type SessionDirectoryGroup,
@@ -75,6 +77,8 @@ import {
 
 const SESSION_LIST_VIEW_MODE_STORAGE_KEY =
   "cc-switch.sessionManager.listViewMode";
+const SESSION_GROUP_EXPANSION_STORAGE_KEY =
+  "cc-switch.sessionManager.groupExpansionState";
 
 type ProviderFilter =
   | "all"
@@ -94,12 +98,91 @@ type GroupSelectionState = {
   selectableCount: number;
 };
 
+type SessionGroupExpansionState = {
+  expandedProviderIds: Set<string>;
+  expandedDirectoryKeys: Set<string>;
+};
+
 const readInitialSessionListViewMode = (): SessionListViewMode => {
   if (typeof window === "undefined") return "flat";
   const stored = window.localStorage.getItem(
     SESSION_LIST_VIEW_MODE_STORAGE_KEY,
   );
   return stored === "grouped" || stored === "flat" ? stored : "flat";
+};
+
+const readInitialSessionGroupExpansionState =
+  (): SessionGroupExpansionState => {
+    if (typeof window === "undefined") {
+      return {
+        expandedProviderIds: new Set(),
+        expandedDirectoryKeys: new Set(),
+      };
+    }
+
+    try {
+      const stored = window.localStorage.getItem(
+        SESSION_GROUP_EXPANSION_STORAGE_KEY,
+      );
+      const parsed = stored ? JSON.parse(stored) : null;
+
+      if (!parsed || typeof parsed !== "object") {
+        return {
+          expandedProviderIds: new Set(),
+          expandedDirectoryKeys: new Set(),
+        };
+      }
+
+      const expandedProviderIds = Array.isArray(parsed.expandedProviderIds)
+        ? parsed.expandedProviderIds.filter(
+            (providerId: unknown): providerId is string =>
+              typeof providerId === "string",
+          )
+        : [];
+      const expandedDirectoryKeys = Array.isArray(parsed.expandedDirectoryKeys)
+        ? parsed.expandedDirectoryKeys.filter(
+            (directoryKey: unknown): directoryKey is string =>
+              typeof directoryKey === "string",
+          )
+        : [];
+
+      return {
+        expandedProviderIds: new Set(expandedProviderIds),
+        expandedDirectoryKeys: new Set(expandedDirectoryKeys),
+      };
+    } catch {
+      return {
+        expandedProviderIds: new Set(),
+        expandedDirectoryKeys: new Set(),
+      };
+    }
+  };
+
+const serializeSessionGroupExpansionState = (
+  expandedProviderGroups: Set<string>,
+  expandedDirectoryGroups: Set<string>,
+) =>
+  JSON.stringify({
+    expandedProviderIds: Array.from(expandedProviderGroups).sort(),
+    expandedDirectoryKeys: Array.from(expandedDirectoryGroups).sort(),
+  });
+
+const filterSetToAllowedValues = (
+  current: Set<string>,
+  allowedValues: Set<string>,
+) => {
+  let changed = false;
+  const next = new Set<string>();
+
+  current.forEach((value) => {
+    if (allowedValues.has(value)) {
+      next.add(value);
+    } else {
+      changed = true;
+    }
+  });
+
+  return changed ? next : current;
 };
 
 export function SessionManagerPage({ appId }: { appId: string }) {
@@ -132,12 +215,15 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const [listViewMode, setListViewMode] = useState<SessionListViewMode>(
     readInitialSessionListViewMode,
   );
+  const [initialGroupExpansionState] = useState(
+    readInitialSessionGroupExpansionState,
+  );
   const [expandedProviderGroups, setExpandedProviderGroups] = useState<
     Set<string>
-  >(() => new Set());
+  >(() => initialGroupExpansionState.expandedProviderIds);
   const [expandedDirectoryGroups, setExpandedDirectoryGroups] = useState<
     Set<string>
-  >(() => new Set());
+  >(() => initialGroupExpansionState.expandedDirectoryKeys);
 
   // 使用 FlexSearch 全文搜索
   const { search: searchSessions } = useSessionSearch({
@@ -160,6 +246,18 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     [filteredSessions, t],
   );
 
+  const validGroupExpansionKeys = useMemo(
+    () => ({
+      providerIds: new Set(sessions.map((session) => session.providerId)),
+      directoryKeys: new Set(
+        sessions.map((session) =>
+          getSessionDirectoryGroupKey(session.providerId, session.projectDir),
+        ),
+      ),
+    }),
+    [sessions],
+  );
+
   useEffect(() => {
     window.localStorage.setItem(
       SESSION_LIST_VIEW_MODE_STORAGE_KEY,
@@ -168,19 +266,25 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   }, [listViewMode]);
 
   useEffect(() => {
-    if (listViewMode !== "grouped") return;
-
-    setExpandedProviderGroups(
-      new Set(groupedSessions.map((group) => group.providerId)),
-    );
-    setExpandedDirectoryGroups(
-      new Set(
-        groupedSessions.flatMap((group) =>
-          group.directories.map((directory) => directory.key),
-        ),
+    window.localStorage.setItem(
+      SESSION_GROUP_EXPANSION_STORAGE_KEY,
+      serializeSessionGroupExpansionState(
+        expandedProviderGroups,
+        expandedDirectoryGroups,
       ),
     );
-  }, [groupedSessions, listViewMode]);
+  }, [expandedDirectoryGroups, expandedProviderGroups]);
+
+  useEffect(() => {
+    if (isLoading) return;
+
+    setExpandedProviderGroups((current) =>
+      filterSetToAllowedValues(current, validGroupExpansionKeys.providerIds),
+    );
+    setExpandedDirectoryGroups((current) =>
+      filterSetToAllowedValues(current, validGroupExpansionKeys.directoryKeys),
+    );
+  }, [isLoading, validGroupExpansionKeys]);
 
   useEffect(() => {
     if (filteredSessions.length === 0) {
@@ -569,6 +673,11 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     });
   };
 
+  const handleCollapseAllGroups = () => {
+    setExpandedProviderGroups(new Set());
+    setExpandedDirectoryGroups(new Set());
+  };
+
   const renderSessionItem = (session: SessionMeta) => {
     const sessionKey = getSessionKey(session);
     const isSelected = selectedKey !== null && sessionKey === selectedKey;
@@ -859,6 +968,31 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                             </SelectItem>
                           </SelectContent>
                         </Select>
+                        {listViewMode === "grouped" && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-7"
+                                aria-label={t(
+                                  "sessionManager.collapseAllGroups",
+                                  {
+                                    defaultValue: "全部收起",
+                                  },
+                                )}
+                                onClick={handleCollapseAllGroups}
+                              >
+                                <ChevronsDownUp className="size-3.5" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {t("sessionManager.collapseAllGroups", {
+                                defaultValue: "全部收起",
+                              })}
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button
