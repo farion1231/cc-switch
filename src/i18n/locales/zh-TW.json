@@ -996,12 +996,14 @@
       "byteplus": "透過此連結註冊即可取得每個模型 50 萬 tokens 的免費推理額度。",
       "ccsub": "CCSub 是穩定、實惠的 AI API 中轉平台，Claude Code 官方訂閱的超強平替，一個 Key 覆蓋全部模型，價格約為官方 1/3。",
       "subrouter": "SubRouter 是中轉站聚合平台，一個 Key 可接入多個模型與供應商。",
+      "qiniu": "七牛雲是多協定 AI 中轉平台，一個 Key 即可呼叫原生 Claude、GPT、Gemini 模型，相容 Anthropic、OpenAI、Gemini 多種介面。",
       "unity2": "Unity2.ai 為 CC Switch 使用者提供專屬福利：透過此連結註冊可領取 $2 餘額，加入官方群再送 $10，最高可領 $12 免費額度！"
     },
     "presets": {
       "ucloud": "優雲智算",
       "ucloudCoding": "優雲智算 Coding Plan",
       "shengsuanyun": "勝算雲",
+      "qiniu": "七牛雲",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
       "together": "Together AI"
