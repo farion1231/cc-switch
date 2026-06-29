@@ -72,21 +72,18 @@ jobs:
         shell: bash
         run: |
           # Generate a test signing key for testing
-          pnpm tauri signer generate -p "test-password"
-          # The key will be saved to ~/.tauri/my-app.key and ~/.tauri/my-app.pub
-          # Read the key file (it should be in minisign format with comment)
-          KEY_FILE="$HOME/.tauri/my-app.key"
-          if [ ! -f "$KEY_FILE" ]; then
-            echo "❌ Key file not found at $KEY_FILE"
+          # The key is output to stdout, not saved to a file
+          OUTPUT=$(pnpm tauri signer generate -p "test-password" 2>&1)
+          echo "$OUTPUT"
+          # Extract the private key from the output (it's the base64 string after "Your secret key was generated successfully")
+          PRIVATE_KEY=$(echo "$OUTPUT" | grep -A1 "Your secret key was generated successfully" | tail -1)
+          if [ -z "$PRIVATE_KEY" ]; then
+            echo "❌ Failed to extract private key from output"
             exit 1
           fi
-          echo "Key file content (first 2 lines):"
-          head -2 "$KEY_FILE"
-          # Set the environment variable with the raw key content (not base64 encoded)
-          # Tauri expects the raw minisign key format
-          echo "TAURI_SIGNING_PRIVATE_KEY<<EOF" >> $GITHUB_ENV
-          cat "$KEY_FILE" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
+          echo "Extracted private key (first 20 chars): ${PRIVATE_KEY:0:20}..."
+          # Set the environment variable with the base64-encoded key
+          echo "TAURI_SIGNING_PRIVATE_KEY=$PRIVATE_KEY" >> $GITHUB_ENV
           echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=test-password" >> $GITHUB_ENV
           echo "✅ Test signing key generated"
 
