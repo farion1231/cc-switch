@@ -1,0 +1,182 @@
+name: Test AppImage Signing
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: test-appimage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-appimage-signing:
+    name: Test AppImage Signing
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.12.3
+          run_install: false
+
+      - name: Get pnpm store directory
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libssl-dev \
+            libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev \
+            || sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.0-dev
+          sudo apt-get install -y --no-install-recommends libsoup-3.0-dev \
+            || sudo apt-get install -y --no-install-recommends libsoup2.4-dev
+
+      - name: Cache Cargo registry and build
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Generate test signing key
+        shell: bash
+        run: |
+          # Generate a test signing key for testing
+          pnpm tauri signer generate -p "test-password"
+          # The key will be saved to ~/.tauri/my-app.key and ~/.tauri/my-app.pub
+          echo "TAURI_SIGNING_PRIVATE_KEY=$(cat ~/.tauri/my-app.key | base64 -w 0)" >> $GITHUB_ENV
+          echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=test-password" >> $GITHUB_ENV
+          echo "✅ Test signing key generated"
+
+      - name: Build AppImage
+        shell: bash
+        run: |
+          pnpm tauri build --bundles appimage
+
+      - name: Verify original signature exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          APPIMAGE=$(find src-tauri/target/release/bundle -name "*.AppImage" | head -1)
+          if [ -z "$APPIMAGE" ]; then
+            echo "❌ No AppImage found"
+            exit 1
+          fi
+          echo "AppImage: $APPIMAGE"
+          if [ -f "${APPIMAGE}.sig" ]; then
+            echo "✅ Original .sig file exists"
+            cat "${APPIMAGE}.sig"
+          else
+            echo "⚠️ No .sig file found (updater may not be configured)"
+          fi
+
+      - name: Fix AppImage .DirIcon symlink
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Workaround for tauri-apps/tauri#15110
+          ARCH=$(uname -m)
+          wget -q "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${ARCH}.AppImage" \
+            -O appimagetool
+          chmod +x appimagetool
+
+          for appimage in src-tauri/target/release/bundle/appimage/*.AppImage; do
+            [ -f "$appimage" ] || continue
+            echo "Fixing $appimage..."
+            "$appimage" --appimage-extract
+            ln -sf CC\ Switch.png squashfs-root/.DirIcon
+            APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool --no-appstream squashfs-root "$appimage"
+            rm -rf squashfs-root
+          done
+
+          rm -f appimagetool
+
+      - name: Re-sign AppImage after repacking
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Re-sign the modified AppImage so updater .sig matches the new content
+          # See: https://github.com/tauri-apps/tauri/issues/15110
+          for appimage in src-tauri/target/release/bundle/appimage/*.AppImage; do
+            [ -f "$appimage" ] || continue
+            echo "Re-signing $appimage..."
+            # Remove old signature first
+            rm -f "${appimage}.sig"
+            # Re-sign using tauri signer
+            pnpm tauri signer sign \
+              -k "$TAURI_SIGNING_PRIVATE_KEY" \
+              ${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:+-p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"} \
+              "$appimage"
+            echo "✅ Re-signed: $appimage"
+            if [ -f "${appimage}.sig" ]; then
+              echo "✅ New .sig file generated:"
+              cat "${appimage}.sig"
+            else
+              echo "❌ Failed to generate .sig file"
+              exit 1
+            fi
+          done
+
+      - name: Verify AppImage symlinks
+        shell: bash
+        run: |
+          set -euo pipefail
+          for appimage in src-tauri/target/release/bundle/appimage/*.AppImage; do
+            [ -f "$appimage" ] || continue
+            echo "=== Verifying $appimage ==="
+            # Extract and check symlinks
+            "$appimage" --appimage-extract
+            echo "Checking .DirIcon symlink:"
+            ls -la squashfs-root/.DirIcon
+            if [ -L squashfs-root/.DirIcon ]; then
+              TARGET=$(readlink squashfs-root/.DirIcon)
+              echo "Target: $TARGET"
+              if [[ "$TARGET" == /* ]]; then
+                echo "❌ .DirIcon is an absolute path (broken symlink)"
+                exit 1
+              else
+                echo "✅ .DirIcon uses relative path"
+              fi
+            fi
+            rm -rf squashfs-root
+          done
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-appimage-artifacts
+          path: |
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/appimage/*.AppImage.sig
+          if-no-files-found: warn
