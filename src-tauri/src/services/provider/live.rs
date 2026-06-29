@@ -758,7 +758,10 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             let auth = obj
                 .get("auth")
                 .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
-            let config_str = obj.get("config").and_then(|v| v.as_str());
+            let config_str = obj
+                .get("config")
+                .and_then(|v| v.as_str())
+                .map(|s| super::strip_mcp_sections_from_toml(s));
 
             // Native (direct) Responses providers must suppress Codex's freeform
             // apply_patch custom tool via the generated catalog; chat/proxy
@@ -771,7 +774,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 &provider.settings_config,
                 provider.category.as_deref(),
                 auth,
-                config_str,
+                config_str.as_deref(),
                 profile,
             )?;
         }
@@ -1038,6 +1041,10 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
     match app_type {
         AppType::Codex => {
             let mut result = crate::codex_config::read_codex_live_settings()?;
+            // Strip MCP sections from the live config TOML — MCP is managed by
+            // the MCP module, not the provider config. This prevents MCP entries
+            // from leaking into the DB via backfill or being shown in the editor.
+            super::sanitize_codex_config_field(&AppType::Codex, &mut result);
             // `modelCatalog` is a cc-switch private field that lives only in
             // the DB SSOT plus the `cc-switch-model-catalog.json` projection
             // file — it is never inlined into `auth.json` or `config.toml`.
@@ -1183,7 +1190,11 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
     }
 
     let settings_config = match app_type {
-        AppType::Codex => crate::codex_config::read_codex_live_settings()?,
+        AppType::Codex => {
+            let mut settings = crate::codex_config::read_codex_live_settings()?;
+            super::sanitize_codex_config_field(&AppType::Codex, &mut settings);
+            settings
+        }
         AppType::Claude => {
             let settings_path = get_claude_settings_path();
             if !settings_path.exists() {

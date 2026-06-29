@@ -117,6 +117,22 @@ pub fn strip_mcp_sections_from_toml(config_toml: &str) -> String {
     cleaned.trim().to_string()
 }
 
+/// Sanitize MCP sections from a Codex provider's `settings_config["config"]` field.
+/// No-op for non-Codex app types or when the `config` field is absent/non-string.
+/// The sanitizer is idempotent — calling it on already-clean config is a no-op.
+pub(crate) fn sanitize_codex_config_field(app_type: &AppType, settings: &mut Value) {
+    if !matches!(app_type, AppType::Codex) {
+        return;
+    }
+    let Some(config_str) = settings.get("config").and_then(|v| v.as_str()) else {
+        return;
+    };
+    let cleaned = strip_mcp_sections_from_toml(config_str);
+    if let Some(obj) = settings.as_object_mut() {
+        obj.insert("config".to_string(), Value::String(cleaned));
+    }
+}
+
 /// Provider business logic service
 pub struct ProviderService;
 
@@ -1760,6 +1776,7 @@ impl ProviderService {
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
+        sanitize_codex_config_field(&app_type, &mut provider.settings_config);
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
         if app_type.is_additive_mode() {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
@@ -1815,6 +1832,7 @@ impl ProviderService {
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
+        sanitize_codex_config_field(&app_type, &mut provider.settings_config);
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
         if provider_id_changed {
