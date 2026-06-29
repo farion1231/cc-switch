@@ -257,7 +257,9 @@ export function OpenClawFormFields({
       <ApiKeySection
         value={apiKey}
         onChange={onApiKeyChange}
-        category={category}
+        // OpenClaw 的 API key 始终由用户自填，没有 OAuth-only 的免 key 官方供应商，
+        // 故不让 official 禁用输入框（与 Hermes 对齐）。
+        category={category === "official" ? undefined : category}
         shouldShowLink={shouldShowApiKeyLink}
         websiteUrl={websiteUrl}
         isPartner={isPartner}
