@@ -294,6 +294,9 @@ pub struct LocalMigrations {
     /// 同步偏好默认值迁移：老用户设为 true 以保持旧行为
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sync_preferences_defaults_v1: Option<SyncPreferencesDefaultsMigration>,
+    /// Codex provider config 中 MCP section 清理迁移
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strip_codex_mcp_sections_v1: Option<StripCodexMcpSectionsMigration>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -338,6 +341,14 @@ pub struct CodexOfficialHistoryUnifyMigration {
 #[serde(rename_all = "camelCase")]
 pub struct SyncPreferencesDefaultsMigration {
     pub completed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StripCodexMcpSectionsMigration {
+    pub completed_at: String,
+    #[serde(default)]
+    pub providers_cleaned: usize,
 }
 
 /// 应用设置结构
@@ -881,6 +892,26 @@ pub fn run_sync_preferences_defaults_migration() -> Result<(), AppError> {
             .get_or_insert_with(Default::default);
         migrations.sync_preferences_defaults_v1 = Some(SyncPreferencesDefaultsMigration {
             completed_at: chrono::Utc::now().to_rfc3339(),
+        });
+    })
+}
+
+pub fn is_strip_codex_mcp_sections_migrated() -> bool {
+    get_settings()
+        .local_migrations
+        .as_ref()
+        .and_then(|m| m.strip_codex_mcp_sections_v1.as_ref())
+        .is_some()
+}
+
+pub fn mark_strip_codex_mcp_sections_migrated(providers_cleaned: usize) -> Result<(), AppError> {
+    mutate_settings(|settings| {
+        let migrations = settings
+            .local_migrations
+            .get_or_insert_with(Default::default);
+        migrations.strip_codex_mcp_sections_v1 = Some(StripCodexMcpSectionsMigration {
+            completed_at: chrono::Utc::now().to_rfc3339(),
+            providers_cleaned,
         });
     })
 }
