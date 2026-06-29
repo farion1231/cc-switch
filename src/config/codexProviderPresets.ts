@@ -301,6 +301,23 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     icon: "qiniu",
   },
   {
+    name: "FennoAI",
+    websiteUrl: "https://api.fenno.ai",
+    apiKeyUrl:
+      "https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "fenno",
+      "https://api.fenno.ai",
+      "gpt-5.5",
+    ),
+    endpointCandidates: ["https://api.fenno.ai"],
+    isPartner: true,
+    partnerPromotionKey: "fenno",
+    icon: "fenno",
+  },
+  {
     name: "Azure OpenAI",
     websiteUrl:
       "https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/codex",

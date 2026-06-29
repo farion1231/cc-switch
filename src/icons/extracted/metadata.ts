@@ -225,6 +225,22 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["etok", "ai", "programming"],
     defaultColor: "#F97316",
   },
+  fenno: {
+    name: "fenno",
+    displayName: "FennoAI",
+    category: "ai-provider",
+    keywords: [
+      "fenno",
+      "fennoai",
+      "aggregator",
+      "relay",
+      "claude",
+      "codex",
+      "gpt",
+      "gateway",
+    ],
+    defaultColor: "#000000",
+  },
   cubence: {
     name: "cubence",
     displayName: "Cubence",
