@@ -1080,11 +1080,9 @@ pub fn run() {
                     }
                 });
 
-                // Session log usage sync: 启动时同步一次，之后每 60 秒检查
+                // Session log usage sync: gated by settings
                 let db_for_session_sync = state.db.clone();
                 tauri::async_runtime::spawn(async move {
-                    const SESSION_SYNC_INTERVAL_SECS: u64 = 60;
-
                     fn run_step<T>(name: &str, result: Result<T, crate::error::AppError>) {
                         if let Err(e) = result {
                             log::warn!("{name} failed: {e}");
@@ -1093,51 +1091,77 @@ pub fn run() {
 
                     let db = &db_for_session_sync;
 
-                    // 首次同步
-                    run_step(
-                        "Usage cost startup backfill",
-                        db.backfill_missing_usage_costs(),
-                    );
-                    run_step(
-                        "Session usage initial sync",
-                        crate::services::session_usage::sync_claude_session_logs(db),
-                    );
-                    run_step(
-                        "Codex usage initial sync",
-                        crate::services::session_usage_codex::sync_codex_usage(db),
-                    );
-                    run_step(
-                        "Gemini usage initial sync",
-                        crate::services::session_usage_gemini::sync_gemini_usage(db),
-                    );
-                    run_step(
-                        "OpenCode usage initial sync",
-                        crate::services::session_usage_opencode::sync_opencode_usage(db),
-                    );
+                    // Initial sync (respects settings)
+                    {
+                        let s = crate::settings::get_settings();
+                        if s.session_usage_sync_enabled {
+                            run_step(
+                                "Usage cost startup backfill",
+                                db.backfill_missing_usage_costs(),
+                            );
+                            if s.session_usage_sync_claude {
+                                run_step(
+                                    "Session usage initial sync",
+                                    crate::services::session_usage::sync_claude_session_logs(db),
+                                );
+                            }
+                            if s.session_usage_sync_codex {
+                                run_step(
+                                    "Codex usage initial sync",
+                                    crate::services::session_usage_codex::sync_codex_usage(db),
+                                );
+                            }
+                            if s.session_usage_sync_gemini {
+                                run_step(
+                                    "Gemini usage initial sync",
+                                    crate::services::session_usage_gemini::sync_gemini_usage(db),
+                                );
+                            }
+                            if s.session_usage_sync_opencode {
+                                run_step(
+                                    "OpenCode usage initial sync",
+                                    crate::services::session_usage_opencode::sync_opencode_usage(db),
+                                );
+                            }
+                        } else {
+                            log::info!("Session usage sync disabled by settings");
+                        }
+                    }
 
-                    // 定期同步
-                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(
-                        SESSION_SYNC_INTERVAL_SECS,
-                    ));
-                    interval.tick().await; // skip immediate first tick
+                    // Periodic sync with dynamic interval
                     loop {
-                        interval.tick().await;
-                        run_step(
-                            "Session usage periodic sync",
-                            crate::services::session_usage::sync_claude_session_logs(db),
-                        );
-                        run_step(
-                            "Codex usage periodic sync",
-                            crate::services::session_usage_codex::sync_codex_usage(db),
-                        );
-                        run_step(
-                            "Gemini usage periodic sync",
-                            crate::services::session_usage_gemini::sync_gemini_usage(db),
-                        );
-                        run_step(
-                            "OpenCode usage periodic sync",
-                            crate::services::session_usage_opencode::sync_opencode_usage(db),
-                        );
+                        let s = crate::settings::get_settings();
+                        let interval_secs = s.session_usage_sync_interval_secs.max(10);
+                        tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
+
+                        let s = crate::settings::get_settings();
+                        if !s.session_usage_sync_enabled {
+                            continue;
+                        }
+                        if s.session_usage_sync_claude {
+                            run_step(
+                                "Session usage periodic sync",
+                                crate::services::session_usage::sync_claude_session_logs(db),
+                            );
+                        }
+                        if s.session_usage_sync_codex {
+                            run_step(
+                                "Codex usage periodic sync",
+                                crate::services::session_usage_codex::sync_codex_usage(db),
+                            );
+                        }
+                        if s.session_usage_sync_gemini {
+                            run_step(
+                                "Gemini usage periodic sync",
+                                crate::services::session_usage_gemini::sync_gemini_usage(db),
+                            );
+                        }
+                        if s.session_usage_sync_opencode {
+                            run_step(
+                                "OpenCode usage periodic sync",
+                                crate::services::session_usage_opencode::sync_opencode_usage(db),
+                            );
+                        }
                     }
                 });
             });
