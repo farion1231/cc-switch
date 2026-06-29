@@ -125,6 +125,11 @@ const switchProviderFilter = async (providerLabel: RegExp) => {
   );
 };
 
+const enterGroupedBatchMode = async () => {
+  await switchToGroupedView();
+  fireEvent.click(screen.getByRole("button", { name: /批量管理/i }));
+};
+
 describe("SessionManagerPage", () => {
   beforeEach(() => {
     toastSuccessMock.mockReset();
@@ -415,7 +420,9 @@ describe("SessionManagerPage", () => {
       screen.getByRole("button", { name: /展开或折叠 claude 目录分组/ }),
     ).toBeInTheDocument();
     expect(screen.getByText("Alpha Session")).toBeInTheDocument();
-    expect(screen.getByText("Gamma Session")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Gamma Session/ }),
+    ).toBeInTheDocument();
     expect(screen.getByText("未知目录")).toBeInTheDocument();
   });
 
@@ -469,6 +476,126 @@ describe("SessionManagerPage", () => {
       expect(screen.queryByText("Gamma Session")).not.toBeInTheDocument();
     });
 
+    expect(toastErrorMock).not.toHaveBeenCalled();
+    expect(toastSuccessMock).toHaveBeenCalled();
+  });
+
+  it("selects visible deletable sessions by provider group in grouped batch mode", async () => {
+    renderPage("all");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Claude Session" }),
+      ).toBeInTheDocument(),
+    );
+
+    await enterGroupedBatchMode();
+
+    const codexProviderCheckbox = screen.getByRole("checkbox", {
+      name: /选择 codex 供应商分组内会话/,
+    });
+    const claudeProviderCheckbox = screen.getByRole("checkbox", {
+      name: /选择 claude 供应商分组内会话/,
+    });
+
+    fireEvent.click(codexProviderCheckbox);
+
+    expect(codexProviderCheckbox).toBeChecked();
+    expect(claudeProviderCheckbox).not.toBeChecked();
+    expect(screen.getByText("已选 3 项")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /展开或折叠 codex 目录分组/ }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(codexProviderCheckbox);
+
+    expect(codexProviderCheckbox).not.toBeChecked();
+    expect(screen.getByText("已选 0 项")).toBeInTheDocument();
+  });
+
+  it("selects visible deletable sessions by directory group and marks the provider as mixed", async () => {
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Alpha Session" }),
+      ).toBeInTheDocument(),
+    );
+
+    await enterGroupedBatchMode();
+
+    const providerCheckbox = screen.getByRole("checkbox", {
+      name: /选择 codex 供应商分组内会话/,
+    });
+    const codexDirectoryCheckbox = screen.getByRole("checkbox", {
+      name: /选择 codex 目录分组内会话/,
+    });
+    const unknownDirectoryCheckbox = screen.getByRole("checkbox", {
+      name: /选择 未知目录 目录分组内会话/,
+    });
+
+    fireEvent.click(codexDirectoryCheckbox);
+
+    expect(codexDirectoryCheckbox).toBeChecked();
+    expect(unknownDirectoryCheckbox).not.toBeChecked();
+    expect(providerCheckbox).toHaveAttribute("aria-checked", "mixed");
+    expect(screen.getByText("已选 2 项")).toBeInTheDocument();
+  });
+
+  it("marks grouped batch checkboxes as mixed when only one session is selected", async () => {
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Alpha Session" }),
+      ).toBeInTheDocument(),
+    );
+
+    await enterGroupedBatchMode();
+
+    fireEvent.click(screen.getAllByRole("checkbox", { name: "选择会话" })[0]);
+
+    expect(
+      screen.getByRole("checkbox", {
+        name: /选择 codex 供应商分组内会话/,
+      }),
+    ).toHaveAttribute("aria-checked", "mixed");
+    expect(
+      screen.getByRole("checkbox", { name: /选择 codex 目录分组内会话/ }),
+    ).toHaveAttribute("aria-checked", "mixed");
+    expect(screen.getByText("已选 1 项")).toBeInTheDocument();
+  });
+
+  it("batch deletes only sessions selected from a grouped directory", async () => {
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Alpha Session" }),
+      ).toBeInTheDocument(),
+    );
+
+    await enterGroupedBatchMode();
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /选择 codex 目录分组内会话/,
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /批量删除/i }));
+
+    const dialog = screen.getByTestId("confirm-dialog");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: /删除所选会话/i }),
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument();
+      expect(screen.queryByText("Beta Session")).not.toBeInTheDocument();
+    });
+
+    expect(
+      screen.getByRole("button", { name: /Gamma Session/ }),
+    ).toBeInTheDocument();
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
   });
