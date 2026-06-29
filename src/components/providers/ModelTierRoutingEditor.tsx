@@ -71,7 +71,7 @@ function readRoute(
     providerId: route?.providerId ?? "",
     model: stripOneMSuffix(rawModel),
     displayName: route?.displayName ?? "",
-    supports1m: route?.supports1m ?? ONE_M_SUFFIX.test(rawModel),
+    supports1m: route?.supports1m === true || ONE_M_SUFFIX.test(rawModel),
   };
 }
 

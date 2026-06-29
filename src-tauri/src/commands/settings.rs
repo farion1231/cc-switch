@@ -731,7 +731,25 @@ pub async fn set_model_tier_routing_config(
             &state,
             crate::app_config::AppType::ClaudeDesktop,
         ) {
-            log::warn!("[ModelTierRouting] 刷新 Claude Desktop profile 失败: {e}");
+            log::warn!(
+                "[ModelTierRouting] 刷新 Claude Desktop profile 失败，回滚模型层级路由配置: {e}"
+            );
+            if let Err(rollback_err) = state.db.set_model_tier_routing_config(&previous) {
+                log::error!("[ModelTierRouting] 回滚模型层级路由配置失败: {rollback_err}");
+                return Err(format!(
+                    "刷新 Claude Desktop profile 失败: {e}; 回滚配置失败: {rollback_err}"
+                ));
+            }
+            if let Err(refresh_err) = state
+                .proxy_service
+                .refresh_takeover_if_active(&crate::app_config::AppType::Claude)
+                .await
+            {
+                log::warn!(
+                    "[ModelTierRouting] 回滚后刷新 Claude 接管 live 配置失败: {refresh_err}"
+                );
+            }
+            return Err(format!("刷新 Claude Desktop profile 失败: {e}"));
         }
     }
 

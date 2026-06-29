@@ -674,9 +674,12 @@ pub fn model_list_response(provider: &Provider) -> Result<Value, AppError> {
     Ok(model_list_response_from_specs(&model_specs))
 }
 
-pub fn model_list_response_for_tier_routing(db: &Database) -> Result<Option<Value>, AppError> {
+pub fn model_list_response_for_tier_routing(
+    db: &Database,
+    provider: &Provider,
+) -> Result<Option<Value>, AppError> {
     let config = db.get_model_tier_routing_config()?;
-    let model_specs = desktop_tier_routing_model_specs(db, &config)?;
+    let model_specs = desktop_tier_routing_model_specs(db, &config, provider)?;
     if model_specs.is_empty() {
         return Ok(None);
     }
@@ -717,7 +720,7 @@ fn model_list_response_from_specs(model_specs: &[InferenceModelSpec]) -> Value {
     })
 }
 
-fn desktop_tier_routing_model_specs(
+fn configured_desktop_tier_routing_model_specs(
     db: &Database,
     config: &ModelTierRoutingConfig,
 ) -> Result<Vec<InferenceModelSpec>, AppError> {
@@ -758,6 +761,83 @@ fn desktop_tier_routing_model_specs(
     Ok(specs)
 }
 
+fn desktop_tier_routing_model_specs(
+    db: &Database,
+    config: &ModelTierRoutingConfig,
+    provider: &Provider,
+) -> Result<Vec<InferenceModelSpec>, AppError> {
+    let configured_specs = configured_desktop_tier_routing_model_specs(db, config)?;
+    if configured_specs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let fallback_specs = desktop_tier_routing_fallback_model_specs(provider)?;
+    Ok(overlay_tier_routing_model_specs(
+        fallback_specs,
+        configured_specs,
+    ))
+}
+
+fn desktop_tier_routing_fallback_model_specs(
+    provider: &Provider,
+) -> Result<Vec<InferenceModelSpec>, AppError> {
+    match provider_mode(provider) {
+        ClaudeDesktopMode::Direct => {
+            let specs = direct_inference_model_specs(provider)?;
+            if specs.is_empty() {
+                Ok(default_desktop_model_specs())
+            } else {
+                Ok(specs)
+            }
+        }
+        ClaudeDesktopMode::Proxy => proxy_inference_model_specs(provider),
+    }
+}
+
+fn proxy_inference_model_specs(provider: &Provider) -> Result<Vec<InferenceModelSpec>, AppError> {
+    Ok(proxy_model_routes(provider)?
+        .iter()
+        .map(|route| InferenceModelSpec {
+            name: route.route_id.clone(),
+            label_override: route.label_override.clone(),
+            supports_1m: route.supports_1m,
+        })
+        .collect())
+}
+
+fn default_desktop_model_specs() -> Vec<InferenceModelSpec> {
+    DEFAULT_PROXY_ROUTES
+        .iter()
+        .map(|route| InferenceModelSpec {
+            name: route.route_id.to_string(),
+            label_override: None,
+            supports_1m: route.supports_1m,
+        })
+        .collect()
+}
+
+fn overlay_tier_routing_model_specs(
+    mut fallback_specs: Vec<InferenceModelSpec>,
+    configured_specs: Vec<InferenceModelSpec>,
+) -> Vec<InferenceModelSpec> {
+    if fallback_specs.is_empty() {
+        return configured_specs;
+    }
+
+    for configured in configured_specs {
+        if let Some(existing) = fallback_specs
+            .iter_mut()
+            .find(|spec| spec.name == configured.name)
+        {
+            *existing = configured;
+        } else {
+            fallback_specs.push(configured);
+        }
+    }
+
+    fallback_specs
+}
+
 fn validate_tier_routing_target_provider(provider: &Provider) -> Result<(), AppError> {
     if !provider.settings_config.is_object() {
         return Err(AppError::localized(
@@ -795,7 +875,7 @@ fn validate_tier_routing_target_provider(provider: &Provider) -> Result<(), AppE
 
 fn has_desktop_tier_routing_profile(db: &Database) -> Result<bool, AppError> {
     let config = db.get_model_tier_routing_config()?;
-    Ok(!desktop_tier_routing_model_specs(db, &config)?.is_empty())
+    Ok(!configured_desktop_tier_routing_model_specs(db, &config)?.is_empty())
 }
 
 fn model_has_one_m_marker(model: &str) -> bool {
@@ -1114,7 +1194,7 @@ fn apply_provider_to_paths_inner(
     paths: &ClaudeDesktopPaths,
 ) -> Result<(), AppError> {
     let tier_routing = db.get_model_tier_routing_config()?;
-    let tier_model_specs = desktop_tier_routing_model_specs(db, &tier_routing)?;
+    let tier_model_specs = desktop_tier_routing_model_specs(db, &tier_routing, provider)?;
     let profile = match provider_mode(provider) {
         ClaudeDesktopMode::Direct => {
             if !tier_model_specs.is_empty() {
@@ -1137,15 +1217,7 @@ fn apply_provider_to_paths_inner(
             let model_specs = if !tier_model_specs.is_empty() {
                 tier_model_specs
             } else {
-                let routes = proxy_model_routes(provider)?;
-                routes
-                    .iter()
-                    .map(|route| InferenceModelSpec {
-                        name: route.route_id.clone(),
-                        label_override: route.label_override.clone(),
-                        supports_1m: route.supports_1m,
-                    })
-                    .collect::<Vec<_>>()
+                proxy_inference_model_specs(provider)?
             };
             build_gateway_profile(&base_url, &api_key, Some(model_specs.as_slice()))
         }
@@ -1500,6 +1572,13 @@ mod tests {
         futures::executor::block_on(db.update_proxy_config(config)).expect("update proxy config");
     }
 
+    fn find_model<'a>(models: &'a [Value], name: &str) -> &'a Value {
+        models
+            .iter()
+            .find(|model| model["name"] == json!(name) || model["id"] == json!(name))
+            .unwrap_or_else(|| panic!("missing model {name} in {models:?}"))
+    }
+
     fn direct_provider(id: &str) -> Provider {
         let mut provider = Provider::with_id(
             id.to_string(),
@@ -1786,16 +1865,97 @@ mod tests {
         let models = profile["inferenceModels"]
             .as_array()
             .expect("inferenceModels array");
-        assert_eq!(models.len(), 1);
-        assert_eq!(models[0]["name"], json!(CURRENT_OPUS_ROUTE_ID));
-        assert_eq!(models[0]["labelOverride"], json!("GLM-5.2"));
-        assert_eq!(models[0]["supports1m"], json!(true));
+        assert_eq!(models.len(), 4);
+        assert_eq!(
+            find_model(models, "claude-sonnet-4-6")["name"],
+            json!("claude-sonnet-4-6")
+        );
+        let opus = find_model(models, CURRENT_OPUS_ROUTE_ID);
+        assert_eq!(opus["labelOverride"], json!("GLM-5.2"));
+        assert_eq!(opus["supports1m"], json!(true));
+        assert_eq!(
+            find_model(models, "claude-haiku-4-5")["name"],
+            json!("claude-haiku-4-5")
+        );
+        assert_eq!(
+            find_model(models, "claude-fable-5")["name"],
+            json!("claude-fable-5")
+        );
 
-        let list = model_list_response_for_tier_routing(&db)
+        let list = model_list_response_for_tier_routing(&db, &current_provider)
             .expect("model list response")
             .expect("tier response present");
-        assert_eq!(list["data"][0]["id"], json!(CURRENT_OPUS_ROUTE_ID));
-        assert_eq!(list["data"][0]["supports1m"], json!(true));
+        let list_models = list["data"].as_array().expect("model list data");
+        assert_eq!(list_models.len(), 4);
+        assert_eq!(
+            find_model(list_models, CURRENT_OPUS_ROUTE_ID)["supports1m"],
+            json!(true)
+        );
+    }
+
+    #[test]
+    fn claude_desktop_tier_routing_preserves_provider_fallback_models() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let current_provider = proxy_provider("proxy-current");
+        let mut routed_provider = proxy_provider("zhipu");
+        routed_provider.category = Some("cn_official".to_string());
+        let db = test_db();
+        set_proxy_port(&db, 15721);
+        db.save_provider(MODEL_TIER_ROUTING_APP, &routed_provider)
+            .expect("save routed provider");
+
+        let mut enabled_apps = std::collections::HashMap::new();
+        enabled_apps.insert(MODEL_TIER_ROUTING_APP.to_string(), true);
+        let mut claude_desktop_routes = std::collections::HashMap::new();
+        claude_desktop_routes.insert(
+            "opus".to_string(),
+            crate::proxy::types::TierRoute {
+                provider_id: "zhipu".to_string(),
+                model: "glm-5.2".to_string(),
+                display_name: "GLM-5.2".to_string(),
+                supports_1m: true,
+            },
+        );
+        let mut routes = std::collections::HashMap::new();
+        routes.insert(MODEL_TIER_ROUTING_APP.to_string(), claude_desktop_routes);
+        db.set_model_tier_routing_config(&crate::proxy::types::ModelTierRoutingConfig {
+            enabled: true,
+            enabled_apps,
+            routes,
+            ..Default::default()
+        })
+        .expect("set tier config");
+
+        apply_provider_to_paths(&db, &current_provider, &paths)
+            .expect("apply tier routing profile");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        let models = profile["inferenceModels"]
+            .as_array()
+            .expect("inferenceModels array");
+        assert_eq!(models.len(), 2);
+        assert_eq!(
+            find_model(models, "claude-sonnet-4-6")["labelOverride"],
+            json!("Kimi K2")
+        );
+        let opus = find_model(models, CURRENT_OPUS_ROUTE_ID);
+        assert_eq!(opus["labelOverride"], json!("GLM-5.2"));
+        assert_eq!(opus["supports1m"], json!(true));
+
+        let list = model_list_response_for_tier_routing(&db, &current_provider)
+            .expect("model list response")
+            .expect("tier response present");
+        let list_models = list["data"].as_array().expect("model list data");
+        assert_eq!(list_models.len(), 2);
+        assert_eq!(
+            find_model(list_models, "claude-sonnet-4-6")["id"],
+            json!("claude-sonnet-4-6")
+        );
+        assert_eq!(
+            find_model(list_models, CURRENT_OPUS_ROUTE_ID)["supports1m"],
+            json!(true)
+        );
     }
 
     #[test]
@@ -1841,14 +2001,21 @@ mod tests {
         let models = profile["inferenceModels"]
             .as_array()
             .expect("inferenceModels array");
-        assert_eq!(models.len(), 1);
+        assert_eq!(models.len(), 4);
         // model 名无后缀，但 supports_1m=true → supports1m 由字段派生
-        assert_eq!(models[0]["supports1m"], json!(true));
+        assert_eq!(
+            find_model(models, CURRENT_OPUS_ROUTE_ID)["supports1m"],
+            json!(true)
+        );
 
-        let list = model_list_response_for_tier_routing(&db)
+        let list = model_list_response_for_tier_routing(&db, &current_provider)
             .expect("model list response")
             .expect("tier response present");
-        assert_eq!(list["data"][0]["supports1m"], json!(true));
+        let list_models = list["data"].as_array().expect("model list data");
+        assert_eq!(
+            find_model(list_models, CURRENT_OPUS_ROUTE_ID)["supports1m"],
+            json!(true)
+        );
     }
 
     #[test]

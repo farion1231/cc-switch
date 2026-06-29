@@ -27,7 +27,7 @@ use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
 use crate::{
     app_config::AppType,
-    provider::{LocalProxyRequestOverrides, Provider},
+    provider::{ClaudeDesktopMode, LocalProxyRequestOverrides, Provider},
 };
 use bytes::Bytes;
 use futures::StreamExt;
@@ -1187,6 +1187,14 @@ impl RequestForwarder {
                 );
                 crate::claude_desktop_config::prepare_proxy_request_with_upstream_model(
                     routed_body,
+                    provider,
+                )
+            } else if matches!(
+                crate::claude_desktop_config::provider_mode(provider),
+                ClaudeDesktopMode::Direct
+            ) {
+                crate::claude_desktop_config::prepare_proxy_request_with_upstream_model(
+                    body.clone(),
                     provider,
                 )
             } else {
