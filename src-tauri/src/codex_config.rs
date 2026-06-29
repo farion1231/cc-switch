@@ -334,6 +334,17 @@ fn codex_catalog_model_entry(
     entry_obj.insert("availability_nux".to_string(), Value::Null);
     entry_obj.insert("upgrade".to_string(), Value::Null);
 
+    // Codex desktop app expects this field on every catalog entry; its absence
+    // causes the app to treat the entry as unknown and fall back to a generic
+    // "custom" model with a hardcoded 6-tier reasoning picker.
+    entry_obj.insert("use_responses_lite".to_string(), json!(false));
+
+    // model_messages carries GPT-5.5 personality/instruction templates that are
+    // irrelevant to third-party models. The built-in catalog entries for
+    // non-GPT models do not include this field; keeping it causes the desktop
+    // app to reject the entry during model-list construction.
+    entry_obj.remove("model_messages");
+
     entry
 }
 
@@ -2094,8 +2105,8 @@ base_url = "https://production.api/v1"
             Some(128_000)
         );
         assert!(
-            models[0].get("model_messages").is_some(),
-            "Codex requires model_messages in custom catalogs"
+            models[0].get("model_messages").is_none(),
+            "third-party catalog entries should not carry the gpt-5.5 agent template"
         );
         assert_eq!(
             models[0]
@@ -2104,9 +2115,9 @@ base_url = "https://production.api/v1"
             Some("gpt-5.5 base instructions")
         );
         assert_eq!(
-            models[0].get("model_messages"),
-            template.get("model_messages"),
-            "custom catalog entries should keep the gpt-5.5 agent template"
+            models[0].get("use_responses_lite"),
+            Some(&json!(false)),
+            "third-party catalog entries should declare use_responses_lite for desktop app compatibility"
         );
         assert_eq!(
             models[0].get("additional_speed_tiers"),
