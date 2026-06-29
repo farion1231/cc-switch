@@ -31,6 +31,7 @@ import type { SessionMeta } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -67,6 +68,8 @@ import {
   getProviderLabel,
   getSessionKey,
   groupSessionsByProviderAndDirectory,
+  type SessionDirectoryGroup,
+  type SessionProviderGroup,
   shouldHideCodexMessageFromToc,
 } from "./utils";
 
@@ -83,6 +86,13 @@ type ProviderFilter =
   | "hermes";
 
 type SessionListViewMode = "flat" | "grouped";
+
+type GroupSelectionState = {
+  checked: boolean | "indeterminate";
+  isSelected: boolean;
+  selectedCount: number;
+  selectableCount: number;
+};
 
 const readInitialSessionListViewMode = (): SessionListViewMode => {
   if (typeof window === "undefined") return "flat";
@@ -476,6 +486,28 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       selectedSessionKeys.has(getSessionKey(session)),
     );
 
+  const getGroupSelectionState = (
+    groupSessions: SessionMeta[],
+  ): GroupSelectionState => {
+    const selectableSessions = groupSessions.filter((session) =>
+      Boolean(session.sourcePath),
+    );
+    const selectedCount = selectableSessions.filter((session) =>
+      selectedSessionKeys.has(getSessionKey(session)),
+    ).length;
+    const isSelected =
+      selectableSessions.length > 0 &&
+      selectedCount === selectableSessions.length;
+
+    return {
+      checked:
+        selectedCount === 0 ? false : isSelected ? true : "indeterminate",
+      isSelected,
+      selectedCount,
+      selectableCount: selectableSessions.length,
+    };
+  };
+
   const toggleSessionChecked = (session: SessionMeta, checked: boolean) => {
     if (!session.sourcePath) return;
     const key = getSessionKey(session);
@@ -486,6 +518,29 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       } else {
         next.delete(key);
       }
+      return next;
+    });
+  };
+
+  const toggleSessionGroupChecked = (
+    groupSessions: SessionMeta[],
+    checked: boolean,
+  ) => {
+    const selectableSessions = groupSessions.filter((session) =>
+      Boolean(session.sourcePath),
+    );
+    if (selectableSessions.length === 0) return;
+
+    setSelectedSessionKeys((current) => {
+      const next = new Set(current);
+      selectableSessions.forEach((session) => {
+        const sessionKey = getSessionKey(session);
+        if (checked) {
+          next.add(sessionKey);
+        } else {
+          next.delete(sessionKey);
+        }
+      });
       return next;
     });
   };
@@ -529,6 +584,69 @@ export function SessionManagerPage({ appId }: { appId: string }) {
         isCheckDisabled={!session.sourcePath}
         onSelect={setSelectedKey}
         onToggleChecked={(checked) => toggleSessionChecked(session, checked)}
+      />
+    );
+  };
+
+  const renderGroupSelectionBadge = (
+    selectionState: GroupSelectionState,
+    totalCount: number,
+    variant: "secondary" | "outline",
+  ) => (
+    <Badge variant={variant} className="shrink-0 text-xs">
+      {selectionMode
+        ? `${selectionState.selectedCount}/${selectionState.selectableCount}`
+        : totalCount}
+    </Badge>
+  );
+
+  const renderProviderGroupCheckbox = (
+    providerGroup: SessionProviderGroup,
+    providerLabel: string,
+    selectionState: GroupSelectionState,
+  ) => {
+    if (!selectionMode) return null;
+
+    return (
+      <Checkbox
+        checked={selectionState.checked}
+        disabled={selectionState.selectableCount === 0}
+        aria-label={t("sessionManager.selectProviderGroupForBatch", {
+          defaultValue: "选择 {{provider}} 供应商分组内会话",
+          provider: providerLabel,
+        })}
+        onClick={(event) => event.stopPropagation()}
+        onCheckedChange={() =>
+          toggleSessionGroupChecked(
+            providerGroup.sessions,
+            !selectionState.isSelected,
+          )
+        }
+      />
+    );
+  };
+
+  const renderDirectoryGroupCheckbox = (
+    directoryGroup: SessionDirectoryGroup,
+    selectionState: GroupSelectionState,
+  ) => {
+    if (!selectionMode) return null;
+
+    return (
+      <Checkbox
+        checked={selectionState.checked}
+        disabled={selectionState.selectableCount === 0}
+        aria-label={t("sessionManager.selectDirectoryGroupForBatch", {
+          defaultValue: "选择 {{directory}} 目录分组内会话",
+          directory: directoryGroup.label,
+        })}
+        onClick={(event) => event.stopPropagation()}
+        onCheckedChange={() =>
+          toggleSessionGroupChecked(
+            directoryGroup.sessions,
+            !selectionState.isSelected,
+          )
+        }
       />
     );
   };
@@ -978,6 +1096,9 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                             providerGroup.providerId,
                             t,
                           );
+                          const providerSelectionState = getGroupSelectionState(
+                            providerGroup.sessions,
+                          );
 
                           return (
                             <Collapsible
@@ -987,48 +1108,58 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                 toggleProviderGroup(providerGroup.providerId)
                               }
                             >
-                              <CollapsibleTrigger asChild>
-                                <button
-                                  type="button"
-                                  className="flex w-full items-center gap-2 rounded-md border bg-muted/40 px-2.5 py-2 text-left transition-colors hover:bg-muted"
-                                  aria-label={t(
-                                    "sessionManager.toggleProviderGroup",
-                                    {
-                                      defaultValue:
-                                        "展开或折叠 {{provider}} 供应商分组",
-                                      provider: providerLabel,
-                                    },
-                                  )}
-                                >
-                                  {providerOpen ? (
-                                    <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                                  ) : (
-                                    <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-                                  )}
-                                  <ProviderIcon
-                                    icon={getProviderIconName(
-                                      providerGroup.providerId,
+                              <div className="flex w-full items-center gap-2 rounded-md border bg-muted/40 px-2.5 py-2 transition-colors hover:bg-muted">
+                                {renderProviderGroupCheckbox(
+                                  providerGroup,
+                                  providerLabel,
+                                  providerSelectionState,
+                                )}
+                                <CollapsibleTrigger asChild>
+                                  <button
+                                    type="button"
+                                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                                    aria-label={t(
+                                      "sessionManager.toggleProviderGroup",
+                                      {
+                                        defaultValue:
+                                          "展开或折叠 {{provider}} 供应商分组",
+                                        provider: providerLabel,
+                                      },
                                     )}
-                                    name={providerGroup.providerId}
-                                    size={16}
-                                  />
-                                  <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                                    {providerLabel}
-                                  </span>
-                                  <Badge
-                                    variant="secondary"
-                                    className="shrink-0 text-xs"
                                   >
-                                    {providerGroup.sessions.length}
-                                  </Badge>
-                                </button>
-                              </CollapsibleTrigger>
+                                    {providerOpen ? (
+                                      <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                                    ) : (
+                                      <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+                                    )}
+                                    <ProviderIcon
+                                      icon={getProviderIconName(
+                                        providerGroup.providerId,
+                                      )}
+                                      name={providerGroup.providerId}
+                                      size={16}
+                                    />
+                                    <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                                      {providerLabel}
+                                    </span>
+                                    {renderGroupSelectionBadge(
+                                      providerSelectionState,
+                                      providerGroup.sessions.length,
+                                      "secondary",
+                                    )}
+                                  </button>
+                                </CollapsibleTrigger>
+                              </div>
                               <CollapsibleContent className="mt-1 space-y-1 pl-2">
                                 {providerGroup.directories.map(
                                   (directoryGroup) => {
                                     const directoryOpen =
                                       expandedDirectoryGroups.has(
                                         directoryGroup.key,
+                                      );
+                                    const directorySelectionState =
+                                      getGroupSelectionState(
+                                        directoryGroup.sessions,
                                       );
 
                                     return (
@@ -1041,55 +1172,61 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                           )
                                         }
                                       >
-                                        <CollapsibleTrigger asChild>
-                                          <button
-                                            type="button"
-                                            className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                                            aria-label={t(
-                                              "sessionManager.toggleDirectoryGroup",
-                                              {
-                                                defaultValue:
-                                                  "展开或折叠 {{directory}} 目录分组",
-                                                directory: directoryGroup.label,
-                                              },
-                                            )}
-                                          >
-                                            {directoryOpen ? (
-                                              <ChevronDown className="size-3.5 shrink-0" />
-                                            ) : (
-                                              <ChevronRight className="size-3.5 shrink-0" />
-                                            )}
-                                            <FolderOpen className="size-3.5 shrink-0" />
-                                            <Tooltip>
-                                              <TooltipTrigger asChild>
-                                                <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                                                  {directoryGroup.label}
-                                                </span>
-                                              </TooltipTrigger>
-                                              <TooltipContent
-                                                side="bottom"
-                                                className="max-w-xs"
-                                              >
-                                                <p className="font-mono text-xs break-all">
-                                                  {directoryGroup.projectDir ??
-                                                    t(
-                                                      "sessionManager.unknownDirectory",
-                                                      {
-                                                        defaultValue:
-                                                          "未知目录",
-                                                      },
-                                                    )}
-                                                </p>
-                                              </TooltipContent>
-                                            </Tooltip>
-                                            <Badge
-                                              variant="outline"
-                                              className="shrink-0 text-xs"
+                                        <div className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+                                          {renderDirectoryGroupCheckbox(
+                                            directoryGroup,
+                                            directorySelectionState,
+                                          )}
+                                          <CollapsibleTrigger asChild>
+                                            <button
+                                              type="button"
+                                              className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                                              aria-label={t(
+                                                "sessionManager.toggleDirectoryGroup",
+                                                {
+                                                  defaultValue:
+                                                    "展开或折叠 {{directory}} 目录分组",
+                                                  directory:
+                                                    directoryGroup.label,
+                                                },
+                                              )}
                                             >
-                                              {directoryGroup.sessions.length}
-                                            </Badge>
-                                          </button>
-                                        </CollapsibleTrigger>
+                                              {directoryOpen ? (
+                                                <ChevronDown className="size-3.5 shrink-0" />
+                                              ) : (
+                                                <ChevronRight className="size-3.5 shrink-0" />
+                                              )}
+                                              <FolderOpen className="size-3.5 shrink-0" />
+                                              <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                  <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                                                    {directoryGroup.label}
+                                                  </span>
+                                                </TooltipTrigger>
+                                                <TooltipContent
+                                                  side="bottom"
+                                                  className="max-w-xs"
+                                                >
+                                                  <p className="font-mono text-xs break-all">
+                                                    {directoryGroup.projectDir ??
+                                                      t(
+                                                        "sessionManager.unknownDirectory",
+                                                        {
+                                                          defaultValue:
+                                                            "未知目录",
+                                                        },
+                                                      )}
+                                                  </p>
+                                                </TooltipContent>
+                                              </Tooltip>
+                                              {renderGroupSelectionBadge(
+                                                directorySelectionState,
+                                                directoryGroup.sessions.length,
+                                                "outline",
+                                              )}
+                                            </button>
+                                          </CollapsibleTrigger>
+                                        </div>
                                         <CollapsibleContent className="mt-1 space-y-1 pl-3">
                                           {directoryGroup.sessions.map(
                                             (session) =>

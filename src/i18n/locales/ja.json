@@ -896,6 +896,8 @@
     "unknownDirectory": "不明なディレクトリ",
     "toggleProviderGroup": "{{provider}} プロバイダーグループを開閉",
     "toggleDirectoryGroup": "{{directory}} ディレクトリグループを開閉",
+    "selectProviderGroupForBatch": "{{provider}} プロバイダーグループ内のセッションを選択",
+    "selectDirectoryGroupForBatch": "{{directory}} ディレクトリグループ内のセッションを選択",
     "manageBatchTooltip": "一括管理に入る",
     "exitBatchModeTooltip": "一括管理を終了",
     "batchModeHint": "削除するセッションを選択",

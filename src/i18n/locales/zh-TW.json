@@ -867,6 +867,8 @@
     "unknownDirectory": "未知目錄",
     "toggleProviderGroup": "展開或摺疊 {{provider}} 供應商分組",
     "toggleDirectoryGroup": "展開或摺疊 {{directory}} 目錄分組",
+    "selectProviderGroupForBatch": "選擇 {{provider}} 供應商分組內工作階段",
+    "selectDirectoryGroupForBatch": "選擇 {{directory}} 目錄分組內工作階段",
     "manageBatchTooltip": "進入批次管理",
     "exitBatchModeTooltip": "退出批次管理",
     "batchModeHint": "勾選要刪除的工作階段",
