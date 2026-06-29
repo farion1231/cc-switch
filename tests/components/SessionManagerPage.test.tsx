@@ -16,6 +16,8 @@ import { setSessionFixtures } from "../msw/state";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
+const GROUP_EXPANSION_STORAGE_KEY =
+  "cc-switch.sessionManager.groupExpansionState";
 
 vi.mock("sonner", () => ({
   toast: {
@@ -130,12 +132,30 @@ const enterGroupedBatchMode = async () => {
   fireEvent.click(screen.getByRole("button", { name: /批量管理/i }));
 };
 
+const collapseAllGroups = () => {
+  fireEvent.click(screen.getByRole("button", { name: /全部收起/i }));
+};
+
+const expandDirectoryGroup = (provider: string, directory: string) => {
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: new RegExp(`展开或折叠 ${provider} 供应商分组`),
+    }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: new RegExp(`展开或折叠 ${directory} 目录分组`),
+    }),
+  );
+};
+
 describe("SessionManagerPage", () => {
   beforeEach(() => {
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
     Element.prototype.scrollIntoView = vi.fn();
     window.localStorage.removeItem("cc-switch.sessionManager.listViewMode");
+    window.localStorage.removeItem(GROUP_EXPANSION_STORAGE_KEY);
 
     const sessions: SessionMeta[] = [
       {
@@ -392,7 +412,7 @@ describe("SessionManagerPage", () => {
     invalidateSpy.mockRestore();
   });
 
-  it("switches to grouped view and renders provider, directory, and session levels", async () => {
+  it("switches to grouped view collapsed by default and shows collapse control", async () => {
     renderPage("all");
 
     await waitFor(() =>
@@ -404,6 +424,9 @@ describe("SessionManagerPage", () => {
     await switchToGroupedView();
 
     expect(
+      screen.getByRole("button", { name: /全部收起/i }),
+    ).toBeInTheDocument();
+    expect(
       screen.getByRole("button", {
         name: /展开或折叠 codex 供应商分组/,
       }),
@@ -414,25 +437,65 @@ describe("SessionManagerPage", () => {
       }),
     ).toBeInTheDocument();
     expect(
+      screen.queryByRole("button", { name: /展开或折叠 codex 目录分组/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Alpha Session/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("persists manual expansion and collapses all grouped sessions", async () => {
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Alpha Session" }),
+      ).toBeInTheDocument(),
+    );
+
+    await switchToGroupedView();
+    expandDirectoryGroup("codex", "codex");
+
+    expect(
       screen.getByRole("button", { name: /展开或折叠 codex 目录分组/ }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /展开或折叠 claude 目录分组/ }),
+      screen.getByRole("button", { name: /Alpha Session/ }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Alpha Session")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /Gamma Session/ }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("未知目录")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        JSON.parse(window.localStorage.getItem(GROUP_EXPANSION_STORAGE_KEY)!),
+      ).toEqual({
+        expandedProviderIds: ["codex"],
+        expandedDirectoryKeys: ["codex:/mock/codex"],
+      }),
+    );
+
+    collapseAllGroups();
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: /展开或折叠 codex 目录分组/ }),
+      ).not.toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(
+        JSON.parse(window.localStorage.getItem(GROUP_EXPANSION_STORAGE_KEY)!),
+      ).toEqual({
+        expandedProviderIds: [],
+        expandedDirectoryKeys: [],
+      }),
+    );
   });
 
-  it("regroups sessions when the provider filter changes in grouped view", async () => {
+  it("keeps filtered grouped sessions collapsed until expanding the group", async () => {
     renderPage("all");
 
     await waitFor(() =>
       expect(screen.getByText("Alpha Session")).toBeInTheDocument(),
     );
 
+    fireEvent.click(screen.getByRole("button", { name: /Alpha Session/ }));
     await switchToGroupedView();
     await switchProviderFilter(/Claude Code/i);
 
@@ -441,12 +504,24 @@ describe("SessionManagerPage", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: /Claude Session/ }),
+      screen.getByRole("heading", { name: "Claude Session" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
         name: /展开或折叠 claude 供应商分组/,
       }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /展开或折叠 claude 目录分组/ }),
+    ).not.toBeInTheDocument();
+
+    expandDirectoryGroup("claude", "claude");
+
+    expect(
+      screen.getByRole("button", { name: /展开或折叠 claude 目录分组/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Claude Session/ }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Gamma Session")).not.toBeInTheDocument();
   });
@@ -503,9 +578,6 @@ describe("SessionManagerPage", () => {
     expect(codexProviderCheckbox).toBeChecked();
     expect(claudeProviderCheckbox).not.toBeChecked();
     expect(screen.getByText("已选 3 项")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /展开或折叠 codex 目录分组/ }),
-    ).toBeInTheDocument();
 
     fireEvent.click(codexProviderCheckbox);
 
@@ -523,6 +595,7 @@ describe("SessionManagerPage", () => {
     );
 
     await enterGroupedBatchMode();
+    expandDirectoryGroup("codex", "codex");
 
     const providerCheckbox = screen.getByRole("checkbox", {
       name: /选择 codex 供应商分组内会话/,
@@ -530,14 +603,10 @@ describe("SessionManagerPage", () => {
     const codexDirectoryCheckbox = screen.getByRole("checkbox", {
       name: /选择 codex 目录分组内会话/,
     });
-    const unknownDirectoryCheckbox = screen.getByRole("checkbox", {
-      name: /选择 未知目录 目录分组内会话/,
-    });
 
     fireEvent.click(codexDirectoryCheckbox);
 
     expect(codexDirectoryCheckbox).toBeChecked();
-    expect(unknownDirectoryCheckbox).not.toBeChecked();
     expect(providerCheckbox).toHaveAttribute("aria-checked", "mixed");
     expect(screen.getByText("已选 2 项")).toBeInTheDocument();
   });
@@ -552,6 +621,7 @@ describe("SessionManagerPage", () => {
     );
 
     await enterGroupedBatchMode();
+    expandDirectoryGroup("codex", "codex");
 
     fireEvent.click(screen.getAllByRole("checkbox", { name: "选择会话" })[0]);
 
@@ -576,6 +646,7 @@ describe("SessionManagerPage", () => {
     );
 
     await enterGroupedBatchMode();
+    expandDirectoryGroup("codex", "codex");
     fireEvent.click(
       screen.getByRole("checkbox", {
         name: /选择 codex 目录分组内会话/,
@@ -594,7 +665,17 @@ describe("SessionManagerPage", () => {
     });
 
     expect(
-      screen.getByRole("button", { name: /Gamma Session/ }),
+      screen.getByRole("button", { name: /展开或折叠 未知目录 目录分组/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", { name: "选择会话" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /展开或折叠 未知目录 目录分组/ }),
+    );
+    expect(
+      screen.getByRole("checkbox", { name: "选择会话" }),
     ).toBeInTheDocument();
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
