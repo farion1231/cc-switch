@@ -444,6 +444,11 @@ impl Database {
                         Self::migrate_v10_to_v11(conn)?;
                         Self::set_user_version(conn, 11)?;
                     }
+                    11 => {
+                        log::info!("迁移数据库从 v11 到 v12（清理重复 Codex 会话用量）");
+                        Self::migrate_v11_to_v12(conn)?;
+                        Self::set_user_version(conn, 12)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -1267,6 +1272,58 @@ impl Database {
         log::info!(
             "v10 -> v11 迁移完成：usage_daily_rollups 已保留 request_model/pricing_model 维度"
         );
+        Ok(())
+    }
+
+    /// v11 -> v12：清理 Codex fork/restore 历史快照导致的重复会话用量。
+    ///
+    /// 旧版 Codex session 导入使用 `session_id:event_index` 作为 request_id。fork、
+    /// subagent 或恢复会话时，Codex 会把父线程历史 token_count 事件复制到新 session
+    /// 文件，旧导入器会把这些相同 token 指纹当作新请求再次写入。
+    fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "proxy_request_logs")? {
+            return Ok(());
+        }
+
+        let required_columns = [
+            "provider_id",
+            "app_type",
+            "model",
+            "request_model",
+            "input_tokens",
+            "output_tokens",
+            "cache_read_tokens",
+            "cache_creation_tokens",
+            "total_cost_usd",
+            "data_source",
+        ];
+        for column in required_columns {
+            if !Self::has_column(conn, "proxy_request_logs", column)? {
+                return Ok(());
+            }
+        }
+
+        let deleted = conn
+            .execute(
+                "DELETE FROM proxy_request_logs
+                 WHERE app_type = 'codex'
+                   AND COALESCE(data_source, 'proxy') = 'codex_session'
+                   AND rowid NOT IN (
+                       SELECT MIN(rowid)
+                       FROM proxy_request_logs
+                       WHERE app_type = 'codex'
+                         AND COALESCE(data_source, 'proxy') = 'codex_session'
+                       GROUP BY provider_id, model, COALESCE(request_model, ''),
+                                input_tokens, output_tokens, cache_read_tokens,
+                                cache_creation_tokens, total_cost_usd
+                   )",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("清理重复 Codex 会话用量失败: {e}")))?;
+
+        if deleted > 0 {
+            log::info!("v11 -> v12：已清理 {deleted} 条重复 Codex 会话用量");
+        }
         Ok(())
     }
 
