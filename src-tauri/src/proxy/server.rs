@@ -91,16 +91,16 @@ impl ProxyServer {
         }
     }
 
+    /// 端口冲突时自动尝试的最大偏移量
+    const PORT_FALLBACK_RANGE: u16 = 10;
+
     pub async fn start(&self) -> Result<ProxyServerInfo, ProxyError> {
         // 检查是否已在运行
         if self.shutdown_tx.read().await.is_some() {
             return Err(ProxyError::AlreadyRunning);
         }
 
-        let addr: SocketAddr =
-            format!("{}:{}", self.config.listen_address, self.config.listen_port)
-                .parse()
-                .map_err(|e| ProxyError::BindFailed(format!("无效的地址: {e}")))?;
+        let base_port = self.config.listen_port;
 
         // 创建关闭通道
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -108,14 +108,56 @@ impl ProxyServer {
         // 构建路由
         let app = self.build_router();
 
-        // 绑定监听器
-        let listener = tokio::net::TcpListener::bind(&addr)
-            .await
-            .map_err(|e| ProxyError::BindFailed(e.to_string()))?;
+        // 绑定监听器（端口冲突时自动尝试 base_port..base_port+PORT_FALLBACK_RANGE）
+        let mut last_err: Option<String> = None;
+        let mut listener = None;
+        let start_port = if base_port == 0 { 0 } else { base_port };
+        let end_port = if base_port == 0 {
+            0
+        } else {
+            base_port.saturating_add(Self::PORT_FALLBACK_RANGE)
+        };
+
+        for port in start_port..=end_port {
+            let addr: SocketAddr = format!("{}:{}", self.config.listen_address, port)
+                .parse()
+                .map_err(|e| ProxyError::BindFailed(format!("无效的地址: {e}")))?;
+            match tokio::net::TcpListener::bind(&addr).await {
+                Ok(l) => {
+                    listener = Some(l);
+                    break;
+                }
+                Err(e) => {
+                    last_err = Some(e.to_string());
+                    if port == 0 {
+                        break;
+                    }
+                }
+            }
+        }
+
+        let listener = listener.ok_or_else(|| {
+            ProxyError::BindFailed(format!(
+                "无法绑定端口 {}-{}: {}",
+                start_port,
+                end_port,
+                last_err.unwrap_or_default()
+            ))
+        })?;
+
         let local_addr = listener
             .local_addr()
             .map_err(|e| ProxyError::BindFailed(e.to_string()))?;
         let actual_port = local_addr.port();
+
+        if actual_port != base_port && base_port != 0 {
+            log::warn!(
+                "[{}] 端口 {} 被占用，已自动切换到 {}",
+                log_srv::PORT_FALLBACK,
+                base_port,
+                actual_port
+            );
+        }
 
         log::info!("[{}] 代理服务器启动于 {local_addr}", log_srv::STARTED);
 

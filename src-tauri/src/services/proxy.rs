@@ -466,12 +466,13 @@ impl ProxyService {
         Ok(info)
     }
 
+    /// 当实际监听端口与配置端口不同时持久化（覆盖 port=0 和端口 fallback 两种场景）
     async fn persist_ephemeral_listen_port_if_needed(
         &self,
         config: &ProxyConfig,
         actual_port: u16,
     ) -> Result<(), String> {
-        if config.listen_port != 0 {
+        if config.listen_port != 0 && config.listen_port == actual_port {
             return Ok(());
         }
 
