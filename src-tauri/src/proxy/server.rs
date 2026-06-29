@@ -435,3 +435,77 @@ impl ProxyServer {
             .await;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::Database;
+    use std::sync::Arc;
+
+    /// 验证端口 fallback：配置端口被占用时自动切换。
+    #[tokio::test]
+    async fn port_fallback_when_configured_port_is_occupied() {
+        let db = Arc::new(Database::memory().expect("create test db"));
+        let base_port: u16 = 15800;
+
+        // 先占用 base_port
+        let occupant = tokio::net::TcpListener::bind(format!("127.0.0.1:{base_port}"))
+            .await
+            .expect("bind occupant");
+
+        let config = ProxyConfig {
+            listen_port: base_port,
+            ..Default::default()
+        };
+        let server = ProxyServer::new(config, db, None);
+
+        let info = server.start().await.expect("start with fallback");
+        let actual_port = info.port;
+
+        assert_ne!(actual_port, base_port, "应该 fallback 到不同端口");
+        assert!(
+            actual_port > base_port
+                && actual_port <= base_port + ProxyServer::PORT_FALLBACK_RANGE,
+            "fallback 端口 {actual_port} 应在 {}-{} 范围内",
+            base_port + 1,
+            base_port + ProxyServer::PORT_FALLBACK_RANGE
+        );
+
+        drop(occupant);
+        let _ = server.stop().await;
+    }
+
+    /// 验证：所有端口被占用时返回 BindFailed。
+    #[tokio::test]
+    async fn port_fallback_fails_when_all_ports_occupied() {
+        let db = Arc::new(Database::memory().expect("create test db"));
+        let base_port: u16 = 15900;
+        let range = ProxyServer::PORT_FALLBACK_RANGE;
+
+        let mut occupants = Vec::new();
+        for port in base_port..=base_port + range {
+            match tokio::net::TcpListener::bind(format!("127.0.0.1:{port}")).await {
+                Ok(l) => occupants.push(l),
+                Err(_) => break,
+            }
+        }
+
+        if (occupants.len() as u16) < range + 1 {
+            eprintln!("无法占用所有端口，跳过测试");
+            return;
+        }
+
+        let config = ProxyConfig {
+            listen_port: base_port,
+            ..Default::default()
+        };
+        let server = ProxyServer::new(config, db, None);
+
+        assert!(
+            server.start().await.is_err(),
+            "所有端口被占用应返回错误"
+        );
+
+        drop(occupants);
+    }
+}
