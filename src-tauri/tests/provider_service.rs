@@ -2040,3 +2040,245 @@ fn update_current_claude_provider_preserves_live_common_config() {
         "statusLine should be preserved"
     );
 }
+
+/// Regression test for the provider-switch path of the "preserve live common
+/// config" fix (see PR #3728). When switching between two providers that do not
+/// set `commonConfigEnabled` (relying on auto-inference), the common fields
+/// present in the live `settings.json` (statusLine, enabledPlugins, model) must
+/// survive the switch while the provider-specific env fields are updated.
+#[test]
+fn provider_service_switch_claude_preserves_common_config_fields() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let settings_path = get_claude_settings_path();
+    if let Some(parent) = settings_path.parent() {
+        std::fs::create_dir_all(parent).expect("create claude settings dir");
+    }
+
+    // Live settings.json holds the common fields the user configured in Claude
+    // Code while provider A is active. Neither provider sets commonConfigEnabled,
+    // so common config is applied via auto-inference from the synced snippet.
+    let live = json!({
+        "env": {
+            "ANTHROPIC_API_KEY": "key-a",
+            "ANTHROPIC_BASE_URL": "https://a.example.com"
+        },
+        "enabledPlugins": {
+            "plugin-a@market": true
+        },
+        "statusLine": {
+            "type": "command",
+            "command": "node /home/u/.claude/plugins/cache/hud/dist/index.js"
+        },
+        "model": "claude-sonnet-4-5"
+    });
+    std::fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&live).expect("serialize live"),
+    )
+    .expect("seed claude live config");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "provider-a".to_string();
+        manager.providers.insert(
+            "provider-a".to_string(),
+            Provider::with_id(
+                "provider-a".to_string(),
+                "Provider A".to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_API_KEY": "key-a",
+                        "ANTHROPIC_BASE_URL": "https://a.example.com"
+                    }
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "provider-b".to_string(),
+            Provider::with_id(
+                "provider-b".to_string(),
+                "Provider B".to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_API_KEY": "key-b",
+                        "ANTHROPIC_BASE_URL": "https://b.example.com"
+                    }
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    // No pre-existing snippet and not cleared: the switch-time sync must
+    // extract the common config from live and merge it into the target provider.
+    state
+        .db
+        .set_config_snippet_cleared(AppType::Claude.as_str(), false)
+        .expect("snippet not cleared");
+
+    ProviderService::switch(&state, AppType::Claude, "provider-b")
+        .expect("switch provider should succeed");
+
+    let live_after: serde_json::Value =
+        read_json_file(&settings_path).expect("read claude live settings");
+
+    // Provider-specific fields are updated to provider B.
+    assert_eq!(
+        live_after
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_API_KEY"))
+            .and_then(|key| key.as_str()),
+        Some("key-b"),
+        "live settings.json should reflect provider B auth"
+    );
+    assert_eq!(
+        live_after
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+            .and_then(|url| url.as_str()),
+        Some("https://b.example.com"),
+        "live settings.json should reflect provider B base url"
+    );
+
+    // Common fields are preserved across the switch.
+    assert_eq!(
+        live_after
+            .get("enabledPlugins")
+            .and_then(|p| p.get("plugin-a@market"))
+            .and_then(|v| v.as_bool()),
+        Some(true),
+        "enabledPlugins should be preserved when switching providers"
+    );
+    assert_eq!(
+        live_after
+            .get("statusLine")
+            .and_then(|s| s.get("command"))
+            .and_then(|c| c.as_str()),
+        Some("node /home/u/.claude/plugins/cache/hud/dist/index.js"),
+        "statusLine should be preserved when switching providers"
+    );
+    assert_eq!(
+        live_after.get("model").and_then(|m| m.as_str()),
+        Some("claude-sonnet-4-5"),
+        "model should be preserved when switching providers"
+    );
+}
+
+/// Regression test for the switch-time snippet re-sync (see PR #3728). When the
+/// live `settings.json` holds an up-to-date claude-hud path (with a version
+/// directory) but the DB `common_config_claude` snippet is stale (without the
+/// version directory), switching providers must re-sync the snippet from live so
+/// the DB no longer carries the stale path.
+#[test]
+fn provider_service_switch_claude_syncs_common_config_snippet() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let settings_path = get_claude_settings_path();
+    if let Some(parent) = settings_path.parent() {
+        std::fs::create_dir_all(parent).expect("create claude settings dir");
+    }
+
+    let live_new_path = "node /home/u/.claude/plugins/cache/claude-hud/0.1.0/dist/index.js";
+    let live = json!({
+        "env": {
+            "ANTHROPIC_API_KEY": "key-a",
+            "ANTHROPIC_BASE_URL": "https://a.example.com"
+        },
+        "statusLine": {
+            "type": "command",
+            "command": live_new_path
+        }
+    });
+    std::fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&live).expect("serialize live"),
+    )
+    .expect("seed claude live config");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "provider-a".to_string();
+        manager.providers.insert(
+            "provider-a".to_string(),
+            Provider::with_id(
+                "provider-a".to_string(),
+                "Provider A".to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_API_KEY": "key-a",
+                        "ANTHROPIC_BASE_URL": "https://a.example.com"
+                    }
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "provider-b".to_string(),
+            Provider::with_id(
+                "provider-b".to_string(),
+                "Provider B".to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_API_KEY": "key-b",
+                        "ANTHROPIC_BASE_URL": "https://b.example.com"
+                    }
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    // STALE snippet: claude-hud path without the version directory (from before
+    // the plugin upgrade). The DB is out of date relative to the live settings.
+    let stale_path = "node /home/u/.claude/plugins/cache/claude-hud/dist/index.js";
+    let stale_snippet = serde_json::to_string(&json!({
+        "statusLine": {
+            "type": "command",
+            "command": stale_path
+        }
+    }))
+    .expect("serialize stale snippet");
+    state
+        .db
+        .set_config_snippet(AppType::Claude.as_str(), Some(stale_snippet))
+        .expect("set stale snippet");
+    state
+        .db
+        .set_config_snippet_cleared(AppType::Claude.as_str(), false)
+        .expect("snippet not cleared");
+
+    ProviderService::switch(&state, AppType::Claude, "provider-b")
+        .expect("switch provider should succeed");
+
+    // After switch, the DB snippet should have been re-synced from live, so it
+    // reflects the up-to-date (versioned) claude-hud path and no longer carries
+    // the stale path.
+    let snippet = state
+        .db
+        .get_config_snippet(AppType::Claude.as_str())
+        .expect("get config snippet")
+        .unwrap_or_default();
+    assert!(
+        snippet.contains(live_new_path),
+        "DB common_config_claude should be re-synced to the live (versioned) path, got: {snippet}"
+    );
+    assert!(
+        !snippet.contains(stale_path),
+        "DB common_config_claude should no longer carry the stale path, got: {snippet}"
+    );
+}
