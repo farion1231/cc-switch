@@ -84,6 +84,39 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     Ok(true)
 }
 
+/// Strip all `[mcp_servers]` and `[mcp_servers.*]` top-level tables from a Codex TOML config.
+/// Returns the cleaned TOML string. If parsing fails, returns the original string unchanged.
+pub fn strip_mcp_sections_from_toml(config_toml: &str) -> String {
+    let mut doc = match config_toml.parse::<toml_edit::DocumentMut>() {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("Failed to parse TOML for MCP stripping, returning original: {e}");
+            return config_toml.to_string();
+        }
+    };
+
+    let root = doc.as_table_mut();
+    root.remove("mcp_servers");
+
+    // Clean up multiple empty lines left by removal
+    let mut cleaned = String::new();
+    let mut blank_run = 0usize;
+    for line in doc.to_string().lines() {
+        if line.trim().is_empty() {
+            blank_run += 1;
+            if blank_run <= 1 {
+                cleaned.push('\n');
+            }
+            continue;
+        }
+        blank_run = 0;
+        cleaned.push_str(line);
+        cleaned.push('\n');
+    }
+
+    cleaned.trim().to_string()
+}
+
 /// Provider business logic service
 pub struct ProviderService;
 
@@ -779,7 +812,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_codex_common_config_preserves_mcp_servers_base_url() {
+    fn extract_codex_common_config_strips_mcp_servers() {
         let config_toml = r#"model_provider = "azure"
 model = "gpt-4"
 disable_response_storage = true
@@ -814,9 +847,50 @@ base_url = "http://localhost:8080"
             "should remove entire model_providers table"
         );
         assert!(
-            extracted.contains("http://localhost:8080"),
-            "should keep mcp_servers.* base_url"
+            !extracted.contains("[mcp_servers"),
+            "should strip mcp_servers table"
         );
+        assert!(
+            !extracted.contains("http://localhost:8080"),
+            "should strip mcp_servers content"
+        );
+        assert!(
+            extracted.contains("disable_response_storage"),
+            "should preserve non-provider, non-MCP settings"
+        );
+    }
+
+    #[test]
+    fn strip_mcp_sections_removes_mcp_servers() {
+        let toml = r#"model = "gpt-4"
+
+[mcp_servers.server1]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server"]
+
+[mcp_servers.server2]
+command = "node"
+"#;
+        let result = strip_mcp_sections_from_toml(toml);
+        assert!(!result.contains("[mcp_servers"), "should strip all mcp_servers tables");
+        assert!(result.contains("model = \"gpt-4\""), "should preserve other settings");
+    }
+
+    #[test]
+    fn strip_mcp_sections_no_mcp_unchanged() {
+        let toml = r#"model = "gpt-4"
+disable_response_storage = true
+"#;
+        let result = strip_mcp_sections_from_toml(toml);
+        assert!(result.contains("model = \"gpt-4\""));
+        assert!(result.contains("disable_response_storage"));
+    }
+
+    #[test]
+    fn strip_mcp_sections_malformed_toml_returns_original() {
+        let toml = "this is not valid [[ toml";
+        let result = strip_mcp_sections_from_toml(toml);
+        assert_eq!(result, toml);
     }
 
     #[tokio::test]
@@ -2722,6 +2796,8 @@ impl ProviderService {
 
         // Remove entire model_providers table (provider-specific configuration)
         root.remove("model_providers");
+        // Remove MCP sections — MCP is managed by the MCP module, not provider config
+        root.remove("mcp_servers");
 
         // Clean up multiple empty lines (keep at most one blank line).
         let mut cleaned = String::new();
