@@ -1,9 +1,13 @@
 import { test, expect } from "@playwright/test";
 
+const STATIC_TOKEN = "e2e-test-token";
+
 test.describe("web mode smoke", () => {
   test("login and navigate to dashboard", async ({ page }) => {
-    // 1. Generate a token via the backend API
-    const generateRes = await page.request.post("/api/v1/auth/generate", {});
+    // 1. Generate a token via the backend API (requires the static AUTH_TOKEN)
+    const generateRes = await page.request.post("/api/v1/auth/generate", {
+      headers: { Authorization: `Bearer ${STATIC_TOKEN}` },
+    });
     expect(generateRes.ok()).toBe(true);
     const generateBody = await generateRes.json();
     expect(generateBody.success).toBe(true);

@@ -9,9 +9,13 @@ import { test, expect } from "@playwright/test";
  * which silently broke the feature. We assert the API contract (success + array
  * shape) and that the Session Manager UI opens without an error state.
  */
+const STATIC_TOKEN = "e2e-test-token";
+
 test.describe("session management (web)", () => {
   async function authToken(request: import("@playwright/test").APIRequestContext) {
-    const res = await request.post("/api/v1/auth/generate", {});
+    const res = await request.post("/api/v1/auth/generate", {
+      headers: { Authorization: `Bearer ${STATIC_TOKEN}` },
+    });
     expect(res.ok()).toBe(true);
     const body = await res.json();
     expect(body.success).toBe(true);
@@ -54,7 +58,9 @@ test.describe("session management (web)", () => {
     page,
   }) => {
     const token = await page.request
-      .post("/api/v1/auth/generate", {})
+      .post("/api/v1/auth/generate", {
+        headers: { Authorization: `Bearer ${STATIC_TOKEN}` },
+      })
       .then((r) => r.json())
       .then((b) => b.data as string);
 

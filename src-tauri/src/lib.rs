@@ -966,6 +966,14 @@ pub fn run() {
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
+            // Auto-start the embedded web server when CC_SWITCH_ENABLE_WEB is set.
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = crate::web_server::auto_start_web_server(app_handle).await {
+                    log::error!("Failed to auto-start web server: {e}");
+                }
+            });
+
             // 从数据库加载日志配置并应用
             {
                 let db = &app.state::<AppState>().db;

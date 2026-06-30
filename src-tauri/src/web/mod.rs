@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tower_http::{
-    cors::{Any, CorsLayer},
+    cors::{AllowOrigin, Any, CorsLayer},
     services::{ServeDir, ServeFile},
     trace::TraceLayer,
 };
@@ -35,6 +35,7 @@ fn get_web_assets_path() -> PathBuf {
     if let Ok(current_dir) = std::env::current_dir() {
         candidates.push(current_dir.join("web-dist"));
         candidates.push(current_dir.join("src-tauri").join("web-dist"));
+        candidates.push(current_dir.join("dist"));
     }
 
     if let Ok(exe_path) = std::env::current_exe() {
@@ -61,12 +62,46 @@ fn get_web_assets_path() -> PathBuf {
     candidates.last().cloned().unwrap_or_else(|| PathBuf::from("web-dist"))
 }
 
-pub fn create_router(state: Arc<AppState>, ws_state: Arc<WsState>) -> Router {
-    let cors = CorsLayer::new()
-        .allow_origin(Any) // Required for local/remote browser access
+/// Build a CORS layer that defaults to localhost/127.0.0.1 origins and honors
+/// the `CC_SWITCH_WEB_CORS_ORIGINS` comma-separated allowlist.
+fn build_cors_layer() -> CorsLayer {
+    let extra_origins: Arc<Vec<String>> = Arc::new(
+        std::env::var("CC_SWITCH_WEB_CORS_ORIGINS")
+            .ok()
+            .map(|s| {
+                s.split(',')
+                    .map(|x| x.trim().to_string())
+                    .filter(|x| !x.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default(),
+    );
+
+    let allow_origin = AllowOrigin::predicate(
+        move |origin: &axum::http::HeaderValue, _parts: &axum::http::request::Parts| {
+            let Ok(origin_str) = origin.to_str() else {
+                return false;
+            };
+            if origin_str.starts_with("http://localhost:")
+                || origin_str.starts_with("https://localhost:")
+                || origin_str.starts_with("http://127.0.0.1:")
+                || origin_str.starts_with("https://127.0.0.1:")
+            {
+                return true;
+            }
+            extra_origins.iter().any(|allowed| origin_str == allowed)
+        },
+    );
+
+    CorsLayer::new()
+        .allow_origin(allow_origin)
         .allow_methods(Any)
         .allow_headers(Any)
-        .allow_credentials(false);
+        .allow_credentials(false)
+}
+
+pub fn create_router(state: Arc<AppState>, ws_state: Arc<WsState>) -> Router {
+    let cors = build_cors_layer();
 
     let shared_state = (state, ws_state);
 
@@ -86,6 +121,7 @@ pub fn create_router(state: Arc<AppState>, ws_state: Arc<WsState>) -> Router {
     let api_routes = Router::new()
         .nest("/auth", routes::auth::routes())
         .nest("/logs", routes::logs::routes())
+        .fallback(api_not_found)
         .merge(protected_routes);
     let ws_route = Router::new()
         .route("/ws", get(handlers::ws::ws_handler))
@@ -117,6 +153,16 @@ pub fn create_app(db_path: &str) -> Result<Router, rusqlite::Error> {
     let (tx, _rx) = broadcast::channel(100);
     let ws_state = Arc::new(WsState::new(tx));
     Ok(create_router(state, ws_state))
+}
+
+async fn api_not_found() -> impl IntoResponse {
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({
+            "success": false,
+            "error": "Not found",
+        })),
+    )
 }
 
 async fn health_check() -> impl IntoResponse {

@@ -19,6 +19,7 @@ GEMINI.md
 vitest-report.json
 nul
 test-results/
+src-tauri/web-dist/
 
 # Flatpak build artifacts
 flatpak/cc-switch.deb

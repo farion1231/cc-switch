@@ -18,7 +18,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "CC_SWITCH_WEB_PORT=13002 CC_SWITCH_DB_PATH=/tmp/cc-switch-e2e.db pnpm headless:debug:web",
+    command: "AUTH_TOKEN=e2e-test-token CC_SWITCH_WEB_PORT=13002 CC_SWITCH_DB_PATH=/tmp/cc-switch-e2e.db pnpm headless:debug:web",
     url: "http://localhost:13002/health",
     timeout: 60 * 1000,
     reuseExistingServer: !process.env.CI,

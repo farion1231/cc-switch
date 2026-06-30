@@ -1,10 +1,14 @@
 use axum::{
-    extract::{State, WebSocketUpgrade},
-    response::Response,
+    extract::{Query, State, WebSocketUpgrade},
+    http::StatusCode,
+    response::{IntoResponse, Response},
 };
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::{error, info};
+
+use crate::web::middleware::auth::validate_token;
 
 pub struct WsState {
     pub tx: broadcast::Sender<String>,
@@ -18,8 +22,15 @@ impl WsState {
 
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
+    Query(params): Query<HashMap<String, String>>,
     State((_, ws_state)): State<(Arc<crate::web::models::app_state::AppState>, Arc<WsState>)>,
 ) -> Response {
+    // Validate JWT token from query param (browsers cannot set custom headers for WebSockets).
+    let token = params.get("token").map(|s| s.as_str()).unwrap_or("");
+    if token.is_empty() || validate_token(token).is_err() {
+        return (StatusCode::UNAUTHORIZED, "Missing or invalid token").into_response();
+    }
+
     ws.on_upgrade(move |socket| handle_socket(socket, ws_state))
 }
 

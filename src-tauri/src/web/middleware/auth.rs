@@ -50,11 +50,7 @@ fn load_auth_token_from_sources() -> String {
             let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
         }
     }
-    log::info!(
-        "Generated new AUTH_TOKEN and persisted to {}. New token: {}",
-        path.display(),
-        token
-    );
+    log::info!("Generated new AUTH_TOKEN and persisted to {}", path.display());
     token
 }
 
@@ -142,7 +138,7 @@ pub fn rotate_auth_token() -> String {
         .lock()
         .expect("AUTH_TOKEN cache lock poisoned");
     *guard = Some(new_token.clone());
-    log::info!("Rotated AUTH_TOKEN. New token: {}", new_token);
+    log::info!("Rotated AUTH_TOKEN");
     new_token
 }
 

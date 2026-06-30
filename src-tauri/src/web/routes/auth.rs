@@ -35,7 +35,17 @@ pub fn routes() -> Router {
         .route("/generate", post(generate_route))
 }
 
-async fn generate_route() -> Json<ApiResponse<String>> {
+async fn generate_route(request: Request) -> Json<ApiResponse<String>> {
+    let provided = extract_bearer_token(&request);
+    let expected = get_auth_token();
+    let valid = provided
+        .as_deref()
+        .map(|p| constant_time_eq(p.as_bytes(), expected.as_bytes()))
+        .unwrap_or(false);
+    if !valid {
+        return Json(ApiResponse::error("Invalid static token".to_string()));
+    }
+
     match generate_token("admin") {
         Ok(token) => Json(ApiResponse::success(token)),
         Err(e) => Json(ApiResponse::error(format!(
@@ -43,6 +53,20 @@ async fn generate_route() -> Json<ApiResponse<String>> {
             e
         ))),
     }
+}
+
+fn extract_bearer_token(request: &Request) -> Option<String> {
+    request
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|header| {
+            if header.starts_with("Bearer ") {
+                Some(header[7..].to_string())
+            } else {
+                None
+            }
+        })
 }
 
 async fn login_route(Json(req): Json<LoginRequest>) -> Json<ApiResponse<LoginResponse>> {
@@ -155,6 +179,35 @@ mod tests {
 
         let json = response.0;
         assert!(!json.success);
+
+        unsafe { env::remove_var("AUTH_TOKEN") };
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn generate_route_requires_static_token() {
+        crate::web::middleware::auth::reset_auth_token_cache();
+        unsafe { env::set_var("AUTH_TOKEN", "generate-test-secret") };
+
+        let request = axum::http::Request::builder()
+            .uri("/auth/generate")
+            .method("POST")
+            .header("Authorization", "Bearer generate-test-secret")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response = generate_route(request).await;
+        assert!(response.0.success, "generate failed: {:?}", response.0.error);
+        assert!(!response.0.data.unwrap().is_empty());
+
+        let bad_request = axum::http::Request::builder()
+            .uri("/auth/generate")
+            .method("POST")
+            .header("Authorization", "Bearer wrong-secret")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let bad_response = generate_route(bad_request).await;
+        assert!(!bad_response.0.success);
 
         unsafe { env::remove_var("AUTH_TOKEN") };
     }

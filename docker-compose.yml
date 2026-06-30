@@ -15,6 +15,7 @@ services:
       RUST_LOG: info
       CC_SWITCH_WEB_PORT: "13001"
       CC_SWITCH_WEB_BIND_ALL: "true"
+      CC_SWITCH_DB_PATH: /data/db/cc-switch.db
       TAURI_RESOURCE_DIR: "/app/src-tauri"
       AUTH_TOKEN: "${AUTH_TOKEN:-}"
     ports:
