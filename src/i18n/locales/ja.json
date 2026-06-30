@@ -722,6 +722,7 @@
       "title": "優先ターミナル",
       "description": "ターミナルボタンをクリックした時に使用するターミナルアプリを選択",
       "fallbackHint": "選択したターミナルが利用できない場合、システムのデフォルトが使用されます",
+      "cmuxAutomationHint": "cmux 使用時：cmux の Settings → Automation で Socket control mode を Automation mode に設定し、Cmd+Q で完全終了してから cmux を再起動してください。cmux が起動していない場合、CC Switch は一時的に CMUX_SOCKET_MODE=allowAll で cmux をコールドスタートします。これにより起動中はローカル socket control が許可されます。cmux のエラーはそのまま表示され、システムのデフォルトターミナルにはフォールバックしません。",
       "options": {
         "macos": {
           "terminal": "Terminal.app",
@@ -731,7 +732,8 @@
           "ghostty": "Ghostty",
           "wezterm": "WezTerm",
           "kaku": "Kaku",
-          "warp": "Warp"
+          "warp": "Warp",
+          "cmux": "cmux"
         },
         "windows": {
           "cmd": "コマンドプロンプト",

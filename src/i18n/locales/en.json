@@ -722,6 +722,7 @@
       "title": "Preferred Terminal",
       "description": "Choose which terminal app to use when clicking the terminal button",
       "fallbackHint": "If the selected terminal is unavailable, the system default will be used",
+      "cmuxAutomationHint": "For cmux: open Settings → Automation and set Socket control mode to Automation mode, then press Cmd+Q to fully quit and reopen cmux. If cmux is not running, CC Switch temporarily starts it with CMUX_SOCKET_MODE=allowAll, which allows local socket control during startup. cmux errors are shown directly and will not fall back to the system default terminal.",
       "options": {
         "macos": {
           "terminal": "Terminal.app",
@@ -731,7 +732,8 @@
           "ghostty": "Ghostty",
           "wezterm": "WezTerm",
           "kaku": "Kaku",
-          "warp": "Warp"
+          "warp": "Warp",
+          "cmux": "cmux"
         },
         "windows": {
           "cmd": "Command Prompt",

@@ -722,6 +722,7 @@
       "title": "首選終端機",
       "description": "選擇點擊終端機按鈕時使用的終端機應用程式",
       "fallbackHint": "如果選擇的終端機不可用，將自動使用系統預設終端機",
+      "cmuxAutomationHint": "使用 cmux 時：請在 cmux 設定 → Automation 中將 Socket control mode 設為 Automation mode，並按 Cmd+Q 完全退出後重新開啟 cmux。如果 cmux 尚未執行，CC Switch 會暫時用 CMUX_SOCKET_MODE=allowAll 冷啟動 cmux，這會在啟動期間允許本機 socket 控制。cmux 錯誤會直接顯示，不會回退到系統預設終端機。",
       "options": {
         "macos": {
           "terminal": "Terminal.app",
@@ -731,7 +732,8 @@
           "ghostty": "Ghostty",
           "wezterm": "WezTerm",
           "kaku": "Kaku",
-          "warp": "Warp"
+          "warp": "Warp",
+          "cmux": "cmux"
         },
         "windows": {
           "cmd": "命令提示字元",

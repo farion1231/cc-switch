@@ -722,6 +722,7 @@
       "title": "首选终端",
       "description": "选择点击终端按钮时使用的终端应用",
       "fallbackHint": "如果选择的终端不可用，将自动使用系统默认终端",
+      "cmuxAutomationHint": "使用 cmux 时：请在 cmux 设置 → Automation 中将 Socket control mode 设为 Automation mode，并按 Cmd+Q 完全退出后重新打开 cmux。如果 cmux 尚未运行，CC Switch 会临时用 CMUX_SOCKET_MODE=allowAll 冷启动 cmux，这会在启动期间允许本机 socket 控制。cmux 错误会直接显示，不会回退到系统默认终端。",
       "options": {
         "macos": {
           "terminal": "Terminal.app",
@@ -731,7 +732,8 @@
           "ghostty": "Ghostty",
           "wezterm": "WezTerm",
           "kaku": "Kaku",
-          "warp": "Warp"
+          "warp": "Warp",
+          "cmux": "cmux"
         },
         "windows": {
           "cmd": "命令提示符",
