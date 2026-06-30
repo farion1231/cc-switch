@@ -21,6 +21,10 @@ use super::gemini_auth::{
 };
 use super::normalize_claude_models_in_value;
 
+fn openclaw_live_sync_hidden() -> bool {
+    !crate::settings::is_app_visible(&AppType::OpenClaw)
+}
+
 pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
     let mut v = settings.clone();
     if let Some(obj) = v.as_object_mut() {
@@ -511,6 +515,14 @@ pub(crate) fn write_live_with_common_config(
     app_type: &AppType,
     provider: &Provider,
 ) -> Result<(), AppError> {
+    if matches!(app_type, AppType::OpenClaw) && openclaw_live_sync_hidden() {
+        log::debug!(
+            "OpenClaw is hidden in visibleApps; skipping live config write for provider '{}'",
+            provider.id
+        );
+        return Ok(());
+    }
+
     let mut effective_provider = provider.clone();
     effective_provider.settings_config =
         build_effective_settings_with_common_config(db, app_type, provider)?;
@@ -892,6 +904,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
 /// Writes all providers from the database to the live configuration file.
 /// Used for OpenCode and other additive mode applications.
 fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<(), AppError> {
+    if matches!(app_type, AppType::OpenClaw) && openclaw_live_sync_hidden() {
+        log::debug!("OpenClaw is hidden in visibleApps; skipping live provider sync");
+        return Ok(());
+    }
+
     let providers = state.db.get_all_providers(app_type.as_str())?;
     let mut synced_count = 0usize;
 
@@ -1455,6 +1472,11 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
 pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     use crate::openclaw_config;
 
+    if openclaw_live_sync_hidden() {
+        log::debug!("OpenClaw is hidden in visibleApps; skipping live provider import");
+        return Ok(0);
+    }
+
     let providers = openclaw_config::get_typed_providers()?;
     if providers.is_empty() {
         return Ok(0);
@@ -1590,6 +1612,13 @@ pub fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppErro
 /// without affecting other providers in the file.
 pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppError> {
     use crate::openclaw_config;
+
+    if openclaw_live_sync_hidden() {
+        log::debug!(
+            "OpenClaw is hidden in visibleApps; skipping live config removal for provider '{provider_id}'"
+        );
+        return Ok(());
+    }
 
     // Check if OpenClaw config directory exists
     if !openclaw_config::get_openclaw_dir().exists() {
