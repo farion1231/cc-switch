@@ -162,7 +162,15 @@ fn clear_claude_config_at(path: &Path) -> Result<bool, AppError> {
 }
 
 pub fn clear_claude_config_for_db(db: &Database) -> Result<bool, AppError> {
-    clear_claude_config_at(&claude_config_path_for_db(db)?)
+    let active_path = claude_config_path_for_db(db)?;
+    let mut changed = clear_claude_config_at(&active_path)?;
+
+    let default_path = claude_dir()?.join(CLAUDE_CONFIG_FILE);
+    if default_path != active_path {
+        changed |= clear_claude_config_at(&default_path)?;
+    }
+
+    Ok(changed)
 }
 
 pub fn claude_config_status_for_db(db: &Database) -> Result<(bool, PathBuf), AppError> {
@@ -336,5 +344,50 @@ mod tests {
         let path = claude_config_path_for_db(&db).expect("Claude plugin config path");
 
         assert_eq!(path, configured_dir.join("config.json"));
+    }
+
+    #[test]
+    #[serial]
+    fn clear_profile_and_config_plugin_config_also_clears_configured_dir() {
+        let home = TempHome::new();
+        let db = crate::database::Database::memory().expect("memory database");
+        let configured_dir = home.path().join("configured-claude");
+        let profile_dir = home.path().join("profile-and-config");
+        let configured_config = configured_dir.join("config.json");
+        let profile_config = profile_dir.join("config.json");
+
+        crate::settings::update_settings(crate::settings::AppSettings {
+            claude_config_dir: Some(configured_dir.to_string_lossy().into_owned()),
+            claude_provider_config_dir: Some(profile_dir.to_string_lossy().into_owned()),
+            ..Default::default()
+        })
+        .expect("set Claude dirs");
+        save_current_claude_provider(
+            &db,
+            "profile-and-config",
+            crate::provider::ClaudeActivationMode::ProfileAndConfig,
+            Some(&profile_dir),
+        );
+        fs::create_dir_all(&configured_dir).expect("create configured Claude dir");
+        fs::create_dir_all(&profile_dir).expect("create profile Claude dir");
+        fs::write(
+            &configured_config,
+            r#"{"primaryApiKey":"any","configured":true}"#,
+        )
+        .expect("write configured plugin config");
+        fs::write(&profile_config, r#"{"primaryApiKey":"any","profile":true}"#)
+            .expect("write profile plugin config");
+
+        let changed = clear_claude_config_for_db(&db).expect("clear plugin config");
+
+        assert!(changed);
+        let configured_content =
+            fs::read_to_string(&configured_config).expect("read configured plugin config");
+        let profile_content =
+            fs::read_to_string(&profile_config).expect("read profile plugin config");
+        assert!(!configured_content.contains("primaryApiKey"));
+        assert!(!profile_content.contains("primaryApiKey"));
+        assert!(configured_content.contains("configured"));
+        assert!(profile_content.contains("profile"));
     }
 }
