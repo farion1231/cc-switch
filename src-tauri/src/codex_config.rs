@@ -134,10 +134,29 @@ const CODEX_RESERVED_MODEL_PROVIDER_IDS: &[&str] = &[
     "ollama-chat",
 ];
 
+fn resolve_tilde_path(raw: &str) -> PathBuf {
+    if raw == "~" {
+        get_home_dir()
+    } else if let Some(stripped) = raw.strip_prefix("~/") {
+        get_home_dir().join(stripped)
+    } else if let Some(stripped) = raw.strip_prefix("~\\") {
+        get_home_dir().join(stripped)
+    } else {
+        PathBuf::from(raw)
+    }
+}
+
 /// 获取 Codex 配置目录路径
 pub fn get_codex_config_dir() -> PathBuf {
     if let Some(custom) = crate::settings::get_codex_override_dir() {
         return custom;
+    }
+
+    if let Ok(codex_home) = std::env::var("CODEX_HOME") {
+        let trimmed = codex_home.trim();
+        if !trimmed.is_empty() {
+            return resolve_tilde_path(trimmed);
+        }
     }
 
     get_home_dir().join(".codex")
