@@ -368,6 +368,34 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "ZetaAPI",
+    websiteUrl: "https://zetaapi.ai",
+    apiKeyUrl: "https://zetaapi.ai/go/ccs",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "ZetaAPI",
+      options: {
+        baseURL: "https://api.zetaapi.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-5.5": { name: "GPT-5.5" },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "zetaapi",
+    icon: "zetaapi",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "火山Agentplan",
     websiteUrl: "https://www.volcengine.com/product/ark",
     apiKeyUrl:

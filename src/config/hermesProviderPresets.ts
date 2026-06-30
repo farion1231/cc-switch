@@ -190,6 +190,25 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "ZetaAPI",
+    websiteUrl: "https://zetaapi.ai",
+    apiKeyUrl: "https://zetaapi.ai/go/ccs",
+    settingsConfig: {
+      name: "zetaapi",
+      base_url: "https://api.zetaapi.ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [{ id: "gpt-5.5", name: "GPT-5.5" }],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "zetaapi",
+    icon: "zetaapi",
+    suggestedDefaults: {
+      model: { default: "gpt-5.5", provider: "zetaapi" },
+    },
+  },
+  {
     name: "火山Agentplan",
     websiteUrl: "https://www.volcengine.com/product/ark",
     apiKeyUrl:

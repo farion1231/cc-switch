@@ -157,6 +157,11 @@ Register now via <a href="https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/">this lin
 <td>Thanks to Fenno.ai for sponsoring this project! Fenno.ai is a stable and efficient API relay service provider, currently focused on Codex relay. It is compatible with the OpenAI and Anthropic protocols and can be flexibly used from Codex, Claude Code, OpenCode, and other mainstream coding tools. It reliably supports enterprise-grade workloads of hundreds of billions of tokens per day, with corporate (B2B) settlement and invoicing for both domestic and overseas entities. Fenno.ai offers an exclusive benefit for CC Switch users: subscribe via <a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">this link</a> to the incredible ¥9.9 Coding Plan worth $150 in credits, and earn up to 20% in referral rewards — invite more, earn more!</td>
 </tr>
 
+<tr>
+<td width="180"><a href="https://zetaapi.ai/go/ccs"><img src="assets/partners/logos/zetaapi-banner.png" alt="ZetaAPI" width="150"></a></td>
+<td>Thanks to ZetaAPI for sponsoring this project! ZetaAPI focuses on real model fidelity, no watered-down responses, no quality degradation, and pricing as low as 35% of official rates. The platform does not mix traffic, secretly replace models with lower-quality alternatives, or use fake model routing. It supports Claude Code, Codex, Gemini, ChatGPT, and other mainstream AI models, helping users significantly reduce API costs while maintaining reliable model quality. At the same time, ZetaAPI provides enterprise-grade SLA-backed stability, standard API compatibility, one API key for multiple models, fast integration, and pay-as-you-go billing, making it suitable for AI products, coding agents, internal business tools, customer service systems, content generation, and automation workflows. If any model is verified to be inconsistent with its stated quality, ZetaAPI backs it with a 10x compensation guarantee, giving users a more stable, transparent, and trustworthy experience. Register via <a href="https://zetaapi.ai/go/ccs">this link</a> and use the promo code CC-SWITCH during your first recharge to enjoy an exclusive 10% discount on your first top-up, just for CC Switch users!</td>
+</tr>
+
 </table>
 
 </details>

@@ -157,6 +157,11 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 <td>Fenno.ai のご支援に感謝します！Fenno.ai は安定かつ高効率な API 中継サービスプロバイダーで、現在は主に Codex の中継を提供しています。OpenAI および Anthropic プロトコルに対応し、Codex・Claude Code・OpenCode などの主要なコーディングツールから柔軟に利用できます。1 日あたり数千億トークンというエンタープライズ級の呼び出し需要を安定して支え、国内外の法人による B2B 決済・請求書発行に対応しています。Fenno.ai は CC Switch 利用者限定の特典を用意しています：<a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">こちらのリンク</a>から 9.9 元（150 ドル相当）のお得な Coding Plan を購入でき、友達紹介で最大 20% の特典がもらえます。紹介すればするほどお得です！</td>
 </tr>
 
+<tr>
+<td width="180"><a href="https://zetaapi.ai/go/ccs"><img src="assets/partners/logos/zetaapi-banner.png" alt="ZetaAPI" width="150"></a></td>
+<td>本プロジェクトをご支援いただいている ZetaAPI に感謝します！ZetaAPI は、モデル品質の忠実性、水増しなし、性能劣化なし、公式価格の 35% から利用できる低価格を主な特徴としています。プラットフォームはトラフィックの混在、低品質モデルへの密かな切り替え、虚偽のモデルルーティングを行わず、Claude Code、Codex、Gemini、ChatGPT などの主要 AI モデルに対応しており、モデル品質を維持しながら API 利用コストを大幅に削減できます。同時に、ZetaAPI はエンタープライズ級の SLA 安定性保証、標準 API 互換、1つの Key による複数モデル接続、迅速な導入、従量課金などの機能を提供し、AI プロダクト、コード生成、企業内ツール、カスタマーサポート、コンテンツ生成、自動化ワークフローなどの用途に適しています。万が一、モデル品質が表記内容と一致しないことが確認された場合、ZetaAPI は 10 倍補償保証を提供し、ユーザーがより安定して、透明性高く、安心して利用できる環境を実現します。<a href="https://zetaapi.ai/go/ccs">こちらのリンク</a>から登録し、初回チャージ時にプロモコード CC-SWITCH を使用すると、CC Switch ユーザー限定の初回チャージ 10% オフ特典をご利用いただけます！</td>
+</tr>
+
 </table>
 
 </details>

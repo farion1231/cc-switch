@@ -270,6 +270,21 @@ export const providerPresets: ProviderPreset[] = [
     icon: "fenno",
   },
   {
+    name: "ZetaAPI",
+    websiteUrl: "https://zetaapi.ai",
+    apiKeyUrl: "https://zetaapi.ai/go/ccs",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.zetaapi.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "zetaapi",
+    icon: "zetaapi",
+  },
+  {
     name: "Gemini Native",
     websiteUrl: "https://ai.google.dev/gemini-api",
     apiKeyUrl: "https://aistudio.google.com/app/apikey",

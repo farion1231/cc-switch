@@ -402,6 +402,42 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "ZetaAPI",
+    websiteUrl: "https://zetaapi.ai",
+    apiKeyUrl: "https://zetaapi.ai/go/ccs",
+    settingsConfig: {
+      baseUrl: "https://api.zetaapi.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          contextWindow: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "zetaapi",
+    icon: "zetaapi",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "zetaapi/gpt-5.5",
+      },
+      modelCatalog: {
+        "zetaapi/gpt-5.5": { alias: "GPT-5.5" },
+      },
+    },
+  },
+  {
     name: "Unity2.ai",
     websiteUrl: "https://unity2.ai",
     apiKeyUrl: "https://unity2.ai/register?source=ccs",

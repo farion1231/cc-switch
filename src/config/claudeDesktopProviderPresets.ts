@@ -214,6 +214,19 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "fenno",
   },
   {
+    name: "ZetaAPI",
+    websiteUrl: "https://zetaapi.ai",
+    apiKeyUrl: "https://zetaapi.ai/go/ccs",
+    category: "aggregator",
+    baseUrl: "https://api.zetaapi.ai",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(),
+    isPartner: true,
+    partnerPromotionKey: "zetaapi",
+    icon: "zetaapi",
+  },
+  {
     name: "火山Agentplan",
     websiteUrl: "https://www.volcengine.com/product/ark",
     apiKeyUrl:

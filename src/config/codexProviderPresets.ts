@@ -318,6 +318,22 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     icon: "fenno",
   },
   {
+    name: "ZetaAPI",
+    websiteUrl: "https://zetaapi.ai",
+    apiKeyUrl: "https://zetaapi.ai/go/ccs",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "zetaapi",
+      "https://api.zetaapi.ai/v1",
+      "gpt-5.5",
+    ),
+    endpointCandidates: ["https://api.zetaapi.ai/v1"],
+    isPartner: true,
+    partnerPromotionKey: "zetaapi",
+    icon: "zetaapi",
+  },
+  {
     name: "Azure OpenAI",
     websiteUrl:
       "https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/codex",

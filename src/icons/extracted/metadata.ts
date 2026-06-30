@@ -241,6 +241,21 @@ export const iconMetadata: Record<string, IconMetadata> = {
     ],
     defaultColor: "#000000",
   },
+  zetaapi: {
+    name: "zetaapi",
+    displayName: "ZetaAPI",
+    category: "ai-provider",
+    keywords: [
+      "zetaapi",
+      "zeta",
+      "aggregator",
+      "relay",
+      "claude",
+      "gpt",
+      "gateway",
+    ],
+    defaultColor: "#000000",
+  },
   cubence: {
     name: "cubence",
     displayName: "Cubence",
