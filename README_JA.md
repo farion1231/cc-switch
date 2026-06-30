@@ -10,6 +10,7 @@
 [![Downloads](https://img.shields.io/github/downloads/farion1231/cc-switch/total)](https://github.com/farion1231/cc-switch/releases/latest)
 
 <a href="https://trendshift.io/repositories/15372" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15372" alt="farion1231%2Fcc-switch | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+<a href="https://www.star-history.com/#farion1231/cc-switch&Date"><picture><source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/badge?repo=farion1231/cc-switch&theme=dark" /><img alt="Star History Rank" src="https://api.star-history.com/badge?repo=farion1231/cc-switch" width="196" height="55" /></picture></a>
 
 ### 🌐 唯一の公式サイト：**[ccswitch.io](https://ccswitch.io)**
 
@@ -24,9 +25,11 @@
 <details open>
 <summary>クリックで折りたたむ</summary>
 
-[![Kimi K2.6](https://kimi-file.moonshot.cn/prod-chat-kimi/kfs/4/2/2026-06-08/1d8j61pt3v89kkekm5mbg)](https://platform.moonshot.cn/console?aff=cc-switch)
+[![Kimi K2.7 Code](assets/partners/banners/kimi-banner-en.png)](https://platform.kimi.ai?aff=cc-switch)
 
-Kimi K2.6 は Moonshot AI によるオープンソースのネイティブマルチモーダル・エージェントモデルで、長期的なコーディング、コード駆動設計、スウォーム（群）型タスクオーケストレーションのために構築されています。フロントエンド、DevOps、パフォーマンス最適化、フルスタックワークフローにわたる複雑なエンドツーエンドのエンジニアリング作業に対応できるよう設計されており、多数の専門エージェントを協調させて、実際のコーディングタスクの計画・実装・テスト・反復を行います。**[ここをクリックして Kimi を体験する](https://platform.moonshot.cn/console?aff=cc-switch)**
+Kimi K2.7 Code は Moonshot AI が開発した、コーディングに特化したオープンソースのエージェントモデルです。コーディング能力とエージェント性能が全面的に強化され、実世界の長程コーディングタスクで大幅な向上を実現し、複雑なソフトウェアエンジニアリングのワークフロー全体でエンドツーエンドのタスク成功率を高めます。さらに K2.7 Code は推論効率を改善し、K2.6 と比べて推論トークンの消費を約 30% 削減します。**[ここをクリックして Kimi を体験する](https://platform.kimi.ai?aff=cc-switch)**
+
+コーディング作業がメインですか？コーディングのために作られたサブスクリプション、**[Kimi For Coding プラン](https://www.kimi.com/code/?aff=cc-switch)** をぜひお試しください！
 
 ---
 
@@ -60,13 +63,20 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
+<td width="180"><a href="https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory"><img src="assets/partners/logos/TeamoRouter-banner.png" alt="TeamoRouter" width="150"></a></td>
+<td>このプロジェクトをご支援いただいている TeamoRouter に感謝します！TeamoRouter は、開発者、AI チーム、企業向けに構築されたエンタープライズグレードの Agentic LLM ゲートウェイです。サブスクリプション不要で、単一の統合 API を通じて Claude Code、Codex、Gemini CLI、OpenAI Codex、その他の人気 AI エージェントにアクセスでき、API 料金は最大 90% オフで利用できます。
+一般的な API リレーサービスとは異なり、TeamoRouter は OpenAI、Anthropic、Vertex、Azure、AWS Bedrock など、数百の公式モデルプロバイダーと信頼できるインフラパートナーを集約しています。各プロバイダーは、Agent プロトコルとの 100% 互換性、キャッシュ性能、リクエストの追跡可能性について検証されており、リバースエンジニアリングされたものや品質が薄められたエンドポイントではなく、安定した品質を提供します。プラットフォームは公式に近い TTFT、99.6% の SLA、最大 5,000 QPM のエンタープライズ規模のスループット、そして業界トップクラスのキャッシュヒット率を提供し、長時間稼働するエージェントワークフローのトークンコストを大幅に削減します。
+TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーティング、利用状況分析、動的なプロバイダー最適化、専任サポートなどのエンタープライズ機能も提供しています。さらにシンプルな体験を求める場合は、Teamo Desktop を使うことで、Claude Code、Codex、Gemini CLI、その他の人気 AI エージェントをワンクリックで利用できます。API キー管理や手動のゲートウェイ設定は不要です。新規ユーザーとして<a href="https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory">こちらのリンク</a>から登録すると、初回チャージが 10% オフになります。</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch"><img src="assets/partners/logos/byteplus.png" alt="BytePlus" width="150"></a></td>
 <td>Dola seed のご支援に感謝します！Dola Seed 2.0 は ByteDance がグローバル市場向けに独自開発したフルモーダル汎用大規模モデルです。統一されたマルチモーダルアーキテクチャを基盤に、テキスト・画像・音声・動画の統合的な理解と生成をサポートします。エージェント連携をネイティブに実現し、強力な推論、長時間タスクの実行、ツール統合、コーディング能力を備えています。スマートコックピット、パーソナルアシスタント、教育、カスタマーサポート、マーケティング、リテールなど幅広いシナリオに適用可能で、マルチモーダル認識、エンドツーエンドの複雑なタスク遂行、安定したインタラクション、データセキュリティに優れ、ModelArk プラットフォームを通じて手軽に利用・デプロイできます。<a href="https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch">このリンク</a>からご登録いただくと、モデルごとに 500,000 トークンの無料推論クォータを進呈します。<a href="https://www.volcengine.com/activity/ai618?utm_campaign=hw&utm_content=hw&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch"> >>中国大陆地区的开发者请点击这里</a></td>
 </tr>
 
 <tr>
-<td width="180"><a href="https://cloud.siliconflow.cn/i/drGuwc9k"><img src="assets/partners/logos/silicon_en.jpg" alt="SiliconFlow" width="150"></a></td>
-<td>SiliconFlow のご支援に感謝します！SiliconFlow は高性能 AI インフラストラクチャおよびモデル API プラットフォームで、言語・音声・画像・動画モデルへの高速かつ信頼性の高いアクセスをワンストップで提供します。従量課金制、豊富なマルチモーダルモデル対応、高速推論、エンタープライズグレードの安定性を備え、開発者やチームがより効率的に AI アプリケーションを構築・拡張できるようサポートします。<a href="https://cloud.siliconflow.cn/i/drGuwc9k">このリンク</a>から登録し、本人確認を完了すると、プラットフォーム内の全モデルで利用可能な ¥16 のボーナスクレジットが付与されます。SiliconFlow は OpenClaw にも対応しており、SiliconFlow の API キーを接続することで主要な AI モデルを無料で呼び出すことができます。</td>
+<td width="180"><a href="https://cloud.siliconflow.cn/i/YflgU2Ve"><img src="assets/partners/logos/silicon_en.jpg" alt="SiliconFlow" width="150"></a></td>
+<td>SiliconFlow のご支援に感謝します！SiliconFlow は高性能 AI インフラストラクチャおよびモデル API プラットフォームで、言語・音声・画像・動画モデルへの高速かつ信頼性の高いアクセスをワンストップで提供します。従量課金制、豊富なマルチモーダルモデル対応、高速推論、エンタープライズグレードの安定性を備え、開発者やチームがより効率的に AI アプリケーションを構築・拡張できるようサポートします。<a href="https://cloud.siliconflow.cn/i/YflgU2Ve">このリンク</a>から登録し、本人確認を完了すると、プラットフォーム内の全モデルで利用可能な ¥16 のボーナスクレジットが付与されます。SiliconFlow は OpenClaw にも対応しており、SiliconFlow の API キーを接続することで主要な AI モデルを無料で呼び出すことができます。</td>
 </tr>
 
 <tr>
@@ -147,6 +157,16 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 <tr>
 <td width="180"><a href="https://unity2.ai/register?source=ccs"><img src="assets/partners/logos/unity2.jpg" alt="Unity2.ai" width="150"></a></td>
 <td>Unity2.ai のご支援に感謝します！Unity2.ai は個人開発者・チーム・企業向けの高性能 AI モデル API リレープラットフォームです。中国の大手企業に長年利用されており、1 日 300 億トークン以上を処理し、5000 RPM クラスの高並列に対応しています。残高課金、初回チャージボーナス、組み合わせサブスクリプション、企業向け請求書発行、専任サポートを提供。<a href="https://unity2.ai/register?source=ccs">こちらのリンク</a>から登録すると $2 のクレジット、公式グループへの参加でさらに $10、最大 $12 の無料クレジットがもらえます！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL"><img src="assets/partners/logos/fenno-banner.png" alt="Fenno.ai" width="150"></a></td>
+<td>Fenno.ai のご支援に感謝します！Fenno.ai は安定かつ高効率な API 中継サービスプロバイダーで、現在は主に Codex の中継を提供しています。OpenAI および Anthropic プロトコルに対応し、Codex・Claude Code・OpenCode などの主要なコーディングツールから柔軟に利用できます。1 日あたり数千億トークンというエンタープライズ級の呼び出し需要を安定して支え、国内外の法人による B2B 決済・請求書発行に対応しています。Fenno.ai は CC Switch 利用者限定の特典を用意しています：<a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">こちらのリンク</a>から 9.9 元（150 ドル相当）のお得な Coding Plan を購入でき、友達紹介で最大 20% の特典がもらえます。紹介すればするほどお得です！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://zetaapi.ai/go/ccs"><img src="assets/partners/logos/zetaapi-banner.png" alt="ZetaAPI" width="150"></a></td>
+<td>本プロジェクトをご支援いただいている ZetaAPI に感謝します！ZetaAPI は、モデル品質の忠実性、水増しなし、性能劣化なし、公式価格の 35% から利用できる低価格を主な特徴としています。プラットフォームはトラフィックの混在、低品質モデルへの密かな切り替え、虚偽のモデルルーティングを行わず、Claude Code、Codex、Gemini、ChatGPT などの主要 AI モデルに対応しており、モデル品質を維持しながら API 利用コストを大幅に削減できます。同時に、ZetaAPI はエンタープライズ級の SLA 安定性保証、標準 API 互換、1つの Key による複数モデル接続、迅速な導入、従量課金などの機能を提供し、AI プロダクト、コード生成、企業内ツール、カスタマーサポート、コンテンツ生成、自動化ワークフローなどの用途に適しています。万が一、モデル品質が表記内容と一致しないことが確認された場合、ZetaAPI は 10 倍補償保証を提供し、ユーザーがより安定して、透明性高く、安心して利用できる環境を実現します。<a href="https://zetaapi.ai/go/ccs">こちらのリンク</a>から登録し、初回チャージ時にプロモコード CC-SWITCH を使用すると、CC Switch ユーザー限定の初回チャージ 10% オフ特典をご利用いただけます！</td>
 </tr>
 
 </table>

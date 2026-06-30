@@ -758,7 +758,7 @@ dependencies = [
 
 [[package]]
 name = "cc-switch"
-version = "3.16.3"
+version = "3.16.4"
 dependencies = [
  "anyhow",
  "arboard",
@@ -825,6 +825,7 @@ dependencies = [
  "windows-sys 0.61.2",
  "winreg 0.52.0",
  "zip 2.4.2",
+ "zstd",
 ]
 
 [[package]]

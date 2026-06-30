@@ -2185,7 +2185,11 @@ base_url = "https://proxy.example/v1"
         let env_sqlite_home = dir.path().join("env-sqlite-home");
         let config_sqlite_home = dir.path().join("config-sqlite-home");
         let _guard = EnvVarGuard::set("CODEX_SQLITE_HOME", &env_sqlite_home);
-        let config_text = format!("sqlite_home = \"{}\"\n", config_sqlite_home.display());
+        let escaped_config_sqlite_home = config_sqlite_home.to_string_lossy();
+        let escaped_config_sqlite_home = escaped_config_sqlite_home
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        let config_text = format!("sqlite_home = \"{escaped_config_sqlite_home}\"\n");
 
         let paths = codex_state_db_paths(&codex_dir, &config_text);
 

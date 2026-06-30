@@ -25,13 +25,6 @@ const expectedChatPresets = new Map<
     },
   ],
   [
-    "DouBaoSeed",
-    {
-      baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
-      contextWindows: { "doubao-seed-2-0-code-preview-latest": 256000 },
-    },
-  ],
-  [
     "DeepSeek",
     {
       baseUrl: "https://api.deepseek.com",
@@ -45,14 +38,14 @@ const expectedChatPresets = new Map<
     "Zhipu GLM",
     {
       baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
-      contextWindows: { "glm-5.1": 200000 },
+      contextWindows: { "glm-5.2": 200000 },
     },
   ],
   [
     "Zhipu GLM en",
     {
       baseUrl: "https://api.z.ai/api/coding/paas/v4",
-      contextWindows: { "glm-5.1": 200000 },
+      contextWindows: { "glm-5.2": 200000 },
     },
   ],
   [
@@ -60,16 +53,6 @@ const expectedChatPresets = new Map<
     {
       baseUrl: "https://qianfan.baidubce.com/v2/coding",
       contextWindows: { "qianfan-code-latest": 131072 },
-    },
-  ],
-  [
-    "Bailian",
-    {
-      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      contextWindows: {
-        "qwen3-coder-plus": 1000000,
-        "qwen3-max": 262144,
-      },
     },
   ],
   [
@@ -84,6 +67,7 @@ const expectedChatPresets = new Map<
     {
       baseUrl: "https://api.stepfun.com/step_plan/v1",
       contextWindows: {
+        "step-3.7-flash": 262144,
         "step-3.5-flash-2603": 262144,
         "step-3.5-flash": 262144,
       },
@@ -94,6 +78,7 @@ const expectedChatPresets = new Map<
     {
       baseUrl: "https://api.stepfun.ai/step_plan/v1",
       contextWindows: {
+        "step-3.7-flash": 262144,
         "step-3.5-flash-2603": 262144,
         "step-3.5-flash": 262144,
       },
@@ -107,45 +92,10 @@ const expectedChatPresets = new Map<
     },
   ],
   [
-    "Longcat",
-    {
-      baseUrl: "https://api.longcat.chat/openai/v1",
-      contextWindows: { "LongCat-Flash-Chat": 262144 },
-    },
-  ],
-  [
-    "MiniMax",
-    {
-      baseUrl: "https://api.minimaxi.com/v1",
-      contextWindows: { "MiniMax-M2.7": 200000 },
-    },
-  ],
-  [
-    "MiniMax en",
-    {
-      baseUrl: "https://api.minimax.io/v1",
-      contextWindows: { "MiniMax-M2.7": 200000 },
-    },
-  ],
-  [
     "BaiLing",
     {
       baseUrl: "https://api.tbox.cn/api/llm/v1",
-      contextWindows: { "Ling-2.5-1T": 131072 },
-    },
-  ],
-  [
-    "Xiaomi MiMo",
-    {
-      baseUrl: "https://api.xiaomimimo.com/v1",
-      contextWindows: { "mimo-v2.5-pro": 1048576 },
-    },
-  ],
-  [
-    "Xiaomi MiMo Token Plan (China)",
-    {
-      baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
-      contextWindows: { "mimo-v2.5-pro": 1048576 },
+      contextWindows: { "Ling-2.6-1T": 262144 },
     },
   ],
   [
@@ -200,6 +150,62 @@ describe("Codex Chat provider presets", () => {
           ]),
         ),
       ).toEqual(expected.contextWindows);
+    }
+  });
+
+  it("uses native Responses API for migrated CN providers without local route mapping", () => {
+    const nativeResponsesPresets = new Map<
+      string,
+      { contextWindows: Record<string, number> }
+    >([
+      [
+        "DouBaoSeed",
+        { contextWindows: { "doubao-seed-2-1-pro-260628": 262144 } },
+      ],
+      ["Bailian", { contextWindows: { "qwen3-coder-plus": 1048576 } }],
+      ["Longcat", { contextWindows: { "LongCat-2.0-Preview": 1048576 } }],
+      ["MiniMax", { contextWindows: { "MiniMax-M3": 1000000 } }],
+      ["MiniMax en", { contextWindows: { "MiniMax-M3": 1000000 } }],
+      [
+        "Xiaomi MiMo",
+        {
+          contextWindows: {
+            "mimo-v2.5-pro": 1048576,
+            "mimo-v2.5": 1048576,
+          },
+        },
+      ],
+      [
+        "Xiaomi MiMo Token Plan (China)",
+        {
+          contextWindows: {
+            "mimo-v2.5-pro": 1048576,
+            "mimo-v2.5": 1048576,
+          },
+        },
+      ],
+    ]);
+
+    for (const [name, expected] of nativeResponsesPresets) {
+      const preset = codexProviderPresets.find((item) => item.name === name);
+
+      expect(preset, `${name} preset`).toBeDefined();
+      expect(preset?.apiFormat).toBe("openai_responses");
+      // 原生 Responses 预设现在带 modelCatalog：cc-switch 直连时据此生成
+      // ~/.codex 的 model-catalogs.json（shell_command 编辑、不发 freeform
+      // apply_patch）。带 catalog 不再强制开“本地路由映射”——前端已按
+      // apiFormat 解耦（openai_responses 默认不开接管）。
+      expect((preset?.modelCatalog ?? []).length).toBeGreaterThan(0);
+      expect(
+        Object.fromEntries(
+          (preset?.modelCatalog ?? []).map((model) => [
+            model.model,
+            model.contextWindow,
+          ]),
+        ),
+      ).toEqual(expected.contextWindows);
+      // 原生（直连）不走 Chat 转换，因此不需要 codexChatReasoning。
+      expect(preset?.codexChatReasoning).toBeUndefined();
     }
   });
 });

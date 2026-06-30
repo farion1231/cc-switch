@@ -2313,6 +2313,9 @@ impl ProxyService {
                 .get("auth")
                 .ok_or_else(|| "Codex 供应商缺少 auth 配置".to_string())?;
             let config_str = effective_settings.get("config").and_then(|v| v.as_str());
+            let profile = crate::codex_config::CodexCatalogToolProfile::from_api_format(
+                provider.meta.as_ref().and_then(|m| m.api_format.as_deref()),
+            );
 
             crate::codex_config::write_codex_provider_live_with_catalog(
                 &effective_settings,
@@ -2320,6 +2323,7 @@ impl ProxyService {
                 auth,
                 config_str,
                 None,
+                profile,
             )
             .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
         }
@@ -2580,6 +2584,9 @@ impl ProxyService {
             .get("auth")
             .ok_or_else(|| "Codex 配置缺少 auth 字段".to_string())?;
         let config_str = config.get("config").and_then(|v| v.as_str());
+        let profile = crate::codex_config::CodexCatalogToolProfile::from_api_format(
+            provider.meta.as_ref().and_then(|m| m.api_format.as_deref()),
+        );
 
         crate::codex_config::write_codex_provider_live_with_catalog(
             config,
@@ -2587,6 +2594,7 @@ impl ProxyService {
             auth,
             config_str,
             None,
+            profile,
         )
         .map_err(|e| format!("写入 Codex 配置失败: {e}"))
     }
@@ -2598,7 +2606,7 @@ impl ProxyService {
     fn write_codex_takeover_live_for_provider(
         &self,
         config: &Value,
-        _provider: Option<&Provider>,
+        provider: Option<&Provider>,
     ) -> Result<(), String> {
         #[cfg(test)]
         if FAIL_CODEX_TAKEOVER_LIVE_WRITE_FOR_TEST.swap(false, std::sync::atomic::Ordering::SeqCst)
@@ -2612,9 +2620,12 @@ impl ProxyService {
                 .filter(|auth| Self::codex_auth_has_proxy_placeholder(auth))
             {
                 let config_str = config.get("config").and_then(|v| v.as_str()).unwrap_or("");
+                let profile = crate::codex_config::CodexCatalogToolProfile::from_api_format(
+                    provider.and_then(|p| p.meta.as_ref()?.api_format.as_deref()),
+                );
                 let prepared_config =
                     crate::codex_config::prepare_codex_live_config_text_with_optional_catalog(
-                        config, config_str,
+                        config, config_str, profile,
                     )
                     .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
                 let live_config =
@@ -2648,10 +2659,18 @@ impl ProxyService {
         // living in the config's `experimental_bearer_token`). Computing it up here
         // keeps every config-writing branch — write-auth, delete-auth, no-auth —
         // consistent instead of letting the empty-auth path skip projection.
+        // Verbatim restore has no Provider in hand (we only have the stored
+        // backup config), so the catalog tool profile can't be recovered here.
+        // Default to ProxyChat: a restored native-direct backup keeps its inline
+        // modelCatalog but would not get apply_patch re-stripped until the next
+        // provider switch rewrites it via write_live_snapshot. Acceptable known
+        // limitation (restore-of-deleted-provider-backup only).
         let prepared_cfg = config_str
             .map(|cfg| {
                 crate::codex_config::prepare_codex_live_config_text_with_optional_catalog(
-                    config, cfg,
+                    config,
+                    cfg,
+                    crate::codex_config::CodexCatalogToolProfile::ProxyChat,
                 )
             })
             .transpose()

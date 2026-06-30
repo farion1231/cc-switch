@@ -171,10 +171,24 @@ export const normalizeCodexCatalogModelsForSave = (
       ? Number.parseInt(rawContextWindow, 10)
       : undefined;
 
+    const inputModalities = item.inputModalities?.filter(
+      (m) => typeof m === "string" && m.trim(),
+    );
+
+    const baseInstructions = item.baseInstructions?.trim();
+
     normalized.push({
       model,
       ...(displayName ? { displayName } : {}),
       ...(contextWindow && contextWindow > 0 ? { contextWindow } : {}),
+      // Native Responses profile overrides (ignored by the chat/proxy profile).
+      ...(typeof item.supportsParallelToolCalls === "boolean"
+        ? { supportsParallelToolCalls: item.supportsParallelToolCalls }
+        : {}),
+      ...(inputModalities && inputModalities.length > 0
+        ? { inputModalities }
+        : {}),
+      ...(baseInstructions ? { baseInstructions } : {}),
     });
   }
 
@@ -586,24 +600,21 @@ function ProviderFormFull({
     resetCodexConfig,
   } = useCodexConfigState({ initialData });
 
+  const initialCodexApiFormat: CodexApiFormat =
+    initialData?.meta?.apiFormat === "openai_chat"
+      ? "openai_chat"
+      : initialData?.meta?.apiFormat === "openai_responses"
+        ? "openai_responses"
+        : (codexApiFormatFromWireApi(
+            extractCodexWireApi(
+              typeof initialData?.settingsConfig?.config === "string"
+                ? initialData.settingsConfig.config
+                : "",
+            ),
+          ) ?? "openai_responses");
+
   const [localCodexApiFormat, setLocalCodexApiFormat] =
-    useState<CodexApiFormat>(() => {
-      if (initialData?.meta?.apiFormat === "openai_chat") {
-        return "openai_chat";
-      }
-      if (initialData?.meta?.apiFormat === "openai_responses") {
-        return "openai_responses";
-      }
-      return (
-        codexApiFormatFromWireApi(
-          extractCodexWireApi(
-            typeof initialData?.settingsConfig?.config === "string"
-              ? initialData.settingsConfig.config
-              : "",
-          ),
-        ) ?? "openai_responses"
-      );
-    });
+    useState<CodexApiFormat>(initialCodexApiFormat);
 
   const { configError: codexConfigError, debouncedValidate } =
     useCodexTomlValidation();
@@ -1279,8 +1290,11 @@ function ProviderFormFull({
           category !== "official" && (codexConfig ?? "").trim()
             ? setCodexWireApi(codexConfig ?? "", "responses")
             : (codexConfig ?? "");
+        // 模型映射与「路由接管」解耦：对所有非官方供应商，填了就持久化
+        //（Chat 生成兼容路由、原生 Responses 生成 model-catalogs.json），
+        // 留空归一化为 [] 即不写。后端只看 modelCatalog.models 是否非空。
         const normalizedCatalogModels =
-          category !== "official" && localCodexApiFormat === "openai_chat"
+          category !== "official"
             ? normalizeCodexCatalogModelsForSave(codexCatalogModels)
             : [];
         // Sync first catalog row's model into config.toml so Codex uses it as default

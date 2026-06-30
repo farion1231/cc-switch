@@ -223,7 +223,8 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
         // 响应解压由 response_processor 根据 content-encoding 手动处理。
         .no_gzip()
         .no_brotli()
-        .no_deflate();
+        .no_deflate()
+        .no_zstd();
 
     // 有代理地址则使用代理，否则跟随系统代理
     if let Some(url) = proxy_url {
