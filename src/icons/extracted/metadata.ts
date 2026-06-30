@@ -77,6 +77,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["qwen", "tongyi"],
     defaultColor: "#FF6A00",
   },
+  amux: {
+    name: "amux",
+    displayName: "Amux",
+    category: "ai-provider",
+    keywords: ["amux", "amuxapi", "aggregator", "relay", "gateway", "gpt"],
+    defaultColor: "#000000",
+  },
   anthropic: {
     name: "anthropic",
     displayName: "Anthropic",

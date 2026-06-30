@@ -351,6 +351,20 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     icon: "teamorouter",
   },
   {
+    name: "Amux",
+    websiteUrl: "https://amux.ai",
+    apiKeyUrl: "https://amux.ai",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "amux",
+      "https://api.amux.ai/v1",
+      "gpt-5.5",
+    ),
+    endpointCandidates: ["https://api.amux.ai/v1"],
+    icon: "amux",
+  },
+  {
     name: "Azure OpenAI",
     websiteUrl:
       "https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/codex",
