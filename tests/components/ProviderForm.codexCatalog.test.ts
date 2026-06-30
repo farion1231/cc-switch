@@ -67,4 +67,19 @@ describe("ProviderForm Codex catalog helpers", () => {
       }),
     ).toBeUndefined();
   });
+
+  it("infers Codex OAuth provider type from Claude settingsConfig fallback URLs", () => {
+    for (const settingsConfig of [
+      { base_url: "https://chatgpt.com/backend-api/codex" },
+      { baseURL: "https://chatgpt.com/backend-api/codex" },
+      { apiEndpoint: { url: "https://chatgpt.com/backend-api/codex" } },
+    ]) {
+      expect(
+        resolveClaudeManagedProviderType({
+          baseUrl: "",
+          settingsConfig: JSON.stringify(settingsConfig),
+        }),
+      ).toBe("codex_oauth");
+    }
+  });
 });

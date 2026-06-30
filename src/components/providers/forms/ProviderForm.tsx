@@ -135,12 +135,50 @@ type PresetEntry = {
 
 type ClaudeManagedProviderType = "github_copilot" | "codex_oauth";
 
+const firstNonEmptyString = (...values: Array<unknown>): string | undefined => {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
+};
+
+const resolveClaudeBaseUrlFromSettingsConfig = (
+  settingsConfig?: string | null,
+): string | undefined => {
+  if (!settingsConfig?.trim()) return undefined;
+
+  try {
+    const parsed = JSON.parse(settingsConfig) as Record<string, unknown>;
+    const env =
+      parsed.env && typeof parsed.env === "object"
+        ? (parsed.env as Record<string, unknown>)
+        : undefined;
+    const apiEndpoint =
+      parsed.apiEndpoint && typeof parsed.apiEndpoint === "object"
+        ? (parsed.apiEndpoint as Record<string, unknown>)
+        : undefined;
+
+    return firstNonEmptyString(
+      env?.ANTHROPIC_BASE_URL,
+      parsed.base_url,
+      parsed.baseURL,
+      apiEndpoint?.url,
+    );
+  } catch {
+    return undefined;
+  }
+};
+
 export const resolveClaudeManagedProviderType = ({
   baseUrl,
+  settingsConfig,
   initialProviderType,
   templateProviderType,
 }: {
   baseUrl?: string | null;
+  settingsConfig?: string | null;
   initialProviderType?: string;
   templateProviderType?: string;
 }): ClaudeManagedProviderType | undefined => {
@@ -148,8 +186,13 @@ export const resolveClaudeManagedProviderType = ({
   if (templateProviderType === "codex_oauth") return "codex_oauth";
   if (initialProviderType === "github_copilot") return "github_copilot";
   if (initialProviderType === "codex_oauth") return "codex_oauth";
-  if ((baseUrl ?? "").includes("githubcopilot.com")) return "github_copilot";
-  if (isChatGptCodexOAuthBaseUrl(baseUrl)) return "codex_oauth";
+  const effectiveBaseUrl =
+    firstNonEmptyString(baseUrl) ??
+    resolveClaudeBaseUrlFromSettingsConfig(settingsConfig);
+  if ((effectiveBaseUrl ?? "").includes("githubcopilot.com")) {
+    return "github_copilot";
+  }
+  if (isChatGptCodexOAuthBaseUrl(effectiveBaseUrl)) return "codex_oauth";
   return undefined;
 };
 
@@ -741,6 +784,7 @@ function ProviderFormFull({
   });
   const managedProviderType = resolveClaudeManagedProviderType({
     baseUrl,
+    settingsConfig: form.getValues("settingsConfig"),
     initialProviderType: initialData?.meta?.providerType,
     templateProviderType: templatePreset?.providerType,
   });

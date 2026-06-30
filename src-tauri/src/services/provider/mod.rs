@@ -5361,6 +5361,75 @@ base_url = "http://localhost:8080"
 
     #[tokio::test]
     #[serial]
+    async fn update_current_claude_provider_restores_live_backup_when_proxy_live_sync_fails() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        let original = claude_provider(
+            "p1",
+            "Claude A",
+            "token-original",
+            "https://api.original.example",
+            None,
+        );
+        db.save_provider("claude", &original)
+            .expect("save original provider");
+        db.set_current_provider("claude", "p1")
+            .expect("set db current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
+            .expect("set local current provider");
+
+        let original_backup =
+            serde_json::to_string(&original.settings_config).expect("serialize original backup");
+        db.save_live_backup("claude", &original_backup)
+            .await
+            .expect("seed original live backup");
+        db.update_proxy_config(ProxyConfig {
+            listen_port: 0,
+            ..Default::default()
+        })
+        .await
+        .expect("update proxy config");
+
+        state
+            .proxy_service
+            .start()
+            .await
+            .expect("start proxy service");
+
+        fs::create_dir_all(get_claude_settings_path()).expect("block live settings writes");
+
+        let updated = claude_provider(
+            "p1",
+            "Claude A",
+            "token-updated",
+            "https://api.updated.example",
+            None,
+        );
+
+        let err = ProviderService::update(&state, AppType::Claude, None, updated)
+            .expect_err("live sync failure should reject current provider update");
+        assert!(
+            err.to_string().contains("同步 Claude Live 配置失败"),
+            "expected live sync failure, got {err:?}"
+        );
+
+        let backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("get live backup")
+            .expect("backup remains present");
+        assert_eq!(
+            backup.original_config, original_backup,
+            "failed current-provider update must restore the takeover backup used for later restore"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn update_current_claude_profile_only_skips_proxy_live_write_during_takeover() {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
@@ -7736,6 +7805,14 @@ impl ProviderService {
             let plan = Self::claude_switch_plan(&provider);
             Self::validate_claude_runtime_switch_plan(&plan)?;
         }
+        let previous_live_backup = if is_current {
+            Some(
+                futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
+                    .map_err(|e| AppError::Message(format!("读取 Live 备份失败: {e}")))?,
+            )
+        } else {
+            None
+        };
 
         // Save to database only after current-provider runtime validation succeeds.
         state.db.save_provider(app_type.as_str(), &provider)?;
@@ -7766,11 +7843,8 @@ impl ProviderService {
             // 如果 Claude 代理接管处于激活状态，并且代理服务正在运行：
             // - 不直接走普通 Live 写入逻辑
             // - 改为更新 Live 备份，并在 Claude 下同步代理安全的 Live 配置
-            let has_live_backup =
-                futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
-                    .ok()
-                    .flatten()
-                    .is_some();
+            let previous_live_backup = previous_live_backup.unwrap_or(None);
+            let has_live_backup = previous_live_backup.is_some();
             let live_taken_over = state
                 .proxy_service
                 .detect_takeover_in_live_config_for_app(&app_type);
@@ -7778,19 +7852,18 @@ impl ProviderService {
             // by proxy takeover, including the short activation window before
             // proxy_config.enabled is committed.
             let should_sync_via_proxy = has_live_backup || live_taken_over;
+            let is_claude_profile_only = matches!(
+                claude_switch_plan
+                    .as_ref()
+                    .map(|plan| &plan.activation_mode),
+                Some(ClaudeActivationMode::ProfileOnly)
+            );
 
             let update_result = (|| -> Result<(), AppError> {
                 if let Some(plan) = claude_switch_plan.as_ref() {
                     Self::validate_claude_runtime_switch_plan(plan)?;
                     Self::apply_claude_switch_plan(plan)?;
                 }
-
-                let is_claude_profile_only = matches!(
-                    claude_switch_plan
-                        .as_ref()
-                        .map(|plan| &plan.activation_mode),
-                    Some(ClaudeActivationMode::ProfileOnly)
-                );
 
                 if should_sync_via_proxy {
                     if matches!(app_type, AppType::ClaudeDesktop) {
@@ -7808,14 +7881,32 @@ impl ProviderService {
                         && !is_claude_profile_only
                         && futures::executor::block_on(state.proxy_service.is_running())
                     {
-                        futures::executor::block_on(
+                        let sync_result = futures::executor::block_on(
                             state
                                 .proxy_service
                                 .sync_claude_live_from_provider_while_proxy_active(&provider),
-                        )
-                        .map_err(|e| {
-                            AppError::Message(format!("同步 Claude Live 配置失败: {e}"))
-                        })?;
+                        );
+                        if let Err(e) = sync_result {
+                            let backup_restore_result = match previous_live_backup.as_ref() {
+                                Some(backup) => {
+                                    futures::executor::block_on(state.db.save_live_backup(
+                                        app_type.as_str(),
+                                        &backup.original_config,
+                                    ))
+                                }
+                                None => futures::executor::block_on(
+                                    state.db.delete_live_backup(app_type.as_str()),
+                                ),
+                            };
+                            if let Err(rollback_err) = backup_restore_result {
+                                return Err(AppError::Message(format!(
+                                    "同步 Claude Live 配置失败: {e}; additionally failed to restore Live backup: {rollback_err}"
+                                )));
+                            }
+                            return Err(AppError::Message(format!(
+                                "同步 Claude Live 配置失败: {e}"
+                            )));
+                        }
                     }
                 } else if !is_claude_profile_only {
                     write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
