@@ -20,7 +20,8 @@ CC Switch ユーザーマニュアル
 │   ├── 2.3 プロバイダーの編集
 │   ├── 2.4 並べ替えと複製
 │   ├── 2.5 使用量クエリ
-│   └── 2.6 Claude Desktop
+│   ├── 2.6 Claude Desktop
+│   └── 2.7 Codex 記憶機能
 │
 ├── 3. 拡張機能
 │   ├── 3.1 MCP サーバー管理
@@ -65,6 +66,7 @@ CC Switch ユーザーマニュアル
 | [2.4-sort-duplicate.md](./2-providers/2.4-sort-duplicate.md) | ドラッグで並べ替え、プロバイダーの複製、削除 |
 | [2.5-usage-query.md](./2-providers/2.5-usage-query.md) | 使用量クエリ、残額表示、複数プラン表示 |
 | [2.6-claude-desktop.md](./2-providers/2.6-claude-desktop.md) | Claude Desktop サードパーティプロバイダー、直結モード、モデルマッピング |
+| [2.7-codex-memories.md](./2-providers/2.7-codex-memories.md) | Codex 記憶 / Chronicle 機能、カスタムプロバイダでのモデル同期トグル |
 
 ### 3. 拡張機能
 
@@ -101,6 +103,7 @@ CC Switch ユーザーマニュアル
 - **インストールの問題**：[1.2 インストールガイド](./1-getting-started/1.2-installation.md) をご確認ください
 - **プロバイダーの設定**：[2.1 プロバイダーの追加](./2-providers/2.1-add.md) をご確認ください
 - **Claude Desktop の利用**：[2.6 Claude Desktop](./2-providers/2.6-claude-desktop.md) をご確認ください
+- **Codex 記憶機能が動作しない場合**：[2.7 Codex 記憶機能](./2-providers/2.7-codex-memories.md) をご確認ください
 - **プロキシの使用**：[4.1 プロキシサービス](./4-proxy/4.1-service.md) をご確認ください
 - **お困りの方**：[5.2 FAQ](./5-faq/5.2-questions.md) をご確認ください
 
