@@ -888,8 +888,14 @@ args = ["-y", "@modelcontextprotocol/server"]
 command = "node"
 "#;
         let result = strip_mcp_sections_from_toml(toml);
-        assert!(!result.contains("[mcp_servers"), "should strip all mcp_servers tables");
-        assert!(result.contains("model = \"gpt-4\""), "should preserve other settings");
+        assert!(
+            !result.contains("[mcp_servers"),
+            "should strip all mcp_servers tables"
+        );
+        assert!(
+            result.contains("model = \"gpt-4\""),
+            "should preserve other settings"
+        );
     }
 
     #[test]
@@ -2014,12 +2020,9 @@ impl ProviderService {
                 }
             } else {
                 write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
-                // Sync MCP
-                if crate::settings::get_settings().mcp_live_sync_enabled {
-                    McpService::sync_all_enabled(state)?;
-                } else {
-                    log::debug!("MCP live sync disabled, skipping write-back to tool configs");
-                }
+                // MCP sync must always run after provider writes — the Codex
+                // sanitizer strips [mcp_servers], so this re-adds DB-managed entries.
+                McpService::sync_all_enabled(state)?;
             }
         }
 
@@ -2393,12 +2396,9 @@ impl ProviderService {
             }
         }
 
-        // Sync MCP
-        if crate::settings::get_settings().mcp_live_sync_enabled {
-            McpService::sync_all_enabled(state)?;
-        } else {
-            log::debug!("MCP live sync disabled, skipping write-back to tool configs");
-        }
+        // MCP sync must always run after provider writes — the Codex sanitizer
+        // strips [mcp_servers], so this re-adds DB-managed entries.
+        McpService::sync_all_enabled(state)?;
 
         Ok(result)
     }

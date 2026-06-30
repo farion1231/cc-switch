@@ -434,7 +434,7 @@
       "autoImportDisabledHint": "You can still import manually from the corresponding page",
       "liveSync": "Live Sync",
       "mcpLiveSync": "Sync MCP changes to tool configs",
-      "mcpLiveSyncDesc": "Write MCP changes back to each tool's configuration file",
+      "mcpLiveSyncDesc": "Auto-sync MCP changes to each tool's config file when providers switch (manual MCP edits always apply immediately)",
       "promptLiveSync": "Sync Prompt changes to tool files",
       "promptLiveSyncDesc": "Write enabled prompts back to tool prompt files",
       "skillLiveSync": "Sync Skills to tool directories",

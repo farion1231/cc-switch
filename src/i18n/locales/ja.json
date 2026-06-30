@@ -434,7 +434,7 @@
       "autoImportDisabledHint": "無効にしても各ページから手動インポート可能",
       "liveSync": "書き戻し同期",
       "mcpLiveSync": "MCP の変更を各ツールの設定に同期",
-      "mcpLiveSyncDesc": "MCP の変更を各ツールの設定ファイルに書き戻す",
+      "mcpLiveSyncDesc": "プロバイダー切替時に MCP を各ツールの設定ファイルに自動同期（手動 MCP 編集は常に即時反映）",
       "promptLiveSync": "Prompt の有効化をツールファイルに書き戻す",
       "promptLiveSyncDesc": "有効なプロンプトを対応ツールの prompt ファイルに書き戻す",
       "skillLiveSync": "Skill を各ツールディレクトリに同期",

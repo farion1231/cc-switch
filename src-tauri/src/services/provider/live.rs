@@ -942,11 +942,11 @@ pub(crate) fn sync_current_provider_for_app_to_live(
         }
     }
 
-    if crate::settings::get_settings().mcp_live_sync_enabled {
-        McpService::sync_all_enabled(state)?;
-    } else {
-        log::debug!("MCP live sync disabled, skipping write-back to tool configs");
-    }
+    // MCP sync must always run after provider writes — the Codex sanitizer
+    // strips [mcp_servers] from the live config, so sync_all_enabled is the
+    // only path that re-adds DB-managed MCP entries. Skipping this when the
+    // toggle is off would silently delete all Codex MCP servers.
+    McpService::sync_all_enabled(state)?;
 
     Ok(())
 }
@@ -1014,17 +1014,16 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         }
     }
 
-    // MCP sync
-    if crate::settings::get_settings().mcp_live_sync_enabled {
-        McpService::sync_all_enabled(state)?;
-    } else {
-        log::debug!("MCP live sync disabled, skipping write-back to tool configs");
-    }
+    // MCP sync must always run after provider writes — the Codex sanitizer
+    // strips [mcp_servers] from the live config, so sync_all_enabled is the
+    // only path that re-adds DB-managed MCP entries.
+    McpService::sync_all_enabled(state)?;
 
     // Skill sync
     if crate::settings::get_settings().skill_live_sync_enabled {
         for app_type in AppType::all() {
-            if let Err(e) = crate::services::skill::SkillService::sync_to_app(&state.db, &app_type) {
+            if let Err(e) = crate::services::skill::SkillService::sync_to_app(&state.db, &app_type)
+            {
                 log::warn!("同步 Skill 到 {app_type:?} 失败: {e}");
                 // Continue syncing other apps, don't abort
             }

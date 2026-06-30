@@ -90,9 +90,7 @@ export function SyncAutomationSettings({
           title={t("settings.syncAutomation.skillLiveSync")}
           description={t("settings.syncAutomation.skillLiveSyncDesc")}
           checked={settings.skillLiveSyncEnabled !== false}
-          onCheckedChange={(value) =>
-            onChange({ skillLiveSyncEnabled: value })
-          }
+          onCheckedChange={(value) => onChange({ skillLiveSyncEnabled: value })}
         />
       </div>
 

@@ -434,7 +434,7 @@
       "autoImportDisabledHint": "關閉後仍可在對應頁面手動匯入",
       "liveSync": "寫回同步",
       "mcpLiveSync": "MCP 變更同步到各工具設定",
-      "mcpLiveSyncDesc": "將 MCP 變更寫回各工具的設定檔",
+      "mcpLiveSyncDesc": "切換 Provider 時自動同步 MCP 到各工具設定檔（手動編輯 MCP 始終立即生效）",
       "promptLiveSync": "Prompt 啟用後寫回工具檔案",
       "promptLiveSyncDesc": "將啟用的提示詞寫回對應工具的 prompt 檔案",
       "skillLiveSync": "Skill 同步到各工具目錄",
