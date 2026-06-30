@@ -118,3 +118,9 @@ lossy な `/responses → /chat/completions` 変換を避け、ログと
 - 回避策リポジトリ: https://github.com/Konsn666/codex-img-prep
 - エンドツーエンド検証: 38.64MB スクリーンショット → パイプライン後
   1.04MB → CC Switch → MiniMax → 200 OK (視覚認識正解)。
+---
+
+## 中国語版 / 中文版
+
+このガイドの中国語訳は [Konsn666/codex-img-prep/blob/main/README.zh-CN.md](https://github.com/Konsn666/codex-img-prep/blob/main/README.zh-CN.md)、
+アップストリームの中国語バグレポートは [ISSUE.zh-CN.md](https://github.com/Konsn666/codex-img-prep/blob/main/ISSUE.zh-CN.md) で参照できます。

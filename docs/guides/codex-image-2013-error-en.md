@@ -117,3 +117,11 @@ path.
 - Workaround repo: https://github.com/Konsn666/codex-img-prep
 - End-to-end verification: 38.64 MB screenshot → 1.04 MB after the
   pipeline → CC Switch → MiniMax → 200 OK with correct vision answer.
+---
+
+## Chinese (简体中文) version
+
+A fully translated Chinese version of this guide is available at
+[Konsn666/codex-img-prep/blob/main/README.zh-CN.md](https://github.com/Konsn666/codex-img-prep/blob/main/README.zh-CN.md)
+along with the upstream bug report in Chinese at
+[ISSUE.zh-CN.md](https://github.com/Konsn666/codex-img-prep/blob/main/ISSUE.zh-CN.md).

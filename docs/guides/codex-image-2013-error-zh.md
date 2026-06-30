@@ -91,3 +91,9 @@ curl -fsSL https://raw.githubusercontent.com/Konsn666/codex-img-prep/main/instal
 - 上游 issue: https://github.com/farion1231/cc-switch/issues/4820
 - Workaround repo: https://github.com/Konsn666/codex-img-prep
 - 端到端验证: 38.64MB 截图 → pipeline 后 1.04MB → CC Switch → MiniMax → 200 OK, 视觉识别正确
+---
+
+## 英文版 / English version
+
+完整的英文版见 [Konsn666/codex-img-prep README](https://github.com/Konsn666/codex-img-prep/blob/main/README.md),
+英文 issue 稿见 [ISSUE.md](https://github.com/Konsn666/codex-img-prep/blob/main/ISSUE.md)。
