@@ -455,8 +455,7 @@ impl ProxyService {
             .persist_ephemeral_listen_port_if_needed(&config, info.port)
             .await
         {
-            let _ = server.stop().await;
-            return Err(e);
+            log::warn!("持久化动态代理端口失败，代理服务器仍正常运行: {e}");
         }
 
         // 5. 保存服务器实例
@@ -573,6 +572,7 @@ impl ProxyService {
                     );
                     if let Err(e) = self.takeover_live_configs().await {
                         log::error!("fallback 后重新接管 Live 配置失败: {e}");
+                        return Err(e);
                     }
                 }
                 Ok(info)

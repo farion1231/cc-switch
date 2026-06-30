@@ -464,8 +464,7 @@ mod tests {
 
         assert_ne!(actual_port, base_port, "应该 fallback 到不同端口");
         assert!(
-            actual_port > base_port
-                && actual_port <= base_port + ProxyServer::PORT_FALLBACK_RANGE,
+            actual_port > base_port && actual_port <= base_port + ProxyServer::PORT_FALLBACK_RANGE,
             "fallback 端口 {actual_port} 应在 {}-{} 范围内",
             base_port + 1,
             base_port + ProxyServer::PORT_FALLBACK_RANGE
@@ -501,10 +500,7 @@ mod tests {
         };
         let server = ProxyServer::new(config, db, None);
 
-        assert!(
-            server.start().await.is_err(),
-            "所有端口被占用应返回错误"
-        );
+        assert!(server.start().await.is_err(), "所有端口被占用应返回错误");
 
         drop(occupants);
     }
