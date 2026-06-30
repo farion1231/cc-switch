@@ -58,6 +58,7 @@ import type { UniversalProviderPreset } from "@/config/universalProviderPresets"
 import {
   applyTemplateValues,
   hasApiKeyField,
+  isChatGptCodexOAuthBaseUrl,
 } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import {
@@ -130,6 +131,26 @@ type PresetEntry = {
     | OpenCodeProviderPreset
     | OpenClawProviderPreset
     | HermesProviderPreset;
+};
+
+type ClaudeManagedProviderType = "github_copilot" | "codex_oauth";
+
+export const resolveClaudeManagedProviderType = ({
+  baseUrl,
+  initialProviderType,
+  templateProviderType,
+}: {
+  baseUrl?: string | null;
+  initialProviderType?: string;
+  templateProviderType?: string;
+}): ClaudeManagedProviderType | undefined => {
+  if (templateProviderType === "github_copilot") return "github_copilot";
+  if (templateProviderType === "codex_oauth") return "codex_oauth";
+  if (initialProviderType === "github_copilot") return "github_copilot";
+  if (initialProviderType === "codex_oauth") return "codex_oauth";
+  if ((baseUrl ?? "").includes("githubcopilot.com")) return "github_copilot";
+  if (isChatGptCodexOAuthBaseUrl(baseUrl)) return "codex_oauth";
+  return undefined;
 };
 
 const codexApiFormatFromWireApi = (
@@ -718,6 +739,13 @@ function ProviderFormFull({
     settingsConfig: form.getValues("settingsConfig"),
     onConfigChange: handleSettingsConfigChange,
   });
+  const managedProviderType = resolveClaudeManagedProviderType({
+    baseUrl,
+    initialProviderType: initialData?.meta?.providerType,
+    templateProviderType: templatePreset?.providerType,
+  });
+  const isManagedCopilotProvider = managedProviderType === "github_copilot";
+  const isManagedCodexOauthProvider = managedProviderType === "codex_oauth";
 
   const {
     useCommonConfig,
@@ -1141,13 +1169,8 @@ function ProviderFormFull({
     }
 
     // OAuth 未登录：B 类（token 根本不存在，保存了也没法建立）
-    const isCopilotProvider =
-      templatePreset?.providerType === "github_copilot" ||
-      initialData?.meta?.providerType === "github_copilot" ||
-      baseUrl.includes("githubcopilot.com");
-    const isCodexOauthProvider =
-      templatePreset?.providerType === "codex_oauth" ||
-      initialData?.meta?.providerType === "codex_oauth";
+    const isCopilotProvider = isManagedCopilotProvider;
+    const isCodexOauthProvider = isManagedCodexOauthProvider;
     if (isCopilotProvider && !isCopilotAuthenticated) {
       toast.error(
         t("copilot.loginRequired", {
@@ -1273,13 +1296,8 @@ function ProviderFormFull({
     }
 
     // OAuth / 其它身份识别（与 handleSubmit 保持一致）
-    const isCopilotProvider =
-      templatePreset?.providerType === "github_copilot" ||
-      initialData?.meta?.providerType === "github_copilot" ||
-      baseUrl.includes("githubcopilot.com");
-    const isCodexOauthProvider =
-      templatePreset?.providerType === "codex_oauth" ||
-      initialData?.meta?.providerType === "codex_oauth";
+    const isCopilotProvider = isManagedCopilotProvider;
+    const isCodexOauthProvider = isManagedCodexOauthProvider;
 
     let settingsConfig: string;
 
@@ -1453,7 +1471,9 @@ function ProviderFormFull({
 
     // 确定 providerType（新建时从预设获取，编辑时从现有数据获取）
     const providerType =
-      templatePreset?.providerType || initialData?.meta?.providerType;
+      templatePreset?.providerType ||
+      initialData?.meta?.providerType ||
+      managedProviderType;
 
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
@@ -2086,22 +2106,11 @@ function ProviderFormFull({
               websiteUrl={claudeWebsiteUrl}
               isPartner={isClaudePartner}
               partnerPromotionKey={claudePartnerPromotionKey}
-              isCopilotPreset={
-                templatePreset?.providerType === "github_copilot" ||
-                initialData?.meta?.providerType === "github_copilot" ||
-                baseUrl.includes("githubcopilot.com")
-              }
-              isCodexOauthPreset={
-                templatePreset?.providerType === "codex_oauth" ||
-                initialData?.meta?.providerType === "codex_oauth"
-              }
+              isCopilotPreset={isManagedCopilotProvider}
+              isCodexOauthPreset={isManagedCodexOauthProvider}
               usesOAuth={
                 templatePreset?.requiresOAuth === true ||
-                templatePreset?.providerType === "github_copilot" ||
-                initialData?.meta?.providerType === "github_copilot" ||
-                baseUrl.includes("githubcopilot.com") ||
-                templatePreset?.providerType === "codex_oauth" ||
-                initialData?.meta?.providerType === "codex_oauth"
+                Boolean(managedProviderType)
               }
               isCopilotAuthenticated={isCopilotAuthenticated}
               selectedGitHubAccountId={selectedGitHubAccountId}

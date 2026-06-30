@@ -68,6 +68,7 @@ import {
   type ClaudeDesktopDefaultRoute,
 } from "@/lib/api/providers";
 import { resolveManagedAccountId } from "@/lib/authBinding";
+import { isChatGptCodexOAuthBaseUrl } from "@/utils/providerConfigUtils";
 
 export type ClaudeDesktopProviderFormValues = ProviderFormData & {
   presetId?: string;
@@ -376,7 +377,13 @@ export function ClaudeDesktopProviderForm({
     [t],
   );
   const activeProviderType =
-    activePreset?.providerType ?? initialData?.meta?.providerType;
+    activePreset?.providerType ??
+    initialData?.meta?.providerType ??
+    (baseUrl.includes("githubcopilot.com")
+      ? "github_copilot"
+      : isChatGptCodexOAuthBaseUrl(baseUrl)
+        ? "codex_oauth"
+        : undefined);
   const isOfficial =
     initialData?.category === "official" ||
     activePreset?.category === "official";

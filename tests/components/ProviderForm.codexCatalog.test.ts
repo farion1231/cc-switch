@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { normalizeCodexCatalogModelsForSave } from "@/components/providers/forms/ProviderForm";
+import {
+  normalizeCodexCatalogModelsForSave,
+  resolveClaudeManagedProviderType,
+} from "@/components/providers/forms/ProviderForm";
 
 describe("ProviderForm Codex catalog helpers", () => {
   it("normalizes catalog rows and removes empty or duplicate models", () => {
@@ -48,5 +51,20 @@ describe("ProviderForm Codex catalog helpers", () => {
       },
       { model: "mimo-v2.5-pro", supportsParallelToolCalls: false },
     ]);
+  });
+
+  it("infers Codex OAuth provider type from the ChatGPT Codex base URL", () => {
+    expect(
+      resolveClaudeManagedProviderType({
+        baseUrl: "https://chatgpt.com/backend-api/codex",
+      }),
+    ).toBe("codex_oauth");
+
+    expect(
+      resolveClaudeManagedProviderType({
+        baseUrl:
+          "https://relay.example/v1?upstream=https://chatgpt.com/backend-api/codex",
+      }),
+    ).toBeUndefined();
   });
 });
