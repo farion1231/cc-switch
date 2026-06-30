@@ -3191,14 +3191,7 @@ fn launch_windows_terminal(
     let cwd_command = build_windows_cwd_command(cwd);
 
     let content = format!(
-        "@echo off
-{cwd_command}
-echo Using provider-specific claude config:
-echo {}
-claude --settings \"{}\"
-del \"{}\" >nul 2>&1
-del \"%~f0\" >nul 2>&1
-",
+        "@echo off\r\n{cwd_command}\r\necho Using provider-specific claude config:\r\necho {}\r\nclaude --settings \"{}\"\r\ndel \"{}\" >nul 2>&1\r\ndel \"%~f0\" >nul 2>&1\r\n",
         config_path_for_batch,
         config_path_for_batch,
         config_path_for_batch,
