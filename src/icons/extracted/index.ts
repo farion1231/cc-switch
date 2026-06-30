@@ -22,6 +22,7 @@ import _runapi from "./runapi.jpg";
 import _shengsuanyun from "./shengsuanyun.svg?url";
 import _subrouter from "./subrouter.svg?url";
 import _sudocode from "./sudocode.png";
+import _teamorouter from "./TeamoRouter-icon-dark.png";
 import _unity2 from "./unity2.png";
 import _zetaapi from "./zetaapi-icon.png";
 
@@ -119,6 +120,7 @@ export const iconUrls: Record<string, string> = {
   shengsuanyun: _shengsuanyun,
   subrouter: _subrouter,
   sudocode: _sudocode,
+  teamorouter: _teamorouter,
   unity2: _unity2,
   zetaapi: _zetaapi,
 };

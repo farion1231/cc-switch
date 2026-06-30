@@ -256,6 +256,21 @@ export const iconMetadata: Record<string, IconMetadata> = {
     ],
     defaultColor: "#000000",
   },
+  teamorouter: {
+    name: "teamorouter",
+    displayName: "TeamoRouter",
+    category: "ai-provider",
+    keywords: [
+      "teamorouter",
+      "teamo",
+      "router",
+      "aggregator",
+      "relay",
+      "gateway",
+      "gpt",
+    ],
+    defaultColor: "#000000",
+  },
   cubence: {
     name: "cubence",
     displayName: "Cubence",

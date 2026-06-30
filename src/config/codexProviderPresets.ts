@@ -334,6 +334,23 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     icon: "zetaapi",
   },
   {
+    name: "TeamoRouter",
+    websiteUrl: "https://teamorouter.com",
+    apiKeyUrl:
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "teamorouter",
+      "https://api.teamorouter.com/v1",
+      "gpt-5.5",
+    ),
+    endpointCandidates: ["https://api.teamorouter.com/v1"],
+    isPartner: true,
+    partnerPromotionKey: "teamorouter",
+    icon: "teamorouter",
+  },
+  {
     name: "Azure OpenAI",
     websiteUrl:
       "https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/codex",
