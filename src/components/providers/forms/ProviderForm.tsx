@@ -164,6 +164,7 @@ const resolveClaudeBaseUrlFromSettingsConfig = (
       env?.ANTHROPIC_BASE_URL,
       parsed.base_url,
       parsed.baseURL,
+      parsed.apiEndpoint,
       apiEndpoint?.url,
     );
   } catch {

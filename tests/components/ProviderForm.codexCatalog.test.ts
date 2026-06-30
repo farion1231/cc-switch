@@ -72,6 +72,7 @@ describe("ProviderForm Codex catalog helpers", () => {
     for (const settingsConfig of [
       { base_url: "https://chatgpt.com/backend-api/codex" },
       { baseURL: "https://chatgpt.com/backend-api/codex" },
+      { apiEndpoint: "https://chatgpt.com/backend-api/codex" },
       { apiEndpoint: { url: "https://chatgpt.com/backend-api/codex" } },
     ]) {
       expect(
