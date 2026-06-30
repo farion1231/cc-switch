@@ -1234,7 +1234,7 @@
     "enableRemoteCompaction": "啟用遠端壓縮",
     "remoteCompactionHint": "開啟後會將目前 model_providers 條目的 name 寫為 OpenAI，讓 Codex 嘗試使用遠端壓縮。",
     "enableMemories": "啟用 Codex 記憶功能",
-    "memoriesHint": "開啟後，cc-switch 切換供應商時會將 [memories] 段的 extract_model / consolidation_model 同步為頂層 model，確保 Codex 記憶/chronicle 後端使用目前供應商能提供的模型；其他 [memories] 欄位（generate_memories / use_memories / disable_on_external_context / min_rate_limit_remaining_percent）保留。詳見 https://developers.openai.com/codex/memories。",
+    "memoriesHint": "開啟後，cc-switch 會同時管理三處：(1) 將 [memories] 段的 extract_model 與 consolidation_model 同步為頂層 model，確保 Codex 記憶/chronicle 後端使用目前供應商能提供的模型；(2) 寫入 [features].memories = true，啟用 Codex 記憶功能的 feature flag。關閉時僅移除這三處鍵/段，其他 [memories] 欄位（generate_memories / use_memories / disable_on_external_context / min_rate_limit_remaining_percent）和 [features] 欄位保留。詳見 https://developers.openai.com/codex/memories。",
     "apiUrlLabel": "API 請求位址",
     "extractFromCurrent": "從編輯內容擷取",
     "extractNoCommonConfig": "目前編輯內容沒有可擷取的通用設定",

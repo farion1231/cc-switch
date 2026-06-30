@@ -135,10 +135,12 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     setCodexBaseUrl((prev) => (prev === extracted ? prev : extracted));
   }, [codexConfig]);
 
-  // 与 TOML 配置保持 [memories] 段开关同步：段存在即视为启用
+  // 与 TOML 配置保持记忆功能开关同步：
+  // 开关亮 = [memories] 段内两个 model 字段任一存在，或 [features].memories == true
+  // （extractCodexMemoriesModels 在三处全空时返回 null）
   useEffect(() => {
-    const sectionPresent = extractCodexMemoriesModels(codexConfig) !== null;
-    setMemoriesEnabled((prev) => (prev === sectionPresent ? prev : sectionPresent));
+    const enabled = extractCodexMemoriesModels(codexConfig) !== null;
+    setMemoriesEnabled((prev) => (prev === enabled ? prev : enabled));
   }, [codexConfig]);
 
   // 获取 API Key（从 auth JSON）
@@ -272,8 +274,8 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
 
       setCodexApiKey(pickCodexApiKey(auth, config));
 
-      const sectionPresent = extractCodexMemoriesModels(config) !== null;
-      setMemoriesEnabled(sectionPresent);
+      const memoriesOn = extractCodexMemoriesModels(config) !== null;
+      setMemoriesEnabled(memoriesOn);
     },
     [setCodexAuth, setCodexConfig, setCodexCatalogModels],
   );

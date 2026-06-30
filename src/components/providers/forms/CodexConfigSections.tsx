@@ -308,6 +308,19 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
         </label>
 
         <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1">
+          <label
+            className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground"
+            title={t("codexConfig.memoriesHint")}
+          >
+            <input
+              type="checkbox"
+              checked={memoriesEnabled}
+              onChange={(e) => handleMemoriesToggle(e.target.checked)}
+              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+            />
+            {t("codexConfig.enableMemories")}
+          </label>
+
           <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
             <input
               type="checkbox"
@@ -332,19 +345,6 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
               {t("codexConfig.enableRemoteCompaction")}
             </label>
           )}
-
-          <label
-            className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground"
-            title={t("codexConfig.memoriesHint")}
-          >
-            <input
-              type="checkbox"
-              checked={memoriesEnabled}
-              onChange={(e) => handleMemoriesToggle(e.target.checked)}
-              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-            />
-            {t("codexConfig.enableMemories")}
-          </label>
 
           <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
             <input

@@ -1262,7 +1262,7 @@
     "enableRemoteCompaction": "リモート圧縮を有効化",
     "remoteCompactionHint": "有効にすると、現在の model_providers エントリの name を OpenAI に設定し、Codex がリモート圧縮を試行できるようにします。",
     "enableMemories": "Codex 記憶機能を有効化",
-    "memoriesHint": "有効にすると、cc-switch がプロバイダを切り替えるたびに [memories] 段の extract_model / consolidation_model をトップレベルの model に同期し、Codex の記憶/chronicle バックエンドが現在のプロバイダで提供されているモデルを常に使うようにします。他の [memories] フィールド（generate_memories / use_memories / disable_on_external_context / min_rate_limit_remaining_percent）は保持されます。詳細は https://developers.openai.com/codex/memories を参照。",
+    "memoriesHint": "有効にすると、cc-switch は 3 つを同時に管理します：(1) [memories] 段の extract_model と consolidation_model をトップレベル model に同期し、Codex の記憶/chronicle バックエンドが現在のプロバイダで提供されているモデルを常に使うようにします；(2) [features].memories = true を書き込み、Codex 記憶機能の feature flag を有効化します。無効にすると、この 3 つのキーのみが削除されます；他の [memories] フィールド（generate_memories / use_memories / disable_on_external_context / min_rate_limit_remaining_percent）および [features] フィールドは保持されます。詳細は https://developers.openai.com/codex/memories を参照。",
     "apiUrlLabel": "API リクエスト URL",
     "extractFromCurrent": "編集内容から抽出",
     "extractNoCommonConfig": "編集内容から抽出できる共通設定がありません",
