@@ -1261,6 +1261,8 @@
     "enableGoalMode": "启用 Goal mode",
     "enableRemoteCompaction": "启用远程压缩",
     "remoteCompactionHint": "开启后会将当前 model_providers 条目的 name 写为 OpenAI，使 Codex 尝试使用远程压缩。",
+    "enableMemories": "启用 Codex 记忆功能",
+    "memoriesHint": "开启后，cc-switch 切换供应商时会把 [memories] 段的 extract_model / consolidation_model 同步为顶层 model，确保 Codex 记忆/chronicle 后端用当前供应商能提供的模型；其他 [memories] 字段（generate_memories / use_memories / disable_on_external_context / min_rate_limit_remaining_percent）保留。详见 https://developers.openai.com/codex/memories。",
     "apiUrlLabel": "API 请求地址",
     "extractFromCurrent": "从编辑内容提取",
     "extractNoCommonConfig": "当前编辑内容没有可提取的通用配置",

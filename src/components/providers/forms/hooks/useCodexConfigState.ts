@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
+  extractCodexMemoriesModels,
   setCodexBaseUrl as setCodexBaseUrlInConfig,
   updateCodexExperimentalBearerToken,
 } from "@/utils/providerConfigUtils";
@@ -40,6 +41,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     CodexCatalogModel[]
   >([]);
   const [codexAuthError, setCodexAuthError] = useState("");
+  const [memoriesEnabled, setMemoriesEnabled] = useState(false);
 
   const isUpdatingCodexBaseUrlRef = useRef(false);
 
@@ -133,6 +135,12 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     setCodexBaseUrl((prev) => (prev === extracted ? prev : extracted));
   }, [codexConfig]);
 
+  // 与 TOML 配置保持 [memories] 段开关同步：段存在即视为启用
+  useEffect(() => {
+    const sectionPresent = extractCodexMemoriesModels(codexConfig) !== null;
+    setMemoriesEnabled((prev) => (prev === sectionPresent ? prev : sectionPresent));
+  }, [codexConfig]);
+
   // 获取 API Key（从 auth JSON）
   const getCodexAuthApiKey = useCallback((authString: string): string => {
     try {
@@ -189,6 +197,10 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     },
     [],
   );
+
+  // 注：memoriesEnabled 的状态完全由上面的 sync effect 从 TOML
+  // 段存在性反推，不再需要独立的 onChange 回调——避免与 TOML
+  // 写入路径产生重复更新。
 
   // 处理 Codex API Key 输入并写回 auth.json
   // 同步: 若 config.toml 当前含 experimental_bearer_token (Mobile 兼容形态),
@@ -259,6 +271,9 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       setCodexBaseUrl(baseUrl || "");
 
       setCodexApiKey(pickCodexApiKey(auth, config));
+
+      const sectionPresent = extractCodexMemoriesModels(config) !== null;
+      setMemoriesEnabled(sectionPresent);
     },
     [setCodexAuth, setCodexConfig, setCodexCatalogModels],
   );
@@ -270,6 +285,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     codexBaseUrl,
     codexCatalogModels,
     codexAuthError,
+    memoriesEnabled,
     setCodexAuth,
     setCodexConfig,
     setCodexCatalogModels,

@@ -417,6 +417,14 @@ const TOML_PROVIDER_NAME_REPLACE_PATTERN =
 const TOML_GOALS_FEATURE_PATTERN = /^\s*goals\s*=\s*(true|false)\s*(?:#.*)?$/;
 const TOML_GOALS_FEATURE_REPLACE_PATTERN =
   /^(\s*goals\s*=\s*)(true|false)(\s*(?:#.*)?)$/;
+const TOML_MEMORIES_EXTRACT_MODEL_PATTERN =
+  /^\s*extract_model\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
+const TOML_MEMORIES_EXTRACT_MODEL_REPLACE_PATTERN =
+  /^(\s*extract_model\s*=\s*)(?:"(?:\\.|[^"\\\r\n])*"|'[^'\r\n]*')(\s*(?:#.*)?)$/;
+const TOML_MEMORIES_CONSOLIDATION_MODEL_PATTERN =
+  /^\s*consolidation_model\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
+const TOML_MEMORIES_CONSOLIDATION_MODEL_REPLACE_PATTERN =
+  /^(\s*consolidation_model\s*=\s*)(?:"(?:\\.|[^"\\\r\n])*"|'[^'\r\n]*')(\s*(?:#.*)?)$/;
 const CODEX_RESERVED_MODEL_PROVIDER_IDS = new Set([
   "amazon-bedrock",
   "openai",
@@ -1035,6 +1043,134 @@ export const setCodexRemoteCompaction = (
   lines.push(`[${targetSectionName}]`, replacementLine);
   targetSectionRange = getTomlSectionRange(lines, targetSectionName);
   return targetSectionRange ? finalizeTomlText(lines) : normalizedText;
+};
+
+// ========== Codex [memories] 段工具 ==========
+//
+// Codex 的 `[memories]` 段用于控制其记忆/chronicle 后端；
+// `extract_model` / `consolidation_model` 显式配置时，Codex 会
+// 用该模型跑记忆抽取/整合。当用户使用自定义供应商时（如
+// `model = "deepseek-v4-pro"`），若这两个字段指向 OpenAI 原生
+// 模型（`MiniMax-M3` / `gpt-5.4-mini`），后端会因找不到模型而
+// 报错。cc-switch 提供「启用 Codex 记忆功能」开关：开启后把
+// 这两个字段同步为顶层 `model` 的值；关闭后移除整个 `[memories]`
+// 段。其他 `[memories]` 字段（`generate_memories` / `use_memories`
+// / `disable_on_external_context` / `min_rate_limit_remaining_percent`）
+// 保留不动。
+
+export const extractCodexMemoriesModels = (
+  configText: string | undefined | null,
+): { extractModel?: string; consolidationModel?: string } | null => {
+  try {
+    const raw = typeof configText === "string" ? configText : "";
+    const text = normalizeTomlText(raw);
+    if (!text) return null;
+    const lines = text.split("\n");
+    const range = getTomlSectionRange(lines, "memories");
+    if (!range) return null;
+
+    const extractMatch = findTomlAssignmentInRange(
+      lines,
+      TOML_MEMORIES_EXTRACT_MODEL_PATTERN,
+      range.bodyStartIndex,
+      range.bodyEndIndex,
+    );
+    const consolidationMatch = findTomlAssignmentInRange(
+      lines,
+      TOML_MEMORIES_CONSOLIDATION_MODEL_PATTERN,
+      range.bodyStartIndex,
+      range.bodyEndIndex,
+    );
+
+    return {
+      extractModel: extractMatch?.value,
+      consolidationModel: consolidationMatch?.value,
+    };
+  } catch {
+    return null;
+  }
+};
+
+export const setCodexMemoriesSection = (
+  configText: string,
+  enabled: boolean,
+  extractModel: string,
+  consolidationModel: string,
+): string => {
+  const normalizedText = normalizeTomlText(configText);
+  const lines = normalizedText ? normalizedText.split("\n") : [];
+  let memoriesRange = getTomlSectionRange(lines, "memories");
+
+  if (!enabled) {
+    if (!memoriesRange) return normalizedText;
+    lines.splice(
+      memoriesRange.headerLineIndex,
+      memoriesRange.bodyEndIndex - memoriesRange.headerLineIndex,
+    );
+    return finalizeTomlText(lines);
+  }
+
+  const extractTrimmed = extractModel.trim();
+  const consolidationTrimmed = consolidationModel.trim();
+
+  // 防御：开启状态下若两个目标值都为空（用户尚未设置顶层 model），
+  // 保留 [memories] 段现有内容，不去覆盖用户显式设置的值。
+  if (!extractTrimmed && !consolidationTrimmed) {
+    return normalizedText;
+  }
+
+  const extractLine = `extract_model = ${tomlBasicString(extractTrimmed)}`;
+  const consolidationLine = `consolidation_model = ${tomlBasicString(consolidationTrimmed)}`;
+
+  if (memoriesRange) {
+    const extractIndex = findTomlLineInRange(
+      lines,
+      TOML_MEMORIES_EXTRACT_MODEL_REPLACE_PATTERN,
+      memoriesRange.bodyStartIndex,
+      memoriesRange.bodyEndIndex,
+    );
+    const consolidationIndex = findTomlLineInRange(
+      lines,
+      TOML_MEMORIES_CONSOLIDATION_MODEL_REPLACE_PATTERN,
+      memoriesRange.bodyStartIndex,
+      memoriesRange.bodyEndIndex,
+    );
+
+    if (extractIndex !== -1) {
+      lines[extractIndex] = lines[extractIndex].replace(
+        TOML_MEMORIES_EXTRACT_MODEL_REPLACE_PATTERN,
+        `$1${tomlBasicString(extractTrimmed)}$2`,
+      );
+    } else {
+      lines.splice(
+        getTomlSectionInsertIndex(lines, memoriesRange),
+        0,
+        extractLine,
+      );
+    }
+
+    if (consolidationIndex !== -1) {
+      lines[consolidationIndex] = lines[consolidationIndex].replace(
+        TOML_MEMORIES_CONSOLIDATION_MODEL_REPLACE_PATTERN,
+        `$1${tomlBasicString(consolidationTrimmed)}$2`,
+      );
+    } else {
+      lines.splice(
+        getTomlSectionInsertIndex(lines, memoriesRange),
+        0,
+        consolidationLine,
+      );
+    }
+    return finalizeTomlText(lines);
+  }
+
+  // 段不存在：在文件末尾追加，保留与 Codex 现有 `[features]` /
+  // `[model_providers.custom]` 段相同的空行分隔风格。
+  if (lines.length > 0 && lines[lines.length - 1].trim() !== "") {
+    lines.push("");
+  }
+  lines.push("[memories]", extractLine, consolidationLine);
+  return finalizeTomlText(lines);
 };
 
 // 从 Codex 的 TOML 配置文本中提取 base_url（支持单/双引号）
