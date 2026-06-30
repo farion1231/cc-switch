@@ -458,6 +458,19 @@ impl ProxyService {
             log::warn!("持久化动态代理端口失败，代理服务器仍正常运行: {e}");
         }
 
+        // If port fallback occurred, refresh Live configs (Claude/Codex/Gemini)
+        // so they point at the actual port instead of the original occupied one.
+        if info.port != config.listen_port && config.listen_port != 0 {
+            log::info!(
+                "端口由 {} fallback 到 {}，刷新 Live 配置",
+                config.listen_port,
+                info.port
+            );
+            if let Err(e) = self.takeover_live_configs().await {
+                log::error!("fallback 后刷新 Live 配置失败: {e}");
+            }
+        }
+
         // 5. 保存服务器实例
         *self.server.write().await = Some(server);
 
