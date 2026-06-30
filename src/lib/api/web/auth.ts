@@ -1,6 +1,6 @@
 import { post } from "../web-client";
 
-export const webAuthApi = {
+export const authApi = {
   async login(token: string): Promise<{ token: string }> {
     return post("/auth/login", { token });
   },

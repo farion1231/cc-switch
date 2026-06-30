@@ -83,9 +83,11 @@ async fn login_route(Json(req): Json<LoginRequest>) -> Json<ApiResponse<LoginRes
     };
 
     let expected = get_auth_token();
-    let valid = constant_time_eq(provided.as_bytes(), expected.as_bytes())
-        || validate_token(&provided).is_ok();
-    if !valid {
+    // Run both checks without short-circuiting to avoid timing side-channels
+    // that would reveal whether the caller supplied a static token or a JWT.
+    let static_valid = constant_time_eq(provided.as_bytes(), expected.as_bytes());
+    let jwt_valid = validate_token(&provided).is_ok();
+    if !static_valid && !jwt_valid {
         return Json(ApiResponse::error("Invalid auth token".to_string()));
     }
 
@@ -128,14 +130,8 @@ async fn logout_route(request: Request) -> Json<ApiResponse<()>> {
 }
 
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
+    use subtle::ConstantTimeEq;
+    a.ct_eq(b).into()
 }
 
 #[cfg(test)]

@@ -182,12 +182,10 @@ export function WebServerSettings() {
       try {
         const browserUrl = serverUrl.replace("0.0.0.0", "localhost");
         if (isTauri()) {
-          const openModule = await new Function(
-            'return import("@tauri-apps/plugin-opener")',
-          )();
-          await openModule.open(browserUrl);
+          const { openUrl } = await import("@tauri-apps/plugin-opener");
+          await openUrl(browserUrl);
         } else {
-          window.open(browserUrl, "_blank");
+          window.open(browserUrl, "_blank", "noopener,noreferrer");
         }
       } catch (error) {
         console.error("Failed to open browser:", error);

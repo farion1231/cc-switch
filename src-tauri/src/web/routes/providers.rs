@@ -1316,19 +1316,19 @@ async fn add_custom_endpoint(
     Path(_id): Path<String>,
     Json(_endpoint): Json<crate::web::models::CustomEndpoint>,
 ) -> Json<ApiResponse<bool>> {
-    Json(ApiResponse::success(true))
+    Json(ApiResponse::error("Not implemented".to_string()))
 }
 
 async fn remove_custom_endpoint(
     State((_state, _)): State<(Arc<AppState>, Arc<WsState>)>,
     Path((_id, _url)): Path<(String, String)>,
 ) -> Json<ApiResponse<bool>> {
-    Json(ApiResponse::success(true))
+    Json(ApiResponse::error("Not implemented".to_string()))
 }
 
 async fn update_sort_order(
     State((_state, _)): State<(Arc<AppState>, Arc<WsState>)>,
     Json(_updates): Json<Vec<serde_json::Value>>,
 ) -> Json<ApiResponse<bool>> {
-    Json(ApiResponse::success(true))
+    Json(ApiResponse::error("Not implemented".to_string()))
 }

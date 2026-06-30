@@ -104,9 +104,14 @@ async function flush(useBeacon = false): Promise<void> {
 
   shipping = true;
   try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const token = localStorage.getItem("cc_switch_token");
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
     await fetch(LOG_ENDPOINT, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: payload,
       keepalive: true,
     });

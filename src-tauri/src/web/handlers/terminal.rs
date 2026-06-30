@@ -353,6 +353,10 @@ async fn spawn_shell_with_env(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    // Start from a clean environment so provider credentials are the only
+    // sensitive values exposed to the spawned shell.
+    cmd.env_clear();
+
     // Add environment variables
     for (key, value) in &env_vars {
         cmd.env(key, value);

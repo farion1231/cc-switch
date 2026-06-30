@@ -222,7 +222,7 @@ export const settingsApi = {
   },
 
   async openExternal(url: string): Promise<void> {
-    window.open(url, "_blank");
+    window.open(url, "_blank", "noopener,noreferrer");
   },
 
   async setAutoLaunch(enabled: boolean): Promise<boolean> {

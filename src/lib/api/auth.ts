@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "@/lib/environment";
-import { webAuthApi } from "./web/auth";
+import { authApi as webAuthApi } from "./web/auth";
 
 export type ManagedAuthProvider = "github_copilot" | "codex_oauth";
 

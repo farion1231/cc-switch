@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { authApi } from "@/lib/api/auth";
-import { webAuthApi } from "@/lib/api/web/auth";
+import { authApi as webAuthApi } from "@/lib/api/web/auth";
 
 const jsonResponse = (data: unknown) =>
   new Response(JSON.stringify({ success: true, data }), {

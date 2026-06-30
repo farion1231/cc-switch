@@ -83,6 +83,7 @@ sha2 = "0.10"
 hmac = "0.12"
 json5 = "0.4"
 json-five = "0.3.1"
+subtle = "2"
 tracing = "0.1"
 jsonwebtoken = "9"
 

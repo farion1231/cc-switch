@@ -3,7 +3,7 @@ pub mod middleware;
 pub mod models;
 pub mod routes;
 
-use axum::{http::StatusCode, response::IntoResponse, routing::get, Json, Router};
+use axum::{http::StatusCode, response::IntoResponse, routing::{get, post}, Json, Router};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -116,11 +116,11 @@ pub fn create_router(state: Arc<AppState>, ws_state: Arc<WsState>) -> Router {
         .nest("/hermes", routes::hermes::routes())
         .nest("/openclaw", routes::openclaw::routes())
         .nest("/workspace", routes::workspace::routes())
+        .route("/logs", post(routes::logs::ingest_logs))
         .layer(axum::middleware::from_fn(middleware::auth_middleware))
         .with_state(shared_state.clone());
     let api_routes = Router::new()
         .nest("/auth", routes::auth::routes())
-        .nest("/logs", routes::logs::routes())
         .fallback(api_not_found)
         .merge(protected_routes);
     let ws_route = Router::new()

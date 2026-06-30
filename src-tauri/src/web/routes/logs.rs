@@ -1,4 +1,4 @@
-use axum::{routing::post, Json, Router};
+use axum::{Json};
 use serde::Deserialize;
 use tracing::{debug, error, info, warn};
 
@@ -25,10 +25,6 @@ pub struct ClientLogBatch {
     pub entries: Vec<ClientLogEntry>,
 }
 
-pub fn routes() -> Router {
-    Router::new().route("/", post(ingest_logs))
-}
-
 /// Truncate a string to at most `max` bytes without splitting a UTF-8 char.
 fn truncate_field(mut value: String, max: usize) -> String {
     if value.len() <= max {
@@ -46,7 +42,7 @@ fn truncate_field(mut value: String, max: usize) -> String {
 /// Receive a batch of browser-side log entries and re-emit them through the
 /// server `tracing` pipeline under the `web_client` target so they show up in
 /// the normal `RUST_LOG` output alongside backend logs.
-async fn ingest_logs(Json(batch): Json<ClientLogBatch>) -> Json<ApiResponse<()>> {
+pub async fn ingest_logs(Json(batch): Json<ClientLogBatch>) -> Json<ApiResponse<()>> {
     let total = batch.entries.len();
     for entry in batch.entries.into_iter().take(MAX_ENTRIES) {
         let level = entry.level.unwrap_or_else(|| "info".to_string());

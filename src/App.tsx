@@ -188,6 +188,7 @@ function App() {
   };
 
   const handleLogout = async () => {
+    if (isTauri()) return;
     setLogoutConfirmOpen(false);
     try {
       await authApi.logout();

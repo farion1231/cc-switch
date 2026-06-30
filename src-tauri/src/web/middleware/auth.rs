@@ -28,7 +28,7 @@ fn auth_token_cache() -> &'static Mutex<Option<String>> {
 fn load_auth_token_from_sources() -> String {
     if let Ok(token) = env::var("AUTH_TOKEN") {
         if !token.is_empty() {
-            log::info!("Using AUTH_TOKEN from environment");
+            log::debug!("Using AUTH_TOKEN from environment");
             return token;
         }
     }
@@ -47,7 +47,9 @@ fn load_auth_token_from_sources() -> String {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+            if let Err(e) = fs::set_permissions(&path, fs::Permissions::from_mode(0o600)) {
+                log::warn!("Failed to set permissions on {}: {}", path.display(), e);
+            }
         }
     }
     log::info!("Generated new AUTH_TOKEN and persisted to {}", path.display());
@@ -131,7 +133,9 @@ pub fn rotate_auth_token() -> String {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+            if let Err(e) = fs::set_permissions(&path, fs::Permissions::from_mode(0o600)) {
+                log::warn!("Failed to set permissions on {}: {}", path.display(), e);
+            }
         }
     }
     let mut guard = auth_token_cache()

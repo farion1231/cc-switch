@@ -2,19 +2,15 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api/v1";
 
 import { webLog } from "@/lib/webLogger";
 
-let authToken: string | null = localStorage.getItem("cc_switch_token");
-
 export function setAuthToken(token: string) {
-  authToken = token;
   localStorage.setItem("cc_switch_token", token);
 }
 
 export function getAuthToken(): string | null {
-  return authToken;
+  return localStorage.getItem("cc_switch_token");
 }
 
 export function clearAuthToken() {
-  authToken = null;
   localStorage.removeItem("cc_switch_token");
 }
 
@@ -27,8 +23,9 @@ async function fetchWithAuth(
     ...(options.headers as Record<string, string>),
   };
 
-  if (authToken) {
-    headers["Authorization"] = `Bearer ${authToken}`;
+  const token = getAuthToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
   }
 
   const method = options.method ?? "GET";
@@ -214,10 +211,7 @@ export function connectTerminalWebSocket(
 
   ws.onopen = () => {
     webLog.info("terminal websocket connected", { provider: providerId, app });
-    // Send auth token as first message if needed
-    if (authToken) {
-      // Note: auth is handled via headers in query params for WebSocket upgrade
-    }
+    // Auth is handled via the `token` query parameter on the WebSocket upgrade.
   };
 
   ws.onmessage = (event) => {
