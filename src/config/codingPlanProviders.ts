@@ -37,11 +37,13 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
   },
   {
     // 火山方舟 Agent Plan / Coding Plan。base_url 形如
-    // ark.cn-beijing.volces.com/api/coding[/v3]；与后端 detect_provider 的
-    // `volces.com/api/coding` 子串判断同效。
+    // ark.cn-beijing.volces.com/api/{coding|plan}[/v3]；与后端 detect_provider 的
+    // `volces.com/api/coding` 或 `volces.com/api/plan` 子串判断同效。
+    // 两种路径需同时识别：用户配置 /api/coding（Coding Plan 入口）与
+    // /api/plan（Agent Plan 入口，issue #4808）。
     id: "volcengine",
     label: "火山方舟 (Volcengine)",
-    pattern: /volces\.com\/api\/coding/i,
+    pattern: /volces\.com\/api\/(?:coding|plan)/i,
   },
 ] as const;
 

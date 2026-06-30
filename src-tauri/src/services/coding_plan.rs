@@ -36,9 +36,10 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         Some(CodingPlanProvider::MiniMaxEn)
     } else if url.contains("zenmux") {
         Some(CodingPlanProvider::ZenMux)
-    } else if url.contains("volces.com/api/coding") {
-        // 仅匹配 Coding/Agent Plan 入口；DouBaoSeed 按量付费走 /api/v3 与
-        // /api/compatible，没有套餐额度，不在此命中。
+    } else if url.contains("volces.com/api/coding") || url.contains("volces.com/api/plan") {
+        // 命中 Coding Plan（`/api/coding`）与 Agent Plan（`/api/plan`）两类入口。
+        // DouBaoSeed 按量付费走 /api/v3 与 /api/compatible，没有套餐额度，不在此命中。
+        // 两种路径同源火山方舟账号，使用同一份 AK/SK 查询额度（issue #4808）。
         Some(CodingPlanProvider::Volcengine)
     } else {
         None
@@ -1194,10 +1195,10 @@ pub async fn get_coding_plan_quota(
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_afp_tiers, parse_coding_plan_tiers, parse_minimax_tiers, parse_zhipu_token_tiers,
-        volcengine_canonical_query, volcengine_is_auth_error_code, volcengine_region,
-        volcengine_response_error, volcengine_sign, zhipu_quota_base, TIER_FIVE_HOUR, TIER_MONTHLY,
-        TIER_WEEKLY_LIMIT,
+        detect_provider, parse_afp_tiers, parse_coding_plan_tiers, parse_minimax_tiers,
+        parse_zhipu_token_tiers, volcengine_canonical_query, volcengine_is_auth_error_code,
+        volcengine_region, volcengine_response_error, volcengine_sign, zhipu_quota_base,
+        CodingPlanProvider, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
 
@@ -1736,6 +1737,47 @@ mod tests {
             volcengine_region("https://example.com/api/coding"),
             "cn-beijing"
         );
+    }
+
+    #[test]
+    fn detect_provider_volcengine_matches_both_coding_and_plan_paths() {
+        // 火山方舟 Agent Plan（issue #4808）与 Coding Plan 同源账号，base_url
+        // 形如 `ark.cn-beijing.volces.com/api/coding[/v3]`（Coding Plan）或
+        // `ark.cn-beijing.volces.com/api/plan[/v3]`（Agent Plan），均应识别为
+        // Volcengine，以便用量查询走 AK/SK 签名流程。
+        // 注：海外 BytePlus（ark.ap-southeast.bytepluses.com）的 detection
+        // 在本变更前/后均不在 volces.com 匹配范围内，超出本 issue 范围。
+        assert!(matches!(
+            detect_provider("https://ark.cn-beijing.volces.com/api/coding"),
+            Some(CodingPlanProvider::Volcengine)
+        ));
+        assert!(matches!(
+            detect_provider("https://ark.cn-beijing.volces.com/api/coding/v3"),
+            Some(CodingPlanProvider::Volcengine)
+        ));
+        assert!(matches!(
+            detect_provider("https://ark.cn-beijing.volces.com/api/plan"),
+            Some(CodingPlanProvider::Volcengine)
+        ));
+        assert!(matches!(
+            detect_provider("https://ark.cn-beijing.volces.com/api/plan/v3"),
+            Some(CodingPlanProvider::Volcengine)
+        ));
+        // 大小写不敏感：与前端 RegExp 一致。
+        assert!(matches!(
+            detect_provider("HTTPS://ARK.CN-BEIJING.VOLCES.COM/API/PLAN"),
+            Some(CodingPlanProvider::Volcengine)
+        ));
+    }
+
+    #[test]
+    fn detect_provider_volcengine_does_not_match_unrelated_paths() {
+        // /api/v3 与 /api/compatible 是按量付费入口（DouBaoSeed），无套餐额度，
+        // 不应误判为 Volcengine Coding Plan，避免误触发 AK/SK 签名查询。
+        assert!(detect_provider("https://ark.cn-beijing.volces.com/api/v3").is_none());
+        assert!(detect_provider("https://ark.cn-beijing.volces.com/api/compatible").is_none());
+        // 含 plan 段但不是火山方舟的域名（如 plan.com），不应误命中。
+        assert!(detect_provider("https://example.com/api/plan").is_none());
     }
 
     #[test]
