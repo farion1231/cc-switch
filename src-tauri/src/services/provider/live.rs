@@ -761,7 +761,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             let config_str = obj
                 .get("config")
                 .and_then(|v| v.as_str())
-                .map(|s| super::strip_mcp_sections_from_toml(s));
+                .map(super::strip_mcp_sections_from_toml);
 
             // Native (direct) Responses providers must suppress Codex's freeform
             // apply_patch custom tool via the generated catalog; chat/proxy
