@@ -38,8 +38,7 @@ impl PromptService {
 
         if is_enabled {
             // 启用提示词：写入内容到文件
-            let target_path = prompt_file_path_for_db(state.db.as_ref(), &app)?;
-            write_text_file(&target_path, &prompt.content)?;
+            Self::write_prompt_files_for_app(state, &app, &prompt.content)?;
         } else {
             // 禁用提示词：检查是否还有其他已启用的提示词
             let prompts = state.db.get_prompts(app.as_str())?;
@@ -48,6 +47,24 @@ impl PromptService {
             if !any_enabled {
                 // 所有提示词都已禁用，清空文件
                 Self::clear_prompt_files_for_app(state, &app)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn write_prompt_files_for_app(
+        state: &AppState,
+        app: &AppType,
+        content: &str,
+    ) -> Result<(), AppError> {
+        let target_path = prompt_file_path_for_db(state.db.as_ref(), app)?;
+        write_text_file(&target_path, content)?;
+
+        if matches!(app, AppType::Claude) {
+            let configured_path = prompt_file_path(app)?;
+            if configured_path != target_path {
+                write_text_file(&configured_path, content)?;
             }
         }
 
@@ -142,7 +159,7 @@ impl PromptService {
 
         if let Some(prompt) = prompts.get_mut(id) {
             prompt.enabled = true;
-            write_text_file(&target_path, &prompt.content)?; // 原子写入
+            Self::write_prompt_files_for_app(state, &app, &prompt.content)?;
             state.db.save_prompt(app.as_str(), prompt)?;
         } else {
             return Err(AppError::InvalidInput(format!("提示词 {id} 不存在")));
@@ -351,7 +368,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn enable_prompt_writes_to_current_profile_and_config_claude_path() {
+    fn enable_prompt_writes_to_current_profile_and_configured_claude_paths() {
         let home = TempHome::new();
         let configured_claude_dir = home.path().join("configured-claude");
         let profile_dir = home.path().join("profile-and-config");
@@ -387,6 +404,10 @@ mod tests {
         };
         db.save_prompt(AppType::Claude.as_str(), &prompt)
             .expect("save prompt");
+        let configured_prompt_path = configured_claude_dir.join("CLAUDE.md");
+        std::fs::create_dir_all(configured_prompt_path.parent().unwrap()).expect("configured dir");
+        std::fs::write(&configured_prompt_path, "stale configured prompt")
+            .expect("seed stale configured prompt");
 
         PromptService::enable_prompt(&state, AppType::Claude, "prompt-1").expect("enable prompt");
 
@@ -394,9 +415,10 @@ mod tests {
             std::fs::read_to_string(profile_dir.join("CLAUDE.md")).expect("profile prompt file"),
             "profile prompt"
         );
-        assert!(
-            !configured_claude_dir.join("CLAUDE.md").exists(),
-            "profile-and-config prompt sync should not write the configured/default Claude file"
+        assert_eq!(
+            std::fs::read_to_string(&configured_prompt_path).expect("configured prompt file"),
+            "profile prompt",
+            "profile-and-config prompt sync should mirror the configured/default Claude file"
         );
     }
 

@@ -1139,8 +1139,7 @@ fn build_exec_line(shell: &str, cwd: Option<&Path>) -> String {
 
 /// 构建 provider 命令行：通过用户 shell 的交互模式执行，确保 GUI 启动的终端也加载用户 PATH。
 #[allow(dead_code)]
-fn build_provider_command_line(shell: &str, config_path: &str, cwd: Option<&Path>) -> String {
-    let claude_command = format!("claude --settings {}", shell_single_quote(config_path));
+fn build_claude_command_line(shell: &str, claude_command: &str, cwd: Option<&Path>) -> String {
     let command = cwd
         .map(|dir| {
             format!(
@@ -1149,7 +1148,7 @@ fn build_provider_command_line(shell: &str, config_path: &str, cwd: Option<&Path
                 claude_command
             )
         })
-        .unwrap_or(claude_command);
+        .unwrap_or_else(|| claude_command.to_string());
 
     format!(
         "{} {} {}",
@@ -1157,6 +1156,12 @@ fn build_provider_command_line(shell: &str, config_path: &str, cwd: Option<&Path
         provider_command_flag_for_shell(shell),
         shell_single_quote(&command)
     )
+}
+
+#[allow(dead_code)]
+fn build_provider_command_line(shell: &str, config_path: &str, cwd: Option<&Path>) -> String {
+    let claude_command = format!("claude --settings {}", shell_single_quote(config_path));
+    build_claude_command_line(shell, &claude_command, cwd)
 }
 
 #[allow(dead_code)]
@@ -2845,7 +2850,7 @@ echo {config_path}
                 provider_command = provider_command,
             )
         })
-        .unwrap_or_else(|| format!("{}claude\n", build_shell_cd_command(cwd)));
+        .unwrap_or_else(|| format!("{}\n", build_claude_command_line(shell, "claude", cwd)));
 
     if let Some(profile_dir) = claude_profile_dir {
         return format!(
@@ -4023,7 +4028,7 @@ mod tests {
         );
 
         assert!(script.contains("export CLAUDE_CONFIG_DIR='/tmp/.claude-profiles/api'"));
-        assert!(script.contains("claude\n"));
+        assert!(script.contains(r#"'/bin/bash' -ic 'cd '"'"'/tmp/project'"'"' && claude'"#));
         assert!(!script.contains("--settings"));
         assert!(!script.contains("claude_"));
     }
@@ -4073,7 +4078,7 @@ mod tests {
         );
 
         assert!(!script.contains("unset CLAUDE_CONFIG_DIR"));
-        assert!(script.contains("cd '/tmp/project' || exit 1\nclaude\n"));
+        assert!(script.contains(r#"'/bin/bash' -ic 'cd '"'"'/tmp/project'"'"' && claude'"#));
     }
 
     #[test]
