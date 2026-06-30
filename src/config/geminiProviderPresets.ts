@@ -23,6 +23,7 @@ export interface GeminiProviderPreset {
   description?: string;
   category?: ProviderCategory;
   isPartner?: boolean;
+  primePartner?: boolean; // 置顶合作伙伴（顶级）：徽章显示为心形
   partnerPromotionKey?: string;
   endpointCandidates?: string[];
   theme?: GeminiPresetTheme;
@@ -86,6 +87,48 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "unity2",
     icon: "unity2",
+  },
+  {
+    name: "SubRouter",
+    websiteUrl: "https://subrouter.ai",
+    apiKeyUrl: "https://subrouter.ai/register?aff=l3ri",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://subrouter.ai/v1beta",
+        GEMINI_MODEL: "gemini-3.5-flash",
+      },
+    },
+    baseURL: "https://subrouter.ai/v1beta",
+    model: "gemini-3.5-flash",
+    description: "SubRouter",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "subrouter",
+    endpointCandidates: ["https://subrouter.ai/v1beta"],
+    icon: "subrouter",
+  },
+  {
+    name: "Qiniu",
+    nameKey: "providerForm.presets.qiniu",
+    websiteUrl: "https://s.qiniu.com/nMvAvy",
+    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.qnaigc.com/bypass/vertex",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://api.qnaigc.com/bypass/vertex",
+    model: "gemini-3.1-pro-preview",
+    description: "Qiniu",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "qiniu",
+    endpointCandidates: [
+      "https://api.qnaigc.com/bypass/vertex",
+      "https://api.modelink.ai/bypass/vertex",
+    ],
+    icon: "qiniu",
   },
   {
     name: "PackyCode",
@@ -280,23 +323,23 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#000000",
   },
   {
-    name: "CTok.ai",
-    websiteUrl: "https://ctok.ai",
-    apiKeyUrl: "https://ctok.ai",
+    name: "ETok.ai",
+    websiteUrl: "https://etok.ai",
+    apiKeyUrl: "https://etok.ai",
     settingsConfig: {
       env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.ctok.ai/v1beta",
+        GOOGLE_GEMINI_BASE_URL: "https://api.etok.ai/v1beta",
         GEMINI_MODEL: "gemini-3.5-flash",
       },
     },
-    baseURL: "https://api.ctok.ai/v1beta",
+    baseURL: "https://api.etok.ai/v1beta",
     model: "gemini-3.5-flash",
-    description: "CTok",
+    description: "ETok",
     category: "third_party",
     isPartner: true,
-    partnerPromotionKey: "ctok",
-    endpointCandidates: ["https://api.ctok.ai/v1beta"],
-    icon: "ctok",
+    partnerPromotionKey: "etok",
+    endpointCandidates: ["https://api.etok.ai/v1beta"],
+    icon: "etok",
     iconColor: "#000000",
   },
   {

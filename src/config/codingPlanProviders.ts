@@ -11,7 +11,7 @@ import { TEMPLATE_TYPES } from "@/config/constants";
 
 export interface CodingPlanProviderEntry {
   /** 与后端 QuotaTier 的 `codingPlanProvider` 取值对齐 */
-  id: "kimi" | "zhipu" | "minimax" | "zenmux";
+  id: "kimi" | "zhipu" | "minimax" | "zenmux" | "volcengine";
   /** UsageScriptModal 下拉显示用 */
   label: string;
   /** base_url 匹配规则 */
@@ -34,6 +34,14 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     id: "zenmux",
     label: "ZenMux",
     pattern: /zenmux\./i,
+  },
+  {
+    // 火山方舟 Agent Plan / Coding Plan。base_url 形如
+    // ark.cn-beijing.volces.com/api/coding[/v3]；与后端 detect_provider 的
+    // `volces.com/api/coding` 子串判断同效。
+    id: "volcengine",
+    label: "火山方舟 (Volcengine)",
+    pattern: /volces\.com\/api\/coding/i,
   },
 ] as const;
 

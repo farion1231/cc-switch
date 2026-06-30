@@ -7,6 +7,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   Popover,
@@ -117,6 +118,9 @@ export function UsageDateRangePicker({
   );
   const [draftStart, setDraftStart] = useState(resolvedRange.startDate);
   const [draftEnd, setDraftEnd] = useState(resolvedRange.endDate);
+  const [draftLiveEnd, setDraftLiveEnd] = useState(
+    selection.preset === "custom" ? (selection.liveEndTime ?? false) : false,
+  );
   const [displayMonth, setDisplayMonth] = useState(
     () =>
       new Date(
@@ -136,6 +140,9 @@ export function UsageDateRangePicker({
     const r = resolveUsageRange(selection);
     setDraftStart(r.startDate);
     setDraftEnd(r.endDate);
+    setDraftLiveEnd(
+      selection.preset === "custom" ? (selection.liveEndTime ?? false) : false,
+    );
     setDisplayMonth(
       new Date(
         fromTs(r.startDate).getFullYear(),
@@ -146,6 +153,15 @@ export function UsageDateRangePicker({
     setActiveField("start");
     setError(null);
   }, [open, selection]);
+
+  // Keep draftEnd ticking when live mode is active and popover is open
+  useEffect(() => {
+    if (!open || !draftLiveEnd) return;
+    const tick = () => setDraftEnd(Math.floor(Date.now() / 1000));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [open, draftLiveEnd]);
 
   const calendarDays = useMemo(
     () => getCalendarDays(displayMonth),
@@ -169,6 +185,14 @@ export function UsageDateRangePicker({
   /* Pick a date from the calendar */
   const handleDatePick = (day: Date) => {
     setError(null);
+
+    // When live end time is active, calendar only controls start date
+    if (draftLiveEnd) {
+      const nextTs = setDateKeepTime(draftStart, day);
+      setDraftStart(nextTs);
+      return;
+    }
+
     const nextTs = setDateKeepTime(
       activeField === "start" ? draftStart : draftEnd,
       day,
@@ -211,6 +235,7 @@ export function UsageDateRangePicker({
       preset: "custom",
       customStartDate: draftStart,
       customEndDate: draftEnd,
+      liveEndTime: draftLiveEnd,
     });
     setOpen(false);
   };
@@ -222,6 +247,7 @@ export function UsageDateRangePicker({
   /* ── Field card (start / end) ── */
   const renderField = (field: DraftField) => {
     const isActive = activeField === field;
+    const isEndLive = field === "end" && draftLiveEnd;
     const ts = field === "start" ? draftStart : draftEnd;
     const setTs = field === "start" ? setDraftStart : setDraftEnd;
     const label =
@@ -232,12 +258,16 @@ export function UsageDateRangePicker({
     return (
       <div
         className={cn(
-          "rounded-lg border px-3 py-2 cursor-pointer transition-all",
-          isActive
-            ? "border-primary ring-1 ring-primary/30 bg-primary/5"
-            : "border-border/50 hover:border-border",
+          "rounded-lg border px-3 py-2 transition-all",
+          isEndLive
+            ? "border-border/30 bg-muted/30 cursor-not-allowed opacity-50"
+            : isActive
+              ? "border-primary ring-1 ring-primary/30 bg-primary/5 cursor-pointer"
+              : "border-border/50 hover:border-border cursor-pointer",
         )}
-        onClick={() => setActiveField(field)}
+        onClick={() => {
+          if (!isEndLive) setActiveField(field);
+        }}
       >
         <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
           {label}
@@ -245,27 +275,41 @@ export function UsageDateRangePicker({
         <div className="flex items-center gap-1.5">
           <Input
             type="date"
-            className="h-7 flex-1 border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0"
+            className={cn(
+              "h-7 flex-1 border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0",
+              isEndLive && "pointer-events-none",
+            )}
             value={fmtDate(ts)}
             onChange={(e) => {
+              if (isEndLive) return;
               const next = parseDateInput(ts, e.target.value);
               setTs(next);
               const d = fromTs(next);
               setDisplayMonth(new Date(d.getFullYear(), d.getMonth(), 1));
               setError(null);
             }}
-            onFocus={() => setActiveField(field)}
+            onFocus={() => {
+              if (!isEndLive) setActiveField(field);
+            }}
+            readOnly={isEndLive}
           />
           <Input
             type="time"
             step={60}
-            className="h-7 w-[90px] flex-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0"
+            className={cn(
+              "h-7 w-[90px] flex-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0",
+              isEndLive && "pointer-events-none",
+            )}
             value={fmtTime(ts)}
             onChange={(e) => {
+              if (isEndLive) return;
               setTs(parseTimeInput(ts, e.target.value));
               setError(null);
             }}
-            onFocus={() => setActiveField(field)}
+            onFocus={() => {
+              if (!isEndLive) setActiveField(field);
+            }}
+            readOnly={isEndLive}
           />
         </div>
       </div>
@@ -317,6 +361,23 @@ export function UsageDateRangePicker({
             </p>
             {renderField("start")}
             {renderField("end")}
+
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <Checkbox
+                checked={draftLiveEnd}
+                onCheckedChange={(checked) => {
+                  const live = checked === true;
+                  setDraftLiveEnd(live);
+                  if (live) {
+                    setDraftEnd(Math.floor(Date.now() / 1000));
+                    setActiveField("start");
+                  }
+                }}
+              />
+              <span className="text-xs text-muted-foreground">
+                {t("usage.liveEndTime", "结束时间跟随当前时刻")}
+              </span>
+            </label>
 
             {error && <p className="text-xs text-destructive">{error}</p>}
 

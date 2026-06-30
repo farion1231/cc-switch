@@ -3,6 +3,7 @@
 //! 统一处理流式和非流式 API 响应
 
 use super::{
+    content_encoding::{decompress_body, get_content_encoding},
     forwarder::ActiveConnectionGuard,
     handler_config::{StreamUsageEventFilter, UsageParserConfig},
     handler_context::{RequestContext, StreamingTimeoutConfig},
@@ -19,7 +20,6 @@ use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::Value;
 use std::{
-    io::Read,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -29,59 +29,8 @@ use std::{
 use tokio::sync::Mutex;
 
 // ============================================================================
-// 响应解压
+// 响应头处理
 // ============================================================================
-
-/// 根据 content-encoding 解压响应体字节
-///
-/// reqwest 自动解压已禁用（为了透传 accept-encoding），需要手动解压。
-/// 返回 `Ok(None)` 表示编码不受支持、原样透传——此时调用方必须保留
-/// content-encoding 头，否则下游（诊断/客户端）会把压缩字节误当明文。
-fn decompress_body(content_encoding: &str, body: &[u8]) -> Result<Option<Vec<u8>>, std::io::Error> {
-    match content_encoding {
-        "gzip" | "x-gzip" => {
-            let mut decoder = flate2::read::GzDecoder::new(body);
-            let mut decompressed = Vec::new();
-            decoder.read_to_end(&mut decompressed)?;
-            Ok(Some(decompressed))
-        }
-        "deflate" => {
-            // RFC 9110: deflate 指 zlib 包裹格式；但部分上游发 raw deflate 流。
-            // 先按规范尝试 zlib，失败再回退 raw —— 否则合规上游必然解压失败，
-            // 原始压缩字节会被 fail-open 透传给 JSON 解析（#2234 形态 C 之一）。
-            let mut decompressed = Vec::new();
-            let mut zlib = flate2::read::ZlibDecoder::new(body);
-            match zlib.read_to_end(&mut decompressed) {
-                Ok(_) => Ok(Some(decompressed)),
-                Err(zlib_err) => {
-                    log::debug!("deflate 按 zlib 解压失败（{zlib_err}），回退 raw deflate");
-                    let mut decompressed = Vec::new();
-                    let mut raw = flate2::read::DeflateDecoder::new(body);
-                    raw.read_to_end(&mut decompressed)?;
-                    Ok(Some(decompressed))
-                }
-            }
-        }
-        "br" => {
-            let mut decompressed = Vec::new();
-            brotli::BrotliDecompress(&mut std::io::Cursor::new(body), &mut decompressed)?;
-            Ok(Some(decompressed))
-        }
-        _ => {
-            log::warn!("未知的 content-encoding: {content_encoding}，跳过解压");
-            Ok(None)
-        }
-    }
-}
-
-/// 从响应头提取 content-encoding（忽略 identity 和 chunked）
-fn get_content_encoding(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get("content-encoding")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.trim().to_lowercase())
-        .filter(|s| !s.is_empty() && s != "identity")
-}
 
 /// RFC 2616 / RFC 7230 中定义的不应被代理继续转发的响应头。
 const HOP_BY_HOP_RESPONSE_HEADERS: &[&str] = &[
@@ -877,40 +826,6 @@ mod tests {
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::RwLock;
-
-    #[test]
-    fn decompress_body_deflate_handles_zlib_wrapped_per_rfc9110() {
-        // RFC 9110 规范的 deflate = zlib 包裹格式（合规上游发的就是这个）
-        let payload = br#"{"ok":true}"#;
-        let mut encoder =
-            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
-        std::io::Write::write_all(&mut encoder, payload).unwrap();
-        let compressed = encoder.finish().unwrap();
-
-        let decompressed = decompress_body("deflate", &compressed).unwrap().unwrap();
-        assert_eq!(decompressed, payload);
-    }
-
-    #[test]
-    fn decompress_body_deflate_falls_back_to_raw_stream() {
-        // 部分上游违规发 raw deflate 流，保持兼容
-        let payload = br#"{"ok":true}"#;
-        let mut encoder =
-            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
-        std::io::Write::write_all(&mut encoder, payload).unwrap();
-        let compressed = encoder.finish().unwrap();
-
-        let decompressed = decompress_body("deflate", &compressed).unwrap().unwrap();
-        assert_eq!(decompressed, payload);
-    }
-
-    #[test]
-    fn decompress_body_unknown_encoding_returns_none_to_keep_headers() {
-        // 未知编码必须返回 None（而非伪装成"已解码"），否则 content-encoding
-        // 头被剥掉，下游诊断会把压缩字节误报成明文
-        let result = decompress_body("zstd", b"\x28\xb5\x2f\xfd").unwrap();
-        assert!(result.is_none());
-    }
 
     #[test]
     fn test_strip_sse_field_accepts_optional_space() {
