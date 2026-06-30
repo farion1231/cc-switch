@@ -99,7 +99,7 @@ export const updateCommonConfigSnippet = (
   } catch (err) {
     return {
       updatedConfig: jsonString,
-      error: "配置 JSON 解析失败，无法写入通用配置",
+      error: "配置 JSON 解析失败，无法应用通用配置",
     };
   }
 
