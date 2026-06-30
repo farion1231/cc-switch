@@ -78,6 +78,12 @@ pub struct DeepLinkImportRequest {
     /// Optional Opus model (Claude only, v3.7.1+)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub opus_model: Option<String>,
+    /// Optional API format / local-route switch (v3.16.5+)
+    /// One of: "anthropic" | "openai_chat" | "openai_responses".
+    /// Maps to `ProviderMeta.apiFormat`; any value other than "anthropic"
+    /// makes the local proxy take over and convert the upstream protocol.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_format: Option<String>,
 
     // ============ Prompt-specific fields ============
     /// Base64 encoded Markdown content

@@ -227,8 +227,25 @@ fn usage_base_url_override(request: &DeepLinkImportRequest) -> Option<String> {
     }
 }
 
-/// Build provider meta with usage script configuration
+/// Build provider meta with usage script and/or API format configuration
 fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<ProviderMeta>, AppError> {
+    let usage_script = build_usage_script(request)?;
+    let api_format = request.api_format.clone();
+
+    // Nothing to put in meta
+    if usage_script.is_none() && api_format.is_none() {
+        return Ok(None);
+    }
+
+    Ok(Some(ProviderMeta {
+        usage_script,
+        api_format,
+        ..Default::default()
+    }))
+}
+
+/// Build the usage query script from the deeplink request, if any usage field is set
+fn build_usage_script(request: &DeepLinkImportRequest) -> Result<Option<UsageScript>, AppError> {
     // Check if any usage script fields are provided
     if request.usage_script.is_none()
         && request.usage_enabled.is_none()
@@ -269,10 +286,7 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
         secret_access_key: None,
     };
 
-    Ok(Some(ProviderMeta {
-        usage_script: Some(usage_script),
-        ..Default::default()
-    }))
+    Ok(Some(usage_script))
 }
 
 /// Build Claude settings configuration

@@ -88,6 +88,47 @@ fn test_parse_deeplink_with_notes() {
 }
 
 #[test]
+fn test_parse_deeplink_with_api_format() {
+    let url = "ccswitch://v1/import?resource=provider&app=codex&name=DeepSeek&endpoint=https%3A%2F%2Fapi.deepseek.com&apiKey=key123&apiFormat=openai_chat";
+
+    let request = parse_deeplink_url(url).unwrap();
+
+    assert_eq!(request.api_format, Some("openai_chat".to_string()));
+}
+
+#[test]
+fn test_parse_deeplink_rejects_invalid_api_format() {
+    let url = "ccswitch://v1/import?resource=provider&app=codex&name=DeepSeek&endpoint=https%3A%2F%2Fapi.deepseek.com&apiKey=key123&apiFormat=bogus";
+
+    let result = parse_deeplink_url(url);
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Invalid apiFormat"));
+}
+
+#[test]
+fn test_build_provider_sets_api_format_meta() {
+    use super::parser::parse_deeplink_url;
+    use super::provider::build_provider_from_request;
+    use crate::AppType;
+
+    let url = "ccswitch://v1/import?resource=provider&app=codex&name=DeepSeek&endpoint=https%3A%2F%2Fapi.deepseek.com&apiKey=key123&apiFormat=openai_chat";
+    let request = parse_deeplink_url(url).unwrap();
+
+    let provider = build_provider_from_request(&AppType::Codex, &request).unwrap();
+
+    assert_eq!(
+        provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.api_format.as_deref()),
+        Some("openai_chat")
+    );
+}
+
+#[test]
 fn test_parse_invalid_scheme() {
     let url = "https://v1/import?resource=provider&app=claude&name=Test";
 
@@ -179,6 +220,7 @@ fn test_build_gemini_provider_with_model() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -232,6 +274,7 @@ fn test_build_gemini_provider_without_model() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -278,6 +321,7 @@ fn test_deeplink_usage_script_does_not_copy_provider_credentials() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -327,6 +371,7 @@ fn test_deeplink_usage_script_omits_explicit_credentials_that_match_provider() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -375,6 +420,7 @@ fn test_deeplink_usage_script_preserves_distinct_usage_credentials() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         config: None,
         config_format: None,
         config_url: None,
@@ -428,6 +474,7 @@ fn test_parse_and_merge_config_claude() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         config: Some(config_b64),
         config_format: Some("json".to_string()),
         config_url: None,
@@ -519,6 +566,7 @@ fn test_parse_and_merge_config_url_override() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         config: Some(config_b64),
         config_format: Some("json".to_string()),
         config_url: None,
@@ -582,6 +630,7 @@ fn test_build_claude_provider_preserves_custom_env_fields() {
         haiku_model: Some("haiku-from-url".to_string()),
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         config: Some(config_b64),
         config_format: Some("json".to_string()),
         config_url: None,
@@ -637,6 +686,7 @@ fn test_build_claude_provider_without_config_unchanged() {
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         config: None,
         config_format: None,
         config_url: None,

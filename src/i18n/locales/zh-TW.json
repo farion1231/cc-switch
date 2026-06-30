@@ -2260,6 +2260,7 @@
     "haikuModel": "Haiku 模型",
     "sonnetModel": "Sonnet 模型",
     "opusModel": "Opus 模型",
+    "apiFormat": "API 格式 / 路由",
     "multiModel": "多模態模型",
     "notes": "備註",
     "import": "匯入",
