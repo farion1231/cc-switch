@@ -5,6 +5,12 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Linux Wayland: Override the AppImage's Forced `GDK_BACKEND=x11`**: The AppImage's GTK launch hook (`linuxdeploy-plugin-gtk.sh`) unconditionally exports `GDK_BACKEND=x11` to dodge a historical native-Wayland crash (tauri-apps/tauri#8541). On newer Wayland + NVIDIA setups this forced XWayland leaves the WebKitGTK web content unable to receive pointer events — the GTK title bar stays clickable but the page is dead — and black-screens on resize; the existing `WEBKIT_DISABLE_*` mitigations don't help because the root cause is the forced window backend, not rendering. Since the hook also overrides any user-set `GDK_BACKEND`, there was no way to switch back without unpacking the AppImage. `main.rs` now reads an opt-in `CC_SWITCH_GDK_BACKEND` escape hatch (which the hook never touches) before GTK init: leaving it unset keeps the current x11 behavior unchanged (zero regression), while `CC_SWITCH_GDK_BACKEND=wayland` forces native Wayland. The override is generic, so users on tiling Wayland compositors hitting the inverse input bug can set `CC_SWITCH_GDK_BACKEND=x11`. (#4351, fixes #4350)
+
 ## [3.16.4] - 2026-06-27
 
 Development since v3.16.3 focuses on tightening the Codex proxy path — native OpenAI Responses migration for the major Chinese providers, a decoupled upstream-format selector, zstd request/error-body decompression, and a run of tool-call and OAuth-over-proxy fixes — alongside richer usage and pricing tooling (models.dev pricing import, Volcengine Ark coding/agent-plan quotas, live-tracking date ranges, GLM-5.2/Doubao Seed 2.1 pricing), new proxy and resilience capabilities (custom request header/body overrides, an in-app recovery screen for too-new databases, native Windows ARM64 builds), and a broad wave of preset and branding updates (the SubRouter and OpenCode Go subscriptions, the CTok→ETok rename, Kimi rebranding and prime-partner badges, and a Kimi K2.7 Code sponsor banner).
