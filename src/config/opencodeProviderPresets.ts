@@ -674,8 +674,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "Kimi",
     primePartner: true,
-    websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
-    apiKeyUrl: "https://platform.moonshot.cn/console/api-keys?aff=cc-switch",
+    websiteUrl: "https://platform.kimi.com?aff=cc-switch",
+    apiKeyUrl: "https://platform.kimi.com/console/api-keys?aff=cc-switch",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "Kimi",
@@ -708,8 +708,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "Kimi For Coding",
     primePartner: true,
-    websiteUrl: "https://www.kimi.com/code/docs/?aff=cc-switch",
-    apiKeyUrl: "https://platform.moonshot.cn/console/api-keys?aff=cc-switch",
+    websiteUrl: "https://www.kimi.com/code/?aff=cc-switch",
+    apiKeyUrl: "https://platform.kimi.com/console/api-keys?aff=cc-switch",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "Kimi For Coding",

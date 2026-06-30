@@ -416,7 +416,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "Kimi",
     primePartner: true,
-    websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
+    websiteUrl: "https://platform.kimi.com?aff=cc-switch",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://api.moonshot.cn/anthropic",
@@ -434,7 +434,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "Kimi For Coding",
     primePartner: true,
-    websiteUrl: "https://www.kimi.com/code/docs/?aff=cc-switch",
+    websiteUrl: "https://www.kimi.com/code/?aff=cc-switch",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://api.kimi.com/coding/",

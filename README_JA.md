@@ -25,9 +25,9 @@
 <details open>
 <summary>クリックで折りたたむ</summary>
 
-[![Kimi K2.7 Code](assets/partners/banners/kimi-banner-en.png)](https://platform.moonshot.cn/console?aff=cc-switch)
+[![Kimi K2.7 Code](assets/partners/banners/kimi-banner-en.png)](https://platform.kimi.com?aff=cc-switch)
 
-Kimi K2.7 Code は Moonshot AI が開発した、コーディングに特化したオープンソースのエージェントモデルです。コーディング能力とエージェント性能が全面的に強化され、実世界の長程コーディングタスクで大幅な向上を実現し、複雑なソフトウェアエンジニアリングのワークフロー全体でエンドツーエンドのタスク成功率を高めます。さらに K2.7 Code は推論効率を改善し、K2.6 と比べて推論トークンの消費を約 30% 削減します。**[ここをクリックして Kimi を体験する](https://platform.moonshot.cn/console?aff=cc-switch)**
+Kimi K2.7 Code は Moonshot AI が開発した、コーディングに特化したオープンソースのエージェントモデルです。コーディング能力とエージェント性能が全面的に強化され、実世界の長程コーディングタスクで大幅な向上を実現し、複雑なソフトウェアエンジニアリングのワークフロー全体でエンドツーエンドのタスク成功率を高めます。さらに K2.7 Code は推論効率を改善し、K2.6 と比べて推論トークンの消費を約 30% 削減します。**[ここをクリックして Kimi を体験する](https://platform.kimi.com?aff=cc-switch)**
 
 ---
 

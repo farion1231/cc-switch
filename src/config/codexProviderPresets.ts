@@ -485,8 +485,8 @@ requires_openai_auth = true`,
   {
     name: "Kimi",
     primePartner: true,
-    websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
-    apiKeyUrl: "https://platform.moonshot.cn/console/api-keys?aff=cc-switch",
+    websiteUrl: "https://platform.kimi.com?aff=cc-switch",
+    apiKeyUrl: "https://platform.kimi.com/console/api-keys?aff=cc-switch",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "kimi",
@@ -516,8 +516,8 @@ requires_openai_auth = true`,
   {
     name: "Kimi For Coding",
     primePartner: true,
-    websiteUrl: "https://www.kimi.com/code/docs/",
-    apiKeyUrl: "https://www.kimi.com/code/",
+    websiteUrl: "https://www.kimi.com/code/?aff=cc-switch",
+    apiKeyUrl: "https://www.kimi.com/code/?aff=cc-switch",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "kimi_coding",

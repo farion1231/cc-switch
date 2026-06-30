@@ -579,7 +579,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "Kimi",
     primePartner: true,
-    websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
+    websiteUrl: "https://platform.kimi.com?aff=cc-switch",
     settingsConfig: {
       name: "kimi",
       base_url: "https://api.moonshot.cn/v1",
@@ -597,7 +597,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "Kimi For Coding",
     primePartner: true,
-    websiteUrl: "https://www.kimi.com/code/docs/?aff=cc-switch",
+    websiteUrl: "https://www.kimi.com/code/?aff=cc-switch",
     settingsConfig: {
       name: "kimi_coding",
       base_url: "https://api.kimi.com/coding/",

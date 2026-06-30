@@ -600,8 +600,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   {
     name: "Kimi",
     primePartner: true,
-    websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
-    apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
+    websiteUrl: "https://platform.kimi.com?aff=cc-switch",
+    apiKeyUrl: "https://platform.kimi.com/console/api-keys?aff=cc-switch",
     settingsConfig: {
       baseUrl: "https://api.moonshot.cn/v1",
       apiKey: "",
@@ -639,8 +639,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   {
     name: "Kimi For Coding",
     primePartner: true,
-    websiteUrl: "https://www.kimi.com/code/docs/?aff=cc-switch",
-    apiKeyUrl: "https://platform.moonshot.cn/console/api-keys",
+    websiteUrl: "https://www.kimi.com/code/?aff=cc-switch",
+    apiKeyUrl: "https://platform.kimi.com/console/api-keys?aff=cc-switch",
     settingsConfig: {
       baseUrl: "https://api.kimi.com/v1",
       apiKey: "",

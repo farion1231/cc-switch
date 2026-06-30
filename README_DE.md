@@ -25,9 +25,9 @@
 <details open>
 <summary>Zum Einklappen klicken</summary>
 
-[![Kimi K2.7 Code](assets/partners/banners/kimi-banner-en.png)](https://platform.moonshot.cn/console?aff=cc-switch)
+[![Kimi K2.7 Code](assets/partners/banners/kimi-banner-en.png)](https://platform.kimi.com?aff=cc-switch)
 
-Kimi K2.7 Code ist ein quelloffenes, auf Programmierung spezialisiertes Agenten-Modell von Moonshot AI. Es bietet eine stärkere Programmier- und Agentenleistung mit erheblichen Verbesserungen bei realen, langfristigen Programmieraufgaben. Diese Fortschritte führen zu höheren End-to-End-Erfolgsraten in komplexen Software-Engineering-Workflows. Zudem verbessert K2.7 Code die Reasoning-Effizienz und reduziert den Verbrauch an Thinking-Tokens um rund 30 % gegenüber K2.6. **[Hier klicken, um Kimi auszuprobieren](https://platform.moonshot.cn/console?aff=cc-switch)**
+Kimi K2.7 Code ist ein quelloffenes, auf Programmierung spezialisiertes Agenten-Modell von Moonshot AI. Es bietet eine stärkere Programmier- und Agentenleistung mit erheblichen Verbesserungen bei realen, langfristigen Programmieraufgaben. Diese Fortschritte führen zu höheren End-to-End-Erfolgsraten in komplexen Software-Engineering-Workflows. Zudem verbessert K2.7 Code die Reasoning-Effizienz und reduziert den Verbrauch an Thinking-Tokens um rund 30 % gegenüber K2.6. **[Hier klicken, um Kimi auszuprobieren](https://platform.kimi.com?aff=cc-switch)**
 
 ---
 

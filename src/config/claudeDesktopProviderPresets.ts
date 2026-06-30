@@ -457,7 +457,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
     name: "Kimi",
     primePartner: true,
-    websiteUrl: "https://platform.moonshot.cn/console?aff=cc-switch",
+    websiteUrl: "https://platform.kimi.com?aff=cc-switch",
     category: "cn_official",
     baseUrl: "https://api.moonshot.cn/anthropic",
     mode: "proxy",
@@ -473,7 +473,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
     name: "Kimi For Coding",
     primePartner: true,
-    websiteUrl: "https://www.kimi.com/code/docs/?aff=cc-switch",
+    websiteUrl: "https://www.kimi.com/code/?aff=cc-switch",
     category: "cn_official",
     baseUrl: "https://api.kimi.com/coding/",
     mode: "proxy",
