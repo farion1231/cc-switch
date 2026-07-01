@@ -181,6 +181,41 @@ impl Database {
         Ok(affected > 0)
     }
 
+    /// 批量更新 Skill 的来源（仓库信息）
+    ///
+    /// 将选中的 Skills 关联到指定的仓库，更新 repo_owner、repo_name 和 repo_branch 字段。
+    /// 返回成功更新的记录数。
+    pub fn batch_update_skill_source(
+        &self,
+        updates: &[(String, String, Option<String>)],
+        repo_owner: &str,
+        repo_name: &str,
+        repo_branch: &str,
+    ) -> Result<usize, AppError> {
+        if updates.is_empty() {
+            return Ok(0);
+        }
+
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let mut affected = 0;
+
+        for (old_id, new_id, readme_url) in updates {
+            let rows = tx
+                .execute(
+                    "UPDATE skills SET id = ?1, repo_owner = ?2, repo_name = ?3, repo_branch = ?4, readme_url = ?5 WHERE id = ?6",
+                    params![new_id, repo_owner, repo_name, repo_branch, readme_url, old_id],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            affected += rows;
+        }
+
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(affected)
+    }
+
     // ========== SkillRepo CRUD（保持原有） ==========
 
     /// 获取所有 Skill 仓库

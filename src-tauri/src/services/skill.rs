@@ -1378,6 +1378,65 @@ impl SkillService {
         Ok(())
     }
 
+    /// 批量更新 Skills 的来源（仓库信息）
+    ///
+    /// 将选中的 Skills 关联到指定的仓库。
+    /// 返回成功更新的记录数。
+    pub fn batch_update_source(
+        db: &Arc<Database>,
+        ids: &[String],
+        repo_owner: &str,
+        repo_name: &str,
+        repo_branch: &str,
+        subdirectory: Option<&str>,
+    ) -> Result<usize> {
+        let all_skills = Self::get_all_installed(db)?;
+        let skill_map: std::collections::HashMap<&str, &InstalledSkill> =
+            all_skills.iter().map(|s| (s.id.as_str(), s)).collect();
+        let subdirectory = subdirectory.map(|s| s.trim()).filter(|s| !s.is_empty());
+        let updates: Vec<(String, String, Option<String>)> = ids
+            .iter()
+            .filter_map(|id| {
+                let skill = skill_map.get(id.as_str())?;
+                let doc_path = if let Some(subdir) = subdirectory {
+                    format!(
+                        "{}/{}/SKILL.md",
+                        subdir.trim_end_matches('/'),
+                        skill.directory.trim_end_matches('/')
+                    )
+                } else {
+                    skill
+                        .readme_url
+                        .as_deref()
+                        .and_then(Self::extract_doc_path_from_url)
+                        .unwrap_or_else(|| {
+                            format!("{}/SKILL.md", skill.directory.trim_end_matches('/'))
+                        })
+                };
+                let readme_url = Some(Self::build_skill_doc_url(
+                    repo_owner,
+                    repo_name,
+                    repo_branch,
+                    &doc_path,
+                ));
+                let new_id = format!("{}/{}:{}", repo_owner, repo_name, skill.directory);
+                Some((id.clone(), new_id, readme_url))
+            })
+            .collect();
+
+        let affected =
+            db.batch_update_skill_source(&updates, repo_owner, repo_name, repo_branch)?;
+        log::info!(
+            "批量更新 {} 个 Skills 的来源为 {}/{} (branch: {}, subdirectory: {:?})",
+            affected,
+            repo_owner,
+            repo_name,
+            repo_branch,
+            subdirectory
+        );
+        Ok(affected)
+    }
+
     /// 扫描未管理的 Skills
     ///
     /// 扫描各应用目录，找出未被 CC Switch 管理的 Skills
