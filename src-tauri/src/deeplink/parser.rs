@@ -79,14 +79,28 @@ fn parse_provider_deeplink(
         .clone();
 
     // Validate app type
+    // Note: keep aliases in sync with AppType::from_str in app_config.rs.
     if !matches!(
         app.as_str(),
-        "claude" | "codex" | "gemini" | "opencode" | "openclaw" | "hermes"
+        "claude"
+            | "claude-desktop"
+            | "claude_desktop"
+            | "claudedesktop"
+            | "codex"
+            | "gemini"
+            | "opencode"
+            | "openclaw"
+            | "hermes"
     ) {
         return Err(AppError::InvalidInput(format!(
-            "Invalid app type: must be 'claude', 'codex', 'gemini', 'opencode', 'openclaw', or 'hermes', got '{app}'"
+            "Invalid app type: must be 'claude', 'claude-desktop', 'codex', 'gemini', 'opencode', 'openclaw', or 'hermes', got '{app}'"
         )));
     }
+    let app = if matches!(app.as_str(), "claude_desktop" | "claudedesktop") {
+        "claude-desktop".to_string()
+    } else {
+        app
+    };
 
     let name = params
         .get("name")
