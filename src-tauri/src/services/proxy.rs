@@ -57,7 +57,7 @@ enum ClaudeTakeoverAuthPolicy {
 #[derive(Clone)]
 pub struct ProxyService {
     db: Arc<Database>,
-    codex_oauth_manager: Arc<RwLock<CodexOAuthManager>>,
+    codex_oauth_manager: Arc<CodexOAuthManager>,
     server: Arc<RwLock<Option<ProxyServer>>>,
     /// AppHandle，用于传递给 ProxyServer 以支持故障转移时的 UI 更新
     app_handle: Arc<RwLock<Option<tauri::AppHandle>>>,
@@ -71,16 +71,15 @@ pub struct HotSwitchOutcome {
 
 impl ProxyService {
     pub fn new(db: Arc<Database>) -> Self {
-        let codex_oauth_manager = Arc::new(RwLock::new(CodexOAuthManager::new(
-            crate::config::get_app_config_dir(),
-        )));
+        let codex_oauth_manager =
+            Arc::new(CodexOAuthManager::new(crate::config::get_app_config_dir()));
 
         Self::new_with_codex_oauth_manager(db, codex_oauth_manager)
     }
 
     pub fn new_with_codex_oauth_manager(
         db: Arc<Database>,
-        codex_oauth_manager: Arc<RwLock<CodexOAuthManager>>,
+        codex_oauth_manager: Arc<CodexOAuthManager>,
     ) -> Self {
         Self {
             db,
@@ -1171,6 +1170,48 @@ impl ProxyService {
     }
 
     /// 备份各应用的 Live 配置
+    /// 若当前 Codex provider 是托管账号绑定，则把待备份的 live 配置中属于该账号的
+    /// ChatGPT 登录 auth 清空。托管账号的可刷新 token 由 CodexOAuthManager 集中保管，
+    /// 绝不应持久化进 Live 备份（否则完整 bundle 的 refresh_token 会落进 DB 备份槽）。
+    fn sanitize_codex_backup_auth(&self, config: &mut Value) {
+        let Some(current_id) =
+            crate::settings::get_effective_current_provider(&self.db, &AppType::Codex)
+                .ok()
+                .flatten()
+        else {
+            return;
+        };
+        let Ok(providers) = self.db.get_all_providers(AppType::Codex.as_str()) else {
+            return;
+        };
+        let Some(provider) = providers.get(&current_id) else {
+            return;
+        };
+        if provider.category.as_deref() != Some("official") {
+            return;
+        }
+        let Some(account_id) = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+        else {
+            return;
+        };
+        let should_strip = config
+            .get("auth")
+            .map(|auth| {
+                crate::codex_config::codex_live_auth_is_managed_chatgpt_login(auth, &account_id)
+            })
+            .unwrap_or(false);
+        if should_strip {
+            if let Some(obj) = config.as_object_mut() {
+                obj.insert("auth".to_string(), json!({}));
+            }
+        }
+    }
+
     async fn backup_live_configs(&self) -> Result<(), String> {
         // Claude
         if let Ok(config) = self.read_claude_live() {
@@ -1191,10 +1232,11 @@ impl ProxyService {
         }
 
         // Codex
-        if let Ok(config) = self.read_codex_live() {
+        if let Ok(mut config) = self.read_codex_live() {
             if Self::live_has_proxy_placeholder_for_app(&AppType::Codex, &config) {
                 log::warn!("codex Live 已被代理接管，不备份（避免把代理配置固化进备份槽）；下次 stop 会从 SSOT 重建 Live");
             } else {
+                self.sanitize_codex_backup_auth(&mut config);
                 let json_str = serde_json::to_string(&config)
                     .map_err(|e| format!("序列化 Codex 配置失败: {e}"))?;
                 self.db
@@ -1224,7 +1266,7 @@ impl ProxyService {
 
     /// 备份指定应用的 Live 配置（严格模式：目标配置不存在则返回错误）
     async fn backup_live_config_strict(&self, app_type: &AppType) -> Result<(), String> {
-        let (app_type_str, config) = match app_type {
+        let (app_type_str, mut config) = match app_type {
             AppType::Claude => ("claude", self.read_claude_live()?),
             AppType::Codex => ("codex", self.read_codex_live()?),
             AppType::Gemini => ("gemini", self.read_gemini_live()?),
@@ -1238,6 +1280,11 @@ impl ProxyService {
                 "{app_type_str} Live 已被代理接管，不备份（避免把代理配置固化进备份槽）；下次 stop 会从 SSOT 重建 Live"
             );
             return Ok(());
+        }
+
+        // 托管 Codex 账号的可刷新 token 不入备份（见 sanitize_codex_backup_auth）。
+        if matches!(app_type, AppType::Codex) {
+            self.sanitize_codex_backup_auth(&mut config);
         }
 
         let json_str = serde_json::to_string(&config)
@@ -2096,6 +2143,22 @@ impl ProxyService {
                 &mut effective_settings,
             )
             .map_err(|e| format!("注入统一会话路由失败: {e}"))?;
+
+            // 托管账号：build 出的 effective_settings.auth 是完整可刷新 bundle（含
+            // refresh_token），绝不能写进 DB 备份（token 由 CodexOAuthManager 集中保管）。
+            // 覆盖上面的 clear/preserve 分支，统一剥离为占位；恢复时 live 由 manager
+            // 重新派生。
+            let provider_is_managed_codex = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+                .map(|id| !id.trim().is_empty())
+                .unwrap_or(false);
+            if provider_is_managed_codex {
+                if let Some(obj) = effective_settings.as_object_mut() {
+                    obj.insert("auth".to_string(), json!({}));
+                }
+            }
         }
 
         let backup_json = match app_type_enum {
@@ -2120,19 +2183,6 @@ impl ProxyService {
             .save_live_backup(app_type, &backup_json)
             .await
             .map_err(|e| format!("更新 {app_type} 备份失败: {e}"))?;
-
-        if matches!(app_type_enum, AppType::Codex)
-            && provider
-                .meta
-                .as_ref()
-                .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
-                .is_some()
-        {
-            if let Some(auth) = effective_settings.get("auth") {
-                crate::codex_config::record_codex_managed_oauth_live_auth(auth)
-                    .map_err(|e| format!("记录 Codex 托管认证标记失败: {e}"))?;
-            }
-        }
 
         log::info!("已更新 {app_type} Live 备份（热切换）");
         Ok(())
@@ -2316,8 +2366,10 @@ impl ProxyService {
             return Err("Codex 备份必须是 JSON 对象".to_string());
         };
 
-        if crate::codex_config::codex_auth_matches_recorded_managed_oauth(existing_auth, account_id)
-            .map_err(|e| format!("检查 Codex 托管认证标记失败: {e}"))?
+        // 托管账号写入的是完整可刷新 bundle（含 refresh_token），必须避免它被
+        // 持久化进 Live 备份。按 account_id 内容判定：命中托管账号则清空备份 auth，
+        // 否则原样保留用户自己的登录以便接管结束后还原。
+        if crate::codex_config::codex_live_auth_is_managed_chatgpt_login(existing_auth, account_id)
         {
             target_obj.insert("auth".to_string(), json!({}));
             return Ok(());
@@ -5096,8 +5148,6 @@ base_url = "https://codex.example/v1"
         let service = ProxyService::new(db.clone());
         service
             .codex_oauth_manager
-            .read()
-            .await
             .add_test_account_with_access_token(
                 "acct-managed",
                 "managed-token",

@@ -99,7 +99,7 @@ pub async fn auth_start_login(
             Ok(map_device_code_response(auth_provider, response))
         }
         AUTH_PROVIDER_CODEX_OAUTH => {
-            let auth_manager = codex_state.0.read().await;
+            let auth_manager = &codex_state.0;
             let response = auth_manager
                 .start_device_flow()
                 .await
@@ -137,7 +137,7 @@ pub async fn auth_poll_for_account(
             }
         }
         AUTH_PROVIDER_CODEX_OAUTH => {
-            let auth_manager = codex_state.0.write().await;
+            let auth_manager = &codex_state.0;
             match auth_manager.poll_for_token(&device_code).await {
                 Ok(account) => {
                     let default_account_id = auth_manager.get_status().await.default_account_id;
@@ -172,7 +172,7 @@ pub async fn auth_list_accounts(
                 .collect())
         }
         AUTH_PROVIDER_CODEX_OAUTH => {
-            let auth_manager = codex_state.0.read().await;
+            let auth_manager = &codex_state.0;
             let status = auth_manager.get_status().await;
             let default_account_id = status.default_account_id.clone();
             Ok(status
@@ -212,7 +212,7 @@ pub async fn auth_get_status(
             })
         }
         AUTH_PROVIDER_CODEX_OAUTH => {
-            let auth_manager = codex_state.0.read().await;
+            let auth_manager = &codex_state.0;
             let status = auth_manager.get_status().await;
             let default_account_id = status.default_account_id.clone();
             Ok(ManagedAuthStatus {
@@ -250,7 +250,7 @@ pub async fn auth_remove_account(
                 .map_err(|e| e.to_string())
         }
         AUTH_PROVIDER_CODEX_OAUTH => {
-            let auth_manager = codex_state.0.write().await;
+            let auth_manager = &codex_state.0;
             auth_manager
                 .remove_account(&account_id)
                 .await
@@ -277,7 +277,7 @@ pub async fn auth_set_default_account(
                 .map_err(|e| e.to_string())
         }
         AUTH_PROVIDER_CODEX_OAUTH => {
-            let auth_manager = codex_state.0.write().await;
+            let auth_manager = &codex_state.0;
             auth_manager
                 .set_default_account(&account_id)
                 .await
@@ -300,7 +300,7 @@ pub async fn auth_logout(
             auth_manager.clear_auth().await.map_err(|e| e.to_string())
         }
         AUTH_PROVIDER_CODEX_OAUTH => {
-            let auth_manager = codex_state.0.write().await;
+            let auth_manager = &codex_state.0;
             auth_manager.clear_auth().await.map_err(|e| e.to_string())
         }
         _ => unreachable!(),
