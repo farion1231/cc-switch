@@ -15,7 +15,6 @@
 //! - Provider 通过 meta.authBinding 关联账号
 //! - 自动迁移 v1 单账号格式到 v3 多账号 + 默认账号格式
 
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -429,8 +428,6 @@ pub struct CopilotAuthManager {
     api_endpoints: Arc<RwLock<HashMap<String, String>>>,
     /// 每个账号的端点拉取锁，避免并发拉取重复打 GitHub API
     endpoint_locks: Arc<RwLock<HashMap<String, Arc<Mutex<()>>>>>,
-    /// HTTP 客户端
-    http_client: Client,
     /// 存储路径
     storage_path: PathBuf,
     /// 待迁移的旧格式 token
@@ -452,7 +449,6 @@ impl CopilotAuthManager {
             copilot_models: Arc::new(RwLock::new(HashMap::new())),
             api_endpoints: Arc::new(RwLock::new(HashMap::new())),
             endpoint_locks: Arc::new(RwLock::new(HashMap::new())),
-            http_client: Client::new(),
             storage_path,
             pending_migration: Arc::new(RwLock::new(None)),
             migration_error: Arc::new(RwLock::new(None)),
@@ -608,8 +604,7 @@ impl CopilotAuthManager {
         };
         log::info!("[CopilotAuth] 启动设备码流程 (domain: {domain})");
 
-        let response = self
-            .http_client
+        let response = crate::proxy::http_client::get()
             .post(github_device_code_url(&domain))
             .header("Accept", "application/json")
             .header("User-Agent", COPILOT_USER_AGENT)
@@ -653,8 +648,7 @@ impl CopilotAuthManager {
         };
         log::debug!("[CopilotAuth] 轮询 OAuth Token (domain: {domain})");
 
-        let response = self
-            .http_client
+        let response = crate::proxy::http_client::get()
             .post(github_oauth_token_url(&domain))
             .header("Accept", "application/json")
             .header("User-Agent", COPILOT_USER_AGENT)
@@ -837,8 +831,7 @@ impl CopilotAuthManager {
 
         log::info!("[CopilotAuth] 获取账号 {account_id} 的 Copilot 可用模型");
 
-        let response = self
-            .http_client
+        let response = crate::proxy::http_client::get()
             .get(&models_url)
             .header("Authorization", format!("Bearer {copilot_token}"))
             .header("Content-Type", "application/json")
@@ -925,8 +918,7 @@ impl CopilotAuthManager {
 
         log::info!("[CopilotAuth] 获取账号 {account_id} 的 Copilot 使用量");
 
-        let response = self
-            .http_client
+        let response = crate::proxy::http_client::get()
             .get(copilot_usage_url(&domain))
             .header("Authorization", format!("token {github_token}"))
             .header("Content-Type", "application/json")
@@ -1040,8 +1032,7 @@ impl CopilotAuthManager {
 
         log::debug!("[CopilotAuth] 为账号 {account_id} 惰性拉取动态 API 端点");
 
-        let response = self
-            .http_client
+        let response = crate::proxy::http_client::get()
             .get(copilot_usage_url(&domain))
             .header("Authorization", format!("token {github_token}"))
             .header("Content-Type", "application/json")
@@ -1318,8 +1309,7 @@ impl CopilotAuthManager {
         github_token: &str,
         domain: &str,
     ) -> Result<GitHubUser, CopilotAuthError> {
-        let response = self
-            .http_client
+        let response = crate::proxy::http_client::get()
             .get(github_user_url(domain))
             .header("Authorization", format!("token {github_token}"))
             .header("User-Agent", COPILOT_USER_AGENT)
@@ -1351,8 +1341,7 @@ impl CopilotAuthManager {
     ) -> Result<(), CopilotAuthError> {
         log::debug!("[CopilotAuth] 获取账号 {account_id} 的 Copilot Token (domain: {domain})");
 
-        let response = self
-            .http_client
+        let response = crate::proxy::http_client::get()
             .get(copilot_token_url(domain))
             .header("Authorization", format!("token {github_token}"))
             .header("User-Agent", COPILOT_USER_AGENT)
