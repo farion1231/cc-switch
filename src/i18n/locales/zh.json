@@ -2114,6 +2114,7 @@
     "addRepo": "添加技能仓库",
     "loading": "加载中...",
     "installed": "已安装",
+    "installedFiltered": "已安装 {{count}} / {{total}}",
     "install": "安装",
     "installing": "安装中...",
     "uninstall": "卸载",
@@ -2211,6 +2212,10 @@
       "repo": "仓库筛选",
       "allRepos": "全部仓库"
     },
+    "appFilter": {
+      "noResults": "当前筛选下没有匹配的技能",
+      "noResultsDescription": "请选择至少一个应用统计按钮，或选中全部应用以查看全部已安装技能。"
+    },
     "noResults": "未找到匹配的技能",
     "noInstalled": "暂无已安装的技能",
     "noInstalledDescription": "从仓库发现并安装技能，或导入已有的技能",
@@ -2260,6 +2265,49 @@
       "successSingle": "技能 {{name}} 已安装",
       "successMultiple": "成功安装 {{count}} 个技能",
       "noSkillsFound": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）"
+    },
+    "groups": {
+      "views": {
+        "all": "全部",
+        "source": "按来源",
+        "manual": "手动分组"
+      },
+      "kinds": {
+        "source": "来源",
+        "manual": "手动"
+      },
+      "auto": {
+        "local": "本地",
+        "ungrouped": "其他分组"
+      },
+      "appStates": {
+        "enabled": "全部已开启",
+        "disabled": "全部已关闭",
+        "mixed": "部分开启"
+      },
+      "toggleAppForGroup": "{{app}} 当前{{state}}，点击切换此分组",
+      "create": "新建分组",
+      "createPrompt": "请输入分组名称",
+      "createSuccess": "分组 {{name}} 已创建",
+      "rename": "重命名",
+      "renamePrompt": "请输入新的分组名称",
+      "renameSuccess": "分组 {{name}} 已重命名",
+      "delete": "删除分组",
+      "deleteConfirm": "确定要删除手动分组 \"{{name}}\" 吗？其中的 Skill 不会被卸载。",
+      "deleteSuccess": "分组 {{name}} 已删除",
+      "members": "成员",
+      "membersSaved": "分组 {{name}} 的成员已保存",
+      "editMembersTitle": "编辑分组成员",
+      "editMembersDescription": "选择要加入 \"{{name}}\" 的 Skills。",
+      "searchMembers": "搜索 Skill...",
+      "selectAll": "全部勾选",
+      "clearAll": "全部不勾选",
+      "saveMembers": "保存成员 ({{count}})",
+      "enableSuccess": "已为 {{app}} 启用 {{count}} 个 Skill",
+      "disableSuccess": "已为 {{app}} 禁用 {{count}} 个 Skill",
+      "empty": "此分组中没有匹配的 Skill",
+      "noResults": "暂无分组",
+      "noResultsDescription": "没有符合此分组类型或应用筛选条件的 Skill。"
     }
   },
   "deeplink": {

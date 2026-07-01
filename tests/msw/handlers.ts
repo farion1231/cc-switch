@@ -44,6 +44,8 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/get_skills_migration_result`, () =>
     success(null),
   ),
+  http.post(`${TAURI_ENDPOINT}/get_installed_skills`, () => success([])),
+  http.post(`${TAURI_ENDPOINT}/get_skill_groups`, () => success([])),
   http.post(`${TAURI_ENDPOINT}/get_providers`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);
     return success(getProviders(app));
@@ -231,6 +233,10 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/get_app_config_dir_override`, () =>
     success(getAppConfigDirOverride()),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/get_default_app_config_dir`, () =>
+    success("/home/mock/.cc-switch"),
   ),
 
   http.post(

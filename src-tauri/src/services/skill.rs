@@ -8,7 +8,7 @@
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -109,6 +109,36 @@ pub struct SkillRepo {
     pub branch: String,
     /// 是否启用
     pub enabled: bool,
+}
+
+/// Skill 分组类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SkillGroupKind {
+    Source,
+    Manual,
+}
+
+/// 返回给前端的 Skill 分组
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillGroup {
+    pub id: String,
+    pub name: String,
+    pub kind: SkillGroupKind,
+    pub editable: bool,
+    pub member_skill_ids: Vec<String>,
+    pub count: usize,
+}
+
+/// 数据库中的手动 Skill 分组
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManualSkillGroup {
+    pub id: String,
+    pub name: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub skill_ids: Vec<String>,
 }
 
 /// 技能安装状态（旧版兼容）
@@ -447,6 +477,8 @@ impl Default for SkillService {
 }
 
 impl SkillService {
+    const MANUAL_UNGROUPED_GROUP_ID: &'static str = "manual:ungrouped";
+
     pub fn new() -> Self {
         Self
     }
@@ -472,6 +504,163 @@ impl SkillService {
             return None;
         }
         Some(path.to_string())
+    }
+
+    fn manual_group_ref(id: &str) -> String {
+        format!("manual:{id}")
+    }
+
+    fn manual_group_db_id(group_id: &str) -> Option<String> {
+        group_id
+            .strip_prefix("manual:")
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned)
+    }
+
+    fn editable_manual_group_db_id(group_id: &str) -> Option<String> {
+        if group_id == Self::MANUAL_UNGROUPED_GROUP_ID {
+            return None;
+        }
+        Self::manual_group_db_id(group_id)
+    }
+
+    fn skill_source_group_name(skill: &InstalledSkill) -> String {
+        match (&skill.repo_owner, &skill.repo_name) {
+            (Some(owner), Some(repo)) if !owner.is_empty() && !repo.is_empty() => {
+                format!("{owner}/{repo}")
+            }
+            _ => "Local".to_string(),
+        }
+    }
+
+    fn skill_source_group_id(skill: &InstalledSkill) -> String {
+        match (&skill.repo_owner, &skill.repo_name) {
+            (Some(owner), Some(repo)) if !owner.is_empty() && !repo.is_empty() => {
+                format!("source:{}/{}", owner.to_lowercase(), repo.to_lowercase())
+            }
+            _ => "source:local".to_string(),
+        }
+    }
+
+    fn build_source_groups<'a>(
+        skills: impl Iterator<Item = &'a InstalledSkill>,
+    ) -> Vec<SkillGroup> {
+        let mut grouped: BTreeMap<String, (String, Vec<String>)> = BTreeMap::new();
+        for skill in skills {
+            let name = Self::skill_source_group_name(skill);
+            let id = Self::skill_source_group_id(skill);
+            grouped
+                .entry(id)
+                .or_insert_with(|| (name, Vec::new()))
+                .1
+                .push(skill.id.clone());
+        }
+
+        grouped
+            .into_iter()
+            .map(|(id, (name, member_skill_ids))| SkillGroup {
+                id,
+                name,
+                kind: SkillGroupKind::Source,
+                editable: false,
+                count: member_skill_ids.len(),
+                member_skill_ids,
+            })
+            .collect()
+    }
+
+    fn build_ungrouped_manual_group<'a>(
+        skills: impl Iterator<Item = &'a InstalledSkill>,
+        manual_groups: &[ManualSkillGroup],
+    ) -> Option<SkillGroup> {
+        let grouped_ids: HashSet<&str> = manual_groups
+            .iter()
+            .flat_map(|group| group.skill_ids.iter().map(String::as_str))
+            .collect();
+
+        let mut member_skill_ids: Vec<String> = skills
+            .filter(|skill| !grouped_ids.contains(skill.id.as_str()))
+            .map(|skill| skill.id.clone())
+            .collect();
+
+        if member_skill_ids.is_empty() {
+            return None;
+        }
+
+        member_skill_ids.sort();
+
+        Some(SkillGroup {
+            id: Self::MANUAL_UNGROUPED_GROUP_ID.to_string(),
+            name: "Ungrouped".to_string(),
+            kind: SkillGroupKind::Manual,
+            editable: false,
+            count: member_skill_ids.len(),
+            member_skill_ids,
+        })
+    }
+
+    fn resolve_skill_group_member_ids(db: &Arc<Database>, group_id: &str) -> Result<Vec<String>> {
+        let skills = db.get_all_installed_skills()?;
+        let existing_ids: HashSet<&str> = skills.keys().map(String::as_str).collect();
+
+        if group_id == Self::MANUAL_UNGROUPED_GROUP_ID {
+            let grouped_ids: HashSet<String> = db
+                .get_manual_skill_groups()?
+                .into_iter()
+                .flat_map(|group| group.skill_ids.into_iter())
+                .filter(|id| existing_ids.contains(id.as_str()))
+                .collect();
+
+            return Ok(skills
+                .values()
+                .filter(|skill| !grouped_ids.contains(skill.id.as_str()))
+                .map(|skill| skill.id.clone())
+                .collect());
+        }
+
+        if let Some(manual_id) = Self::manual_group_db_id(group_id) {
+            return db
+                .get_manual_skill_group_members(&manual_id)?
+                .map(|skill_ids| {
+                    skill_ids
+                        .into_iter()
+                        .filter(|id| existing_ids.contains(id.as_str()))
+                        .collect()
+                })
+                .ok_or_else(|| anyhow!("Skill group not found: {group_id}"));
+        }
+
+        if group_id.starts_with("source:") {
+            let member_skill_ids = skills
+                .values()
+                .filter(|skill| Self::skill_source_group_id(skill) == group_id)
+                .map(|skill| skill.id.clone())
+                .collect::<Vec<_>>();
+            if member_skill_ids.is_empty() {
+                return Err(anyhow!("Skill group not found: {group_id}"));
+            }
+            return Ok(member_skill_ids);
+        }
+
+        Err(anyhow!("Skill group not found: {group_id}"))
+    }
+
+    fn supported_skill_apps() -> [AppType; 5] {
+        [
+            AppType::Claude,
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::OpenCode,
+            AppType::Hermes,
+        ]
+    }
+
+    fn ensure_supported_skill_app(app: &AppType) -> Result<()> {
+        if Self::supported_skill_apps().contains(app) {
+            Ok(())
+        } else {
+            Err(anyhow!("App does not support Skills: {}", app.as_str()))
+        }
     }
 
     // ========== 路径管理 ==========
@@ -562,6 +751,176 @@ impl SkillService {
     pub fn get_all_installed(db: &Arc<Database>) -> Result<Vec<InstalledSkill>> {
         let skills = db.get_all_installed_skills()?;
         Ok(skills.into_values().collect())
+    }
+
+    /// 获取来源自动分组和手动分组
+    pub fn get_skill_groups(db: &Arc<Database>) -> Result<Vec<SkillGroup>> {
+        let skills = db.get_all_installed_skills()?;
+        let mut groups: Vec<SkillGroup> = Vec::new();
+
+        groups.extend(Self::build_source_groups(skills.values()));
+
+        let existing_ids: HashSet<String> = skills.keys().cloned().collect();
+        let manual_groups = db.get_manual_skill_groups()?;
+        let mut normalized_manual_groups = Vec::with_capacity(manual_groups.len());
+
+        for manual in manual_groups {
+            let member_skill_ids: Vec<String> = manual
+                .skill_ids
+                .iter()
+                .filter(|id| existing_ids.contains(*id))
+                .cloned()
+                .collect();
+            normalized_manual_groups.push(ManualSkillGroup {
+                skill_ids: member_skill_ids.clone(),
+                id: manual.id.clone(),
+                name: manual.name.clone(),
+                created_at: manual.created_at,
+                updated_at: manual.updated_at,
+            });
+            groups.push(SkillGroup {
+                id: Self::manual_group_ref(&manual.id),
+                name: manual.name,
+                kind: SkillGroupKind::Manual,
+                editable: true,
+                count: member_skill_ids.len(),
+                member_skill_ids,
+            });
+        }
+
+        if let Some(ungrouped_group) =
+            Self::build_ungrouped_manual_group(skills.values(), &normalized_manual_groups)
+        {
+            groups.push(ungrouped_group);
+        }
+
+        Ok(groups)
+    }
+
+    pub fn create_manual_skill_group(
+        db: &Arc<Database>,
+        name: &str,
+        skill_ids: Vec<String>,
+    ) -> Result<SkillGroup> {
+        let normalized_name = name.trim();
+        if normalized_name.is_empty() {
+            return Err(anyhow!("Skill group name cannot be empty"));
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        let manual = db.create_manual_skill_group(&id, normalized_name, &skill_ids)?;
+        Ok(SkillGroup {
+            id: Self::manual_group_ref(&manual.id),
+            name: manual.name,
+            kind: SkillGroupKind::Manual,
+            editable: true,
+            count: manual.skill_ids.len(),
+            member_skill_ids: manual.skill_ids,
+        })
+    }
+
+    pub fn rename_manual_skill_group(db: &Arc<Database>, group_id: &str, name: &str) -> Result<()> {
+        let normalized_name = name.trim();
+        if normalized_name.is_empty() {
+            return Err(anyhow!("Skill group name cannot be empty"));
+        }
+        let manual_id = Self::editable_manual_group_db_id(group_id)
+            .ok_or_else(|| anyhow!("Only manual skill groups can be renamed"))?;
+        if !db.rename_manual_skill_group(&manual_id, normalized_name)? {
+            return Err(anyhow!("Skill group not found: {group_id}"));
+        }
+        Ok(())
+    }
+
+    pub fn delete_manual_skill_group(db: &Arc<Database>, group_id: &str) -> Result<()> {
+        let manual_id = Self::editable_manual_group_db_id(group_id)
+            .ok_or_else(|| anyhow!("Only manual skill groups can be deleted"))?;
+        if !db.delete_manual_skill_group(&manual_id)? {
+            return Err(anyhow!("Skill group not found: {group_id}"));
+        }
+        Ok(())
+    }
+
+    pub fn set_manual_skill_group_members(
+        db: &Arc<Database>,
+        group_id: &str,
+        skill_ids: Vec<String>,
+    ) -> Result<()> {
+        let manual_id = Self::editable_manual_group_db_id(group_id)
+            .ok_or_else(|| anyhow!("Only manual skill groups can be edited"))?;
+        if !db.set_manual_skill_group_members(&manual_id, &skill_ids)? {
+            return Err(anyhow!("Skill group not found: {group_id}"));
+        }
+        Ok(())
+    }
+
+    pub fn batch_toggle_skill_group_app(
+        db: &Arc<Database>,
+        group_id: &str,
+        app: &AppType,
+        enabled: bool,
+        skill_ids: Option<Vec<String>>,
+    ) -> Result<usize> {
+        Self::ensure_supported_skill_app(app)?;
+        let member_ids = if let Some(skill_ids) = skill_ids {
+            let group_member_ids = Self::resolve_skill_group_member_ids(db, group_id)?;
+            let group_member_set: HashSet<&str> =
+                group_member_ids.iter().map(String::as_str).collect();
+            let mut selected = Vec::new();
+            let mut seen = HashSet::new();
+            for skill_id in skill_ids {
+                if seen.insert(skill_id.clone()) && group_member_set.contains(skill_id.as_str()) {
+                    selected.push(skill_id);
+                }
+            }
+            selected
+        } else {
+            Self::resolve_skill_group_member_ids(db, group_id)?
+        };
+        let original_states: Vec<(String, bool)> = member_ids
+            .iter()
+            .map(|id| {
+                let skill = db
+                    .get_installed_skill(id)?
+                    .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
+                Ok((id.clone(), skill.apps.is_enabled_for(app)))
+            })
+            .collect::<Result<_>>()?;
+
+        let mut changed_count = 0;
+        let mut completed: Vec<(String, bool)> = Vec::new();
+        for (id, original_enabled) in original_states {
+            if original_enabled == enabled {
+                continue;
+            }
+
+            if let Err(err) = Self::toggle_app(db, &id, app, enabled) {
+                let mut rollback_errors = Vec::new();
+                for (completed_id, completed_original_enabled) in completed.into_iter().rev() {
+                    if let Err(rollback_err) =
+                        Self::toggle_app(db, &completed_id, app, completed_original_enabled)
+                    {
+                        rollback_errors.push(format!("{completed_id}: {rollback_err}"));
+                    }
+                }
+
+                if rollback_errors.is_empty() {
+                    return Err(err).with_context(|| {
+                        format!(
+                            "failed to batch toggle Skill group {group_id}; completed changes were rolled back"
+                        )
+                    });
+                }
+
+                return Err(anyhow!(
+                    "failed to batch toggle Skill group {group_id}: {err}; rollback failures: {}",
+                    rollback_errors.join("; ")
+                ));
+            }
+
+            completed.push((id, original_enabled));
+            changed_count += 1;
+        }
+        Ok(changed_count)
     }
 
     /// 安装 Skill
@@ -3058,7 +3417,31 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
+
+    fn test_skill(id: &str) -> InstalledSkill {
+        InstalledSkill {
+            id: id.to_string(),
+            name: id.to_string(),
+            description: None,
+            directory: id.to_string(),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            apps: SkillApps {
+                claude: false,
+                codex: false,
+                gemini: false,
+                opencode: false,
+                hermes: false,
+            },
+            installed_at: 0,
+            content_hash: None,
+            updated_at: 0,
+        }
+    }
 
     fn write_skill(dir: &Path, name: &str) {
         fs::create_dir_all(dir).expect("create skill dir");
@@ -3067,6 +3450,25 @@ mod tests {
             format!("---\nname: {name}\ndescription: Test skill\n---\n"),
         )
         .expect("write SKILL.md");
+    }
+
+    fn with_test_home<T>(f: impl FnOnce() -> T) -> T {
+        static TEST_HOME_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let _guard = TEST_HOME_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("lock test home");
+        let temp = tempdir().expect("tempdir");
+        let previous = std::env::var("CC_SWITCH_TEST_HOME").ok();
+        unsafe {
+            std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        }
+        let result = f();
+        match previous {
+            Some(value) => unsafe { std::env::set_var("CC_SWITCH_TEST_HOME", value) },
+            None => unsafe { std::env::remove_var("CC_SWITCH_TEST_HOME") },
+        }
+        result
     }
 
     #[test]
@@ -3123,5 +3525,109 @@ mod tests {
             dest.join("SKILL.md").is_file(),
             "existing destination skill should be preserved"
         );
+    }
+
+    #[test]
+    fn get_skill_groups_adds_manual_ungrouped_fallback_group() {
+        let db = Arc::new(Database::memory().expect("create memory db"));
+        db.save_skill(&test_skill("skill-a")).expect("save skill a");
+        db.save_skill(&test_skill("skill-b")).expect("save skill b");
+        db.create_manual_skill_group("group-1", "Team", &["skill-a".to_string()])
+            .expect("create manual group");
+
+        let groups = SkillService::get_skill_groups(&db).expect("load skill groups");
+        let ungrouped_group = groups
+            .into_iter()
+            .find(|group| group.id == SkillService::MANUAL_UNGROUPED_GROUP_ID)
+            .expect("ungrouped group should exist");
+
+        assert_eq!(ungrouped_group.kind, SkillGroupKind::Manual);
+        assert!(!ungrouped_group.editable);
+        assert_eq!(ungrouped_group.member_skill_ids, vec!["skill-b"]);
+        assert_eq!(ungrouped_group.count, 1);
+    }
+
+    #[test]
+    fn batch_toggle_ungrouped_manual_group_only_updates_fallback_members() {
+        with_test_home(|| {
+            let db = Arc::new(Database::memory().expect("create memory db"));
+            db.save_skill(&test_skill("skill-a")).expect("save skill a");
+            db.save_skill(&test_skill("skill-b")).expect("save skill b");
+            db.create_manual_skill_group("group-1", "Team", &["skill-a".to_string()])
+                .expect("create manual group");
+            write_skill(
+                &SkillService::get_ssot_dir()
+                    .expect("ssot dir")
+                    .join("skill-b"),
+                "skill-b",
+            );
+
+            let changed = SkillService::batch_toggle_skill_group_app(
+                &db,
+                SkillService::MANUAL_UNGROUPED_GROUP_ID,
+                &AppType::Claude,
+                true,
+                None,
+            )
+            .expect("toggle ungrouped group");
+
+            let grouped_skill = db
+                .get_installed_skill("skill-a")
+                .expect("load grouped skill")
+                .expect("grouped skill exists");
+            let ungrouped_skill = db
+                .get_installed_skill("skill-b")
+                .expect("load ungrouped skill")
+                .expect("ungrouped skill exists");
+
+            assert_eq!(changed, 1);
+            assert!(!grouped_skill.apps.claude);
+            assert!(ungrouped_skill.apps.claude);
+        });
+    }
+
+    #[test]
+    fn batch_toggle_skill_group_app_skips_members_already_in_target_state() {
+        with_test_home(|| {
+            let db = Arc::new(Database::memory().expect("create memory db"));
+            let mut skill_a = test_skill("skill-a");
+            skill_a.apps.claude = true;
+            db.save_skill(&skill_a).expect("save skill a");
+            db.save_skill(&test_skill("skill-b")).expect("save skill b");
+            db.create_manual_skill_group(
+                "group-1",
+                "Team",
+                &["skill-a".to_string(), "skill-b".to_string()],
+            )
+            .expect("create manual group");
+            let ssot_dir = SkillService::get_ssot_dir().expect("ssot dir");
+            write_skill(&ssot_dir.join("skill-a"), "skill-a");
+            write_skill(&ssot_dir.join("skill-b"), "skill-b");
+
+            let changed = SkillService::batch_toggle_skill_group_app(
+                &db,
+                "manual:group-1",
+                &AppType::Claude,
+                true,
+                None,
+            )
+            .expect("toggle mixed group");
+
+            assert_eq!(changed, 1);
+            assert!(
+                db.get_installed_skill("skill-a")
+                    .expect("reload skill a")
+                    .expect("skill a exists")
+                    .apps
+                    .claude
+            );
+            assert!(
+                db.get_installed_skill("skill-b")
+                    .expect("reload skill b")
+                    .expect("skill b exists")
+                    .apps
+                    .claude
+            );
+        });
     }
 }

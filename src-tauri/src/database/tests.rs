@@ -3,7 +3,7 @@
 //! 包含 Schema 迁移和基本功能的测试。
 
 use super::*;
-use crate::app_config::MultiAppConfig;
+use crate::app_config::{InstalledSkill, MultiAppConfig, SkillApps};
 use crate::provider::{Provider, ProviderManager};
 use indexmap::IndexMap;
 use rusqlite::{params, Connection};
@@ -289,6 +289,15 @@ fn schema_create_tables_include_pricing_model_columns() {
     let request_model = get_column_info(&conn, "proxy_request_logs", "request_model");
     assert_eq!(request_model.r#type, "TEXT");
     assert_eq!(request_model.notnull, 0);
+
+    assert!(
+        Database::table_exists(&conn, "skill_groups").expect("check skill_groups"),
+        "skill_groups table should exist"
+    );
+    assert!(
+        Database::table_exists(&conn, "skill_group_members").expect("check skill_group_members"),
+        "skill_group_members table should exist"
+    );
 }
 
 #[test]
@@ -682,6 +691,72 @@ fn dry_run_validates_schema_compatibility() {
         result.is_ok(),
         "Dry-run should succeed with provider data: {result:?}"
     );
+}
+
+fn test_skill(id: &str) -> InstalledSkill {
+    InstalledSkill {
+        id: id.to_string(),
+        name: id.to_string(),
+        description: None,
+        directory: id.to_string(),
+        repo_owner: None,
+        repo_name: None,
+        repo_branch: None,
+        readme_url: None,
+        apps: SkillApps {
+            claude: false,
+            codex: false,
+            gemini: false,
+            opencode: false,
+            hermes: false,
+        },
+        installed_at: 0,
+        content_hash: None,
+        updated_at: 0,
+    }
+}
+
+#[test]
+fn manual_skill_group_create_returns_valid_stored_members() {
+    let db = Database::memory().expect("create memory db");
+    db.save_skill(&test_skill("skill-b")).expect("save skill b");
+    db.save_skill(&test_skill("skill-a")).expect("save skill a");
+
+    let group = db
+        .create_manual_skill_group(
+            "group-1",
+            "Group 1",
+            &[
+                "skill-b".to_string(),
+                "skill-a".to_string(),
+                "skill-a".to_string(),
+            ],
+        )
+        .expect("create group");
+
+    assert_eq!(group.skill_ids, vec!["skill-a", "skill-b"]);
+}
+
+#[test]
+fn manual_skill_group_member_update_rolls_back_on_invalid_skill() {
+    let db = Database::memory().expect("create memory db");
+    db.save_skill(&test_skill("skill-a")).expect("save skill a");
+    db.create_manual_skill_group("group-1", "Group 1", &["skill-a".to_string()])
+        .expect("create group");
+
+    let err = db
+        .set_manual_skill_group_members("group-1", &["missing-skill".to_string()])
+        .expect_err("invalid skill should fail");
+    assert!(
+        err.to_string().contains("Skill not found: missing-skill"),
+        "unexpected error: {err}"
+    );
+
+    let groups = db
+        .get_manual_skill_groups()
+        .expect("read manual skill groups");
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].skill_ids, vec!["skill-a"]);
 }
 
 #[test]

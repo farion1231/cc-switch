@@ -49,6 +49,20 @@ export interface SkillBackupEntry {
   skill: InstalledSkill;
 }
 
+export type SkillGroupKind = "source" | "manual";
+
+/** Skill 分组（自动来源分组 + 手动分组） */
+export interface SkillGroup {
+  id: string;
+  name: string;
+  kind: SkillGroupKind;
+  editable: boolean;
+  memberSkillIds: string[];
+  count: number;
+}
+
+export type SkillAppId = "claude" | "codex" | "gemini" | "opencode" | "hermes";
+
 /** 可发现的 Skill（来自仓库） */
 export interface DiscoverableSkill {
   key: string;
@@ -175,6 +189,46 @@ export const skillsApi = {
   /** 切换 Skill 的应用启用状态 */
   async toggleApp(id: string, app: AppId, enabled: boolean): Promise<boolean> {
     return await invoke("toggle_skill_app", { id, app, enabled });
+  },
+
+  /** 获取 Skill 分组 */
+  getGroups(): Promise<SkillGroup[]> {
+    return invoke("get_skill_groups");
+  },
+
+  /** 创建手动 Skill 分组 */
+  createGroup(name: string, skillIds: string[]): Promise<SkillGroup> {
+    return invoke("create_skill_group", { name, skillIds });
+  },
+
+  /** 重命名手动 Skill 分组 */
+  renameGroup(groupId: string, name: string): Promise<boolean> {
+    return invoke("rename_skill_group", { groupId, name });
+  },
+
+  /** 删除手动 Skill 分组（不卸载 Skills） */
+  deleteGroup(groupId: string): Promise<boolean> {
+    return invoke("delete_skill_group", { groupId });
+  },
+
+  /** 设置手动 Skill 分组成员 */
+  setGroupMembers(groupId: string, skillIds: string[]): Promise<boolean> {
+    return invoke("set_skill_group_members", { groupId, skillIds });
+  },
+
+  /** 批量切换分组内 Skill 的应用启用状态 */
+  async batchToggleGroupApp(
+    groupId: string,
+    app: SkillAppId,
+    enabled: boolean,
+    skillIds?: string[],
+  ): Promise<number> {
+    return await invoke("batch_toggle_skill_group_app", {
+      groupId,
+      app,
+      enabled,
+      skillIds,
+    });
   },
 
   /** 扫描未管理的 Skills */

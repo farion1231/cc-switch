@@ -2114,6 +2114,7 @@
     "addRepo": "Add Skill Repository",
     "loading": "Loading...",
     "installed": "Installed",
+    "installedFiltered": "Installed {{count}} / {{total}}",
     "install": "Install",
     "installing": "Installing...",
     "uninstall": "Uninstall",
@@ -2211,6 +2212,10 @@
       "repo": "Filter by repo",
       "allRepos": "All repos"
     },
+    "appFilter": {
+      "noResults": "No skills match the current filters",
+      "noResultsDescription": "Select at least one app count button, or select all apps to view every installed skill."
+    },
     "noResults": "No matching skills found",
     "noInstalled": "No skills installed",
     "noInstalledDescription": "Discover and install skills from repositories, or import existing skills",
@@ -2260,6 +2265,49 @@
       "successSingle": "Skill {{name}} installed",
       "successMultiple": "Successfully installed {{count}} skills",
       "noSkillsFound": "No skills found in ZIP file (requires SKILL.md file)"
+    },
+    "groups": {
+      "views": {
+        "all": "All",
+        "source": "By source",
+        "manual": "Manual groups"
+      },
+      "kinds": {
+        "source": "Source",
+        "manual": "Manual"
+      },
+      "auto": {
+        "local": "Local",
+        "ungrouped": "Other groups"
+      },
+      "appStates": {
+        "enabled": "All enabled",
+        "disabled": "All disabled",
+        "mixed": "Partially enabled"
+      },
+      "toggleAppForGroup": "{{app}} is {{state}}. Click to toggle this group.",
+      "create": "New group",
+      "createPrompt": "Enter a group name",
+      "createSuccess": "Group {{name}} created",
+      "rename": "Rename",
+      "renamePrompt": "Enter a new group name",
+      "renameSuccess": "Group {{name}} renamed",
+      "delete": "Delete group",
+      "deleteConfirm": "Delete manual group \"{{name}}\"? Skills in it will not be uninstalled.",
+      "deleteSuccess": "Group {{name}} deleted",
+      "members": "Members",
+      "membersSaved": "Members saved for {{name}}",
+      "editMembersTitle": "Edit group members",
+      "editMembersDescription": "Choose Skills to include in \"{{name}}\".",
+      "searchMembers": "Search Skills...",
+      "selectAll": "Select all",
+      "clearAll": "Clear all",
+      "saveMembers": "Save members ({{count}})",
+      "enableSuccess": "Enabled {{count}} skills for {{app}}",
+      "disableSuccess": "Disabled {{count}} skills for {{app}}",
+      "empty": "No matching skills in this group",
+      "noResults": "No groups",
+      "noResultsDescription": "No skills match this group type or app filter."
     }
   },
   "deeplink": {

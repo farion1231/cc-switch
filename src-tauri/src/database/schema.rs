@@ -113,6 +113,31 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 6b. Manual Skill Groups 表
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS skill_groups (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            created_at INTEGER NOT NULL DEFAULT 0,
+            updated_at INTEGER NOT NULL DEFAULT 0
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 6c. Manual Skill Group Membership 表
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS skill_group_members (
+            group_id TEXT NOT NULL,
+            skill_id TEXT NOT NULL,
+            PRIMARY KEY (group_id, skill_id),
+            FOREIGN KEY (group_id) REFERENCES skill_groups(id) ON DELETE CASCADE,
+            FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 7. Settings 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)",
@@ -440,7 +465,9 @@ impl Database {
                         Self::set_user_version(conn, 10)?;
                     }
                     10 => {
-                        log::info!("迁移数据库从 v10 到 v11（usage_daily_rollups 保留 request_model 维度）");
+                        log::info!(
+                            "迁移数据库从 v10 到 v11（usage rollup 维度 + Skill 手动分组支持）"
+                        );
                         Self::migrate_v10_to_v11(conn)?;
                         Self::set_user_version(conn, 11)?;
                     }
@@ -966,7 +993,8 @@ impl Database {
         .map_err(|e| AppError::Database(format!("创建新 skills 表失败: {e}")))?;
 
         log::info!(
-            "skills 表已迁移到 v3 结构。\n\
+            "skills 表已迁移到 v3 结构。
+\
              注意：旧的安装记录已清除，首次启动时将自动扫描文件系统重建数据。"
         );
 
@@ -1226,13 +1254,9 @@ impl Database {
             Self::add_column_if_missing(conn, "proxy_request_logs", "pricing_model", "TEXT")?;
         }
 
-        if !Self::table_exists(conn, "usage_daily_rollups")? {
-            log::info!("v10 -> v11：usage_daily_rollups 不存在，跳过重建");
-            return Ok(());
-        }
-
-        conn.execute_batch(
-            "ALTER TABLE usage_daily_rollups RENAME TO usage_daily_rollups_v10;
+        if Self::table_exists(conn, "usage_daily_rollups")? {
+            conn.execute_batch(
+                "ALTER TABLE usage_daily_rollups RENAME TO usage_daily_rollups_v10;
              CREATE TABLE usage_daily_rollups (
                  date TEXT NOT NULL,
                  app_type TEXT NOT NULL,
@@ -1259,14 +1283,42 @@ impl Database {
                   cache_read_tokens, cache_creation_tokens, total_cost_usd, avg_latency_ms
              FROM usage_daily_rollups_v10;
              DROP TABLE usage_daily_rollups_v10;",
-        )
-        .map_err(|e| {
-            AppError::Database(format!("v10 -> v11 重建 usage_daily_rollups 失败: {e}"))
-        })?;
+            )
+            .map_err(|e| {
+                AppError::Database(format!("v10 -> v11 重建 usage_daily_rollups 失败: {e}"))
+            })?;
 
-        log::info!(
-            "v10 -> v11 迁移完成：usage_daily_rollups 已保留 request_model/pricing_model 维度"
-        );
+            log::info!(
+                "v10 -> v11 迁移完成：usage_daily_rollups 已保留 request_model/pricing_model 维度"
+            );
+        } else {
+            log::info!("v10 -> v11：usage_daily_rollups 不存在，跳过重建");
+        }
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS skill_groups (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                created_at INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL DEFAULT 0
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 skill_groups 表失败: {e}")))?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS skill_group_members (
+                group_id TEXT NOT NULL,
+                skill_id TEXT NOT NULL,
+                PRIMARY KEY (group_id, skill_id),
+                FOREIGN KEY (group_id) REFERENCES skill_groups(id) ON DELETE CASCADE,
+                FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 skill_group_members 表失败: {e}")))?;
+
+        log::info!("v10 -> v11 迁移完成：已添加 usage rollup 维度与 Skill 手动分组表");
         Ok(())
     }
 

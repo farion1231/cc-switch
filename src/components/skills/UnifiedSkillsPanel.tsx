@@ -6,15 +6,32 @@ import {
   ExternalLink,
   RefreshCw,
   Loader2,
+  FolderTree,
+  Plus,
+  Pencil,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { Input } from "@/components/ui/input";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   type ImportSkillSelection,
   type SkillBackupEntry,
   useDeleteSkillBackup,
   useInstalledSkills,
+  useSkillGroups,
+  useCreateSkillGroup,
+  useRenameSkillGroup,
+  useDeleteSkillGroup,
+  useSetSkillGroupMembers,
+  useBatchToggleSkillGroupApp,
   useSkillBackups,
   useRestoreSkillBackup,
   useToggleSkillApp,
@@ -27,11 +44,12 @@ import {
   type InstalledSkill,
   type SkillUpdateInfo,
 } from "@/hooks/useSkills";
+import type { SkillAppId, SkillGroup } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
-import { SKILLS_APP_IDS } from "@/config/appConfig";
+import { APP_ICON_MAP, SKILLS_APP_IDS } from "@/config/appConfig";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
@@ -49,6 +67,16 @@ interface UnifiedSkillsPanelProps {
   currentApp: AppId;
 }
 
+type SkillGroupView = "all" | "source" | "manual";
+
+const MANUAL_UNGROUPED_GROUP_ID = "manual:ungrouped";
+const RIGHT_ALIGNED_APP_TOGGLE_SLOT_CLASS =
+  "w-[164px] flex-shrink-0 flex items-center justify-end transition-transform";
+const HOVER_ACTION_SLOT_CLASS =
+  "absolute right-4 top-1/2 flex -translate-y-1/2 items-center gap-0.5 transition-opacity";
+const SINGLE_ACTION_HOVER_SHIFT_CLASS = "group-hover:-translate-x-[40px]";
+const DOUBLE_ACTION_SHIFT_CLASS = "-translate-x-[68px]";
+
 export interface UnifiedSkillsPanelHandle {
   openDiscovery: () => void;
   openImport: () => void;
@@ -62,6 +90,25 @@ function formatSkillBackupDate(unixSeconds: number): string {
   return Number.isNaN(date.getTime())
     ? String(unixSeconds)
     : date.toLocaleString();
+}
+
+function getSkillGroupDisplayName(
+  t: ReturnType<typeof useTranslation>["t"],
+  group: SkillGroup,
+): string {
+  if (group.id === MANUAL_UNGROUPED_GROUP_ID) {
+    return t("skills.groups.auto.ungrouped");
+  }
+
+  if (group.kind !== "source") {
+    return group.name;
+  }
+
+  if (group.id === "source:local") {
+    return t("skills.groups.auto.local");
+  }
+
+  return group.name;
 }
 
 const UnifiedSkillsPanel = React.forwardRef<
@@ -79,8 +126,21 @@ const UnifiedSkillsPanel = React.forwardRef<
   } | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
+  const [selectedFilterApps, setSelectedFilterApps] = useState<Set<AppId>>(
+    () => new Set(SKILLS_APP_IDS),
+  );
+  const [groupView, setGroupView] = useState<SkillGroupView>("all");
+  const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [memberDialogGroup, setMemberDialogGroup] = useState<SkillGroup | null>(
+    null,
+  );
 
   const { data: skills, isLoading } = useInstalledSkills();
+  const { data: skillGroups = [], isLoading: isLoadingGroups } = useSkillGroups(
+    groupView !== "all",
+  );
   const {
     data: skillBackups = [],
     refetch: refetchSkillBackups,
@@ -95,6 +155,11 @@ const UnifiedSkillsPanel = React.forwardRef<
     useScanUnmanagedSkills({ enabled: true });
   const importMutation = useImportSkillsFromApps();
   const installFromZipMutation = useInstallSkillsFromZip();
+  const createGroupMutation = useCreateSkillGroup();
+  const renameGroupMutation = useRenameSkillGroup();
+  const deleteGroupMutation = useDeleteSkillGroup();
+  const setGroupMembersMutation = useSetSkillGroupMembers();
+  const batchToggleGroupMutation = useBatchToggleSkillGroupApp();
   const {
     data: skillUpdates,
     refetch: checkUpdates,
@@ -132,12 +197,207 @@ const UnifiedSkillsPanel = React.forwardRef<
     return counts;
   }, [skills]);
 
+  const allFilterAppsSelected = useMemo(
+    () => SKILLS_APP_IDS.every((app) => selectedFilterApps.has(app)),
+    [selectedFilterApps],
+  );
+
+  const filteredSkills = useMemo(() => {
+    if (!skills) return [];
+    if (allFilterAppsSelected) return skills;
+    if (selectedFilterApps.size === 0) return [];
+    return skills.filter((skill) =>
+      SKILLS_APP_IDS.some(
+        (app) => selectedFilterApps.has(app) && Boolean(skill.apps[app]),
+      ),
+    );
+  }, [allFilterAppsSelected, skills, selectedFilterApps]);
+
+  const skillById = useMemo(() => {
+    const map = new Map<string, InstalledSkill>();
+    for (const skill of skills ?? []) {
+      map.set(skill.id, skill);
+    }
+    return map;
+  }, [skills]);
+
+  const filteredSkillIds = useMemo(
+    () => new Set(filteredSkills.map((skill) => skill.id)),
+    [filteredSkills],
+  );
+
+  const visibleGroups = useMemo(() => {
+    if (groupView === "all") return [];
+    return skillGroups
+      .filter((group) => group.kind === groupView)
+      .map((group) => {
+        const allSkills = group.memberSkillIds
+          .map((id) => skillById.get(id))
+          .filter((skill): skill is InstalledSkill => Boolean(skill));
+        return {
+          group,
+          allSkills,
+          skills: allSkills.filter(
+            (skill) => allFilterAppsSelected || filteredSkillIds.has(skill.id),
+          ),
+        };
+      })
+      .filter(
+        ({ group, allSkills }) =>
+          allSkills.length > 0 || (group.kind === "manual" && group.editable),
+      );
+  }, [
+    allFilterAppsSelected,
+    filteredSkillIds,
+    groupView,
+    skillById,
+    skillGroups,
+  ]);
+
+  const installedCountLabel = allFilterAppsSelected
+    ? t("skills.installed", { count: skills?.length || 0 })
+    : t("skills.installedFiltered", {
+        count: filteredSkills.length,
+        total: skills?.length || 0,
+      });
+
+  const handleToggleFilterApp = (app: AppId) => {
+    setSelectedFilterApps((prev) => {
+      const next = new Set(prev);
+      if (next.has(app)) {
+        next.delete(app);
+      } else {
+        next.add(app);
+      }
+      return next;
+    });
+  };
+
   const handleToggleApp = async (id: string, app: AppId, enabled: boolean) => {
     try {
       await toggleAppMutation.mutateAsync({ id, app, enabled });
     } catch (error) {
       toast.error(t("common.error"), { description: String(error) });
     }
+  };
+
+  const handleCreateGroup = async () => {
+    const name = window.prompt(t("skills.groups.createPrompt"));
+    const trimmedName = name?.trim();
+    if (!trimmedName) return;
+    try {
+      await createGroupMutation.mutateAsync({
+        name: trimmedName,
+        skillIds: [],
+      });
+      setGroupView("manual");
+      toast.success(t("skills.groups.createSuccess", { name: trimmedName }), {
+        closeButton: true,
+      });
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    }
+  };
+
+  const handleRenameGroup = async (group: SkillGroup) => {
+    const name = window.prompt(t("skills.groups.renamePrompt"), group.name);
+    const trimmedName = name?.trim();
+    if (!trimmedName || trimmedName === group.name) return;
+    try {
+      await renameGroupMutation.mutateAsync({
+        groupId: group.id,
+        name: trimmedName,
+      });
+      toast.success(t("skills.groups.renameSuccess", { name: trimmedName }), {
+        closeButton: true,
+      });
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    }
+  };
+
+  const handleDeleteGroup = (group: SkillGroup) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: t("skills.groups.delete"),
+      message: t("skills.groups.deleteConfirm", { name: group.name }),
+      confirmText: t("skills.groups.delete"),
+      variant: "destructive",
+      onConfirm: async () => {
+        try {
+          await deleteGroupMutation.mutateAsync(group.id);
+          setConfirmDialog(null);
+          toast.success(
+            t("skills.groups.deleteSuccess", { name: group.name }),
+            {
+              closeButton: true,
+            },
+          );
+        } catch (error) {
+          toast.error(t("common.error"), { description: String(error) });
+        }
+      },
+    });
+  };
+
+  const handleSaveGroupMembers = async (
+    group: SkillGroup,
+    skillIds: string[],
+  ) => {
+    try {
+      await setGroupMembersMutation.mutateAsync({
+        groupId: group.id,
+        skillIds,
+      });
+      setMemberDialogGroup(null);
+      toast.success(t("skills.groups.membersSaved", { name: group.name }), {
+        closeButton: true,
+      });
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    }
+  };
+
+  const handleBatchToggleGroupApp = async (
+    group: SkillGroup,
+    app: SkillAppId,
+    enabled: boolean,
+    skillIds: string[],
+  ) => {
+    try {
+      const count = await batchToggleGroupMutation.mutateAsync({
+        groupId: group.id,
+        app,
+        enabled,
+        skillIds,
+      });
+      toast.success(
+        t(
+          enabled
+            ? "skills.groups.enableSuccess"
+            : "skills.groups.disableSuccess",
+          {
+            count,
+            app: APP_ICON_MAP[app]?.label ?? app,
+          },
+        ),
+        { closeButton: true },
+      );
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    }
+  };
+
+  const handleToggleGroupCollapsed = (groupId: string) => {
+    setCollapsedGroupIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupId)) {
+        next.delete(groupId);
+      } else {
+        next.add(groupId);
+      }
+      return next;
+    });
   };
 
   const handleUninstall = (skill: InstalledSkill) => {
@@ -349,9 +609,11 @@ const UnifiedSkillsPanel = React.forwardRef<
     <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
       <div className="flex items-center justify-between">
         <AppCountBar
-          totalLabel={t("skills.installed", { count: skills?.length || 0 })}
+          totalLabel={installedCountLabel}
           counts={enabledCounts}
           appIds={SKILLS_APP_IDS}
+          selectedApps={selectedFilterApps}
+          onToggleApp={handleToggleFilterApp}
         />
         <div className="flex items-center gap-1.5">
           <div
@@ -400,6 +662,42 @@ const UnifiedSkillsPanel = React.forwardRef<
         </div>
       </div>
 
+      <div className="mt-3 mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {(["all", "source", "manual"] as SkillGroupView[]).map((view) => (
+            <Button
+              key={view}
+              type="button"
+              variant={groupView === view ? "secondary" : "ghost"}
+              size="sm"
+              className="h-7 text-xs gap-1"
+              onClick={() => setGroupView(view)}
+            >
+              {view !== "all" && <FolderTree size={12} />}
+              {t(`skills.groups.views.${view}`)}
+            </Button>
+          ))}
+          {isLoadingGroups && (
+            <Loader2 size={14} className="animate-spin text-muted-foreground" />
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {groupView === "manual" && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs gap-1"
+              onClick={handleCreateGroup}
+              disabled={createGroupMutation.isPending}
+            >
+              <Plus size={12} />
+              {t("skills.groups.create")}
+            </Button>
+          )}
+        </div>
+      </div>
+
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
         {isLoading ? (
           <div className="text-center py-12 text-muted-foreground">
@@ -417,10 +715,68 @@ const UnifiedSkillsPanel = React.forwardRef<
               {t("skills.noInstalledDescription")}
             </p>
           </div>
+        ) : groupView !== "all" ? (
+          isLoadingGroups && skillGroups.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              {t("skills.loading")}
+            </div>
+          ) : visibleGroups.length === 0 ? (
+            <div className="text-center py-12">
+              <div className="w-16 h-16 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+                <FolderTree size={24} className="text-muted-foreground" />
+              </div>
+              <h3 className="text-lg font-medium text-foreground mb-2">
+                {t("skills.groups.noResults")}
+              </h3>
+              <p className="text-muted-foreground text-sm">
+                {t("skills.groups.noResultsDescription")}
+              </p>
+            </div>
+          ) : (
+            <TooltipProvider delayDuration={300}>
+              <div className="space-y-3">
+                {visibleGroups.map(({ group, skills: groupSkills }) => (
+                  <SkillGroupSection
+                    key={group.id}
+                    group={group}
+                    skills={groupSkills}
+                    updatesMap={updatesMap}
+                    isCollapsed={collapsedGroupIds.has(group.id)}
+                    isBulkPending={batchToggleGroupMutation.isPending}
+                    isUpdatingSkillId={
+                      updateSkillMutation.isPending
+                        ? updateSkillMutation.variables
+                        : undefined
+                    }
+                    onToggleCollapsed={handleToggleGroupCollapsed}
+                    onBatchToggle={handleBatchToggleGroupApp}
+                    onEditMembers={setMemberDialogGroup}
+                    onRename={handleRenameGroup}
+                    onDelete={handleDeleteGroup}
+                    onToggleApp={handleToggleApp}
+                    onUninstall={handleUninstall}
+                    onUpdate={handleUpdateSkill}
+                  />
+                ))}
+              </div>
+            </TooltipProvider>
+          )
+        ) : filteredSkills.length === 0 ? (
+          <div className="text-center py-12">
+            <div className="w-16 h-16 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+              <Sparkles size={24} className="text-muted-foreground" />
+            </div>
+            <h3 className="text-lg font-medium text-foreground mb-2">
+              {t("skills.appFilter.noResults")}
+            </h3>
+            <p className="text-muted-foreground text-sm">
+              {t("skills.appFilter.noResultsDescription")}
+            </p>
+          </div>
         ) : (
           <TooltipProvider delayDuration={300}>
             <div className="rounded-xl border border-border-default overflow-hidden">
-              {skills.map((skill, index) => (
+              {filteredSkills.map((skill, index) => (
                 <InstalledSkillListItem
                   key={skill.id}
                   skill={skill}
@@ -432,7 +788,7 @@ const UnifiedSkillsPanel = React.forwardRef<
                   onToggleApp={handleToggleApp}
                   onUninstall={() => handleUninstall(skill)}
                   onUpdate={() => handleUpdateSkill(skill)}
-                  isLast={index === skills.length - 1}
+                  isLast={index === filteredSkills.length - 1}
                 />
               ))}
             </div>
@@ -462,6 +818,16 @@ const UnifiedSkillsPanel = React.forwardRef<
         />
       )}
 
+      {memberDialogGroup && skills && (
+        <SkillGroupMembersDialog
+          group={memberDialogGroup}
+          skills={skills}
+          isSaving={setGroupMembersMutation.isPending}
+          onSave={handleSaveGroupMembers}
+          onClose={() => setMemberDialogGroup(null)}
+        />
+      )}
+
       <RestoreSkillsDialog
         backups={skillBackups}
         isDeleting={deleteBackupMutation.isPending}
@@ -477,6 +843,422 @@ const UnifiedSkillsPanel = React.forwardRef<
 });
 
 UnifiedSkillsPanel.displayName = "UnifiedSkillsPanel";
+
+interface SkillGroupSectionProps {
+  group: SkillGroup;
+  skills: InstalledSkill[];
+  updatesMap: Record<string, SkillUpdateInfo>;
+  isCollapsed: boolean;
+  isBulkPending: boolean;
+  isUpdatingSkillId?: string;
+  onToggleCollapsed: (groupId: string) => void;
+  onBatchToggle: (
+    group: SkillGroup,
+    app: SkillAppId,
+    enabled: boolean,
+    skillIds: string[],
+  ) => void;
+  onEditMembers: (group: SkillGroup) => void;
+  onRename: (group: SkillGroup) => void;
+  onDelete: (group: SkillGroup) => void;
+  onToggleApp: (id: string, app: AppId, enabled: boolean) => void;
+  onUninstall: (skill: InstalledSkill) => void;
+  onUpdate: (skill: InstalledSkill) => void;
+}
+
+const SkillGroupSection: React.FC<SkillGroupSectionProps> = ({
+  group,
+  skills,
+  updatesMap,
+  isCollapsed,
+  isBulkPending,
+  isUpdatingSkillId,
+  onToggleCollapsed,
+  onBatchToggle,
+  onEditMembers,
+  onRename,
+  onDelete,
+  onToggleApp,
+  onUninstall,
+  onUpdate,
+}) => {
+  const { t } = useTranslation();
+  const groupName = getSkillGroupDisplayName(t, group);
+
+  return (
+    <div className="rounded-xl border border-border-default overflow-hidden bg-background/60">
+      <div
+        className={`group relative flex items-center gap-3 px-4 py-2.5 bg-muted/30 ${
+          isCollapsed ? "" : "border-b border-border-default"
+        }`}
+      >
+        <div className="min-w-0 flex flex-1 items-center gap-2">
+          <button
+            type="button"
+            className="min-w-0 flex flex-1 items-center gap-2 text-left"
+            onClick={() => onToggleCollapsed(group.id)}
+            aria-expanded={!isCollapsed}
+          >
+            {isCollapsed ? (
+              <ChevronRight
+                size={14}
+                className="text-muted-foreground shrink-0"
+              />
+            ) : (
+              <ChevronDown
+                size={14}
+                className="text-muted-foreground shrink-0"
+              />
+            )}
+            <FolderTree size={14} className="text-muted-foreground shrink-0" />
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-sm truncate">
+                  {groupName}
+                </span>
+                <Badge variant="outline" className="h-5 text-[10px]">
+                  {t(`skills.groups.kinds.${group.kind}`)}
+                </Badge>
+                <span className="text-xs text-muted-foreground">
+                  {skills.length}/{group.count}
+                </span>
+              </div>
+            </div>
+          </button>
+
+          {group.editable && (
+            <div
+              className={`flex items-center gap-1 flex-shrink-0 transition-transform ${SINGLE_ACTION_HOVER_SHIFT_CLASS}`}
+            >
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => onEditMembers(group)}
+              >
+                {t("skills.groups.members")}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => onRename(group)}
+                title={t("skills.groups.rename")}
+              >
+                <Pencil size={13} />
+              </Button>
+            </div>
+          )}
+        </div>
+
+        <div
+          className={`${RIGHT_ALIGNED_APP_TOGGLE_SLOT_CLASS} ${
+            group.editable ? SINGLE_ACTION_HOVER_SHIFT_CLASS : ""
+          }`}
+          data-testid="group-toggle-slot"
+          data-group-id={group.id}
+        >
+          <GroupAppToggleBar
+            group={group}
+            skills={skills}
+            isPending={isBulkPending}
+            onBatchToggle={onBatchToggle}
+          />
+        </div>
+        <div
+          className={`${HOVER_ACTION_SLOT_CLASS} ${
+            group.editable
+              ? "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100"
+              : "pointer-events-none opacity-0"
+          }`}
+          data-testid="group-action-slot"
+          data-group-id={group.id}
+        >
+          {group.editable && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 hover:text-red-500"
+              onClick={() => onDelete(group)}
+              title={t("skills.groups.delete")}
+            >
+              <Trash2 size={13} />
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {isCollapsed ? null : skills.length === 0 ? (
+        <div className="px-4 py-6 text-center text-sm text-muted-foreground">
+          {t("skills.groups.empty")}
+        </div>
+      ) : (
+        skills.map((skill, index) => (
+          <InstalledSkillListItem
+            key={skill.id}
+            skill={skill}
+            hasUpdate={!!updatesMap[skill.id]}
+            isUpdating={isUpdatingSkillId === skill.id}
+            onToggleApp={onToggleApp}
+            onUninstall={() => onUninstall(skill)}
+            onUpdate={() => onUpdate(skill)}
+            isLast={index === skills.length - 1}
+          />
+        ))
+      )}
+    </div>
+  );
+};
+
+type GroupAppState = "enabled" | "disabled" | "mixed";
+
+interface GroupAppToggleBarProps {
+  group: SkillGroup;
+  skills: InstalledSkill[];
+  isPending: boolean;
+  onBatchToggle: (
+    group: SkillGroup,
+    app: SkillAppId,
+    enabled: boolean,
+    skillIds: string[],
+  ) => void;
+}
+
+const getGroupAppState = (
+  skills: InstalledSkill[],
+  app: SkillAppId,
+): GroupAppState => {
+  if (skills.length === 0) return "disabled";
+  const enabledCount = skills.filter((skill) =>
+    Boolean(skill.apps[app]),
+  ).length;
+  if (enabledCount === 0) return "disabled";
+  if (enabledCount === skills.length) return "enabled";
+  return "mixed";
+};
+
+const getGroupAppButtonClassName = (
+  state: GroupAppState,
+  activeClass: string,
+): string => {
+  const baseClass =
+    "relative w-7 h-7 rounded-lg flex items-center justify-center transition-all disabled:cursor-not-allowed disabled:opacity-45";
+
+  switch (state) {
+    case "enabled":
+      return `${baseClass} ${activeClass}`;
+    case "mixed":
+      return `${baseClass} ${activeClass} opacity-90 ring-2 ring-yellow-400/70 ring-offset-1 ring-offset-background`;
+    case "disabled":
+      return `${baseClass} opacity-35 hover:opacity-70`;
+  }
+};
+
+const GroupAppToggleBar: React.FC<GroupAppToggleBarProps> = ({
+  group,
+  skills,
+  isPending,
+  onBatchToggle,
+}) => {
+  const { t } = useTranslation();
+  const skillAppIds = SKILLS_APP_IDS as SkillAppId[];
+
+  return (
+    <div className="flex items-center gap-1.5 flex-shrink-0">
+      {skillAppIds.map((app) => {
+        const { label, icon, activeClass } = APP_ICON_MAP[app];
+        const state = getGroupAppState(skills, app);
+        const nextEnabled = state !== "enabled";
+        const stateLabel = t(`skills.groups.appStates.${state}`);
+
+        return (
+          <Tooltip key={app}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() =>
+                  onBatchToggle(
+                    group,
+                    app,
+                    nextEnabled,
+                    skills.map((skill) => skill.id),
+                  )
+                }
+                disabled={isPending || skills.length === 0}
+                aria-label={t("skills.groups.toggleAppForGroup", {
+                  app: label,
+                  state: stateLabel,
+                })}
+                className={getGroupAppButtonClassName(state, activeClass)}
+              >
+                {icon}
+                {state === "mixed" && (
+                  <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-yellow-400 ring-1 ring-background" />
+                )}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              <p>
+                {label} · {stateLabel}
+              </p>
+            </TooltipContent>
+          </Tooltip>
+        );
+      })}
+    </div>
+  );
+};
+
+interface SkillGroupMembersDialogProps {
+  group: SkillGroup;
+  skills: InstalledSkill[];
+  isSaving: boolean;
+  onSave: (group: SkillGroup, skillIds: string[]) => void;
+  onClose: () => void;
+}
+
+const SkillGroupMembersDialog: React.FC<SkillGroupMembersDialogProps> = ({
+  group,
+  skills,
+  isSaving,
+  onSave,
+  onClose,
+}) => {
+  const { t } = useTranslation();
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(
+    () => new Set(group.memberSkillIds),
+  );
+  const [query, setQuery] = useState("");
+
+  const visibleSkills = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return skills;
+    return skills.filter((skill) =>
+      [skill.name, skill.description, skill.directory]
+        .filter((value): value is string => Boolean(value))
+        .some((value) => value.toLowerCase().includes(normalized)),
+    );
+  }, [query, skills]);
+  const visibleSkillIds = useMemo(
+    () => visibleSkills.map((skill) => skill.id),
+    [visibleSkills],
+  );
+  const allVisibleSkillsSelected =
+    visibleSkillIds.length > 0 &&
+    visibleSkillIds.every((id) => selectedIds.has(id));
+
+  const toggleSkill = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleAllSkillsSelected = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSkillsSelected) {
+        for (const id of visibleSkillIds) {
+          next.delete(id);
+        }
+      } else {
+        for (const id of visibleSkillIds) {
+          next.add(id);
+        }
+      }
+      return next;
+    });
+  };
+
+  return (
+    <Dialog open onOpenChange={(nextOpen) => !nextOpen && onClose()}>
+      <DialogContent
+        className="max-w-2xl max-h-[85vh] flex flex-col"
+        zIndex="alert"
+      >
+        <DialogHeader>
+          <DialogTitle>{t("skills.groups.editMembersTitle")}</DialogTitle>
+          <DialogDescription>
+            {t("skills.groups.editMembersDescription", { name: group.name })}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="px-6 pb-3">
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={t("skills.groups.searchMembers")}
+          />
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 pb-4 space-y-2">
+          {visibleSkills.map((skill) => (
+            <label
+              key={skill.id}
+              className="flex items-start gap-3 rounded-lg border border-border-default p-3 hover:bg-muted/50"
+            >
+              <input
+                type="checkbox"
+                checked={selectedIds.has(skill.id)}
+                onChange={() => toggleSkill(skill.id)}
+                className="mt-1"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium truncate">{skill.name}</div>
+                {skill.description && (
+                  <div className="text-xs text-muted-foreground truncate">
+                    {skill.description}
+                  </div>
+                )}
+                <div className="text-[11px] text-muted-foreground/60">
+                  {skill.directory}
+                </div>
+              </div>
+            </label>
+          ))}
+        </div>
+
+        <DialogFooter className="sm:justify-between">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={toggleAllSkillsSelected}
+            disabled={visibleSkillIds.length === 0 || isSaving}
+          >
+            {allVisibleSkillsSelected
+              ? t("skills.groups.clearAll")
+              : t("skills.groups.selectAll")}
+          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onClose}
+              disabled={isSaving}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => onSave(group, Array.from(selectedIds))}
+              disabled={isSaving}
+            >
+              {t("skills.groups.saveMembers", { count: selectedIds.size })}
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
 
 interface InstalledSkillListItemProps {
   skill: InstalledSkill;
@@ -498,6 +1280,10 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   isLast,
 }) => {
   const { t } = useTranslation();
+  const actionButtonsAlwaysVisible = Boolean(hasUpdate);
+  const toggleShiftClass = actionButtonsAlwaysVisible
+    ? DOUBLE_ACTION_SHIFT_CLASS
+    : SINGLE_ACTION_HOVER_SHIFT_CLASS;
 
   const openDocs = async () => {
     if (!skill.readmeUrl) return;
@@ -553,15 +1339,26 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
         )}
       </div>
 
-      <AppToggleGroup
-        apps={skill.apps}
-        onToggle={(app, enabled) => onToggleApp(skill.id, app, enabled)}
-        appIds={SKILLS_APP_IDS}
-      />
+      <div
+        className={`${RIGHT_ALIGNED_APP_TOGGLE_SLOT_CLASS} ${toggleShiftClass}`}
+        data-testid="skill-toggle-slot"
+        data-skill-id={skill.id}
+      >
+        <AppToggleGroup
+          apps={skill.apps}
+          onToggle={(app, enabled) => onToggleApp(skill.id, app, enabled)}
+          appIds={SKILLS_APP_IDS}
+        />
+      </div>
 
       <div
-        className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-        style={hasUpdate ? { opacity: 1 } : undefined}
+        className={`${HOVER_ACTION_SLOT_CLASS} ${
+          actionButtonsAlwaysVisible
+            ? "opacity-100"
+            : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100"
+        }`}
+        data-testid="skill-action-slot"
+        data-skill-id={skill.id}
       >
         {hasUpdate && onUpdate && (
           <Button

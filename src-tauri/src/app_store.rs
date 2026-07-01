@@ -27,10 +27,11 @@ pub fn get_app_config_dir_override() -> Option<PathBuf> {
 }
 
 fn read_override_from_store(app: &tauri::AppHandle) -> Option<PathBuf> {
-    let store = match app.store_builder("app_paths.json").build() {
+    let store_file = crate::config::get_app_paths_store_file_name();
+    let store = match app.store_builder(&store_file).build() {
         Ok(store) => store,
         Err(e) => {
-            log::warn!("无法创建 Store: {e}");
+            log::warn!("无法创建 Store {store_file}: {e}");
             return None;
         }
     };
@@ -75,8 +76,9 @@ pub fn set_app_config_dir_to_store(
     app: &tauri::AppHandle,
     path: Option<&str>,
 ) -> Result<(), AppError> {
+    let store_file = crate::config::get_app_paths_store_file_name();
     let store = app
-        .store_builder("app_paths.json")
+        .store_builder(&store_file)
         .build()
         .map_err(|e| AppError::Message(format!("创建 Store 失败: {e}")))?;
 

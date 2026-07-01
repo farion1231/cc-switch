@@ -33,6 +33,80 @@ pub fn get_home_dir() -> PathBuf {
     })
 }
 
+const DEFAULT_APP_CONFIG_DIR_NAME: &str = ".cc-switch";
+const DEFAULT_APP_PATHS_STORE_FILE_NAME: &str = "app_paths.json";
+
+fn sanitize_app_variant(raw: &str) -> Option<String> {
+    let trimmed = raw.trim().to_ascii_lowercase();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut normalized = String::with_capacity(trimmed.len());
+    let mut last_was_dash = false;
+
+    for ch in trimmed.chars() {
+        if ch.is_ascii_alphanumeric() {
+            normalized.push(ch);
+            last_was_dash = false;
+        } else if !normalized.is_empty() && !last_was_dash {
+            normalized.push('-');
+            last_was_dash = true;
+        }
+    }
+
+    while normalized.ends_with('-') {
+        normalized.pop();
+    }
+
+    match normalized.as_str() {
+        "" | "official" | "release" | "prod" | "production" => None,
+        _ => Some(normalized),
+    }
+}
+
+fn configured_app_variant() -> Option<String> {
+    std::env::var("CC_SWITCH_APP_VARIANT")
+        .ok()
+        .as_deref()
+        .and_then(sanitize_app_variant)
+        .or_else(|| option_env!("CC_SWITCH_APP_VARIANT").and_then(sanitize_app_variant))
+}
+
+fn app_config_dir_name_for_variant(variant: Option<&str>) -> String {
+    match variant {
+        Some(value) => format!("{DEFAULT_APP_CONFIG_DIR_NAME}-{value}"),
+        None => DEFAULT_APP_CONFIG_DIR_NAME.to_string(),
+    }
+}
+
+fn app_paths_store_file_name_for_variant(variant: Option<&str>) -> String {
+    match variant {
+        Some(value) => {
+            let stem = DEFAULT_APP_PATHS_STORE_FILE_NAME.trim_end_matches(".json");
+            format!("{stem}-{value}.json")
+        }
+        None => DEFAULT_APP_PATHS_STORE_FILE_NAME.to_string(),
+    }
+}
+
+/// 获取默认应用配置目录名称（官方版为 `.cc-switch`，调试变体会追加后缀）
+pub fn get_default_app_config_dir_name() -> String {
+    let variant = configured_app_variant();
+    app_config_dir_name_for_variant(variant.as_deref())
+}
+
+/// 获取默认应用配置目录路径（不考虑用户手动覆盖）
+pub fn get_default_app_config_dir() -> PathBuf {
+    get_home_dir().join(get_default_app_config_dir_name())
+}
+
+/// 获取当前变体对应的 app_paths Store 文件名
+pub fn get_app_paths_store_file_name() -> String {
+    let variant = configured_app_variant();
+    app_paths_store_file_name_for_variant(variant.as_deref())
+}
+
 /// 获取 Claude Code 配置目录路径
 pub fn get_claude_config_dir() -> PathBuf {
     if let Some(custom) = crate::settings::get_claude_override_dir() {
@@ -185,7 +259,7 @@ pub fn get_app_config_dir() -> PathBuf {
         return custom;
     }
 
-    let default_dir = get_home_dir().join(".cc-switch");
+    let default_dir = get_default_app_config_dir();
 
     // 兼容 v3.10.3：当用户环境存在 `HOME` 且与真实用户目录不同，
     // v3.10.3 可能在 `HOME/.cc-switch/` 下创建/使用了数据库。
@@ -193,19 +267,22 @@ pub fn get_app_config_dir() -> PathBuf {
     // 同时也避免新安装因为 `HOME` 被设置而写入非预期路径。
     #[cfg(windows)]
     {
-        let default_db = default_dir.join("cc-switch.db");
-        if !default_db.exists() {
-            if let Ok(home_env) = std::env::var("HOME") {
-                let trimmed = home_env.trim();
-                if !trimmed.is_empty() {
-                    let legacy_dir = PathBuf::from(trimmed).join(".cc-switch");
-                    if legacy_dir.join("cc-switch.db").exists() {
-                        log::info!(
-                            "Detected v3.10.3 legacy database at {}, using it instead of {}",
-                            legacy_dir.display(),
-                            default_dir.display()
-                        );
-                        return legacy_dir;
+        let variant = configured_app_variant();
+        if variant.is_none() {
+            let default_db = default_dir.join("cc-switch.db");
+            if !default_db.exists() {
+                if let Ok(home_env) = std::env::var("HOME") {
+                    let trimmed = home_env.trim();
+                    if !trimmed.is_empty() {
+                        let legacy_dir = PathBuf::from(trimmed).join(".cc-switch");
+                        if legacy_dir.join("cc-switch.db").exists() {
+                            log::info!(
+                                "Detected v3.10.3 legacy database at {}, using it instead of {}",
+                                legacy_dir.display(),
+                                default_dir.display()
+                            );
+                            return legacy_dir;
+                        }
                     }
                 }
             }
@@ -422,6 +499,46 @@ mod tests {
         assert_eq!(
             derive_mcp_path_from_override(&override_dir),
             PathBuf::from(r"\\wsl$\Ubuntu\opt\claude\.claude\.claude.json")
+        );
+    }
+
+    #[test]
+    fn sanitize_app_variant_normalizes_non_production_values() {
+        assert_eq!(
+            sanitize_app_variant(" Debug Build "),
+            Some("debug-build".to_string())
+        );
+        assert_eq!(
+            sanitize_app_variant("qa_internal"),
+            Some("qa-internal".to_string())
+        );
+    }
+
+    #[test]
+    fn sanitize_app_variant_ignores_production_aliases() {
+        assert_eq!(sanitize_app_variant("official"), None);
+        assert_eq!(sanitize_app_variant("release"), None);
+        assert_eq!(sanitize_app_variant("production"), None);
+    }
+
+    #[test]
+    fn app_config_dir_name_for_variant_appends_suffix() {
+        assert_eq!(app_config_dir_name_for_variant(None), ".cc-switch");
+        assert_eq!(
+            app_config_dir_name_for_variant(Some("debug")),
+            ".cc-switch-debug"
+        );
+    }
+
+    #[test]
+    fn app_paths_store_file_name_for_variant_isolated_per_variant() {
+        assert_eq!(
+            app_paths_store_file_name_for_variant(None),
+            "app_paths.json"
+        );
+        assert_eq!(
+            app_paths_store_file_name_for_variant(Some("debug")),
+            "app_paths-debug.json"
         );
     }
 
