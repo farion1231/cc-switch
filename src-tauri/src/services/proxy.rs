@@ -1711,8 +1711,16 @@ impl ProxyService {
             return Ok(false);
         }
 
-        write_live_with_common_config(self.db.as_ref(), app_type, provider)
-            .map_err(|e| format!("写入 {app_type:?} Live 配置失败: {e}"))?;
+        if matches!(app_type, AppType::Claude) {
+            let effective_settings =
+                build_effective_settings_with_common_config(self.db.as_ref(), app_type, provider)
+                    .map_err(|e| format!("构建 {app_type:?} 有效配置失败: {e}"))?;
+            self.write_claude_live(&effective_settings)
+                .map_err(|e| format!("写入 {app_type:?} Live 配置失败: {e}"))?;
+        } else {
+            write_live_with_common_config(self.db.as_ref(), app_type, provider)
+                .map_err(|e| format!("写入 {app_type:?} Live 配置失败: {e}"))?;
+        }
 
         Ok(true)
     }
@@ -3559,6 +3567,98 @@ mod tests {
         assert_eq!(
             default_after, backup_live,
             "restore should write the backup to the configured/default Claude dir"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn restore_without_backup_routes_profile_only_claude_ssot_to_default_path() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let profile_dir = home.dir.path().join("profile-only");
+        std::fs::create_dir_all(&profile_dir).expect("create profile dir");
+        let default_dir = home.dir.path().join(".claude");
+        std::fs::create_dir_all(&default_dir).expect("create default claude dir");
+
+        let default_settings_path = default_dir.join("settings.json");
+        let profile_settings_path = profile_dir.join("settings.json");
+        let profile_live = json!({
+            "env": {
+                "ANTHROPIC_API_KEY": "profile-key",
+                "ANTHROPIC_BASE_URL": "https://api.profile.example"
+            }
+        });
+        write_json_file(
+            &default_settings_path,
+            &json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": PROXY_TOKEN_PLACEHOLDER,
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721"
+                }
+            }),
+        )
+        .expect("seed default proxy settings");
+        write_json_file(&profile_settings_path, &profile_live).expect("seed profile settings");
+
+        let mut provider = Provider::with_id(
+            "profile-only".to_string(),
+            "Profile Only".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "stored-key",
+                    "ANTHROPIC_BASE_URL": "https://api.stored.example"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            claude_profile_dir: Some(profile_dir.to_string_lossy().into_owned()),
+            claude_activation_mode: Some(ClaudeActivationMode::ProfileOnly),
+            ..Default::default()
+        });
+        db.save_provider("claude", &provider)
+            .expect("save profile-only provider");
+        db.set_current_provider("claude", "profile-only")
+            .expect("set db current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("profile-only"))
+            .expect("set local current provider");
+        crate::settings::set_claude_provider_override_dir(Some(
+            profile_dir.to_string_lossy().as_ref(),
+        ))
+        .expect("set profile override");
+
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Claude)
+            .await
+            .expect("restore live config from ssot");
+
+        let profile_after: Value =
+            read_json_file(&profile_settings_path).expect("read profile settings");
+        assert_eq!(
+            profile_after, profile_live,
+            "profile-only no-backup restore must not mutate the external profile settings"
+        );
+
+        let default_after: Value =
+            read_json_file(&default_settings_path).expect("read default settings");
+        assert_eq!(
+            default_after
+                .get("env")
+                .and_then(|env| env.get("ANTHROPIC_API_KEY"))
+                .and_then(|value| value.as_str()),
+            Some("stored-key"),
+            "SSOT restore should target the configured/default Claude dir"
+        );
+        assert_eq!(
+            default_after
+                .get("env")
+                .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+                .and_then(|value| value.as_str()),
+            Some("https://api.stored.example")
         );
     }
 
