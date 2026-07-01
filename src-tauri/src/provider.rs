@@ -348,6 +348,18 @@ pub enum ClaudeDesktopMode {
     Proxy,
 }
 
+/// Anthropic-format assistant tool-use history handling for reasoning vendors.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AnthropicToolThinkingPolicy {
+    /// Historical default: synthesize placeholder thinking blocks for reasoning vendors.
+    Auto,
+    /// Preserve real thinking and safe structural cleanup only; do not synthesize.
+    PreserveOnly,
+    /// Explicitly opt into placeholder synthesis for vendors that require it.
+    PlaceholderAlways,
+}
+
 /// Claude Desktop 本地路由模式下暴露给 Desktop 的安全模型路由。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -455,6 +467,16 @@ pub struct ProviderMeta {
     /// - "openai_responses": OpenAI Responses API 格式，需要转换
     #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
+    /// Anthropic-format reasoning tool-use history policy.
+    ///
+    /// Unset / `auto` keeps the historical behavior for compatibility.
+    /// `preserve_only` keeps real thinking blocks and safe cleanup, without
+    /// synthesizing `"tool call"` thinking placeholders.
+    #[serde(
+        rename = "anthropicToolThinkingPolicy",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub anthropic_tool_thinking_policy: Option<AnthropicToolThinkingPolicy>,
     /// 通用认证绑定（provider_config / managed_account）
     ///
     /// 新代码应只写入该字段；githubAccountId 仅保留兼容读取。

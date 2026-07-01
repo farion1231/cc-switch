@@ -161,6 +161,11 @@ export type CodexChatReasoningOutputFormat =
   | "reasoning_details"
   | "think_tags";
 
+export type AnthropicToolThinkingPolicy =
+  | "auto"
+  | "preserve_only"
+  | "placeholder_always";
+
 export interface CodexChatReasoning {
   supportsThinking?: boolean;
   supportsEffort?: boolean;
@@ -210,6 +215,9 @@ export interface ProviderMeta {
     | "openai_chat"
     | "openai_responses"
     | "gemini_native";
+  // Anthropic-format reasoning tool-use history policy.
+  // Defaults to auto. preserve_only keeps real thinking and safe cleanup only.
+  anthropicToolThinkingPolicy?: AnthropicToolThinkingPolicy;
   // 通用认证绑定
   authBinding?: AuthBinding;
   // Claude 认证字段名

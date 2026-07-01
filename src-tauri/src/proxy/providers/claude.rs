@@ -15,7 +15,7 @@
 //! - **GitHubCopilot**: GitHub Copilot (OAuth + Copilot Token)
 
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
-use crate::provider::Provider;
+use crate::provider::{AnthropicToolThinkingPolicy, Provider};
 use crate::proxy::error::ProxyError;
 use serde_json::{json, Value};
 
@@ -104,6 +104,15 @@ fn should_normalize_anthropic_tool_thinking_history(
         return false;
     }
 
+    if provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.anthropic_tool_thinking_policy.as_ref())
+        == Some(&AnthropicToolThinkingPolicy::PlaceholderAlways)
+    {
+        return true;
+    }
+
     if body
         .get("model")
         .and_then(|m| m.as_str())
@@ -127,12 +136,16 @@ fn should_normalize_anthropic_tool_thinking_history(
     .any(is_reasoning_vendor_identifier)
 }
 
-/// DeepSeek's Anthropic-compatible endpoint requires thinking history to be
-/// replayed on every assistant turn that contains tool_use. Some Anthropic SDK
-/// clients keep the tool history but drop or redact the thinking block, which
-/// makes DeepSeek reject the next request with `content[].thinking ... must be
-/// passed back`. Normalize only the narrow tool-call history shape for
-/// providers known to require plain `thinking` blocks.
+/// Some Anthropic-compatible reasoning providers historically required
+/// thinking history to be replayed on assistant turns that contain `tool_use`.
+/// Some clients keep the tool history but drop or redact the thinking block,
+/// which made those providers reject the next request with errors such as
+/// `content[].thinking ... must be passed back`.
+///
+/// Keep the legacy placeholder behavior configurable and scoped to the narrow
+/// tool-call history shape. Providers that no longer need synthetic replay can
+/// use `preserve_only` to keep real thinking blocks and safe cleanup without
+/// inserting `"tool call"` placeholders.
 pub fn normalize_anthropic_tool_thinking_history_for_provider(
     body: &mut Value,
     provider: &Provider,
@@ -142,7 +155,19 @@ pub fn normalize_anthropic_tool_thinking_history_for_provider(
         return false;
     }
 
-    normalize_anthropic_tool_thinking_history(body)
+    let inject_missing_thinking = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.anthropic_tool_thinking_policy.as_ref())
+        .map(|policy| match policy {
+            AnthropicToolThinkingPolicy::PreserveOnly => false,
+            AnthropicToolThinkingPolicy::Auto | AnthropicToolThinkingPolicy::PlaceholderAlways => {
+                true
+            }
+        })
+        .unwrap_or(true);
+
+    normalize_anthropic_tool_thinking_history(body, inject_missing_thinking)
 }
 
 /// DeepSeek official Anthropic-compatible endpoint URL
@@ -231,7 +256,10 @@ pub fn normalize_anthropic_messages_for_provider(
     changed
 }
 
-fn normalize_anthropic_tool_thinking_history(body: &mut Value) -> bool {
+fn normalize_anthropic_tool_thinking_history(
+    body: &mut Value,
+    inject_missing_thinking: bool,
+) -> bool {
     let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
         return false;
     };
@@ -264,7 +292,7 @@ fn normalize_anthropic_tool_thinking_history(body: &mut Value) -> bool {
                         if obj.remove("signature").is_some() {
                             changed = true;
                         }
-                        if !has_non_empty_thinking {
+                        if inject_missing_thinking && !has_non_empty_thinking {
                             obj.insert(
                                 "thinking".to_string(),
                                 json!(ANTHROPIC_THINKING_PLACEHOLDER),
@@ -286,7 +314,7 @@ fn normalize_anthropic_tool_thinking_history(body: &mut Value) -> bool {
             }
         }
 
-        if !has_thinking {
+        if inject_missing_thinking && !has_thinking {
             content.insert(
                 0,
                 json!({
@@ -2120,6 +2148,123 @@ mod tests {
         assert_eq!(content[0]["thinking"], ANTHROPIC_THINKING_PLACEHOLDER);
         assert_eq!(content[1]["type"], "text");
         assert_eq!(content[2]["type"], "tool_use");
+    }
+
+    #[test]
+    fn test_anthropic_tool_history_preserve_only_policy_skips_placeholder_injection() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                anthropic_tool_thinking_policy: Some(
+                    crate::provider::AnthropicToolThinkingPolicy::PreserveOnly,
+                ),
+                ..Default::default()
+            },
+        );
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "I will inspect the repo."},
+                    {"type": "tool_use", "id": "call_123", "name": "read_file", "input": {"path": "README.md"}}
+                ]
+            }]
+        });
+        let original = body.clone();
+
+        let changed = normalize_anthropic_tool_thinking_history_for_provider(
+            &mut body,
+            &provider,
+            "anthropic",
+        );
+
+        assert!(!changed);
+        assert_eq!(body, original);
+    }
+
+    #[test]
+    fn test_anthropic_tool_history_preserve_only_policy_keeps_safe_transforms() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                anthropic_tool_thinking_policy: Some(
+                    crate::provider::AnthropicToolThinkingPolicy::PreserveOnly,
+                ),
+                ..Default::default()
+            },
+        );
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "Need to inspect the file.", "signature": "anthropic-signature"},
+                    {"type": "tool_use", "id": "call_123", "name": "read_file", "input": {"path": "README.md"}}
+                ]
+            }]
+        });
+
+        let changed = normalize_anthropic_tool_thinking_history_for_provider(
+            &mut body,
+            &provider,
+            "anthropic",
+        );
+
+        assert!(changed);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(content[0]["thinking"], "Need to inspect the file.");
+        assert!(content[0].get("signature").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_tool_history_placeholder_always_policy_injects_placeholder() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.example.com/anthropic",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                anthropic_tool_thinking_policy: Some(
+                    crate::provider::AnthropicToolThinkingPolicy::PlaceholderAlways,
+                ),
+                ..Default::default()
+            },
+        );
+        let mut body = json!({
+            "model": "example-model",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "call_123", "name": "read_file", "input": {"path": "README.md"}}
+                ]
+            }]
+        });
+
+        let changed = normalize_anthropic_tool_thinking_history_for_provider(
+            &mut body,
+            &provider,
+            "anthropic",
+        );
+
+        assert!(changed);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(content[0]["thinking"], ANTHROPIC_THINKING_PLACEHOLDER);
+        assert_eq!(content[1]["type"], "tool_use");
     }
 
     #[test]
