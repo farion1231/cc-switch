@@ -343,7 +343,9 @@ export function AddProviderDialog({
 
           <TabsContent value="app-specific" className="mt-0">
             <ProviderForm
+              key={`add-provider-form:${appId}:${open ? "open" : "closed"}:tab`}
               appId={appId}
+              open={open}
               submitLabel={t("common.add")}
               onSubmit={handleSubmit}
               onCancel={() => onOpenChange(false)}
@@ -359,7 +361,9 @@ export function AddProviderDialog({
       ) : (
         // OpenCode/OpenClaw: directly show form without tabs
         <ProviderForm
+          key={`add-provider-form:${appId}:${open ? "open" : "closed"}:direct`}
           appId={appId}
+          open={open}
           submitLabel={t("common.add")}
           onSubmit={handleSubmit}
           onCancel={() => onOpenChange(false)}

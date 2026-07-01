@@ -43,6 +43,11 @@ export function EditProviderDialog({
   const [hasLoadedLive, setHasLoadedLive] = useState(false);
 
   useEffect(() => {
+    setLiveSettings(null);
+    setHasLoadedLive(false);
+  }, [open, provider?.id, appId, isProxyTakeover]);
+
+  useEffect(() => {
     let cancelled = false;
     const load = async () => {
       if (!open || !provider) {
@@ -217,7 +222,7 @@ export function EditProviderDialog({
     [appId, onSubmit, onOpenChange, provider],
   );
 
-  if (!provider || !initialData) {
+  if (!provider || !initialData || !hasLoadedLive) {
     return null;
   }
 
@@ -239,7 +244,9 @@ export function EditProviderDialog({
       }
     >
       <ProviderForm
+        key={`edit-provider-form:${appId}:${provider.id}:${open ? "open" : "closed"}`}
         appId={appId}
+        open={open}
         providerId={provider.id}
         submitLabel={t("common.save")}
         onSubmit={handleSubmit}

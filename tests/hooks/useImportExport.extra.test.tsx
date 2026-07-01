@@ -105,6 +105,33 @@ describe("useImportExport Hook (edge cases)", () => {
     expect(result.current.status).toBe("error");
   });
 
+  it("guards against duplicate import submissions in the same tick", async () => {
+    openFileDialogMock.mockResolvedValue("/config.json");
+    let resolveImport: ((value: { success: boolean }) => void) | undefined;
+    importConfigMock.mockImplementation(
+      () =>
+        new Promise<{ success: boolean }>((resolve) => {
+          resolveImport = resolve;
+        }),
+    );
+
+    const { result } = renderHook(() => useImportExport());
+
+    await act(async () => {
+      await result.current.selectImportFile();
+    });
+
+    await act(async () => {
+      const firstImport = result.current.importConfig();
+      const secondImport = result.current.importConfig();
+
+      expect(importConfigMock).toHaveBeenCalledTimes(1);
+
+      resolveImport?.({ success: true });
+      await Promise.all([firstImport, secondImport]);
+    });
+  });
+
   it("propagates export success message to toast with saved path", async () => {
     saveFileDialogMock.mockResolvedValue("/exports/config.json");
     exportConfigMock.mockResolvedValue({

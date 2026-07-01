@@ -118,6 +118,8 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
         let mut tool_name_by_index: HashMap<u32, String> = HashMap::new();
         let mut tool_args_by_index: HashMap<u32, String> = HashMap::new();
         let mut last_tool_index: Option<u32> = None;
+        let mut response_completed = false;
+        let mut stream_ended_with_error = false;
 
         tokio::pin!(stream);
 
@@ -691,6 +693,7 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                             // response.completed → message_delta + message_stop
                             // ================================================
                             "response.completed" => {
+                                response_completed = true;
                                 let response_obj = response_object_from_event(&data);
                                 let stop_reason = map_responses_stop_reason(
                                     response_obj.get("status").and_then(|s| s.as_str()),
@@ -705,6 +708,26 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                     let mut remaining: Vec<u32> = open_indices.iter().copied().collect();
                                     remaining.sort_unstable();
                                     for index in remaining {
+                                        if tool_name_by_index.get(&index).map(String::as_str) == Some("Read") {
+                                            let raw = tool_args_by_index
+                                                .get(&index)
+                                                .cloned()
+                                                .unwrap_or_default();
+                                            let sanitized = sanitize_anthropic_tool_use_input_json("Read", &raw);
+                                            if !sanitized.is_empty() {
+                                                let delta_event = json!({
+                                                    "type": "content_block_delta",
+                                                    "index": index,
+                                                    "delta": {
+                                                        "type": "input_json_delta",
+                                                        "partial_json": sanitized
+                                                    }
+                                                });
+                                                let delta_sse = format!("event: content_block_delta\ndata: {}\n\n",
+                                                    serde_json::to_string(&delta_event).unwrap_or_default());
+                                                yield Ok(Bytes::from(delta_sse));
+                                            }
+                                        }
                                         let stop_event = json!({
                                             "type": "content_block_stop",
                                             "index": index
@@ -713,8 +736,15 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                             serde_json::to_string(&stop_event).unwrap_or_default());
                                         yield Ok(Bytes::from(stop_sse));
                                         open_indices.remove(&index);
+                                        tool_name_by_index.remove(&index);
+                                        tool_args_by_index.remove(&index);
+                                        tool_index_by_item_id.retain(|_, mapped_index| *mapped_index != index);
+                                        if last_tool_index == Some(index) {
+                                            last_tool_index = None;
+                                        }
                                     }
                                 }
+                                current_text_index = None;
                                 fallback_open_index = None;
 
                                 // Defensive: Always build usage_json, even if usage field missing
@@ -773,6 +803,7 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                     }
                 }
                 Err(e) => {
+                    stream_ended_with_error = true;
                     log::error!("Responses stream error: {e}");
                     let error_event = json!({
                         "type": "error",
@@ -787,6 +818,70 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                     break;
                 }
             }
+        }
+
+        if !stream_ended_with_error && !response_completed && has_sent_message_start {
+            if !open_indices.is_empty() {
+                let mut remaining: Vec<u32> = open_indices.iter().copied().collect();
+                remaining.sort_unstable();
+                for index in remaining {
+                    if tool_name_by_index.get(&index).map(String::as_str) == Some("Read") {
+                        let raw = tool_args_by_index
+                            .get(&index)
+                            .cloned()
+                            .unwrap_or_default();
+                        let sanitized = sanitize_anthropic_tool_use_input_json("Read", &raw);
+                        if !sanitized.is_empty() {
+                            let delta_event = json!({
+                                "type": "content_block_delta",
+                                "index": index,
+                                "delta": {
+                                    "type": "input_json_delta",
+                                    "partial_json": sanitized
+                                }
+                            });
+                            let delta_sse = format!("event: content_block_delta\ndata: {}\n\n",
+                                serde_json::to_string(&delta_event).unwrap_or_default());
+                            yield Ok(Bytes::from(delta_sse));
+                        }
+                    }
+
+                    let stop_event = json!({
+                        "type": "content_block_stop",
+                        "index": index
+                    });
+                    let stop_sse = format!("event: content_block_stop\ndata: {}\n\n",
+                        serde_json::to_string(&stop_event).unwrap_or_default());
+                    yield Ok(Bytes::from(stop_sse));
+                    open_indices.remove(&index);
+                    tool_name_by_index.remove(&index);
+                    tool_args_by_index.remove(&index);
+                    tool_index_by_item_id.retain(|_, mapped_index| *mapped_index != index);
+                    if last_tool_index == Some(index) {
+                        last_tool_index = None;
+                    }
+                }
+            }
+
+            current_text_index = None;
+            fallback_open_index = None;
+
+            let delta_event = json!({
+                "type": "message_delta",
+                "delta": {
+                    "stop_reason": if has_tool_use { "tool_use" } else { "end_turn" },
+                    "stop_sequence": null
+                },
+                "usage": build_anthropic_usage_from_responses(None)
+            });
+            let delta_sse = format!("event: message_delta\ndata: {}\n\n",
+                serde_json::to_string(&delta_event).unwrap_or_default());
+            yield Ok(Bytes::from(delta_sse));
+
+            let stop_event = json!({"type": "message_stop"});
+            let stop_sse = format!("event: message_stop\ndata: {}\n\n",
+                serde_json::to_string(&stop_event).unwrap_or_default());
+            yield Ok(Bytes::from(stop_sse));
         }
     }
 }
@@ -933,6 +1028,64 @@ mod tests {
         assert_eq!(merged.matches("event: content_block_stop").count(), 1);
         assert!(merged.contains("\"partial_json\":\"{\\\"file_path\\\":\\\"/tmp/demo.py\\\",\\\"limit\\\":2000,\\\"offset\\\":0}"));
         assert!(!merged.contains("\\\"pages\\\":\\\"\\\""));
+    }
+
+    #[tokio::test]
+    async fn test_response_completed_flushes_buffered_read_args_without_done() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_read\",\"model\":\"gpt-5.5\"}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"fc_read\",\"type\":\"function_call\",\"call_id\":\"call_read\",\"name\":\"Read\"}}\n\n",
+            "event: response.function_call_arguments.delta\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_read\",\"delta\":\"{\\\"file_path\\\":\\\"/tmp/demo.py\\\",\\\"limit\\\":2000,\\\"offset\\\":0,\\\"pages\\\":\\\"\\\"}\"}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
+        );
+
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
+        let converted = create_anthropic_sse_stream_from_responses(upstream);
+        let chunks: Vec<_> = converted.collect().await;
+
+        let merged = chunks
+            .into_iter()
+            .map(|c| String::from_utf8_lossy(c.unwrap().as_ref()).to_string())
+            .collect::<String>();
+
+        assert!(merged.contains("\"name\":\"Read\""));
+        assert!(merged.contains("\"partial_json\":\"{\\\"file_path\\\":\\\"/tmp/demo.py\\\",\\\"limit\\\":2000,\\\"offset\\\":0}"));
+        assert!(!merged.contains("\\\"pages\\\":\\\"\\\""));
+        assert_eq!(merged.matches("event: content_block_stop").count(), 1);
+        assert!(merged.contains("\"type\":\"message_stop\""));
+    }
+
+    #[tokio::test]
+    async fn test_stream_end_without_response_completed_emits_finalizers() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_eof\",\"model\":\"gpt-5.4\"}}\n\n",
+            "event: response.content_part.added\n",
+            "data: {\"type\":\"response.content_part.added\",\"part\":{\"type\":\"output_text\",\"text\":\"\"},\"output_index\":0,\"content_index\":0}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\",\"output_index\":0,\"content_index\":0}\n\n"
+        );
+
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
+        let converted = create_anthropic_sse_stream_from_responses(upstream);
+        let chunks: Vec<_> = converted.collect().await;
+
+        let merged = chunks
+            .into_iter()
+            .map(|c| String::from_utf8_lossy(c.unwrap().as_ref()).to_string())
+            .collect::<String>();
+
+        assert_eq!(merged.matches("event: content_block_stop").count(), 1);
+        assert!(merged.contains("\"stop_reason\":\"end_turn\""));
+        assert!(merged.contains("\"type\":\"message_stop\""));
     }
 
     #[tokio::test]

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -235,6 +235,7 @@ type LocalProxyRequestOverridesBuildResult = ReturnType<
 
 export interface ProviderFormProps {
   appId: AppId;
+  open?: boolean;
   providerId?: string;
   submitLabel: string;
   onSubmit: (values: ProviderFormValues) => Promise<void> | void;
@@ -266,6 +267,7 @@ export function ProviderForm(props: ProviderFormProps) {
 
 function ProviderFormFull({
   appId,
+  open = true,
   providerId,
   submitLabel,
   onSubmit,
@@ -273,13 +275,31 @@ function ProviderFormFull({
   onUniversalPresetSelect,
   onManageUniversalProviders,
   onSubmittingChange,
-  initialData,
+  initialData: initialDataProp,
   showButtons = true,
   isProxyTakeover = false,
 }: ProviderFormProps) {
   if (appId === "claude-desktop") {
     throw new Error("ProviderFormFull should not receive claude-desktop");
   }
+
+  const [initialData, setInitialData] = useState(initialDataProp);
+  const lastResetKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      lastResetKeyRef.current = null;
+      return;
+    }
+
+    const resetKey = `${appId}:${providerId ?? "new"}`;
+    if (lastResetKeyRef.current === resetKey) {
+      return;
+    }
+
+    lastResetKeyRef.current = resetKey;
+    setInitialData(initialDataProp);
+  }, [open, appId, providerId, initialDataProp]);
 
   const { t } = useTranslation();
   const isEditMode = Boolean(initialData);
@@ -631,8 +651,17 @@ function ProviderFormFull({
   }, [appId, initialData, selectedPresetId, resetCodexConfig]);
 
   useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const resetKey = `${appId}:${providerId ?? "new"}`;
+    if (lastResetKeyRef.current !== resetKey) {
+      return;
+    }
+
     form.reset(defaultValues);
-  }, [defaultValues, form]);
+  }, [open, appId, providerId, defaultValues, form]);
 
   const presetCategoryLabels: Record<string, string> = useMemo(
     () => ({

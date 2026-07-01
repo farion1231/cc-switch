@@ -58,7 +58,7 @@ export function useApiKeyState({
 
       const configString = setApiKeyInConfig(
         initialConfig || "{}",
-        key.trim(),
+        key,
         {
           // 最佳实践：仅在"新增模式"且"非官方类别"时补齐缺失字段
           // - 新增模式：selectedPresetId !== null

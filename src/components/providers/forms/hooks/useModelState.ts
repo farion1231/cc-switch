@@ -135,23 +135,25 @@ export function useModelState({
     initial.fableName,
   );
 
-  const isUserEditingRef = useRef(false);
+  const pendingLocalConfigRef = useRef<string | null>(null);
   const lastConfigRef = useRef(settingsConfig);
   const latestConfigRef = useRef(settingsConfig);
 
   latestConfigRef.current = settingsConfig;
 
   // 仅在 settingsConfig 外部变化时同步（表单加载 / 切换预设）；
-  // 用户正在编辑时 (isUserEditingRef) 跳过一次以避免回填覆盖。
+  // Only skip the echo from this hook's own write-back to avoid syncing local input back in.
   useEffect(() => {
     if (lastConfigRef.current === settingsConfig) {
       return;
     }
-    if (isUserEditingRef.current) {
-      isUserEditingRef.current = false;
+    if (pendingLocalConfigRef.current === settingsConfig) {
+      pendingLocalConfigRef.current = null;
       lastConfigRef.current = settingsConfig;
       return;
     }
+
+    pendingLocalConfigRef.current = null;
     lastConfigRef.current = settingsConfig;
 
     const parsed = parseModelsFromConfig(settingsConfig);
@@ -168,8 +170,6 @@ export function useModelState({
 
   const handleModelChange = useCallback(
     (field: ClaudeModelEnvField, value: string) => {
-      isUserEditingRef.current = true;
-
       if (field === "ANTHROPIC_MODEL") setClaudeModel(value);
       if (field === "ANTHROPIC_DEFAULT_HAIKU_MODEL")
         setDefaultHaikuModel(value);
@@ -205,6 +205,13 @@ export function useModelState({
         delete env["ANTHROPIC_SMALL_FAST_MODEL"];
 
         const updatedConfig = JSON.stringify(currentConfig, null, 2);
+        if (updatedConfig === latestConfigRef.current) {
+          lastConfigRef.current = updatedConfig;
+          pendingLocalConfigRef.current = null;
+          return;
+        }
+
+        pendingLocalConfigRef.current = updatedConfig;
         latestConfigRef.current = updatedConfig;
         onConfigChange(updatedConfig);
       } catch (err) {

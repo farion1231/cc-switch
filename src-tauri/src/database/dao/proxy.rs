@@ -694,6 +694,7 @@ impl Database {
                         timeout_seconds: row.get::<_, i64>(2)? as u64,
                         error_rate_threshold: row.get(3)?,
                         min_requests: row.get::<_, i32>(4)? as u32,
+                        window_seconds: 60,
                     })
                 },
             )

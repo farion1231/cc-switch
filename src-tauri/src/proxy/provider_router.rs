@@ -6,7 +6,9 @@ use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
+use crate::proxy::circuit_breaker::{
+    AllowResult, CircuitBreaker, CircuitBreakerConfig, HalfOpenPermitGuard,
+};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -127,7 +129,7 @@ impl ProviderRouter {
         &self,
         provider_id: &str,
         app_type: &str,
-        used_half_open_permit: bool,
+        permit_guard: Option<HalfOpenPermitGuard>,
         success: bool,
         error_msg: Option<String>,
     ) -> Result<(), AppError> {
@@ -142,9 +144,9 @@ impl ProviderRouter {
         let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
 
         if success {
-            breaker.record_success(used_half_open_permit).await;
+            breaker.record_success(permit_guard).await;
         } else {
-            breaker.record_failure(used_half_open_permit).await;
+            breaker.record_failure(permit_guard).await;
         }
 
         // 3. 更新数据库健康状态（使用配置的阈值）
@@ -178,19 +180,9 @@ impl ProviderRouter {
     /// 仅释放 HalfOpen permit，不影响健康统计（neutral 接口）
     ///
     /// 用于整流器等场景：请求结果不应计入 Provider 健康度，
-    /// 但仍需释放占用的探测名额，避免 HalfOpen 状态卡死
-    pub async fn release_permit_neutral(
-        &self,
-        provider_id: &str,
-        app_type: &str,
-        used_half_open_permit: bool,
-    ) {
-        if !used_half_open_permit {
-            return;
-        }
-        let circuit_key = format!("{app_type}:{provider_id}");
-        let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
-        breaker.release_half_open_permit();
+    /// Drop the guard to release the occupied probe slot.
+    pub async fn release_permit_neutral(&self, permit_guard: Option<HalfOpenPermitGuard>) {
+        drop(permit_guard);
     }
 
     /// 更新所有熔断器的配置（热更新）
@@ -258,6 +250,7 @@ impl ProviderRouter {
                 timeout_seconds: app_config.circuit_timeout_seconds as u64,
                 error_rate_threshold: app_config.circuit_error_rate_threshold,
                 min_requests: app_config.circuit_min_requests,
+                window_seconds: 60,
             },
             Err(_) => crate::proxy::circuit_breaker::CircuitBreakerConfig::default(),
         };
@@ -458,7 +451,7 @@ mod tests {
         let router = ProviderRouter::new(db.clone());
 
         router
-            .record_result("b", "claude", false, false, Some("fail".to_string()))
+            .record_result("b", "claude", None, false, Some("fail".to_string()))
             .await
             .unwrap();
 
@@ -497,12 +490,12 @@ mod tests {
 
         // 触发熔断：1 次失败
         router
-            .record_result("a", "claude", false, false, Some("fail".to_string()))
+            .record_result("a", "claude", None, false, Some("fail".to_string()))
             .await
             .unwrap();
 
         // 第一次请求：获取 HalfOpen 探测名额
-        let first = router.allow_provider_request("a", "claude").await;
+        let mut first = router.allow_provider_request("a", "claude").await;
         assert!(first.allowed);
         assert!(first.used_half_open_permit);
 
@@ -512,7 +505,7 @@ mod tests {
 
         // 使用 release_permit_neutral 释放名额（不影响健康统计）
         router
-            .release_permit_neutral("a", "claude", first.used_half_open_permit)
+            .release_permit_neutral(first.permit_guard.take())
             .await;
 
         // 第三次请求应被允许（名额已释放）

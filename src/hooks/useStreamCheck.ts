@@ -18,6 +18,32 @@ export function useStreamCheck(appId: AppId) {
   const { t } = useTranslation();
   const [checkingIds, setCheckingIds] = useState<Set<string>>(new Set());
 
+  const getFailureDescription = useCallback(
+    (result: StreamCheckResult) => {
+      if (typeof result.httpStatus === "number") {
+        const httpHintKey =
+          result.httpStatus >= 500
+            ? "streamCheck.httpHint.5xx"
+            : `streamCheck.httpHint.${result.httpStatus}`;
+        const httpHint = t(httpHintKey, { defaultValue: "" });
+        if (httpHint && httpHint !== httpHintKey) {
+          return httpHint;
+        }
+
+        return t("streamCheck.connectivityNote", {
+          defaultValue:
+            "Connectivity only confirms reachability. Authentication or model configuration may still need adjustment.",
+        });
+      }
+
+      return t("streamCheck.unreachableHint", {
+        defaultValue:
+          "Could not establish a connection (DNS / connect / TLS / timeout). Check the base_url and your network.",
+      });
+    },
+    [t],
+  );
+
   const checkProvider = useCallback(
     async (
       providerId: string,
@@ -46,18 +72,14 @@ export function useStreamCheck(appId: AppId) {
             }),
           );
         } else {
-          // 仅当无法建立连接（DNS / 连接被拒 / TLS / 超时）才会到这里
           toast.error(
-            t("streamCheck.unreachable", {
+            t("streamCheck.failed", {
               providerName: providerName,
               message: result.message,
-              defaultValue: `${providerName} 无法连通: ${result.message}`,
+              defaultValue: `${providerName} check failed: ${result.message}`,
             }),
             {
-              description: t("streamCheck.unreachableHint", {
-                defaultValue:
-                  "无法建立连接（DNS / 连接 / TLS / 超时）。请检查 base_url 与网络。",
-              }),
+              description: getFailureDescription(result),
               duration: 8000,
               closeButton: true,
             },
@@ -82,7 +104,7 @@ export function useStreamCheck(appId: AppId) {
         });
       }
     },
-    [appId, t],
+    [appId, getFailureDescription, t],
   );
 
   const isChecking = useCallback(

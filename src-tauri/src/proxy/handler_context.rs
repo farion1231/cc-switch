@@ -241,6 +241,7 @@ impl RequestContext {
             self.optimizer_config.clone(),
             self.copilot_optimizer_config.clone(),
             max_retries,
+            self.app_config.auto_failover_enabled,
         )
     }
 
