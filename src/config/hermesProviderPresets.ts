@@ -246,6 +246,25 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "Code0",
+    websiteUrl: "https://code0.ai",
+    apiKeyUrl: "https://code0.ai?source=ccswitch",
+    settingsConfig: {
+      name: "code0",
+      base_url: "https://code0.ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [{ id: "gpt-5.5", name: "GPT-5.5" }],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "code0",
+    icon: "code0",
+    suggestedDefaults: {
+      model: { default: "gpt-5.5", provider: "code0" },
+    },
+  },
+  {
     name: "火山Agentplan",
     websiteUrl: "https://www.volcengine.com/product/ark",
     apiKeyUrl:

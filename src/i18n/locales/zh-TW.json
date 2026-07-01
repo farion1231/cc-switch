@@ -977,6 +977,7 @@
     "officialHint": "官方供應商使用瀏覽器登入，無需設定 API Key",
     "getApiKey": "取得 API Key",
     "partnerPromotion": {
+      "code0": "code0.ai 是面向開發者的 AI 程式設計服務平台，支援 Claude Code、Codex、Gemini。CC Switch 使用者專屬福利：透過官網聯繫客服即可領取測試額度！",
       "packycode": "PackyCode 是 CC Switch 的官方合作夥伴，使用此連結註冊並在儲值時填寫「cc-switch」優惠碼，可以享受 9 折優惠",
       "apikeyfun": "APIKEY.FUN 為 CC Switch 的使用者提供了特別優惠，透過專屬連結註冊，可享受最高儲值永久 95 折優惠。",
       "apinebula": "APINEBULA 為 CC Switch 使用者提供特別優惠：使用專屬連結註冊並在儲值時填寫「ccswitch」優惠碼，可享 9 折優惠。",

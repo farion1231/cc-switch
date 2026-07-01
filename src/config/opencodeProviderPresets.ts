@@ -451,6 +451,34 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "Code0",
+    websiteUrl: "https://code0.ai",
+    apiKeyUrl: "https://code0.ai?source=ccswitch",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Code0",
+      options: {
+        baseURL: "https://code0.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-5.5": { name: "GPT-5.5" },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "code0",
+    icon: "code0",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "火山Agentplan",
     websiteUrl: "https://www.volcengine.com/product/ark",
     apiKeyUrl:

@@ -125,6 +125,11 @@ TeamoRouter bietet außerdem Enterprise-Funktionen wie zentrale Abrechnung, Team
 </tr>
 
 <tr>
+<td width="180"><a href="https://code0.ai?source=ccswitch"><img src="assets/partners/logos/code0.png" alt="code0.ai" width="150"></a></td>
+<td>Vielen Dank an <a href="https://code0.ai?source=ccswitch">code0.ai</a> für die Unterstützung dieses Projekts! code0.ai ist eine für Entwickler entwickelte AI-Coding-Service-Plattform, die Claude Code, Codex, Gemini und weitere gängige AI-Coding-Funktionen unterstützt. Sie hilft einzelnen Entwicklern und Teams, AI-Agents stabiler und effizienter für Programmierung, Debugging, Refactoring und Automatisierungs-Workflows zu nutzen. ccswitch-Nutzer können über die <a href="https://code0.ai?source=ccswitch">code0.ai-Website</a> den Kundensupport kontaktieren, um Testguthaben zu erhalten und einen zuverlässigen AI-Coding-Service zu erleben.</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://claudecn.top"><img src="assets/partners/logos/claudecn.jpg" alt="ClaudeCN" width="150"></a></td>
 <td>Danke an ClaudeCN für die Unterstützung dieses Projekts! ClaudeCN ist eine unternehmensgerechte KI-Gateway-Plattform, die von einem eingetragenen Unternehmen betrieben wird. Sie bietet hochverfügbaren kommerziellen API-Zugriff auf beliebte Modelle wie Claude, GPT und DeepSeek und ist auf formelle Unternehmensbeschaffungsprozesse ausgerichtet — Banküberweisungen von Firmen, unterzeichnete Verträge und volle Compliance. Registrieren Sie sich über <a href="https://claudecn.top">diesen Link</a>!</td>
 </tr>

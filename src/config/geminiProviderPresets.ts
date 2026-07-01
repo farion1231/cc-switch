@@ -131,6 +131,24 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "qiniu",
   },
   {
+    name: "Code0",
+    websiteUrl: "https://code0.ai",
+    apiKeyUrl: "https://code0.ai?source=ccswitch",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://code0.ai",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://code0.ai",
+    model: "gemini-3.1-pro-preview",
+    description: "Code0",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "code0",
+    icon: "code0",
+  },
+  {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.com",
     apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",

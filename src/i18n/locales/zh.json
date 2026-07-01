@@ -1006,6 +1006,7 @@
     "officialHint": "💡 官方供应商使用浏览器登录，无需配置 API Key",
     "getApiKey": "获取 API Key",
     "partnerPromotion": {
+      "code0": "code0.ai 是面向开发者的 AI 编程服务平台，支持 Claude Code、Codex、Gemini。CC Switch 用户专属福利：通过官网联系客服即可领取测试额度！",
       "packycode": "PackyCode 是 CC Switch 的官方合作伙伴，使用此链接注册并在充值时填写 \"cc-switch\" 优惠码，可以享受9折优惠",
       "apikeyfun": "APIKEY.FUN 为 CC Switch 的用户提供了特别优惠，通过专属链接注册，可享受最高充值永久 95 折优惠。",
       "apinebula": "APINEBULA 为 CC Switch 用户提供特别优惠：使用专属链接注册并在充值时填写 \"ccswitch\" 优惠码，可享九折优惠。",

@@ -862,6 +862,21 @@ export const providerPresets: ProviderPreset[] = [
     icon: "claudeapi",
   },
   {
+    name: "Code0",
+    websiteUrl: "https://code0.ai",
+    apiKeyUrl: "https://code0.ai?source=ccswitch",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://code0.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "code0",
+    icon: "code0",
+  },
+  {
     name: "ClaudeCN",
     websiteUrl: "https://claudecn.top",
     apiKeyUrl: "https://claudecn.top/register?aff=ccswitch",

@@ -365,6 +365,18 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     icon: "amux",
   },
   {
+    name: "Code0",
+    websiteUrl: "https://code0.ai",
+    apiKeyUrl: "https://code0.ai?source=ccswitch",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig("code0", "https://code0.ai/v1", "gpt-5.5"),
+    endpointCandidates: ["https://code0.ai/v1"],
+    isPartner: true,
+    partnerPromotionKey: "code0",
+    icon: "code0",
+  },
+  {
     name: "Azure OpenAI",
     websiteUrl:
       "https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/codex",
