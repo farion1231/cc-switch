@@ -682,6 +682,8 @@
     "enableClaudePluginIntegrationDescription": "開啟後 VS Code Claude Code 外掛程式的供應商將隨本軟體切換",
     "skipClaudeOnboarding": "跳過 Claude Code 初次安裝確認",
     "skipClaudeOnboardingDescription": "開啟後跳過 Claude Code 初次安裝確認",
+    "mcpLiveSync": "MCP 即時同步",
+    "mcpLiveSyncDescription": "自動同步 MCP 服務到各工具設定檔。如果你手動管理 MCP 或使用其他工具同步，請關閉此項。",
     "codexAuth": "Codex 應用增強",
     "preserveCodexOfficialAuthOnSwitch": "切換第三方時保留官方登入",
     "preserveCodexOfficialAuthOnSwitchDescription": "開啟後可以在使用第三方 API 的時候使用 Codex 應用的官方外掛、手機遠端操作等功能",

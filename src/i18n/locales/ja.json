@@ -682,6 +682,8 @@
     "enableClaudePluginIntegrationDescription": "オンにすると VS Code の Claude Code 拡張のプロバイダーも同期します",
     "skipClaudeOnboarding": "Claude Code の初回確認をスキップ",
     "skipClaudeOnboardingDescription": "オンにすると Claude Code の初回インストール確認をスキップします",
+    "mcpLiveSync": "MCP ライブ同期",
+    "mcpLiveSyncDescription": "MCPサーバー定義を各ツールの設定ファイルに自動同期します。MCPを手動で管理している場合、または別のツールで同期している場合はオフにしてください。",
     "codexAuth": "Codex アプリ拡張",
     "preserveCodexOfficialAuthOnSwitch": "サードパーティ切替時に公式ログインを保持",
     "preserveCodexOfficialAuthOnSwitchDescription": "オンにすると、サードパーティ API を使用する際に Codex アプリの公式プラグインやスマホからのリモート操作などの機能を利用できます。",

@@ -9,6 +9,9 @@ use crate::error::AppError;
 use super::validation::{extract_server_spec, validate_server_spec};
 
 fn should_sync_claude_mcp() -> bool {
+    if !crate::settings::mcp_live_sync_enabled() {
+        return false;
+    }
     // Claude 未安装/未初始化时：通常 ~/.claude 目录与 ~/.claude.json 都不存在。
     // 按用户偏好：此时跳过写入/删除，不创建任何文件或目录。
     crate::config::get_claude_config_dir().exists() || crate::config::get_claude_mcp_path().exists()
