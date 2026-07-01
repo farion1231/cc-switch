@@ -257,7 +257,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiKeyUrl:
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     category: "cn_official",
-    baseUrl: "https://ark.cn-beijing.volces.com/api/coding",
+    baseUrl: "https://ark.cn-beijing.volces.com/api/plan",
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: brandedRoutes(

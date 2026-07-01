@@ -515,7 +515,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       npm: "@ai-sdk/openai-compatible",
       name: "火山Agentplan",
       options: {
-        baseURL: "https://ark.cn-beijing.volces.com/api/coding/v3",
+        baseURL: "https://ark.cn-beijing.volces.com/api/plan/v3",
         apiKey: "",
         setCacheKey: true,
       },
