@@ -731,7 +731,8 @@
           "ghostty": "Ghostty",
           "wezterm": "WezTerm",
           "kaku": "Kaku",
-          "warp": "Warp"
+          "warp": "Warp",
+          "rio": "Rio"
         },
         "windows": {
           "cmd": "Command Prompt",
