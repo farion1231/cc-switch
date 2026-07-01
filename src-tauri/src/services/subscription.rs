@@ -1340,3 +1340,21 @@ fn now_millis() -> i64 {
         .unwrap_or_default()
         .as_millis() as i64
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_seconds_map_to_expected_tier_names() {
+        // 官方特例窗口
+        assert_eq!(window_seconds_to_tier_name(18000), "five_hour");
+        assert_eq!(window_seconds_to_tier_name(604800), "seven_day");
+        // Codex 免费方案的次要窗口是 30 天（30 * 24 * 3600 = 2_592_000 秒）。
+        // 前端 TIER_I18N_KEYS 需要有对应的 "30_day" 才能展示，见 #3651。
+        assert_eq!(window_seconds_to_tier_name(2_592_000), "30_day");
+        // 其他窗口按小时/天回退命名
+        assert_eq!(window_seconds_to_tier_name(3600), "1_hour");
+        assert_eq!(window_seconds_to_tier_name(86400), "1_day");
+    }
+}
