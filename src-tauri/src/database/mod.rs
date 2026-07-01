@@ -43,6 +43,10 @@ use crate::config::get_app_config_dir;
 use crate::error::AppError;
 use rusqlite::{hooks::Action, Connection};
 use serde::Serialize;
+#[cfg(unix)]
+use std::fs::Permissions;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::sync::Mutex;
 
 // DAO 方法通过 impl Database 提供，无需额外导出
@@ -103,6 +107,16 @@ impl Database {
         }
 
         let conn = Connection::open(&db_path).map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 设置安全文件权限：DB 文件 600 (仅 owner 可读写)，目录 700 (仅 owner 可访问)
+        // 防止 API Key 被主机上其他进程读取 (CWE-732)
+        #[cfg(unix)]
+        {
+            if let Some(parent) = db_path.parent() {
+                let _ = std::fs::set_permissions(parent, Permissions::from_mode(0o700));
+            }
+            let _ = std::fs::set_permissions(&db_path, Permissions::from_mode(0o600));
+        }
 
         // 启用外键约束
         conn.execute("PRAGMA foreign_keys = ON;", [])
